@@ -1,0 +1,243 @@
+/* ToolCallRenderer 组件样式 */
+.tool-call-renderer {
+  /* 浅色主题变量 */
+  --tool-bg: #ffffff;
+  --tool-border: #e5e7eb;
+  --tool-text: #374151;
+  --tool-text-secondary: #6b7280;
+  --tool-name-color: #2563eb;
+  --tool-success-bg: #dcfce7;
+  --tool-success-border: #16a34a;
+  --tool-success-text: #166534;
+  --tool-error-bg: #fef2f2;
+  --tool-error-border: #dc2626;
+  --tool-error-text: #991b1b;
+  --tool-pending-bg: #fef3c7;
+  --tool-pending-border: #d97706;
+  --tool-pending-text: #92400e;
+  --tool-button-bg: #f3f4f6;
+  --tool-button-hover: #e5e7eb;
+  --tool-button-text: #374151;
+  --tool-params-bg: #f9fafb;
+  --tool-details-bg: #f9fafb;
+  --tool-chip-bg: #f8fafc;
+  --tool-chip-border: #e5e7eb;
+  --tool-chip-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+
+/* 深色主题变量 */
+.dark .tool-call-renderer {
+  --tool-bg: #1f2937;
+  --tool-border: #374151;
+  --tool-text: #f9fafb;
+  --tool-text-secondary: #d1d5db;
+  --tool-name-color: #60a5fa;
+  --tool-success-bg: #064e3b;
+  --tool-success-border: #059669;
+  --tool-success-text: #34d399;
+  --tool-error-bg: #7f1d1d;
+  --tool-error-border: #dc2626;
+  --tool-error-text: #fca5a5;
+  --tool-pending-bg: #78350f;
+  --tool-pending-border: #d97706;
+  --tool-pending-text: #fbbf24;
+  --tool-button-bg: #374151;
+  --tool-button-hover: #4b5563;
+  --tool-button-text: #f9fafb;
+  --tool-params-bg: #111827;
+  --tool-details-bg: #111827;
+  --tool-chip-bg: #0f172a;
+  --tool-chip-border: #1f2937;
+  --tool-chip-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+/* 主容器样式 */
+.tool-call-container {
+  color: var(--tool-text);
+  margin: 0.2rem 0;
+}
+
+/* 顶部工具标签（胶囊） */
+.tool-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.35rem 0.6rem;
+  background: var(--tool-chip-bg);
+  border: 1px solid var(--tool-chip-border);
+  border-radius: 9999px;
+  box-shadow: var(--tool-chip-shadow);
+  max-width: 100%;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+.tool-chip.expanded {
+  border-color: var(--tool-name-color);
+}
+
+.tool-chip-left {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.tool-icon {
+  width: 15px;
+  height: 15px;
+  color: var(--tool-name-color);
+}
+
+.tool-name {
+  color: var(--tool-name-color);
+  font-weight: 600;
+  font-size: 0.78rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 18rem;
+}
+
+.tool-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.1rem 0.5rem 0.1rem 0.35rem;
+  border-radius: 9999px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.tool-status::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: currentColor;
+  opacity: 0.8;
+}
+
+.tool-status.success {
+  background: var(--tool-success-bg);
+  color: var(--tool-success-text);
+  border-color: var(--tool-success-border);
+}
+
+.tool-status.error {
+  background: var(--tool-error-bg);
+  color: var(--tool-error-text);
+  border-color: var(--tool-error-border);
+}
+
+.tool-status.pending {
+  background: var(--tool-pending-bg);
+  color: var(--tool-pending-text);
+  border-color: var(--tool-pending-border);
+}
+
+.tool-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 9999px;
+  border: 1px solid var(--tool-border);
+  background: var(--tool-button-bg);
+  color: var(--tool-text-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.tool-toggle:hover {
+  background: var(--tool-button-hover);
+  color: var(--tool-text);
+}
+
+.tool-toggle-icon {
+  width: 14px;
+  height: 14px;
+  transition: transform 0.2s ease;
+}
+
+.tool-toggle.expanded .tool-toggle-icon {
+  transform: rotate(180deg);
+}
+
+/* 参数容器样式 */
+.params-container {
+  background-color: var(--tool-params-bg);
+  border: 1px solid var(--tool-border);
+  border-radius: 0.375rem;
+  padding: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.params-title {
+  color: var(--tool-text-secondary);
+  font-size: 0.75rem;
+  font-weight: 500;
+  margin-bottom: 0.5rem;
+}
+
+.param-item {
+  margin-bottom: 0.5rem;
+}
+
+.param-name {
+  color: var(--tool-name-color);
+  font-weight: 500;
+  font-size: 0.875rem;
+}
+
+.param-value {
+  color: var(--tool-text);
+  margin-top: 0.25rem;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* 详情容器样式 */
+.details-container {
+  background-color: var(--tool-details-bg);
+  border: 1px solid var(--tool-border);
+  border-radius: 0.375rem;
+  border-left: 3px solid var(--tool-name-color);
+  padding: 0.75rem;
+  margin-top: 0.4rem;
+}
+
+.details-title {
+  color: var(--tool-text-secondary);
+  font-size: 0.75rem;
+  font-weight: 500;
+  margin-bottom: 0.5rem;
+}
+
+.tool-error-box {
+  background: var(--tool-error-bg);
+  border: 1px solid var(--tool-error-border);
+  color: var(--tool-error-text);
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* 响应式设计 */
+@media (max-width: 640px) {
+  .param-value {
+    font-size: 0.7rem;
+  }
+
+  .tool-name {
+    max-width: 12rem;
+  }
+}

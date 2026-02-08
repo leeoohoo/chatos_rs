@@ -1,0 +1,23 @@
+﻿{
+  "type": "sqlite",
+  "sqlite": {
+    "db_path": "data/chat_app.db",
+    "timeout": 30000,
+    "busy_timeout": 30000
+  },
+  "mongodb": {
+    "host": "localhost",
+    "port": 27017,
+    "database": "chat_app",
+    "username": null,
+    "password": null,
+    "connection_string": null,
+    "max_pool_size": 100,
+    "min_pool_size": 0,
+    "server_selection_timeout_ms": 30000,
+    "connect_timeout_ms": 20000,
+    "socket_timeout_ms": 20000
+  },
+  "auto_migrate": true,
+  "debug": false
+}

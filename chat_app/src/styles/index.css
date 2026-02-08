@@ -1,0 +1,346 @@
+@import 'tailwindcss/base';
+@import 'tailwindcss/components';
+@import 'tailwindcss/utilities';
+@import 'katex/dist/katex.min.css';
+@import 'highlight.js/styles/github.css';
+
+@layer base {
+  /* 全局滚动性能优化 */
+  * {
+    /* 减少重绘和回流 */
+    box-sizing: border-box;
+  }
+  
+  /* 优化滚动容器 */
+  .overflow-y-auto, .overflow-auto {
+    /* 启用硬件加速 */
+    transform: translateZ(0);
+    /* 优化滚动性能 */
+    -webkit-overflow-scrolling: touch;
+  }
+
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+    --primary: 221.2 83.2% 53.3%;
+    --primary-foreground: 210 40% 98%;
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 222.2 84% 4.9%;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+    --accent: 210 40% 96%;
+    --accent-foreground: 222.2 84% 4.9%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 221.2 83.2% 53.3%;
+    --radius: 0.5rem;
+  }
+
+  .dark {
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+    --card: 222.2 84% 4.9%;
+    --card-foreground: 210 40% 98%;
+    --popover: 222.2 84% 4.9%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 217.2 91.2% 59.8%;
+    --primary-foreground: 222.2 84% 4.9%;
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+    --accent: 217.2 32.6% 17.5%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 224.3 76.3% 94.1%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-solid;
+  }
+  body {
+    @apply bg-white text-gray-900;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+  
+  .dark body {
+    @apply bg-gray-900 text-white;
+  }
+}
+
+/* AI Chat specific styles */
+.ai-chat-container {
+  @apply flex flex-col h-full bg-white;
+}
+
+.ai-chat-header {
+  @apply flex items-center justify-between p-4 border-b border-gray-200 bg-white;
+}
+
+.ai-chat-messages {
+  @apply flex-1 overflow-y-auto p-4 space-y-4;
+}
+
+.ai-chat-input {
+  @apply border-t border-gray-200 bg-white p-4;
+}
+
+/* Message styles */
+.message-user {
+  @apply bg-blue-100 text-blue-800 p-4 rounded-lg;
+}
+
+.message-assistant {
+  @apply bg-transparent text-gray-700;
+}
+
+.message-avatar {
+  @apply w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold;
+}
+
+.message-avatar-user {
+  @apply bg-blue-600 text-white;
+}
+
+.message-avatar-assistant {
+  @apply bg-gray-200 text-gray-900;
+}
+
+/* Typing indicator */
+.typing-indicator {
+  @apply flex space-x-1;
+}
+
+.typing-dot {
+  @apply w-2 h-2 bg-gray-400 rounded-full animate-pulse;
+}
+
+.typing-dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.typing-dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+/* Code highlighting */
+.hljs {
+  @apply bg-gray-100 text-gray-700 p-4 rounded-lg overflow-x-auto;
+}
+
+/* Markdown styles moved to MarkdownRenderer.css for better isolation */
+
+/* Session dropdown */
+.session-dropdown {
+  @apply absolute top-full left-0 mt-2 w-80 bg-white border border-gray-200 rounded-lg shadow-lg z-50;
+}
+
+.session-item {
+  @apply p-3 hover:bg-gray-100 hover:text-gray-900 cursor-pointer border-b border-gray-200 last:border-b-0;
+}
+
+.session-item-active {
+  @apply bg-blue-600 text-white;
+}
+
+/* Scrollbar styles */
+/* Scrollbar styles */
+.custom-scrollbar::-webkit-scrollbar {
+  @apply w-2;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  @apply bg-gray-100;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  @apply bg-gray-400 rounded-full;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  @apply bg-gray-600;
+}
+
+/* Animation utilities */
+.fade-in {
+  @apply animate-pulse;
+}
+
+.slide-up {
+  @apply animate-bounce;
+}
+
+.slide-down {
+  @apply animate-bounce;
+}
+
+/* 优化的呼吸边框动画：更克制，更简洁 */
+@keyframes breathing-border {
+  0%, 100% {
+    box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.20);
+  }
+  50% {
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.35);
+  }
+}
+
+.animate-breathing-border {
+  animation: breathing-border 3s ease-in-out infinite;
+  /* 添加will-change提示浏览器优化 */
+  will-change: box-shadow;
+}
+
+/* 弹框通用样式 */
+.modal-container {
+  @apply fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50;
+}
+
+.modal-content {
+  @apply bg-card rounded-xl shadow-xl transform transition-all duration-300 ease-out scale-100 border border-border;
+  /* 保留轻微动效，避免过于喧宾夺主 */
+  animation: breathing-border 4s ease-in-out infinite;
+  backdrop-filter: saturate(140%) blur(2px);
+}
+
+.modal-content::before {
+  content: '';
+  @apply absolute inset-0 rounded-xl;
+  background: linear-gradient(135deg, rgba(59,130,246,0.06), rgba(99,102,241,0.04));
+  z-index: -1;
+}
+
+/* 深色模式下的呼吸边框 */
+.dark .animate-breathing-border {
+  animation: breathing-border-dark 3s ease-in-out infinite;
+}
+
+@keyframes breathing-border-dark {
+  0%, 100% {
+    box-shadow: 
+      0 0 15px rgba(96, 165, 250, 0.3), 
+      0 0 0 1px rgba(96, 165, 250, 0.3);
+  }
+  50% {
+    box-shadow: 
+      0 0 25px rgba(96, 165, 250, 0.5), 
+      0 0 0 2px rgba(96, 165, 250, 0.5);
+  }
+}
+
+/* 抽屉呼吸边框样式 */
+.breathing-border {
+  animation: drawer-breathing-border 3s ease-in-out infinite;
+  border-right: 2px solid transparent;
+}
+
+@keyframes drawer-breathing-border {
+  0%, 100% {
+    border-right-color: rgba(59, 130, 246, 0.25);
+    box-shadow: 2px 0 10px rgba(59, 130, 246, 0.12);
+  }
+  50% {
+    border-right-color: rgba(59, 130, 246, 0.38);
+    box-shadow: 2px 0 16px rgba(59, 130, 246, 0.18);
+  }
+}
+
+/* =================== Minimal Slate Theme =================== */
+.theme-minimal {
+  --elev-shadow: 0 8px 24px rgba(2, 6, 23, 0.06);
+}
+
+/* 背景：浅色更有层次，暗色更纯净 */
+.theme-minimal body {
+  background:
+    radial-gradient(900px 300px at 20% -10%, rgba(59,130,246,0.06) 0%, transparent 60%),
+    linear-gradient(180deg, rgba(148,163,184,0.06), rgba(255,255,255,0.0));
+}
+.dark.theme-minimal body {
+  background: linear-gradient(180deg, rgba(2,6,23,0.92), rgba(2,6,23,1));
+}
+
+/* 卡片/抽屉/弹窗：去模糊，实心，简洁边框与阴影 */
+.theme-minimal .bg-card {
+  background-color: hsl(var(--card)) !important;
+  border: 1px solid hsl(var(--border)) !important;
+  box-shadow: var(--elev-shadow);
+}
+
+.theme-minimal .modal-content {
+  box-shadow: var(--elev-shadow);
+}
+
+/* 顶部栏粘性与分隔线 */
+.theme-minimal .chat-header {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  box-shadow: 0 1px 0 hsl(var(--border));
+}
+
+/* 消息区：居中收口 */
+.theme-minimal .chat-messages {
+  display: flex;
+  flex-direction: column;
+}
+.theme-minimal .chat-messages > * {
+  max-width: 980px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* 消息卡片：统一边框和背景（assistant） */
+.theme-minimal .message-bubble {
+  border: 1px solid hsl(var(--border));
+  background-color: hsl(var(--card));
+}
+
+/* 用户消息：更清爽的强调 */
+.theme-minimal .bg-user-message {
+  background-color: rgba(59,130,246,0.10) !important;
+  border-left: 3px solid rgba(59,130,246,0.55);
+}
+.dark.theme-minimal .bg-user-message {
+  background-color: rgba(56,189,248,0.12) !important;
+  border-left: 3px solid rgba(56,189,248,0.55);
+}
+
+/* 输入区：居中收口，简洁边框 */
+.theme-minimal .chat-input {
+  max-width: 980px;
+  margin-left: auto;
+  margin-right: auto;
+  background: transparent;
+  padding-left: 0;
+  padding-right: 0;
+}
+.theme-minimal .chat-input .border {
+  border-color: hsl(var(--border));
+}
+
+/* 深色模式下的抽屉呼吸边框 */
+.dark .breathing-border {
+  animation: drawer-breathing-border-dark 3s ease-in-out infinite;
+}
+
+@keyframes drawer-breathing-border-dark {
+  0%, 100% {
+    border-right-color: rgba(56, 189, 248, 0.28);
+    box-shadow: 2px 0 10px rgba(56, 189, 248, 0.12);
+  }
+  50% {
+    border-right-color: rgba(56, 189, 248, 0.42);
+    box-shadow: 2px 0 16px rgba(56, 189, 248, 0.18);
+  }
+}

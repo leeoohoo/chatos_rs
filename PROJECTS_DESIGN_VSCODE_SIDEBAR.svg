@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="900" viewBox="0 0 1400 900">
+  <style>
+    .bg { fill: #1e1e1e; }
+    .sidebar { fill: #252526; }
+    .section { fill: #2d2d2d; }
+    .sectionActive { fill: #094771; }
+    .text { font: 12px Arial, sans-serif; fill: #d4d4d4; }
+    .textMuted { font: 11px Arial, sans-serif; fill: #9da0a6; }
+    .textTitle { font: 12px Arial, sans-serif; fill: #c5c5c5; letter-spacing: 0.5px; }
+    .divider { stroke: #3c3c3c; stroke-width: 1; }
+  </style>
+
+  <!-- Background -->
+  <rect x="0" y="0" width="1400" height="900" class="bg"/>
+
+  <!-- Sidebar -->
+  <rect x="0" y="0" width="320" height="900" class="sidebar"/>
+
+  <!-- Sidebar title -->
+  <text x="16" y="28" class="textTitle">EXPLORER</text>
+  <text x="300" y="28" class="textMuted">...</text>
+
+  <!-- Section: SESSIONS (expanded) -->
+  <rect x="0" y="46" width="320" height="30" class="sectionActive"/>
+  <text x="16" y="66" class="text">v  SESSIONS</text>
+  <text x="32" y="96" class="textMuted">- Sprint Planning</text>
+  <text x="32" y="116" class="textMuted">- Release Notes</text>
+  <text x="32" y="136" class="textMuted">- Bug Fixes</text>
+  <text x="32" y="156" class="textMuted">- Design Review</text>
+
+  <!-- Section: PROJECTS (expanded) -->
+  <rect x="0" y="186" width="320" height="30" class="section"/>
+  <text x="16" y="206" class="text">v  PROJECTS</text>
+  <text x="32" y="236" class="textMuted">- Project Alpha</text>
+  <text x="32" y="256" class="textMuted">- Project Beta</text>
+  <text x="32" y="276" class="textMuted">- Project Gamma</text>
+
+  <!-- Divider -->
+  <line x1="0" y1="330" x2="320" y2="330" class="divider"/>
+
+  <!-- Main area placeholder -->
+  <rect x="320" y="0" width="1080" height="900" class="bg"/>
+  <text x="360" y="40" class="textMuted">Main content area</text>
+</svg>

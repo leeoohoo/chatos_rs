@@ -1,0 +1,630 @@
+/* MarkdownRenderer 独立样式文件 */
+/* 参考 chat.css 的设计理念，使用主题变量系统，确保样式隔离 */
+
+/* ===== 主题变量定义 ===== */
+.markdown-renderer {
+    /* 浅色主题 */
+    --md-bg: #ffffff;
+    --md-secondary-bg: #f8fafc;
+    --md-text: #1e293b;
+    --md-secondary-text: #64748b;
+    --md-border: #e2e8f0;
+    --md-hover-bg: #f1f5f9;
+    --md-code-bg: #f8fafc;
+    --md-code-text: #24292f;
+    --md-link-color: #0969da;
+    --md-quote-border: #d1d5db;
+    --md-quote-bg: #f9fafb;
+}
+
+/* 深色主题 */
+.dark .markdown-renderer {
+    --md-bg: #1e1e1e;
+    --md-secondary-bg: #2d2d2d;
+    --md-text: #e6edf3;
+    --md-secondary-text: #8b949e;
+    --md-border: #3d3d3d;
+    --md-hover-bg: #383838;
+    --md-code-bg: #161b22;
+    --md-code-text: #f0f6fc;
+    --md-link-color: #58a6ff;
+    --md-quote-border: #4b5563;
+    --md-quote-bg: #374151;
+}
+
+/* ===== 基础容器样式 ===== */
+.markdown-renderer {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--md-text);
+    word-wrap: break-word;
+    max-width: none;
+    /* 重置所有可能的外部样式影响 */
+    all: initial;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--md-text);
+}
+
+/* 思考内容变体：通过覆盖主题变量让整块内容显著变灰 */
+.markdown-renderer.thinking {
+    --md-text: #6b7280; /* gray-500 */
+    --md-secondary-text: #6b7280;
+    --md-link-color: #6b7280; /* 链接不再突出为蓝色 */
+    --md-code-text: #6b7280; /* 代码文字压灰 */
+    --md-code-bg: #f3f4f6;  /* 代码块浅灰底 */
+    --md-quote-bg: #f3f4f6; /* 引用浅灰底 */
+    --md-quote-border: #e5e7eb; /* 引用浅灰边 */
+}
+
+/* 强制所有子元素继承压灰文本颜色，避免外部样式影响 */
+.markdown-renderer.thinking,
+.markdown-renderer.thinking * {
+    color: var(--md-text) !important;
+}
+
+/* 暗色主题下的思考内容变体：使用更柔和的灰度与深色背景 */
+.dark .markdown-renderer.thinking {
+    --md-text: #9ca3af;          /* gray-400 - 统一为中性灰 */
+    --md-secondary-text: #9ca3af;
+    --md-link-color: #9ca3af;
+    --md-code-text: #9ca3af;
+    --md-code-bg: #0f172a;       /* slate-900 */
+    --md-quote-bg: #0f172a;
+    --md-quote-border: #334155;  /* slate-700 */
+}
+
+.dark .markdown-renderer.thinking,
+.dark .markdown-renderer.thinking * {
+    color: var(--md-text) !important;
+}
+
+/* ===== 标题样式 ===== */
+.markdown-renderer h1,
+.markdown-renderer h2,
+.markdown-renderer h3,
+.markdown-renderer h4,
+.markdown-renderer h5,
+.markdown-renderer h6 {
+    margin-top: 24px;
+    margin-bottom: 16px;
+    font-weight: 600;
+    line-height: 1.25;
+    color: var(--md-text);
+    font-family: inherit;
+}
+
+.markdown-renderer h1 {
+    font-size: 2em;
+    border-bottom: 1px solid var(--md-border);
+    padding-bottom: 0.3em;
+}
+
+.markdown-renderer h2 {
+    font-size: 1.5em;
+    border-bottom: 1px solid var(--md-border);
+    padding-bottom: 0.3em;
+}
+
+.markdown-renderer h3 {
+    font-size: 1.25em;
+}
+
+.markdown-renderer h4 {
+    font-size: 1em;
+}
+
+.markdown-renderer h5 {
+    font-size: 0.875em;
+}
+
+.markdown-renderer h6 {
+    font-size: 0.85em;
+    color: var(--md-secondary-text);
+}
+
+/* ===== 段落样式 ===== */
+.markdown-renderer p {
+    margin-top: 0;
+    margin-bottom:  0!important;
+    color: var(--md-text);
+}
+
+/* ===== 链接样式 ===== */
+.markdown-renderer a {
+    color: var(--md-link-color);
+    text-decoration: none;
+}
+
+.markdown-renderer a:hover {
+    text-decoration: underline;
+}
+
+/* ===== 强调和斜体 ===== */
+.markdown-renderer strong {
+    font-weight: 600;
+    color: var(--md-text);
+}
+
+.markdown-renderer em {
+    font-style: italic;
+    color: var(--md-text);
+}
+
+/* ===== 行内代码样式 ===== */
+.markdown-renderer code {
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Courier, monospace;
+    padding: 0.2em 0.4em;
+    margin: 0;
+    font-size: 13px;
+    background-color: var(--md-code-bg);
+    border-radius: 3px;
+    color: var(--md-code-text);
+    border: 1px solid var(--md-border);
+    font-weight: 500;
+}
+
+/* ===== 代码块样式 ===== */
+.markdown-renderer pre {
+    margin: 0;
+    padding: 8px 12px;
+    overflow: auto;
+    font-size: 13px;
+    line-height: 1.5;
+    background-color: var(--md-code-bg);
+    border-radius: 6px;
+    border: 1px solid var(--md-border);
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Courier, monospace;
+}
+
+/* 代码块容器内的 pre 元素不需要外边距 */
+.markdown-renderer .code-block pre {
+    margin: 0;
+    border: none;
+    border-radius: 0;
+}
+
+.markdown-renderer pre code {
+    display: inline;
+    max-width: auto;
+    padding: 0;
+    margin: 0;
+    overflow: visible;
+    line-height: inherit;
+    word-wrap: normal;
+    background-color: transparent;
+    border: 0;
+    font-size: 13px;
+    color: var(--md-code-text);
+    font-weight: 400;
+}
+
+/* ===== 代码块容器样式 ===== */
+.markdown-renderer .code-block {
+    margin: 8px 0;
+    border-radius: 6px;
+    border: 1px solid var(--md-border);
+    overflow: hidden;
+    background-color: var(--md-code-bg);
+}
+
+.markdown-renderer .code-header {
+    background-color: var(--md-secondary-bg);
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--md-secondary-text);
+    border-bottom: 1px solid var(--md-border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    min-height: 32px;
+    max-width: 100%;
+    overflow: hidden;
+}
+
+.markdown-renderer .code-language {
+    flex: 1;
+    text-align: left;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.markdown-renderer .code-actions {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+.markdown-renderer .streaming-code .code-header {
+    background-color: var(--md-hover-bg);
+}
+
+.markdown-renderer .streaming-indicator {
+    color: var(--md-link-color);
+    font-size: 11px;
+    animation: pulse 1s infinite;
+}
+
+/* ===== 代码块按钮样式 ===== */
+.markdown-renderer .code-action-btn {
+    padding: 4px 8px;
+    background: rgba(0, 0, 0, 0.1);
+    border: 1px solid rgba(0, 0, 0, 0.2);
+    border-radius: 4px;
+    color: var(--md-text);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    height: 24px;
+    flex-shrink: 0;
+}
+
+/* 深色主题下的按钮样式 */
+.dark .markdown-renderer .code-action-btn {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: var(--md-text);
+}
+
+.markdown-renderer .code-action-btn:hover {
+    background: rgba(0, 0, 0, 0.15);
+    color: var(--md-text);
+}
+
+/* 深色主题下的按钮hover样式 */
+.dark .markdown-renderer .code-action-btn:hover {
+    background: rgba(255, 255, 255, 0.15);
+    color: var(--md-text);
+}
+
+.markdown-renderer .code-action-btn:hover .icon {
+    opacity: 1;
+}
+
+.markdown-renderer .code-action-btn:active {
+    transform: scale(0.95);
+}
+
+.markdown-renderer .code-action-btn .icon {
+    width: 14px;
+    height: 14px;
+    display: inline-flex;
+    opacity: 0.9;
+    transition: opacity 0.2s ease;
+}
+
+.markdown-renderer .expand-btn .icon.rotated {
+    transform: rotate(180deg);
+}
+
+.markdown-renderer .expand-btn .icon {
+    transition: transform 0.2s ease;
+    will-change: transform;
+}
+
+/* 按钮特定样式 - 浅色主题 */
+.markdown-renderer .copy-btn:hover {
+    background-color: rgba(59, 130, 246, 0.1);
+    color: #3b82f6;
+}
+
+.markdown-renderer .expand-btn:hover {
+    background-color: rgba(147, 51, 234, 0.1);
+    color: #9333ea;
+}
+
+/* 按钮特定样式 - 深色主题 */
+.dark .markdown-renderer .copy-btn:hover {
+    background-color: rgba(96, 165, 250, 0.2);
+    color: #60a5fa;
+}
+
+.dark .markdown-renderer .expand-btn:hover {
+    background-color: rgba(196, 181, 253, 0.2);
+    color: #c4b5fd;
+}
+
+/* ===== 代码块内容区域 ===== */
+.markdown-renderer .code-content {
+    max-height: 200px;
+    overflow: hidden;
+    transition: max-height 0.3s ease;
+    position: relative;
+}
+
+.markdown-renderer .code-block.expanded .code-content {
+    max-height: none;
+}
+
+.markdown-renderer .code-content::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 40px;
+    background: linear-gradient(transparent, var(--md-code-bg));
+    pointer-events: none;
+    opacity: 1;
+    transition: opacity 0.3s ease;
+}
+
+.markdown-renderer .code-block.expanded .code-content::after {
+    opacity: 0;
+}
+
+/* ===== 引用样式 ===== */
+.markdown-renderer blockquote {
+    margin: 0 0 16px 0;
+    padding: 0 1em;
+    color: var(--md-secondary-text);
+    border-left: 0.25em solid var(--md-quote-border);
+    background: var(--md-quote-bg);
+    border-radius: 0 4px 4px 0;
+}
+
+/* ===== 列表样式 ===== */
+.markdown-renderer ul,
+.markdown-renderer ol {
+    margin-top: 0;
+    margin-bottom: 16px;
+    padding-left: 2em;
+}
+
+.markdown-renderer li {
+    margin-top: 0.25em;
+    color: var(--md-text);
+}
+
+/* ===== 🔥 统一表格样式 - 完全参考 chat.css 的设计理念 ===== */
+.markdown-renderer table,
+.markdown-renderer .streaming-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    margin: 12px 0;
+    border: 1px dashed var(--md-border);
+    border-radius: 4px;
+    background: rgba(148, 163, 184, 0.05);
+    overflow: hidden;
+    table-layout: fixed; /* 保证列宽均分，便于自动换行 */
+}
+
+/* 深色模式表格背景 */
+.dark .markdown-renderer table,
+.dark .markdown-renderer .streaming-table {
+    background: rgba(148, 163, 184, 0.02);
+}
+
+/* 统一表头样式 */
+.markdown-renderer table th,
+.markdown-renderer .streaming-table th {
+    padding: 8px 12px;
+    border: 1px solid var(--md-border);
+    background: var(--md-code-bg);
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--md-text);
+    text-align: left;
+    white-space: normal;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+}
+
+/* 统一单元格样式 */
+.markdown-renderer table td,
+.markdown-renderer .streaming-table td {
+    padding: 8px 12px;
+    border: 1px solid var(--md-border);
+    background: var(--md-bg);
+    font-size: 13px;
+    color: var(--md-text);
+    white-space: normal; /* 自动换行 */
+    word-break: break-word; /* 长单词或连续字符也换行 */
+    overflow-wrap: anywhere; /* 过长内容强制换行 */
+}
+
+/* 统一斑马纹样式 */
+.markdown-renderer table tr:nth-child(even) td,
+.markdown-renderer .streaming-table tr:nth-child(even) td {
+    background: var(--md-secondary-bg);
+}
+
+/* 表格悬停效果 */
+.markdown-renderer table tr:hover td,
+.markdown-renderer .streaming-table tr:hover td {
+    background: var(--md-hover-bg);
+}
+
+/* 流式表格包装器 */
+.markdown-renderer .streaming-table-wrapper {
+    margin: 12px 0;
+    padding: 8px;
+    border: 1px dashed var(--md-border);
+    border-radius: 4px;
+    background: rgba(148, 163, 184, 0.05);
+    transition: all 0.3s ease;
+}
+
+.dark .markdown-renderer .streaming-table-wrapper {
+    background: rgba(148, 163, 184, 0.02);
+    border-color: var(--md-border);
+}
+
+.markdown-renderer .streaming-table-indicator {
+    font-size: 11px;
+    color: var(--md-secondary-text);
+    margin-bottom: 4px;
+    font-weight: 500;
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 0.7; }
+    50% { opacity: 1; }
+}
+
+/* 流式完成状态 */
+.markdown-renderer .streaming-complete table {
+    transition: opacity 0.3s ease;
+    opacity: 1;
+}
+
+/* ===== 响应式表格支持 ===== */
+@media (max-width: 768px) {
+    .markdown-renderer table,
+    .markdown-renderer .streaming-table {
+        font-size: 12px;
+    }
+
+    .markdown-renderer table th,
+    .markdown-renderer table td,
+    .markdown-renderer .streaming-table th,
+    .markdown-renderer .streaming-table td {
+        padding: 6px 8px;
+        font-size: 12px;
+    }
+
+    .markdown-renderer .streaming-table-wrapper {
+        padding: 6px;
+        margin: 12px 0;
+    }
+
+    .markdown-renderer .streaming-table-indicator {
+        font-size: 10px;
+    }
+}
+
+/* ===== 数学公式样式 ===== */
+.markdown-renderer .math-block {
+    background: var(--md-secondary-bg);
+    padding: 12px;
+    border-radius: 6px;
+    margin: 16px 0;
+    text-align: center;
+    font-family: 'Times New Roman', serif;
+    font-size: 14px;
+    border: 1px solid var(--md-border);
+    color: var(--md-text);
+}
+
+.markdown-renderer .math-inline {
+    background: var(--md-code-bg);
+    padding: 2px 4px;
+    border-radius: 3px;
+    font-family: 'Times New Roman', serif;
+    font-size: 13px;
+    color: var(--md-text);
+}
+
+/* ===== 流式光标样式 ===== */
+.markdown-renderer .streaming-cursor {
+    display: inline-block;
+    width: 8px;
+    height: 16px;
+    background-color: var(--md-text);
+    animation: blink 1s infinite;
+    margin-left: 4px;
+}
+
+@keyframes blink {
+    0%, 50% { opacity: 1; }
+    51%, 100% { opacity: 0; }
+}
+
+/* ===== 分隔线样式 ===== */
+.markdown-renderer hr {
+    height: 1px;
+    margin: 24px 0;
+    background-color: var(--md-border);
+    border: none;
+}
+
+/* ===== 图片样式 ===== */
+.markdown-renderer img {
+    max-width: 100%;
+    height: auto;
+    border-radius: 4px;
+    margin: 8px 0;
+}
+
+/* ===== 打印样式 ===== */
+@media print {
+    .markdown-renderer {
+        color: #000;
+        background: #fff;
+    }
+    
+    .markdown-renderer table {
+        border: 1px solid #000;
+        background: #fff;
+    }
+    
+    .markdown-renderer table th,
+    .markdown-renderer table td {
+        border: 1px solid #000;
+        background: #fff;
+    }
+    
+    .markdown-renderer .streaming-cursor {
+        display: none;
+    }
+}
+
+/* ===== 减少动画模式支持 ===== */
+@media (prefers-reduced-motion: reduce) {
+    .markdown-renderer .streaming-cursor,
+    .markdown-renderer .streaming-indicator {
+        animation: none;
+    }
+    
+    .markdown-renderer .streaming-table {
+        transition: none;
+    }
+}
+
+/* ===== 样式隔离保护 ===== */
+.markdown-renderer * {
+    box-sizing: border-box;
+}
+
+/* 确保不受外部样式影响 */
+.markdown-renderer {
+    /* 重置可能的外部影响 */
+    font-style: normal;
+    font-variant: normal;
+    text-transform: none;
+    text-decoration: none;
+    letter-spacing: normal;
+    word-spacing: normal;
+    text-indent: 0;
+    text-shadow: none;
+    text-align: left;
+    vertical-align: baseline;
+    white-space: normal;
+    direction: ltr;
+    unicode-bidi: normal;
+}
+
+/* ===== 用户消息样式 ===== */
+/* 用户消息背景样式 - 浅色主题 */
+.bg-user-message {
+    background: #dbeafe; /* blue-100 */
+    color: #1e40af; /* blue-800 */
+}
+
+/* 用户消息背景样式 - 深色主题 */
+.dark .bg-user-message {
+    background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%);
+    color: #ffffff;
+    font-weight: 500;
+}
