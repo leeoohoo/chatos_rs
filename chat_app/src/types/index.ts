@@ -45,6 +45,36 @@ export interface Session {
   metadata?: string | null;
 }
 
+// 项目接口
+export interface Project {
+  id: string;
+  name: string;
+  rootPath: string;
+  description?: string | null;
+  userId?: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+// 文件系统条目
+export interface FsEntry {
+  name: string;
+  path: string;
+  isDir: boolean;
+  size?: number | null;
+  modifiedAt?: string | null;
+}
+
+export interface FsReadResult {
+  path: string;
+  name: string;
+  size: number;
+  contentType: string;
+  isBinary: boolean;
+  modifiedAt?: string | null;
+  content: string;
+}
+
 // 系统上下文接口
 export interface SystemContext {
   id: string;

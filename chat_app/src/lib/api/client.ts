@@ -124,6 +124,47 @@ class ApiClient {
     return this.request<any[]>(`/sessions/${sessionId}/messages${query}`);
   }
 
+  // 项目相关API
+  async listProjects(userId?: string): Promise<any[]> {
+    const params = userId ? `?user_id=${encodeURIComponent(userId)}` : '';
+    return this.request<any[]>(`/projects${params}`);
+  }
+
+  async createProject(data: { name: string; root_path: string; description?: string; user_id?: string }): Promise<any> {
+    return this.request<any>('/projects', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateProject(id: string, data: { name?: string; root_path?: string; description?: string }): Promise<any> {
+    return this.request<any>(`/projects/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteProject(id: string): Promise<any> {
+    return this.request<any>(`/projects/${id}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async getProject(id: string): Promise<any> {
+    return this.request<any>(`/projects/${id}`);
+  }
+
+  // 文件系统
+  async listFsEntries(path?: string): Promise<any> {
+    const qs = path ? `?path=${encodeURIComponent(path)}` : '';
+    return this.request<any>(`/fs/entries${qs}`);
+  }
+
+  async readFsFile(path: string): Promise<any> {
+    const qs = `?path=${encodeURIComponent(path)}`;
+    return this.request<any>(`/fs/read${qs}`);
+  }
+
   // 消息相关API
   async createMessage(data: {
     id: string;

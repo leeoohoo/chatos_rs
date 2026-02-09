@@ -481,6 +481,15 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )"#,
+        r#"CREATE TABLE IF NOT EXISTS projects (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            root_path TEXT NOT NULL,
+            description TEXT,
+            user_id TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )"#,
         r#"CREATE TABLE IF NOT EXISTS mcp_config_applications (
             id TEXT PRIMARY KEY,
             mcp_config_id TEXT NOT NULL,
@@ -553,6 +562,7 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
         "CREATE INDEX IF NOT EXISTS idx_system_contexts_user_id ON system_contexts(user_id)",
         "CREATE INDEX IF NOT EXISTS idx_agents_user_id ON agents(user_id)",
         "CREATE INDEX IF NOT EXISTS idx_applications_user_id ON applications(user_id)",
+        "CREATE INDEX IF NOT EXISTS idx_projects_user_id ON projects(user_id)",
         "CREATE INDEX IF NOT EXISTS idx_session_mcp_servers_session_id ON session_mcp_servers(session_id)",
         "CREATE INDEX IF NOT EXISTS idx_mcp_config_profiles_mcp_config_id ON mcp_config_profiles(mcp_config_id)",
         "CREATE INDEX IF NOT EXISTS idx_mcp_config_applications_mcp_config_id ON mcp_config_applications(mcp_config_id)",
@@ -643,6 +653,7 @@ async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> {
         "system_contexts",
         "agents",
         "applications",
+        "projects",
         "mcp_config_applications",
         "system_context_applications",
         "agent_applications",
@@ -686,7 +697,9 @@ async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> {
     let _ = db.collection::<mongodb::bson::Document>("mcp_change_logs")
         .create_index(IndexModel::builder().keys(doc! { "created_at": 1 }).build(), None)
         .await;
+    let _ = db.collection::<mongodb::bson::Document>("projects")
+        .create_index(IndexModel::builder().keys(doc! { "user_id": 1 }).build(), None)
+        .await;
 
     Ok(Database::Mongo { client, db })
 }
-

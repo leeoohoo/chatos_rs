@@ -20,6 +20,7 @@ tokio-stream = "0.1"
 bytes = "1"
 once_cell = "1"
 base64 = "0.22"
+mime_guess = "2"
 chrono = { version = "0.4", features = ["serde", "clock"] }
 thiserror = "1"
 anyhow = "1"
@@ -47,4 +48,3 @@ pdf = []
 opt-level = 3
 lto = true
 codegen-units = 1
-

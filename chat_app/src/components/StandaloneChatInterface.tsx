@@ -10,6 +10,7 @@ import AiModelManager from './AiModelManager';
 import SystemContextEditor from './SystemContextEditor';
 import AgentManager from './AgentManager';
 import ApplicationsPanel from '@/components/ApplicationsPanel';
+import ProjectExplorer from './ProjectExplorer';
 import { cn } from '../lib/utils';
 import ApiClient from '../lib/api/client';
 import type { Application } from '../types';
@@ -100,10 +101,13 @@ const StandaloneChatContent: React.FC<{
   const store = useChatStoreContext();
   const {
     currentSession,
+    currentProject,
+    activePanel,
     messages,
     hasMoreMessages,
     error,
     loadSessions,
+    loadProjects,
     sendMessage,
     clearError,
     aiModelConfigs,
@@ -144,6 +148,9 @@ const StandaloneChatContent: React.FC<{
   ), [currentSession, sessionChatState]);
   const chatIsLoading = currentChatState?.isLoading ?? false;
   const chatIsStreaming = currentChatState?.isStreaming ?? false;
+  const headerTitle = activePanel === 'project'
+    ? (currentProject?.name || '项目')
+    : (currentSession?.title || '');
 
   const didInitRef = useRef(false);
 
@@ -161,9 +168,10 @@ const StandaloneChatContent: React.FC<{
     didInitRef.current = true;
 
     loadSessions({ limit: SESSION_PAGE_SIZE, offset: 0 });
+    loadProjects();
     loadAiModelConfigs();
     loadAgents();
-  }, [loadSessions, loadAiModelConfigs, loadAgents]);
+  }, [loadSessions, loadProjects, loadAiModelConfigs, loadAgents]);
 
   // 已移除 Electron webview 事件绑定与 iframe 清理逻辑
 
@@ -197,10 +205,10 @@ const StandaloneChatContent: React.FC<{
             </svg>
           </button>
 
-          {currentSession && (
+          {headerTitle && (
             <div className="flex-1 min-w-0">
               <h1 className="text-lg font-semibold text-foreground truncate">
-                {currentSession.title}
+                {headerTitle}
               </h1>
             </div>
           )}
@@ -304,56 +312,62 @@ const StandaloneChatContent: React.FC<{
           store={store}
         />
 
-        {/* 右侧消息列表 */}
+        {/* 右侧区域 */}
         <div className="flex-1 flex flex-col overflow-hidden">
-          <div className="flex-1 overflow-hidden">
-            {currentSession ? (
-              <MessageList
-                messages={messages}
-                isLoading={chatIsLoading}
-                isStreaming={chatIsStreaming}
-                hasMore={hasMoreMessages}
-                onLoadMore={handleLoadMore}
-              />
-            ) : (
-              <div className="flex items-center justify-center h-full text-muted-foreground">
-                <div className="text-center">
-                  <svg className="w-16 h-16 mx-auto mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                  </svg>
-                  <p className="text-lg mb-2">欢迎使用AI聊天助手</p>
-                  <p className="text-sm">点击左上角按钮创建新会话开始对话</p>
-                  <button
-                    onClick={toggleSidebar}
-                    className="mt-3 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
-                  >
-                    展开会话列表
-                  </button>
-                </div>
+          {activePanel === 'project' ? (
+            <ProjectExplorer project={currentProject} className="flex-1" />
+          ) : (
+            <>
+              <div className="flex-1 overflow-hidden">
+                {currentSession ? (
+                  <MessageList
+                    messages={messages}
+                    isLoading={chatIsLoading}
+                    isStreaming={chatIsStreaming}
+                    hasMore={hasMoreMessages}
+                    onLoadMore={handleLoadMore}
+                  />
+                ) : (
+                  <div className="flex items-center justify-center h-full text-muted-foreground">
+                    <div className="text-center">
+                      <svg className="w-16 h-16 mx-auto mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                      </svg>
+                      <p className="text-lg mb-2">欢迎使用AI聊天助手</p>
+                      <p className="text-sm">点击左上角按钮创建新会话开始对话</p>
+                      <button
+                        onClick={toggleSidebar}
+                        className="mt-3 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
+                      >
+                        展开会话列表
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
-            )}
-          </div>
 
-          {/* 输入区域 */}
-          {currentSession && (
-            <InputArea
-              onSend={handleMessageSend}
-              onStop={abortCurrentConversation}
-              disabled={chatIsLoading || chatIsStreaming}
-              isStreaming={chatIsStreaming}
-              allowAttachments={true}
-              supportedFileTypes={supportedFileTypes}
-              reasoningSupported={supportsReasoning}
-              reasoningEnabled={chatConfig?.reasoningEnabled === true}
-              onReasoningToggle={(enabled) => updateChatConfig({ reasoningEnabled: enabled })}
-              selectedModelId={selectedModelId}
-              availableModels={aiModelConfigs}
-              onModelChange={setSelectedModel}
-              showModelSelector={true}
-              selectedAgentId={selectedAgentId}
-              availableAgents={agents}
-              onAgentChange={setSelectedAgent}
-            />
+              {/* 输入区域 */}
+              {currentSession && (
+                <InputArea
+                  onSend={handleMessageSend}
+                  onStop={abortCurrentConversation}
+                  disabled={chatIsLoading || chatIsStreaming}
+                  isStreaming={chatIsStreaming}
+                  allowAttachments={true}
+                  supportedFileTypes={supportedFileTypes}
+                  reasoningSupported={supportsReasoning}
+                  reasoningEnabled={chatConfig?.reasoningEnabled === true}
+                  onReasoningToggle={(enabled) => updateChatConfig({ reasoningEnabled: enabled })}
+                  selectedModelId={selectedModelId}
+                  availableModels={aiModelConfigs}
+                  onModelChange={setSelectedModel}
+                  showModelSelector={true}
+                  selectedAgentId={selectedAgentId}
+                  availableAgents={agents}
+                  onAgentChange={setSelectedAgent}
+                />
+              )}
+            </>
           )}
         </div>
       </div>

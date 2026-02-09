@@ -1,7 +1,7 @@
 import {create} from 'zustand';
 import {immer} from 'zustand/middleware/immer';
 import {persist} from 'zustand/middleware';
-import type {Message, Session, ChatConfig, Theme, McpConfig, AiModelConfig, SystemContext, AgentConfig, Application} from '../../types';
+import type {Message, Session, ChatConfig, Theme, McpConfig, AiModelConfig, SystemContext, AgentConfig, Application, Project} from '../../types';
 import {DatabaseService} from '../database';
 import {apiClient} from '../api/client';
 import {ChatService, MessageManager} from '../services';
@@ -19,6 +19,12 @@ export interface ChatState {
     sessions: Session[];
     currentSessionId: string | null;
     currentSession: Session | null;
+
+    // 项目相关
+    projects: Project[];
+    currentProjectId: string | null;
+    currentProject: Project | null;
+    activePanel: 'chat' | 'project';
 
     // 消息相关
     messages: Message[];
@@ -57,6 +63,14 @@ export interface ChatActions {
     selectSession: (sessionId: string) => Promise<void>;
     updateSession: (sessionId: string, updates: Partial<Session>) => Promise<void>;
     deleteSession: (sessionId: string) => Promise<void>;
+
+    // 项目操作
+    loadProjects: () => Promise<Project[]>;
+    createProject: (name: string, rootPath: string, description?: string) => Promise<Project>;
+    updateProject: (projectId: string, updates: Partial<Project>) => Promise<Project | null>;
+    deleteProject: (projectId: string) => Promise<void>;
+    selectProject: (projectId: string) => Promise<void>;
+    setActivePanel: (panel: 'chat' | 'project') => void;
 
     // 消息操作
     loadMessages: (sessionId: string) => Promise<void>;
@@ -146,6 +160,16 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
     const chatService = new ChatService(userId, projectId, messageManager, configUrl);
     debugLog("chatService:", chatService)
 
+    const normalizeProject = (raw: any): Project => ({
+        id: raw?.id,
+        name: raw?.name ?? '',
+        rootPath: raw?.root_path ?? raw?.rootPath ?? '',
+        description: raw?.description ?? null,
+        userId: raw?.user_id ?? raw?.userId ?? null,
+        createdAt: new Date(raw?.created_at ?? raw?.createdAt ?? Date.now()),
+        updatedAt: new Date(raw?.updated_at ?? raw?.updatedAt ?? raw?.created_at ?? raw?.createdAt ?? Date.now()),
+    });
+
     return create<ChatState & ChatActions>()(
         immer(
             persist(
@@ -154,6 +178,10 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                     sessions: [],
                     currentSessionId: null,
                     currentSession: null,
+                    projects: [],
+                    currentProjectId: null,
+                    currentProject: null,
+                    activePanel: 'chat',
                     messages: [],
                     isLoading: false,
                     isStreaming: false,
@@ -309,6 +337,7 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                                 state.currentSessionId = formattedSession.id;
                                 state.currentSession = formattedSession;
                                 state.messages = [];
+                                state.activePanel = 'chat';
                                 state.error = null;
                             });
 
@@ -340,6 +369,7 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                             state.currentSessionId = sessionId;
                             (state as any).currentSession = session; // Type assertion to handle immer WritableDraft issue
                             state.messages = messages;
+                            state.activePanel = 'chat';
                             state.isLoading = false;
                             state.hasMoreMessages = messages.length === 10;
                             const chatState = state.sessionChatState[sessionId];
@@ -400,6 +430,9 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                                     state.currentSession = null;
                                     state.messages = [];
                                 }
+                                if (state.activePanel === 'chat' && state.currentSessionId === null) {
+                                    state.activePanel = state.currentProjectId ? 'project' : 'chat';
+                                }
                             });
                         } catch (error) {
                             console.error('Failed to delete session:', error);
@@ -407,6 +440,136 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                                 state.error = error instanceof Error ? error.message : 'Failed to delete session';
                             });
                         }
+                    },
+
+                    // 项目操作
+                    loadProjects: async () => {
+                        try {
+                            const uid = getUserIdParam();
+                            const list = await client.listProjects(uid);
+                            const formatted = Array.isArray(list) ? list.map(normalizeProject) : [];
+                            set((state) => {
+                                state.projects = formatted;
+                                if (!state.currentProjectId) {
+                                    const lastId = localStorage.getItem(`lastProjectId_${uid}`);
+                                    if (lastId) {
+                                        const matched = formatted.find(p => p.id === lastId);
+                                        if (matched) {
+                                            state.currentProjectId = matched.id;
+                                            state.currentProject = matched;
+                                        }
+                                    }
+                                } else {
+                                    const matched = formatted.find(p => p.id === state.currentProjectId);
+                                    if (matched) {
+                                        state.currentProject = matched;
+                                    }
+                                }
+                            });
+                            return formatted;
+                        } catch (error) {
+                            console.error('Failed to load projects:', error);
+                            set((state) => {
+                                state.error = error instanceof Error ? error.message : 'Failed to load projects';
+                            });
+                            return [];
+                        }
+                    },
+
+                    createProject: async (name: string, rootPath: string, description?: string) => {
+                        const uid = getUserIdParam();
+                        const payload = {
+                            name,
+                            root_path: rootPath,
+                            description: description?.trim() || undefined,
+                            user_id: uid,
+                        };
+                        const created = await client.createProject(payload);
+                        const project = normalizeProject(created);
+                        set((state) => {
+                            state.projects.unshift(project);
+                            state.currentProjectId = project.id;
+                            state.currentProject = project;
+                            state.activePanel = 'project';
+                        });
+                        localStorage.setItem(`lastProjectId_${uid}`, project.id);
+                        return project;
+                    },
+
+                    updateProject: async (projectId: string, updates: Partial<Project>) => {
+                        try {
+                            const payload: { name?: string; root_path?: string; description?: string } = {};
+                            if (updates.name !== undefined) payload.name = updates.name;
+                            if (updates.rootPath !== undefined) payload.root_path = updates.rootPath;
+                            if (updates.description !== undefined) payload.description = updates.description || undefined;
+                            const updated = await client.updateProject(projectId, payload);
+                            const project = normalizeProject(updated);
+                            set((state) => {
+                                const index = state.projects.findIndex(p => p.id === projectId);
+                                if (index !== -1) {
+                                    state.projects[index] = project;
+                                }
+                                if (state.currentProjectId === projectId) {
+                                    state.currentProject = project;
+                                }
+                            });
+                            return project;
+                        } catch (error) {
+                            console.error('Failed to update project:', error);
+                            set((state) => {
+                                state.error = error instanceof Error ? error.message : 'Failed to update project';
+                            });
+                            return null;
+                        }
+                    },
+
+                    deleteProject: async (projectId: string) => {
+                        try {
+                            await client.deleteProject(projectId);
+                            set((state) => {
+                                state.projects = state.projects.filter(p => p.id !== projectId);
+                                if (state.currentProjectId === projectId) {
+                                    state.currentProjectId = null;
+                                    state.currentProject = null;
+                                    if (state.activePanel === 'project') {
+                                        state.activePanel = 'chat';
+                                    }
+                                }
+                            });
+                        } catch (error) {
+                            console.error('Failed to delete project:', error);
+                            set((state) => {
+                                state.error = error instanceof Error ? error.message : 'Failed to delete project';
+                            });
+                        }
+                    },
+
+                    selectProject: async (projectId: string) => {
+                        try {
+                            let project = get().projects.find(p => p.id === projectId) || null;
+                            if (!project) {
+                                const fetched = await client.getProject(projectId);
+                                project = normalizeProject(fetched);
+                            }
+                            const uid = getUserIdParam();
+                            set((state) => {
+                                state.currentProjectId = projectId;
+                                state.currentProject = project;
+                                state.activePanel = 'project';
+                            });
+                            localStorage.setItem(`lastProjectId_${uid}`, projectId);
+                        } catch (error) {
+                            console.error('Failed to select project:', error);
+                            set((state) => {
+                                state.error = error instanceof Error ? error.message : 'Failed to select project';
+                            });
+                        }
+                    },
+
+                    setActivePanel: (panel: 'chat' | 'project') => {
+                        set((state) => {
+                            state.activePanel = panel;
+                        });
                     },
 
                     // 消息操作

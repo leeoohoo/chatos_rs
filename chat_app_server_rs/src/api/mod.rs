@@ -24,6 +24,7 @@ pub mod chat_v3;
 pub mod agents;
 pub mod agents_v3;
 pub mod applications;
+pub mod projects;
 pub mod configs;
 pub mod chat_agent_v2;
 pub mod user_settings;
@@ -96,6 +97,7 @@ pub fn router() -> Router {
         .merge(agents_v3::router())
         .nest("/api/agents", agents::router())
         .nest("/api/applications", applications::router())
+        .merge(projects::router())
         .merge(configs::router())
         .merge(fs::router())
         .nest("/api/v2", chat_agent_v2::router())

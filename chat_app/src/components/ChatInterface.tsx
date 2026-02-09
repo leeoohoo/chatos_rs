@@ -9,6 +9,7 @@ import AiModelManager from './AiModelManager';
 import SystemContextEditor from './SystemContextEditor';
 import AgentManager from './AgentManager';
 import UserSettingsPanel from './UserSettingsPanel';
+import ProjectExplorer from './ProjectExplorer';
 // 应用弹窗管理器由 ApplicationsPanel 直接承担
 import ApplicationsPanel from './ApplicationsPanel';
 import { cn } from '../lib/utils';
@@ -23,10 +24,13 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
 }) => {
   const {
     currentSession,
+    currentProject,
+    activePanel,
     messages,
     hasMoreMessages,
     error,
     loadSessions,
+    loadProjects,
     // selectSession,
     loadMoreMessages,
     sendMessage,
@@ -70,6 +74,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   ), [currentSession, sessionChatState]);
   const chatIsLoading = currentChatState?.isLoading ?? false;
   const chatIsStreaming = currentChatState?.isStreaming ?? false;
+  const headerTitle = activePanel === 'project'
+    ? (currentProject?.name || '项目')
+    : (currentSession?.title || '');
 
   const [showMcpManager, setShowMcpManager] = useState(false);
   const [showAiModelManager, setShowAiModelManager] = useState(false);
@@ -86,9 +93,10 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     didInitRef.current = true;
 
     loadSessions({ limit: SESSION_PAGE_SIZE, offset: 0 });
+    loadProjects();
     loadAiModelConfigs();
     loadAgents();
-  }, [loadSessions, loadAiModelConfigs, loadAgents]);
+  }, [loadSessions, loadProjects, loadAiModelConfigs, loadAgents]);
 
   // 处理消息发送
   const handleMessageSend = useCallback(async (content: string, attachments?: File[]) => {
@@ -124,10 +132,10 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
             </svg>
           </button>
           
-          {currentSession && (
+          {headerTitle && (
             <div className="flex-1 min-w-0">
               <h1 className="text-lg font-semibold text-foreground truncate">
-                {currentSession.title}
+                {headerTitle}
               </h1>
             </div>
           )}
@@ -224,59 +232,65 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
           {/* 然后自行决定如何打开/显示应用（Electron 窗口、window.open 等） */}
 
           <div className="flex-1 flex flex-col overflow-hidden">
-            <div className="flex-1 overflow-hidden">
-              {currentSession ? (
-                <MessageList
-                  messages={messages}
-                  isLoading={chatIsLoading}
-                  isStreaming={chatIsStreaming}
-                  hasMore={hasMoreMessages}
-                  onLoadMore={handleLoadMore}
-                  customRenderer={customRenderer}
-                />
-              ) : (
-                <div className="flex items-center justify-center h-full">
-                  <div className="text-center">
-                    <h2 className="text-xl font-semibold text-muted-foreground mb-2">
-                      欢迎使用 AI 聊天
-                    </h2>
-                    <p className="text-muted-foreground mb-4">
-                      点击左上角按钮选择会话，或创建新的会话开始对话
-                    </p>
-                    <button
-                      onClick={toggleSidebar}
-                      className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
-                    >
-                      展开会话列表
-                    </button>
-                  </div>
+            {activePanel === 'project' ? (
+              <ProjectExplorer project={currentProject} className="flex-1" />
+            ) : (
+              <>
+                <div className="flex-1 overflow-hidden">
+                  {currentSession ? (
+                    <MessageList
+                      messages={messages}
+                      isLoading={chatIsLoading}
+                      isStreaming={chatIsStreaming}
+                      hasMore={hasMoreMessages}
+                      onLoadMore={handleLoadMore}
+                      customRenderer={customRenderer}
+                    />
+                  ) : (
+                    <div className="flex items-center justify-center h-full">
+                      <div className="text-center">
+                        <h2 className="text-xl font-semibold text-muted-foreground mb-2">
+                          欢迎使用 AI 聊天
+                        </h2>
+                        <p className="text-muted-foreground mb-4">
+                          点击左上角按钮选择会话，或创建新的会话开始对话
+                        </p>
+                        <button
+                          onClick={toggleSidebar}
+                          className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
+                        >
+                          展开会话列表
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
 
-            {/* 输入区域 */}
-            {currentSession && (
-              <div className="border-t border-border">
-                <InputArea
-                  onSend={handleMessageSend}
-                  onStop={abortCurrentConversation}
-                  disabled={chatIsLoading || chatIsStreaming}
-                  isStreaming={chatIsStreaming}
-                  placeholder="输入消息..."
-                  allowAttachments={true}
-                  supportedFileTypes={supportedFileTypes}
-                  reasoningSupported={supportsReasoning}
-                  reasoningEnabled={chatConfig?.reasoningEnabled === true}
-                  onReasoningToggle={(enabled) => updateChatConfig({ reasoningEnabled: enabled })}
-                  showModelSelector={true}
-                  selectedModelId={selectedModelId}
-                  availableModels={aiModelConfigs}
-                  onModelChange={setSelectedModel}
-                  selectedAgentId={selectedAgentId}
-                  availableAgents={agents}
-                  onAgentChange={setSelectedAgent}
-                />
-              </div>
+                {/* 输入区域 */}
+                {currentSession && (
+                  <div className="border-t border-border">
+                    <InputArea
+                      onSend={handleMessageSend}
+                      onStop={abortCurrentConversation}
+                      disabled={chatIsLoading || chatIsStreaming}
+                      isStreaming={chatIsStreaming}
+                      placeholder="输入消息..."
+                      allowAttachments={true}
+                      supportedFileTypes={supportedFileTypes}
+                      reasoningSupported={supportsReasoning}
+                      reasoningEnabled={chatConfig?.reasoningEnabled === true}
+                      onReasoningToggle={(enabled) => updateChatConfig({ reasoningEnabled: enabled })}
+                      showModelSelector={true}
+                      selectedModelId={selectedModelId}
+                      availableModels={aiModelConfigs}
+                      onModelChange={setSelectedModel}
+                      selectedAgentId={selectedAgentId}
+                      availableAgents={agents}
+                      onAgentChange={setSelectedAgent}
+                    />
+                  </div>
+                )}
+              </>
             )}
           </div>
         </div>
