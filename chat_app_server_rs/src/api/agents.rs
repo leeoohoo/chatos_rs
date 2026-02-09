@@ -33,6 +33,7 @@ struct AgentRequest {
     app_ids: Option<Vec<String>>,
     mcp_config_ids: Option<Value>,
     callable_agent_ids: Option<Value>,
+    project_id: Option<String>,
     workspace_dir: Option<String>,
 }
 
@@ -73,6 +74,7 @@ async fn list_agents(axum::extract::Query(query): axum::extract::Query<UserQuery
             "user_id": a.user_id,
             "mcp_config_ids": a.mcp_config_ids,
             "callable_agent_ids": a.callable_agent_ids,
+            "project_id": a.project_id,
             "workspace_dir": normalize_workspace_dir(a.workspace_dir.as_deref()),
             "enabled": a.enabled,
             "created_at": a.created_at,
@@ -97,6 +99,10 @@ async fn create_agent(Json(req): Json<AgentRequest>) -> (StatusCode, Json<Value>
         user_id: req.user_id,
         mcp_config_ids: parse_id_list(&req.mcp_config_ids).unwrap_or_default(),
         callable_agent_ids: parse_id_list(&req.callable_agent_ids).unwrap_or_default(),
+        project_id: req.project_id.and_then(|s| {
+            let trimmed = s.trim().to_string();
+            if trimmed.is_empty() { None } else { Some(trimmed) }
+        }),
         workspace_dir: sanitize_workspace_dir(req.workspace_dir),
         enabled: req.enabled.unwrap_or(true),
         created_at: chrono::Utc::now().to_rfc3339(),
@@ -141,6 +147,7 @@ async fn get_agent(axum::extract::Path(agent_id): axum::extract::Path<String>) -
             "user_id": a.user_id,
             "mcp_config_ids": a.mcp_config_ids,
             "callable_agent_ids": a.callable_agent_ids,
+            "project_id": a.project_id,
             "workspace_dir": normalize_workspace_dir(a.workspace_dir.as_deref()),
             "enabled": a.enabled,
             "created_at": a.created_at,
@@ -166,6 +173,10 @@ async fn update_agent(axum::extract::Path(agent_id): axum::extract::Path<String>
     if let Some(v) = req.enabled { agent.enabled = v; }
     if let Some(v) = parse_id_list(&req.mcp_config_ids) { agent.mcp_config_ids = v; }
     if let Some(v) = parse_id_list(&req.callable_agent_ids) { agent.callable_agent_ids = v; }
+    if let Some(v) = req.project_id {
+        let trimmed = v.trim();
+        agent.project_id = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) };
+    }
     if let Some(v) = req.workspace_dir { agent.workspace_dir = sanitize_workspace_dir(Some(v)); }
     if let Err(err) = agents_repo::update_agent(&agent_id, &agent).await {
         return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "更新智能体失败", "detail": err})));
@@ -349,6 +360,7 @@ fn agent_value(agent: &Agent, app_ids: Option<Vec<String>>) -> Value {
         "user_id": agent.user_id.clone(),
         "mcp_config_ids": agent.mcp_config_ids.clone(),
         "callable_agent_ids": agent.callable_agent_ids.clone(),
+        "project_id": agent.project_id.clone(),
         "workspace_dir": normalize_workspace_dir(agent.workspace_dir.as_deref()),
         "enabled": agent.enabled,
         "created_at": agent.created_at.clone(),

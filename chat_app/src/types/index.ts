@@ -169,6 +169,7 @@ export interface AgentConfig {
   description?: string;
   ai_model_config_id: string;
   enabled: boolean;
+  project_id?: string | null;
   workspace_dir?: string | null;
   createdAt: Date;
   updatedAt: Date;

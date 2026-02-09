@@ -17,6 +17,7 @@ fn normalize_doc(doc: &Document) -> Option<Agent> {
         user_id: doc.get_str("user_id").ok().map(|s| s.to_string()),
         mcp_config_ids: mcp_ids,
         callable_agent_ids: callable_ids,
+        project_id: doc.get_str("project_id").ok().map(|s| s.to_string()),
         workspace_dir: doc.get_str("workspace_dir").ok().map(|s| s.to_string()),
         enabled: doc.get_bool("enabled").unwrap_or(true),
         created_at: doc.get_str("created_at").unwrap_or("").to_string(),
@@ -100,6 +101,7 @@ pub async fn create_agent(data: &Agent) -> Result<(), String> {
                 ("user_id", data_mongo.user_id.clone().map(Bson::String).unwrap_or(Bson::Null)),
                 ("mcp_config_ids", Bson::String(mcp_json_mongo.clone())),
                 ("callable_agent_ids", Bson::String(callable_json_mongo.clone())),
+                ("project_id", data_mongo.project_id.clone().map(Bson::String).unwrap_or(Bson::Null)),
                 ("workspace_dir", data_mongo.workspace_dir.clone().map(Bson::String).unwrap_or(Bson::Null)),
                 ("enabled", Bson::Boolean(data_mongo.enabled)),
                 ("created_at", Bson::String(now_mongo.clone())),
@@ -112,7 +114,7 @@ pub async fn create_agent(data: &Agent) -> Result<(), String> {
         },
         |pool| {
             Box::pin(async move {
-                sqlx::query("INSERT INTO agents (id, name, ai_model_config_id, system_context_id, description, user_id, mcp_config_ids, callable_agent_ids, workspace_dir, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                sqlx::query("INSERT INTO agents (id, name, ai_model_config_id, system_context_id, description, user_id, mcp_config_ids, callable_agent_ids, project_id, workspace_dir, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
                     .bind(&data_sqlite.id)
                     .bind(&data_sqlite.name)
                     .bind(&data_sqlite.ai_model_config_id)
@@ -121,6 +123,7 @@ pub async fn create_agent(data: &Agent) -> Result<(), String> {
                     .bind(&data_sqlite.user_id)
                     .bind(&mcp_json_sqlite)
                     .bind(&callable_json_sqlite)
+                    .bind(&data_sqlite.project_id)
                     .bind(&data_sqlite.workspace_dir)
                     .bind(if data_sqlite.enabled {1} else {0})
                     .bind(&now_sqlite)
@@ -159,6 +162,7 @@ pub async fn update_agent(id: &str, updates: &Agent) -> Result<(), String> {
                 set_doc.insert("enabled", Bson::Boolean(updates_mongo.enabled));
                 set_doc.insert("mcp_config_ids", Bson::String(mcp_json_mongo.clone()));
                 set_doc.insert("callable_agent_ids", Bson::String(callable_json_mongo.clone()));
+                set_doc.insert("project_id", updates_mongo.project_id.clone().map(Bson::String).unwrap_or(Bson::Null));
                 set_doc.insert("workspace_dir", updates_mongo.workspace_dir.clone().map(Bson::String).unwrap_or(Bson::Null));
                 set_doc.insert("updated_at", now_mongo.clone());
                 db.collection::<Document>("agents").update_one(doc! { "id": id }, doc! { "$set": set_doc }, None).await.map_err(|e| e.to_string())?;
@@ -168,7 +172,7 @@ pub async fn update_agent(id: &str, updates: &Agent) -> Result<(), String> {
         |pool| {
             let id = id.to_string();
             Box::pin(async move {
-                sqlx::query("UPDATE agents SET name = ?, ai_model_config_id = ?, system_context_id = ?, description = ?, enabled = ?, mcp_config_ids = ?, callable_agent_ids = ?, workspace_dir = ?, updated_at = ? WHERE id = ?")
+                sqlx::query("UPDATE agents SET name = ?, ai_model_config_id = ?, system_context_id = ?, description = ?, enabled = ?, mcp_config_ids = ?, callable_agent_ids = ?, project_id = ?, workspace_dir = ?, updated_at = ? WHERE id = ?")
                     .bind(&updates_sqlite.name)
                     .bind(&updates_sqlite.ai_model_config_id)
                     .bind(&updates_sqlite.system_context_id)
@@ -176,6 +180,7 @@ pub async fn update_agent(id: &str, updates: &Agent) -> Result<(), String> {
                     .bind(if updates_sqlite.enabled {1} else {0})
                     .bind(&mcp_json_sqlite)
                     .bind(&callable_json_sqlite)
+                    .bind(&updates_sqlite.project_id)
                     .bind(&updates_sqlite.workspace_dir)
                     .bind(&now_sqlite)
                     .bind(&id)
@@ -276,6 +281,5 @@ pub async fn set_app_ids_for_agent(agent_id: &str, app_ids: &[String]) -> Result
         }
     ).await
 }
-
 
 

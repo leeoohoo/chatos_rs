@@ -469,6 +469,7 @@ class ApiClient {
     mcp_config_ids?: string[];
     callable_agent_ids?: string[];
     system_context_id?: string;
+    project_id?: string | null;
     workspace_dir?: string | null;
     user_id?: string;
     enabled?: boolean;
@@ -493,6 +494,7 @@ class ApiClient {
     mcp_config_ids?: string[];
     callable_agent_ids?: string[];
     system_context_id?: string;
+    project_id?: string | null;
     workspace_dir?: string | null;
     enabled?: boolean;
     app_ids?: string[];

@@ -18,6 +18,7 @@ interface AgentItem {
   mcp_config_ids: string[];
   callable_agent_ids?: string[];
   system_context_id?: string;
+  project_id?: string | null;
   workspace_dir?: string;
   enabled: boolean;
   created_at?: string;
@@ -75,6 +76,10 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
     loadSystemContexts,
     applications,
     loadApplications,
+    projects,
+    loadProjects,
+    createProject,
+    currentProjectId,
   } = storeData;
 
   // 从上下文获取当前用户环境
@@ -95,26 +100,26 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
     ai_model_config_id: string;
     mcp_config_ids: string[];
     system_context_id?: string;
-    workspace_dir: string;
+    project_id: string;
   }>({
     name: '',
     description: '',
     ai_model_config_id: '',
     mcp_config_ids: [],
     system_context_id: undefined,
-    workspace_dir: '',
+    project_id: '',
   });
   const defaultWorkspaceDir = getOS() === 'Windows' ? '%USERPROFILE%\\.chatos_workspace' : '~/.chatos_workspace';
   const [selectedAppIds, setSelectedAppIds] = useState<string[]>([]);
   // 跳过首次编辑回显时的联动重置，避免清空 MCP/系统上下文
   const skipResetOnHydration = useRef(false);
-  const [workspacePickerOpen, setWorkspacePickerOpen] = useState(false);
-  const [workspacePickerPath, setWorkspacePickerPath] = useState<string | null>(null);
-  const [workspacePickerParent, setWorkspacePickerParent] = useState<string | null>(null);
-  const [workspacePickerEntries, setWorkspacePickerEntries] = useState<FsEntry[]>([]);
-  const [workspacePickerRoots, setWorkspacePickerRoots] = useState<FsEntry[]>([]);
-  const [workspacePickerLoading, setWorkspacePickerLoading] = useState(false);
-  const [workspacePickerError, setWorkspacePickerError] = useState<string | null>(null);
+  const [projectPickerOpen, setProjectPickerOpen] = useState(false);
+  const [projectPickerPath, setProjectPickerPath] = useState<string | null>(null);
+  const [projectPickerParent, setProjectPickerParent] = useState<string | null>(null);
+  const [projectPickerEntries, setProjectPickerEntries] = useState<FsEntry[]>([]);
+  const [projectPickerRoots, setProjectPickerRoots] = useState<FsEntry[]>([]);
+  const [projectPickerLoading, setProjectPickerLoading] = useState(false);
+  const [projectPickerError, setProjectPickerError] = useState<string | null>(null);
 
   const loadAll = async () => {
     setIsLoading(true);
@@ -124,6 +129,7 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
         loadMcpConfigs(),
         loadSystemContexts(),
         (loadApplications ? loadApplications() : Promise.resolve()),
+        (loadProjects ? loadProjects() : Promise.resolve()),
         // 刷新全局store中的智能体列表，供输入区选择
         (storeData.loadAgents ? storeData.loadAgents() : Promise.resolve()),
       ]);
@@ -178,6 +184,22 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
     loadAll();
   }, []);
 
+  const getDefaultProjectId = () => {
+    if (currentProjectId) return currentProjectId;
+    if (Array.isArray(projects) && projects.length > 0) return projects[0].id;
+    return '';
+  };
+
+  useEffect(() => {
+    if (editingAgent) return;
+    if (!formData.project_id) {
+      const fallbackId = getDefaultProjectId();
+      if (fallbackId) {
+        setFormData(prev => ({ ...prev, project_id: fallbackId }));
+      }
+    }
+  }, [projects, currentProjectId, editingAgent]);
+
   const resetForm = () => {
     setFormData({
       name: '',
@@ -185,16 +207,16 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
       ai_model_config_id: '',
       mcp_config_ids: [],
       system_context_id: undefined,
-      workspace_dir: '',
+      project_id: getDefaultProjectId(),
     });
     setShowAddForm(false);
     setEditingAgent(null);
     setSelectedAppIds([]);
   };
 
-  const loadWorkspaceEntries = async (path?: string | null) => {
-    setWorkspacePickerLoading(true);
-    setWorkspacePickerError(null);
+  const loadProjectEntries = async (path?: string | null) => {
+    setProjectPickerLoading(true);
+    setProjectPickerError(null);
     try {
       const baseUrl = client.getBaseUrl ? client.getBaseUrl() : '/api';
       const url = `${baseUrl}/fs/list${path ? `?path=${encodeURIComponent(path)}` : ''}`;
@@ -203,12 +225,12 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
         throw new Error(`HTTP ${resp.status}`);
       }
       const data = await resp.json();
-      setWorkspacePickerPath(data?.path ?? null);
-      setWorkspacePickerParent(data?.parent ?? null);
-      setWorkspacePickerEntries(Array.isArray(data?.entries) ? data.entries : []);
-      setWorkspacePickerRoots(Array.isArray(data?.roots) ? data.roots : []);
+      setProjectPickerPath(data?.path ?? null);
+      setProjectPickerParent(data?.parent ?? null);
+      setProjectPickerEntries(Array.isArray(data?.entries) ? data.entries : []);
+      setProjectPickerRoots(Array.isArray(data?.roots) ? data.roots : []);
     } catch (err: any) {
-      setWorkspacePickerError(err?.message || '加载目录失败');
+      setProjectPickerError(err?.message || '加载目录失败');
       if (path) {
         try {
           const baseUrl = client.getBaseUrl ? client.getBaseUrl() : '/api';
@@ -216,35 +238,45 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
           const resp = await fetch(url);
           if (resp.ok) {
             const data = await resp.json();
-            setWorkspacePickerPath(data?.path ?? null);
-            setWorkspacePickerParent(data?.parent ?? null);
-            setWorkspacePickerEntries(Array.isArray(data?.entries) ? data.entries : []);
-            setWorkspacePickerRoots(Array.isArray(data?.roots) ? data.roots : []);
+            setProjectPickerPath(data?.path ?? null);
+            setProjectPickerParent(data?.parent ?? null);
+            setProjectPickerEntries(Array.isArray(data?.entries) ? data.entries : []);
+            setProjectPickerRoots(Array.isArray(data?.roots) ? data.roots : []);
           }
         } catch {
           // ignore fallback errors
         }
       }
     } finally {
-      setWorkspacePickerLoading(false);
+      setProjectPickerLoading(false);
     }
   };
 
-  const openWorkspacePicker = async () => {
-    setWorkspacePickerOpen(true);
-    const current = formData.workspace_dir.trim();
-    await loadWorkspaceEntries(current ? current : null);
+  const deriveProjectName = (path: string) => {
+    const trimmed = path.trim().replace(/[\\/]+$/, '');
+    if (!trimmed) return 'Project';
+    const parts = trimmed.split(/[\\/]/).filter(Boolean);
+    return parts[parts.length - 1] || 'Project';
   };
 
-  const chooseWorkspaceDir = (path: string | null) => {
+  const openProjectPicker = async () => {
+    setProjectPickerOpen(true);
+    await loadProjectEntries(null);
+  };
+
+  const createProjectFromPath = async (path: string | null) => {
     if (!path) return;
-    setFormData((prev) => ({ ...prev, workspace_dir: path }));
-    setWorkspacePickerOpen(false);
-  };
-
-  const useDefaultWorkspaceDir = () => {
-    setFormData((prev) => ({ ...prev, workspace_dir: '' }));
-    setWorkspacePickerOpen(false);
+    try {
+      const name = deriveProjectName(path);
+      if (!createProject) {
+        throw new Error('无法创建项目');
+      }
+      const project = await createProject(name, path);
+      setFormData(prev => ({ ...prev, project_id: project.id }));
+      setProjectPickerOpen(false);
+    } catch (err: any) {
+      setProjectPickerError(err?.message || '创建项目失败');
+    }
   };
 
   // 联动：仅在用户变更应用时重置 MCP 与系统上下文，编辑回显不触发
@@ -266,13 +298,24 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
     e.preventDefault();
     if (!formData.name.trim() || !formData.ai_model_config_id) return;
     try {
-      const workspaceDir = formData.workspace_dir.trim();
+      const projectId = formData.project_id.trim();
+      if (!projectId) {
+        alert('请选择项目');
+        return;
+      }
+      const project = (projects || []).find((p: any) => p.id === projectId);
+      if (!project) {
+        alert('项目不存在或已删除，请刷新项目列表');
+        return;
+      }
+      const workspaceDir = String(project.rootPath || '').trim();
       const created = await client.createAgent({
         name: formData.name.trim(),
         description: formData.description?.trim() || undefined,
         ai_model_config_id: formData.ai_model_config_id,
         mcp_config_ids: formData.mcp_config_ids,
         system_context_id: formData.system_context_id,
+        project_id: projectId,
         workspace_dir: workspaceDir,
         user_id: effectiveUserId,
         enabled: true,
@@ -298,13 +341,16 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
     e.preventDefault();
     if (!editingAgent) return;
     try {
-      const workspaceDir = formData.workspace_dir.trim();
+      const projectId = formData.project_id.trim();
+      const project = projectId ? (projects || []).find((p: any) => p.id === projectId) : null;
+      const workspaceDir = project?.rootPath ? String(project.rootPath).trim() : String(editingAgent.workspace_dir || '').trim();
       const updated = await client.updateAgent(editingAgent.id, {
         name: formData.name,
         description: formData.description,
         ai_model_config_id: formData.ai_model_config_id,
         mcp_config_ids: formData.mcp_config_ids,
         system_context_id: formData.system_context_id,
+        project_id: projectId || null,
         workspace_dir: workspaceDir,
         enabled: true,
         app_ids: selectedAppIds,
@@ -344,7 +390,7 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
       ai_model_config_id: agent.ai_model_config_id,
       mcp_config_ids: Array.isArray(agent.mcp_config_ids) ? agent.mcp_config_ids : [],
       system_context_id: agent.system_context_id,
-      workspace_dir: (agent as any).workspace_dir || '',
+      project_id: (agent as any).project_id || '',
     });
     // 初始化应用多选，统一使用后端字段 app_ids
     skipResetOnHydration.current = true;
@@ -367,12 +413,25 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
     });
     return names.join('，');
   };
-  const getWorkspaceDir = (agent?: AgentItem | null) => {
+  const getProjectById = (id?: string | null) => {
+    if (!id) return null;
+    return (projects || []).find((p: any) => p.id === id) || null;
+  };
+  const getProjectName = (agent?: AgentItem | null) => {
+    const project = getProjectById(agent?.project_id);
+    if (project?.name) return project.name;
+    if (agent?.project_id) return '未知项目';
+    return '未关联';
+  };
+  const getProjectRoot = (agent?: AgentItem | null) => {
+    const project = getProjectById(agent?.project_id);
+    if (project?.rootPath) return String(project.rootPath);
     const raw = agent?.workspace_dir;
     if (raw && String(raw).trim()) return String(raw);
     return defaultWorkspaceDir;
   };
-  const workspaceList = workspacePickerPath ? workspacePickerEntries : workspacePickerRoots;
+  const projectList = projectPickerPath ? projectPickerEntries : projectPickerRoots;
+  const selectedProject = getProjectById(formData.project_id);
 
   return (
     <>
@@ -453,24 +512,34 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-foreground mb-2">工作目录</label>
+                <label className="block text-sm font-medium text-foreground mb-2">关联项目</label>
                 <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    value={formData.workspace_dir}
-                    onChange={(e) => setFormData({ ...formData, workspace_dir: e.target.value })}
+                  <select
+                    value={formData.project_id}
+                    onChange={(e) => setFormData({ ...formData, project_id: e.target.value })}
                     className="flex-1 px-3 py-2 border border-input bg-background text-foreground rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
-                    placeholder={`不填默认：${defaultWorkspaceDir}`}
-                  />
+                    disabled={!projects || projects.length === 0}
+                  >
+                    <option value="">{projects && projects.length > 0 ? '请选择项目' : '暂无项目'}</option>
+                    {(projects || []).map((p: any) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
                   <button
                     type="button"
-                    onClick={openWorkspacePicker}
+                    onClick={openProjectPicker}
                     className="px-3 py-2 rounded bg-muted text-muted-foreground hover:bg-accent"
                   >
-                    选择目录
+                    从目录新建
                   </button>
                 </div>
-                <div className="mt-1 text-xs text-muted-foreground">建议填写绝对路径；留空将使用默认工作区。</div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  {selectedProject?.rootPath
+                    ? `项目目录：${selectedProject.rootPath}`
+                    : (projects && projects.length > 0 ? '未选择项目' : '暂无项目，请从目录新建')}
+                </div>
               </div>
               <div>
                 <label className="block text-sm font-medium text-foreground mb-2">选择模型（单选）</label>
@@ -561,7 +630,8 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
                       <p className="mt-2 text-xs text-muted-foreground truncate" title={getModelName(a.ai_model_config_id)}>模型：{getModelName(a.ai_model_config_id)}</p>
                       <p className="mt-1 text-xs text-muted-foreground truncate" title={getSystemContextName(a.system_context_id)}>系统上下文：{getSystemContextName(a.system_context_id)}</p>
                       <p className="mt-1 text-xs text-muted-foreground truncate" title={getMcpNames(a.mcp_config_ids || [])}>MCP配置：{getMcpNames(a.mcp_config_ids || [])}</p>
-                      <p className="mt-1 text-xs text-muted-foreground truncate" title={getWorkspaceDir(a)}>工作目录：{getWorkspaceDir(a)}</p>
+                      <p className="mt-1 text-xs text-muted-foreground truncate" title={getProjectName(a)}>项目：{getProjectName(a)}</p>
+                      <p className="mt-1 text-xs text-muted-foreground truncate" title={getProjectRoot(a)}>项目目录：{getProjectRoot(a)}</p>
                     </div>
                     {/* 右侧操作区：不收缩 */}
                     <div className="flex items-center space-x-2 ml-4 shrink-0">
@@ -600,7 +670,8 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
                 <p><span className="text-muted-foreground">模型：</span>{getModelName(detailAgent.ai_model_config_id)}</p>
                 <p><span className="text-muted-foreground">系统上下文：</span>{getSystemContextName(detailAgent.system_context_id)}</p>
                 <p><span className="text-muted-foreground">MCP配置：</span>{getMcpNames(detailAgent.mcp_config_ids || [])}</p>
-                <p><span className="text-muted-foreground">工作目录：</span>{getWorkspaceDir(detailAgent)}</p>
+                <p><span className="text-muted-foreground">项目：</span>{getProjectName(detailAgent)}</p>
+                <p><span className="text-muted-foreground">项目目录：</span>{getProjectRoot(detailAgent)}</p>
                 {Array.isArray(detailAgent.mcp_config_ids) && detailAgent.mcp_config_ids.length > 0 && (
                   <div className="mt-2 space-y-2">
                     {(detailAgent.mcp_config_ids || []).map((id) => {
@@ -646,61 +717,55 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
             </div>
           </div>
         )}
-        {workspacePickerOpen && (
+        {projectPickerOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center">
-            <div className="fixed inset-0 bg-black/50" onClick={() => setWorkspacePickerOpen(false)} />
+            <div className="fixed inset-0 bg-black/50" onClick={() => setProjectPickerOpen(false)} />
             <div className="relative bg-card border border-border rounded-lg shadow-xl w-[640px] max-h-[80vh] p-6 flex flex-col">
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center space-x-2">
                   <RobotIcon />
-                  <h3 className="text-lg font-semibold text-foreground">选择工作目录</h3>
+                  <h3 className="text-lg font-semibold text-foreground">选择项目目录</h3>
                 </div>
-                <button onClick={() => setWorkspacePickerOpen(false)} className="p-2 text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg transition-colors">
+                <button onClick={() => setProjectPickerOpen(false)} className="p-2 text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg transition-colors">
                   <XMarkIcon />
                 </button>
               </div>
               <div className="text-xs text-muted-foreground break-all">
-                当前路径：<span className="text-foreground">{workspacePickerPath || '请选择盘符/目录'}</span>
+                当前路径：<span className="text-foreground">{projectPickerPath || '请选择盘符/目录'}</span>
               </div>
+              <div className="mt-1 text-xs text-muted-foreground">选择目录后将自动创建项目并关联当前智能体。</div>
               <div className="mt-3 flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => loadWorkspaceEntries(workspacePickerParent)}
-                  disabled={!workspacePickerParent}
+                  onClick={() => loadProjectEntries(projectPickerParent)}
+                  disabled={!projectPickerParent}
                   className="px-3 py-1.5 rounded bg-muted text-muted-foreground hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   返回上级
                 </button>
                 <button
                   type="button"
-                  onClick={() => chooseWorkspaceDir(workspacePickerPath)}
-                  disabled={!workspacePickerPath}
+                  onClick={() => createProjectFromPath(projectPickerPath)}
+                  disabled={!projectPickerPath}
                   className="px-3 py-1.5 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   选择当前目录
                 </button>
-                <button
-                  type="button"
-                  onClick={useDefaultWorkspaceDir}
-                  className="px-3 py-1.5 rounded bg-muted text-muted-foreground hover:bg-accent"
-                >
-                  使用默认
-                </button>
               </div>
               <div className="mt-3 flex-1 overflow-y-auto border border-border rounded">
-                {workspacePickerLoading && (
+                {projectPickerLoading && (
                   <div className="p-4 text-sm text-muted-foreground">加载中...</div>
                 )}
-                {!workspacePickerLoading && workspaceList.length === 0 && (
+                {!projectPickerLoading && projectList.length === 0 && (
                   <div className="p-4 text-sm text-muted-foreground">没有可用目录</div>
                 )}
-                {!workspacePickerLoading && workspaceList.length > 0 && (
+                {!projectPickerLoading && projectList.length > 0 && (
                   <div className="divide-y divide-border">
-                    {workspaceList.map((entry) => (
+                    {projectList.map((entry) => (
                       <button
                         key={entry.path}
                         type="button"
-                        onClick={() => loadWorkspaceEntries(entry.path)}
+                        onClick={() => loadProjectEntries(entry.path)}
                         className="w-full text-left px-4 py-2 hover:bg-accent flex items-center gap-2"
                       >
                         <span className="text-foreground">{entry.name}</span>
@@ -709,8 +774,8 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
                   </div>
                 )}
               </div>
-              {workspacePickerError && (
-                <div className="mt-2 text-xs text-red-500">{workspacePickerError}</div>
+              {projectPickerError && (
+                <div className="mt-2 text-xs text-red-500">{projectPickerError}</div>
               )}
             </div>
           </div>
