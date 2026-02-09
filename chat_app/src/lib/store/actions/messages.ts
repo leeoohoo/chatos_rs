@@ -52,7 +52,7 @@ export function createMessageActions({ set, get, client }: Deps) {
       }
     },
 
-    updateMessage: async (messageId: string, updates: Partial<Message>) => {
+    updateMessage: async (messageId: string, _updates: Partial<Message>) => {
       try {
         console.warn('updateMessage not implemented yet');
         const updatedMessage = null;

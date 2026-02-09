@@ -10,6 +10,7 @@ import { createMcpActions } from './actions/mcp';
 import { createChatConfigActions } from './actions/chatConfig';
 import { createSessionActions } from './actions/sessions';
 import { createProjectActions } from './actions/projects';
+import { createTerminalActions } from './actions/terminals';
 import { createMessageActions } from './actions/messages';
 import { createStreamingActions } from './actions/streaming';
 import { createAgentActions } from './actions/agents';
@@ -40,12 +41,10 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
         immer(
             persist(
                     (set, get) => {
-                    const getSessionParams = () => {
-                        return {
-                            userId,
-                            projectId: undefined,
-                        };
-                    };
+                    const getSessionParams = () => ({
+                        userId,
+                        projectId: '',
+                    });
 
                     return {
                     // 初始状态
@@ -56,6 +55,9 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                     currentProjectId: null,
                     currentProject: null,
                     activePanel: 'chat',
+                    terminals: [],
+                    currentTerminalId: null,
+                    currentTerminal: null,
                     messages: [],
                     isLoading: false,
                     isStreaming: false,
@@ -85,6 +87,7 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                     // 会话/项目/消息/流式/UI 操作（拆分到独立模块）
                     ...createSessionActions({ set, get, client, getSessionParams, customUserId, customProjectId }),
                     ...createProjectActions({ set, get, client, getUserIdParam }),
+                    ...createTerminalActions({ set, get, client, getUserIdParam }),
                     ...createMessageActions({ set, get, client }),
                     sendMessage: createSendMessageHandler({ set, get, client, getUserIdParam }),
                     ...createStreamingActions({ set, get, client }),

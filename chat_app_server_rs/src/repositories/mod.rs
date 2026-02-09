@@ -13,3 +13,5 @@ pub mod mcp_configs;
 pub mod system_contexts;
 pub mod session_mcp_servers;
 pub mod user_settings;
+pub mod terminals;
+pub mod terminal_logs;

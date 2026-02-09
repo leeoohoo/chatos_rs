@@ -10,6 +10,7 @@ import SystemContextEditor from './SystemContextEditor';
 import AgentManager from './AgentManager';
 import UserSettingsPanel from './UserSettingsPanel';
 import ProjectExplorer from './ProjectExplorer';
+import TerminalView from './TerminalView';
 // 应用弹窗管理器由 ApplicationsPanel 直接承担
 import ApplicationsPanel from './ApplicationsPanel';
 import { cn } from '../lib/utils';
@@ -25,6 +26,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const {
     currentSession,
     currentProject,
+    currentTerminal,
     projects,
     activePanel,
     messages,
@@ -77,7 +79,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const chatIsStreaming = currentChatState?.isStreaming ?? false;
   const headerTitle = activePanel === 'project'
     ? (currentProject?.name || '项目')
-    : (currentSession?.title || '');
+    : activePanel === 'terminal'
+      ? (currentTerminal?.name || '终端')
+      : (currentSession?.title || '');
 
   const [showMcpManager, setShowMcpManager] = useState(false);
   const [showAiModelManager, setShowAiModelManager] = useState(false);
@@ -235,6 +239,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
           <div className="flex-1 flex flex-col overflow-hidden">
             {activePanel === 'project' ? (
               <ProjectExplorer project={currentProject} className="flex-1" />
+            ) : activePanel === 'terminal' ? (
+              <TerminalView className="flex-1" />
             ) : (
               <>
                 <div className="flex-1 overflow-hidden">
@@ -268,7 +274,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 </div>
 
                 {/* 输入区域 */}
-                {currentSession && (
+                {currentSession && activePanel === 'chat' && (
                   <div className="border-t border-border">
                     <InputArea
                       onSend={handleMessageSend}

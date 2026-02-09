@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useChatStoreFromContext, useChatApiClientFromContext } from '../lib/store/ChatStoreContext';
 import { useChatStore } from '../lib/store';
-import type { Session, Project, FsEntry } from '../types';
+import type { Session, Project, FsEntry, Terminal } from '../types';
 import { PlusIcon, DotsVerticalIcon, PencilIcon, TrashIcon, ChatIcon } from './ui/icons';
 import ConfirmDialog from './ui/ConfirmDialog';
 import { useConfirmDialog } from '../hooks/useConfirmDialog';
@@ -90,6 +90,12 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     createProject,
     selectProject,
     deleteProject,
+    terminals,
+    currentTerminal,
+    loadTerminals,
+    createTerminal,
+    selectTerminal,
+    deleteTerminal,
   } = storeToUse;
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
@@ -99,13 +105,20 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
   const [hasMoreLocked, setHasMoreLocked] = useState(false);
   const [sessionsExpanded, setSessionsExpanded] = useState(true);
   const [projectsExpanded, setProjectsExpanded] = useState(true);
+  const [terminalsExpanded, setTerminalsExpanded] = useState(true);
+  const [isRefreshingTerminals, setIsRefreshingTerminals] = useState(false);
   const PAGE_SIZE = 30;
 
   const [projectModalOpen, setProjectModalOpen] = useState(false);
   const [projectRoot, setProjectRoot] = useState('');
   const [projectError, setProjectError] = useState<string | null>(null);
 
+  const [terminalModalOpen, setTerminalModalOpen] = useState(false);
+  const [terminalRoot, setTerminalRoot] = useState('');
+  const [terminalError, setTerminalError] = useState<string | null>(null);
+
   const [dirPickerOpen, setDirPickerOpen] = useState(false);
+  const [dirPickerTarget, setDirPickerTarget] = useState<'project' | 'terminal'>('project');
   const [dirPickerPath, setDirPickerPath] = useState<string | null>(null);
   const [dirPickerParent, setDirPickerParent] = useState<string | null>(null);
   const [dirPickerEntries, setDirPickerEntries] = useState<FsEntry[]>([]);
@@ -116,6 +129,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
   const apiClient = useChatApiClientFromContext();
   const apiBaseUrl = apiClient?.getBaseUrl ? apiClient.getBaseUrl() : '/api';
   const didLoadProjectsRef = useRef(false);
+  const didLoadTerminalsRef = useRef(false);
   
   const { dialogState, showConfirmDialog, handleConfirm, handleCancel } = useConfirmDialog();
 
@@ -144,6 +158,12 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     setHasMore(fetched.length >= PAGE_SIZE);
   };
 
+  const handleRefreshTerminals = async () => {
+    setIsRefreshingTerminals(true);
+    await loadTerminals();
+    setIsRefreshingTerminals(false);
+  };
+
   const handleLoadMoreSessions = async () => {
     if (isLoadingMore) return;
     setIsLoadingMore(true);
@@ -161,11 +181,24 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     setProjectModalOpen(true);
   };
 
+  const openTerminalModal = () => {
+    setTerminalRoot('');
+    setTerminalError(null);
+    setTerminalModalOpen(true);
+  };
+
   const deriveProjectName = (path: string) => {
     const trimmed = path.trim().replace(/[\\/]+$/, '');
     if (!trimmed) return 'Project';
     const parts = trimmed.split(/[\\/]/).filter(Boolean);
     return parts[parts.length - 1] || 'Project';
+  };
+
+  const deriveTerminalName = (path: string) => {
+    const trimmed = path.trim().replace(/[\\/]+$/, '');
+    if (!trimmed) return 'Terminal';
+    const parts = trimmed.split(/[\\/]/).filter(Boolean);
+    return parts[parts.length - 1] || 'Terminal';
   };
 
   const handleCreateProject = async () => {
@@ -182,12 +215,34 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     }
   };
 
+  const handleCreateTerminal = async () => {
+    if (!terminalRoot.trim()) {
+      setTerminalError('请选择终端目录');
+      return;
+    }
+    try {
+      const name = deriveTerminalName(terminalRoot);
+      await createTerminal(terminalRoot.trim(), name);
+      setTerminalModalOpen(false);
+    } catch (error) {
+      setTerminalError(error instanceof Error ? error.message : '创建终端失败');
+    }
+  };
+
   const handleSelectProject = async (projectId: string) => {
     try {
       await selectProject(projectId);
       await loadSessions({ limit: PAGE_SIZE, offset: 0, append: false, silent: true });
     } catch (error) {
       console.error('Failed to select project:', error);
+    }
+  };
+
+  const handleSelectTerminal = async (terminalId: string) => {
+    try {
+      await selectTerminal(terminalId);
+    } catch (error) {
+      console.error('Failed to select terminal:', error);
     }
   };
 
@@ -204,6 +259,24 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
           await deleteProject(projectId);
         } catch (error) {
           console.error('Failed to delete project:', error);
+        }
+      }
+    });
+  };
+
+  const handleDeleteTerminal = async (terminalId: string) => {
+    const terminal = terminals.find((t: Terminal) => t.id === terminalId);
+    showConfirmDialog({
+      title: '删除确认',
+      message: `确定要删除终端 "${terminal?.name || 'Untitled'}" 吗？此操作无法撤销。`,
+      confirmText: '删除',
+      cancelText: '取消',
+      type: 'danger',
+      onConfirm: async () => {
+        try {
+          await deleteTerminal(terminalId);
+        } catch (error) {
+          console.error('Failed to delete terminal:', error);
         }
       }
     });
@@ -237,15 +310,20 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     }
   };
 
-  const openDirPicker = async () => {
+  const openDirPicker = async (target: 'project' | 'terminal') => {
+    setDirPickerTarget(target);
     setDirPickerOpen(true);
-    const current = projectRoot.trim();
+    const current = (target === 'project' ? projectRoot : terminalRoot).trim();
     await loadDirEntries(current ? current : null);
   };
 
   const chooseDir = (path: string | null) => {
     if (!path) return;
-    setProjectRoot(path);
+    if (dirPickerTarget === 'project') {
+      setProjectRoot(path);
+    } else {
+      setTerminalRoot(path);
+    }
     setDirPickerOpen(false);
   };
 
@@ -308,6 +386,20 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     didLoadProjectsRef.current = true;
     loadProjects();
   }, [loadProjects]);
+
+  useEffect(() => {
+    if (didLoadTerminalsRef.current) return;
+    didLoadTerminalsRef.current = true;
+    loadTerminals();
+  }, [loadTerminals]);
+
+  useEffect(() => {
+    if (isCollapsed || !terminalsExpanded) return;
+    const timer = window.setInterval(() => {
+      loadTerminals();
+    }, 10000);
+    return () => window.clearInterval(timer);
+  }, [isCollapsed, terminalsExpanded, loadTerminals]);
 
   return (
     <div
@@ -558,6 +650,128 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
               </div>
             )}
           </div>
+
+          <div className="my-2 border-t border-border" />
+
+          <div className="flex flex-col">
+            <div className="px-3 py-2 text-xs text-muted-foreground flex items-center justify-between">
+              <button
+                type="button"
+                onClick={() => setTerminalsExpanded((prev) => !prev)}
+                className="flex items-center gap-2 uppercase tracking-wide"
+              >
+                <span>{terminalsExpanded ? '▾' : '▸'}</span>
+                <span>TERMINALS</span>
+              </button>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={handleRefreshTerminals}
+                  className="p-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded"
+                  title="刷新终端列表"
+                >
+                  <svg className={cn('w-4 h-4', isRefreshingTerminals && 'animate-spin')} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12a7.5 7.5 0 0112.125-5.303M19.5 12a7.5 7.5 0 01-12.125 5.303M16.5 6.697V3m0 3.697h-3.697M7.5 17.303V21m0-3.697H3.803" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  onClick={openTerminalModal}
+                  className="p-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded"
+                  title="新增终端"
+                >
+                  <PlusIcon className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {terminalsExpanded && (
+              <div className="max-h-64 overflow-y-auto">
+                {terminals.length === 0 ? (
+                  <div className="px-3 py-3 text-xs text-muted-foreground">
+                    还没有终端，点击右侧 + 新建。
+                  </div>
+                ) : (
+                  <div className="p-2 space-y-1">
+                    {terminals.map((terminal: Terminal) => (
+                      <div
+                        key={terminal.id}
+                        className={`group relative flex items-center p-2 rounded-lg cursor-pointer transition-colors ${
+                          currentTerminal?.id === terminal.id
+                            ? 'bg-accent border border-border'
+                            : 'hover:bg-accent/50'
+                        }`}
+                        onClick={() => handleSelectTerminal(terminal.id)}
+                      >
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <h3 className="text-sm font-medium text-foreground truncate">
+                              {terminal.name}
+                            </h3>
+                            <span className={cn(
+                              'inline-flex items-center text-[10px] px-1.5 py-0.5 rounded border',
+                              terminal.status === 'running'
+                                ? 'border-emerald-500/40 text-emerald-600'
+                                : 'border-muted-foreground/40 text-muted-foreground'
+                            )}>
+                              {terminal.status === 'running' ? '运行中' : '已退出'}
+                            </span>
+                            {terminal.status === 'running' && (
+                              <span className={cn(
+                                'inline-flex items-center text-[10px] px-1.5 py-0.5 rounded border',
+                                terminal.busy
+                                  ? 'border-amber-500/40 text-amber-600'
+                                  : 'border-emerald-500/30 text-emerald-600/80'
+                              )}>
+                                {terminal.busy ? '忙碌' : '空闲'}
+                              </span>
+                            )}
+                          </div>
+                          <div className="mt-1 text-xs text-muted-foreground truncate" title={terminal.cwd}>
+                            {terminal.cwd}
+                          </div>
+                          {terminal.lastActiveAt && (
+                            <div className="mt-1 text-[10px] text-muted-foreground/70">
+                              最近活动：{formatTimeAgo(terminal.lastActiveAt)}
+                            </div>
+                          )}
+                        </div>
+                        <div className="relative">
+                          <button
+                            className="p-1 text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 transition-opacity"
+                            onClick={(e: React.MouseEvent) => {
+                              e.stopPropagation();
+                              const menu = e.currentTarget.nextElementSibling as HTMLElement;
+                              if (menu) {
+                                menu.classList.toggle('hidden');
+                              }
+                            }}
+                          >
+                            <DotsVerticalIcon className="w-4 h-4" />
+                          </button>
+                          <div className="hidden absolute right-0 z-10 mt-1 w-32 bg-popover border border-border rounded-md shadow-lg">
+                            <div className="py-1">
+                              <button
+                                onClick={(e: React.MouseEvent) => {
+                                  e.stopPropagation();
+                                  handleDeleteTerminal(terminal.id);
+                                  const menu = e.currentTarget.closest('.absolute') as HTMLElement;
+                                  if (menu) menu.classList.add('hidden');
+                                }}
+                                className="flex items-center w-full px-3 py-2 text-sm text-destructive hover:bg-destructive/10"
+                              >
+                                <TrashIcon className="w-4 h-4 mr-2" />
+                                删除
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -589,7 +803,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
                   />
                   <button
                     type="button"
-                    onClick={openDirPicker}
+                    onClick={() => openDirPicker('project')}
                     className="px-3 py-2 rounded bg-muted text-muted-foreground hover:bg-accent"
                   >
                     选择目录
@@ -623,13 +837,77 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
         </div>
       )}
 
+      {/* 终端创建弹窗 */}
+      {terminalModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="fixed inset-0 bg-black/50" onClick={() => setTerminalModalOpen(false)} />
+          <div className="relative bg-card border border-border rounded-lg shadow-xl w-[520px] p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-foreground">新增终端</h3>
+              <button
+                onClick={() => setTerminalModalOpen(false)}
+                className="p-2 text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg transition-colors"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <label className="text-sm text-muted-foreground">终端目录</label>
+                <div className="mt-1 flex items-center gap-2">
+                  <input
+                    value={terminalRoot}
+                    onChange={(e) => setTerminalRoot(e.target.value)}
+                    className="flex-1 px-3 py-2 rounded border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                    placeholder="选择或输入本地目录路径"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => openDirPicker('terminal')}
+                    className="px-3 py-2 rounded bg-muted text-muted-foreground hover:bg-accent"
+                  >
+                    选择目录
+                  </button>
+                </div>
+              </div>
+              {terminalRoot.trim() && (
+                <div className="text-xs text-muted-foreground">
+                  终端名称将默认使用：<span className="text-foreground">{deriveTerminalName(terminalRoot)}</span>
+                </div>
+              )}
+              {terminalError && (
+                <div className="text-xs text-destructive">{terminalError}</div>
+              )}
+            </div>
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                onClick={() => setTerminalModalOpen(false)}
+                className="px-3 py-2 rounded bg-muted text-muted-foreground hover:bg-accent"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleCreateTerminal}
+                className="px-4 py-2 rounded bg-primary text-primary-foreground hover:bg-primary/90"
+              >
+                创建
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 目录选择弹窗 */}
       {dirPickerOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div className="fixed inset-0 bg-black/50" onClick={() => setDirPickerOpen(false)} />
           <div className="relative bg-card border border-border rounded-lg shadow-xl w-[640px] max-h-[80vh] p-6 flex flex-col">
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-lg font-semibold text-foreground">选择项目目录</h3>
+              <h3 className="text-lg font-semibold text-foreground">
+                {dirPickerTarget === 'terminal' ? '选择终端目录' : '选择项目目录'}
+              </h3>
               <button onClick={() => setDirPickerOpen(false)} className="p-2 text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg transition-colors">
                 <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />

@@ -134,7 +134,7 @@ export function createProjectActions({ set, get, client, getUserIdParam }: Deps)
       }
     },
 
-    setActivePanel: (panel: 'chat' | 'project') => {
+    setActivePanel: (panel: 'chat' | 'project' | 'terminal') => {
       set((state: any) => {
         state.activePanel = panel;
       });

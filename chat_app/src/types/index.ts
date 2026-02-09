@@ -56,6 +56,28 @@ export interface Project {
   updatedAt: Date;
 }
 
+// 终端接口
+export interface Terminal {
+  id: string;
+  name: string;
+  cwd: string;
+  userId?: string | null;
+  status: string;
+  busy?: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+  lastActiveAt: Date;
+}
+
+export interface TerminalLog {
+  id: string;
+  terminalId: string;
+  logType: string;
+  content: string;
+  createdAt: Date | string;
+}
+
+
 // 文件系统条目
 export interface FsEntry {
   name: string;

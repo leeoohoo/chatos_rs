@@ -152,7 +152,7 @@ export async function listSessionsIPC(userId?: string, projectId?: string) {
   throw new Error('IPC listSessions not available');
 }
 
-export async function createSessionIPC(data: { id?: string; title: string; user_id: string; project_id: string }) {
+export async function createSessionIPC(data: { id?: string; title: string; user_id: string; project_id?: string }) {
   const api = (window as any).chatAPI;
   if (api?.createSession) return api.createSession(data);
   throw new Error('IPC createSession not available');

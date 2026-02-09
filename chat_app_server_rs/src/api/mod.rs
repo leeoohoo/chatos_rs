@@ -29,6 +29,7 @@ pub mod configs;
 pub mod chat_agent_v2;
 pub mod user_settings;
 pub mod fs;
+pub mod terminals;
 
 pub fn router() -> Router {
     let cfg = Config::get();
@@ -98,6 +99,7 @@ pub fn router() -> Router {
         .nest("/api/agents", agents::router())
         .nest("/api/applications", applications::router())
         .merge(projects::router())
+        .merge(terminals::router())
         .merge(configs::router())
         .merge(fs::router())
         .nest("/api/v2", chat_agent_v2::router())

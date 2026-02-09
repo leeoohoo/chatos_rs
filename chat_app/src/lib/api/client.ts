@@ -166,6 +166,40 @@ class ApiClient {
     return this.request<any[]>(`/projects/${projectId}/changes${query}`);
   }
 
+  // 终端相关API
+  async listTerminals(userId?: string): Promise<any[]> {
+    const params = userId ? `?user_id=${encodeURIComponent(userId)}` : '';
+    return this.request<any[]>(`/terminals${params}`);
+  }
+
+  async createTerminal(data: { name?: string; cwd: string; user_id?: string }): Promise<any> {
+    return this.request<any>('/terminals', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getTerminal(id: string): Promise<any> {
+    return this.request<any>(`/terminals/${id}`);
+  }
+
+  async deleteTerminal(id: string): Promise<any> {
+    return this.request<any>(`/terminals/${id}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async listTerminalLogs(
+    terminalId: string,
+    params?: { limit?: number; offset?: number }
+  ): Promise<any[]> {
+    const qs: string[] = [];
+    if (params?.limit !== undefined) qs.push(`limit=${encodeURIComponent(String(params.limit))}`);
+    if (params?.offset !== undefined) qs.push(`offset=${encodeURIComponent(String(params.offset))}`);
+    const query = qs.length ? `?${qs.join('&')}` : '';
+    return this.request<any[]>(`/terminals/${terminalId}/history${query}`);
+  }
+
   // 文件系统
   async listFsEntries(path?: string): Promise<any> {
     const qs = path ? `?path=${encodeURIComponent(path)}` : '';

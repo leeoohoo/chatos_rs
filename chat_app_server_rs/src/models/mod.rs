@@ -11,3 +11,5 @@ pub mod ai_model_config;
 pub mod system_context;
 pub mod session_mcp_server;
 pub mod user_settings;
+pub mod terminal;
+pub mod terminal_log;

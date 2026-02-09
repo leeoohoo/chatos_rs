@@ -202,7 +202,7 @@ export function createSessionActions({
       }
     },
 
-    updateSession: async (sessionId: string, updates: Partial<Session>) => {
+    updateSession: async (sessionId: string, _updates: Partial<Session>) => {
       try {
         console.warn('updateSession not implemented yet');
         const updatedSession = null;

@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-axum = { version = "0.7", features = ["json", "macros"] }
+axum = { version = "0.7", features = ["json", "macros", "ws"] }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -36,6 +36,9 @@ hex = "0.4"
 walkdir = "2.4"
 dirs = "5.0"
 pathdiff = "0.2"
+portable-pty = "0.8"
+dashmap = "5.5"
+regex = "1"
 
 # Database
 sqlx = { version = "0.7", features = ["runtime-tokio", "sqlite", "macros", "chrono", "json"] }

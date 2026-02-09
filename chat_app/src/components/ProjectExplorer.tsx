@@ -146,6 +146,7 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
   const [loadingLogs, setLoadingLogs] = useState(false);
   const [logsError, setLogsError] = useState<string | null>(null);
   const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
+  const [expandedReady, setExpandedReady] = useState(false);
   const [treeWidth, setTreeWidth] = useState(() => {
     if (typeof window === 'undefined') return 288;
     const saved = window.localStorage.getItem('project_explorer_tree_width');
@@ -153,6 +154,32 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     return Number.isFinite(parsed) ? Math.min(Math.max(parsed, 200), 640) : 288;
   });
   const [isResizing, setIsResizing] = useState(false);
+
+  const normalizePath = useCallback((value: string) => (
+    value.replace(/\\/g, '/').replace(/\/+$/, '')
+  ), []);
+
+  const rootPathNormalized = useMemo(
+    () => (project?.rootPath ? normalizePath(project.rootPath) : ''),
+    [project?.rootPath, normalizePath]
+  );
+
+  const toExpandedKey = useCallback((path: string) => {
+    const full = normalizePath(path);
+    if (!rootPathNormalized) return full;
+    if (full === rootPathNormalized) return '';
+    const prefix = `${rootPathNormalized}/`;
+    if (full.startsWith(prefix)) {
+      return full.slice(prefix.length);
+    }
+    return full;
+  }, [rootPathNormalized, normalizePath]);
+
+  const keyToPath = useCallback((key: string) => {
+    if (!rootPathNormalized) return normalizePath(key);
+    if (!key) return rootPathNormalized;
+    return `${rootPathNormalized}/${key}`;
+  }, [rootPathNormalized, normalizePath]);
 
   const loadEntries = useCallback(async (path: string) => {
     setLoadingPaths(prev => new Set(prev).add(path));
@@ -176,19 +203,20 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     if (!entry.isDir) return;
     setSelectedPath(entry.path);
     setSelectedFile(null);
+    const key = toExpandedKey(entry.path);
     setExpandedPaths(prev => {
       const next = new Set(prev);
-      if (next.has(entry.path)) {
-        next.delete(entry.path);
+      if (next.has(key)) {
+        next.delete(key);
       } else {
-        next.add(entry.path);
+        next.add(key);
       }
       return next;
     });
     if (!entriesMap[entry.path]) {
       await loadEntries(entry.path);
     }
-  }, [entriesMap, loadEntries]);
+  }, [entriesMap, loadEntries, toExpandedKey]);
 
   const openFile = useCallback(async (entry: FsEntry) => {
     setSelectedPath(entry.path);
@@ -214,24 +242,29 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
       setChangeLogs([]);
       setLogsError(null);
       setSelectedLogId(null);
+      setExpandedReady(false);
       return;
     }
     const root = project.rootPath;
     setEntriesMap({});
     const saved = project.id ? localStorage.getItem(`project_explorer_expanded_${project.id}`) : null;
-    let nextExpanded = new Set<string>([root]);
+    let nextExpanded = new Set<string>();
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          nextExpanded = new Set(parsed.filter((p) => typeof p === 'string'));
-          nextExpanded.add(root);
+          nextExpanded = new Set(
+            parsed
+              .filter((p) => typeof p === 'string')
+              .map((p) => toExpandedKey(p))
+          );
         }
       } catch {
-        nextExpanded = new Set([root]);
+        nextExpanded = new Set();
       }
     }
     setExpandedPaths(nextExpanded);
+    setExpandedReady(true);
     setSelectedPath(root);
     setSelectedFile(null);
     setChangeLogs([]);
@@ -239,20 +272,17 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     setSelectedLogId(null);
     loadEntries(root);
     nextExpanded.forEach((p) => {
-      if (p !== root) {
-        loadEntries(p);
-      }
+      if (!p) return;
+      const full = keyToPath(p);
+      if (full !== root) loadEntries(full);
     });
-  }, [project?.id, project?.rootPath, loadEntries]);
+  }, [project?.id, project?.rootPath, loadEntries, keyToPath, toExpandedKey]);
 
   useEffect(() => {
-    if (!project?.id || !project?.rootPath) return;
+    if (!expandedReady || !project?.id || !project?.rootPath) return;
     const next = Array.from(expandedPaths);
-    if (!next.includes(project.rootPath)) {
-      next.push(project.rootPath);
-    }
     localStorage.setItem(`project_explorer_expanded_${project.id}`, JSON.stringify(next));
-  }, [expandedPaths, project?.id, project?.rootPath]);
+  }, [expandedPaths, expandedReady, project?.id, project?.rootPath]);
 
   useEffect(() => {
     if (!isResizing) return;
@@ -325,7 +355,7 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
       return null;
     }
     return entries.map((entry) => {
-      const isExpanded = expandedPaths.has(entry.path);
+      const entryKey = toExpandedKey(entry.path);
       const isActive = selectedPath === entry.path;
       return (
         <div key={entry.path}>
@@ -339,7 +369,7 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
             style={{ paddingLeft: 12 + depth * 14 }}
           >
             <span className="text-xs text-muted-foreground w-3 shrink-0">
-              {entry.isDir ? (isExpanded ? '▾' : '▸') : ''}
+              {entry.isDir ? (expandedPaths.has(entryKey) ? '▾' : '▸') : ''}
             </span>
             <span
               className={cn(
@@ -353,7 +383,7 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
               {!entry.isDir && entry.size != null ? formatFileSize(entry.size) : ''}
             </span>
           </button>
-          {entry.isDir && isExpanded && renderEntries(entry.path, depth + 1)}
+          {entry.isDir && expandedPaths.has(entryKey) && renderEntries(entry.path, depth + 1)}
         </div>
       );
     });

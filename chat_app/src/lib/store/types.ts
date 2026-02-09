@@ -1,4 +1,4 @@
-import type { Message, Session, ChatConfig, Theme, McpConfig, AiModelConfig, SystemContext, AgentConfig, Application, Project } from '../../types';
+import type { Message, Session, ChatConfig, Theme, McpConfig, AiModelConfig, SystemContext, AgentConfig, Application, Project, Terminal } from '../../types';
 
 export interface ChatState {
   // 会话相关
@@ -10,7 +10,12 @@ export interface ChatState {
   projects: Project[];
   currentProjectId: string | null;
   currentProject: Project | null;
-  activePanel: 'chat' | 'project';
+  activePanel: 'chat' | 'project' | 'terminal';
+
+  // 终端相关
+  terminals: Terminal[];
+  currentTerminalId: string | null;
+  currentTerminal: Terminal | null;
 
   // 消息相关
   messages: Message[];
@@ -55,7 +60,13 @@ export interface ChatActions {
   updateProject: (projectId: string, updates: Partial<Project>) => Promise<Project | null>;
   deleteProject: (projectId: string) => Promise<void>;
   selectProject: (projectId: string) => Promise<void>;
-  setActivePanel: (panel: 'chat' | 'project') => void;
+  setActivePanel: (panel: 'chat' | 'project' | 'terminal') => void;
+
+  // 终端操作
+  loadTerminals: () => Promise<Terminal[]>;
+  createTerminal: (cwd: string, name?: string) => Promise<Terminal>;
+  deleteTerminal: (terminalId: string) => Promise<void>;
+  selectTerminal: (terminalId: string) => Promise<void>;
 
   // 消息操作
   loadMessages: (sessionId: string) => Promise<void>;

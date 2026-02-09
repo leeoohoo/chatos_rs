@@ -491,6 +491,24 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )"#,
+        r#"CREATE TABLE IF NOT EXISTS terminals (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            cwd TEXT NOT NULL,
+            user_id TEXT,
+            status TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            last_active_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )"#,
+        r#"CREATE TABLE IF NOT EXISTS terminal_logs (
+            id TEXT PRIMARY KEY,
+            terminal_id TEXT NOT NULL,
+            type TEXT NOT NULL,
+            content TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (terminal_id) REFERENCES terminals(id) ON DELETE CASCADE
+        )"#,
         r#"CREATE TABLE IF NOT EXISTS mcp_config_applications (
             id TEXT PRIMARY KEY,
             mcp_config_id TEXT NOT NULL,
@@ -566,6 +584,10 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
         "CREATE INDEX IF NOT EXISTS idx_agents_project_id ON agents(project_id)",
         "CREATE INDEX IF NOT EXISTS idx_applications_user_id ON applications(user_id)",
         "CREATE INDEX IF NOT EXISTS idx_projects_user_id ON projects(user_id)",
+        "CREATE INDEX IF NOT EXISTS idx_terminals_user_id ON terminals(user_id)",
+        "CREATE INDEX IF NOT EXISTS idx_terminals_status ON terminals(status)",
+        "CREATE INDEX IF NOT EXISTS idx_terminal_logs_terminal_id ON terminal_logs(terminal_id)",
+        "CREATE INDEX IF NOT EXISTS idx_terminal_logs_created_at ON terminal_logs(created_at)",
         "CREATE INDEX IF NOT EXISTS idx_session_mcp_servers_session_id ON session_mcp_servers(session_id)",
         "CREATE INDEX IF NOT EXISTS idx_mcp_config_profiles_mcp_config_id ON mcp_config_profiles(mcp_config_id)",
         "CREATE INDEX IF NOT EXISTS idx_mcp_config_applications_mcp_config_id ON mcp_config_applications(mcp_config_id)",
@@ -657,6 +679,8 @@ async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> {
         "agents",
         "applications",
         "projects",
+        "terminals",
+        "terminal_logs",
         "mcp_config_applications",
         "system_context_applications",
         "agent_applications",
@@ -705,6 +729,18 @@ async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> {
         .await;
     let _ = db.collection::<mongodb::bson::Document>("projects")
         .create_index(IndexModel::builder().keys(doc! { "user_id": 1 }).build(), None)
+        .await;
+    let _ = db.collection::<mongodb::bson::Document>("terminals")
+        .create_index(IndexModel::builder().keys(doc! { "user_id": 1 }).build(), None)
+        .await;
+    let _ = db.collection::<mongodb::bson::Document>("terminals")
+        .create_index(IndexModel::builder().keys(doc! { "status": 1 }).build(), None)
+        .await;
+    let _ = db.collection::<mongodb::bson::Document>("terminal_logs")
+        .create_index(IndexModel::builder().keys(doc! { "terminal_id": 1 }).build(), None)
+        .await;
+    let _ = db.collection::<mongodb::bson::Document>("terminal_logs")
+        .create_index(IndexModel::builder().keys(doc! { "created_at": 1 }).build(), None)
         .await;
 
     Ok(Database::Mongo { client, db })
