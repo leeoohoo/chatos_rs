@@ -3,28 +3,10 @@
   "version": "1.0.10",
   "description": "A complete React AI chat component with session management, MCP support, and SQLite persistence",
   "type": "module",
-  "main": "dist/index.cjs.js",
-  "module": "dist/index.esm.js",
-  "types": "dist/index.d.ts",
-  "files": [
-    "dist",
-    "README.md",
-    "LICENSE"
-  ],
-  "exports": {
-    ".": {
-      "import": "./dist/index.esm.js",
-      "require": "./dist/index.cjs.js",
-      "types": "./dist/index.d.ts"
-    },
-    "./styles": "./dist/index.css"
-  },
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "build:lib": "vite build --config vite.lib.config.ts",
     "preview": "vite preview",
-    "prepublishOnly": "npm run build:lib",
     "test": "vitest",
     "test:ui": "vitest --ui",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",

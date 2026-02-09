@@ -39,6 +39,7 @@ export const InputArea: React.FC<InputAreaProps> = ({
   selectedAgentId = null,
   availableAgents = [],
   onAgentChange,
+  availableProjects = [],
 }) => {
   const [message, setMessage] = useState('');
   const [attachments, setAttachments] = useState<File[]>([]);
@@ -55,6 +56,10 @@ export const InputArea: React.FC<InputAreaProps> = ({
     () => (selectedAgentId ? (availableAgents || []).find(a => a.id === selectedAgentId) : null),
     [availableAgents, selectedAgentId]
   );
+  const selectedProject = useMemo(() => {
+    if (!selectedAgent?.project_id) return null;
+    return (availableProjects || []).find((p: any) => p.id === selectedAgent.project_id) || null;
+  }, [availableProjects, selectedAgent]);
   const selectedModel = useMemo(
     () => (selectedModelId ? (availableModels || []).find(m => (m as any).id === selectedModelId) : null),
     [availableModels, selectedModelId]
@@ -68,11 +73,15 @@ export const InputArea: React.FC<InputAreaProps> = ({
     [availableModels]
   );
   const hasAiOptions = (availableModels && availableModels.length > 0) || (availableAgents && availableAgents.length > 0);
-  const currentAiLabel = useMemo(() => (
-    selectedAgent
-      ? `Agent: ${selectedAgent.name}`
-      : (selectedModel ? `Model: ${(selectedModel as any).name}` : '选择 AI')
-  ), [selectedAgent, selectedModel]);
+  const currentAiLabel = useMemo(() => {
+    if (selectedAgent) {
+      const projectName = selectedProject?.name || (selectedAgent.project_id ? '未知项目' : '');
+      return projectName
+        ? `Agent: ${selectedAgent.name} · 项目: ${projectName}`
+        : `Agent: ${selectedAgent.name}`;
+    }
+    return selectedModel ? `Model: ${(selectedModel as any).name}` : '选择 AI';
+  }, [selectedAgent, selectedProject, selectedModel]);
 
   // 自动调整文本框高度
   const adjustTextareaHeight = useCallback(() => {
