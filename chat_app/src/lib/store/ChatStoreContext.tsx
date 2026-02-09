@@ -1,5 +1,6 @@
 import React, { createContext, useContext, ReactNode } from 'react';
-import { createChatStoreWithConfig, useChatStore } from './index';
+import { useChatStore } from './index';
+import { createChatStoreWithBackend } from './createChatStoreWithBackend';
 import type { ChatStore as ChatStoreHook, ChatState, ChatActions } from './createChatStoreWithBackend';
 import type ApiClient from '../api/client';
 import { debugLog } from '@/lib/utils';
@@ -37,11 +38,10 @@ export const ChatStoreProvider: React.FC<ChatStoreProviderProps> = ({
   const store = React.useMemo(() => {
     if (userId || projectId || customApiClient) {
       debugLog('🏪 创建自定义store:', { userId, projectId, hasCustomApiClient: !!customApiClient });
-      return createChatStoreWithConfig(
-        userId || 'default-user',
-        projectId || 'default-project',
-        customApiClient
-      );
+      return createChatStoreWithBackend(customApiClient, {
+        userId: userId || 'default-user',
+        projectId: projectId || 'default-project',
+      });
     } else {
       debugLog('🏪 使用默认store');
       return useChatStore;
