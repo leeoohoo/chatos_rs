@@ -75,6 +75,20 @@ export interface FsReadResult {
   content: string;
 }
 
+export interface ChangeLogItem {
+  id: string;
+  serverName: string;
+  path: string;
+  action: string;
+  bytes: number;
+  sha256?: string | null;
+  diff?: string | null;
+  sessionId?: string | null;
+  runId?: string | null;
+  createdAt: string;
+  sessionTitle?: string | null;
+}
+
 // 系统上下文接口
 export interface SystemContext {
   id: string;

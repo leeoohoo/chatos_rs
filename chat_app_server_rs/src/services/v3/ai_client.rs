@@ -96,9 +96,10 @@ impl AiClient {
             on_tools_end: None,
         });
 
+        let prefer_stateless = history_limit != 0;
         let mut previous_response_id: Option<String> = None;
-        if let Some(sid) = session_id.as_ref() {
-            if history_limit != 0 {
+        if !prefer_stateless {
+            if let Some(sid) = session_id.as_ref() {
                 let limit = if history_limit > 0 { Some(history_limit) } else { None };
                 previous_response_id = self.message_manager.get_last_response_id(sid, limit.unwrap_or(50)).await;
             }
@@ -111,7 +112,7 @@ impl AiClient {
 
         let allow_prev_id = session_id.as_ref().map(|s| !self.prev_response_id_disabled_sessions.contains(s)).unwrap_or(true);
         let provider_allows_prev = provider == "gpt" && base_url_allows_prev(self.ai_request_handler.base_url());
-        let use_prev_id = previous_response_id.is_some() && allow_prev_id && provider_allows_prev;
+        let use_prev_id = !prefer_stateless && previous_response_id.is_some() && allow_prev_id && provider_allows_prev;
         let stateless_history_limit = if !use_prev_id && history_limit == 0 {
             warn!("[AI_V3] history_limit=0 with stateless mode; fallback to 20");
             20

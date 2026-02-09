@@ -10,7 +10,7 @@ interface AppProps {
   projectId?: string;
 }
 
-function App({ userId = 'custom_user_123', projectId = 'custom_project_456' }: AppProps = {}) {
+function App({ userId = 'custom_user_123', projectId }: AppProps = {}) {
   const { actualTheme } = useTheme();
 
   // 确保主题正确应用

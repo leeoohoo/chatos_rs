@@ -32,20 +32,22 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
     
     // 使用传入的参数或默认值
     const userId = customUserId || 'default-user';
-    const projectId = customProjectId || 'default-project';
     
     // 获取userId的统一函数
     const getUserIdParam = () => userId;
     
-    // 获取会话相关参数的统一函数
-    const getSessionParams = () => {
-        return { userId, projectId };
-    };
-
     return create<ChatState & ChatActions>()(
         immer(
             persist(
-                    (set, get) => ({
+                    (set, get) => {
+                    const getSessionParams = () => {
+                        return {
+                            userId,
+                            projectId: undefined,
+                        };
+                    };
+
+                    return {
                     // 初始状态
                     sessions: [],
                     currentSessionId: null,
@@ -116,7 +118,8 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                             state.error = null;
                         });
                     },
-                }),
+                };
+                },
                 {
                     name: 'chat-store-with-backend',
                     partialize: (state) => ({

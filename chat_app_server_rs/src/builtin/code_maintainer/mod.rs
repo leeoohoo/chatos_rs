@@ -9,7 +9,9 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use diff::{build_diff, extract_patch_diffs, read_text_for_diff, DiffInput};
+use diff::{
+    build_diff, extract_patch_diffs, extract_patch_targets, read_text_for_diff, DiffInput,
+};
 use fs_ops::FsOps;
 use patch::apply_patch;
 use storage::ChangeLogStore;
@@ -383,6 +385,7 @@ impl CodeMaintainerService {
             let fs_ops = fs_ops.clone();
             let root = root.clone();
             let allow_writes = opts.allow_writes;
+            let max_file_bytes = opts.max_file_bytes;
             service.register_tool(
                 "apply_patch",
                 &format!(
@@ -403,6 +406,14 @@ impl CodeMaintainerService {
                         .and_then(|v| v.as_str())
                         .ok_or("patch is required".to_string())?;
                     let patch_diffs: HashMap<String, String> = extract_patch_diffs(patch_text);
+                    let patch_targets = extract_patch_targets(patch_text);
+                    let mut before_snapshots: HashMap<String, DiffInput> = HashMap::new();
+                    for target in patch_targets {
+                        let before_path = fs_ops.resolve_path(&target.before_path)?;
+                        let before_snapshot = read_text_for_diff(&before_path, max_file_bytes)
+                            .unwrap_or_else(DiffInput::omitted);
+                        before_snapshots.insert(target.after_path, before_snapshot);
+                    }
                     let result = apply_patch(&root, patch_text, allow_writes)?;
                     let mut hashes = Vec::new();
 
@@ -414,7 +425,13 @@ impl CodeMaintainerService {
                             let full_path = fs_ops.resolve_path(path)?;
                             let content = std::fs::read(&full_path).map_err(|err| err.to_string())?;
                             let hash = sha256_bytes(&content);
-                            let diff = patch_diffs.get(path).cloned();
+                            let before_snapshot = before_snapshots
+                                .remove(path)
+                                .unwrap_or_else(|| DiffInput::text(String::new()));
+                            let after_snapshot = read_text_for_diff(&full_path, max_file_bytes)
+                                .unwrap_or_else(DiffInput::omitted);
+                            let diff = build_diff(before_snapshot, after_snapshot)
+                                .or_else(|| patch_diffs.get(path).cloned());
                             store.log_change(
                                 path,
                                 "write",
@@ -428,7 +445,12 @@ impl CodeMaintainerService {
                         }
 
                         for path in &result.deleted {
-                            let diff = patch_diffs.get(path).cloned();
+                            let before_snapshot = before_snapshots
+                                .remove(path)
+                                .unwrap_or_else(|| DiffInput::text(String::new()));
+                            let after_snapshot = DiffInput::text(String::new());
+                            let diff = build_diff(before_snapshot, after_snapshot)
+                                .or_else(|| patch_diffs.get(path).cloned());
                             store.log_change(path, "delete", 0, "", ctx.session_id, ctx.run_id, diff)?;
                         }
                     }

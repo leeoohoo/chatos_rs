@@ -185,6 +185,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
   const handleSelectProject = async (projectId: string) => {
     try {
       await selectProject(projectId);
+      await loadSessions({ limit: PAGE_SIZE, offset: 0, append: false, silent: true });
     } catch (error) {
       console.error('Failed to select project:', error);
     }

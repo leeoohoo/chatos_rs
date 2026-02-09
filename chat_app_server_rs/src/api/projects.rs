@@ -3,8 +3,11 @@ use axum::http::StatusCode;
 use serde::Deserialize;
 use serde_json::Value;
 use std::path::Path as FsPath;
+use std::path::Path as StdPath;
+use pathdiff::diff_paths;
 
 use crate::models::project::{Project, ProjectService};
+use crate::repositories::change_logs;
 
 #[derive(Debug, Deserialize)]
 struct ProjectQuery {
@@ -30,6 +33,14 @@ pub fn router() -> Router {
     Router::new()
         .route("/api/projects", get(list_projects).post(create_project))
         .route("/api/projects/:id", get(get_project).put(update_project).delete(delete_project))
+        .route("/api/projects/:id/changes", get(list_project_changes))
+}
+
+#[derive(Debug, Deserialize)]
+struct ProjectChangeQuery {
+    path: Option<String>,
+    limit: Option<i64>,
+    offset: Option<i64>,
 }
 
 async fn list_projects(Query(query): Query<ProjectQuery>) -> (StatusCode, Json<Value>) {
@@ -90,4 +101,47 @@ async fn delete_project(Path(id): Path<String>) -> (StatusCode, Json<Value>) {
         Ok(_) => (StatusCode::OK, Json(serde_json::json!({"success": true, "message": "项目已删除"}))),
         Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": err}))),
     }
+}
+
+async fn list_project_changes(Path(id): Path<String>, Query(query): Query<ProjectChangeQuery>) -> (StatusCode, Json<Value>) {
+    let project = match ProjectService::get_by_id(&id).await {
+        Ok(Some(p)) => p,
+        Ok(None) => return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "项目不存在"}))),
+        Err(err) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": err}))),
+    };
+
+    let paths = build_change_paths(&project, query.path);
+    let limit = query.limit.or(Some(100));
+    let offset = query.offset.unwrap_or(0);
+
+    match change_logs::list_project_change_logs(&project.id, paths, limit, offset).await {
+        Ok(list) => (StatusCode::OK, Json(serde_json::to_value(list).unwrap_or(Value::Null))),
+        Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": err}))),
+    }
+}
+
+fn build_change_paths(project: &Project, raw: Option<String>) -> Option<Vec<String>> {
+    let raw = raw.and_then(|s| {
+        let trimmed = s.trim();
+        if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
+    })?;
+    let mut out = vec![raw.clone()];
+    let root = project.root_path.trim();
+    if !root.is_empty() {
+        let root_path = StdPath::new(root);
+        let target = StdPath::new(raw.as_str());
+        if target.is_absolute() {
+            if target.starts_with(root_path) {
+                if let Some(rel) = diff_paths(target, root_path) {
+                    out.push(rel.to_string_lossy().to_string());
+                }
+            }
+        } else {
+            let abs = root_path.join(target);
+            out.push(abs.to_string_lossy().to_string());
+        }
+    }
+    out.sort();
+    out.dedup();
+    Some(out)
 }

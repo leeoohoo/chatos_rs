@@ -113,12 +113,14 @@ export function createSessionActions({
           isCustomProjectId: !!customProjectId,
         });
 
-        const sessionData = {
+        const sessionData: { id: string; title: string; user_id: string; project_id?: string } = {
           id: crypto.randomUUID(),
           title,
           user_id: userId,
-          project_id: projectId,
         };
+        if (projectId) {
+          sessionData.project_id = projectId;
+        }
 
         const session = await client.createSession(sessionData);
         debugLog('✅ createSession API调用成功:', session);

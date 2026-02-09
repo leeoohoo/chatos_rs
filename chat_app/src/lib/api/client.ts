@@ -88,7 +88,7 @@ class ApiClient {
     return this.request<any[]>(`/sessions${queryString ? `?${queryString}` : ''}`);
   }
 
-  async createSession(data: { id: string; title: string; user_id: string; project_id: string }): Promise<any> {
+  async createSession(data: { id: string; title: string; user_id: string; project_id?: string }): Promise<any> {
     debugLog('🔍 createSession API调用:', data);
     if (ipcAvailable()) {
       return createSessionIPC(data);
@@ -152,6 +152,18 @@ class ApiClient {
 
   async getProject(id: string): Promise<any> {
     return this.request<any>(`/projects/${id}`);
+  }
+
+  async listProjectChangeLogs(
+    projectId: string,
+    params?: { path?: string; limit?: number; offset?: number }
+  ): Promise<any[]> {
+    const qs: string[] = [];
+    if (params?.path) qs.push(`path=${encodeURIComponent(params.path)}`);
+    if (params?.limit !== undefined) qs.push(`limit=${encodeURIComponent(String(params.limit))}`);
+    if (params?.offset !== undefined) qs.push(`offset=${encodeURIComponent(String(params.offset))}`);
+    const query = qs.length ? `?${qs.join('&')}` : '';
+    return this.request<any[]>(`/projects/${projectId}/changes${query}`);
   }
 
   // 文件系统

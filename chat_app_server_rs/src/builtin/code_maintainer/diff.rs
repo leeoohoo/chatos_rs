@@ -167,6 +167,80 @@ pub fn extract_patch_diffs(patch: &str) -> HashMap<String, String> {
     map
 }
 
+#[derive(Debug, Clone)]
+pub struct PatchTarget {
+    pub before_path: String,
+    pub after_path: String,
+}
+
+pub fn extract_patch_targets(patch: &str) -> Vec<PatchTarget> {
+    let text = patch.replace("\r\n", "\n");
+    let lines: Vec<&str> = text.split('\n').collect();
+    let mut targets: Vec<PatchTarget> = Vec::new();
+    let mut i = 0usize;
+    while i < lines.len() {
+        let line = lines[i];
+        if let Some(path) = line.strip_prefix("*** Update File: ") {
+            let before_path = path.trim().to_string();
+            let mut move_to: Option<String> = None;
+            i += 1;
+            while i < lines.len() {
+                let current = lines[i];
+                if let Some(dest) = current.strip_prefix("*** Move to: ") {
+                    let dest = dest.trim();
+                    if !dest.is_empty() {
+                        move_to = Some(dest.to_string());
+                    }
+                }
+                i += 1;
+                if current.starts_with("*** End Patch") {
+                    break;
+                }
+            }
+            let after_path = move_to.unwrap_or_else(|| before_path.clone());
+            targets.push(PatchTarget {
+                before_path,
+                after_path,
+            });
+            continue;
+        }
+        if let Some(path) = line.strip_prefix("*** Add File: ") {
+            let path = path.trim().to_string();
+            i += 1;
+            while i < lines.len() {
+                let current = lines[i];
+                i += 1;
+                if current.starts_with("*** End Patch") {
+                    break;
+                }
+            }
+            targets.push(PatchTarget {
+                before_path: path.clone(),
+                after_path: path,
+            });
+            continue;
+        }
+        if let Some(path) = line.strip_prefix("*** Delete File: ") {
+            let path = path.trim().to_string();
+            i += 1;
+            while i < lines.len() {
+                let current = lines[i];
+                i += 1;
+                if current.starts_with("*** End Patch") {
+                    break;
+                }
+            }
+            targets.push(PatchTarget {
+                before_path: path.clone(),
+                after_path: path,
+            });
+            continue;
+        }
+        i += 1;
+    }
+    targets
+}
+
 fn collect_patch_section(lines: &[&str], start: usize, path: &str) -> (String, String, usize) {
     let mut section: Vec<String> = Vec::new();
     let mut move_to: Option<String> = None;
