@@ -318,8 +318,9 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     >
       {/* 会话与项目列表 */}
       {!isCollapsed && (
-        <div className="flex-1 overflow-y-auto">
-          <div className="px-3 py-2 text-xs text-muted-foreground flex items-center justify-between">
+        <div className="flex-1 flex flex-col overflow-hidden">
+          <div className={cn('flex flex-col min-h-0', sessionsExpanded ? 'flex-1' : 'shrink-0')}>
+            <div className="px-3 py-2 text-xs text-muted-foreground flex items-center justify-between">
             <button
               type="button"
               onClick={() => setSessionsExpanded((prev) => !prev)}
@@ -346,70 +347,179 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
                 <PlusIcon className="w-4 h-4" />
               </button>
             </div>
-          </div>
-
-          {sessionsExpanded && (
-            <>
-              {sessions.length === 0 ? (
-                <div className="flex flex-col items-center justify-center text-muted-foreground py-6">
-                  <ChatIcon className="w-12 h-12 mb-4 opacity-50" />
-                  <p className="text-sm">还没有会话</p>
-                  <button
-                    onClick={handleCreateSession}
-                    className="mt-2 px-4 py-2 text-sm bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
-                  >
-                    创建第一个会话
-                  </button>
-                </div>
-              ) : (
-                <div className="p-2 space-y-1">
-                  {sessions.map((session: Session) => (
-                    <div
-                      key={session.id}
-                      className={`group relative flex items-center p-3 rounded-lg cursor-pointer transition-colors ${
-                        currentSession?.id === session.id
-                          ? 'bg-accent border border-border'
-                          : 'hover:bg-accent/50'
-                      }`}
-                      onClick={() => handleSelectSession(session.id)}
+            </div>
+            {sessionsExpanded && (
+              <div className="flex-1 min-h-0 overflow-y-auto">
+                {sessions.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center text-muted-foreground py-6">
+                    <ChatIcon className="w-12 h-12 mb-4 opacity-50" />
+                    <p className="text-sm">还没有会话</p>
+                    <button
+                      onClick={handleCreateSession}
+                      className="mt-2 px-4 py-2 text-sm bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
                     >
-                      <div className="flex-1 min-w-0">
-                        {editingSessionId === session.id ? (
-                          <input
-                            type="text"
-                            value={editingTitle}
-                            onChange={(e) => setEditingTitle(e.target.value)}
-                            onBlur={handleSaveEdit}
-                            onKeyDown={handleKeyPress}
-                            className="w-full px-2 py-1 text-sm bg-background border border-border rounded focus:outline-none focus:ring-2 focus:ring-ring"
-                            autoFocus
-                            onClick={(e) => e.stopPropagation()}
-                          />
-                        ) : (
-                          <>
-                            <h3 className="text-sm font-medium text-foreground truncate">
-                              {session.title}
-                            </h3>
-                            <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
-                              <span>{formatTimeAgo(session.updatedAt)}</span>
-                              <span className="text-muted-foreground/60">·</span>
-                              {(() => {
-                                const chatState = sessionChatState?.[session.id];
-                                const isBusy = !!(chatState?.isLoading || chatState?.isStreaming);
-                                return (
-                                  <span className={cn('inline-flex items-center gap-1', isBusy ? 'text-amber-600' : 'text-muted-foreground')}>
-                                    <span className={cn('inline-block w-2 h-2 rounded-full', isBusy ? 'bg-amber-500' : 'bg-muted-foreground/40')} />
-                                    {isBusy ? '执行中' : '空闲'}
-                                  </span>
-                                );
-                              })()}
+                      创建第一个会话
+                    </button>
+                  </div>
+                ) : (
+                  <div className="p-2 space-y-1">
+                    {sessions.map((session: Session) => (
+                      <div
+                        key={session.id}
+                        className={`group relative flex items-center p-3 rounded-lg cursor-pointer transition-colors ${
+                          currentSession?.id === session.id
+                            ? 'bg-accent border border-border'
+                            : 'hover:bg-accent/50'
+                        }`}
+                        onClick={() => handleSelectSession(session.id)}
+                      >
+                        <div className="flex-1 min-w-0">
+                          {editingSessionId === session.id ? (
+                            <input
+                              type="text"
+                              value={editingTitle}
+                              onChange={(e) => setEditingTitle(e.target.value)}
+                              onBlur={handleSaveEdit}
+                              onKeyDown={handleKeyPress}
+                              className="w-full px-2 py-1 text-sm bg-background border border-border rounded focus:outline-none focus:ring-2 focus:ring-ring"
+                              autoFocus
+                              onClick={(e) => e.stopPropagation()}
+                            />
+                          ) : (
+                            <>
+                              <h3 className="text-sm font-medium text-foreground truncate">
+                                {session.title}
+                              </h3>
+                              <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                                <span>{formatTimeAgo(session.updatedAt)}</span>
+                                <span className="text-muted-foreground/60">·</span>
+                                {(() => {
+                                  const chatState = sessionChatState?.[session.id];
+                                  const isBusy = !!(chatState?.isLoading || chatState?.isStreaming);
+                                  return (
+                                    <span className={cn('inline-flex items-center gap-1', isBusy ? 'text-amber-600' : 'text-muted-foreground')}>
+                                      <span className={cn('inline-block w-2 h-2 rounded-full', isBusy ? 'bg-amber-500' : 'bg-muted-foreground/40')} />
+                                      {isBusy ? '执行中' : '空闲'}
+                                    </span>
+                                  );
+                                })()}
+                              </div>
+                            </>
+                          )}
+                        </div>
+
+                        {/* 操作菜单 */}
+                        {editingSessionId !== session.id && (
+                          <div className="relative">
+                            <button
+                              className="p-1 text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 transition-opacity"
+                              onClick={(e: React.MouseEvent) => {
+                                e.stopPropagation();
+                                const menu = e.currentTarget.nextElementSibling as HTMLElement;
+                                if (menu) {
+                                  menu.classList.toggle('hidden');
+                                }
+                              }}
+                            >
+                              <DotsVerticalIcon className="w-4 h-4" />
+                            </button>
+                            <div className="hidden absolute right-0 z-10 mt-1 w-32 bg-popover border border-border rounded-md shadow-lg">
+                              <div className="py-1">
+                                <button
+                                  onClick={(e: React.MouseEvent) => {
+                                    e.stopPropagation();
+                                    handleStartEdit(session.id, session.title);
+                                    const menu = e.currentTarget.closest('.absolute') as HTMLElement;
+                                    if (menu) menu.classList.add('hidden');
+                                  }}
+                                  className="flex items-center w-full px-3 py-2 text-sm text-popover-foreground hover:bg-accent"
+                                >
+                                  <PencilIcon className="w-4 h-4 mr-2" />
+                                  重命名
+                                </button>
+                                <button
+                                  onClick={(e: React.MouseEvent) => {
+                                    e.stopPropagation();
+                                    handleDeleteSession(session.id);
+                                    const menu = e.currentTarget.closest('.absolute') as HTMLElement;
+                                    if (menu) menu.classList.add('hidden');
+                                  }}
+                                  className="flex items-center w-full px-3 py-2 text-sm text-destructive hover:bg-destructive/10"
+                                >
+                                  <TrashIcon className="w-4 h-4 mr-2" />
+                                  删除
+                                </button>
+                              </div>
                             </div>
-                          </>
+                          </div>
                         )}
                       </div>
+                    ))}
+                    {hasMore && (
+                      <div className="pt-2">
+                        <button
+                          onClick={handleLoadMoreSessions}
+                          disabled={isLoadingMore}
+                          className="w-full px-3 py-2 text-sm text-muted-foreground hover:text-foreground border border-border rounded-lg hover:bg-accent transition-colors disabled:opacity-50"
+                        >
+                          {isLoadingMore ? '加载中...' : '加载更多'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
 
-                      {/* 操作菜单 */}
-                      {editingSessionId !== session.id && (
+          <div className="my-2 border-t border-border" />
+
+          <div className="flex flex-col">
+            <div className="px-3 py-2 text-xs text-muted-foreground flex items-center justify-between">
+            <button
+              type="button"
+              onClick={() => setProjectsExpanded((prev) => !prev)}
+              className="flex items-center gap-2 uppercase tracking-wide"
+            >
+              <span>{projectsExpanded ? '▾' : '▸'}</span>
+              <span>PROJECTS</span>
+            </button>
+            <button
+              type="button"
+              onClick={openProjectModal}
+              className="p-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded"
+              title="新增项目"
+            >
+              <PlusIcon className="w-4 h-4" />
+            </button>
+            </div>
+
+            {projectsExpanded && (
+              <div className="max-h-64 overflow-y-auto">
+                {projects.length === 0 ? (
+                  <div className="px-3 py-3 text-xs text-muted-foreground">
+                    还没有项目，点击右侧 + 新建。
+                  </div>
+                ) : (
+                  <div className="p-2 space-y-1">
+                    {projects.map((project: Project) => (
+                      <div
+                        key={project.id}
+                        className={`group relative flex items-center p-2 rounded-lg cursor-pointer transition-colors ${
+                          currentProject?.id === project.id
+                            ? 'bg-accent border border-border'
+                            : 'hover:bg-accent/50'
+                        }`}
+                        onClick={() => handleSelectProject(project.id)}
+                      >
+                        <div className="flex-1 min-w-0">
+                          <h3 className="text-sm font-medium text-foreground truncate">
+                            {project.name}
+                          </h3>
+                          <div className="mt-1 text-xs text-muted-foreground truncate" title={project.rootPath}>
+                            {project.rootPath}
+                          </div>
+                        </div>
                         <div className="relative">
                           <button
                             className="p-1 text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 transition-opacity"
@@ -428,19 +538,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
                               <button
                                 onClick={(e: React.MouseEvent) => {
                                   e.stopPropagation();
-                                  handleStartEdit(session.id, session.title);
-                                  const menu = e.currentTarget.closest('.absolute') as HTMLElement;
-                                  if (menu) menu.classList.add('hidden');
-                                }}
-                                className="flex items-center w-full px-3 py-2 text-sm text-popover-foreground hover:bg-accent"
-                              >
-                                <PencilIcon className="w-4 h-4 mr-2" />
-                                重命名
-                              </button>
-                              <button
-                                onClick={(e: React.MouseEvent) => {
-                                  e.stopPropagation();
-                                  handleDeleteSession(session.id);
+                                  handleDeleteProject(project.id);
                                   const menu = e.currentTarget.closest('.absolute') as HTMLElement;
                                   if (menu) menu.classList.add('hidden');
                                 }}
@@ -452,108 +550,13 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
                             </div>
                           </div>
                         </div>
-                      )}
-                    </div>
-                  ))}
-                  {hasMore && (
-                    <div className="pt-2">
-                      <button
-                        onClick={handleLoadMoreSessions}
-                        disabled={isLoadingMore}
-                        className="w-full px-3 py-2 text-sm text-muted-foreground hover:text-foreground border border-border rounded-lg hover:bg-accent transition-colors disabled:opacity-50"
-                      >
-                        {isLoadingMore ? '加载中...' : '加载更多'}
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </>
-          )}
-
-          <div className="my-2 border-t border-border" />
-
-          <div className="px-3 py-2 text-xs text-muted-foreground flex items-center justify-between">
-            <button
-              type="button"
-              onClick={() => setProjectsExpanded((prev) => !prev)}
-              className="flex items-center gap-2 uppercase tracking-wide"
-            >
-              <span>{projectsExpanded ? '▾' : '▸'}</span>
-              <span>PROJECTS</span>
-            </button>
-            <button
-              type="button"
-              onClick={openProjectModal}
-              className="p-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded"
-              title="新增项目"
-            >
-              <PlusIcon className="w-4 h-4" />
-            </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
-
-          {projectsExpanded && (
-            <>
-              {projects.length === 0 ? (
-                <div className="px-3 py-3 text-xs text-muted-foreground">
-                  还没有项目，点击右侧 + 新建。
-                </div>
-              ) : (
-                <div className="p-2 space-y-1">
-                  {projects.map((project: Project) => (
-                    <div
-                      key={project.id}
-                      className={`group relative flex items-center p-2 rounded-lg cursor-pointer transition-colors ${
-                        currentProject?.id === project.id
-                          ? 'bg-accent border border-border'
-                          : 'hover:bg-accent/50'
-                      }`}
-                      onClick={() => handleSelectProject(project.id)}
-                    >
-                      <div className="flex-1 min-w-0">
-                        <h3 className="text-sm font-medium text-foreground truncate">
-                          {project.name}
-                        </h3>
-                        <div className="mt-1 text-xs text-muted-foreground truncate" title={project.rootPath}>
-                          {project.rootPath}
-                        </div>
-                      </div>
-                      <div className="relative">
-                        <button
-                          className="p-1 text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 transition-opacity"
-                          onClick={(e: React.MouseEvent) => {
-                            e.stopPropagation();
-                            const menu = e.currentTarget.nextElementSibling as HTMLElement;
-                            if (menu) {
-                              menu.classList.toggle('hidden');
-                            }
-                          }}
-                        >
-                          <DotsVerticalIcon className="w-4 h-4" />
-                        </button>
-                        <div className="hidden absolute right-0 z-10 mt-1 w-32 bg-popover border border-border rounded-md shadow-lg">
-                          <div className="py-1">
-                            <button
-                              onClick={(e: React.MouseEvent) => {
-                                e.stopPropagation();
-                                handleDeleteProject(project.id);
-                                const menu = e.currentTarget.closest('.absolute') as HTMLElement;
-                                if (menu) menu.classList.add('hidden');
-                              }}
-                              className="flex items-center w-full px-3 py-2 text-sm text-destructive hover:bg-destructive/10"
-                            >
-                              <TrashIcon className="w-4 h-4 mr-2" />
-                              删除
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </>
-          )}
         </div>
       )}
 
