@@ -1,5 +1,5 @@
 use std::io::{Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
@@ -24,6 +24,9 @@ pub struct TerminalSession {
     sender: broadcast::Sender<TerminalEvent>,
     writer: Mutex<Box<dyn Write + Send>>,
     master: Mutex<Box<dyn MasterPty + Send>>,
+    root_cwd: PathBuf,
+    current_cwd: Mutex<PathBuf>,
+    input_line: Mutex<String>,
     busy: AtomicBool,
     last_input_at: AtomicU64,
     last_output_at: AtomicU64,
@@ -37,6 +40,9 @@ impl TerminalSession {
             return Err("cwd does not exist".to_string());
         }
 
+        let root_cwd = std::fs::canonicalize(&cwd)
+            .map_err(|e| format!("canonicalize cwd failed: {e}"))?;
+
         let pty_system = native_pty_system();
         let pair = pty_system
             .openpty(PtySize {
@@ -47,7 +53,7 @@ impl TerminalSession {
             })
             .map_err(|e| format!("open pty failed: {e}"))?;
 
-        let child = spawn_shell(&cwd, pair.slave)?;
+        let child = spawn_shell(root_cwd.as_path(), pair.slave)?;
 
         let mut reader = pair
             .master
@@ -65,6 +71,9 @@ impl TerminalSession {
             sender,
             writer: Mutex::new(writer),
             master: Mutex::new(pair.master),
+            root_cwd: root_cwd.clone(),
+            current_cwd: Mutex::new(root_cwd),
+            input_line: Mutex::new(String::new()),
             busy: AtomicBool::new(false),
             last_input_at: AtomicU64::new(0),
             last_output_at: AtomicU64::new(0),
@@ -90,12 +99,13 @@ impl TerminalSession {
                             let tail = parts.pop().unwrap_or("");
                             let mut saw_prompt = false;
                             for line in parts.iter() {
+                                session_clone.sync_current_cwd_from_prompt_line(line);
                                 if is_prompt_line(line) {
                                     saw_prompt = true;
-                                    break;
                                 }
                             }
                             line_buffer = tail.to_string();
+                            session_clone.sync_current_cwd_from_prompt_line(line_buffer.as_str());
                             if !saw_prompt && is_prompt_line(line_buffer.as_str()) {
                                 saw_prompt = true;
                             }
@@ -124,12 +134,21 @@ impl TerminalSession {
     }
 
     pub fn write_input(&self, data: &str) -> Result<(), String> {
-        self.mark_input();
-        let mut writer = self.writer.lock().map_err(|_| "writer lock failed".to_string())?;
-        writer
-            .write_all(data.as_bytes())
-            .map_err(|e| format!("write failed: {e}"))?;
-        writer.flush().map_err(|e| format!("flush failed: {e}"))?;
+        let (forward_data, blocked_messages) = self.apply_directory_guard(data);
+        self.mark_input(&forward_data);
+
+        if !forward_data.is_empty() {
+            let mut writer = self.writer.lock().map_err(|_| "writer lock failed".to_string())?;
+            writer
+                .write_all(forward_data.as_bytes())
+                .map_err(|e| format!("write failed: {e}"))?;
+            writer.flush().map_err(|e| format!("flush failed: {e}"))?;
+        }
+
+        for message in blocked_messages {
+            self.emit_guard_output(&message);
+        }
+
         Ok(())
     }
 
@@ -150,9 +169,88 @@ impl TerminalSession {
         self.busy.load(Ordering::Relaxed)
     }
 
-    fn mark_input(&self) {
+    fn apply_directory_guard(&self, data: &str) -> (String, Vec<String>) {
+        if data.is_empty() {
+            return (String::new(), Vec::new());
+        }
+
+        let mut line = match self.input_line.lock() {
+            Ok(guard) => guard,
+            Err(_) => return (data.to_string(), Vec::new()),
+        };
+        let mut current_cwd = match self.current_cwd.lock() {
+            Ok(guard) => guard,
+            Err(_) => return (data.to_string(), Vec::new()),
+        };
+
+        let mut forward = String::with_capacity(data.len());
+        let mut blocked = Vec::new();
+
+        for ch in data.chars() {
+            match ch {
+                '\r' | '\n' => {
+                    let command_line = line.clone();
+                    line.clear();
+                    if let Some(reason) = validate_directory_change_command(
+                        command_line.as_str(),
+                        self.root_cwd.as_path(),
+                        &mut current_cwd,
+                    ) {
+                        forward.push_str(clear_input_line_sequence(command_line.as_str()).as_str());
+                        blocked.push(reason);
+                        continue;
+                    }
+                    forward.push(ch);
+                }
+                '\u{8}' | '\u{7f}' => {
+                    line.pop();
+                    forward.push(ch);
+                }
+                '\u{15}' => {
+                    line.clear();
+                    forward.push(ch);
+                }
+                '\u{3}' | '\u{4}' | '\u{1a}' => {
+                    line.clear();
+                    forward.push(ch);
+                }
+                _ if ch.is_control() => {
+                    forward.push(ch);
+                }
+                _ => {
+                    line.push(ch);
+                    forward.push(ch);
+                }
+            }
+        }
+
+        (forward, blocked)
+    }
+
+    fn emit_guard_output(&self, message: &str) {
+        let output = format!("\r\n{message}\r\n");
+        let _ = self.sender.send(TerminalEvent::Output(output));
+    }
+
+    fn sync_current_cwd_from_prompt_line(&self, line: &str) {
+        let Some(parsed_cwd) = extract_prompt_cwd(line) else {
+            return;
+        };
+
+        if !path_is_within_root(parsed_cwd.as_path(), self.root_cwd.as_path()) {
+            return;
+        }
+
+        if let Ok(mut cwd_guard) = self.current_cwd.lock() {
+            *cwd_guard = parsed_cwd;
+        }
+    }
+
+    fn mark_input(&self, data: &str) {
         self.last_input_at.store(now_millis(), Ordering::Relaxed);
-        self.set_busy(true);
+        if input_triggers_busy(data) {
+            self.set_busy(true);
+        }
     }
 
     fn mark_output(&self) {
@@ -240,7 +338,7 @@ pub fn get_terminal_manager() -> Arc<TerminalsManager> {
     TERMINAL_MANAGER.get_or_init(|| Arc::new(TerminalsManager::new())).clone()
 }
 
-fn spawn_shell(cwd: &str, slave: Box<dyn SlavePty + Send>) -> Result<Box<dyn portable_pty::Child + Send + Sync>, String> {
+fn spawn_shell(cwd: &Path, slave: Box<dyn SlavePty + Send>) -> Result<Box<dyn portable_pty::Child + Send + Sync>, String> {
     let shell = select_shell();
     let mut cmd = CommandBuilder::new(shell.clone());
     cmd.cwd(cwd);
@@ -292,6 +390,282 @@ fn find_in_path(candidates: &[&str]) -> Option<String> {
     None
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DirChangeKind {
+    Cd,
+    SetLocation,
+    Pushd,
+    Popd,
+}
+
+#[derive(Debug, Clone)]
+struct DirChangeCommand {
+    kind: DirChangeKind,
+    target: Option<String>,
+    has_extra_args: bool,
+}
+
+fn validate_directory_change_command(
+    line: &str,
+    root_cwd: &Path,
+    current_cwd: &mut PathBuf,
+) -> Option<String> {
+    let command = parse_directory_change_command(line)?;
+
+    if command.has_extra_args {
+        return Some(
+            "Blocked: run directory-change commands alone (no chained arguments)."
+                .to_string(),
+        );
+    }
+
+    if matches!(command.kind, DirChangeKind::Pushd | DirChangeKind::Popd) {
+        return Some("Blocked: pushd/popd are disabled for this restricted terminal.".to_string());
+    }
+
+    if let Some(target) = command.target.as_deref() {
+        let target = target.trim();
+        if target == "-" {
+            return Some("Blocked: cd - is disabled in this restricted terminal.".to_string());
+        }
+        if has_dynamic_cd_syntax(target) {
+            return Some(
+                "Blocked: cd path cannot contain shell expansions or control operators."
+                    .to_string(),
+            );
+        }
+    }
+
+    let resolved = match resolve_cd_target(root_cwd, current_cwd.as_path(), command.target.as_deref()) {
+        Some(path) => path,
+        None => return None,
+    };
+
+    if !path_is_within_root(resolved.as_path(), root_cwd) {
+        let root = root_cwd.display();
+        return Some(format!("Blocked: cannot leave terminal root directory: {root}"));
+    }
+
+    *current_cwd = resolved;
+    None
+}
+
+fn parse_directory_change_command(line: &str) -> Option<DirChangeCommand> {
+    let words = split_shell_words(line.trim())?;
+    if words.is_empty() {
+        return None;
+    }
+
+    let command = words[0].to_ascii_lowercase();
+    match command.as_str() {
+        "cd" | "chdir" => parse_cd_command(words),
+        "set-location" | "sl" => parse_set_location_command(words),
+        "pushd" => Some(DirChangeCommand {
+            kind: DirChangeKind::Pushd,
+            target: words.get(1).cloned(),
+            has_extra_args: words.len() > 2,
+        }),
+        "popd" => Some(DirChangeCommand {
+            kind: DirChangeKind::Popd,
+            target: None,
+            has_extra_args: words.len() > 1,
+        }),
+        _ => None,
+    }
+}
+
+fn parse_cd_command(words: Vec<String>) -> Option<DirChangeCommand> {
+    let mut idx = 1;
+    if idx < words.len() && words[idx].eq_ignore_ascii_case("/d") {
+        idx += 1;
+    }
+
+    let target = if idx < words.len() {
+        Some(words[idx].clone())
+    } else {
+        None
+    };
+    let has_extra_args = if target.is_some() {
+        idx + 1 < words.len()
+    } else {
+        idx < words.len()
+    };
+
+    Some(DirChangeCommand {
+        kind: DirChangeKind::Cd,
+        target,
+        has_extra_args,
+    })
+}
+
+fn parse_set_location_command(words: Vec<String>) -> Option<DirChangeCommand> {
+    let mut idx = 1;
+    if idx < words.len()
+        && (words[idx].eq_ignore_ascii_case("-path")
+            || words[idx].eq_ignore_ascii_case("-literalpath"))
+    {
+        idx += 1;
+    }
+
+    let target = if idx < words.len() {
+        Some(words[idx].clone())
+    } else {
+        None
+    };
+    let has_extra_args = if target.is_some() {
+        idx + 1 < words.len()
+    } else {
+        idx < words.len()
+    };
+
+    Some(DirChangeCommand {
+        kind: DirChangeKind::SetLocation,
+        target,
+        has_extra_args,
+    })
+}
+
+fn split_shell_words(input: &str) -> Option<Vec<String>> {
+    let mut words = Vec::new();
+    let mut current = String::new();
+    let mut quote: Option<char> = None;
+
+    for ch in input.chars() {
+        match quote {
+            Some(marker) => {
+                if ch == marker {
+                    quote = None;
+                } else {
+                    current.push(ch);
+                }
+            }
+            None => {
+                if ch.is_whitespace() {
+                    if !current.is_empty() {
+                        words.push(std::mem::take(&mut current));
+                    }
+                } else if ch == '\'' || ch == '"' {
+                    quote = Some(ch);
+                } else {
+                    current.push(ch);
+                }
+            }
+        }
+    }
+
+    if quote.is_some() {
+        return None;
+    }
+    if !current.is_empty() {
+        words.push(current);
+    }
+    Some(words)
+}
+
+fn extract_prompt_cwd(line: &str) -> Option<PathBuf> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    static POWERSHELL_PROMPT_RE: once_cell::sync::Lazy<regex::Regex> = once_cell::sync::Lazy::new(|| {
+        regex::Regex::new(r"(?:^|[\s\]])PS (?:[^:>\r\n]+::)?([A-Za-z]:\\[^>\r\n]*)> ?$").unwrap()
+    });
+    static CMD_PROMPT_RE: once_cell::sync::Lazy<regex::Regex> = once_cell::sync::Lazy::new(|| {
+        regex::Regex::new(r"([A-Za-z]:\\[^>\r\n]*)> ?$").unwrap()
+    });
+    static UNIX_PROMPT_RE: once_cell::sync::Lazy<regex::Regex> = once_cell::sync::Lazy::new(|| {
+        regex::Regex::new(r"(/[^#$%>\r\n]*)[#$%>] ?$").unwrap()
+    });
+
+    if let Some(caps) = POWERSHELL_PROMPT_RE.captures(trimmed) {
+        return canonicalize_prompt_path(caps.get(1).map(|m| m.as_str())?);
+    }
+    if let Some(caps) = CMD_PROMPT_RE.captures(trimmed) {
+        return canonicalize_prompt_path(caps.get(1).map(|m| m.as_str())?);
+    }
+    if let Some(caps) = UNIX_PROMPT_RE.captures(trimmed) {
+        return canonicalize_prompt_path(caps.get(1).map(|m| m.as_str())?);
+    }
+
+    None
+}
+
+fn canonicalize_prompt_path(raw_path: &str) -> Option<PathBuf> {
+    let candidate = raw_path.trim();
+    if candidate.is_empty() {
+        return None;
+    }
+
+    let path = Path::new(candidate);
+    if !path.is_absolute() {
+        return None;
+    }
+
+    std::fs::canonicalize(path).ok()
+}
+
+fn clear_input_line_sequence(command_line: &str) -> String {
+    let mut seq = String::new();
+    for _ in 0..command_line.chars().count() {
+        // Backspace + overwrite + backspace clears one character in most terminals.
+        seq.push('\u{8}');
+        seq.push(' ');
+        seq.push('\u{8}');
+    }
+    seq
+}
+
+fn has_dynamic_cd_syntax(target: &str) -> bool {
+    let trimmed = target.trim();
+    trimmed.starts_with('~')
+        || trimmed
+            .chars()
+            .any(|ch| matches!(ch, '$' | '%' | '`' | ';' | '|' | '&' | '>' | '<'))
+}
+
+fn resolve_cd_target(root_cwd: &Path, current_cwd: &Path, target: Option<&str>) -> Option<PathBuf> {
+    let raw_target = target.unwrap_or("").trim();
+
+    if raw_target.is_empty() {
+        return Some(root_cwd.to_path_buf());
+    }
+
+    let candidate = if Path::new(raw_target).is_absolute() {
+        PathBuf::from(raw_target)
+    } else {
+        current_cwd.join(raw_target)
+    };
+
+    std::fs::canonicalize(candidate).ok()
+}
+
+fn path_is_within_root(candidate: &Path, root: &Path) -> bool {
+    let candidate_norm = normalize_path_for_compare(candidate);
+    let root_norm = normalize_path_for_compare(root);
+
+    if candidate_norm == root_norm {
+        return true;
+    }
+
+    let prefix = format!("{root_norm}/");
+    candidate_norm.starts_with(&prefix)
+}
+
+fn normalize_path_for_compare(path: &Path) -> String {
+    let mut normalized = path.to_string_lossy().replace('\\', "/");
+
+    while normalized.ends_with('/') && normalized.len() > 1 {
+        normalized.pop();
+    }
+
+    if cfg!(windows) {
+        normalized = normalized.to_ascii_lowercase();
+    }
+
+    normalized
+}
+
 fn now_millis() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
@@ -300,14 +674,37 @@ fn now_millis() -> u64 {
         .unwrap_or(0)
 }
 
+fn input_triggers_busy(data: &str) -> bool {
+    if data.is_empty() {
+        return false;
+    }
+    if data.contains('\r') || data.contains('\n') {
+        return true;
+    }
+
+    // Ctrl-C / Ctrl-D / Ctrl-Z may start or interrupt foreground commands.
+    data.as_bytes()
+        .iter()
+        .any(|b| matches!(*b, 0x03 | 0x04 | 0x1A))
+}
+
 fn strip_ansi(input: &str) -> String {
     if input.is_empty() {
         return String::new();
     }
-    static ANSI_RE: once_cell::sync::Lazy<regex::Regex> = once_cell::sync::Lazy::new(|| {
+    static ANSI_CSI_RE: once_cell::sync::Lazy<regex::Regex> = once_cell::sync::Lazy::new(|| {
         regex::Regex::new(r"\x1B\[[0-?]*[ -/]*[@-~]").unwrap()
     });
-    ANSI_RE.replace_all(input, "").to_string()
+    static ANSI_OSC_RE: once_cell::sync::Lazy<regex::Regex> = once_cell::sync::Lazy::new(|| {
+        regex::Regex::new(r"\x1B\][^\x07\x1B]*(?:\x07|\x1B\\)").unwrap()
+    });
+    static ANSI_ESC_RE: once_cell::sync::Lazy<regex::Regex> = once_cell::sync::Lazy::new(|| {
+        regex::Regex::new(r"\x1B[@-_]").unwrap()
+    });
+
+    let without_osc = ANSI_OSC_RE.replace_all(input, "");
+    let without_csi = ANSI_CSI_RE.replace_all(&without_osc, "");
+    ANSI_ESC_RE.replace_all(&without_csi, "").to_string()
 }
 
 fn is_prompt_line(line: &str) -> bool {
@@ -317,14 +714,131 @@ fn is_prompt_line(line: &str) -> bool {
     }
     static PROMPT_PATTERNS: once_cell::sync::Lazy<Vec<regex::Regex>> = once_cell::sync::Lazy::new(|| {
         vec![
-            regex::Regex::new(r"^\\([^)]+\\)\\s?.*[#$%>] ?$").unwrap(),
-            regex::Regex::new(r"^[^\\n\\r]*@[^\\n\\r]*[#$%>] ?$").unwrap(),
-            regex::Regex::new(r"^PS [A-Za-z]:\\\\.*> ?$").unwrap(),
-            regex::Regex::new(r"^[A-Za-z]:\\\\.*> ?$").unwrap(),
-            regex::Regex::new(r"^.*\\$\\s?$").unwrap(),
-            regex::Regex::new(r"^.*%\\s?$").unwrap(),
-            regex::Regex::new(r"^.*>\\s?$").unwrap(),
+            regex::Regex::new(r"^\([^)]+\)\s?.*[#$%>] ?$").unwrap(),
+            regex::Regex::new(r"^[^\n\r]*@[^\n\r]*[#$%>] ?$").unwrap(),
+            regex::Regex::new(r"^PS [A-Za-z]:\\.*> ?$").unwrap(),
+            regex::Regex::new(r"^[A-Za-z]:\\.*> ?$").unwrap(),
+            regex::Regex::new(r"^.*\$\s?$").unwrap(),
+            regex::Regex::new(r"^.*%\s?$").unwrap(),
+            regex::Regex::new(r"^.*>\s?$").unwrap(),
         ]
     });
     PROMPT_PATTERNS.iter().any(|re| re.is_match(trimmed))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        extract_prompt_cwd,
+        input_triggers_busy,
+        is_prompt_line,
+        normalize_path_for_compare,
+        path_is_within_root,
+        validate_directory_change_command,
+    };
+
+    #[test]
+    fn input_only_marks_busy_when_it_can_change_foreground_command() {
+        assert!(!input_triggers_busy(""));
+        assert!(!input_triggers_busy("n"));
+        assert!(!input_triggers_busy("\u{7f}"));
+        assert!(input_triggers_busy("\r"));
+        assert!(input_triggers_busy("npm run dev\r"));
+        assert!(input_triggers_busy("\n"));
+        assert!(input_triggers_busy("\u{3}"));
+        assert!(input_triggers_busy("\u{4}"));
+        assert!(input_triggers_busy("\u{1a}"));
+    }
+
+    #[test]
+    fn prompt_detection_matches_common_shell_prompts() {
+        assert!(is_prompt_line("PS C:\\repo>"));
+        assert!(is_prompt_line("C:\\repo>"));
+        assert!(is_prompt_line("user@host:~/repo$"));
+        assert!(!is_prompt_line("vite v5 ready in 123 ms"));
+    }
+
+    #[test]
+    fn prompt_parser_handles_ansi_wrapped_prompt() {
+        let cwd = std::env::current_dir().unwrap();
+        let expected = std::fs::canonicalize(&cwd).unwrap();
+
+        let plain_prompt = if cfg!(windows) {
+            format!("PS {}>", cwd.display())
+        } else {
+            format!("{}$", cwd.display())
+        };
+        let wrapped = format!("\u{1b}]633;A\u{7}\u{1b}[32m{plain_prompt}\u{1b}[0m");
+        let cleaned = super::strip_ansi(wrapped.as_str());
+
+        let parsed = extract_prompt_cwd(cleaned.as_str()).unwrap();
+        assert_eq!(
+            normalize_path_for_compare(parsed.as_path()),
+            normalize_path_for_compare(expected.as_path())
+        );
+    }
+
+    #[test]
+    fn prompt_parser_recognizes_shell_working_directory() {
+        let cwd = std::env::current_dir().unwrap();
+        let expected = std::fs::canonicalize(&cwd).unwrap();
+
+        if cfg!(windows) {
+            let line = format!("PS {}>", cwd.display());
+            let parsed = extract_prompt_cwd(line.as_str()).unwrap();
+            assert_eq!(
+                normalize_path_for_compare(parsed.as_path()),
+                normalize_path_for_compare(expected.as_path())
+            );
+        } else {
+            let line = format!("{}$", cwd.display());
+            let parsed = extract_prompt_cwd(line.as_str()).unwrap();
+            assert_eq!(
+                normalize_path_for_compare(parsed.as_path()),
+                normalize_path_for_compare(expected.as_path())
+            );
+        }
+    }
+
+    #[test]
+    fn directory_guard_allows_descendants_and_blocks_escape() {
+        let unique = format!(
+            "chatos-terminal-guard-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let base = std::env::temp_dir().join(unique);
+        let root = base.join("root");
+        let child = root.join("child");
+
+        std::fs::create_dir_all(&child).unwrap();
+
+        let root = std::fs::canonicalize(&root).unwrap();
+        let mut current = root.clone();
+
+        assert!(validate_directory_change_command("cd child", root.as_path(), &mut current).is_none());
+        assert!(path_is_within_root(current.as_path(), root.as_path()));
+
+        assert!(validate_directory_change_command("cd ..", root.as_path(), &mut current).is_none());
+        assert_eq!(current, root);
+
+        let blocked_root_parent = validate_directory_change_command("cd ..", root.as_path(), &mut current);
+        assert!(blocked_root_parent.is_some());
+
+        let escape = format!("cd ..{}..", std::path::MAIN_SEPARATOR);
+        let blocked = validate_directory_change_command(escape.as_str(), root.as_path(), &mut current);
+        assert!(blocked.is_some());
+
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn directory_guard_blocks_dynamic_cd_syntax() {
+        let root = std::fs::canonicalize(".").unwrap();
+        let mut current = root.clone();
+        let blocked = validate_directory_change_command("cd $HOME", root.as_path(), &mut current);
+        assert!(blocked.is_some());
+    }
 }
