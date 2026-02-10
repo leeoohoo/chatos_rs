@@ -22,9 +22,8 @@ interface CommandHistoryItem {
   createdAt: string;
 }
 
-interface CommandParseState {
+interface CommandHistoryParseState {
   lineBuffer: string;
-  skipFollowingLf: boolean;
 }
 
 const MAX_COMMAND_HISTORY = 200;
@@ -89,74 +88,102 @@ const getThemeColors = (theme: 'light' | 'dark') => {
   };
 };
 
-const createInitialCommandParseState = (): CommandParseState => ({
+const createInitialCommandHistoryParseState = (): CommandHistoryParseState => ({
   lineBuffer: '',
-  skipFollowingLf: false,
 });
 
-const stripInputControlSequences = (input: string): string => (
+const stripTerminalControlSequences = (input: string): string => (
   input
     .replace(/\u001b\][^\u001b\u0007]*(?:\u0007|\u001b\\)/g, '')
     .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '')
     .replace(/\u001b[@-Z\\-_]/g, '')
 );
 
-const parseInputChunkForCommands = (
-  chunk: string,
-  state: CommandParseState,
-): { commands: string[]; nextState: CommandParseState } => {
-  const commands: string[] = [];
-  let lineBuffer = state.lineBuffer;
-  let skipFollowingLf = state.skipFollowingLf;
-  const cleaned = stripInputControlSequences(chunk);
-
-  for (const ch of cleaned) {
-    if (skipFollowingLf && ch !== '\n') {
-      skipFollowingLf = false;
-    }
-
-    if (ch === '\r' || ch === '\n') {
-      if (skipFollowingLf && ch === '\n') {
-        skipFollowingLf = false;
-        continue;
-      }
-
-      const command = lineBuffer.trim();
-      if (command) {
-        commands.push(command);
-      }
-      lineBuffer = '';
-      skipFollowingLf = ch === '\r';
-      continue;
-    }
-
+const collapseBackspaces = (input: string): string => {
+  let out = '';
+  for (const ch of input) {
     if (ch === '\u0008' || ch === '\u007f') {
-      lineBuffer = lineBuffer.slice(0, -1);
+      out = out.slice(0, -1);
       continue;
     }
-
-    if (ch === '\u0015') {
-      lineBuffer = '';
+    if (ch === '\u0000') {
       continue;
     }
+    out += ch;
+  }
+  return out;
+};
 
-    if (ch === '\u0003' || ch === '\u0004' || ch === '\u001a') {
-      lineBuffer = '';
-      continue;
+const looksLikePromptPrefix = (prefixWithMarker: string): boolean => {
+  const marker = prefixWithMarker[prefixWithMarker.length - 1];
+  if (!marker || !['$', '%', '#', '>'].includes(marker)) {
+    return false;
+  }
+
+  const prefix = prefixWithMarker.slice(0, -1).trim();
+  if (!prefix) {
+    return false;
+  }
+
+  if (prefix.startsWith('(') || prefix.includes('@')) {
+    return true;
+  }
+
+  if (prefix.includes(':') || prefix.includes('/') || prefix.includes('\\') || prefix.includes('~')) {
+    return true;
+  }
+
+  return /^[\w.-]+(?:\s+[\w.-]+)*$/.test(prefix);
+};
+
+const extractCommandFromPromptLine = (line: string): string | null => {
+  const visible = collapseBackspaces(line.split('\r').pop() ?? '').trimEnd();
+  if (!visible) {
+    return null;
+  }
+
+  const windowsPrompt = visible.match(/^([A-Za-z]:\\.*>)\s*(.+)$/);
+  if (windowsPrompt?.[2]) {
+    const command = windowsPrompt[2].trim();
+    return command || null;
+  }
+
+  const unixPromptWithSpace = visible.match(/^(.*\s[#$%>])\s+(.+)$/);
+  if (unixPromptWithSpace?.[2] && looksLikePromptPrefix(unixPromptWithSpace[1])) {
+    const command = unixPromptWithSpace[2].trim();
+    return command || null;
+  }
+
+  const unixUserHostPrompt = visible.match(/^([^\r\n]*@[^\r\n]*[#$%>])\s+(.+)$/);
+  if (unixUserHostPrompt?.[2]) {
+    const command = unixUserHostPrompt[2].trim();
+    return command || null;
+  }
+
+  return null;
+};
+
+const parseOutputChunkForCommands = (
+  chunk: string,
+  state: CommandHistoryParseState,
+): { commands: string[]; nextState: CommandHistoryParseState } => {
+  const cleaned = stripTerminalControlSequences(chunk);
+  const combined = `${state.lineBuffer}${cleaned}`;
+  const lines = combined.split('\n');
+  const nextLineBuffer = lines.pop() ?? '';
+  const commands: string[] = [];
+
+  for (const rawLine of lines) {
+    const command = extractCommandFromPromptLine(rawLine);
+    if (command) {
+      commands.push(command);
     }
-
-    if (ch < ' ' || ch === '\u007f') {
-      continue;
-    }
-
-    lineBuffer += ch;
   }
 
   return {
     commands,
     nextState: {
-      lineBuffer,
-      skipFollowingLf,
+      lineBuffer: nextLineBuffer,
     },
   };
 };
@@ -211,7 +238,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const dataHandlerRef = useRef<ReturnType<XTerm['onData']> | null>(null);
   const inputForwardEnabledRef = useRef(false);
-  const commandParseStateRef = useRef<CommandParseState>(createInitialCommandParseState());
+  const outputParseStateRef = useRef<CommandHistoryParseState>(createInitialCommandHistoryParseState());
   const commandSeqRef = useRef(0);
 
   const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected');
@@ -230,6 +257,24 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
   const themeColors = useMemo(() => getThemeColors(actualTheme), [actualTheme]);
   const displayHistory = useMemo(() => [...commandHistory].reverse(), [commandHistory]);
 
+  const appendCommands = (commands: string[], createdAt: string) => {
+    if (commands.length === 0) {
+      return;
+    }
+
+    setCommandHistory((prev) => {
+      const next = [...prev];
+      for (const command of commands) {
+        next.push({
+          id: `cmd-${commandSeqRef.current++}`,
+          command,
+          createdAt,
+        });
+      }
+      return next.slice(-MAX_COMMAND_HISTORY);
+    });
+  };
+
   useEffect(() => {
     const term = terminalRef.current;
     if (term) {
@@ -244,7 +289,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
 
     let cancelled = false;
 
-    commandParseStateRef.current = createInitialCommandParseState();
+    outputParseStateRef.current = createInitialCommandHistoryParseState();
     setCommandHistory([]);
     setHistoryState('loading');
     setConnectionState('disconnected');
@@ -274,23 +319,6 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
         return;
       }
 
-      const parsed = parseInputChunkForCommands(data, commandParseStateRef.current);
-      commandParseStateRef.current = parsed.nextState;
-      if (parsed.commands.length > 0) {
-        const createdAt = new Date().toISOString();
-        setCommandHistory((prev) => {
-          const next = [...prev];
-          for (const command of parsed.commands) {
-            next.push({
-              id: `cmd-${commandSeqRef.current++}`,
-              command,
-              createdAt,
-            });
-          }
-          return next.slice(-MAX_COMMAND_HISTORY);
-        });
-      }
-
       const ws = socketRef.current;
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'input', data }));
@@ -317,24 +345,20 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
         }
 
         const normalized = Array.isArray(logs) ? logs.map(normalizeTerminalLog) : [];
-
         const outputLogs = normalized.filter((log: TerminalLog) => log.logType === 'output' || log.logType === 'system');
-        for (const log of outputLogs) {
-          await writeToTerminal(term, log.content);
-        }
+
+        const outputContent = outputLogs.map((log: TerminalLog) => log.content).join('');
+        await writeToTerminal(term, outputContent);
 
         if (cancelled) {
           return;
         }
 
         const parsedCommands: CommandHistoryItem[] = [];
-        let parseState = createInitialCommandParseState();
+        let parseState = createInitialCommandHistoryParseState();
 
-        for (const log of normalized) {
-          if (log.logType !== 'input') {
-            continue;
-          }
-          const parsed = parseInputChunkForCommands(log.content, parseState);
+        for (const log of outputLogs) {
+          const parsed = parseOutputChunkForCommands(log.content, parseState);
           parseState = parsed.nextState;
           if (parsed.commands.length === 0) {
             continue;
@@ -350,7 +374,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
           }
         }
 
-        commandParseStateRef.current = parseState;
+        outputParseStateRef.current = parseState;
         setCommandHistory(parsedCommands.slice(-MAX_COMMAND_HISTORY));
         setHistoryState('ready');
       } catch (error) {
@@ -417,7 +441,12 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
       try {
         const payload = JSON.parse(event.data);
         if (payload?.type === 'output') {
-          terminalRef.current?.write(payload.data ?? '');
+          const outputData = payload.data ?? '';
+          terminalRef.current?.write(outputData);
+
+          const parsed = parseOutputChunkForCommands(outputData, outputParseStateRef.current);
+          outputParseStateRef.current = parsed.nextState;
+          appendCommands(parsed.commands, new Date().toISOString());
         } else if (payload?.type === 'exit') {
           inputForwardEnabledRef.current = false;
           setConnectionState('disconnected');
