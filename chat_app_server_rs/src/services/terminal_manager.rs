@@ -219,16 +219,9 @@ impl TerminalSession {
                         self.root_cwd.as_path(),
                         &mut current_cwd,
                     ) {
-                        if sanitized_command.contains('\t') {
-                            // Tab completion mutates the shell line, so backspacing typed
-                            // characters is not reliable. Ctrl-U clears the whole input line
-                            // in readline-style shells.
-                            forward.push('\u{15}');
-                        } else {
-                            forward.push_str(
-                                clear_input_line_sequence(sanitized_command.as_str()).as_str(),
-                            );
-                        }
+                        forward.push_str(
+                            clear_input_line_sequence(sanitized_command.as_str()).as_str(),
+                        );
                         skip_following_lf = ch == '\r';
                         blocked.push(reason);
                         continue;
@@ -251,11 +244,6 @@ impl TerminalSession {
                 }
                 '\u{3}' | '\u{4}' | '\u{1a}' => {
                     line.clear();
-                    forward.push(ch);
-                }
-                c if c as u32 == 9 => {
-                    // Keep tab so we can detect completion-based cd attempts at submit time.
-                    line.push(ch);
                     forward.push(ch);
                 }
                 _ if ch.is_control() => {
@@ -505,13 +493,6 @@ fn validate_directory_change_command(
 ) -> Option<String> {
     let command = parse_directory_change_command(line)?;
 
-    if line.contains('\t') {
-        return Some(
-            "Blocked: tab completion is disabled for directory-change commands in this restricted terminal."
-                .to_string(),
-        );
-    }
-
     if command.has_extra_args {
         return Some(
             "Blocked: run directory-change commands alone (no chained arguments).".to_string(),
@@ -724,10 +705,7 @@ fn sanitize_command_line_for_guard(command_line: &str) -> String {
     }
 
     let stripped = strip_ansi(command_line);
-    stripped
-        .chars()
-        .filter(|ch| !ch.is_control() || *ch == '\t')
-        .collect()
+    stripped.chars().filter(|ch| !ch.is_control()).collect()
 }
 
 fn has_dynamic_cd_syntax(target: &str) -> bool {
@@ -993,38 +971,10 @@ mod tests {
     }
 
     #[test]
-    fn directory_guard_blocks_tab_completed_cd_paths() {
-        let unique = format!(
-            "chatos-terminal-guard-tab-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        );
-        let base = std::env::temp_dir().join(unique);
-        let root = base.join("root");
-        let outside = base.join("outside");
-
-        std::fs::create_dir_all(&root).unwrap();
-        std::fs::create_dir_all(&outside).unwrap();
-
-        let root = std::fs::canonicalize(&root).unwrap();
-        let outside = std::fs::canonicalize(&outside).unwrap();
-        let mut current = root.clone();
-
-        let attempted = format!("cd /tmp\t{}", outside.display());
-        let blocked =
-            validate_directory_change_command(attempted.as_str(), root.as_path(), &mut current);
-        assert!(blocked.is_some());
-
-        let _ = std::fs::remove_dir_all(base);
-    }
-
-    #[test]
-    fn sanitize_command_line_keeps_tab_for_completion_detection() {
+    fn sanitize_command_line_removes_tab_control_sequences() {
         let raw = "\x1b[200~cd /Users/lilei/\tproject\x1b[201~";
         let sanitized = sanitize_command_line_for_guard(raw);
-        assert_eq!(sanitized, "cd /Users/lilei/\tproject");
+        assert_eq!(sanitized, "cd /Users/lilei/project");
     }
 
     #[test]
