@@ -125,6 +125,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
   const [dirPickerRoots, setDirPickerRoots] = useState<FsEntry[]>([]);
   const [dirPickerLoading, setDirPickerLoading] = useState(false);
   const [dirPickerError, setDirPickerError] = useState<string | null>(null);
+  const [showHiddenDirs, setShowHiddenDirs] = useState(false);
 
   const apiClient = useChatApiClientFromContext();
   const apiBaseUrl = apiClient?.getBaseUrl ? apiClient.getBaseUrl() : '/api';
@@ -312,6 +313,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
 
   const openDirPicker = async (target: 'project' | 'terminal') => {
     setDirPickerTarget(target);
+    setShowHiddenDirs(false);
     setDirPickerOpen(true);
     const current = (target === 'project' ? projectRoot : terminalRoot).trim();
     await loadDirEntries(current ? current : null);
@@ -400,6 +402,9 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     }, 10000);
     return () => window.clearInterval(timer);
   }, [isCollapsed, terminalsExpanded, loadTerminals]);
+
+  const dirPickerItems = (dirPickerPath ? dirPickerEntries : dirPickerRoots)
+    .filter((entry) => showHiddenDirs || !entry.name.startsWith('.'));
 
   return (
     <div
@@ -934,17 +939,26 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
               >
                 选择当前目录
               </button>
+              {dirPickerTarget === 'project' && (
+                <button
+                  type="button"
+                  onClick={() => setShowHiddenDirs((prev) => !prev)}
+                  className="px-3 py-1.5 rounded bg-muted text-muted-foreground hover:bg-accent"
+                >
+                  {showHiddenDirs ? '不显示隐藏目录' : '显示隐藏目录'}
+                </button>
+              )}
             </div>
             <div className="mt-3 flex-1 overflow-y-auto border border-border rounded">
               {dirPickerLoading && (
                 <div className="p-4 text-sm text-muted-foreground">加载中...</div>
               )}
-              {!dirPickerLoading && (dirPickerPath ? dirPickerEntries : dirPickerRoots).length === 0 && (
+              {!dirPickerLoading && dirPickerItems.length === 0 && (
                 <div className="p-4 text-sm text-muted-foreground">没有可用目录</div>
               )}
-              {!dirPickerLoading && (dirPickerPath ? dirPickerEntries : dirPickerRoots).length > 0 && (
+              {!dirPickerLoading && dirPickerItems.length > 0 && (
                 <div className="divide-y divide-border">
-                  {(dirPickerPath ? dirPickerEntries : dirPickerRoots).map((entry) => (
+                  {dirPickerItems.map((entry) => (
                     <button
                       key={entry.path}
                       type="button"

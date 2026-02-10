@@ -265,7 +265,12 @@ impl TerminalSession {
     }
 
     fn sync_current_cwd_from_prompt_line(&self, line: &str) {
-        let Some(parsed_cwd) = extract_prompt_cwd(line) else {
+        let parsed_cwd = extract_prompt_cwd(line).or_else(|| {
+            let current = self.current_cwd.lock().ok()?.clone();
+            infer_prompt_cwd_from_context(line, current.as_path(), self.root_cwd.as_path())
+        });
+
+        let Some(parsed_cwd) = parsed_cwd else {
             return;
         };
 
@@ -493,6 +498,12 @@ fn validate_directory_change_command(
 ) -> Option<String> {
     let command = parse_directory_change_command(line)?;
 
+    let target_is_absolute = command
+        .target
+        .as_deref()
+        .map(|t| Path::new(t.trim()).is_absolute())
+        .unwrap_or(false);
+
     if command.has_extra_args {
         return Some(
             "Blocked: run directory-change commands alone (no chained arguments).".to_string(),
@@ -519,7 +530,15 @@ fn validate_directory_change_command(
     let resolved =
         match resolve_cd_target(root_cwd, current_cwd.as_path(), command.target.as_deref()) {
             Some(path) => path,
-            None => return None,
+            None => {
+                if target_is_absolute {
+                    return Some(
+                        "Blocked: cannot verify absolute cd target (path does not resolve)."
+                            .to_string(),
+                    );
+                }
+                return None;
+            }
         };
 
     if !path_is_within_root(resolved.as_path(), root_cwd) {
@@ -688,6 +707,87 @@ fn canonicalize_prompt_path(raw_path: &str) -> Option<PathBuf> {
     std::fs::canonicalize(path).ok()
 }
 
+fn infer_prompt_cwd_from_context(
+    line: &str,
+    current_cwd: &Path,
+    _root_cwd: &Path,
+) -> Option<PathBuf> {
+    let hint = extract_prompt_dir_hint(line)?;
+    let normalized_hint = hint.trim_end_matches(|c| c == '/' || c as u32 == 92);
+    if normalized_hint.is_empty() {
+        return None;
+    }
+
+    if normalized_hint == "~" || normalized_hint.starts_with("~/") {
+        let home = std::env::var("HOME").ok()?;
+        let base = PathBuf::from(home);
+        let candidate = if normalized_hint == "~" {
+            base
+        } else {
+            let rel = normalized_hint.trim_start_matches("~/");
+            base.join(rel)
+        };
+        return std::fs::canonicalize(candidate).ok();
+    }
+
+    if Path::new(normalized_hint).is_absolute() {
+        return std::fs::canonicalize(normalized_hint).ok();
+    }
+
+    if normalized_hint == "." {
+        return Some(current_cwd.to_path_buf());
+    }
+
+    if normalized_hint == ".." {
+        return std::fs::canonicalize(current_cwd.parent()?).ok();
+    }
+
+    if current_cwd
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|name| name == normalized_hint)
+        .unwrap_or(false)
+    {
+        return Some(current_cwd.to_path_buf());
+    }
+
+    if let Some(parent_raw) = current_cwd.parent() {
+        if parent_raw
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|name| name == normalized_hint)
+            .unwrap_or(false)
+        {
+            return std::fs::canonicalize(parent_raw).ok();
+        }
+    }
+
+    std::fs::canonicalize(current_cwd.join(normalized_hint)).ok()
+}
+
+fn extract_prompt_dir_hint(line: &str) -> Option<String> {
+    let trimmed = line.trim_end();
+    let marker = trimmed.chars().last()?;
+    if !matches!(marker, '$' | '#' | '%' | '>') {
+        return None;
+    }
+
+    let without_marker = trimmed
+        .get(..trimmed.len().saturating_sub(marker.len_utf8()))?
+        .trim_end();
+    let token = without_marker.split_whitespace().last()?.trim();
+    if token.is_empty() {
+        return None;
+    }
+
+    // Avoid guessing from tokens that are probably user/host prefixes.
+    if token.contains('@') || token.contains(':') {
+        return None;
+    }
+
+    Some(token.to_string())
+}
+
 fn clear_input_line_sequence(command_line: &str) -> String {
     let mut seq = String::new();
     for _ in 0..command_line.chars().count() {
@@ -824,9 +924,9 @@ fn is_prompt_line(line: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_return_to_root_command, extract_prompt_cwd, input_triggers_busy, is_prompt_line,
-        normalize_path_for_compare, path_is_within_root, sanitize_command_line_for_guard,
-        validate_directory_change_command,
+        build_return_to_root_command, extract_prompt_cwd, infer_prompt_cwd_from_context,
+        input_triggers_busy, is_prompt_line, normalize_path_for_compare, path_is_within_root,
+        sanitize_command_line_for_guard, validate_directory_change_command,
     };
     use std::path::Path;
 
@@ -968,6 +1068,89 @@ mod tests {
         assert!(blocked.is_some());
 
         let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn directory_guard_blocks_unresolvable_absolute_target() {
+        let root = std::fs::canonicalize(".").unwrap();
+        let mut current = root.clone();
+        let candidate = format!(
+            "/chatos-restricted-terminal-unresolvable-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+
+        let command = format!("cd {candidate}");
+        let blocked =
+            validate_directory_change_command(command.as_str(), root.as_path(), &mut current);
+        assert!(blocked.is_some());
+    }
+
+    #[test]
+    fn prompt_inference_handles_basename_prompts_within_root() {
+        let unique = format!(
+            "chatos-terminal-prompt-infer-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let base = std::env::temp_dir().join(unique);
+        let root = base.join("root");
+        let child = root.join("child");
+
+        std::fs::create_dir_all(&child).unwrap();
+
+        let root = std::fs::canonicalize(&root).unwrap();
+        let child = std::fs::canonicalize(&child).unwrap();
+
+        let parsed_child = infer_prompt_cwd_from_context(
+            "(base) user@host child %",
+            root.as_path(),
+            root.as_path(),
+        )
+        .unwrap();
+        assert_eq!(
+            normalize_path_for_compare(parsed_child.as_path()),
+            normalize_path_for_compare(child.as_path())
+        );
+
+        let root_name = root
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap()
+            .to_string();
+        let parent_prompt = format!("(base) user@host {root_name} %");
+        let parsed_parent =
+            infer_prompt_cwd_from_context(parent_prompt.as_str(), child.as_path(), root.as_path())
+                .unwrap();
+        assert_eq!(
+            normalize_path_for_compare(parsed_parent.as_path()),
+            normalize_path_for_compare(root.as_path())
+        );
+
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn prompt_inference_parses_home_tilde_prompt() {
+        let Some(home) = std::env::var_os("HOME") else {
+            return;
+        };
+        let expected = std::fs::canonicalize(home).unwrap();
+        let guessed = infer_prompt_cwd_from_context(
+            "(base) user@host ~ %",
+            expected.as_path(),
+            expected.as_path(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            normalize_path_for_compare(guessed.as_path()),
+            normalize_path_for_compare(expected.as_path())
+        );
     }
 
     #[test]
