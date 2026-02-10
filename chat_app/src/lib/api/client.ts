@@ -40,23 +40,33 @@ class ApiClient {
 
     try {
       const response = await fetch(url, config);
-      
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      
-      // 检查响应是否有内容
       const text = await response.text();
+      let parsedBody: any = null;
+
+      if (text) {
+        try {
+          parsedBody = JSON.parse(text);
+        } catch (parseError) {
+          if (response.ok) {
+            console.error(`JSON parse error for ${endpoint}:`, parseError, 'Response text:', text);
+            throw new Error(`Invalid JSON response: ${text}`);
+          }
+        }
+      }
+
+      if (!response.ok) {
+        const errorMessage =
+          (typeof parsedBody?.error === 'string' && parsedBody.error) ||
+          (typeof parsedBody?.message === 'string' && parsedBody.message) ||
+          `HTTP error! status: ${response.status}`;
+        throw new Error(errorMessage);
+      }
+
       if (!text) {
-        return {} as T; // 返回空对象而不是尝试解析空字符串
+        return {} as T;
       }
-      
-      try {
-        return JSON.parse(text);
-      } catch (parseError) {
-        console.error(`JSON parse error for ${endpoint}:`, parseError, 'Response text:', text);
-        throw new Error(`Invalid JSON response: ${text}`);
-      }
+
+      return parsedBody as T;
     } catch (error) {
       console.error(`API request failed: ${endpoint}`, error);
       throw error;

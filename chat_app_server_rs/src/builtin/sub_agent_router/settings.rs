@@ -383,15 +383,28 @@ fn resolve_repo_file(
     hint: Option<&str>,
     default_candidates: &[&str],
 ) -> Result<Option<PathBuf>, String> {
-    if let Some(path) = hint.map(|v| v.trim()).filter(|v| !v.is_empty()) {
-        let resolved = repo_root.join(path);
+    if let Some(path) = hint.map(normalize_repo_relative_path).filter(|v| !v.is_empty()) {
+        let resolved = repo_root.join(path.as_str());
         if !resolved.exists() {
-            return Err(format!("指定路径不存在: {}", resolved.to_string_lossy()));
+            return Err(format!("specified path does not exist: {}", resolved.to_string_lossy()));
         }
+
+        if resolved.is_file() {
+            return Ok(Some(resolved));
+        }
+
         if resolved.is_dir() {
-            return Err(format!("指定路径不是文件: {}", resolved.to_string_lossy()));
+            if let Some(candidate) = find_default_file_recursively(resolved.as_path(), default_candidates) {
+                return Ok(Some(candidate));
+            }
+            return Err(format!(
+                "no candidate file found in directory ({}) : {}",
+                default_candidates.join(", "),
+                resolved.to_string_lossy()
+            ));
         }
-        return Ok(Some(resolved));
+
+        return Err(format!("specified path is not a regular file: {}", resolved.to_string_lossy()));
     }
 
     for rel in default_candidates {
@@ -401,7 +414,59 @@ fn resolve_repo_file(
         }
     }
 
-    Ok(None)
+    Ok(find_default_file_recursively(repo_root, default_candidates))
+}
+
+fn normalize_repo_relative_path(value: &str) -> String {
+    let mut normalized = value.trim().replace('\\', "/");
+    while normalized.starts_with("./") {
+        normalized = normalized[2..].to_string();
+    }
+    normalized = normalized.trim_start_matches('/').to_string();
+    normalized.trim_matches('/').to_string()
+}
+
+fn find_default_file_recursively(root: &Path, default_candidates: &[&str]) -> Option<PathBuf> {
+    let mut candidate_names = HashSet::new();
+    for rel in default_candidates {
+        let name = Path::new(rel).file_name().and_then(|v| v.to_str())?;
+        candidate_names.insert(name.to_string());
+    }
+
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let entries = match fs::read_dir(dir.as_path()) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() {
+                let Some(name) = path.file_name().and_then(|v| v.to_str()) else {
+                    continue;
+                };
+                if candidate_names.contains(name) {
+                    return Some(path);
+                }
+                continue;
+            }
+
+            if path.is_dir() && !is_skipped_repo_dir(path.as_path()) {
+                stack.push(path);
+            }
+        }
+    }
+
+    None
+}
+
+fn is_skipped_repo_dir(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|v| v.to_str()) else {
+        return false;
+    };
+
+    matches!(name, ".git" | "node_modules" | "target" | ".next")
 }
 
 fn ensure_git_repo(

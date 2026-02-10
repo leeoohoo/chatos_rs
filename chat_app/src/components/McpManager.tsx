@@ -109,6 +109,9 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
   const [gitAgentsPathInput, setGitAgentsPathInput] = useState('');
   const [gitSkillsPathInput, setGitSkillsPathInput] = useState('');
   const [settingsSubmitting, setSettingsSubmitting] = useState<'agents' | 'skills' | 'git' | null>(null);
+  const [settingsTab, setSettingsTab] = useState<'overview' | 'git' | 'manual'>('overview');
+  const [settingsNotice, setSettingsNotice] = useState<string | null>(null);
+  const [lastGitImportResult, setLastGitImportResult] = useState<any>(null);
 
   // 组件初始化时加载MCP配置（StrictMode 下防止重复触发）
   React.useEffect(() => {
@@ -249,6 +252,9 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
   const openBuiltinSettings = async (config: McpConfig) => {
     setSettingsConfig(config);
     setSettingsError(null);
+    setSettingsNotice(null);
+    setLastGitImportResult(null);
+    setSettingsTab('overview');
     setSettingsSummary(null);
     setAgentsJsonInput('');
     setSkillsJsonInput('');
@@ -263,6 +269,8 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
     setSettingsConfig(null);
     setSettingsLoading(false);
     setSettingsError(null);
+    setSettingsNotice(null);
+    setLastGitImportResult(null);
     setSettingsSummary(null);
     setAgentsJsonInput('');
     setSkillsJsonInput('');
@@ -271,24 +279,33 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
     setGitAgentsPathInput('');
     setGitSkillsPathInput('');
     setSettingsSubmitting(null);
+    setSettingsTab('overview');
   };
 
   const handleImportAgents = async () => {
     if (!settingsConfig) return;
     const content = agentsJsonInput.trim();
     if (!content) {
-      setSettingsError('请先粘贴 agents JSON');
+      setSettingsError('Please paste agents JSON first.');
       return;
     }
 
     setSettingsSubmitting('agents');
     setSettingsError(null);
+    setSettingsNotice(null);
     try {
-      await apiClient.importBuiltinMcpAgents(settingsConfig.id, content);
+      const response = await apiClient.importBuiltinMcpAgents(settingsConfig.id, content);
+      const result = (response as any)?.data || null;
+      const importedCount = typeof result?.agents === 'number' ? result.agents : null;
+      const importedPath = typeof result?.path === 'string' ? result.path : '';
+      setSettingsNotice(
+        `Agents import succeeded${importedCount !== null ? ` (${importedCount})` : ''}${importedPath ? `, path: ${importedPath}` : ''}`
+      );
+      setSettingsTab('overview');
       setAgentsJsonInput('');
       await loadBuiltinSettings(settingsConfig.id);
     } catch (error: any) {
-      setSettingsError(error?.message || '导入 agents 失败');
+      setSettingsError(error?.message || 'Agents import failed.');
     } finally {
       setSettingsSubmitting(null);
     }
@@ -298,18 +315,26 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
     if (!settingsConfig) return;
     const content = skillsJsonInput.trim();
     if (!content) {
-      setSettingsError('请先粘贴 skills/marketplace JSON');
+      setSettingsError('Please paste skills/marketplace JSON first.');
       return;
     }
 
     setSettingsSubmitting('skills');
     setSettingsError(null);
+    setSettingsNotice(null);
     try {
-      await apiClient.importBuiltinMcpSkills(settingsConfig.id, content);
+      const response = await apiClient.importBuiltinMcpSkills(settingsConfig.id, content);
+      const result = (response as any)?.data || null;
+      const importedCount = typeof result?.plugins === 'number' ? result.plugins : null;
+      const importedPath = typeof result?.path === 'string' ? result.path : '';
+      setSettingsNotice(
+        `Skills import succeeded${importedCount !== null ? ` (${importedCount} plugins)` : ''}${importedPath ? `, path: ${importedPath}` : ''}`
+      );
+      setSettingsTab('overview');
       setSkillsJsonInput('');
       await loadBuiltinSettings(settingsConfig.id);
     } catch (error: any) {
-      setSettingsError(error?.message || '导入 skills 失败');
+      setSettingsError(error?.message || 'Skills import failed.');
     } finally {
       setSettingsSubmitting(null);
     }
@@ -319,22 +344,40 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
     if (!settingsConfig) return;
     const repository = gitRepositoryInput.trim();
     if (!repository) {
-      setSettingsError('请先输入 Git 仓库地址');
+      setSettingsError('Please enter a Git repository URL first.');
       return;
     }
 
     setSettingsSubmitting('git');
     setSettingsError(null);
+    setSettingsNotice(null);
+    setLastGitImportResult(null);
     try {
-      await apiClient.importBuiltinMcpFromGit(settingsConfig.id, {
+      const response = await apiClient.importBuiltinMcpFromGit(settingsConfig.id, {
         repository,
         branch: gitBranchInput.trim() || undefined,
         agents_path: gitAgentsPathInput.trim() || undefined,
         skills_path: gitSkillsPathInput.trim() || undefined,
       });
+      const result = (response as any)?.data || null;
+      setLastGitImportResult(result);
+
+      const importedAgents = !!result?.imported?.agents;
+      const importedSkills = !!result?.imported?.skills;
+      if (importedAgents && importedSkills) {
+        setSettingsNotice('Git import succeeded: agents and skills both updated.');
+      } else if (importedAgents) {
+        setSettingsNotice('Git import succeeded: only agents were updated.');
+      } else if (importedSkills) {
+        setSettingsNotice('Git import succeeded: only skills were updated.');
+      } else {
+        setSettingsNotice('Git import request finished but nothing was imported.');
+      }
+
+      setSettingsTab('overview');
       await loadBuiltinSettings(settingsConfig.id);
     } catch (error: any) {
-      setSettingsError(error?.message || '从 Git 导入失败');
+      setSettingsError(error?.message || 'Git import failed.');
     } finally {
       setSettingsSubmitting(null);
     }
@@ -354,15 +397,23 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
 
     try {
       const text = await readJsonFile(file);
+      setSettingsError(null);
+      setSettingsNotice(null);
+      setSettingsTab('manual');
       if (target === 'agents') {
         setAgentsJsonInput(text);
       } else {
         setSkillsJsonInput(text);
       }
     } catch (error: any) {
-      setSettingsError(error?.message || '读取 JSON 文件失败');
+      setSettingsError(error?.message || 'Failed to read JSON file.');
     }
   };
+
+  const settingsAgents = ((settingsSummary?.items?.agents || []) as any[]);
+  const settingsSkills = ((settingsSummary?.items?.skills || []) as any[]);
+  const settingsPlugins = ((settingsSummary?.items?.plugins || []) as any[]);
+  const lastGitPluginDetails = ((lastGitImportResult?.results?.plugins?.details || []) as any[]);
 
   return (
     <>
@@ -787,164 +838,290 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
                     </div>
                   )}
 
-                  {settingsSummary && (
-                    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-                      <div className="rounded-lg border border-border bg-muted/20 p-4">
-                        <div className="flex items-center justify-between">
-                          <div className="text-sm font-medium text-foreground">已导入 Agents</div>
-                          <div className="text-xs text-muted-foreground">{(settingsSummary?.items?.agents || []).length}</div>
-                        </div>
-                        <div className="mt-3 max-h-56 space-y-2 overflow-auto pr-1">
-                          {((settingsSummary?.items?.agents || []) as any[]).length === 0 ? (
-                            <div className="text-xs text-muted-foreground">暂无 agent 数据</div>
-                          ) : (
-                            ((settingsSummary?.items?.agents || []) as any[]).map((agent: any, idx: number) => (
-                              <div key={`${agent?.id || agent?.path || "agent"}-${idx}`} className="rounded-md border border-border/60 bg-background/60 px-2 py-1.5">
-                                <div className="text-xs text-foreground truncate">{agent?.name || agent?.id || agent?.path || "Unnamed Agent"}</div>
-                                <div className="mt-0.5 text-[11px] text-muted-foreground truncate">
-                                  {agent?.kind === "marketplace"
-                                    ? `${agent?.plugin || "plugin"} · ${agent?.path || ""}`
-                                    : `id: ${agent?.id || ""}${agent?.category ? ` · ${agent?.category}` : ""}`}
-                                </div>
-                              </div>
-                            ))
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="rounded-lg border border-border bg-muted/20 p-4">
-                        <div className="flex items-center justify-between">
-                          <div className="text-sm font-medium text-foreground">已导入 Skills</div>
-                          <div className="text-xs text-muted-foreground">{(settingsSummary?.items?.skills || []).length}</div>
-                        </div>
-                        <div className="mt-3 max-h-56 space-y-2 overflow-auto pr-1">
-                          {((settingsSummary?.items?.skills || []) as any[]).length === 0 ? (
-                            <div className="text-xs text-muted-foreground">暂无 skill 数据</div>
-                          ) : (
-                            ((settingsSummary?.items?.skills || []) as any[]).map((skill: any, idx: number) => (
-                              <div key={`${skill?.id || skill?.path || "skill"}-${idx}`} className="rounded-md border border-border/60 bg-background/60 px-2 py-1.5">
-                                <div className="text-xs text-foreground truncate">{skill?.name || skill?.path || "Unnamed Skill"}</div>
-                                <div className="mt-0.5 text-[11px] text-muted-foreground truncate">
-                                  {(skill?.plugin || "plugin") + (skill?.path ? ` · ${skill.path}` : "")}
-                                </div>
-                              </div>
-                            ))
-                          )}
-                        </div>
-                      </div>
+                  {settingsNotice && (
+                    <div className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-600">
+                      {settingsNotice}
                     </div>
                   )}
 
-                  <div className="rounded-lg border border-border bg-muted/25 p-4 space-y-3">
-                    <div className="space-y-1">
-                      <div className="text-base font-semibold text-foreground">按原来的方式：从 Git 导入</div>
-                      <div className="text-xs text-muted-foreground">填仓库地址后可一键导入，默认自动识别 subagents.json 与 marketplace.json。</div>
-                    </div>
-                    <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-                      <input
-                        type="text"
-                        value={gitRepositoryInput}
-                        onChange={(event) => setGitRepositoryInput(event.target.value)}
-                        placeholder="仓库地址，例如 https://github.com/org/repo.git"
-                        className="lg:col-span-2 h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
-                      />
-                      <input
-                        type="text"
-                        value={gitBranchInput}
-                        onChange={(event) => setGitBranchInput(event.target.value)}
-                        placeholder="分支(可选)，默认仓库默认分支"
-                        className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
-                      />
-                      <input
-                        type="text"
-                        value={gitAgentsPathInput}
-                        onChange={(event) => setGitAgentsPathInput(event.target.value)}
-                        placeholder="agents 文件路径(可选)"
-                        className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
-                      />
-                      <input
-                        type="text"
-                        value={gitSkillsPathInput}
-                        onChange={(event) => setGitSkillsPathInput(event.target.value)}
-                        placeholder="skills 文件路径(可选)"
-                        className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
-                      />
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => { void handleImportFromGit(); }}
-                      disabled={settingsSubmitting !== null}
-                      className="px-4 py-2 text-sm rounded-md bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {settingsSubmitting === 'git' ? '导入中...' : '一键从 Git 导入'}
-                    </button>
-                  </div>
-
-                  <details className="rounded-lg border border-border bg-muted/20 p-4">
-                    <summary className="cursor-pointer text-sm font-medium text-foreground select-none">
-                      兼容模式：手动 JSON 导入（可选）
-                    </summary>
-                    <div className="mt-4 text-xs text-muted-foreground">只有在 Git 导入不方便时再用这里。</div>
-                    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <label className="text-sm font-medium text-foreground">导入 agents (JSON)</label>
-                        <label className="text-xs text-muted-foreground cursor-pointer hover:text-foreground">
-                          读取 JSON 文件
-                          <input
-                            type="file"
-                            accept=".json,application/json,text/plain"
-                            className="hidden"
-                            onChange={(event) => { void handleSelectJsonFile(event, 'agents'); }}
-                          />
-                        </label>
+                  {settingsSummary && (
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                        <div className="rounded-lg border border-border bg-muted/20 p-3">
+                          <div className="text-xs text-muted-foreground">Agents</div>
+                          <div className="mt-1 text-lg font-semibold text-foreground">{settingsSummary?.counts?.agents ?? 0}</div>
+                          <div className="text-[11px] text-muted-foreground">
+                            registry: {settingsSummary?.counts?.registry_agents ?? 0} / marketplace: {settingsSummary?.counts?.marketplace_agents ?? 0}
+                          </div>
+                        </div>
+                        <div className="rounded-lg border border-border bg-muted/20 p-3">
+                          <div className="text-xs text-muted-foreground">Skills</div>
+                          <div className="mt-1 text-lg font-semibold text-foreground">{settingsSummary?.counts?.skills_entries ?? 0}</div>
+                          <div className="text-[11px] text-muted-foreground">total entries from skills/marketplace</div>
+                        </div>
+                        <div className="rounded-lg border border-border bg-muted/20 p-3">
+                          <div className="text-xs text-muted-foreground">Plugins</div>
+                          <div className="mt-1 text-lg font-semibold text-foreground">{settingsSummary?.counts?.plugins ?? 0}</div>
+                          <div className="text-[11px] text-muted-foreground">
+                            registry: {settingsSummary?.valid?.registry ? 'ok' : 'invalid'} / marketplace: {settingsSummary?.valid?.marketplace ? 'ok' : 'invalid'}
+                          </div>
+                        </div>
                       </div>
-                      <textarea
-                        value={agentsJsonInput}
-                        onChange={(event) => setAgentsJsonInput(event.target.value)}
-                        placeholder='例如: {"agents": [...]}'
-                        className="h-52 w-full rounded-md border border-input bg-background px-3 py-2 text-xs font-mono outline-none focus:ring-2 focus:ring-ring"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => { void handleImportAgents(); }}
-                        disabled={settingsSubmitting !== null}
-                        className="px-3 py-1.5 text-xs rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        {settingsSubmitting === 'agents' ? '导入中...' : '导入 agents'}
-                      </button>
-                    </div>
 
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <label className="text-sm font-medium text-foreground">导入 skills/marketplace (JSON)</label>
-                        <label className="text-xs text-muted-foreground cursor-pointer hover:text-foreground">
-                          读取 JSON 文件
-                          <input
-                            type="file"
-                            accept=".json,application/json,text/plain"
-                            className="hidden"
-                            onChange={(event) => { void handleSelectJsonFile(event, 'skills'); }}
-                          />
-                        </label>
+                      <div className="rounded-lg border border-border bg-muted/20 p-1">
+                        <div className="grid grid-cols-1 gap-1 sm:grid-cols-3">
+                          <button
+                            type="button"
+                            onClick={() => setSettingsTab('overview')}
+                            className={`rounded-md px-3 py-2 text-xs font-medium transition-colors ${settingsTab === 'overview' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:bg-background/50 hover:text-foreground'}`}
+                          >
+                            Overview
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setSettingsTab('git')}
+                            className={`rounded-md px-3 py-2 text-xs font-medium transition-colors ${settingsTab === 'git' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:bg-background/50 hover:text-foreground'}`}
+                          >
+                            Git Import
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setSettingsTab('manual')}
+                            className={`rounded-md px-3 py-2 text-xs font-medium transition-colors ${settingsTab === 'manual' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:bg-background/50 hover:text-foreground'}`}
+                          >
+                            Manual JSON
+                          </button>
+                        </div>
                       </div>
-                      <textarea
-                        value={skillsJsonInput}
-                        onChange={(event) => setSkillsJsonInput(event.target.value)}
-                        placeholder='例如: {"plugins": [...]}'
-                        className="h-52 w-full rounded-md border border-input bg-background px-3 py-2 text-xs font-mono outline-none focus:ring-2 focus:ring-ring"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => { void handleImportSkills(); }}
-                        disabled={settingsSubmitting !== null}
-                        className="px-3 py-1.5 text-xs rounded-md bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        {settingsSubmitting === 'skills' ? '导入中...' : '导入 skills'}
-                      </button>
+
+                      {settingsTab === 'overview' && (
+                        <div className="space-y-4">
+                          <div className="rounded-lg border border-border bg-muted/20 p-4">
+                            <div className="flex items-center justify-between">
+                              <div className="text-sm font-medium text-foreground">Plugins Summary</div>
+                              <div className="text-xs text-muted-foreground">{settingsPlugins.length}</div>
+                            </div>
+                            <div className="mt-3 max-h-44 space-y-2 overflow-auto pr-1">
+                              {settingsPlugins.length === 0 ? (
+                                <div className="text-xs text-muted-foreground">No plugin metadata found</div>
+                              ) : (
+                                settingsPlugins.map((plugin: any, idx: number) => (
+                                  <div key={`${plugin?.source || plugin?.name || 'plugin'}-${idx}`} className="rounded-md border border-border/60 bg-background/60 px-2 py-1.5">
+                                    <div className="text-xs text-foreground truncate">{plugin?.name || plugin?.source || 'plugin'}</div>
+                                    <div className="mt-0.5 text-[11px] text-muted-foreground truncate">
+                                      source: {plugin?.source || 'unknown'} | agents: {plugin?.agents ?? 0} | skills: {plugin?.skills ?? 0} | commands: {plugin?.commands ?? 0}
+                                    </div>
+                                  </div>
+                                ))
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                            <div className="rounded-lg border border-border bg-muted/20 p-4">
+                              <div className="flex items-center justify-between">
+                                <div className="text-sm font-medium text-foreground">Imported Agents</div>
+                                <div className="text-xs text-muted-foreground">{settingsAgents.length}</div>
+                              </div>
+                              <div className="mt-3 max-h-56 space-y-2 overflow-auto pr-1">
+                                {settingsAgents.length === 0 ? (
+                                  <div className="text-xs text-muted-foreground">No agent data</div>
+                                ) : (
+                                  settingsAgents.map((agent: any, idx: number) => (
+                                    <div key={`${agent?.id || agent?.path || 'agent'}-${idx}`} className="rounded-md border border-border/60 bg-background/60 px-2 py-1.5">
+                                      <div className="flex items-start justify-between gap-2">
+                                        <div className="text-xs text-foreground truncate">{agent?.name || agent?.id || agent?.path || 'Unnamed Agent'}</div>
+                                        <span className={`rounded px-1.5 py-0.5 text-[10px] ${agent?.kind === 'marketplace' ? 'bg-indigo-500/10 text-indigo-600' : 'bg-emerald-500/10 text-emerald-600'}`}>
+                                          {agent?.kind === 'marketplace' ? 'marketplace' : 'registry'}
+                                        </span>
+                                      </div>
+                                      <div className="mt-0.5 text-[11px] text-muted-foreground truncate">
+                                        {agent?.kind === 'marketplace'
+                                          ? `${agent?.plugin || 'plugin'} | ${agent?.path || ''}`
+                                          : `id: ${agent?.id || ''}${agent?.category ? ` | ${agent?.category}` : ''}`}
+                                      </div>
+                                    </div>
+                                  ))
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="rounded-lg border border-border bg-muted/20 p-4">
+                              <div className="flex items-center justify-between">
+                                <div className="text-sm font-medium text-foreground">Imported Skills</div>
+                                <div className="text-xs text-muted-foreground">{settingsSkills.length}</div>
+                              </div>
+                              <div className="mt-3 max-h-56 space-y-2 overflow-auto pr-1">
+                                {settingsSkills.length === 0 ? (
+                                  <div className="text-xs text-muted-foreground">No skill data</div>
+                                ) : (
+                                  settingsSkills.map((skill: any, idx: number) => (
+                                    <div key={`${skill?.id || skill?.path || 'skill'}-${idx}`} className="rounded-md border border-border/60 bg-background/60 px-2 py-1.5">
+                                      <div className="text-xs text-foreground truncate">{skill?.name || skill?.path || 'Unnamed Skill'}</div>
+                                      <div className="mt-0.5 text-[11px] text-muted-foreground truncate">
+                                        {(skill?.plugin || 'plugin') + (skill?.path ? ` | ${skill.path}` : '')}
+                                      </div>
+                                    </div>
+                                  ))
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {settingsTab === 'git' && (
+                        <div className="rounded-lg border border-border bg-muted/25 p-4 space-y-4">
+                          <div className="space-y-1">
+                            <div className="text-base font-semibold text-foreground">Import agents and skills from Git</div>
+                            <div className="text-xs text-muted-foreground">Auto-detects subagents.json/agents.json and marketplace.json/skills.json.</div>
+                          </div>
+
+                          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                            <input
+                              type="text"
+                              value={gitRepositoryInput}
+                              onChange={(event) => setGitRepositoryInput(event.target.value)}
+                              placeholder="Repository URL, e.g. https://github.com/org/repo.git"
+                              className="lg:col-span-2 h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
+                            />
+                            <input
+                              type="text"
+                              value={gitBranchInput}
+                              onChange={(event) => setGitBranchInput(event.target.value)}
+                              placeholder="Branch (optional, default branch if empty)"
+                              className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
+                            />
+                            <input
+                              type="text"
+                              value={gitAgentsPathInput}
+                              onChange={(event) => setGitAgentsPathInput(event.target.value)}
+                              placeholder="agents file path (optional)"
+                              className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
+                            />
+                            <input
+                              type="text"
+                              value={gitSkillsPathInput}
+                              onChange={(event) => setGitSkillsPathInput(event.target.value)}
+                              placeholder="skills/marketplace file path (optional)"
+                              className="lg:col-span-2 h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
+                            />
+                          </div>
+
+                          <div className="rounded-md border border-border/60 bg-background/50 p-3 text-xs text-muted-foreground space-y-1">
+                            <div className="font-medium text-foreground">Auto-detection rules</div>
+                            <div>agents: subagents.json ? agents.json</div>
+                            <div>skills: marketplace.json ? skills.json</div>
+                            <div>If your repo layout is custom, fill the path fields above.</div>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => { void handleImportFromGit(); }}
+                            disabled={settingsSubmitting !== null}
+                            className="px-4 py-2 text-sm rounded-md bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {settingsSubmitting === 'git' ? 'Importing...' : 'Import from Git'}
+                          </button>
+
+                          {lastGitImportResult && (
+                            <div className="rounded-md border border-border bg-background/70 p-3 space-y-3">
+                              <div className="text-xs font-medium text-foreground">Last Git import result</div>
+                              <div className="grid grid-cols-1 gap-2 lg:grid-cols-2 text-[11px] text-muted-foreground">
+                                <div className="font-mono break-all">repo: {lastGitImportResult?.repository || '?'}</div>
+                                <div className="font-mono break-all">branch: {lastGitImportResult?.branch || 'default'}</div>
+                                <div className="font-mono break-all lg:col-span-2">repo-path: {lastGitImportResult?.repo_path || '?'}</div>
+                                <div className="font-mono break-all">agents-file: {lastGitImportResult?.files?.agents || 'not found'}</div>
+                                <div className="font-mono break-all">skills-file: {lastGitImportResult?.files?.skills || 'not found'}</div>
+                              </div>
+                              <div className="text-[11px] text-muted-foreground">
+                                imported.agents: {String(!!lastGitImportResult?.imported?.agents)} | imported.skills: {String(!!lastGitImportResult?.imported?.skills)} | plugins copied: {lastGitImportResult?.results?.plugins?.copied ?? 0} | plugins skipped: {lastGitImportResult?.results?.plugins?.skipped ?? 0}
+                              </div>
+                              {lastGitPluginDetails.length > 0 && (
+                                <div className="max-h-40 overflow-auto space-y-1 pr-1">
+                                  {lastGitPluginDetails.map((item: any, idx: number) => (
+                                    <div key={`${item?.source || 'plugin'}-${idx}`} className="rounded border border-border/60 bg-muted/20 px-2 py-1 text-[11px] text-muted-foreground">
+                                      <span className={item?.ok ? 'text-emerald-600' : 'text-amber-600'}>{item?.ok ? 'ok' : 'skip'}</span>
+                                      {' | '}
+                                      {item?.source || '(empty source)'}
+                                      {item?.dest ? ` -> ${item.dest}` : ''}
+                                      {item?.reason ? ` (${item.reason})` : ''}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {settingsTab === 'manual' && (
+                        <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-4">
+                          <div className="text-sm font-medium text-foreground">Manual JSON import</div>
+                          <div className="text-xs text-muted-foreground">Use this only when Git import is not suitable.</div>
+                          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between">
+                                <label className="text-sm font-medium text-foreground">Import agents (JSON)</label>
+                                <label className="text-xs text-muted-foreground cursor-pointer hover:text-foreground">
+                                  Load JSON file
+                                  <input
+                                    type="file"
+                                    accept=".json,application/json,text/plain"
+                                    className="hidden"
+                                    onChange={(event) => { void handleSelectJsonFile(event, 'agents'); }}
+                                  />
+                                </label>
+                              </div>
+                              <textarea
+                                value={agentsJsonInput}
+                                onChange={(event) => setAgentsJsonInput(event.target.value)}
+                                placeholder='For example: {"agents": [...]}'
+                                className="h-52 w-full rounded-md border border-input bg-background px-3 py-2 text-xs font-mono outline-none focus:ring-2 focus:ring-ring"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => { void handleImportAgents(); }}
+                                disabled={settingsSubmitting !== null}
+                                className="px-3 py-1.5 text-xs rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                              >
+                                {settingsSubmitting === 'agents' ? 'Importing...' : 'Import agents'}
+                              </button>
+                            </div>
+
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between">
+                                <label className="text-sm font-medium text-foreground">Import skills/marketplace (JSON)</label>
+                                <label className="text-xs text-muted-foreground cursor-pointer hover:text-foreground">
+                                  Load JSON file
+                                  <input
+                                    type="file"
+                                    accept=".json,application/json,text/plain"
+                                    className="hidden"
+                                    onChange={(event) => { void handleSelectJsonFile(event, 'skills'); }}
+                                  />
+                                </label>
+                              </div>
+                              <textarea
+                                value={skillsJsonInput}
+                                onChange={(event) => setSkillsJsonInput(event.target.value)}
+                                placeholder='For example: {"plugins": [...]}'
+                                className="h-52 w-full rounded-md border border-input bg-background px-3 py-2 text-xs font-mono outline-none focus:ring-2 focus:ring-ring"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => { void handleImportSkills(); }}
+                                disabled={settingsSubmitting !== null}
+                                className="px-3 py-1.5 text-xs rounded-md bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                              >
+                                {settingsSubmitting === 'skills' ? 'Importing...' : 'Import skills'}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
-                  </div>
-                  </details>
+                  )}
                 </>
               )}
             </div>
