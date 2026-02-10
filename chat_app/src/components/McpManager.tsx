@@ -41,6 +41,14 @@ const EditIcon = () => (
   </svg>
 );
 
+// 设置图标组件
+const SettingsIcon = () => (
+  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317a1 1 0 011.35-.936l.094.047 1.2.6a1 1 0 00.894 0l1.2-.6a1 1 0 011.444.89l.006.099v1.36a1 1 0 00.292.707l.962.963a1 1 0 01.083 1.32l-.083.094-.962.963a1 1 0 00-.292.707v1.36a1 1 0 01-1.45.894l-.094-.047-1.2-.6a1 1 0 00-.894 0l-1.2.6a1 1 0 01-1.444-.89l-.006-.099v-1.36a1 1 0 00-.292-.707l-.962-.963a1 1 0 01-.083-1.32l.083-.094.962-.963a1 1 0 00.292-.707v-1.36z" />
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10.5a1.5 1.5 0 110 3 1.5 1.5 0 010-3z" />
+  </svg>
+);
+
 interface McpManagerProps {
   onClose?: () => void;
   store?: any; // 可选的store参数，用于在没有Context Provider的情况下使用
@@ -88,7 +96,19 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
   const [configLoading, setConfigLoading] = useState<boolean>(false);
   const [configError, setConfigError] = useState<string | null>(null);
   const [dynamicConfig, setDynamicConfig] = useState<Record<string, any>>({});
-  
+
+  // 内置 MCP 设置面板状态
+  const [settingsConfig, setSettingsConfig] = useState<McpConfig | null>(null);
+  const [settingsLoading, setSettingsLoading] = useState<boolean>(false);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [settingsSummary, setSettingsSummary] = useState<any>(null);
+  const [agentsJsonInput, setAgentsJsonInput] = useState('');
+  const [skillsJsonInput, setSkillsJsonInput] = useState('');
+  const [gitRepositoryInput, setGitRepositoryInput] = useState('');
+  const [gitBranchInput, setGitBranchInput] = useState('');
+  const [gitAgentsPathInput, setGitAgentsPathInput] = useState('');
+  const [gitSkillsPathInput, setGitSkillsPathInput] = useState('');
+  const [settingsSubmitting, setSettingsSubmitting] = useState<'agents' | 'skills' | 'git' | null>(null);
 
   // 组件初始化时加载MCP配置（StrictMode 下防止重复触发）
   React.useEffect(() => {
@@ -211,7 +231,139 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
     });
   };
 
-  // 切换服务器启用状态
+  const loadBuiltinSettings = async (configId: string) => {
+    setSettingsLoading(true);
+    setSettingsError(null);
+    try {
+      const res = await apiClient.getBuiltinMcpSettings(configId);
+      const data = (res as any)?.data || null;
+      setSettingsSummary(data);
+    } catch (error: any) {
+      setSettingsSummary(null);
+      setSettingsError(error?.message || '读取内置 MCP 设置失败');
+    } finally {
+      setSettingsLoading(false);
+    }
+  };
+
+  const openBuiltinSettings = async (config: McpConfig) => {
+    setSettingsConfig(config);
+    setSettingsError(null);
+    setSettingsSummary(null);
+    setAgentsJsonInput('');
+    setSkillsJsonInput('');
+    setGitRepositoryInput('');
+    setGitBranchInput('');
+    setGitAgentsPathInput('');
+    setGitSkillsPathInput('');
+    await loadBuiltinSettings(config.id);
+  };
+
+  const closeBuiltinSettings = () => {
+    setSettingsConfig(null);
+    setSettingsLoading(false);
+    setSettingsError(null);
+    setSettingsSummary(null);
+    setAgentsJsonInput('');
+    setSkillsJsonInput('');
+    setGitRepositoryInput('');
+    setGitBranchInput('');
+    setGitAgentsPathInput('');
+    setGitSkillsPathInput('');
+    setSettingsSubmitting(null);
+  };
+
+  const handleImportAgents = async () => {
+    if (!settingsConfig) return;
+    const content = agentsJsonInput.trim();
+    if (!content) {
+      setSettingsError('请先粘贴 agents JSON');
+      return;
+    }
+
+    setSettingsSubmitting('agents');
+    setSettingsError(null);
+    try {
+      await apiClient.importBuiltinMcpAgents(settingsConfig.id, content);
+      setAgentsJsonInput('');
+      await loadBuiltinSettings(settingsConfig.id);
+    } catch (error: any) {
+      setSettingsError(error?.message || '导入 agents 失败');
+    } finally {
+      setSettingsSubmitting(null);
+    }
+  };
+
+  const handleImportSkills = async () => {
+    if (!settingsConfig) return;
+    const content = skillsJsonInput.trim();
+    if (!content) {
+      setSettingsError('请先粘贴 skills/marketplace JSON');
+      return;
+    }
+
+    setSettingsSubmitting('skills');
+    setSettingsError(null);
+    try {
+      await apiClient.importBuiltinMcpSkills(settingsConfig.id, content);
+      setSkillsJsonInput('');
+      await loadBuiltinSettings(settingsConfig.id);
+    } catch (error: any) {
+      setSettingsError(error?.message || '导入 skills 失败');
+    } finally {
+      setSettingsSubmitting(null);
+    }
+  };
+
+  const handleImportFromGit = async () => {
+    if (!settingsConfig) return;
+    const repository = gitRepositoryInput.trim();
+    if (!repository) {
+      setSettingsError('请先输入 Git 仓库地址');
+      return;
+    }
+
+    setSettingsSubmitting('git');
+    setSettingsError(null);
+    try {
+      await apiClient.importBuiltinMcpFromGit(settingsConfig.id, {
+        repository,
+        branch: gitBranchInput.trim() || undefined,
+        agents_path: gitAgentsPathInput.trim() || undefined,
+        skills_path: gitSkillsPathInput.trim() || undefined,
+      });
+      await loadBuiltinSettings(settingsConfig.id);
+    } catch (error: any) {
+      setSettingsError(error?.message || '从 Git 导入失败');
+    } finally {
+      setSettingsSubmitting(null);
+    }
+  };
+
+  const readJsonFile = (file: File): Promise<string> => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('读取文件失败'));
+    reader.readAsText(file);
+  });
+
+  const handleSelectJsonFile = async (event: React.ChangeEvent<HTMLInputElement>, target: 'agents' | 'skills') => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    try {
+      const text = await readJsonFile(file);
+      if (target === 'agents') {
+        setAgentsJsonInput(text);
+      } else {
+        setSkillsJsonInput(text);
+      }
+    } catch (error: any) {
+      setSettingsError(error?.message || '读取 JSON 文件失败');
+    }
+  };
+
   return (
     <>
       {/* 背景遮罩 */}
@@ -465,6 +617,7 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
               mcpConfigs.map((config: McpConfig) => {
                 const displayName = (config as any).display_name || config.name;
                 const isReadonly = (config as any).readonly || (config as any).builtin;
+                const supportsSettings = Boolean((config as any).supports_settings);
                 return (
                 <div
                   key={config.id}
@@ -556,6 +709,16 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
                   
                   {/* 右侧操作区：不收缩，避免被长文本挤压 */}
                   <div className="flex items-center space-x-2 shrink-0">
+                    {supportsSettings && (
+                      <button
+                        onClick={() => { void openBuiltinSettings(config); }}
+                        className="p-2 text-muted-foreground transition-colors hover:text-emerald-600"
+                        title="设置"
+                      >
+                        <SettingsIcon />
+                      </button>
+                    )}
+
                     <button
                       onClick={() => startEdit(config)}
                       disabled={isReadonly}
@@ -581,7 +744,213 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
         </div>
       </div>
 
-      
+      {settingsConfig && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-6xl max-h-[92vh] overflow-hidden rounded-xl border border-border bg-card shadow-2xl">
+            <div className="flex items-center justify-between border-b px-5 py-3">
+              <div>
+                <h3 className="text-base font-semibold text-foreground">内置 MCP 设置</h3>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {(settingsConfig as any)?.display_name || settingsConfig.name}
+                </p>
+              </div>
+              <button
+                type="button"
+                className="p-2 text-muted-foreground hover:text-foreground"
+                onClick={closeBuiltinSettings}
+              >
+                <XMarkIcon />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-5 overflow-auto max-h-[calc(92vh-70px)]">
+              {settingsLoading ? (
+                <div className="text-sm text-muted-foreground">加载中...</div>
+              ) : (
+                <>
+                  {settingsSummary && (
+                    <div className="rounded-lg border border-border bg-muted/40 p-4 space-y-2">
+                      <div className="text-xs text-muted-foreground">当前路径</div>
+                      <div className="text-xs font-mono break-all">root: {settingsSummary?.paths?.root || '—'}</div>
+                      <div className="text-xs font-mono break-all">agents: {settingsSummary?.paths?.registry || '—'}</div>
+                      <div className="text-xs font-mono break-all">skills: {settingsSummary?.paths?.marketplace || '—'}</div>
+                      <div className="text-xs font-mono break-all">git-cache: {settingsSummary?.paths?.git_cache_root || '—'}</div>
+                      <div className="text-xs text-muted-foreground pt-1">
+                        已导入 agents: {settingsSummary?.counts?.agents ?? 0}（registry: {settingsSummary?.counts?.registry_agents ?? 0} / marketplace: {settingsSummary?.counts?.marketplace_agents ?? 0}），plugins: {settingsSummary?.counts?.plugins ?? 0}，skills条目: {settingsSummary?.counts?.skills_entries ?? 0}
+                      </div>
+                    </div>
+                  )}
+
+                  {settingsError && (
+                    <div className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-600">
+                      {settingsError}
+                    </div>
+                  )}
+
+                  {settingsSummary && (
+                    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                      <div className="rounded-lg border border-border bg-muted/20 p-4">
+                        <div className="flex items-center justify-between">
+                          <div className="text-sm font-medium text-foreground">已导入 Agents</div>
+                          <div className="text-xs text-muted-foreground">{(settingsSummary?.items?.agents || []).length}</div>
+                        </div>
+                        <div className="mt-3 max-h-56 space-y-2 overflow-auto pr-1">
+                          {((settingsSummary?.items?.agents || []) as any[]).length === 0 ? (
+                            <div className="text-xs text-muted-foreground">暂无 agent 数据</div>
+                          ) : (
+                            ((settingsSummary?.items?.agents || []) as any[]).map((agent: any, idx: number) => (
+                              <div key={`${agent?.id || agent?.path || "agent"}-${idx}`} className="rounded-md border border-border/60 bg-background/60 px-2 py-1.5">
+                                <div className="text-xs text-foreground truncate">{agent?.name || agent?.id || agent?.path || "Unnamed Agent"}</div>
+                                <div className="mt-0.5 text-[11px] text-muted-foreground truncate">
+                                  {agent?.kind === "marketplace"
+                                    ? `${agent?.plugin || "plugin"} · ${agent?.path || ""}`
+                                    : `id: ${agent?.id || ""}${agent?.category ? ` · ${agent?.category}` : ""}`}
+                                </div>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="rounded-lg border border-border bg-muted/20 p-4">
+                        <div className="flex items-center justify-between">
+                          <div className="text-sm font-medium text-foreground">已导入 Skills</div>
+                          <div className="text-xs text-muted-foreground">{(settingsSummary?.items?.skills || []).length}</div>
+                        </div>
+                        <div className="mt-3 max-h-56 space-y-2 overflow-auto pr-1">
+                          {((settingsSummary?.items?.skills || []) as any[]).length === 0 ? (
+                            <div className="text-xs text-muted-foreground">暂无 skill 数据</div>
+                          ) : (
+                            ((settingsSummary?.items?.skills || []) as any[]).map((skill: any, idx: number) => (
+                              <div key={`${skill?.id || skill?.path || "skill"}-${idx}`} className="rounded-md border border-border/60 bg-background/60 px-2 py-1.5">
+                                <div className="text-xs text-foreground truncate">{skill?.name || skill?.path || "Unnamed Skill"}</div>
+                                <div className="mt-0.5 text-[11px] text-muted-foreground truncate">
+                                  {(skill?.plugin || "plugin") + (skill?.path ? ` · ${skill.path}` : "")}
+                                </div>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="rounded-lg border border-border bg-muted/25 p-4 space-y-3">
+                    <div className="space-y-1">
+                      <div className="text-base font-semibold text-foreground">按原来的方式：从 Git 导入</div>
+                      <div className="text-xs text-muted-foreground">填仓库地址后可一键导入，默认自动识别 subagents.json 与 marketplace.json。</div>
+                    </div>
+                    <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                      <input
+                        type="text"
+                        value={gitRepositoryInput}
+                        onChange={(event) => setGitRepositoryInput(event.target.value)}
+                        placeholder="仓库地址，例如 https://github.com/org/repo.git"
+                        className="lg:col-span-2 h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
+                      />
+                      <input
+                        type="text"
+                        value={gitBranchInput}
+                        onChange={(event) => setGitBranchInput(event.target.value)}
+                        placeholder="分支(可选)，默认仓库默认分支"
+                        className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
+                      />
+                      <input
+                        type="text"
+                        value={gitAgentsPathInput}
+                        onChange={(event) => setGitAgentsPathInput(event.target.value)}
+                        placeholder="agents 文件路径(可选)"
+                        className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
+                      />
+                      <input
+                        type="text"
+                        value={gitSkillsPathInput}
+                        onChange={(event) => setGitSkillsPathInput(event.target.value)}
+                        placeholder="skills 文件路径(可选)"
+                        className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => { void handleImportFromGit(); }}
+                      disabled={settingsSubmitting !== null}
+                      className="px-4 py-2 text-sm rounded-md bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {settingsSubmitting === 'git' ? '导入中...' : '一键从 Git 导入'}
+                    </button>
+                  </div>
+
+                  <details className="rounded-lg border border-border bg-muted/20 p-4">
+                    <summary className="cursor-pointer text-sm font-medium text-foreground select-none">
+                      兼容模式：手动 JSON 导入（可选）
+                    </summary>
+                    <div className="mt-4 text-xs text-muted-foreground">只有在 Git 导入不方便时再用这里。</div>
+                    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <label className="text-sm font-medium text-foreground">导入 agents (JSON)</label>
+                        <label className="text-xs text-muted-foreground cursor-pointer hover:text-foreground">
+                          读取 JSON 文件
+                          <input
+                            type="file"
+                            accept=".json,application/json,text/plain"
+                            className="hidden"
+                            onChange={(event) => { void handleSelectJsonFile(event, 'agents'); }}
+                          />
+                        </label>
+                      </div>
+                      <textarea
+                        value={agentsJsonInput}
+                        onChange={(event) => setAgentsJsonInput(event.target.value)}
+                        placeholder='例如: {"agents": [...]}'
+                        className="h-52 w-full rounded-md border border-input bg-background px-3 py-2 text-xs font-mono outline-none focus:ring-2 focus:ring-ring"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => { void handleImportAgents(); }}
+                        disabled={settingsSubmitting !== null}
+                        className="px-3 py-1.5 text-xs rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {settingsSubmitting === 'agents' ? '导入中...' : '导入 agents'}
+                      </button>
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <label className="text-sm font-medium text-foreground">导入 skills/marketplace (JSON)</label>
+                        <label className="text-xs text-muted-foreground cursor-pointer hover:text-foreground">
+                          读取 JSON 文件
+                          <input
+                            type="file"
+                            accept=".json,application/json,text/plain"
+                            className="hidden"
+                            onChange={(event) => { void handleSelectJsonFile(event, 'skills'); }}
+                          />
+                        </label>
+                      </div>
+                      <textarea
+                        value={skillsJsonInput}
+                        onChange={(event) => setSkillsJsonInput(event.target.value)}
+                        placeholder='例如: {"plugins": [...]}'
+                        className="h-52 w-full rounded-md border border-input bg-background px-3 py-2 text-xs font-mono outline-none focus:ring-2 focus:ring-ring"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => { void handleImportSkills(); }}
+                        disabled={settingsSubmitting !== null}
+                        className="px-3 py-1.5 text-xs rounded-md bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {settingsSubmitting === 'skills' ? '导入中...' : '导入 skills'}
+                      </button>
+                    </div>
+                  </div>
+                  </details>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 确认对话框 */}
       <ConfirmDialog

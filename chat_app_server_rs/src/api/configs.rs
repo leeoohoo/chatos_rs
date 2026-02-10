@@ -8,6 +8,12 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
+use crate::builtin::sub_agent_router::{
+    import_agents_from_json as import_sub_agent_router_agents,
+    import_from_git as import_sub_agent_router_from_git,
+    import_skills_from_json as import_sub_agent_router_skills,
+    summarize_settings as summarize_sub_agent_router_settings,
+};
 use crate::models::ai_model_config::AiModelConfig;
 use crate::models::mcp_config::McpConfig;
 use crate::models::system_context::SystemContext;
@@ -16,6 +22,7 @@ use crate::repositories::mcp_configs as mcp_repo;
 use crate::repositories::system_contexts as ctx_repo;
 use crate::services::builtin_mcp::{
     builtin_display_name, get_builtin_mcp_config, is_builtin_mcp_id, list_builtin_mcp_configs,
+    SUB_AGENT_ROUTER_MCP_ID,
 };
 
 #[derive(Debug, Deserialize)]
@@ -70,6 +77,19 @@ struct ResourceByCommandRequest {
     alias: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct BuiltinImportRequest {
+    content: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BuiltinGitImportRequest {
+    repository: Option<String>,
+    branch: Option<String>,
+    agents_path: Option<String>,
+    skills_path: Option<String>,
+}
+
 pub fn router() -> Router {
     Router::new()
         .route(
@@ -83,6 +103,22 @@ pub fn router() -> Router {
         .route(
             "/api/mcp-configs/:config_id/resource/config",
             get(get_mcp_resource_config),
+        )
+        .route(
+            "/api/mcp-configs/:config_id/builtin/settings",
+            get(get_builtin_mcp_settings),
+        )
+        .route(
+            "/api/mcp-configs/:config_id/builtin/import-agents",
+            post(import_builtin_agents),
+        )
+        .route(
+            "/api/mcp-configs/:config_id/builtin/import-skills",
+            post(import_builtin_skills),
+        )
+        .route(
+            "/api/mcp-configs/:config_id/builtin/import-git",
+            post(import_builtin_from_git),
         )
         .route(
             "/api/mcp-configs/resource/config",
@@ -160,6 +196,10 @@ async fn list_mcp_configs(Query(query): Query<UserQuery>) -> (StatusCode, Json<V
             map.insert("builtin".to_string(), json!(true));
             map.insert("display_name".to_string(), json!(display_name));
             map.insert("app_ids".to_string(), json!([] as [String; 0]));
+            if cfg.id == SUB_AGENT_ROUTER_MCP_ID {
+                map.insert("supports_settings".to_string(), json!(true));
+                map.insert("builtin_kind".to_string(), json!("sub_agent_router"));
+            }
         }
         out.push(obj);
     }
@@ -372,6 +412,139 @@ async fn delete_mcp_config(Path(config_id): Path<String>) -> (StatusCode, Json<V
         StatusCode::OK,
         Json(json!({ "message": "MCP配置删除成功", "id": config_id })),
     )
+}
+
+async fn get_builtin_mcp_settings(Path(config_id): Path<String>) -> (StatusCode, Json<Value>) {
+    if config_id != SUB_AGENT_ROUTER_MCP_ID {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "该内置 MCP 暂不支持设置"})),
+        );
+    }
+    match summarize_sub_agent_router_settings() {
+        Ok(value) => (StatusCode::OK, Json(json!({"ok": true, "data": value}))),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("读取内置设置失败: {}", err)})),
+        ),
+    }
+}
+
+async fn import_builtin_agents(
+    Path(config_id): Path<String>,
+    Json(req): Json<BuiltinImportRequest>,
+) -> (StatusCode, Json<Value>) {
+    if config_id != SUB_AGENT_ROUTER_MCP_ID {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "该内置 MCP 暂不支持 agents 导入"})),
+        );
+    }
+
+    let content = req
+        .content
+        .as_deref()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+    let Some(content) = content else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "content 不能为空"})),
+        );
+    };
+
+    match import_sub_agent_router_agents(content.as_str()) {
+        Ok(value) => (StatusCode::OK, Json(json!({"ok": true, "data": value}))),
+        Err(err) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": format!("导入 agents 失败: {}", err)})),
+        ),
+    }
+}
+
+async fn import_builtin_skills(
+    Path(config_id): Path<String>,
+    Json(req): Json<BuiltinImportRequest>,
+) -> (StatusCode, Json<Value>) {
+    if config_id != SUB_AGENT_ROUTER_MCP_ID {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "该内置 MCP 暂不支持 skills 导入"})),
+        );
+    }
+
+    let content = req
+        .content
+        .as_deref()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+    let Some(content) = content else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "content 不能为空"})),
+        );
+    };
+
+    match import_sub_agent_router_skills(content.as_str()) {
+        Ok(value) => (StatusCode::OK, Json(json!({"ok": true, "data": value}))),
+        Err(err) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": format!("导入 skills 失败: {}", err)})),
+        ),
+    }
+}
+
+async fn import_builtin_from_git(
+    Path(config_id): Path<String>,
+    Json(req): Json<BuiltinGitImportRequest>,
+) -> (StatusCode, Json<Value>) {
+    if config_id != SUB_AGENT_ROUTER_MCP_ID {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "该内置 MCP 暂不支持 git 导入"})),
+        );
+    }
+
+    let repository = req
+        .repository
+        .as_deref()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+    let Some(repository) = repository else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "repository 不能为空"})),
+        );
+    };
+
+    let branch = req
+        .branch
+        .as_deref()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+    let agents_path = req
+        .agents_path
+        .as_deref()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+    let skills_path = req
+        .skills_path
+        .as_deref()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+
+    match import_sub_agent_router_from_git(
+        repository.as_str(),
+        branch.as_deref(),
+        agents_path.as_deref(),
+        skills_path.as_deref(),
+    ) {
+        Ok(value) => (StatusCode::OK, Json(json!({"ok": true, "data": value}))),
+        Err(err) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": format!("从 git 导入失败: {}", err)})),
+        ),
+    }
 }
 
 async fn get_mcp_resource_config(Path(config_id): Path<String>) -> (StatusCode, Json<Value>) {

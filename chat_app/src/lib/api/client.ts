@@ -320,6 +320,34 @@ class ApiClient {
     });
   }
 
+  async getBuiltinMcpSettings(id: string): Promise<any> {
+    return this.request<any>(`/mcp-configs/${id}/builtin/settings`);
+  }
+
+  async importBuiltinMcpAgents(id: string, content: string): Promise<any> {
+    return this.request<any>(`/mcp-configs/${id}/builtin/import-agents`, {
+      method: 'POST',
+      body: JSON.stringify({ content }),
+    });
+  }
+
+  async importBuiltinMcpSkills(id: string, content: string): Promise<any> {
+    return this.request<any>(`/mcp-configs/${id}/builtin/import-skills`, {
+      method: 'POST',
+      body: JSON.stringify({ content }),
+    });
+  }
+
+  async importBuiltinMcpFromGit(
+    id: string,
+    payload: { repository: string; branch?: string; agents_path?: string; skills_path?: string }
+  ): Promise<any> {
+    return this.request<any>(`/mcp-configs/${id}/builtin/import-git`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
   // AI模型配置相关API
   async getAiModelConfigs(userId?: string) {
     if (ipcAvailable()) {

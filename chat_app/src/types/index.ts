@@ -176,6 +176,8 @@ export interface McpConfig {
   enabled: boolean;
   readonly?: boolean;
   builtin?: boolean;
+  supports_settings?: boolean;
+  builtin_kind?: string;
   config?: any;
   createdAt: Date;
   updatedAt: Date;

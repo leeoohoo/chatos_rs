@@ -8,6 +8,7 @@ use uuid::Uuid;
 
 use crate::builtin::code_maintainer::{CodeMaintainerOptions, CodeMaintainerService};
 use crate::builtin::terminal_controller::{TerminalControllerOptions, TerminalControllerService};
+use crate::builtin::sub_agent_router::{SubAgentRouterOptions, SubAgentRouterService};
 use crate::services::builtin_mcp::BuiltinMcpKind;
 use crate::services::mcp_loader::{McpBuiltinServer, McpHttpServer, McpStdioServer};
 use crate::utils::abort_registry;
@@ -35,6 +36,7 @@ pub struct ToolResult {
 enum BuiltinToolService {
     CodeMaintainer(CodeMaintainerService),
     TerminalController(TerminalControllerService),
+    SubAgentRouter(SubAgentRouterService),
 }
 
 impl BuiltinToolService {
@@ -42,6 +44,7 @@ impl BuiltinToolService {
         match self {
             Self::CodeMaintainer(service) => service.list_tools(),
             Self::TerminalController(service) => service.list_tools(),
+            Self::SubAgentRouter(service) => service.list_tools(),
         }
     }
 
@@ -54,6 +57,7 @@ impl BuiltinToolService {
         match self {
             Self::CodeMaintainer(service) => service.call_tool(name, args, session_id),
             Self::TerminalController(service) => service.call_tool(name, args, session_id),
+            Self::SubAgentRouter(service) => service.call_tool(name, args, session_id),
         }
     }
 }
@@ -229,6 +233,19 @@ impl McpToolExecute {
                     idle_timeout_ms: 5_000,
                     max_wait_ms: 60_000,
                     max_output_chars: 20_000,
+                })?,
+            ),
+            BuiltinMcpKind::SubAgentRouter => BuiltinToolService::SubAgentRouter(
+                SubAgentRouterService::new(SubAgentRouterOptions {
+                    server_name: server.name.clone(),
+                    root: std::path::PathBuf::from(&server.workspace_dir),
+                    user_id: server.user_id.clone(),
+                    project_id: server.project_id.clone(),
+                    timeout_ms: 120_000,
+                    max_output_bytes: 2 * 1024 * 1024,
+                    ai_timeout_ms: 120_000,
+                    session_id: None,
+                    run_id: None,
                 })?,
             ),
         };
