@@ -206,6 +206,17 @@ class ApiClient {
     return this.request<any>(`/fs/entries${qs}`);
   }
 
+  async searchFsEntries(path: string, query: string, limit?: number): Promise<any> {
+    const qs: string[] = [
+      `path=${encodeURIComponent(path)}`,
+      `q=${encodeURIComponent(query)}`,
+    ];
+    if (limit !== undefined) {
+      qs.push(`limit=${encodeURIComponent(String(limit))}`);
+    }
+    return this.request<any>(`/fs/search?${qs.join('&')}`);
+  }
+
   async readFsFile(path: string): Promise<any> {
     const qs = `?path=${encodeURIComponent(path)}`;
     return this.request<any>(`/fs/read${qs}`);

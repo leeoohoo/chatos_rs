@@ -8,6 +8,9 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 const MAX_PREVIEW_BYTES: u64 = 2 * 1024 * 1024;
+const DEFAULT_SEARCH_LIMIT: usize = 200;
+const MAX_SEARCH_LIMIT: usize = 500;
+const MAX_SEARCH_VISITS: usize = 20_000;
 
 #[derive(Debug, Deserialize)]
 struct FsQuery {
@@ -19,10 +22,18 @@ struct FsReadQuery {
     path: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct FsSearchQuery {
+    path: Option<String>,
+    q: Option<String>,
+    limit: Option<usize>,
+}
+
 pub fn router() -> Router {
     Router::new()
         .route("/api/fs/list", get(list_dirs))
         .route("/api/fs/entries", get(list_entries))
+        .route("/api/fs/search", get(search_entries))
         .route("/api/fs/read", get(read_file))
 }
 
@@ -132,6 +143,142 @@ async fn list_entries(Query(query): Query<FsQuery>) -> (StatusCode, Json<Value>)
             "parent": parent,
             "entries": entries,
             "roots": Vec::<Value>::new()
+        })),
+    )
+}
+
+async fn search_entries(Query(query): Query<FsSearchQuery>) -> (StatusCode, Json<Value>) {
+    let raw_path = query
+        .path
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    if raw_path.is_none() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "搜索路径不能为空" })),
+        );
+    }
+
+    let raw_keyword = query
+        .q
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    if raw_keyword.is_none() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "搜索关键字不能为空" })),
+        );
+    }
+
+    let path = PathBuf::from(raw_path.unwrap());
+    if !path.exists() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "路径不存在" })),
+        );
+    }
+    if !path.is_dir() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "路径不是目录" })),
+        );
+    }
+
+    let limit = query
+        .limit
+        .unwrap_or(DEFAULT_SEARCH_LIMIT)
+        .clamp(1, MAX_SEARCH_LIMIT);
+    let keyword = normalize_search_keyword(&raw_keyword.unwrap());
+
+    let mut stack = vec![path.clone()];
+    let mut entries: Vec<Value> = Vec::new();
+    let mut visited_dirs = 0usize;
+    let mut truncated = false;
+
+    while let Some(dir_path) = stack.pop() {
+        if visited_dirs >= MAX_SEARCH_VISITS {
+            truncated = true;
+            break;
+        }
+        visited_dirs += 1;
+
+        let iter = match fs::read_dir(&dir_path) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        for entry in iter {
+            if entries.len() >= limit {
+                truncated = true;
+                break;
+            }
+
+            let entry = match entry {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let meta = match entry.metadata() {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+
+            let full_path = entry.path();
+            if meta.is_dir() {
+                stack.push(full_path);
+                continue;
+            }
+
+            let name = entry.file_name().to_string_lossy().to_string();
+            let relative_path = full_path
+                .strip_prefix(&path)
+                .ok()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|| full_path.to_string_lossy().to_string());
+
+            if !is_search_match(&name, &relative_path, &keyword) {
+                continue;
+            }
+
+            let modified_at = meta.modified().ok().and_then(format_system_time);
+            entries.push(json!({
+                "name": name,
+                "path": full_path.to_string_lossy(),
+                "relative_path": relative_path,
+                "is_dir": false,
+                "size": Some(meta.len()),
+                "modified_at": modified_at
+            }));
+        }
+
+        if truncated {
+            break;
+        }
+    }
+
+    entries.sort_by(|a, b| {
+        let ap = a
+            .get("relative_path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_lowercase();
+        let bp = b
+            .get("relative_path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_lowercase();
+        ap.cmp(&bp)
+    });
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "path": path.to_string_lossy(),
+            "query": keyword,
+            "entries": entries,
+            "truncated": truncated,
+            "visited_dirs": visited_dirs
         })),
     )
 }
@@ -362,6 +509,65 @@ fn read_dir_entries(path: &Path, include_files: bool) -> Result<Vec<Value>, Stri
         an.to_lowercase().cmp(&bn.to_lowercase())
     });
     Ok(out)
+}
+
+fn normalize_search_keyword(value: &str) -> String {
+    value.trim().to_lowercase()
+}
+
+fn compact_search_text(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| !matches!(ch, ' ' | '\t' | '\n' | '\r' | '_' | '-' | '.' | '/' | '\\'))
+        .collect()
+}
+
+fn fuzzy_match(text: &str, keyword: &str) -> bool {
+    if keyword.is_empty() {
+        return true;
+    }
+    if text.contains(keyword) {
+        return true;
+    }
+
+    let mut keyword_iter = keyword.chars();
+    let mut current = match keyword_iter.next() {
+        Some(ch) => ch,
+        None => return true,
+    };
+
+    for ch in text.chars() {
+        if ch == current {
+            match keyword_iter.next() {
+                Some(next) => current = next,
+                None => return true,
+            }
+        }
+    }
+
+    false
+}
+
+fn is_search_match(name: &str, relative_path: &str, keyword: &str) -> bool {
+    if keyword.is_empty() {
+        return true;
+    }
+
+    let lower_name = name.to_lowercase();
+    let lower_path = relative_path.to_lowercase();
+
+    if fuzzy_match(&lower_name, keyword) || fuzzy_match(&lower_path, keyword) {
+        return true;
+    }
+
+    let compact_keyword = compact_search_text(keyword);
+    if compact_keyword.is_empty() {
+        return false;
+    }
+
+    let compact_name = compact_search_text(&lower_name);
+    let compact_path = compact_search_text(&lower_path);
+    fuzzy_match(&compact_name, &compact_keyword) || fuzzy_match(&compact_path, &compact_keyword)
 }
 
 fn format_system_time(time: SystemTime) -> Option<String> {

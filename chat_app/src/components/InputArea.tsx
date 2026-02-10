@@ -24,6 +24,50 @@ const normalizeFsEntry = (raw: any): FsEntry => ({
   modifiedAt: raw?.modified_at ?? raw?.modifiedAt ?? null,
 });
 
+const CODE_FILE_EXTENSIONS = new Set([
+  'c', 'cc', 'cpp', 'cs', 'css', 'go', 'h', 'hpp', 'html', 'htm', 'java', 'js', 'jsx', 'kt',
+  'kts', 'less', 'lua', 'm', 'md', 'mm', 'php', 'proto', 'py', 'r', 'rb', 'rs', 'scala', 'scss',
+  'sh', 'sql', 'svelte', 'swift', 'ts', 'tsx', 'vue', 'xml', 'yml', 'yaml', 'toml', 'ini', 'cfg',
+  'conf', 'properties', 'gradle', 'env', 'graphql', 'bash', 'zsh', 'ps1', 'bat', 'make', 'cmake',
+]);
+
+const CODE_FILE_NAMES = new Set([
+  'dockerfile', 'makefile', 'cmakelists.txt', '.gitignore', '.gitattributes', '.editorconfig',
+  '.npmrc', '.yarnrc', '.yarnrc.yml', '.prettierrc', '.eslintrc', '.babelrc', '.env',
+  '.env.local', '.env.development', '.env.production',
+]);
+
+const isLikelyCodeFileName = (fileName: string) => {
+  const normalized = String(fileName || '').trim().toLowerCase();
+  if (!normalized) return false;
+  if (CODE_FILE_NAMES.has(normalized)) return true;
+
+  const parts = normalized.split('.');
+  if (parts.length >= 2) {
+    const ext = parts[parts.length - 1];
+    if (CODE_FILE_EXTENSIONS.has(ext)) {
+      return true;
+    }
+  }
+  return false;
+};
+
+const fuzzyMatch = (text: string, keyword: string) => {
+  if (!keyword) return true;
+  if (!text) return false;
+  if (text.includes(keyword)) return true;
+
+  let keyIndex = 0;
+  for (let i = 0; i < text.length && keyIndex < keyword.length; i++) {
+    if (text[i] === keyword[keyIndex]) {
+      keyIndex += 1;
+    }
+  }
+  return keyIndex === keyword.length;
+};
+
+const compactSearchText = (value: string) => value.replace(/[\s._\-\/]+/g, '');
+
 export const InputArea: React.FC<InputAreaProps> = ({
   onSend,
   onStop,
@@ -72,6 +116,9 @@ export const InputArea: React.FC<InputAreaProps> = ({
   const [projectFileParent, setProjectFileParent] = useState<string | null>(null);
   const [projectFileFilter, setProjectFileFilter] = useState('');
   const [projectFileLoading, setProjectFileLoading] = useState(false);
+  const [projectFileSearching, setProjectFileSearching] = useState(false);
+  const [projectFileSearchResults, setProjectFileSearchResults] = useState<FsEntry[]>([]);
+  const [projectFileSearchTruncated, setProjectFileSearchTruncated] = useState(false);
   const [projectFileError, setProjectFileError] = useState<string | null>(null);
   const [projectFileAttachingPath, setProjectFileAttachingPath] = useState<string | null>(null);
 
@@ -136,27 +183,42 @@ export const InputArea: React.FC<InputAreaProps> = ({
     return normalized;
   }, [normalizePath, projectFilePath, projectRootForAgentFiles]);
   const filteredProjectFileEntries = useMemo(() => {
-    const keyword = projectFileFilter.trim().toLocaleLowerCase();
+    const keywordRaw = projectFileFilter.trim().toLocaleLowerCase();
+    const keywordCompact = compactSearchText(keywordRaw);
     const source = (projectFileEntries || []).slice().sort((a, b) => {
       if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
       return a.name.localeCompare(b.name);
     });
-    if (!keyword) return source;
+    if (!keywordRaw) return source;
+
+    const matches = (value: string) => {
+      const text = value.toLocaleLowerCase();
+      const compactText = compactSearchText(text);
+      if (fuzzyMatch(text, keywordRaw) || fuzzyMatch(compactText, keywordCompact)) {
+        return true;
+      }
+      return false;
+    };
 
     return source.filter((entry) => {
-      const nameText = entry.name.toLocaleLowerCase();
-      const normalizedEntryPath = normalizePath(entry.path).toLocaleLowerCase();
+      const nameText = entry.name;
+      const normalizedEntryPath = normalizePath(entry.path);
       let relativePathText = normalizedEntryPath;
       if (projectRootForAgentFiles) {
-        const normalizedRoot = normalizePath(projectRootForAgentFiles).toLocaleLowerCase();
+        const normalizedRoot = normalizePath(projectRootForAgentFiles);
         const prefix = `${normalizedRoot}/`;
         if (normalizedEntryPath.startsWith(prefix)) {
           relativePathText = normalizedEntryPath.slice(prefix.length);
         }
       }
-      return nameText.includes(keyword) || relativePathText.includes(keyword);
+      return matches(nameText) || matches(relativePathText);
     });
   }, [normalizePath, projectFileEntries, projectFileFilter, projectRootForAgentFiles]);
+  const projectFileKeywordActive = projectFileFilter.trim().length > 0;
+  const displayedProjectFileEntries = projectFileKeywordActive
+    ? projectFileSearchResults
+    : filteredProjectFileEntries;
+  const projectFileBusy = projectFileKeywordActive ? projectFileSearching : projectFileLoading;
 
   const toRelativeProjectPath = useCallback((absolutePath: string) => {
     if (!projectRootForAgentFiles) return absolutePath;
@@ -210,6 +272,9 @@ export const InputArea: React.FC<InputAreaProps> = ({
   useEffect(() => {
     setProjectFilePickerOpen(false);
     setProjectFileEntries([]);
+    setProjectFileSearchResults([]);
+    setProjectFileSearchTruncated(false);
+    setProjectFileSearching(false);
     setProjectFilePath(null);
     setProjectFileParent(null);
     setProjectFileFilter('');
@@ -217,11 +282,55 @@ export const InputArea: React.FC<InputAreaProps> = ({
     setProjectFileAttachingPath(null);
   }, [selectedAgentId, projectRootForAgentFiles]);
 
+  useEffect(() => {
+    if (!projectFilePickerOpen || !projectRootForAgentFiles) return;
+
+    const keyword = projectFileFilter.trim();
+    if (!keyword) {
+      setProjectFileSearchResults([]);
+      setProjectFileSearchTruncated(false);
+      setProjectFileSearching(false);
+      return;
+    }
+
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      setProjectFileSearching(true);
+      setProjectFileError(null);
+      try {
+        const data = await client.searchFsEntries(projectRootForAgentFiles, keyword, 300);
+        if (cancelled) return;
+
+        const entriesRaw: any[] = Array.isArray(data?.entries) ? data.entries : [];
+        const normalizedEntries = entriesRaw
+          .map((raw: any) => normalizeFsEntry(raw))
+          .filter((entry: FsEntry) => !entry.isDir && entry.path && isPathWithinRoot(entry.path, projectRootForAgentFiles));
+
+        setProjectFileSearchResults(normalizedEntries);
+        setProjectFileSearchTruncated(Boolean(data?.truncated));
+      } catch (error: any) {
+        if (cancelled) return;
+        setProjectFileError(error?.message || '搜索项目文件失败');
+        setProjectFileSearchResults([]);
+        setProjectFileSearchTruncated(false);
+      } finally {
+        if (!cancelled) {
+          setProjectFileSearching(false);
+        }
+      }
+    }, 150);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [client, isPathWithinRoot, projectFileFilter, projectFilePickerOpen, projectRootForAgentFiles]);
+
   const isFileTypeAllowed = useCallback((file: File) => {
     if (!supportedFileTypes || supportedFileTypes.length === 0) return true;
     const type = String(file.type || '').toLowerCase();
     const name = String(file.name || '').toLowerCase();
-    return supportedFileTypes.some((pattern) => {
+    const matched = supportedFileTypes.some((pattern) => {
       const p = String(pattern || '').toLowerCase().trim();
       if (!p) return false;
       if (p === '*/*') return true;
@@ -235,6 +344,11 @@ export const InputArea: React.FC<InputAreaProps> = ({
       if (!type && p === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') return name.endsWith('.docx');
       return false;
     });
+
+    if (matched) return true;
+
+    // Fallback: allow common source/config files even when browser MIME is generic.
+    return isLikelyCodeFileName(name);
   }, [supportedFileTypes]);
 
   // 统一添加文件并校验限制
@@ -353,9 +467,17 @@ export const InputArea: React.FC<InputAreaProps> = ({
         throw new Error('暂不支持二进制文件，请选择文本文件');
       }
       const content = typeof rawFile?.content === 'string' ? rawFile.content : '';
-      const contentType = String(rawFile?.content_type || rawFile?.contentType || 'text/plain');
+      const rawContentType = String(rawFile?.content_type || rawFile?.contentType || '').trim().toLowerCase();
+      const normalizedContentType = (
+        rawContentType.startsWith('text/')
+        || rawContentType === 'application/json'
+        || rawContentType === 'application/pdf'
+        || rawContentType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      )
+        ? rawContentType
+        : 'text/plain';
       const relativePath = toRelativeProjectPath(entry.path) || entry.name;
-      const fileToAttach = new File([content], relativePath, { type: contentType || 'text/plain' });
+      const fileToAttach = new File([content], relativePath, { type: normalizedContentType });
       addFiles([fileToAttach]);
       setProjectFilePickerOpen(false);
     } catch (error: any) {
@@ -699,16 +821,18 @@ export const InputArea: React.FC<InputAreaProps> = ({
                     type="text"
                     value={projectFileFilter}
                     onChange={(event) => setProjectFileFilter(event.target.value)}
-                    placeholder="筛选文件（不区分大小写）..."
+                    placeholder="筛选文件（不区分大小写，支持模糊）..."
                     className="w-full rounded border bg-background px-2 py-1 text-xs outline-none focus:border-primary"
                   />
                 </div>
                 <div className="max-h-64 overflow-auto py-1">
-                  {projectFileLoading ? (
-                    <div className="px-3 py-2 text-xs text-muted-foreground">加载中...</div>
+                  {projectFileBusy ? (
+                    <div className="px-3 py-2 text-xs text-muted-foreground">
+                      {projectFileKeywordActive ? '搜索中...' : '加载中...'}
+                    </div>
                   ) : (
                     <>
-                      {projectFileParent && (
+                      {!projectFileKeywordActive && projectFileParent && (
                         <button
                           type="button"
                           className="w-full px-3 py-1.5 text-left text-sm hover:bg-accent"
@@ -717,7 +841,7 @@ export const InputArea: React.FC<InputAreaProps> = ({
                           ..
                         </button>
                       )}
-                      {filteredProjectFileEntries.map((entry) => (
+                      {displayedProjectFileEntries.map((entry) => (
                         <button
                           key={entry.path}
                           type="button"
@@ -725,17 +849,27 @@ export const InputArea: React.FC<InputAreaProps> = ({
                           onClick={() => { void handleAttachProjectFile(entry); }}
                           disabled={projectFileAttachingPath !== null}
                         >
-                          <span className="truncate">
+                          <span className="min-w-0 flex-1 truncate">
                             {entry.isDir ? `[DIR] ${entry.name}` : `[FILE] ${entry.name}`}
+                            {projectFileKeywordActive && !entry.isDir && (
+                              <span className="block truncate text-[11px] text-muted-foreground">
+                                {toRelativeProjectPath(entry.path)}
+                              </span>
+                            )}
                           </span>
                           {projectFileAttachingPath === entry.path && (
                             <span className="text-[11px] text-muted-foreground">处理中...</span>
                           )}
                         </button>
                       ))}
-                      {filteredProjectFileEntries.length === 0 && !projectFileLoading && (
+                      {displayedProjectFileEntries.length === 0 && !projectFileBusy && (
                         <div className="px-3 py-2 text-xs text-muted-foreground">
-                          {projectFileFilter.trim() ? '没有匹配的文件' : '当前目录没有可选文件'}
+                          {projectFileKeywordActive ? '没有匹配的文件' : '当前目录没有可选文件'}
+                        </div>
+                      )}
+                      {projectFileKeywordActive && projectFileSearchTruncated && (
+                        <div className="px-3 py-2 text-[11px] text-muted-foreground border-t">
+                          结果过多，已截断显示前 300 条
                         </div>
                       )}
                     </>
