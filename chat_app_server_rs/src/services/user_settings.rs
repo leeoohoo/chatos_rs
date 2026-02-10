@@ -1,4 +1,4 @@
-﻿use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::config::Config;
 use crate::repositories::user_settings as repo;
@@ -23,11 +23,16 @@ fn coerce(value: &Value, key: &str) -> Value {
     }
     match key {
         "SUMMARY_ENABLED" | "DYNAMIC_SUMMARY_ENABLED" => Value::Bool(js_truthy(value)),
-        "SUMMARY_MESSAGE_LIMIT" | "SUMMARY_MAX_CONTEXT_TOKENS" | "SUMMARY_KEEP_LAST_N" | "SUMMARY_TARGET_TOKENS" | "SUMMARY_COOLDOWN_SECONDS" | "MAX_ITERATIONS" | "HISTORY_LIMIT" | "CHAT_MAX_TOKENS" => {
-            parse_js_int_value(value)
-                .map(|n| Value::Number(serde_json::Number::from(n)))
-                .unwrap_or(Value::Null)
-        }
+        "SUMMARY_MESSAGE_LIMIT"
+        | "SUMMARY_MAX_CONTEXT_TOKENS"
+        | "SUMMARY_KEEP_LAST_N"
+        | "SUMMARY_TARGET_TOKENS"
+        | "SUMMARY_COOLDOWN_SECONDS"
+        | "MAX_ITERATIONS"
+        | "HISTORY_LIMIT"
+        | "CHAT_MAX_TOKENS" => parse_js_int_value(value)
+            .map(|n| Value::Number(serde_json::Number::from(n)))
+            .unwrap_or(Value::Null),
         "LOG_LEVEL" => Value::String(value.as_str().unwrap_or(&value.to_string()).to_string()),
         _ => value.clone(),
     }
@@ -104,9 +109,17 @@ fn js_truthy(value: &Value) -> bool {
 
 pub fn get_default_user_settings() -> Value {
     let cfg = Config::get();
-    let max_iterations = std::env::var("MAX_ITERATIONS").ok().and_then(|v| v.parse::<i64>().ok()).unwrap_or(25);
-    let history_limit = std::env::var("HISTORY_LIMIT").ok().and_then(|v| v.parse::<i64>().ok()).unwrap_or(20);
-    let chat_max_tokens = std::env::var("CHAT_MAX_TOKENS").ok().and_then(|v| v.parse::<i64>().ok())
+    let max_iterations = std::env::var("MAX_ITERATIONS")
+        .ok()
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(25);
+    let history_limit = std::env::var("HISTORY_LIMIT")
+        .ok()
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(20);
+    let chat_max_tokens = std::env::var("CHAT_MAX_TOKENS")
+        .ok()
+        .and_then(|v| v.parse::<i64>().ok())
         .map(serde_json::Number::from)
         .map(Value::Number)
         .unwrap_or(Value::Null);
@@ -133,7 +146,9 @@ pub async fn get_effective_user_settings(user_id: Option<String>) -> Result<Valu
     }
     let user_id = user_id.unwrap();
     let row = repo::get_user_settings(&user_id).await?;
-    let settings = row.map(|r| r.settings).unwrap_or(Value::Object(serde_json::Map::new()));
+    let settings = row
+        .map(|r| r.settings)
+        .unwrap_or(Value::Object(serde_json::Map::new()));
     if let Value::Object(map) = settings {
         if let Value::Object(base_map) = &mut base {
             for k in USER_SETTING_KEYS {
@@ -181,4 +196,3 @@ pub trait AiClientSettings {
 pub fn apply_settings_to_ai_client<T: AiClientSettings>(ai_client: &mut T, effective: &Value) {
     ai_client.apply_settings(effective);
 }
-

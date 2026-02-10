@@ -2,7 +2,7 @@ use futures::TryStreamExt;
 use mongodb::bson::{doc, Bson, Document};
 
 use crate::models::terminal_log::{TerminalLog, TerminalLogRow};
-use crate::repositories::db::{with_db, to_doc, doc_from_pairs};
+use crate::repositories::db::{doc_from_pairs, to_doc, with_db};
 
 fn normalize_doc(doc: &Document) -> Option<TerminalLog> {
     Some(TerminalLog {
@@ -48,7 +48,11 @@ pub async fn create_terminal_log(log: &TerminalLog) -> Result<String, String> {
     ).await
 }
 
-pub async fn list_terminal_logs(terminal_id: &str, limit: Option<i64>, offset: i64) -> Result<Vec<TerminalLog>, String> {
+pub async fn list_terminal_logs(
+    terminal_id: &str,
+    limit: Option<i64>,
+    offset: i64,
+) -> Result<Vec<TerminalLog>, String> {
     with_db(
         |db| {
             let terminal_id = terminal_id.to_string();
@@ -94,16 +98,24 @@ pub async fn delete_terminal_logs(terminal_id: &str) -> Result<(), String> {
         |db| {
             let terminal_id = terminal_id.to_string();
             Box::pin(async move {
-                db.collection::<Document>("terminal_logs").delete_many(doc! { "terminal_id": &terminal_id }, None).await.map_err(|e| e.to_string())?;
+                db.collection::<Document>("terminal_logs")
+                    .delete_many(doc! { "terminal_id": &terminal_id }, None)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 Ok(())
             })
         },
         |pool| {
             let terminal_id = terminal_id.to_string();
             Box::pin(async move {
-                sqlx::query("DELETE FROM terminal_logs WHERE terminal_id = ?").bind(&terminal_id).execute(pool).await.map_err(|e| e.to_string())?;
+                sqlx::query("DELETE FROM terminal_logs WHERE terminal_id = ?")
+                    .bind(&terminal_id)
+                    .execute(pool)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 Ok(())
             })
-        }
-    ).await
+        },
+    )
+    .await
 }

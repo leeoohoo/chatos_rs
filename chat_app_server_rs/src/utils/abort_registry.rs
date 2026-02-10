@@ -1,4 +1,4 @@
-﻿use std::collections::HashMap;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use once_cell::sync::Lazy;
@@ -11,14 +11,18 @@ struct AbortEntry {
     aborted: bool,
 }
 
-static ABORT_REGISTRY: Lazy<Arc<Mutex<HashMap<String, AbortEntry>>>> = Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
+static ABORT_REGISTRY: Lazy<Arc<Mutex<HashMap<String, AbortEntry>>>> =
+    Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
 
 pub fn set_controller(session_id: &str, token: CancellationToken) {
     if session_id.is_empty() {
         return;
     }
     let mut map = ABORT_REGISTRY.lock();
-    let entry = map.entry(session_id.to_string()).or_insert(AbortEntry { token: token.clone(), aborted: false });
+    let entry = map.entry(session_id.to_string()).or_insert(AbortEntry {
+        token: token.clone(),
+        aborted: false,
+    });
     entry.token = token;
 }
 
@@ -38,7 +42,13 @@ pub fn abort(session_id: &str) -> bool {
         return true;
     }
     // Mirror Node behavior: mark aborted even if no controller exists yet.
-    map.insert(session_id.to_string(), AbortEntry { token: CancellationToken::new(), aborted: true });
+    map.insert(
+        session_id.to_string(),
+        AbortEntry {
+            token: CancellationToken::new(),
+            aborted: true,
+        },
+    );
     true
 }
 
@@ -55,7 +65,10 @@ pub fn reset(session_id: &str) {
         return;
     }
     let mut map = ABORT_REGISTRY.lock();
-    let entry = map.entry(session_id.to_string()).or_insert(AbortEntry { token: CancellationToken::new(), aborted: false });
+    let entry = map.entry(session_id.to_string()).or_insert(AbortEntry {
+        token: CancellationToken::new(),
+        aborted: false,
+    });
     entry.aborted = false;
 }
 
@@ -66,4 +79,3 @@ pub fn clear(session_id: &str) {
     let mut map = ABORT_REGISTRY.lock();
     map.remove(session_id);
 }
-

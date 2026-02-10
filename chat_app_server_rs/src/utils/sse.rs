@@ -1,4 +1,4 @@
-﻿use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::sse::{Event, KeepAlive, Sse};
 use futures::stream::Stream;
 use std::convert::Infallible;
 use std::time::Duration;
@@ -40,10 +40,16 @@ impl SseSender {
     }
 }
 
-pub fn sse_channel() -> (Sse<impl Stream<Item = Result<Event, Infallible>>>, SseSender) {
+pub fn sse_channel() -> (
+    Sse<impl Stream<Item = Result<Event, Infallible>>>,
+    SseSender,
+) {
     let (tx, rx) = mpsc::unbounded_channel();
     let stream = UnboundedReceiverStream::new(rx);
-    let sse = Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)).text("ping"));
+    let sse = Sse::new(stream).keep_alive(
+        KeepAlive::new()
+            .interval(Duration::from_secs(15))
+            .text("ping"),
+    );
     (sse, SseSender { tx })
 }
-

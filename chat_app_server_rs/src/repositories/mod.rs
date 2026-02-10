@@ -1,17 +1,17 @@
-﻿#![allow(dead_code)]
-pub mod db;
-pub mod sessions;
-pub mod messages;
-pub mod session_summaries;
-pub mod session_summary_messages;
+#![allow(dead_code)]
 pub mod agents;
 pub mod ai_model_configs;
 pub mod applications;
-pub mod projects;
 pub mod change_logs;
+pub mod db;
 pub mod mcp_configs;
-pub mod system_contexts;
+pub mod messages;
+pub mod projects;
 pub mod session_mcp_servers;
-pub mod user_settings;
-pub mod terminals;
+pub mod session_summaries;
+pub mod session_summary_messages;
+pub mod sessions;
+pub mod system_contexts;
 pub mod terminal_logs;
+pub mod terminals;
+pub mod user_settings;

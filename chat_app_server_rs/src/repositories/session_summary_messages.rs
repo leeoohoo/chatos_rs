@@ -1,8 +1,8 @@
-﻿use mongodb::bson::{doc, Bson, Document};
 use futures::TryStreamExt;
+use mongodb::bson::{doc, Bson, Document};
 
 use crate::models::session_summary_message::{SessionSummaryMessage, SessionSummaryMessageRow};
-use crate::repositories::db::{with_db, to_doc, doc_from_pairs};
+use crate::repositories::db::{doc_from_pairs, to_doc, with_db};
 
 fn normalize_from_doc(doc: &Document) -> Option<SessionSummaryMessage> {
     let id = doc.get_str("id").ok()?.to_string();
@@ -10,11 +10,23 @@ fn normalize_from_doc(doc: &Document) -> Option<SessionSummaryMessage> {
     let session_id = doc.get_str("session_id").ok()?.to_string();
     let message_id = doc.get_str("message_id").ok()?.to_string();
     let created_at = doc.get_str("created_at").ok().unwrap_or("").to_string();
-    Some(SessionSummaryMessage { id, summary_id, session_id, message_id, created_at })
+    Some(SessionSummaryMessage {
+        id,
+        summary_id,
+        session_id,
+        message_id,
+        created_at,
+    })
 }
 
-pub async fn create_summary_message_links(summary_id: &str, session_id: &str, message_ids: &[String]) -> Result<usize, String> {
-    if message_ids.is_empty() { return Ok(0); }
+pub async fn create_summary_message_links(
+    summary_id: &str,
+    session_id: &str,
+    message_ids: &[String],
+) -> Result<usize, String> {
+    if message_ids.is_empty() {
+        return Ok(0);
+    }
 
     let summary_id = summary_id.to_string();
     let session_id = session_id.to_string();
@@ -69,30 +81,42 @@ pub async fn create_summary_message_links(summary_id: &str, session_id: &str, me
     ).await
 }
 
-pub async fn list_summary_messages_by_summary(summary_id: &str) -> Result<Vec<SessionSummaryMessage>, String> {
+pub async fn list_summary_messages_by_summary(
+    summary_id: &str,
+) -> Result<Vec<SessionSummaryMessage>, String> {
     with_db(
         |db| {
             let summary_id = summary_id.to_string();
             Box::pin(async move {
-                let mut cursor = db.collection::<Document>("session_summary_messages").find(doc! { "summary_id": summary_id }, None).await.map_err(|e| e.to_string())?;
+                let mut cursor = db
+                    .collection::<Document>("session_summary_messages")
+                    .find(doc! { "summary_id": summary_id }, None)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 let mut docs = Vec::new();
                 while let Some(doc) = cursor.try_next().await.map_err(|e| e.to_string())? {
                     docs.push(doc);
                 }
-                let items: Vec<SessionSummaryMessage> = docs.into_iter().filter_map(|d| normalize_from_doc(&d)).collect();
+                let items: Vec<SessionSummaryMessage> = docs
+                    .into_iter()
+                    .filter_map(|d| normalize_from_doc(&d))
+                    .collect();
                 Ok(items)
             })
         },
         |pool| {
             let summary_id = summary_id.to_string();
             Box::pin(async move {
-                let rows = sqlx::query_as::<_, SessionSummaryMessageRow>("SELECT * FROM session_summary_messages WHERE summary_id = ?")
-                    .bind(&summary_id)
-                    .fetch_all(pool)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                let rows = sqlx::query_as::<_, SessionSummaryMessageRow>(
+                    "SELECT * FROM session_summary_messages WHERE summary_id = ?",
+                )
+                .bind(&summary_id)
+                .fetch_all(pool)
+                .await
+                .map_err(|e| e.to_string())?;
                 Ok(rows.into_iter().map(|r| r.to_summary_message()).collect())
             })
-        }
-    ).await
+        },
+    )
+    .await
 }

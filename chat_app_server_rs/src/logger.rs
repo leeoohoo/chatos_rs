@@ -1,11 +1,11 @@
-﻿use crate::config::Config;
+use crate::config::Config;
+use once_cell::sync::OnceCell;
 use std::fs;
 use std::path::Path;
 use std::time::{Duration, SystemTime};
-use once_cell::sync::OnceCell;
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
 use tracing_appender::rolling;
 use tracing_subscriber::fmt::time::UtcTime;
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
 
 struct LoggerGuards {
     _file: tracing_appender::non_blocking::WorkerGuard,
@@ -22,7 +22,8 @@ pub fn init_logger(cfg: &Config) -> Result<(), String> {
 
     cleanup_old_logs(log_dir, &cfg.log_max_files);
 
-    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(cfg.log_level.clone()));
+    let env_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(cfg.log_level.clone()));
 
     let file_appender = rolling::daily(log_dir, "server.log");
     let (file_writer, file_guard) = tracing_appender::non_blocking(file_appender);
@@ -58,7 +59,10 @@ pub fn init_logger(cfg: &Config) -> Result<(), String> {
         .with(error_layer)
         .init();
 
-    let _ = LOG_GUARDS.set(LoggerGuards { _file: file_guard, _error: error_guard });
+    let _ = LOG_GUARDS.set(LoggerGuards {
+        _file: file_guard,
+        _error: error_guard,
+    });
 
     std::panic::set_hook(Box::new(|panic_info| {
         let payload = if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
@@ -68,7 +72,10 @@ pub fn init_logger(cfg: &Config) -> Result<(), String> {
         } else {
             "panic occurred".to_string()
         };
-        let location = panic_info.location().map(|l| format!("{}:{}", l.file(), l.line())).unwrap_or_else(|| "unknown".to_string());
+        let location = panic_info
+            .location()
+            .map(|l| format!("{}:{}", l.file(), l.line()))
+            .unwrap_or_else(|| "unknown".to_string());
         let backtrace = std::backtrace::Backtrace::force_capture();
         tracing::error!(panic = %payload, location = %location, backtrace = %backtrace, "panic");
     }));
@@ -82,7 +89,9 @@ fn cleanup_old_logs(log_dir: &Path, max_files: &str) {
         return;
     }
     let cutoff = SystemTime::now().checked_sub(Duration::from_secs(keep_days * 24 * 3600));
-    let Ok(entries) = fs::read_dir(log_dir) else { return; };
+    let Ok(entries) = fs::read_dir(log_dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         if let Ok(meta) = entry.metadata() {
             if let Ok(modified) = meta.modified() {

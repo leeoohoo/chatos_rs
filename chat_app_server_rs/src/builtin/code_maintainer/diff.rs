@@ -100,9 +100,17 @@ pub fn render_diff(before: &str, after: &str) -> String {
     out.push_str("--- before\n+++ after\n");
     out.push_str(&format!(
         "@@ -{},{} +{},{} @@\n",
-        if before_lines.is_empty() { 0 } else { prefix + 1 },
+        if before_lines.is_empty() {
+            0
+        } else {
+            prefix + 1
+        },
         old_mid.len(),
-        if after_lines.is_empty() { 0 } else { prefix + 1 },
+        if after_lines.is_empty() {
+            0
+        } else {
+            prefix + 1
+        },
         new_mid.len()
     ));
 

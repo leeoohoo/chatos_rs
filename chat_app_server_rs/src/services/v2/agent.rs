@@ -1,12 +1,12 @@
-﻿use serde_json::{Value, json};
+use serde_json::{json, Value};
 
+use crate::config::Config;
 use crate::repositories::{agents, ai_model_configs, system_contexts};
 use crate::services::mcp_loader::load_mcp_configs_for_user;
-use crate::services::user_settings::{get_effective_user_settings, apply_settings_to_ai_client};
-use crate::services::v2::ai_server::{AiServer, ChatOptions};
+use crate::services::user_settings::{apply_settings_to_ai_client, get_effective_user_settings};
 use crate::services::v2::ai_client::AiClientCallbacks;
+use crate::services::v2::ai_server::{AiServer, ChatOptions};
 use crate::utils::attachments::Attachment;
-use crate::config::Config;
 
 #[derive(Debug, Clone)]
 pub struct ModelConfig {
@@ -28,16 +28,26 @@ pub struct ModelConfig {
 }
 
 pub async fn load_model_config_for_agent(agent_id: &str) -> Result<ModelConfig, String> {
-    let agent = agents::get_agent_by_id(agent_id).await?.ok_or("智能体不存在或未启用")?;
-    if agent.enabled == false { return Err("智能体不存在或未启用".to_string()); }
+    let agent = agents::get_agent_by_id(agent_id)
+        .await?
+        .ok_or("智能体不存在或未启用")?;
+    if agent.enabled == false {
+        return Err("智能体不存在或未启用".to_string());
+    }
 
-    let model_cfg = ai_model_configs::get_ai_model_config_by_id(&agent.ai_model_config_id).await?.ok_or("模型配置不可用或未启用")?;
-    if model_cfg.enabled == false { return Err("模型配置不可用或未启用".to_string()); }
+    let model_cfg = ai_model_configs::get_ai_model_config_by_id(&agent.ai_model_config_id)
+        .await?
+        .ok_or("模型配置不可用或未启用")?;
+    if model_cfg.enabled == false {
+        return Err("模型配置不可用或未启用".to_string());
+    }
 
     let mut system_prompt = None;
     if let Some(ctx_id) = agent.system_context_id.clone() {
         if let Ok(Some(ctx)) = system_contexts::get_system_context_by_id(&ctx_id).await {
-            if ctx.is_active { system_prompt = ctx.content; }
+            if ctx.is_active {
+                system_prompt = ctx.content;
+            }
         }
     }
 
@@ -78,24 +88,38 @@ pub async fn run_chat(
         .cloned()
         .collect();
     let has_mcp = !filtered_ids.is_empty();
-    let workspace_dir = crate::utils::workspace::resolve_workspace_dir(model_config.workspace_dir.as_deref());
-    let workspace_dir_opt = if workspace_dir.trim().is_empty() { None } else { Some(workspace_dir.as_str()) };
+    let workspace_dir =
+        crate::utils::workspace::resolve_workspace_dir(model_config.workspace_dir.as_deref());
+    let workspace_dir_opt = if workspace_dir.trim().is_empty() {
+        None
+    } else {
+        Some(workspace_dir.as_str())
+    };
     let (http_servers, mut stdio_servers, builtin_servers) = if model_config.lock_mcp {
         if has_mcp {
             load_mcp_configs_for_user(
                 effective_user_id.clone(),
                 Some(filtered_ids),
-                workspace_dir_opt
-            ).await.unwrap_or((Vec::new(), Vec::new(), Vec::new()))
+                workspace_dir_opt,
+            )
+            .await
+            .unwrap_or((Vec::new(), Vec::new(), Vec::new()))
         } else {
             (Vec::new(), Vec::new(), Vec::new())
         }
     } else {
-        load_mcp_configs_for_user(effective_user_id.clone(), None, workspace_dir_opt).await.unwrap_or((Vec::new(), Vec::new(), Vec::new()))
+        load_mcp_configs_for_user(effective_user_id.clone(), None, workspace_dir_opt)
+            .await
+            .unwrap_or((Vec::new(), Vec::new(), Vec::new()))
     };
     if !workspace_dir.trim().is_empty() {
         for server in stdio_servers.iter_mut() {
-            if server.cwd.as_ref().map(|s| s.trim().is_empty()).unwrap_or(true) {
+            if server
+                .cwd
+                .as_ref()
+                .map(|s| s.trim().is_empty())
+                .unwrap_or(true)
+            {
                 server.cwd = Some(workspace_dir.clone());
             }
         }
@@ -108,35 +132,52 @@ pub async fn run_chat(
     );
     if has_mcp
         && (!mcp_tool_execute.mcp_servers.is_empty()
-        || !mcp_tool_execute.stdio_mcp_servers.is_empty()
-        || !mcp_tool_execute.builtin_mcp_servers.is_empty())
+            || !mcp_tool_execute.stdio_mcp_servers.is_empty()
+            || !mcp_tool_execute.builtin_mcp_servers.is_empty())
     {
         let _ = mcp_tool_execute.init().await;
     }
 
-    let api_key = model_config.api_key.clone().unwrap_or_else(|| cfg.openai_api_key.clone());
-    let base_url = model_config.base_url.clone().unwrap_or_else(|| cfg.openai_base_url.clone());
+    let api_key = model_config
+        .api_key
+        .clone()
+        .unwrap_or_else(|| cfg.openai_api_key.clone());
+    let base_url = model_config
+        .base_url
+        .clone()
+        .unwrap_or_else(|| cfg.openai_base_url.clone());
 
-    let mut ai_server = AiServer::new(api_key, base_url.clone(), model_config.model_name.clone(), model_config.temperature, mcp_tool_execute);
+    let mut ai_server = AiServer::new(
+        api_key,
+        base_url.clone(),
+        model_config.model_name.clone(),
+        model_config.temperature,
+        mcp_tool_execute,
+    );
 
     if let Some(prompt) = model_config.system_prompt.clone() {
         ai_server.set_system_prompt(Some(prompt));
     } else if model_config.use_active_system_context {
         if let Some(uid) = effective_user_id.clone() {
             if let Ok(Some(ctx)) = system_contexts::get_active_system_context(&uid).await {
-                if let Some(content) = ctx.content { ai_server.set_system_prompt(Some(content)); }
+                if let Some(content) = ctx.content {
+                    ai_server.set_system_prompt(Some(content));
+                }
             }
         }
     }
 
-    let effective_settings = get_effective_user_settings(effective_user_id.clone()).await.unwrap_or_else(|_| json!({}));
+    let effective_settings = get_effective_user_settings(effective_user_id.clone())
+        .await
+        .unwrap_or_else(|_| json!({}));
     apply_settings_to_ai_client(&mut ai_server.ai_client, &effective_settings);
     let max_tokens = effective_settings
         .get("CHAT_MAX_TOKENS")
         .and_then(|v| v.as_i64())
         .filter(|v| *v > 0);
 
-    let effective_reasoning = (model_config.supports_reasoning || model_config.thinking_level.is_some())
+    let effective_reasoning = (model_config.supports_reasoning
+        || model_config.thinking_level.is_some())
         && reasoning_enabled.unwrap_or(true);
 
     let options = ChatOptions {
@@ -154,4 +195,3 @@ pub async fn run_chat(
 
     ai_server.chat(session_id, content, options).await
 }
-

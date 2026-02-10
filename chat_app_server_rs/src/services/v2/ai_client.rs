@@ -1,14 +1,14 @@
-﻿use serde_json::{Value, json};
-use tracing::{info, warn};
+use serde_json::{json, Value};
 use std::collections::HashSet;
+use tracing::{info, warn};
 
-use crate::services::v2::ai_request_handler::{AiRequestHandler, StreamCallbacks};
-use crate::services::v2::message_manager::MessageManager;
-use crate::services::v2::mcp_tool_execute::{McpToolExecute, ToolResult};
-use crate::services::v2::conversation_summarizer::{ConversationSummarizer, SummaryOverrides};
-use crate::utils::abort_registry;
-use crate::services::user_settings::AiClientSettings;
 use crate::config::Config;
+use crate::services::user_settings::AiClientSettings;
+use crate::services::v2::ai_request_handler::{AiRequestHandler, StreamCallbacks};
+use crate::services::v2::conversation_summarizer::{ConversationSummarizer, SummaryOverrides};
+use crate::services::v2::mcp_tool_execute::{McpToolExecute, ToolResult};
+use crate::services::v2::message_manager::MessageManager;
+use crate::utils::abort_registry;
 
 #[derive(Clone)]
 pub struct AiClientCallbacks {
@@ -40,7 +40,11 @@ pub struct AiClient {
 }
 
 impl AiClient {
-    pub fn new(ai_request_handler: AiRequestHandler, mcp_tool_execute: McpToolExecute, message_manager: MessageManager) -> Self {
+    pub fn new(
+        ai_request_handler: AiRequestHandler,
+        mcp_tool_execute: McpToolExecute,
+        message_manager: MessageManager,
+    ) -> Self {
         let cfg = Config::get();
         Self {
             ai_request_handler,
@@ -89,10 +93,17 @@ impl AiClient {
         let mut history_messages: Vec<Value> = Vec::new();
         if let Some(session_id) = session_id.clone() {
             if self.history_limit != 0 {
-                let limit = if self.history_limit > 0 { Some(self.history_limit) } else { None };
+                let limit = if self.history_limit > 0 {
+                    Some(self.history_limit)
+                } else {
+                    None
+                };
                 let mut mapped = Vec::new();
                 let summary_limit = Some(2);
-                let (summaries, history) = self.message_manager.get_session_history_with_summaries(&session_id, limit, summary_limit).await;
+                let (summaries, history) = self
+                    .message_manager
+                    .get_session_history_with_summaries(&session_id, limit, summary_limit)
+                    .await;
                 let has_summary_table = !summaries.is_empty();
                 if has_summary_table {
                     for summary in summaries {
@@ -102,7 +113,13 @@ impl AiClient {
                     }
                 }
                 for msg in history {
-                    if msg.metadata.as_ref().and_then(|m| m.get("type")).and_then(|v| v.as_str()) == Some("session_summary") {
+                    if msg
+                        .metadata
+                        .as_ref()
+                        .and_then(|m| m.get("type"))
+                        .and_then(|v| v.as_str())
+                        == Some("session_summary")
+                    {
                         if has_summary_table {
                             continue;
                         }
@@ -114,13 +131,23 @@ impl AiClient {
                     if msg.role == "tool" {
                         let mut content = msg.content;
                         if content.is_empty() && msg.metadata.is_some() {
-                            content = msg.metadata.clone().map(|v| v.to_string()).unwrap_or_default();
+                            content = msg
+                                .metadata
+                                .clone()
+                                .map(|v| v.to_string())
+                                .unwrap_or_default();
                         }
                         mapped.push(json!({"role": "tool", "tool_call_id": msg.tool_call_id.clone().unwrap_or_default(), "content": content}));
                     } else {
                         let mut item = json!({"role": msg.role, "content": msg.content});
-                        if let Some(tc) = msg.tool_calls { item["tool_calls"] = tc; }
-                        if let Some(tc) = msg.metadata.clone().and_then(|m| m.get("toolCalls").cloned()) {
+                        if let Some(tc) = msg.tool_calls {
+                            item["tool_calls"] = tc;
+                        }
+                        if let Some(tc) = msg
+                            .metadata
+                            .clone()
+                            .and_then(|m| m.get("toolCalls").cloned())
+                        {
                             item["tool_calls"] = tc;
                         }
                         mapped.push(item);
@@ -134,10 +161,17 @@ impl AiClient {
         all_messages.extend(messages.clone());
 
         // anchor user content for dynamic summary
-        self.anchor_user_content = messages.iter().rev().find(|m| m.get("role").and_then(|v| v.as_str()) == Some("user"))
+        self.anchor_user_content = messages
+            .iter()
+            .rev()
+            .find(|m| m.get("role").and_then(|v| v.as_str()) == Some("user"))
             .and_then(|m| m.get("content").cloned());
 
-        let tools = if use_tools { Some(self.mcp_tool_execute.get_available_tools()) } else { None };
+        let tools = if use_tools {
+            Some(self.mcp_tool_execute.get_available_tools())
+        } else {
+            None
+        };
 
         self.process_with_tools(
             all_messages,
@@ -150,8 +184,9 @@ impl AiClient {
             reasoning_enabled,
             provider,
             thinking_level,
-            0
-        ).await
+            0,
+        )
+        .await
     }
 
     async fn process_with_tools(
@@ -173,29 +208,50 @@ impl AiClient {
 
         loop {
             if let Some(sid) = session_id.as_ref() {
-                if abort_registry::is_aborted(sid) { return Err("aborted".to_string()); }
+                if abort_registry::is_aborted(sid) {
+                    return Err("aborted".to_string());
+                }
             }
             if iteration >= self.max_iterations {
                 return Err("达到最大迭代次数".to_string());
             }
 
-            info!("AI request iteration {} messages {}", iteration, messages.len());
+            info!(
+                "AI request iteration {} messages {}",
+                iteration,
+                messages.len()
+            );
 
             // dynamic summary (in-memory) if enabled
             let mut api_messages = messages.clone();
             if self.dynamic_summary_enabled {
                 if self.summarizer.is_none() {
-                    self.summarizer = Some(ConversationSummarizer::new(self.ai_request_handler.clone(), self.message_manager.clone()));
+                    self.summarizer = Some(ConversationSummarizer::new(
+                        self.ai_request_handler.clone(),
+                        self.message_manager.clone(),
+                    ));
                 }
                 if let Some(summarizer) = &self.summarizer {
-                    let idx_last_summary = find_summary_index(&api_messages, self.summary_system_prompt.as_ref());
-                    let idx_anchor = find_anchor_index(&api_messages, self.anchor_user_content.as_ref());
-                    let start_idx = if idx_last_summary >= 0 { idx_last_summary } else { idx_anchor };
-                    let delta = if start_idx >= 0 { api_messages[(start_idx as usize + 1)..].to_vec() } else { Vec::new() };
+                    let idx_last_summary =
+                        find_summary_index(&api_messages, self.summary_system_prompt.as_ref());
+                    let idx_anchor =
+                        find_anchor_index(&api_messages, self.anchor_user_content.as_ref());
+                    let start_idx = if idx_last_summary >= 0 {
+                        idx_last_summary
+                    } else {
+                        idx_anchor
+                    };
+                    let delta = if start_idx >= 0 {
+                        api_messages[(start_idx as usize + 1)..].to_vec()
+                    } else {
+                        Vec::new()
+                    };
 
                     let (delta_tokens, delta_count) = estimate_delta_stats(&delta);
-                    let trigger_by_count = self.summary_threshold > 0 && delta_count >= self.summary_threshold;
-                    let trigger_by_tokens = self.max_context_tokens > 0 && delta_tokens >= self.max_context_tokens;
+                    let trigger_by_count =
+                        self.summary_threshold > 0 && delta_count >= self.summary_threshold;
+                    let trigger_by_tokens =
+                        self.max_context_tokens > 0 && delta_tokens >= self.max_context_tokens;
 
                     if trigger_by_count || trigger_by_tokens {
                         let mut input = Vec::new();
@@ -206,42 +262,53 @@ impl AiClient {
                         }
                         input.extend(delta);
 
-                        let summary_callbacks = crate::services::v2::conversation_summarizer::SummaryCallbacks {
-                            on_start: callbacks.on_context_summarized_start.clone(),
-                            on_stream: callbacks.on_context_summarized_stream.clone().map(|cb| {
-                                std::sync::Arc::new(move |chunk: String| {
-                                    cb(Value::String(chunk));
-                                }) as std::sync::Arc<dyn Fn(String) + Send + Sync>
-                            }),
-                            on_end: callbacks.on_context_summarized_end.clone(),
-                        };
+                        let summary_callbacks =
+                            crate::services::v2::conversation_summarizer::SummaryCallbacks {
+                                on_start: callbacks.on_context_summarized_start.clone(),
+                                on_stream: callbacks.on_context_summarized_stream.clone().map(
+                                    |cb| {
+                                        std::sync::Arc::new(move |chunk: String| {
+                                            cb(Value::String(chunk));
+                                        })
+                                            as std::sync::Arc<dyn Fn(String) + Send + Sync>
+                                    },
+                                ),
+                                on_end: callbacks.on_context_summarized_end.clone(),
+                            };
 
-                        let res = summarizer.maybe_summarize_in_memory(
-                            &input,
-                            Some(SummaryOverrides {
-                                message_limit: Some(1),
-                                max_context_tokens: Some(1),
-                                keep_last_n: Some(0),
-                                target_summary_tokens: Some(self.target_summary_tokens),
-                                model: Some(model.clone()),
-                                temperature: Some(0.2),
-                            }),
-                            session_id.clone(),
-                            true,
-                            Some(summary_callbacks)
-                        ).await;
+                        let res = summarizer
+                            .maybe_summarize_in_memory(
+                                &input,
+                                Some(SummaryOverrides {
+                                    message_limit: Some(1),
+                                    max_context_tokens: Some(1),
+                                    keep_last_n: Some(0),
+                                    target_summary_tokens: Some(self.target_summary_tokens),
+                                    model: Some(model.clone()),
+                                    temperature: Some(0.2),
+                                }),
+                                session_id.clone(),
+                                true,
+                                Some(summary_callbacks),
+                            )
+                            .await;
 
                         match res {
                             Ok(res) => {
                                 if res.summarized {
                                     self.summary_system_prompt = res.system_prompt.clone();
                                     let mut rebuilt = Vec::new();
-                                    if let Some(prompt) = self.system_prompt.clone() { rebuilt.push(json!({"role": "system", "content": prompt})); }
+                                    if let Some(prompt) = self.system_prompt.clone() {
+                                        rebuilt.push(json!({"role": "system", "content": prompt}));
+                                    }
                                     if let Some(anchor) = self.anchor_user_content.clone() {
                                         rebuilt.push(json!({"role": "user", "content": anchor}));
                                     }
-                                    if let Some(summary_prompt) = self.summary_system_prompt.clone() {
-                                        rebuilt.push(json!({"role": "system", "content": summary_prompt}));
+                                    if let Some(summary_prompt) = self.summary_system_prompt.clone()
+                                    {
+                                        rebuilt.push(
+                                            json!({"role": "system", "content": summary_prompt}),
+                                        );
                                     }
                                     api_messages = rebuilt;
                                 }
@@ -254,57 +321,73 @@ impl AiClient {
                 }
             }
 
-        let mut resp = None;
-        let mut last_err: Option<String> = None;
-        let mut token_limit_compacted = false;
-        loop {
-            let attempt = self.ai_request_handler.handle_request(
-                api_messages.clone(),
-                tools.clone(),
-                model.clone(),
-                Some(temperature),
-                max_tokens,
-                StreamCallbacks { on_chunk: callbacks.on_chunk.clone(), on_thinking: callbacks.on_thinking.clone() },
-                reasoning_enabled,
-                provider.clone(),
-                thinking_level.clone(),
-                session_id.clone(),
-                callbacks.on_chunk.is_some() || callbacks.on_thinking.is_some(),
-                "chat",
-            ).await;
+            let mut resp = None;
+            let mut last_err: Option<String> = None;
+            let mut token_limit_compacted = false;
+            loop {
+                let attempt = self
+                    .ai_request_handler
+                    .handle_request(
+                        api_messages.clone(),
+                        tools.clone(),
+                        model.clone(),
+                        Some(temperature),
+                        max_tokens,
+                        StreamCallbacks {
+                            on_chunk: callbacks.on_chunk.clone(),
+                            on_thinking: callbacks.on_thinking.clone(),
+                        },
+                        reasoning_enabled,
+                        provider.clone(),
+                        thinking_level.clone(),
+                        session_id.clone(),
+                        callbacks.on_chunk.is_some() || callbacks.on_thinking.is_some(),
+                        "chat",
+                    )
+                    .await;
 
-            match attempt {
-                Ok(r) => {
-                    resp = Some(r);
-                    break;
-                }
-                Err(err) => {
-                    last_err = Some(err.clone());
-                    if !token_limit_compacted && is_token_limit_error(&err) {
-                        token_limit_compacted = true;
-                        if let Some(compacted) = self.try_compact_for_token_limit(
-                            &api_messages,
-                            &err,
-                            &callbacks,
-                            session_id.clone(),
-                            &model
-                        ).await {
-                            api_messages = compacted;
-                            continue;
-                        }
+                match attempt {
+                    Ok(r) => {
+                        resp = Some(r);
+                        break;
                     }
-                    break;
+                    Err(err) => {
+                        last_err = Some(err.clone());
+                        if !token_limit_compacted && is_token_limit_error(&err) {
+                            token_limit_compacted = true;
+                            if let Some(compacted) = self
+                                .try_compact_for_token_limit(
+                                    &api_messages,
+                                    &err,
+                                    &callbacks,
+                                    session_id.clone(),
+                                    &model,
+                                )
+                                .await
+                            {
+                                api_messages = compacted;
+                                continue;
+                            }
+                        }
+                        break;
+                    }
                 }
             }
-        }
 
-        let resp = match resp {
-            Some(r) => r,
-            None => return Err(last_err.unwrap_or_else(|| "request failed".to_string()))
-        };
+            let resp = match resp {
+                Some(r) => r,
+                None => return Err(last_err.unwrap_or_else(|| "request failed".to_string())),
+            };
 
             let tool_calls = resp.tool_calls.clone();
-            if tool_calls.is_none() || tool_calls.as_ref().unwrap().as_array().map(|a| a.is_empty()).unwrap_or(true) {
+            if tool_calls.is_none()
+                || tool_calls
+                    .as_ref()
+                    .unwrap()
+                    .as_array()
+                    .map(|a| a.is_empty())
+                    .unwrap_or(true)
+            {
                 return Ok(json!({
                     "success": true,
                     "content": resp.content,
@@ -316,16 +399,26 @@ impl AiClient {
             }
 
             let tool_calls_val = tool_calls.unwrap();
-            if let Some(cb) = &callbacks.on_tools_start { cb(tool_calls_val.clone()); }
+            if let Some(cb) = &callbacks.on_tools_start {
+                cb(tool_calls_val.clone());
+            }
             let tool_calls_arr = tool_calls_val.as_array().cloned().unwrap_or_default();
 
             let build_aborted_results = |existing: Option<&Vec<ToolResult>>| -> Vec<ToolResult> {
                 let mut results = existing.cloned().unwrap_or_default();
-                let mut present: HashSet<String> = results.iter().map(|r| r.tool_call_id.clone()).collect();
+                let mut present: HashSet<String> =
+                    results.iter().map(|r| r.tool_call_id.clone()).collect();
                 for tc in &tool_calls_arr {
-                    let id = tc.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    if id.is_empty() || present.contains(&id) { continue; }
-                    let name = tc.get("function")
+                    let id = tc
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    if id.is_empty() || present.contains(&id) {
+                        continue;
+                    }
+                    let name = tc
+                        .get("function")
                         .and_then(|f| f.get("name"))
                         .and_then(|v| v.as_str())
                         .or_else(|| tc.get("name").and_then(|v| v.as_str()))
@@ -352,7 +445,15 @@ impl AiClient {
                             "success": result.success,
                             "isError": result.is_error
                         });
-                        let _ = self.message_manager.save_tool_message(sid, &result.content, &result.tool_call_id, Some(meta)).await;
+                        let _ = self
+                            .message_manager
+                            .save_tool_message(
+                                sid,
+                                &result.content,
+                                &result.tool_call_id,
+                                Some(meta),
+                            )
+                            .await;
                     }
                     return Err("aborted".to_string());
                 }
@@ -362,13 +463,18 @@ impl AiClient {
                 let sid = session_id.clone();
                 std::sync::Arc::new(move |result: &ToolResult| {
                     if let Some(ref sid) = sid {
-                        if abort_registry::is_aborted(sid) { return; }
+                        if abort_registry::is_aborted(sid) {
+                            return;
+                        }
                     }
                     cb(serde_json::to_value(result).unwrap_or(json!({})));
                 }) as std::sync::Arc<dyn Fn(&ToolResult) + Send + Sync>
             });
 
-            let tool_results = self.mcp_tool_execute.execute_tools_stream(&tool_calls_arr, session_id.as_deref(), on_tools_stream_cb).await;
+            let tool_results = self
+                .mcp_tool_execute
+                .execute_tools_stream(&tool_calls_arr, session_id.as_deref(), on_tools_stream_cb)
+                .await;
 
             if let Some(sid) = session_id.as_ref() {
                 if abort_registry::is_aborted(sid) {
@@ -379,7 +485,15 @@ impl AiClient {
                             "success": result.success,
                             "isError": result.is_error
                         });
-                        let _ = self.message_manager.save_tool_message(sid, &result.content, &result.tool_call_id, Some(meta)).await;
+                        let _ = self
+                            .message_manager
+                            .save_tool_message(
+                                sid,
+                                &result.content,
+                                &result.tool_call_id,
+                                Some(meta),
+                            )
+                            .await;
                     }
                     return Err("aborted".to_string());
                 }
@@ -396,7 +510,10 @@ impl AiClient {
                         "success": result.success,
                         "isError": result.is_error
                     });
-                    let _ = self.message_manager.save_tool_message(sid, &result.content, &result.tool_call_id, Some(meta)).await;
+                    let _ = self
+                        .message_manager
+                        .save_tool_message(sid, &result.content, &result.tool_call_id, Some(meta))
+                        .await;
                 }
             }
 
@@ -408,9 +525,12 @@ impl AiClient {
             };
             let mut assistant_msg = json!({"role": "assistant", "content": content_val});
             if reasoning_enabled {
-                assistant_msg["reasoning_content"] = Value::String(resp.reasoning.clone().unwrap_or_default());
+                assistant_msg["reasoning_content"] =
+                    Value::String(resp.reasoning.clone().unwrap_or_default());
             }
-            if let Some(tc) = resp.tool_calls.clone() { assistant_msg["tool_calls"] = tc; }
+            if let Some(tc) = resp.tool_calls.clone() {
+                assistant_msg["tool_calls"] = tc;
+            }
             new_messages.push(assistant_msg);
 
             for result in &tool_results {
@@ -430,46 +550,62 @@ impl AiClient {
         session_id: Option<String>,
         model: &str,
     ) -> Option<Vec<Value>> {
-        let summary_input_budget = if self.max_context_tokens > 0 { self.max_context_tokens } else { 6000 };
+        let summary_input_budget = if self.max_context_tokens > 0 {
+            self.max_context_tokens
+        } else {
+            6000
+        };
 
         if self.dynamic_summary_enabled {
             if self.summarizer.is_none() {
-                self.summarizer = Some(ConversationSummarizer::new(self.ai_request_handler.clone(), self.message_manager.clone()));
+                self.summarizer = Some(ConversationSummarizer::new(
+                    self.ai_request_handler.clone(),
+                    self.message_manager.clone(),
+                ));
             }
             if let Some(summarizer) = &self.summarizer {
-                let (trimmed_for_summary, _) = truncate_messages_by_tokens(messages, summary_input_budget);
-                let summary_callbacks = crate::services::v2::conversation_summarizer::SummaryCallbacks {
-                    on_start: callbacks.on_context_summarized_start.clone(),
-                    on_stream: callbacks.on_context_summarized_stream.clone().map(|cb| {
-                        std::sync::Arc::new(move |chunk: String| {
-                            cb(Value::String(chunk));
-                        }) as std::sync::Arc<dyn Fn(String) + Send + Sync>
-                    }),
-                    on_end: callbacks.on_context_summarized_end.clone(),
-                };
+                let (trimmed_for_summary, _) =
+                    truncate_messages_by_tokens(messages, summary_input_budget);
+                let summary_callbacks =
+                    crate::services::v2::conversation_summarizer::SummaryCallbacks {
+                        on_start: callbacks.on_context_summarized_start.clone(),
+                        on_stream: callbacks.on_context_summarized_stream.clone().map(|cb| {
+                            std::sync::Arc::new(move |chunk: String| {
+                                cb(Value::String(chunk));
+                            })
+                                as std::sync::Arc<dyn Fn(String) + Send + Sync>
+                        }),
+                        on_end: callbacks.on_context_summarized_end.clone(),
+                    };
 
-                let res = summarizer.maybe_summarize_in_memory(
-                    &trimmed_for_summary,
-                    Some(SummaryOverrides {
-                        message_limit: Some(1),
-                        max_context_tokens: Some(1),
-                        keep_last_n: Some(0),
-                        target_summary_tokens: Some(self.target_summary_tokens),
-                        model: Some(model.to_string()),
-                        temperature: Some(0.2),
-                    }),
-                    session_id.clone(),
-                    true,
-                    Some(summary_callbacks)
-                ).await;
+                let res = summarizer
+                    .maybe_summarize_in_memory(
+                        &trimmed_for_summary,
+                        Some(SummaryOverrides {
+                            message_limit: Some(1),
+                            max_context_tokens: Some(1),
+                            keep_last_n: Some(0),
+                            target_summary_tokens: Some(self.target_summary_tokens),
+                            model: Some(model.to_string()),
+                            temperature: Some(0.2),
+                        }),
+                        session_id.clone(),
+                        true,
+                        Some(summary_callbacks),
+                    )
+                    .await;
 
                 match res {
                     Ok(res) => {
                         if res.summarized {
                             self.summary_system_prompt = res.system_prompt.clone();
                             let mut rebuilt = Vec::new();
-                            if let Some(prompt) = self.system_prompt.clone() { rebuilt.push(json!({"role": "system", "content": prompt})); }
-                            if let Some(anchor) = self.anchor_user_content.clone() { rebuilt.push(json!({"role": "user", "content": anchor})); }
+                            if let Some(prompt) = self.system_prompt.clone() {
+                                rebuilt.push(json!({"role": "system", "content": prompt}));
+                            }
+                            if let Some(anchor) = self.anchor_user_content.clone() {
+                                rebuilt.push(json!({"role": "user", "content": anchor}));
+                            }
                             if let Some(summary_prompt) = self.summary_system_prompt.clone() {
                                 rebuilt.push(json!({"role": "system", "content": summary_prompt}));
                             }
@@ -485,7 +621,9 @@ impl AiClient {
             }
         }
 
-        let budget = token_limit_budget_from_error(err).unwrap_or(summary_input_budget).max(1000);
+        let budget = token_limit_budget_from_error(err)
+            .unwrap_or(summary_input_budget)
+            .max(1000);
         let (mut truncated, changed) = truncate_messages_by_tokens(messages, budget);
         if changed {
             truncated = ensure_tool_responses(truncated);
@@ -497,13 +635,42 @@ impl AiClient {
 
 impl AiClientSettings for AiClient {
     fn apply_settings(&mut self, effective: &Value) {
-        if let Some(v) = effective.get("MAX_ITERATIONS").and_then(|v| v.as_i64()) { self.max_iterations = v; }
-        if let Some(v) = effective.get("DYNAMIC_SUMMARY_ENABLED").and_then(|v| v.as_bool()) { self.dynamic_summary_enabled = v; }
-        if let Some(v) = effective.get("HISTORY_LIMIT").and_then(|v| v.as_i64()) { self.history_limit = v.max(0); }
-        if let Some(v) = effective.get("SUMMARY_MESSAGE_LIMIT").and_then(|v| v.as_i64()) { self.summary_threshold = v; }
-        if let Some(v) = effective.get("SUMMARY_KEEP_LAST_N").and_then(|v| v.as_i64()) { self.summary_keep_last_n = v; }
-        if let Some(v) = effective.get("SUMMARY_MAX_CONTEXT_TOKENS").and_then(|v| v.as_i64()) { self.max_context_tokens = v; }
-        if let Some(v) = effective.get("SUMMARY_TARGET_TOKENS").and_then(|v| v.as_i64()) { self.target_summary_tokens = v; }
+        if let Some(v) = effective.get("MAX_ITERATIONS").and_then(|v| v.as_i64()) {
+            self.max_iterations = v;
+        }
+        if let Some(v) = effective
+            .get("DYNAMIC_SUMMARY_ENABLED")
+            .and_then(|v| v.as_bool())
+        {
+            self.dynamic_summary_enabled = v;
+        }
+        if let Some(v) = effective.get("HISTORY_LIMIT").and_then(|v| v.as_i64()) {
+            self.history_limit = v.max(0);
+        }
+        if let Some(v) = effective
+            .get("SUMMARY_MESSAGE_LIMIT")
+            .and_then(|v| v.as_i64())
+        {
+            self.summary_threshold = v;
+        }
+        if let Some(v) = effective
+            .get("SUMMARY_KEEP_LAST_N")
+            .and_then(|v| v.as_i64())
+        {
+            self.summary_keep_last_n = v;
+        }
+        if let Some(v) = effective
+            .get("SUMMARY_MAX_CONTEXT_TOKENS")
+            .and_then(|v| v.as_i64())
+        {
+            self.max_context_tokens = v;
+        }
+        if let Some(v) = effective
+            .get("SUMMARY_TARGET_TOKENS")
+            .and_then(|v| v.as_i64())
+        {
+            self.target_summary_tokens = v;
+        }
     }
 }
 
@@ -564,14 +731,23 @@ fn ensure_tool_responses(history: Vec<Value>) -> Vec<Value> {
         }
         out.push(msg.clone());
         if msg.get("role").and_then(|v| v.as_str()) == Some("assistant") {
-            let tool_calls = msg.get("tool_calls").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+            let tool_calls = msg
+                .get("tool_calls")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
             if !tool_calls.is_empty() {
-                let expected: Vec<String> = tool_calls.iter().filter_map(|tc| tc.get("id").and_then(|v| v.as_str()).map(|s| s.to_string())).collect();
+                let expected: Vec<String> = tool_calls
+                    .iter()
+                    .filter_map(|tc| tc.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()))
+                    .collect();
                 let mut present = std::collections::HashSet::new();
                 let mut j = i + 1;
                 while j < history.len() {
                     let next = &history[j];
-                    if next.get("role").and_then(|v| v.as_str()) != Some("tool") { break; }
+                    if next.get("role").and_then(|v| v.as_str()) != Some("tool") {
+                        break;
+                    }
                     if let Some(id) = next.get("tool_call_id").and_then(|v| v.as_str()) {
                         present.insert(id.to_string());
                     }
@@ -593,7 +769,9 @@ fn ensure_tool_responses(history: Vec<Value>) -> Vec<Value> {
 }
 
 fn find_summary_index(messages: &[Value], summary_prompt: Option<&String>) -> i64 {
-    if summary_prompt.is_none() { return -1; }
+    if summary_prompt.is_none() {
+        return -1;
+    }
     let summary_prompt = summary_prompt.unwrap();
     for (idx, msg) in messages.iter().enumerate().rev() {
         if msg.get("role").and_then(|v| v.as_str()) == Some("system") {
@@ -608,7 +786,10 @@ fn find_summary_index(messages: &[Value], summary_prompt: Option<&String>) -> i6
 }
 
 fn find_anchor_index(messages: &[Value], anchor: Option<&Value>) -> i64 {
-    let anchor = match anchor { Some(a) => a, None => return -1 };
+    let anchor = match anchor {
+        Some(a) => a,
+        None => return -1,
+    };
     for (idx, msg) in messages.iter().enumerate().rev() {
         if msg.get("role").and_then(|v| v.as_str()) == Some("user") {
             let content = msg.get("content").unwrap_or(&Value::Null);
@@ -635,7 +816,9 @@ fn estimate_delta_stats(messages: &[Value]) -> (i64, i64) {
 }
 
 fn estimate_tokens_plain(text: &str) -> i64 {
-    if text.is_empty() { return 0; }
+    if text.is_empty() {
+        return 0;
+    }
     ((text.len() as i64) + 3) / 4
 }
 
@@ -681,7 +864,11 @@ fn estimate_message_tokens(msg: &Value) -> i64 {
 
 fn extract_error_message(err: &str) -> String {
     if let Ok(val) = serde_json::from_str::<Value>(err) {
-        if let Some(msg) = val.get("error").and_then(|e| e.get("message")).and_then(|v| v.as_str()) {
+        if let Some(msg) = val
+            .get("error")
+            .and_then(|e| e.get("message"))
+            .and_then(|v| v.as_str())
+        {
             return msg.to_string();
         }
         if let Some(msg) = val.get("message").and_then(|v| v.as_str()) {
@@ -703,14 +890,25 @@ fn parse_number_after(text: &str, key: &str) -> Option<i64> {
     let lower = text.to_lowercase();
     let idx = lower.find(key)?;
     let tail = &lower[idx + key.len()..];
-    let digits: String = tail.chars().skip_while(|c| !c.is_ascii_digit()).take_while(|c| c.is_ascii_digit()).collect();
-    if digits.is_empty() { None } else { digits.parse().ok() }
+    let digits: String = tail
+        .chars()
+        .skip_while(|c| !c.is_ascii_digit())
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    if digits.is_empty() {
+        None
+    } else {
+        digits.parse().ok()
+    }
 }
 
 fn token_limit_budget_from_error(err: &str) -> Option<i64> {
     let msg = extract_error_message(err);
     let lower = msg.to_lowercase();
-    if !(lower.contains("token limit") || lower.contains("context length") || lower.contains("maximum context")) {
+    if !(lower.contains("token limit")
+        || lower.contains("context length")
+        || lower.contains("maximum context"))
+    {
         return None;
     }
     let limit = parse_number_after(&msg, "limit")
@@ -768,7 +966,9 @@ fn truncate_messages_content_only(messages: &[Value], max_tokens: i64) -> Vec<Va
     let mut out = Vec::new();
     let mut remaining = max_tokens;
     for msg in messages {
-        if remaining <= 0 { break; }
+        if remaining <= 0 {
+            break;
+        }
         let t = estimate_message_tokens(msg);
         if t <= remaining {
             remaining -= t;
@@ -782,7 +982,9 @@ fn truncate_messages_content_only(messages: &[Value], max_tokens: i64) -> Vec<Va
 }
 
 fn truncate_message_content(msg: &Value, max_tokens: i64) -> Value {
-    if max_tokens <= 0 { return msg.clone(); }
+    if max_tokens <= 0 {
+        return msg.clone();
+    }
     let mut out = msg.clone();
     if let Some(obj) = out.as_object_mut() {
         let content = obj.get("content").cloned().unwrap_or(Value::Null);
@@ -793,7 +995,9 @@ fn truncate_message_content(msg: &Value, max_tokens: i64) -> Value {
 }
 
 fn truncate_content_value(content: &Value, max_tokens: i64) -> Value {
-    if max_tokens <= 0 { return Value::String(String::new()); }
+    if max_tokens <= 0 {
+        return Value::String(String::new());
+    }
     if let Some(s) = content.as_str() {
         return Value::String(truncate_text_by_tokens(s, max_tokens));
     }
@@ -801,7 +1005,9 @@ fn truncate_content_value(content: &Value, max_tokens: i64) -> Value {
         let mut out = Vec::new();
         let mut remaining = max_tokens;
         for part in arr {
-            if remaining <= 0 { break; }
+            if remaining <= 0 {
+                break;
+            }
             if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
                 let truncated = truncate_text_by_tokens(text, remaining);
                 let used = estimate_tokens_plain(&truncated);
@@ -828,7 +1034,9 @@ fn truncate_content_value(content: &Value, max_tokens: i64) -> Value {
 }
 
 fn truncate_text_by_tokens(text: &str, max_tokens: i64) -> String {
-    if max_tokens <= 0 { return String::new(); }
+    if max_tokens <= 0 {
+        return String::new();
+    }
     let max_chars = (max_tokens * 4) as usize;
     if text.len() <= max_chars {
         return text.to_string();
@@ -843,4 +1051,3 @@ fn truncate_text_by_tokens(text: &str, max_tokens: i64) -> String {
     let cut = max_chars - marker.len();
     format!("{}{}", &text[..cut], marker)
 }
-

@@ -11,7 +11,7 @@ mod utils;
 use std::net::SocketAddr;
 
 use tokio::signal;
-use tracing::{info, error};
+use tracing::{error, info};
 
 #[tokio::main]
 async fn main() {
@@ -40,7 +40,12 @@ async fn main() {
 
     let app = api::router();
 
-    let addr = SocketAddr::new(cfg.host.parse().unwrap_or_else(|_| "0.0.0.0".parse().unwrap()), cfg.port);
+    let addr = SocketAddr::new(
+        cfg.host
+            .parse()
+            .unwrap_or_else(|_| "0.0.0.0".parse().unwrap()),
+        cfg.port,
+    );
     info!("Server running on http://{}", addr);
 
     let listener = match tokio::net::TcpListener::bind(addr).await {
@@ -62,4 +67,3 @@ async fn shutdown_signal() {
     let _ = signal::ctrl_c().await;
     info!("Shutdown signal received");
 }
-

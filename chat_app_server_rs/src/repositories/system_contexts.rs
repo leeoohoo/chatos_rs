@@ -1,9 +1,9 @@
-use mongodb::bson::{doc, Bson, Document};
 use futures::TryStreamExt;
+use mongodb::bson::{doc, Bson, Document};
 use sqlx::Row;
 
 use crate::models::system_context::{SystemContext, SystemContextRow};
-use crate::repositories::db::{with_db, to_doc, doc_from_pairs};
+use crate::repositories::db::{doc_from_pairs, to_doc, with_db};
 
 fn normalize_doc(doc: &Document) -> Option<SystemContext> {
     Some(SystemContext {
@@ -22,26 +22,36 @@ pub async fn list_system_contexts(user_id: &str) -> Result<Vec<SystemContext>, S
         |db| {
             let user_id = user_id.to_string();
             Box::pin(async move {
-                let mut cursor = db.collection::<Document>("system_contexts").find(doc! { "user_id": user_id }, None).await.map_err(|e| e.to_string())?;
+                let mut cursor = db
+                    .collection::<Document>("system_contexts")
+                    .find(doc! { "user_id": user_id }, None)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 let mut docs = Vec::new();
-                while let Some(doc) = cursor.try_next().await.map_err(|e| e.to_string())? { docs.push(doc); }
-                let mut items: Vec<SystemContext> = docs.into_iter().filter_map(|d| normalize_doc(&d)).collect();
-                items.sort_by(|a,b| b.created_at.cmp(&a.created_at));
+                while let Some(doc) = cursor.try_next().await.map_err(|e| e.to_string())? {
+                    docs.push(doc);
+                }
+                let mut items: Vec<SystemContext> =
+                    docs.into_iter().filter_map(|d| normalize_doc(&d)).collect();
+                items.sort_by(|a, b| b.created_at.cmp(&a.created_at));
                 Ok(items)
             })
         },
         |pool| {
             let user_id = user_id.to_string();
             Box::pin(async move {
-                let rows = sqlx::query_as::<_, SystemContextRow>("SELECT * FROM system_contexts WHERE user_id = ? ORDER BY created_at DESC")
-                    .bind(&user_id)
-                    .fetch_all(pool)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                let rows = sqlx::query_as::<_, SystemContextRow>(
+                    "SELECT * FROM system_contexts WHERE user_id = ? ORDER BY created_at DESC",
+                )
+                .bind(&user_id)
+                .fetch_all(pool)
+                .await
+                .map_err(|e| e.to_string())?;
                 Ok(rows.into_iter().map(|r| r.to_ctx()).collect())
             })
-        }
-    ).await
+        },
+    )
+    .await
 }
 
 pub async fn get_active_system_context(user_id: &str) -> Result<Option<SystemContext>, String> {
@@ -49,22 +59,29 @@ pub async fn get_active_system_context(user_id: &str) -> Result<Option<SystemCon
         |db| {
             let user_id = user_id.to_string();
             Box::pin(async move {
-                let doc = db.collection::<Document>("system_contexts").find_one(doc! { "user_id": user_id, "is_active": true }, None).await.map_err(|e| e.to_string())?;
+                let doc = db
+                    .collection::<Document>("system_contexts")
+                    .find_one(doc! { "user_id": user_id, "is_active": true }, None)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 Ok(doc.and_then(|d| normalize_doc(&d)))
             })
         },
         |pool| {
             let user_id = user_id.to_string();
             Box::pin(async move {
-                let row = sqlx::query_as::<_, SystemContextRow>("SELECT * FROM system_contexts WHERE user_id = ? AND is_active = 1")
-                    .bind(&user_id)
-                    .fetch_optional(pool)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                let row = sqlx::query_as::<_, SystemContextRow>(
+                    "SELECT * FROM system_contexts WHERE user_id = ? AND is_active = 1",
+                )
+                .bind(&user_id)
+                .fetch_optional(pool)
+                .await
+                .map_err(|e| e.to_string())?;
                 Ok(row.map(|r| r.to_ctx()))
             })
-        }
-    ).await
+        },
+    )
+    .await
 }
 
 pub async fn get_system_context_by_id(id: &str) -> Result<Option<SystemContext>, String> {
@@ -72,22 +89,29 @@ pub async fn get_system_context_by_id(id: &str) -> Result<Option<SystemContext>,
         |db| {
             let id = id.to_string();
             Box::pin(async move {
-                let doc = db.collection::<Document>("system_contexts").find_one(doc! { "id": id }, None).await.map_err(|e| e.to_string())?;
+                let doc = db
+                    .collection::<Document>("system_contexts")
+                    .find_one(doc! { "id": id }, None)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 Ok(doc.and_then(|d| normalize_doc(&d)))
             })
         },
         |pool| {
             let id = id.to_string();
             Box::pin(async move {
-                let row = sqlx::query_as::<_, SystemContextRow>("SELECT * FROM system_contexts WHERE id = ?")
-                    .bind(&id)
-                    .fetch_optional(pool)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                let row = sqlx::query_as::<_, SystemContextRow>(
+                    "SELECT * FROM system_contexts WHERE id = ?",
+                )
+                .bind(&id)
+                .fetch_optional(pool)
+                .await
+                .map_err(|e| e.to_string())?;
                 Ok(row.map(|r| r.to_ctx()))
             })
-        }
-    ).await
+        },
+    )
+    .await
 }
 
 pub async fn create_system_context(ctx: &SystemContext) -> Result<(), String> {
@@ -173,19 +197,30 @@ pub async fn delete_system_context(id: &str) -> Result<(), String> {
         |db| {
             let id = id.to_string();
             Box::pin(async move {
-                db.collection::<Document>("system_contexts").delete_one(doc! { "id": &id }, None).await.map_err(|e| e.to_string())?;
-                db.collection::<Document>("system_context_applications").delete_many(doc! { "system_context_id": &id }, None).await.map_err(|e| e.to_string())?;
+                db.collection::<Document>("system_contexts")
+                    .delete_one(doc! { "id": &id }, None)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                db.collection::<Document>("system_context_applications")
+                    .delete_many(doc! { "system_context_id": &id }, None)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 Ok(())
             })
         },
         |pool| {
             let id = id.to_string();
             Box::pin(async move {
-                sqlx::query("DELETE FROM system_contexts WHERE id = ?").bind(&id).execute(pool).await.map_err(|e| e.to_string())?;
+                sqlx::query("DELETE FROM system_contexts WHERE id = ?")
+                    .bind(&id)
+                    .execute(pool)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 Ok(())
             })
-        }
-    ).await
+        },
+    )
+    .await
 }
 
 pub async fn activate_system_context(context_id: &str, user_id: &str) -> Result<(), String> {
@@ -197,8 +232,22 @@ pub async fn activate_system_context(context_id: &str, user_id: &str) -> Result<
             let context_id = context_id.to_string();
             let user_id = user_id.to_string();
             Box::pin(async move {
-                db.collection::<Document>("system_contexts").update_many(doc! { "user_id": &user_id }, doc! { "$set": { "is_active": false } }, None).await.map_err(|e| e.to_string())?;
-                db.collection::<Document>("system_contexts").update_one(doc! { "id": &context_id }, doc! { "$set": { "is_active": true, "updated_at": &now_mongo } }, None).await.map_err(|e| e.to_string())?;
+                db.collection::<Document>("system_contexts")
+                    .update_many(
+                        doc! { "user_id": &user_id },
+                        doc! { "$set": { "is_active": false } },
+                        None,
+                    )
+                    .await
+                    .map_err(|e| e.to_string())?;
+                db.collection::<Document>("system_contexts")
+                    .update_one(
+                        doc! { "id": &context_id },
+                        doc! { "$set": { "is_active": true, "updated_at": &now_mongo } },
+                        None,
+                    )
+                    .await
+                    .map_err(|e| e.to_string())?;
                 Ok(())
             })
         },
@@ -206,17 +255,24 @@ pub async fn activate_system_context(context_id: &str, user_id: &str) -> Result<
             let context_id = context_id.to_string();
             let user_id = user_id.to_string();
             Box::pin(async move {
-                sqlx::query("UPDATE system_contexts SET is_active = 0 WHERE user_id = ?").bind(&user_id).execute(pool).await.map_err(|e| e.to_string())?;
-                sqlx::query("UPDATE system_contexts SET is_active = 1, updated_at = ? WHERE id = ?")
-                    .bind(&now_sqlite)
-                    .bind(&context_id)
+                sqlx::query("UPDATE system_contexts SET is_active = 0 WHERE user_id = ?")
+                    .bind(&user_id)
                     .execute(pool)
                     .await
                     .map_err(|e| e.to_string())?;
+                sqlx::query(
+                    "UPDATE system_contexts SET is_active = 1, updated_at = ? WHERE id = ?",
+                )
+                .bind(&now_sqlite)
+                .bind(&context_id)
+                .execute(pool)
+                .await
+                .map_err(|e| e.to_string())?;
                 Ok(())
             })
-        }
-    ).await
+        },
+    )
+    .await
 }
 
 pub async fn get_app_ids_for_system_context(context_id: &str) -> Result<Vec<String>, String> {
@@ -251,7 +307,10 @@ pub async fn get_app_ids_for_system_context(context_id: &str) -> Result<Vec<Stri
     ).await
 }
 
-pub async fn set_app_ids_for_system_context(context_id: &str, app_ids: &[String]) -> Result<(), String> {
+pub async fn set_app_ids_for_system_context(
+    context_id: &str,
+    app_ids: &[String],
+) -> Result<(), String> {
     with_db(
         |db| {
             let context_id = context_id.to_string();
@@ -291,6 +350,3 @@ pub async fn set_app_ids_for_system_context(context_id: &str, app_ids: &[String]
         }
     ).await
 }
-
-
-

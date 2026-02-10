@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use futures::StreamExt;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
-use tracing::{info, error};
+use tracing::{error, info};
 
 use crate::services::v3::message_manager::MessageManager;
 use crate::utils::abort_registry;
@@ -84,7 +84,9 @@ impl AiRequestHandler {
         if let Some(max) = max_output_tokens {
             payload["max_output_tokens"] = json!(max);
         }
-        if let Some(level) = normalize_reasoning_effort(provider.as_deref(), thinking_level.as_deref()) {
+        if let Some(level) =
+            normalize_reasoning_effort(provider.as_deref(), thinking_level.as_deref())
+        {
             payload["reasoning"] = json!({ "effort": level });
         }
         if stream {
@@ -110,9 +112,11 @@ impl AiRequestHandler {
         );
 
         if stream {
-            self.handle_stream_request(url, payload, callbacks, session_id, token).await
+            self.handle_stream_request(url, payload, callbacks, session_id, token)
+                .await
         } else {
-            self.handle_normal_request(url, payload, session_id, token).await
+            self.handle_normal_request(url, payload, session_id, token)
+                .await
         }
     }
 
@@ -123,7 +127,9 @@ impl AiRequestHandler {
         session_id: Option<String>,
         token: Option<CancellationToken>,
     ) -> Result<AiResponse, String> {
-        let send = self.client.post(&url)
+        let send = self
+            .client
+            .post(&url)
             .bearer_auth(&self.api_key)
             .json(&payload)
             .send();
@@ -143,15 +149,24 @@ impl AiRequestHandler {
         let val: Value = resp.json().await.map_err(|e| e.to_string())?;
         if !status.is_success() {
             let err_text = truncate_log(&val.to_string(), 2000);
-            error!("[AI_V3] request failed: status={}, error={}", status, err_text);
+            error!(
+                "[AI_V3] request failed: status={}, error={}",
+                status, err_text
+            );
             return Err(val.to_string());
         }
 
         let tool_calls = extract_tool_calls(&val);
         let content = extract_output_text(&val);
         let usage = val.get("usage").cloned();
-        let finish_reason = val.get("status").and_then(|v| v.as_str()).map(|s| s.to_string());
-        let response_id = val.get("id").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let finish_reason = val
+            .get("status")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let response_id = val
+            .get("id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
 
         if let Some(session_id) = session_id.clone() {
             let mut metadata = serde_json::Map::new();
@@ -161,16 +176,23 @@ impl AiRequestHandler {
             if let Some(tc) = tool_calls.clone() {
                 metadata.insert("toolCalls".to_string(), tc);
             }
-            let meta_val = if metadata.is_empty() { None } else { Some(Value::Object(metadata)) };
+            let meta_val = if metadata.is_empty() {
+                None
+            } else {
+                Some(Value::Object(metadata))
+            };
             let reasoning = None;
-            let _ = self.message_manager.save_assistant_message(
-                &session_id,
-                &content,
-                None,
-                reasoning,
-                meta_val,
-                tool_calls.clone()
-            ).await;
+            let _ = self
+                .message_manager
+                .save_assistant_message(
+                    &session_id,
+                    &content,
+                    None,
+                    reasoning,
+                    meta_val,
+                    tool_calls.clone(),
+                )
+                .await;
         }
 
         Ok(AiResponse {
@@ -191,7 +213,9 @@ impl AiRequestHandler {
         session_id: Option<String>,
         token: Option<CancellationToken>,
     ) -> Result<AiResponse, String> {
-        let send = self.client.post(&url)
+        let send = self
+            .client
+            .post(&url)
             .bearer_auth(&self.api_key)
             .json(&payload)
             .send();
@@ -211,7 +235,10 @@ impl AiRequestHandler {
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
             let err_text = truncate_log(&text, 2000);
-            error!("[AI_V3] stream request failed: status={}, error={}", status, err_text);
+            error!(
+                "[AI_V3] stream request failed: status={}, error={}",
+                status, err_text
+            );
             return Err(text);
         }
 
@@ -227,19 +254,25 @@ impl AiRequestHandler {
 
         while let Some(chunk) = stream.next().await {
             if let Some(token) = token.clone() {
-                if token.is_cancelled() { return Err("aborted".to_string()); }
+                if token.is_cancelled() {
+                    return Err("aborted".to_string());
+                }
             }
             let bytes = chunk.map_err(|e| e.to_string())?;
             let text = String::from_utf8_lossy(&bytes).to_string();
             buffer.push_str(&text);
             while let Some(idx) = buffer.find("\n\n") {
                 let packet = buffer[..idx].to_string();
-                buffer = buffer[idx+2..].to_string();
+                buffer = buffer[idx + 2..].to_string();
                 for line in packet.lines() {
                     let line = line.trim();
-                    if !line.starts_with("data:") { continue; }
+                    if !line.starts_with("data:") {
+                        continue;
+                    }
                     let data = line.trim_start_matches("data:").trim();
-                    if data == "[DONE]" { break; }
+                    if data == "[DONE]" {
+                        break;
+                    }
                     let v: Value = match serde_json::from_str(data) {
                         Ok(v) => v,
                         Err(_) => continue,
@@ -250,28 +283,40 @@ impl AiRequestHandler {
                                 if let Some(delta) = extract_text_delta(delta_val) {
                                     if !delta.is_empty() {
                                         full_content.push_str(&delta);
-                                        if let Some(cb) = &callbacks.on_chunk { cb(delta.clone()); }
+                                        if let Some(cb) = &callbacks.on_chunk {
+                                            cb(delta.clone());
+                                        }
                                         sent_any_chunk = true;
                                     }
                                 }
                             }
-                        } else if t == "response.output_text.done" || t == "response.output_text" || t == "response.output_text.completed" {
+                        } else if t == "response.output_text.done"
+                            || t == "response.output_text"
+                            || t == "response.output_text.completed"
+                        {
                             if full_content.is_empty() {
-                                if let Some(text) = extract_text_from_fields(&v, &["text", "output_text", "delta"]) {
+                                if let Some(text) =
+                                    extract_text_from_fields(&v, &["text", "output_text", "delta"])
+                                {
                                     if !text.is_empty() {
                                         full_content.push_str(&text);
-                                        if let Some(cb) = &callbacks.on_chunk { cb(text); }
+                                        if let Some(cb) = &callbacks.on_chunk {
+                                            cb(text);
+                                        }
                                         sent_any_chunk = true;
                                     }
                                 }
                             }
                         } else if t == "response.reasoning.delta"
                             || t == "response.reasoning_text.delta"
-                            || t == "response.reasoning_summary_text.delta" {
+                            || t == "response.reasoning_summary_text.delta"
+                        {
                             let delta = normalize_reasoning_delta(v.get("delta"));
                             if !delta.is_empty() {
                                 reasoning.push_str(&delta);
-                                if let Some(cb) = &callbacks.on_thinking { cb(delta); }
+                                if let Some(cb) = &callbacks.on_thinking {
+                                    cb(delta);
+                                }
                             }
                         } else if t == "response.completed" {
                             if let Some(resp) = v.get("response") {
@@ -280,7 +325,9 @@ impl AiRequestHandler {
                                     let extracted = extract_output_text(resp);
                                     if !extracted.is_empty() {
                                         full_content.push_str(&extracted);
-                                        if let Some(cb) = &callbacks.on_chunk { cb(extracted); }
+                                        if let Some(cb) = &callbacks.on_chunk {
+                                            cb(extracted);
+                                        }
                                         sent_any_chunk = true;
                                     }
                                 }
@@ -290,7 +337,9 @@ impl AiRequestHandler {
                                     let extracted = extract_output_text(&v);
                                     if !extracted.is_empty() {
                                         full_content.push_str(&extracted);
-                                        if let Some(cb) = &callbacks.on_chunk { cb(extracted); }
+                                        if let Some(cb) = &callbacks.on_chunk {
+                                            cb(extracted);
+                                        }
                                         sent_any_chunk = true;
                                     }
                                 }
@@ -301,7 +350,10 @@ impl AiRequestHandler {
                             }
                         } else if response_obj.is_none() {
                             if let Some(resp) = v.get("response") {
-                                if resp.get("output").is_some() || resp.get("output_text").is_some() || resp.get("status").is_some() {
+                                if resp.get("output").is_some()
+                                    || resp.get("output_text").is_some()
+                                    || resp.get("status").is_some()
+                                {
                                     response_obj = Some(resp.clone());
                                 }
                             } else if v.get("output").is_some() || v.get("output_text").is_some() {
@@ -310,7 +362,11 @@ impl AiRequestHandler {
                         }
                     }
                     if response_id.is_none() {
-                        if let Some(id) = v.get("response").and_then(|r| r.get("id")).and_then(|v| v.as_str()) {
+                        if let Some(id) = v
+                            .get("response")
+                            .and_then(|r| r.get("id"))
+                            .and_then(|v| v.as_str())
+                        {
                             response_id = Some(id.to_string());
                         } else if let Some(id) = v.get("id").and_then(|v| v.as_str()) {
                             response_id = Some(id.to_string());
@@ -337,12 +393,22 @@ impl AiRequestHandler {
                 }
             }
         }
-        let reasoning_opt = if reasoning.is_empty() { None } else { Some(reasoning.clone()) };
+        let reasoning_opt = if reasoning.is_empty() {
+            None
+        } else {
+            Some(reasoning.clone())
+        };
         if finish_reason.is_none() {
-            finish_reason = response_val.get("status").and_then(|v| v.as_str()).map(|s| s.to_string());
+            finish_reason = response_val
+                .get("status")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
         }
         if response_id.is_none() {
-            response_id = response_val.get("id").and_then(|v| v.as_str()).map(|s| s.to_string());
+            response_id = response_val
+                .get("id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
         }
         if usage.is_none() {
             usage = response_val.get("usage").cloned();
@@ -356,15 +422,22 @@ impl AiRequestHandler {
             if let Some(tc) = tool_calls.clone() {
                 metadata.insert("toolCalls".to_string(), tc);
             }
-            let meta_val = if metadata.is_empty() { None } else { Some(Value::Object(metadata)) };
-            let _ = self.message_manager.save_assistant_message(
-                &session_id,
-                &content,
-                None,
-                reasoning_opt.clone(),
-                meta_val,
-                tool_calls.clone()
-            ).await;
+            let meta_val = if metadata.is_empty() {
+                None
+            } else {
+                Some(Value::Object(metadata))
+            };
+            let _ = self
+                .message_manager
+                .save_assistant_message(
+                    &session_id,
+                    &content,
+                    None,
+                    reasoning_opt.clone(),
+                    meta_val,
+                    tool_calls.clone(),
+                )
+                .await;
         }
 
         Ok(AiResponse {
@@ -394,10 +467,23 @@ fn extract_tool_calls(response: &Value) -> Option<Value> {
             if item.get("type").and_then(|v| v.as_str()) != Some("function_call") {
                 continue;
             }
-            let call_id = item.get("call_id").and_then(|v| v.as_str()).or_else(|| item.get("id").and_then(|v| v.as_str())).unwrap_or("");
-            if call_id.is_empty() { continue; }
-            let name = item.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let args = item.get("arguments").cloned().unwrap_or(Value::String("{}".to_string()));
+            let call_id = item
+                .get("call_id")
+                .and_then(|v| v.as_str())
+                .or_else(|| item.get("id").and_then(|v| v.as_str()))
+                .unwrap_or("");
+            if call_id.is_empty() {
+                continue;
+            }
+            let name = item
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let args = item
+                .get("arguments")
+                .cloned()
+                .unwrap_or(Value::String("{}".to_string()));
             let args_str = if let Some(s) = args.as_str() {
                 s.to_string()
             } else {
@@ -413,7 +499,11 @@ fn extract_tool_calls(response: &Value) -> Option<Value> {
             }));
         }
     }
-    if tool_calls.is_empty() { None } else { Some(Value::Array(tool_calls)) }
+    if tool_calls.is_empty() {
+        None
+    } else {
+        Some(Value::Array(tool_calls))
+    }
 }
 
 fn extract_output_text(response: &Value) -> String {
@@ -478,7 +568,9 @@ fn normalize_reasoning_delta(delta: Option<&Value>) -> String {
         if let Some(s) = v.as_str() {
             return s.to_string();
         }
-        if v.is_null() { return String::new(); }
+        if v.is_null() {
+            return String::new();
+        }
         if let Ok(s) = serde_json::to_string(v) {
             return s;
         }

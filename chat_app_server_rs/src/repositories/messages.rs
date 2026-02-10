@@ -1,10 +1,10 @@
-use serde_json::Value;
-use mongodb::bson::{doc, Bson, Document};
-use sqlx::Row;
 use futures::TryStreamExt;
+use mongodb::bson::{doc, Bson, Document};
+use serde_json::Value;
+use sqlx::Row;
 
 use crate::models::message::{Message, MessageRow};
-use crate::repositories::db::{with_db, to_doc, get_db_sync, doc_from_pairs};
+use crate::repositories::db::{doc_from_pairs, get_db_sync, to_doc, with_db};
 
 fn normalize_from_doc(doc: &Document) -> Option<Message> {
     let id = doc.get_str("id").ok()?.to_string();
@@ -12,12 +12,29 @@ fn normalize_from_doc(doc: &Document) -> Option<Message> {
     let role = doc.get_str("role").ok()?.to_string();
     let content = doc.get_str("content").ok().unwrap_or("").to_string();
     let summary = doc.get_str("summary").ok().map(|s| s.to_string());
-    let tool_calls = doc.get_str("tool_calls").ok().and_then(|s| serde_json::from_str::<Value>(s).ok());
+    let tool_calls = doc
+        .get_str("tool_calls")
+        .ok()
+        .and_then(|s| serde_json::from_str::<Value>(s).ok());
     let tool_call_id = doc.get_str("tool_call_id").ok().map(|s| s.to_string());
     let reasoning = doc.get_str("reasoning").ok().map(|s| s.to_string());
-    let metadata = doc.get_str("metadata").ok().and_then(|s| serde_json::from_str::<Value>(s).ok());
+    let metadata = doc
+        .get_str("metadata")
+        .ok()
+        .and_then(|s| serde_json::from_str::<Value>(s).ok());
     let created_at = doc.get_str("created_at").ok().unwrap_or("").to_string();
-    Some(Message { id, session_id, role, content, summary, tool_calls, tool_call_id, reasoning, metadata, created_at })
+    Some(Message {
+        id,
+        session_id,
+        role,
+        content,
+        summary,
+        tool_calls,
+        tool_call_id,
+        reasoning,
+        metadata,
+        created_at,
+    })
 }
 
 pub async fn create_message(data: &Message) -> Result<Message, String> {
@@ -88,7 +105,11 @@ pub async fn get_message_by_id(id: &str) -> Result<Option<Message>, String> {
         |db| {
             let id = id.to_string();
             Box::pin(async move {
-                let doc = db.collection::<Document>("messages").find_one(doc! { "id": id }, None).await.map_err(|e| e.to_string())?;
+                let doc = db
+                    .collection::<Document>("messages")
+                    .find_one(doc! { "id": id }, None)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 Ok(doc.and_then(|d| normalize_from_doc(&d)))
             })
         },
@@ -102,24 +123,40 @@ pub async fn get_message_by_id(id: &str) -> Result<Option<Message>, String> {
                     .map_err(|e| e.to_string())?;
                 Ok(row.map(|r| r.to_message()))
             })
-        }
-    ).await
+        },
+    )
+    .await
 }
 
-pub async fn get_messages_by_session(session_id: &str, limit: Option<i64>, offset: i64) -> Result<Vec<Message>, String> {
+pub async fn get_messages_by_session(
+    session_id: &str,
+    limit: Option<i64>,
+    offset: i64,
+) -> Result<Vec<Message>, String> {
     with_db(
         |db| {
             let session_id = session_id.to_string();
             Box::pin(async move {
-                let mut cursor = db.collection::<Document>("messages").find(doc! { "session_id": session_id }, None).await.map_err(|e| e.to_string())?;
+                let mut cursor = db
+                    .collection::<Document>("messages")
+                    .find(doc! { "session_id": session_id }, None)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 let mut docs = Vec::new();
                 while let Some(doc) = cursor.try_next().await.map_err(|e| e.to_string())? {
                     docs.push(doc);
                 }
-                let mut messages: Vec<Message> = docs.into_iter().filter_map(|d| normalize_from_doc(&d)).collect();
+                let mut messages: Vec<Message> = docs
+                    .into_iter()
+                    .filter_map(|d| normalize_from_doc(&d))
+                    .collect();
                 messages.sort_by(|a, b| a.created_at.cmp(&b.created_at));
                 if let Some(l) = limit {
-                    messages = messages.into_iter().skip(offset as usize).take(l as usize).collect();
+                    messages = messages
+                        .into_iter()
+                        .skip(offset as usize)
+                        .take(l as usize)
+                        .collect();
                 }
                 Ok(messages)
             })
@@ -127,8 +164,12 @@ pub async fn get_messages_by_session(session_id: &str, limit: Option<i64>, offse
         |pool| {
             let session_id = session_id.to_string();
             Box::pin(async move {
-                let mut query = "SELECT * FROM messages WHERE session_id = ? ORDER BY created_at ASC".to_string();
-                if let Some(_) = limit { query.push_str(" LIMIT ? OFFSET ?"); }
+                let mut query =
+                    "SELECT * FROM messages WHERE session_id = ? ORDER BY created_at ASC"
+                        .to_string();
+                if let Some(_) = limit {
+                    query.push_str(" LIMIT ? OFFSET ?");
+                }
                 let mut q = sqlx::query_as::<_, MessageRow>(&query).bind(&session_id);
                 if let Some(l) = limit {
                     q = q.bind(l).bind(offset);
@@ -136,11 +177,16 @@ pub async fn get_messages_by_session(session_id: &str, limit: Option<i64>, offse
                 let rows = q.fetch_all(pool).await.map_err(|e| e.to_string())?;
                 Ok(rows.into_iter().map(|r| r.to_message()).collect())
             })
-        }
-    ).await
+        },
+    )
+    .await
 }
 
-pub async fn get_recent_messages_by_session(session_id: &str, limit: i64, offset: i64) -> Result<Vec<Message>, String> {
+pub async fn get_recent_messages_by_session(
+    session_id: &str,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<Message>, String> {
     with_db(
         |db| {
             let session_id = session_id.to_string();
@@ -178,7 +224,11 @@ pub async fn get_recent_messages_by_session(session_id: &str, limit: i64, offset
     ).await
 }
 
-pub async fn get_messages_by_session_after(session_id: &str, after_created_at: &str, limit: Option<i64>) -> Result<Vec<Message>, String> {
+pub async fn get_messages_by_session_after(
+    session_id: &str,
+    after_created_at: &str,
+    limit: Option<i64>,
+) -> Result<Vec<Message>, String> {
     with_db(
         |db| {
             let session_id = session_id.to_string();
@@ -231,7 +281,10 @@ pub async fn delete_message(id: &str) -> Result<(), String> {
         |db| {
             let id = id.to_string();
             Box::pin(async move {
-                db.collection::<Document>("messages").delete_one(doc! { "id": id }, None).await.map_err(|e| e.to_string())?;
+                db.collection::<Document>("messages")
+                    .delete_one(doc! { "id": id }, None)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 Ok(())
             })
         },
@@ -245,8 +298,9 @@ pub async fn delete_message(id: &str) -> Result<(), String> {
                     .map_err(|e| e.to_string())?;
                 Ok(())
             })
-        }
-    ).await
+        },
+    )
+    .await
 }
 
 pub async fn delete_messages_by_session(session_id: &str) -> Result<(), String> {
@@ -254,7 +308,10 @@ pub async fn delete_messages_by_session(session_id: &str) -> Result<(), String> 
         |db| {
             let session_id = session_id.to_string();
             Box::pin(async move {
-                db.collection::<Document>("messages").delete_many(doc! { "session_id": session_id }, None).await.map_err(|e| e.to_string())?;
+                db.collection::<Document>("messages")
+                    .delete_many(doc! { "session_id": session_id }, None)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 Ok(())
             })
         },
@@ -268,8 +325,9 @@ pub async fn delete_messages_by_session(session_id: &str) -> Result<(), String> 
                     .map_err(|e| e.to_string())?;
                 Ok(())
             })
-        }
-    ).await
+        },
+    )
+    .await
 }
 
 pub async fn count_messages_by_session(session_id: &str) -> Result<i64, String> {
@@ -277,26 +335,34 @@ pub async fn count_messages_by_session(session_id: &str) -> Result<i64, String> 
         |db| {
             let session_id = session_id.to_string();
             Box::pin(async move {
-                let count = db.collection::<Document>("messages").count_documents(doc! { "session_id": session_id }, None).await.map_err(|e| e.to_string())?;
+                let count = db
+                    .collection::<Document>("messages")
+                    .count_documents(doc! { "session_id": session_id }, None)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 Ok(count as i64)
             })
         },
         |pool| {
             let session_id = session_id.to_string();
             Box::pin(async move {
-                let row = sqlx::query("SELECT COUNT(*) as count FROM messages WHERE session_id = ?")
-                    .bind(&session_id)
-                    .fetch_one(pool)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                let row =
+                    sqlx::query("SELECT COUNT(*) as count FROM messages WHERE session_id = ?")
+                        .bind(&session_id)
+                        .fetch_one(pool)
+                        .await
+                        .map_err(|e| e.to_string())?;
                 let count: i64 = row.try_get("count").unwrap_or(0);
                 Ok(count)
             })
-        }
-    ).await
+        },
+    )
+    .await
 }
 
-fn block_on<F: std::future::Future<Output = Result<Message, String>>>(fut: F) -> Result<Message, String> {
+fn block_on<F: std::future::Future<Output = Result<Message, String>>>(
+    fut: F,
+) -> Result<Message, String> {
     if let Ok(handle) = tokio::runtime::Handle::try_current() {
         tokio::task::block_in_place(|| handle.block_on(fut))
     } else {
@@ -304,5 +370,3 @@ fn block_on<F: std::future::Future<Output = Result<Message, String>>>(fut: F) ->
         rt.block_on(fut)
     }
 }
-
-

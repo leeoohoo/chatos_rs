@@ -24,7 +24,11 @@ enum PatchOp {
     },
 }
 
-pub fn apply_patch(root: &Path, patch: &str, allow_writes: bool) -> Result<ApplyPatchResult, String> {
+pub fn apply_patch(
+    root: &Path,
+    patch: &str,
+    allow_writes: bool,
+) -> Result<ApplyPatchResult, String> {
     if !allow_writes {
         return Err("Writes are disabled.".to_string());
     }
@@ -124,7 +128,11 @@ fn parse_patch(input: &str) -> Result<Vec<PatchOp>, String> {
             if i < lines.len() && lines[i].starts_with("*** End Patch") {
                 i += 1;
             }
-            ops.push(PatchOp::Update { path, move_to, hunks });
+            ops.push(PatchOp::Update {
+                path,
+                move_to,
+                hunks,
+            });
             continue;
         }
         if line.starts_with("*** Add File: ") {
@@ -141,7 +149,10 @@ fn parse_patch(input: &str) -> Result<Vec<PatchOp>, String> {
             if i < lines.len() && lines[i].starts_with("*** End Patch") {
                 i += 1;
             }
-            ops.push(PatchOp::Add { path, lines: add_lines });
+            ops.push(PatchOp::Add {
+                path,
+                lines: add_lines,
+            });
             continue;
         }
         if line.starts_with("*** Delete File: ") {
@@ -168,7 +179,11 @@ fn parse_patch(input: &str) -> Result<Vec<PatchOp>, String> {
 
 fn require_line(lines: &[&str], index: usize, prefix: &str) -> Result<String, String> {
     let line = lines.get(index).ok_or_else(|| {
-        format!("Invalid patch format at line {}: expected {}", index + 1, prefix)
+        format!(
+            "Invalid patch format at line {}: expected {}",
+            index + 1,
+            prefix
+        )
     })?;
     if !line.starts_with(prefix) {
         return Err(format!(

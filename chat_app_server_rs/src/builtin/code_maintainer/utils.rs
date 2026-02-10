@@ -58,7 +58,9 @@ pub fn resolve_state_dir(server_name: &str) -> PathBuf {
             return PathBuf::from(root.trim()).join(normalize_name(server_name));
         }
     }
-    get_home_dir().join(".mcp-servers").join(normalize_name(server_name))
+    get_home_dir()
+        .join(".mcp-servers")
+        .join(normalize_name(server_name))
 }
 
 pub fn ensure_path_inside_root(root: &Path, target: &Path) -> Result<PathBuf, String> {

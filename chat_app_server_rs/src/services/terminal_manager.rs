@@ -1,7 +1,7 @@
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use dashmap::DashMap;
 use once_cell::sync::OnceCell;
@@ -34,14 +34,16 @@ pub struct TerminalSession {
 }
 
 impl TerminalSession {
-    fn new(terminal: &Terminal) -> Result<(Arc<Self>, Box<dyn portable_pty::Child + Send + Sync>), String> {
+    fn new(
+        terminal: &Terminal,
+    ) -> Result<(Arc<Self>, Box<dyn portable_pty::Child + Send + Sync>), String> {
         let cwd = terminal.cwd.clone();
         if !Path::new(&cwd).exists() {
             return Err("cwd does not exist".to_string());
         }
 
-        let root_cwd = std::fs::canonicalize(&cwd)
-            .map_err(|e| format!("canonicalize cwd failed: {e}"))?;
+        let root_cwd =
+            std::fs::canonicalize(&cwd).map_err(|e| format!("canonicalize cwd failed: {e}"))?;
 
         let pty_system = native_pty_system();
         let pair = pty_system
@@ -90,7 +92,9 @@ impl TerminalSession {
                     Ok(0) => break,
                     Ok(n) => {
                         let text = String::from_utf8_lossy(&buf[..n]).to_string();
-                        let _ = session_clone.sender.send(TerminalEvent::Output(text.clone()));
+                        let _ = session_clone
+                            .sender
+                            .send(TerminalEvent::Output(text.clone()));
                         session_clone.mark_output();
                         let cleaned = strip_ansi(&text);
                         if !cleaned.is_empty() {
@@ -138,7 +142,10 @@ impl TerminalSession {
         self.mark_input(&forward_data);
 
         if !forward_data.is_empty() {
-            let mut writer = self.writer.lock().map_err(|_| "writer lock failed".to_string())?;
+            let mut writer = self
+                .writer
+                .lock()
+                .map_err(|_| "writer lock failed".to_string())?;
             writer
                 .write_all(forward_data.as_bytes())
                 .map_err(|e| format!("write failed: {e}"))?;
@@ -153,7 +160,10 @@ impl TerminalSession {
     }
 
     pub fn resize(&self, cols: u16, rows: u16) -> Result<(), String> {
-        let master = self.master.lock().map_err(|_| "master lock failed".to_string())?;
+        let master = self
+            .master
+            .lock()
+            .map_err(|_| "master lock failed".to_string())?;
         master
             .resize(PtySize {
                 rows,
@@ -185,21 +195,48 @@ impl TerminalSession {
 
         let mut forward = String::with_capacity(data.len());
         let mut blocked = Vec::new();
+        let mut skip_following_lf = false;
 
         for ch in data.chars() {
+            if skip_following_lf && ch != '\n' {
+                skip_following_lf = false;
+            }
+
             match ch {
                 '\r' | '\n' => {
+                    if skip_following_lf && ch == '\n' {
+                        skip_following_lf = false;
+                        continue;
+                    }
+
                     let command_line = line.clone();
+                    let sanitized_command = sanitize_command_line_for_guard(command_line.as_str());
                     line.clear();
                     if let Some(reason) = validate_directory_change_command(
-                        command_line.as_str(),
+                        sanitized_command.as_str(),
                         self.root_cwd.as_path(),
                         &mut current_cwd,
                     ) {
-                        forward.push_str(clear_input_line_sequence(command_line.as_str()).as_str());
+                        if sanitized_command.contains('\t') {
+                            // Tab completion mutates the shell line, so backspacing typed
+                            // characters is not reliable. Ctrl-U clears the whole input line
+                            // in readline-style shells.
+                            forward.push('\u{15}');
+                        } else {
+                            forward.push_str(
+                                clear_input_line_sequence(sanitized_command.as_str()).as_str(),
+                            );
+                        }
+                        skip_following_lf = ch == '\r';
                         blocked.push(reason);
                         continue;
                     }
+                    forward.push(ch);
+                }
+                c if c as u32 == 27 => {
+                    // Keep ESC in the line buffer so ANSI control sequences can be
+                    // removed before parsing directory-change commands.
+                    line.push(ch);
                     forward.push(ch);
                 }
                 '\u{8}' | '\u{7f}' => {
@@ -300,26 +337,37 @@ impl TerminalsManager {
             let id_clone = id.clone();
             let handle = handle.clone();
             handle.spawn(async move {
-                let _ = terminals::update_terminal_status(&id_clone, Some("exited".to_string()), None).await;
+                let _ =
+                    terminals::update_terminal_status(&id_clone, Some("exited".to_string()), None)
+                        .await;
             });
         });
         self.sessions.insert(terminal.id.clone(), session.clone());
         Ok(session)
     }
 
-    pub async fn create(&self, name: String, cwd: String, user_id: Option<String>) -> Result<Terminal, String> {
+    pub async fn create(
+        &self,
+        name: String,
+        cwd: String,
+        user_id: Option<String>,
+    ) -> Result<Terminal, String> {
         let terminal = Terminal::new(name, cwd, user_id);
         terminals::create_terminal(&terminal).await?;
         let _ = self.spawn_session(&terminal)?;
         Ok(terminal)
     }
 
-    pub async fn ensure_running(&self, terminal: &Terminal) -> Result<Arc<TerminalSession>, String> {
+    pub async fn ensure_running(
+        &self,
+        terminal: &Terminal,
+    ) -> Result<Arc<TerminalSession>, String> {
         if let Some(session) = self.get(&terminal.id) {
             return Ok(session);
         }
         let session = self.spawn_session(terminal)?;
-        let _ = terminals::update_terminal_status(&terminal.id, Some("running".to_string()), None).await;
+        let _ = terminals::update_terminal_status(&terminal.id, Some("running".to_string()), None)
+            .await;
         Ok(session)
     }
 
@@ -335,16 +383,23 @@ impl TerminalsManager {
 static TERMINAL_MANAGER: OnceCell<Arc<TerminalsManager>> = OnceCell::new();
 
 pub fn get_terminal_manager() -> Arc<TerminalsManager> {
-    TERMINAL_MANAGER.get_or_init(|| Arc::new(TerminalsManager::new())).clone()
+    TERMINAL_MANAGER
+        .get_or_init(|| Arc::new(TerminalsManager::new()))
+        .clone()
 }
 
-fn spawn_shell(cwd: &Path, slave: Box<dyn SlavePty + Send>) -> Result<Box<dyn portable_pty::Child + Send + Sync>, String> {
+fn spawn_shell(
+    cwd: &Path,
+    slave: Box<dyn SlavePty + Send>,
+) -> Result<Box<dyn portable_pty::Child + Send + Sync>, String> {
     let shell = select_shell();
     let mut cmd = CommandBuilder::new(shell.clone());
     cmd.cwd(cwd);
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
-    slave.spawn_command(cmd).map_err(|e| format!("{shell}: {e}"))
+    slave
+        .spawn_command(cmd)
+        .map_err(|e| format!("{shell}: {e}"))
 }
 
 fn select_shell() -> String {
@@ -412,10 +467,16 @@ fn validate_directory_change_command(
 ) -> Option<String> {
     let command = parse_directory_change_command(line)?;
 
+    if line.contains('\t') {
+        return Some(
+            "Blocked: tab completion is disabled for directory-change commands in this restricted terminal."
+                .to_string(),
+        );
+    }
+
     if command.has_extra_args {
         return Some(
-            "Blocked: run directory-change commands alone (no chained arguments)."
-                .to_string(),
+            "Blocked: run directory-change commands alone (no chained arguments).".to_string(),
         );
     }
 
@@ -436,14 +497,17 @@ fn validate_directory_change_command(
         }
     }
 
-    let resolved = match resolve_cd_target(root_cwd, current_cwd.as_path(), command.target.as_deref()) {
-        Some(path) => path,
-        None => return None,
-    };
+    let resolved =
+        match resolve_cd_target(root_cwd, current_cwd.as_path(), command.target.as_deref()) {
+            Some(path) => path,
+            None => return None,
+        };
 
     if !path_is_within_root(resolved.as_path(), root_cwd) {
         let root = root_cwd.display();
-        return Some(format!("Blocked: cannot leave terminal root directory: {root}"));
+        return Some(format!(
+            "Blocked: cannot leave terminal root directory: {root}"
+        ));
     }
 
     *current_cwd = resolved;
@@ -568,15 +632,15 @@ fn extract_prompt_cwd(line: &str) -> Option<PathBuf> {
         return None;
     }
 
-    static POWERSHELL_PROMPT_RE: once_cell::sync::Lazy<regex::Regex> = once_cell::sync::Lazy::new(|| {
-        regex::Regex::new(r"(?:^|[\s\]])PS (?:[^:>\r\n]+::)?([A-Za-z]:\\[^>\r\n]*)> ?$").unwrap()
-    });
-    static CMD_PROMPT_RE: once_cell::sync::Lazy<regex::Regex> = once_cell::sync::Lazy::new(|| {
-        regex::Regex::new(r"([A-Za-z]:\\[^>\r\n]*)> ?$").unwrap()
-    });
-    static UNIX_PROMPT_RE: once_cell::sync::Lazy<regex::Regex> = once_cell::sync::Lazy::new(|| {
-        regex::Regex::new(r"(/[^#$%>\r\n]*)[#$%>] ?$").unwrap()
-    });
+    static POWERSHELL_PROMPT_RE: once_cell::sync::Lazy<regex::Regex> =
+        once_cell::sync::Lazy::new(|| {
+            regex::Regex::new(r"(?:^|[\s\]])PS (?:[^:>\r\n]+::)?([A-Za-z]:\\[^>\r\n]*)> ?$")
+                .unwrap()
+        });
+    static CMD_PROMPT_RE: once_cell::sync::Lazy<regex::Regex> =
+        once_cell::sync::Lazy::new(|| regex::Regex::new(r"([A-Za-z]:\\[^>\r\n]*)> ?$").unwrap());
+    static UNIX_PROMPT_RE: once_cell::sync::Lazy<regex::Regex> =
+        once_cell::sync::Lazy::new(|| regex::Regex::new(r"(/[^#$%>\r\n]*)[#$%>] ?$").unwrap());
 
     if let Some(caps) = POWERSHELL_PROMPT_RE.captures(trimmed) {
         return canonicalize_prompt_path(caps.get(1).map(|m| m.as_str())?);
@@ -614,6 +678,18 @@ fn clear_input_line_sequence(command_line: &str) -> String {
         seq.push('\u{8}');
     }
     seq
+}
+
+fn sanitize_command_line_for_guard(command_line: &str) -> String {
+    if command_line.is_empty() {
+        return String::new();
+    }
+
+    let stripped = strip_ansi(command_line);
+    stripped
+        .chars()
+        .filter(|ch| !ch.is_control() || *ch == '\t')
+        .collect()
 }
 
 fn has_dynamic_cd_syntax(target: &str) -> bool {
@@ -692,15 +768,13 @@ fn strip_ansi(input: &str) -> String {
     if input.is_empty() {
         return String::new();
     }
-    static ANSI_CSI_RE: once_cell::sync::Lazy<regex::Regex> = once_cell::sync::Lazy::new(|| {
-        regex::Regex::new(r"\x1B\[[0-?]*[ -/]*[@-~]").unwrap()
-    });
+    static ANSI_CSI_RE: once_cell::sync::Lazy<regex::Regex> =
+        once_cell::sync::Lazy::new(|| regex::Regex::new(r"\x1B\[[0-?]*[ -/]*[@-~]").unwrap());
     static ANSI_OSC_RE: once_cell::sync::Lazy<regex::Regex> = once_cell::sync::Lazy::new(|| {
         regex::Regex::new(r"\x1B\][^\x07\x1B]*(?:\x07|\x1B\\)").unwrap()
     });
-    static ANSI_ESC_RE: once_cell::sync::Lazy<regex::Regex> = once_cell::sync::Lazy::new(|| {
-        regex::Regex::new(r"\x1B[@-_]").unwrap()
-    });
+    static ANSI_ESC_RE: once_cell::sync::Lazy<regex::Regex> =
+        once_cell::sync::Lazy::new(|| regex::Regex::new(r"\x1B[@-_]").unwrap());
 
     let without_osc = ANSI_OSC_RE.replace_all(input, "");
     let without_csi = ANSI_CSI_RE.replace_all(&without_osc, "");
@@ -712,29 +786,26 @@ fn is_prompt_line(line: &str) -> bool {
     if trimmed.is_empty() {
         return false;
     }
-    static PROMPT_PATTERNS: once_cell::sync::Lazy<Vec<regex::Regex>> = once_cell::sync::Lazy::new(|| {
-        vec![
-            regex::Regex::new(r"^\([^)]+\)\s?.*[#$%>] ?$").unwrap(),
-            regex::Regex::new(r"^[^\n\r]*@[^\n\r]*[#$%>] ?$").unwrap(),
-            regex::Regex::new(r"^PS [A-Za-z]:\\.*> ?$").unwrap(),
-            regex::Regex::new(r"^[A-Za-z]:\\.*> ?$").unwrap(),
-            regex::Regex::new(r"^.*\$\s?$").unwrap(),
-            regex::Regex::new(r"^.*%\s?$").unwrap(),
-            regex::Regex::new(r"^.*>\s?$").unwrap(),
-        ]
-    });
+    static PROMPT_PATTERNS: once_cell::sync::Lazy<Vec<regex::Regex>> =
+        once_cell::sync::Lazy::new(|| {
+            vec![
+                regex::Regex::new(r"^\([^)]+\)\s?.*[#$%>] ?$").unwrap(),
+                regex::Regex::new(r"^[^\n\r]*@[^\n\r]*[#$%>] ?$").unwrap(),
+                regex::Regex::new(r"^PS [A-Za-z]:\\.*> ?$").unwrap(),
+                regex::Regex::new(r"^[A-Za-z]:\\.*> ?$").unwrap(),
+                regex::Regex::new(r"^.*\$\s?$").unwrap(),
+                regex::Regex::new(r"^.*%\s?$").unwrap(),
+                regex::Regex::new(r"^.*>\s?$").unwrap(),
+            ]
+        });
     PROMPT_PATTERNS.iter().any(|re| re.is_match(trimmed))
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        extract_prompt_cwd,
-        input_triggers_busy,
-        is_prompt_line,
-        normalize_path_for_compare,
-        path_is_within_root,
-        validate_directory_change_command,
+        extract_prompt_cwd, input_triggers_busy, is_prompt_line, normalize_path_for_compare,
+        path_is_within_root, sanitize_command_line_for_guard, validate_directory_change_command,
     };
 
     #[test]
@@ -818,17 +889,21 @@ mod tests {
         let root = std::fs::canonicalize(&root).unwrap();
         let mut current = root.clone();
 
-        assert!(validate_directory_change_command("cd child", root.as_path(), &mut current).is_none());
+        assert!(
+            validate_directory_change_command("cd child", root.as_path(), &mut current).is_none()
+        );
         assert!(path_is_within_root(current.as_path(), root.as_path()));
 
         assert!(validate_directory_change_command("cd ..", root.as_path(), &mut current).is_none());
         assert_eq!(current, root);
 
-        let blocked_root_parent = validate_directory_change_command("cd ..", root.as_path(), &mut current);
+        let blocked_root_parent =
+            validate_directory_change_command("cd ..", root.as_path(), &mut current);
         assert!(blocked_root_parent.is_some());
 
         let escape = format!("cd ..{}..", std::path::MAIN_SEPARATOR);
-        let blocked = validate_directory_change_command(escape.as_str(), root.as_path(), &mut current);
+        let blocked =
+            validate_directory_change_command(escape.as_str(), root.as_path(), &mut current);
         assert!(blocked.is_some());
 
         let _ = std::fs::remove_dir_all(base);
@@ -840,5 +915,71 @@ mod tests {
         let mut current = root.clone();
         let blocked = validate_directory_change_command("cd $HOME", root.as_path(), &mut current);
         assert!(blocked.is_some());
+    }
+
+    #[test]
+    fn directory_guard_blocks_escape_when_cd_is_pasted_with_ansi_wrapper() {
+        let unique = format!(
+            "chatos-terminal-guard-ansi-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let base = std::env::temp_dir().join(unique);
+        let root = base.join("root");
+        let outside = base.join("outside");
+
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+
+        let root = std::fs::canonicalize(&root).unwrap();
+        let outside = std::fs::canonicalize(&outside).unwrap();
+        let mut current = root.clone();
+
+        let pasted = format!("\x1b[200~cd {}\x1b[201~", outside.display());
+        let sanitized = sanitize_command_line_for_guard(pasted.as_str());
+        assert_eq!(sanitized, format!("cd {}", outside.display()));
+
+        let blocked =
+            validate_directory_change_command(sanitized.as_str(), root.as_path(), &mut current);
+        assert!(blocked.is_some());
+
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn directory_guard_blocks_tab_completed_cd_paths() {
+        let unique = format!(
+            "chatos-terminal-guard-tab-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let base = std::env::temp_dir().join(unique);
+        let root = base.join("root");
+        let outside = base.join("outside");
+
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+
+        let root = std::fs::canonicalize(&root).unwrap();
+        let outside = std::fs::canonicalize(&outside).unwrap();
+        let mut current = root.clone();
+
+        let attempted = format!("cd /tmp\t{}", outside.display());
+        let blocked =
+            validate_directory_change_command(attempted.as_str(), root.as_path(), &mut current);
+        assert!(blocked.is_some());
+
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn sanitize_command_line_keeps_tab_for_completion_detection() {
+        let raw = "\x1b[200~cd /Users/lilei/\tproject\x1b[201~";
+        let sanitized = sanitize_command_line_for_guard(raw);
+        assert_eq!(sanitized, "cd /Users/lilei/\tproject");
     }
 }

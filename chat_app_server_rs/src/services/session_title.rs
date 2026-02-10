@@ -1,4 +1,4 @@
-﻿use crate::models::session::SessionService;
+use crate::models::session::SessionService;
 
 fn is_default_title(title: &str) -> bool {
     let t = title.trim().to_lowercase();
@@ -15,13 +15,21 @@ fn derive_title_from_content(text: &str, max_len: usize) -> String {
         first_line = first_line.trim_start_matches('>').trim_start().to_string();
     }
     if first_line.len() <= max_len {
-        if first_line.is_empty() { "New Chat".to_string() } else { first_line }
+        if first_line.is_empty() {
+            "New Chat".to_string()
+        } else {
+            first_line
+        }
     } else {
         format!("{}…", &first_line[..max_len])
     }
 }
 
-pub async fn maybe_rename_session_title(session_id: &str, user_content: &str, max_len: usize) -> bool {
+pub async fn maybe_rename_session_title(
+    session_id: &str,
+    user_content: &str,
+    max_len: usize,
+) -> bool {
     if session_id.is_empty() {
         return false;
     }
@@ -37,4 +45,3 @@ pub async fn maybe_rename_session_title(session_id: &str, user_content: &str, ma
     }
     false
 }
-

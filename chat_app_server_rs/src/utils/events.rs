@@ -1,4 +1,4 @@
-﻿// Canonical event type constants for SSE/chat
+// Canonical event type constants for SSE/chat
 pub struct Events;
 
 impl Events {
@@ -17,4 +17,3 @@ impl Events {
     pub const ERROR: &'static str = "error";
     pub const HEARTBEAT: &'static str = "heartbeat";
 }
-

@@ -1,5 +1,5 @@
-﻿use std::sync::Arc;
-use mongodb::bson::{Document, Bson};
+use mongodb::bson::{Bson, Document};
+use std::sync::Arc;
 
 use crate::db::{self, Database};
 
@@ -27,8 +27,16 @@ pub fn doc_from_pairs(pairs: Vec<(&str, Bson)>) -> Document {
 
 pub async fn with_db<T, Fmongo, Fsqlite>(mongo_fn: Fmongo, sqlite_fn: Fsqlite) -> Result<T, String>
 where
-    Fmongo: for<'a> FnOnce(&'a mongodb::Database) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<T, String>> + Send + 'a>>,
-    Fsqlite: for<'a> FnOnce(&'a sqlx::SqlitePool) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<T, String>> + Send + 'a>>,
+    Fmongo: for<'a> FnOnce(
+        &'a mongodb::Database,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<T, String>> + Send + 'a>,
+    >,
+    Fsqlite: for<'a> FnOnce(
+        &'a sqlx::SqlitePool,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<T, String>> + Send + 'a>,
+    >,
 {
     let db = get_db().await?;
     match db.as_ref() {
@@ -36,4 +44,3 @@ where
         Database::Sqlite(pool) => sqlite_fn(pool).await,
     }
 }
-

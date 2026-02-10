@@ -1,13 +1,20 @@
-﻿pub fn normalize_provider(provider: &str) -> String {
+pub fn normalize_provider(provider: &str) -> String {
     let p = provider.trim().to_lowercase();
-    if p == "openai" { "gpt".to_string() } else { p }
+    if p == "openai" {
+        "gpt".to_string()
+    } else {
+        p
+    }
 }
 
 pub fn is_gpt_provider(provider: &str) -> bool {
     normalize_provider(provider) == "gpt"
 }
 
-pub fn normalize_thinking_level(provider: &str, level: Option<&str>) -> Result<Option<String>, String> {
+pub fn normalize_thinking_level(
+    provider: &str,
+    level: Option<&str>,
+) -> Result<Option<String>, String> {
     let level = level.map(|v| v.trim()).filter(|v| !v.is_empty());
     if level.is_none() {
         return Ok(None);

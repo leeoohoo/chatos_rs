@@ -9,9 +9,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use diff::{
-    build_diff, extract_patch_diffs, extract_patch_targets, read_text_for_diff, DiffInput,
-};
+use diff::{build_diff, extract_patch_diffs, extract_patch_targets, read_text_for_diff, DiffInput};
 use fs_ops::FsOps;
 use patch::apply_patch;
 use storage::ChangeLogStore;
@@ -55,7 +53,8 @@ impl CodeMaintainerService {
     pub fn new(opts: CodeMaintainerOptions) -> Result<Self, String> {
         let server_name = normalize_name(&opts.server_name);
         let root = opts.root;
-        ensure_dir(&root).map_err(|err| format!("create workspace dir {} failed: {}", root.display(), err))?;
+        ensure_dir(&root)
+            .map_err(|err| format!("create workspace dir {} failed: {}", root.display(), err))?;
 
         let change_log = ChangeLogStore::new(&server_name, opts.db_path.clone())?;
         let change_log = Arc::new(Mutex::new(change_log));
@@ -223,7 +222,9 @@ impl CodeMaintainerService {
                         .and_then(|v| v.as_u64())
                         .map(|v| v as usize);
                     let results = fs_ops.search_text(pattern, path, max_results)?;
-                    Ok(text_result(json!({ "count": results.len(), "results": results })))
+                    Ok(text_result(
+                        json!({ "count": results.len(), "results": results }),
+                    ))
                 }),
             );
         }
@@ -258,8 +259,8 @@ impl CodeMaintainerService {
                         .and_then(|v| v.as_str())
                         .ok_or("content is required".to_string())?;
                     let target = fs_ops.resolve_path(path)?;
-                    let before_snapshot =
-                        read_text_for_diff(&target, max_file_bytes).unwrap_or_else(DiffInput::omitted);
+                    let before_snapshot = read_text_for_diff(&target, max_file_bytes)
+                        .unwrap_or_else(DiffInput::omitted);
                     let result = fs_ops.write_file(path, content)?;
                     let after_snapshot = DiffInput::text(content.to_string());
                     let diff = build_diff(before_snapshot, after_snapshot);
@@ -310,8 +311,8 @@ impl CodeMaintainerService {
                         .and_then(|v| v.as_str())
                         .ok_or("content is required".to_string())?;
                     let target = fs_ops.resolve_path(path)?;
-                    let before_snapshot =
-                        read_text_for_diff(&target, max_file_bytes).unwrap_or_else(DiffInput::omitted);
+                    let before_snapshot = read_text_for_diff(&target, max_file_bytes)
+                        .unwrap_or_else(DiffInput::omitted);
                     let after_snapshot = if let Some(reason) = before_snapshot.reason.clone() {
                         DiffInput::omitted(reason)
                     } else {
@@ -362,8 +363,8 @@ impl CodeMaintainerService {
                         .and_then(|v| v.as_str())
                         .ok_or("path is required".to_string())?;
                     let target = fs_ops.resolve_path(path)?;
-                    let before_snapshot =
-                        read_text_for_diff(&target, max_file_bytes).unwrap_or_else(DiffInput::omitted);
+                    let before_snapshot = read_text_for_diff(&target, max_file_bytes)
+                        .unwrap_or_else(DiffInput::omitted);
                     let after_snapshot = if let Some(reason) = before_snapshot.reason.clone() {
                         DiffInput::omitted(reason)
                     } else {
@@ -374,8 +375,18 @@ impl CodeMaintainerService {
                     let record = change_log
                         .lock()
                         .map_err(|_| "change log unavailable".to_string())?
-                        .log_change(&deleted_path, "delete", 0, "", ctx.session_id, ctx.run_id, diff)?;
-                    Ok(text_result(json!({ "result": { "path": deleted_path }, "change": record })))
+                        .log_change(
+                            &deleted_path,
+                            "delete",
+                            0,
+                            "",
+                            ctx.session_id,
+                            ctx.run_id,
+                            diff,
+                        )?;
+                    Ok(text_result(
+                        json!({ "result": { "path": deleted_path }, "change": record }),
+                    ))
                 }),
             );
         }
@@ -476,12 +487,19 @@ impl CodeMaintainerService {
             .collect()
     }
 
-    pub fn call_tool(&self, name: &str, args: Value, session_id: Option<&str>) -> Result<Value, String> {
+    pub fn call_tool(
+        &self,
+        name: &str,
+        args: Value,
+        session_id: Option<&str>,
+    ) -> Result<Value, String> {
         let tool = self
             .tools
             .get(name)
             .ok_or_else(|| format!("Tool not found: {name}"))?;
-        let session = session_id.filter(|s| !s.trim().is_empty()).unwrap_or(self.default_session_id.as_str());
+        let session = session_id
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or(self.default_session_id.as_str());
         let run = if self.default_run_id.trim().is_empty() {
             session
         } else {

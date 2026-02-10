@@ -60,7 +60,10 @@ fn parse_json_list(raw: &Option<String>) -> Vec<String> {
     if let Some(s) = raw {
         if let Ok(v) = serde_json::from_str::<Value>(s) {
             if let Some(arr) = v.as_array() {
-                return arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
+                return arr
+                    .iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect();
             }
         }
         return Vec::new();

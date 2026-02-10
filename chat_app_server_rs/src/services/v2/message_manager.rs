@@ -1,4 +1,4 @@
-﻿use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 use parking_lot::Mutex;
@@ -31,21 +31,49 @@ pub struct MessageManager {
 impl MessageManager {
     pub fn new() -> Self {
         Self {
-            state: Arc::new(Mutex::new(State { recent_messages: HashMap::new(), pending_saves: VecDeque::new(), stats: Stats::default() })),
+            state: Arc::new(Mutex::new(State {
+                recent_messages: HashMap::new(),
+                pending_saves: VecDeque::new(),
+                stats: Stats::default(),
+            })),
         }
     }
 
-    pub async fn save_user_message(&self, session_id: &str, content: &str, message_id: Option<String>, metadata: Option<Value>) -> Result<Message, String> {
-        let mut message = Message::new(session_id.to_string(), "user".to_string(), content.to_string());
-        if let Some(id) = message_id { message.id = id; }
+    pub async fn save_user_message(
+        &self,
+        session_id: &str,
+        content: &str,
+        message_id: Option<String>,
+        metadata: Option<Value>,
+    ) -> Result<Message, String> {
+        let mut message = Message::new(
+            session_id.to_string(),
+            "user".to_string(),
+            content.to_string(),
+        );
+        if let Some(id) = message_id {
+            message.id = id;
+        }
         message.metadata = metadata;
         let saved = MessageService::create(message).await?;
         self.cache_message(saved.clone());
         Ok(saved)
     }
 
-    pub async fn save_assistant_message(&self, session_id: &str, content: &str, summary: Option<String>, reasoning: Option<String>, metadata: Option<Value>, tool_calls: Option<Value>) -> Result<Message, String> {
-        let mut message = Message::new(session_id.to_string(), "assistant".to_string(), content.to_string());
+    pub async fn save_assistant_message(
+        &self,
+        session_id: &str,
+        content: &str,
+        summary: Option<String>,
+        reasoning: Option<String>,
+        metadata: Option<Value>,
+        tool_calls: Option<Value>,
+    ) -> Result<Message, String> {
+        let mut message = Message::new(
+            session_id.to_string(),
+            "assistant".to_string(),
+            content.to_string(),
+        );
         message.summary = summary;
         message.reasoning = reasoning;
         message.metadata = metadata;
@@ -55,8 +83,18 @@ impl MessageManager {
         Ok(saved)
     }
 
-    pub async fn save_tool_message(&self, session_id: &str, content: &str, tool_call_id: &str, metadata: Option<Value>) -> Result<Message, String> {
-        let mut message = Message::new(session_id.to_string(), "tool".to_string(), content.to_string());
+    pub async fn save_tool_message(
+        &self,
+        session_id: &str,
+        content: &str,
+        tool_call_id: &str,
+        metadata: Option<Value>,
+    ) -> Result<Message, String> {
+        let mut message = Message::new(
+            session_id.to_string(),
+            "tool".to_string(),
+            content.to_string(),
+        );
         message.tool_call_id = Some(tool_call_id.to_string());
         message.metadata = metadata;
         let saved = MessageService::create(message).await?;
@@ -83,14 +121,20 @@ impl MessageManager {
         }
     }
 
-    pub async fn get_session_history_with_summaries(&self, session_id: &str, limit: Option<i64>, summary_limit: Option<i64>) -> (Vec<SessionSummary>, Vec<Message>) {
-        let summaries = match SessionSummaryService::list_by_session(session_id, summary_limit) .await {
-            Ok(items) => items,
-            Err(err) => {
-                error!("get_session_summaries failed: {}", err);
-                Vec::new()
-            }
-        };
+    pub async fn get_session_history_with_summaries(
+        &self,
+        session_id: &str,
+        limit: Option<i64>,
+        summary_limit: Option<i64>,
+    ) -> (Vec<SessionSummary>, Vec<Message>) {
+        let summaries =
+            match SessionSummaryService::list_by_session(session_id, summary_limit).await {
+                Ok(items) => items,
+                Err(err) => {
+                    error!("get_session_summaries failed: {}", err);
+                    Vec::new()
+                }
+            };
 
         if summaries.is_empty() {
             let messages = self.get_session_messages(session_id, limit).await;
@@ -123,7 +167,9 @@ impl MessageManager {
 
     pub fn get_session_messages_sync(&self, session_id: &str, limit: Option<i64>) -> Vec<Message> {
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            return tokio::task::block_in_place(|| handle.block_on(self.get_session_messages(session_id, limit)));
+            return tokio::task::block_in_place(|| {
+                handle.block_on(self.get_session_messages(session_id, limit))
+            });
         }
         let rt = tokio::runtime::Runtime::new();
         if let Ok(rt) = rt {
@@ -199,4 +245,3 @@ impl MessageManager {
         state.stats.messages_saved += 1;
     }
 }
-

@@ -1,10 +1,10 @@
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tracing::warn;
 
-use crate::services::v3::message_manager::MessageManager;
-use crate::services::v3::ai_request_handler::AiRequestHandler;
 use crate::services::v3::ai_client::{AiClient, AiClientCallbacks, ProcessOptions};
+use crate::services::v3::ai_request_handler::AiRequestHandler;
 use crate::services::v3::mcp_tool_execute::McpToolExecute;
+use crate::services::v3::message_manager::MessageManager;
 use crate::utils::attachments;
 
 pub struct AiServer {
@@ -18,10 +18,24 @@ pub struct AiServer {
 }
 
 impl AiServer {
-    pub fn new(openai_api_key: String, base_url: String, default_model: String, default_temperature: f64, mcp_tool_execute: McpToolExecute) -> Self {
+    pub fn new(
+        openai_api_key: String,
+        base_url: String,
+        default_model: String,
+        default_temperature: f64,
+        mcp_tool_execute: McpToolExecute,
+    ) -> Self {
         let message_manager = MessageManager::new();
-        let ai_request_handler = AiRequestHandler::new(openai_api_key.clone(), base_url.clone(), message_manager.clone());
-        let ai_client = AiClient::new(ai_request_handler.clone(), mcp_tool_execute.clone(), message_manager.clone());
+        let ai_request_handler = AiRequestHandler::new(
+            openai_api_key.clone(),
+            base_url.clone(),
+            message_manager.clone(),
+        );
+        let ai_client = AiClient::new(
+            ai_request_handler.clone(),
+            mcp_tool_execute.clone(),
+            message_manager.clone(),
+        );
         Self {
             message_manager,
             ai_request_handler,
@@ -53,13 +67,23 @@ impl AiServer {
 
         let attachments_list = options.attachments.unwrap_or_default();
         let sanitized = attachments::sanitize_attachments_for_db(&attachments_list);
-        let meta = if sanitized.is_empty() { None } else { Some(json!({"attachments": sanitized})) };
-        if let Err(err) = self.message_manager.save_user_message(session_id, user_message, None, meta).await {
+        let meta = if sanitized.is_empty() {
+            None
+        } else {
+            Some(json!({"attachments": sanitized}))
+        };
+        if let Err(err) = self
+            .message_manager
+            .save_user_message(session_id, user_message, None, meta)
+            .await
+        {
             warn!("save user message failed: {}", err);
         }
 
-        let mut content_parts = attachments::build_content_parts_async(user_message, &attachments_list).await;
-        content_parts = attachments::adapt_parts_for_model(&model, &content_parts, options.supports_images);
+        let mut content_parts =
+            attachments::build_content_parts_async(user_message, &attachments_list).await;
+        content_parts =
+            attachments::adapt_parts_for_model(&model, &content_parts, options.supports_images);
 
         let messages = vec![json!({"role": "user", "content": content_parts})];
 
@@ -71,22 +95,35 @@ impl AiServer {
             on_tools_end: None,
         });
 
-        let result = self.ai_client.process_request(
-            messages,
-            Some(session_id.to_string()),
-            ProcessOptions {
-                model: Some(model),
-                temperature: Some(temperature),
-                max_tokens,
-                reasoning_enabled: Some(reasoning_enabled),
-                provider: Some(provider),
-                thinking_level,
-                system_prompt: None,
-                history_limit: None,
-                purpose: Some("chat".to_string()),
-                callbacks: Some(if use_tools { callbacks } else { AiClientCallbacks { on_chunk: callbacks.on_chunk, on_thinking: callbacks.on_thinking, on_tools_start: None, on_tools_stream: None, on_tools_end: None } }),
-            }
-        ).await?;
+        let result = self
+            .ai_client
+            .process_request(
+                messages,
+                Some(session_id.to_string()),
+                ProcessOptions {
+                    model: Some(model),
+                    temperature: Some(temperature),
+                    max_tokens,
+                    reasoning_enabled: Some(reasoning_enabled),
+                    provider: Some(provider),
+                    thinking_level,
+                    system_prompt: None,
+                    history_limit: None,
+                    purpose: Some("chat".to_string()),
+                    callbacks: Some(if use_tools {
+                        callbacks
+                    } else {
+                        AiClientCallbacks {
+                            on_chunk: callbacks.on_chunk,
+                            on_thinking: callbacks.on_thinking,
+                            on_tools_start: None,
+                            on_tools_stream: None,
+                            on_tools_end: None,
+                        }
+                    }),
+                },
+            )
+            .await?;
 
         Ok(result)
     }

@@ -1,4 +1,4 @@
-﻿use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::FromRow;
 use uuid::Uuid;
@@ -64,7 +64,9 @@ impl SessionSummaryRow {
             last_message_id: self.last_message_id,
             first_message_created_at: self.first_message_created_at,
             last_message_created_at: self.last_message_created_at,
-            metadata: self.metadata.and_then(|v| serde_json::from_str::<Value>(&v).ok()),
+            metadata: self
+                .metadata
+                .and_then(|v| serde_json::from_str::<Value>(&v).ok()),
             created_at: self.created_at,
             updated_at: self.updated_at,
         }
@@ -103,7 +105,10 @@ impl SessionSummaryService {
         repo::create_summary(&summary).await
     }
 
-    pub async fn list_by_session(session_id: &str, limit: Option<i64>) -> Result<Vec<SessionSummary>, String> {
+    pub async fn list_by_session(
+        session_id: &str,
+        limit: Option<i64>,
+    ) -> Result<Vec<SessionSummary>, String> {
         repo::list_summaries_by_session(session_id, limit).await
     }
 

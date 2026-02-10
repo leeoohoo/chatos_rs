@@ -59,8 +59,12 @@ impl McpConfigRow {
             name: self.name,
             command: self.command,
             r#type: self.r#type,
-            args: self.args.and_then(|v| serde_json::from_str::<Value>(&v).ok()),
-            env: self.env.and_then(|v| serde_json::from_str::<Value>(&v).ok()),
+            args: self
+                .args
+                .and_then(|v| serde_json::from_str::<Value>(&v).ok()),
+            env: self
+                .env
+                .and_then(|v| serde_json::from_str::<Value>(&v).ok()),
             cwd: self.cwd,
             user_id: self.user_id,
             enabled: self.enabled == 1,

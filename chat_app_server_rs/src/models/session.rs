@@ -1,7 +1,7 @@
-﻿use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use uuid::Uuid;
 use sqlx::FromRow;
+use uuid::Uuid;
 
 use crate::repositories::sessions as repo;
 
@@ -35,7 +35,9 @@ impl SessionRow {
             id: self.id,
             title: self.title,
             description: self.description,
-            metadata: self.metadata.and_then(|m| serde_json::from_str::<Value>(&m).ok()),
+            metadata: self
+                .metadata
+                .and_then(|m| serde_json::from_str::<Value>(&m).ok()),
             user_id: self.user_id,
             project_id: self.project_id,
             created_at: self.created_at,
@@ -45,7 +47,13 @@ impl SessionRow {
 }
 
 impl Session {
-    pub fn new(title: String, description: Option<String>, metadata: Option<Value>, user_id: Option<String>, project_id: Option<String>) -> Session {
+    pub fn new(
+        title: String,
+        description: Option<String>,
+        metadata: Option<Value>,
+        user_id: Option<String>,
+        project_id: Option<String>,
+    ) -> Session {
         let now = chrono::Utc::now().to_rfc3339();
         Session {
             id: Uuid::new_v4().to_string(),
@@ -75,7 +83,12 @@ impl SessionService {
         repo::get_all_sessions(limit, offset).await
     }
 
-    pub async fn get_by_user_project(user_id: Option<String>, project_id: Option<String>, limit: Option<i64>, offset: i64) -> Result<Vec<Session>, String> {
+    pub async fn get_by_user_project(
+        user_id: Option<String>,
+        project_id: Option<String>,
+        limit: Option<i64>,
+        offset: i64,
+    ) -> Result<Vec<Session>, String> {
         repo::get_sessions_by_user_project(user_id, project_id, limit, offset).await
     }
 
@@ -83,8 +96,12 @@ impl SessionService {
         repo::delete_session(session_id).await
     }
 
-    pub async fn update(session_id: &str, title: Option<String>, description: Option<String>, metadata: Option<Value>) -> Result<(), String> {
+    pub async fn update(
+        session_id: &str,
+        title: Option<String>,
+        description: Option<String>,
+        metadata: Option<Value>,
+    ) -> Result<(), String> {
         repo::update_session(session_id, title, description, metadata).await
     }
 }
-

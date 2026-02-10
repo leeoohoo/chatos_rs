@@ -10,11 +10,21 @@ pub async fn get_user_settings(user_id: &str) -> Result<Option<UserSettings>, St
         |db| {
             let user_id = user_id.to_string();
             Box::pin(async move {
-                let doc = db.collection::<Document>("user_settings").find_one(doc! { "user_id": &user_id }, None).await.map_err(|e| e.to_string())?;
+                let doc = db
+                    .collection::<Document>("user_settings")
+                    .find_one(doc! { "user_id": &user_id }, None)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 if let Some(doc) = doc {
-                    let settings = doc.get("settings").cloned().unwrap_or(Bson::Document(Document::new()));
+                    let settings = doc
+                        .get("settings")
+                        .cloned()
+                        .unwrap_or(Bson::Document(Document::new()));
                     let settings_val = bson_to_json(settings);
-                    return Ok(Some(UserSettings { user_id, settings: settings_val }));
+                    return Ok(Some(UserSettings {
+                        user_id,
+                        settings: settings_val,
+                    }));
                 }
                 Ok(None)
             })
@@ -22,20 +32,28 @@ pub async fn get_user_settings(user_id: &str) -> Result<Option<UserSettings>, St
         |pool| {
             let user_id = user_id.to_string();
             Box::pin(async move {
-                let row = sqlx::query("SELECT user_id, settings, updated_at FROM user_settings WHERE user_id = ?")
-                    .bind(&user_id)
-                    .fetch_optional(pool)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                let row = sqlx::query(
+                    "SELECT user_id, settings, updated_at FROM user_settings WHERE user_id = ?",
+                )
+                .bind(&user_id)
+                .fetch_optional(pool)
+                .await
+                .map_err(|e| e.to_string())?;
                 if let Some(row) = row {
                     let settings_str: Option<String> = row.try_get("settings").ok();
-                    let settings_val = settings_str.and_then(|s| serde_json::from_str::<Value>(&s).ok()).unwrap_or(Value::Object(serde_json::Map::new()));
-                    return Ok(Some(UserSettings { user_id, settings: settings_val }));
+                    let settings_val = settings_str
+                        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+                        .unwrap_or(Value::Object(serde_json::Map::new()));
+                    return Ok(Some(UserSettings {
+                        user_id,
+                        settings: settings_val,
+                    }));
                 }
                 Ok(None)
             })
-        }
-    ).await
+        },
+    )
+    .await
 }
 
 pub async fn set_user_settings(user_id: &str, settings: &Value) -> Result<(), String> {

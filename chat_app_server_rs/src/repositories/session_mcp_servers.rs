@@ -1,23 +1,34 @@
-use mongodb::bson::{doc, Bson, Document};
-use futures::TryStreamExt;
-use sqlx::Row;
 use crate::models::session_mcp_server::SessionMcpServer;
-use crate::repositories::db::{with_db, to_doc, doc_from_pairs};
+use crate::repositories::db::{doc_from_pairs, to_doc, with_db};
+use futures::TryStreamExt;
+use mongodb::bson::{doc, Bson, Document};
+use sqlx::Row;
 
 pub async fn list_session_mcp_servers(session_id: &str) -> Result<Vec<SessionMcpServer>, String> {
     with_db(
         |db| {
             let session_id = session_id.to_string();
             Box::pin(async move {
-                let mut cursor = db.collection::<Document>("session_mcp_servers").find(doc! { "session_id": session_id }, None).await.map_err(|e| e.to_string())?;
+                let mut cursor = db
+                    .collection::<Document>("session_mcp_servers")
+                    .find(doc! { "session_id": session_id }, None)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 let mut out = Vec::new();
                 while let Some(doc) = cursor.try_next().await.map_err(|e| e.to_string())? {
                     let id = doc.get_str("id").unwrap_or("").to_string();
                     let session_id = doc.get_str("session_id").unwrap_or("").to_string();
-                    let mcp_server_name = doc.get_str("mcp_server_name").ok().map(|s| s.to_string());
+                    let mcp_server_name =
+                        doc.get_str("mcp_server_name").ok().map(|s| s.to_string());
                     let mcp_config_id = doc.get_str("mcp_config_id").ok().map(|s| s.to_string());
                     let created_at = doc.get_str("created_at").unwrap_or("").to_string();
-                    out.push(SessionMcpServer { id, session_id, mcp_server_name, mcp_config_id, created_at });
+                    out.push(SessionMcpServer {
+                        id,
+                        session_id,
+                        mcp_server_name,
+                        mcp_config_id,
+                        created_at,
+                    });
                 }
                 Ok(out)
             })
@@ -37,16 +48,27 @@ pub async fn list_session_mcp_servers(session_id: &str) -> Result<Vec<SessionMcp
                     let mcp_server_name: Option<String> = row.try_get("mcp_server_name").ok();
                     let mcp_config_id: Option<String> = row.try_get("mcp_config_id").ok();
                     let created_at: String = row.try_get("created_at").unwrap_or_default();
-                    out.push(SessionMcpServer { id, session_id, mcp_server_name, mcp_config_id, created_at });
+                    out.push(SessionMcpServer {
+                        id,
+                        session_id,
+                        mcp_server_name,
+                        mcp_config_id,
+                        created_at,
+                    });
                 }
                 Ok(out)
             })
-        }
-    ).await
+        },
+    )
+    .await
 }
 
 pub async fn add_session_mcp_server(item: &SessionMcpServer) -> Result<(), String> {
-    let now = if item.created_at.is_empty() { chrono::Utc::now().to_rfc3339() } else { item.created_at.clone() };
+    let now = if item.created_at.is_empty() {
+        chrono::Utc::now().to_rfc3339()
+    } else {
+        item.created_at.clone()
+    };
     let now_mongo = now.clone();
     let now_sqlite = now.clone();
     let item_mongo = item.clone();
@@ -82,7 +104,10 @@ pub async fn add_session_mcp_server(item: &SessionMcpServer) -> Result<(), Strin
     ).await
 }
 
-pub async fn delete_session_mcp_server(session_id: &str, mcp_config_id_or_id: &str) -> Result<(), String> {
+pub async fn delete_session_mcp_server(
+    session_id: &str,
+    mcp_config_id_or_id: &str,
+) -> Result<(), String> {
     with_db(
         |db| {
             let session_id = session_id.to_string();
@@ -108,5 +133,3 @@ pub async fn delete_session_mcp_server(session_id: &str, mcp_config_id_or_id: &s
         }
     ).await
 }
-
-

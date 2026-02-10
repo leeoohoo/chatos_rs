@@ -110,7 +110,8 @@ impl ChangeLogStore {
                     .open(path)
                     .map_err(|err| err.to_string())?;
                 let line = serde_json::to_string(&record).map_err(|err| err.to_string())?;
-                file.write_all(line.as_bytes()).map_err(|err| err.to_string())?;
+                file.write_all(line.as_bytes())
+                    .map_err(|err| err.to_string())?;
                 file.write_all(b"\n").map_err(|err| err.to_string())?;
             }
             ChangeLogBackend::Sqlite { pool } => {
@@ -168,7 +169,10 @@ async fn mongo_insert(db: MongoDatabase, record: ChangeRecord) -> Result<(), Str
         "run_id": &record.run_id,
         "created_at": &record.created_at,
     };
-    collection.insert_one(doc, None).await.map_err(|err| err.to_string())?;
+    collection
+        .insert_one(doc, None)
+        .await
+        .map_err(|err| err.to_string())?;
     Ok(())
 }
 
@@ -201,13 +205,28 @@ fn ensure_mongo_indexes(db: &MongoDatabase) -> Result<(), String> {
     run_async(async move {
         let collection = db.collection::<mongodb::bson::Document>("mcp_change_logs");
         let _ = collection
-            .create_index(mongodb::IndexModel::builder().keys(doc! { "server_name": 1 }).build(), None)
+            .create_index(
+                mongodb::IndexModel::builder()
+                    .keys(doc! { "server_name": 1 })
+                    .build(),
+                None,
+            )
             .await;
         let _ = collection
-            .create_index(mongodb::IndexModel::builder().keys(doc! { "session_id": 1 }).build(), None)
+            .create_index(
+                mongodb::IndexModel::builder()
+                    .keys(doc! { "session_id": 1 })
+                    .build(),
+                None,
+            )
             .await;
         let _ = collection
-            .create_index(mongodb::IndexModel::builder().keys(doc! { "created_at": 1 }).build(), None)
+            .create_index(
+                mongodb::IndexModel::builder()
+                    .keys(doc! { "created_at": 1 })
+                    .build(),
+                None,
+            )
             .await;
         Ok(())
     })

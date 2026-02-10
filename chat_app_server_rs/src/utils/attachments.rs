@@ -1,4 +1,4 @@
-﻿use base64::engine::general_purpose::STANDARD as BASE64_STD;
+use base64::engine::general_purpose::STANDARD as BASE64_STD;
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -24,8 +24,8 @@ fn get_u64(v: &Value, key: &str) -> Option<u64> {
 }
 
 pub fn parse_attachments(list: &[Value]) -> Vec<Attachment> {
-    list.iter().map(|v| {
-        Attachment {
+    list.iter()
+        .map(|v| Attachment {
             id: get_str(v, "id"),
             name: get_str(v, "name"),
             mime_type: get_str(v, "mimeType").or_else(|| get_str(v, "mime")),
@@ -33,8 +33,8 @@ pub fn parse_attachments(list: &[Value]) -> Vec<Attachment> {
             data_url: get_str(v, "dataUrl"),
             text: get_str(v, "text"),
             r#type: get_str(v, "type"),
-        }
-    }).collect()
+        })
+        .collect()
 }
 
 pub fn build_content_parts(user_text: &str, attachments: &[Attachment]) -> Value {
@@ -46,7 +46,10 @@ pub fn build_content_parts(user_text: &str, attachments: &[Attachment]) -> Value
 
     for att in attachments {
         let name = att.name.clone().unwrap_or_else(|| "attachment".to_string());
-        let mime = att.mime_type.clone().unwrap_or_else(|| "application/octet-stream".to_string());
+        let mime = att
+            .mime_type
+            .clone()
+            .unwrap_or_else(|| "application/octet-stream".to_string());
         let size = att.size.unwrap_or(0);
         let meta_line = format!("Attachment: {} ({}, {} bytes)", name, mime, size);
 
@@ -59,7 +62,11 @@ pub fn build_content_parts(user_text: &str, attachments: &[Attachment]) -> Value
         if let Some(text) = &att.text {
             if !text.is_empty() {
                 let max = 8000usize;
-                let body = if text.len() > max { format!("{}\n...[truncated]", &text[..max]) } else { text.clone() };
+                let body = if text.len() > max {
+                    format!("{}\n...[truncated]", &text[..max])
+                } else {
+                    text.clone()
+                };
                 let fenced = format!("{}\n\n【File Content】\n\n{}", meta_line, body);
                 parts.push(json!({"type": "text", "text": fenced}));
                 continue;
@@ -71,14 +78,21 @@ pub fn build_content_parts(user_text: &str, attachments: &[Attachment]) -> Value
                 if let Some(decoded) = decode_data_url(data_url) {
                     let body = String::from_utf8_lossy(&decoded).to_string();
                     let max = 8000usize;
-                    let body = if body.len() > max { format!("{}\n...[truncated]", &body[..max]) } else { body };
-                    parts.push(json!({"type": "text", "text": format!("{}\n\n{}", meta_line, body)}));
+                    let body = if body.len() > max {
+                        format!("{}\n...[truncated]", &body[..max])
+                    } else {
+                        body
+                    };
+                    parts.push(
+                        json!({"type": "text", "text": format!("{}\n\n{}", meta_line, body)}),
+                    );
                     continue;
                 }
             }
         }
 
-        parts.push(json!({"type": "text", "text": format!("{} [content not included]", meta_line)}));
+        parts
+            .push(json!({"type": "text", "text": format!("{} [content not included]", meta_line)}));
     }
 
     if parts.is_empty() {
@@ -99,7 +113,10 @@ pub async fn build_content_parts_async(user_text: &str, attachments: &[Attachmen
 
     for att in attachments {
         let name = att.name.clone().unwrap_or_else(|| "attachment".to_string());
-        let mime = att.mime_type.clone().unwrap_or_else(|| "application/octet-stream".to_string());
+        let mime = att
+            .mime_type
+            .clone()
+            .unwrap_or_else(|| "application/octet-stream".to_string());
         let size = att.size.unwrap_or(0);
         let meta_line = format!("Attachment: {} ({}, {} bytes)", name, mime, size);
 
@@ -111,7 +128,11 @@ pub async fn build_content_parts_async(user_text: &str, attachments: &[Attachmen
 
         if let Some(text) = &att.text {
             if !text.is_empty() {
-                let body = if text.len() > max_chars { format!("{}\n...[truncated]", &text[..max_chars]) } else { text.clone() };
+                let body = if text.len() > max_chars {
+                    format!("{}\n...[truncated]", &text[..max_chars])
+                } else {
+                    text.clone()
+                };
                 let fenced = format!("{}\n\n【File Content】\n\n{}", meta_line, body);
                 parts.push(json!({"type": "text", "text": fenced}));
                 continue;
@@ -122,15 +143,25 @@ pub async fn build_content_parts_async(user_text: &str, attachments: &[Attachmen
             if mime == "text/plain" {
                 if let Some(decoded) = decode_data_url(data_url) {
                     let body = String::from_utf8_lossy(&decoded).to_string();
-                    let body = if body.len() > max_chars { format!("{}\n...[truncated]", &body[..max_chars]) } else { body };
-                    parts.push(json!({"type": "text", "text": format!("{}\n\n{}", meta_line, body)}));
+                    let body = if body.len() > max_chars {
+                        format!("{}\n...[truncated]", &body[..max_chars])
+                    } else {
+                        body
+                    };
+                    parts.push(
+                        json!({"type": "text", "text": format!("{}\n\n{}", meta_line, body)}),
+                    );
                     continue;
                 }
             }
             if mime == "application/pdf" {
                 if let Some(decoded) = decode_data_url(data_url) {
                     if let Some(text) = extract_pdf_text(&decoded) {
-                        let body = if text.len() > max_chars { format!("{}\n...[truncated]", &text[..max_chars]) } else { text };
+                        let body = if text.len() > max_chars {
+                            format!("{}\n...[truncated]", &text[..max_chars])
+                        } else {
+                            text
+                        };
                         parts.push(json!({"type": "text", "text": format!("{}\n\n【Extracted from PDF】\n\n{}", meta_line, body)}));
                         continue;
                     }
@@ -139,7 +170,11 @@ pub async fn build_content_parts_async(user_text: &str, attachments: &[Attachmen
             if mime == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" {
                 if let Some(decoded) = decode_data_url(data_url) {
                     if let Some(text) = extract_docx_text(&decoded) {
-                        let body = if text.len() > max_chars { format!("{}\n...[truncated]", &text[..max_chars]) } else { text };
+                        let body = if text.len() > max_chars {
+                            format!("{}\n...[truncated]", &text[..max_chars])
+                        } else {
+                            text
+                        };
                         parts.push(json!({"type": "text", "text": format!("{}\n\n【Extracted from DOCX】\n\n{}", meta_line, body)}));
                         continue;
                     }
@@ -147,7 +182,8 @@ pub async fn build_content_parts_async(user_text: &str, attachments: &[Attachmen
             }
         }
 
-        parts.push(json!({"type": "text", "text": format!("{} [content not included]", meta_line)}));
+        parts
+            .push(json!({"type": "text", "text": format!("{} [content not included]", meta_line)}));
     }
 
     if parts.is_empty() {
@@ -213,7 +249,11 @@ fn extract_docx_text(data: &[u8]) -> Option<String> {
     }
 
     let trimmed = out.trim().to_string();
-    if trimmed.is_empty() { None } else { Some(trimmed) }
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
 }
 
 pub fn sanitize_attachments_for_db(attachments: &[Attachment]) -> Vec<Value> {
@@ -241,12 +281,28 @@ pub fn sanitize_attachments_for_db(attachments: &[Attachment]) -> Vec<Value> {
 
 pub fn is_vision_model(model_name: &str) -> bool {
     let m = model_name.to_lowercase();
-    m.contains("gpt-4o") || m.contains("gpt-4.1") || m.contains("gpt-4.1-mini") || m.contains("o3") || m.contains("omni") || m.contains("doubao") || m.contains("volc") || m.contains("ark") || m.contains("seed")
+    m.contains("gpt-4o")
+        || m.contains("gpt-4.1")
+        || m.contains("gpt-4.1-mini")
+        || m.contains("o3")
+        || m.contains("omni")
+        || m.contains("doubao")
+        || m.contains("volc")
+        || m.contains("ark")
+        || m.contains("seed")
 }
 
-pub fn adapt_parts_for_model(model_name: &str, parts: &Value, supports_images: Option<bool>) -> Value {
-    if supports_images == Some(true) { return parts.clone(); }
-    if supports_images.is_none() && is_vision_model(model_name) { return parts.clone(); }
+pub fn adapt_parts_for_model(
+    model_name: &str,
+    parts: &Value,
+    supports_images: Option<bool>,
+) -> Value {
+    if supports_images == Some(true) {
+        return parts.clone();
+    }
+    if supports_images.is_none() && is_vision_model(model_name) {
+        return parts.clone();
+    }
     if let Value::Array(arr) = parts {
         let mut out: Vec<Value> = Vec::new();
         for p in arr {
@@ -261,4 +317,3 @@ pub fn adapt_parts_for_model(model_name: &str, parts: &Value, supports_images: O
         parts.clone()
     }
 }
-

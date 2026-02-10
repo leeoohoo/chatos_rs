@@ -1,16 +1,18 @@
-﻿use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tracing::{info, warn};
 
-use crate::services::v2::ai_request_handler::{AiRequestHandler, StreamCallbacks};
-use crate::services::v2::message_manager::MessageManager;
-use crate::utils::abort_registry;
 use crate::config::Config;
 use crate::models::message::Message;
 use crate::models::session_summary::{SessionSummary, SessionSummaryService};
 use crate::models::session_summary_message::SessionSummaryMessageService;
+use crate::services::v2::ai_request_handler::{AiRequestHandler, StreamCallbacks};
+use crate::services::v2::message_manager::MessageManager;
+use crate::utils::abort_registry;
 
 fn estimate_tokens(text: &str) -> usize {
-    if text.is_empty() { return 0; }
+    if text.is_empty() {
+        return 0;
+    }
     (text.len() + 3) / 4
 }
 
@@ -66,22 +68,44 @@ impl ConversationSummarizer {
                 target_summary_tokens: cfg.summary_target_tokens,
                 model: "gpt-4".to_string(),
                 temperature: cfg.summary_temperature,
-            }
+            },
         }
     }
 
-    pub async fn maybe_summarize(&self, session_id: &str, opts: Option<SummaryOverrides>) -> Result<Option<(String, Vec<Value>)>, String> {
+    pub async fn maybe_summarize(
+        &self,
+        session_id: &str,
+        opts: Option<SummaryOverrides>,
+    ) -> Result<Option<(String, Vec<Value>)>, String> {
         let overrides = opts.unwrap_or_default();
-        let message_limit = overrides.message_limit.unwrap_or(self.defaults.message_limit);
-        let max_context_tokens = overrides.max_context_tokens.unwrap_or(self.defaults.max_context_tokens);
+        let message_limit = overrides
+            .message_limit
+            .unwrap_or(self.defaults.message_limit);
+        let max_context_tokens = overrides
+            .max_context_tokens
+            .unwrap_or(self.defaults.max_context_tokens);
         let keep_last_n = overrides.keep_last_n.unwrap_or(self.defaults.keep_last_n);
-        let target_summary_tokens = overrides.target_summary_tokens.unwrap_or(self.defaults.target_summary_tokens);
-        let model = overrides.model.unwrap_or_else(|| self.defaults.model.clone());
+        let target_summary_tokens = overrides
+            .target_summary_tokens
+            .unwrap_or(self.defaults.target_summary_tokens);
+        let model = overrides
+            .model
+            .unwrap_or_else(|| self.defaults.model.clone());
         let temperature = overrides.temperature.unwrap_or(self.defaults.temperature);
 
-        let all_messages = self.message_manager.get_session_messages(session_id, None).await;
-        let effective_records: Vec<Message> = all_messages.into_iter()
-            .filter(|m| m.metadata.as_ref().and_then(|v| v.get("type")).and_then(|v| v.as_str()) != Some("session_summary"))
+        let all_messages = self
+            .message_manager
+            .get_session_messages(session_id, None)
+            .await;
+        let effective_records: Vec<Message> = all_messages
+            .into_iter()
+            .filter(|m| {
+                m.metadata
+                    .as_ref()
+                    .and_then(|v| v.get("type"))
+                    .and_then(|v| v.as_str())
+                    != Some("session_summary")
+            })
             .collect();
         let effective_messages: Vec<Value> = effective_records.iter().map(|m| {
             if m.role == "tool" {
@@ -95,19 +119,42 @@ impl ConversationSummarizer {
 
         let total_tokens = estimate_messages_tokens(&effective_messages);
 
-        let need = (effective_messages.len() as i64 >= message_limit) || (total_tokens >= max_context_tokens);
-        info!("[SUM] check: session={}, messages={}, tokens={}, need={}", session_id, effective_messages.len(), total_tokens, need);
-        if !need { return Ok(None); }
+        let need = (effective_messages.len() as i64 >= message_limit)
+            || (total_tokens >= max_context_tokens);
+        info!(
+            "[SUM] check: session={}, messages={}, tokens={}, need={}",
+            session_id,
+            effective_messages.len(),
+            total_tokens,
+            need
+        );
+        if !need {
+            return Ok(None);
+        }
 
         let keep_last_n = keep_last_n.max(0) as usize;
         let mut kept_start = effective_records.len().saturating_sub(keep_last_n);
         while kept_start > 0 && kept_start < effective_records.len() {
-            if effective_records[kept_start].role != "tool" { break; }
+            if effective_records[kept_start].role != "tool" {
+                break;
+            }
             kept_start -= 1;
         }
-        let kept = if keep_last_n > 0 { effective_messages[kept_start..].to_vec() } else { Vec::new() };
-        let mut to_summarize = if keep_last_n > 0 { effective_messages[..kept_start].to_vec() } else { effective_messages.clone() };
-        let mut to_summarize_records = if keep_last_n > 0 { effective_records[..kept_start].to_vec() } else { effective_records.clone() };
+        let kept = if keep_last_n > 0 {
+            effective_messages[kept_start..].to_vec()
+        } else {
+            Vec::new()
+        };
+        let mut to_summarize = if keep_last_n > 0 {
+            effective_messages[..kept_start].to_vec()
+        } else {
+            effective_messages.clone()
+        };
+        let mut to_summarize_records = if keep_last_n > 0 {
+            effective_records[..kept_start].to_vec()
+        } else {
+            effective_records.clone()
+        };
         if max_context_tokens > 0 {
             let total = estimate_messages_tokens(&to_summarize);
             if total > max_context_tokens {
@@ -126,25 +173,36 @@ impl ConversationSummarizer {
         summarize_messages.extend(to_summarize.clone());
         summarize_messages.push(json!({"role": "user", "content": "请基于以上对话与工具调用结果，生成用于继续对话的上下文摘要。"}));
 
-        if abort_registry::is_aborted(session_id) { return Err("aborted".to_string()); }
+        if abort_registry::is_aborted(session_id) {
+            return Err("aborted".to_string());
+        }
 
-        let resp = self.ai_request_handler.handle_request(
-            summarize_messages,
-            None,
-            model.clone(),
-            Some(temperature),
-            None,
-            StreamCallbacks { on_chunk: None, on_thinking: None },
-            false,
-            None,
-            None,
-            Some(session_id.to_string()),
-            false,
-            "summary",
-        ).await?;
+        let resp = self
+            .ai_request_handler
+            .handle_request(
+                summarize_messages,
+                None,
+                model.clone(),
+                Some(temperature),
+                None,
+                StreamCallbacks {
+                    on_chunk: None,
+                    on_thinking: None,
+                },
+                false,
+                None,
+                None,
+                Some(session_id.to_string()),
+                false,
+                "summary",
+            )
+            .await?;
 
         let summary_text = resp.content.clone();
-        let next_system_prompt = format!("以下是之前对话与工具调用的摘要（可视为“压缩记忆”）：\n\n{}", summary_text);
+        let next_system_prompt = format!(
+            "以下是之前对话与工具调用的摘要（可视为“压缩记忆”）：\n\n{}",
+            summary_text
+        );
 
         let mut summary_id: Option<String> = None;
         if !to_summarize_records.is_empty() {
@@ -158,15 +216,24 @@ impl ConversationSummarizer {
             record.approx_tokens = Some(estimate_messages_tokens(&to_summarize));
             record.first_message_id = to_summarize_records.first().map(|m| m.id.clone());
             record.last_message_id = to_summarize_records.last().map(|m| m.id.clone());
-            record.first_message_created_at = to_summarize_records.first().map(|m| m.created_at.clone());
-            record.last_message_created_at = to_summarize_records.last().map(|m| m.created_at.clone());
+            record.first_message_created_at =
+                to_summarize_records.first().map(|m| m.created_at.clone());
+            record.last_message_created_at =
+                to_summarize_records.last().map(|m| m.created_at.clone());
 
             let record_id = record.id.clone();
             match SessionSummaryService::create(record).await {
                 Ok(_) => {
                     summary_id = Some(record_id.clone());
-                    let message_ids: Vec<String> = to_summarize_records.iter().map(|m| m.id.clone()).collect();
-                    if let Err(err) = SessionSummaryMessageService::create_links(&record_id, session_id, &message_ids).await {
+                    let message_ids: Vec<String> =
+                        to_summarize_records.iter().map(|m| m.id.clone()).collect();
+                    if let Err(err) = SessionSummaryMessageService::create_links(
+                        &record_id,
+                        session_id,
+                        &message_ids,
+                    )
+                    .await
+                    {
                         warn!("[SUM] create summary message links failed: {}", err);
                     }
                 }
@@ -183,14 +250,17 @@ impl ConversationSummarizer {
                 map.insert("summary_id".to_string(), Value::String(id));
             }
         }
-        let _ = self.message_manager.save_assistant_message(
-            session_id,
-            "【上下文已压缩为摘要】",
-            Some(summary_text.clone()),
-            None,
-            Some(summary_meta),
-            None,
-        ).await;
+        let _ = self
+            .message_manager
+            .save_assistant_message(
+                session_id,
+                "【上下文已压缩为摘要】",
+                Some(summary_text.clone()),
+                None,
+                Some(summary_meta),
+                None,
+            )
+            .await;
 
         Ok(Some((next_system_prompt, kept)))
     }
@@ -204,11 +274,22 @@ impl ConversationSummarizer {
         callbacks: Option<SummaryCallbacks>,
     ) -> Result<InMemorySummaryResult, String> {
         let overrides = opts.unwrap_or_default();
-        let message_limit = overrides.message_limit.unwrap_or(self.defaults.message_limit);
-        let max_context_tokens = overrides.max_context_tokens.unwrap_or(self.defaults.max_context_tokens);
-        let keep_last_n = overrides.keep_last_n.unwrap_or(self.defaults.keep_last_n).max(0) as usize;
-        let target_summary_tokens = overrides.target_summary_tokens.unwrap_or(self.defaults.target_summary_tokens);
-        let model = overrides.model.unwrap_or_else(|| self.defaults.model.clone());
+        let message_limit = overrides
+            .message_limit
+            .unwrap_or(self.defaults.message_limit);
+        let max_context_tokens = overrides
+            .max_context_tokens
+            .unwrap_or(self.defaults.max_context_tokens);
+        let keep_last_n = overrides
+            .keep_last_n
+            .unwrap_or(self.defaults.keep_last_n)
+            .max(0) as usize;
+        let target_summary_tokens = overrides
+            .target_summary_tokens
+            .unwrap_or(self.defaults.target_summary_tokens);
+        let model = overrides
+            .model
+            .unwrap_or_else(|| self.defaults.model.clone());
         let temperature = overrides.temperature.unwrap_or(self.defaults.temperature);
 
         let mut total_tokens = 0i64;
@@ -225,11 +306,21 @@ impl ConversationSummarizer {
 
         let mut kept_start = messages.len().saturating_sub(keep_last_n);
         while kept_start > 0 && kept_start < messages.len() {
-            if messages[kept_start].get("role").and_then(|v| v.as_str()) != Some("tool") { break; }
+            if messages[kept_start].get("role").and_then(|v| v.as_str()) != Some("tool") {
+                break;
+            }
             kept_start -= 1;
         }
-        let _kept = if keep_last_n > 0 { messages[kept_start..].to_vec() } else { Vec::new() };
-        let mut to_summarize = if keep_last_n > 0 { messages[..kept_start].to_vec() } else { messages.to_vec() };
+        let _kept = if keep_last_n > 0 {
+            messages[kept_start..].to_vec()
+        } else {
+            Vec::new()
+        };
+        let mut to_summarize = if keep_last_n > 0 {
+            messages[..kept_start].to_vec()
+        } else {
+            messages.to_vec()
+        };
         if max_context_tokens > 0 {
             let total = estimate_messages_tokens(&to_summarize);
             if total > max_context_tokens {
@@ -248,43 +339,70 @@ impl ConversationSummarizer {
         summarize_messages.push(json!({"role": "user", "content": "请基于以上对话与工具调用结果，生成用于继续对话的上下文摘要。"}));
 
         if let Some(sid) = session_id.as_ref() {
-            if abort_registry::is_aborted(sid) { return Err("aborted".to_string()); }
+            if abort_registry::is_aborted(sid) {
+                return Err("aborted".to_string());
+            }
         }
 
         let stream_cb = callbacks.as_ref().and_then(|c| c.on_stream.clone());
-        let resp = self.ai_request_handler.handle_request(
-            summarize_messages,
-            None,
-            model.clone(),
-            Some(temperature),
-            None,
-            StreamCallbacks { on_chunk: stream_cb, on_thinking: None },
-            false,
-            None,
-            None,
-            session_id.clone(),
-            callbacks.as_ref().and_then(|c| c.on_stream.as_ref()).is_some(),
-            "summary",
-        ).await?;
+        let resp = self
+            .ai_request_handler
+            .handle_request(
+                summarize_messages,
+                None,
+                model.clone(),
+                Some(temperature),
+                None,
+                StreamCallbacks {
+                    on_chunk: stream_cb,
+                    on_thinking: None,
+                },
+                false,
+                None,
+                None,
+                session_id.clone(),
+                callbacks
+                    .as_ref()
+                    .and_then(|c| c.on_stream.as_ref())
+                    .is_some(),
+                "summary",
+            )
+            .await?;
 
         let summary_text = resp.content.clone();
-        let next_system_prompt = format!("以下是之前对话与工具调用的摘要（可视为“压缩记忆”）：\n\n{}", summary_text);
+        let next_system_prompt = format!(
+            "以下是之前对话与工具调用的摘要（可视为“压缩记忆”）：\n\n{}",
+            summary_text
+        );
 
         if persist {
             if let Some(sid) = session_id.as_ref() {
                 let mut summary_id: Option<String> = None;
                 let all_messages = self.message_manager.get_session_messages(sid, None).await;
-                let effective_records: Vec<Message> = all_messages.into_iter()
-                    .filter(|m| m.metadata.as_ref().and_then(|v| v.get("type")).and_then(|v| v.as_str()) != Some("session_summary"))
+                let effective_records: Vec<Message> = all_messages
+                    .into_iter()
+                    .filter(|m| {
+                        m.metadata
+                            .as_ref()
+                            .and_then(|v| v.get("type"))
+                            .and_then(|v| v.as_str())
+                            != Some("session_summary")
+                    })
                     .collect();
 
                 if !effective_records.is_empty() {
                     let mut kept_start = effective_records.len().saturating_sub(keep_last_n);
                     while kept_start > 0 && kept_start < effective_records.len() {
-                        if effective_records[kept_start].role != "tool" { break; }
+                        if effective_records[kept_start].role != "tool" {
+                            break;
+                        }
                         kept_start -= 1;
                     }
-                    let to_summarize_records = if keep_last_n > 0 { effective_records[..kept_start].to_vec() } else { effective_records.clone() };
+                    let to_summarize_records = if keep_last_n > 0 {
+                        effective_records[..kept_start].to_vec()
+                    } else {
+                        effective_records.clone()
+                    };
                     if !to_summarize_records.is_empty() {
                         let mut record = SessionSummary::new(sid.to_string(), summary_text.clone());
                         record.summary_prompt = Some(system_prompt.clone());
@@ -294,17 +412,27 @@ impl ConversationSummarizer {
                         record.keep_last_n = Some(keep_last_n as i64);
                         record.message_count = Some(to_summarize_records.len() as i64);
                         record.approx_tokens = Some(estimate_messages_tokens(&to_summarize) as i64);
-                        record.first_message_id = to_summarize_records.first().map(|m| m.id.clone());
+                        record.first_message_id =
+                            to_summarize_records.first().map(|m| m.id.clone());
                         record.last_message_id = to_summarize_records.last().map(|m| m.id.clone());
-                        record.first_message_created_at = to_summarize_records.first().map(|m| m.created_at.clone());
-                        record.last_message_created_at = to_summarize_records.last().map(|m| m.created_at.clone());
+                        record.first_message_created_at =
+                            to_summarize_records.first().map(|m| m.created_at.clone());
+                        record.last_message_created_at =
+                            to_summarize_records.last().map(|m| m.created_at.clone());
 
                         let record_id = record.id.clone();
                         match SessionSummaryService::create(record).await {
                             Ok(_) => {
                                 summary_id = Some(record_id.clone());
-                                let message_ids: Vec<String> = to_summarize_records.iter().map(|m| m.id.clone()).collect();
-                                if let Err(err) = SessionSummaryMessageService::create_links(&record_id, sid, &message_ids).await {
+                                let message_ids: Vec<String> =
+                                    to_summarize_records.iter().map(|m| m.id.clone()).collect();
+                                if let Err(err) = SessionSummaryMessageService::create_links(
+                                    &record_id,
+                                    sid,
+                                    &message_ids,
+                                )
+                                .await
+                                {
                                     warn!("[SUM-MEM] create summary message links failed: {}", err);
                                 }
                             }
@@ -321,21 +449,26 @@ impl ConversationSummarizer {
                         map.insert("summary_id".to_string(), Value::String(id));
                     }
                 }
-                let _ = self.message_manager.save_assistant_message(
-                    sid,
-                    "【上下文已压缩为摘要】",
-                    Some(summary_text.clone()),
-                    None,
-                    Some(summary_meta),
-                    None,
-                ).await;
+                let _ = self
+                    .message_manager
+                    .save_assistant_message(
+                        sid,
+                        "【上下文已压缩为摘要】",
+                        Some(summary_text.clone()),
+                        None,
+                        Some(summary_meta),
+                        None,
+                    )
+                    .await;
             }
         }
 
         let preview: String = summary_text.chars().take(800).collect();
         let truncated = summary_text.len() > preview.len();
         if let Some(cb) = callbacks.as_ref().and_then(|c| c.on_end.clone()) {
-            cb(json!({ "summary_preview": preview, "full_summary": summary_text, "truncated": truncated, "keepLastN": keep_last_n }));
+            cb(
+                json!({ "summary_preview": preview, "full_summary": summary_text, "truncated": truncated, "keepLastN": keep_last_n }),
+            );
         }
 
         Ok(InMemorySummaryResult {
@@ -425,17 +558,24 @@ fn truncate_messages_by_tokens(messages: &[Value], max_tokens: i64) -> Vec<Value
 }
 
 fn truncate_message_content(msg: &Value, max_tokens: i64) -> Value {
-    if max_tokens <= 0 { return msg.clone(); }
+    if max_tokens <= 0 {
+        return msg.clone();
+    }
     let mut out = msg.clone();
     if let Some(obj) = out.as_object_mut() {
         let content = obj.get("content").cloned().unwrap_or(Value::Null);
-        obj.insert("content".to_string(), truncate_content_value(&content, max_tokens));
+        obj.insert(
+            "content".to_string(),
+            truncate_content_value(&content, max_tokens),
+        );
     }
     out
 }
 
 fn truncate_content_value(content: &Value, max_tokens: i64) -> Value {
-    if max_tokens <= 0 { return Value::String(String::new()); }
+    if max_tokens <= 0 {
+        return Value::String(String::new());
+    }
     if let Some(s) = content.as_str() {
         return Value::String(truncate_text_by_tokens(s, max_tokens));
     }
@@ -443,7 +583,9 @@ fn truncate_content_value(content: &Value, max_tokens: i64) -> Value {
         let mut out = Vec::new();
         let mut remaining = max_tokens;
         for part in arr {
-            if remaining <= 0 { break; }
+            if remaining <= 0 {
+                break;
+            }
             if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
                 let truncated = truncate_text_by_tokens(text, remaining);
                 let used = estimate_tokens(&truncated) as i64;
@@ -470,7 +612,9 @@ fn truncate_content_value(content: &Value, max_tokens: i64) -> Value {
 }
 
 fn truncate_text_by_tokens(text: &str, max_tokens: i64) -> String {
-    if max_tokens <= 0 { return String::new(); }
+    if max_tokens <= 0 {
+        return String::new();
+    }
     let max_chars = (max_tokens * 4) as usize;
     if text.len() <= max_chars {
         return text.to_string();
@@ -485,4 +629,3 @@ fn truncate_text_by_tokens(text: &str, max_tokens: i64) -> String {
     let cut = max_chars - marker.len();
     format!("{}{}", &text[..cut], marker)
 }
-

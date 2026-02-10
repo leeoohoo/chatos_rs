@@ -1,18 +1,21 @@
-﻿#![allow(dead_code)]
+#![allow(dead_code)]
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
-use std::collections::HashSet;
 
 use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
-use sqlx::{sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions}, SqlitePool, Row};
-use mongodb::{Client, Database as MongoDatabase, IndexModel};
-use mongodb::options::{ClientOptions, ResolverConfig};
 use mongodb::bson::doc;
+use mongodb::options::{ClientOptions, ResolverConfig};
+use mongodb::{Client, Database as MongoDatabase, IndexModel};
+use sqlx::{
+    sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions},
+    Row, SqlitePool,
+};
 
 static DB_FACTORY: OnceCell<Arc<DatabaseFactory>> = OnceCell::new();
 
@@ -132,7 +135,10 @@ pub struct DatabaseFactory {
 impl DatabaseFactory {
     pub fn new() -> Self {
         Self {
-            inner: Mutex::new(DatabaseFactoryInner { adapter: None, config: None }),
+            inner: Mutex::new(DatabaseFactoryInner {
+                adapter: None,
+                config: None,
+            }),
         }
     }
 
@@ -155,9 +161,13 @@ impl DatabaseFactory {
                 if let Some(adapter) = inner.adapter.clone() {
                     return Ok(adapter);
                 }
-                return Err("Database adapter not initialized. Call get_adapter() first.".to_string());
+                return Err(
+                    "Database adapter not initialized. Call get_adapter() first.".to_string(),
+                );
             }
-            return Err("Database adapter busy. Use async get_adapter() within runtime.".to_string());
+            return Err(
+                "Database adapter busy. Use async get_adapter() within runtime.".to_string(),
+            );
         }
 
         let inner = self.inner.blocking_lock();
@@ -170,16 +180,24 @@ impl DatabaseFactory {
     pub fn load_config(&self, config_path: Option<PathBuf>) -> Result<DatabaseConfig, String> {
         let path = config_path.unwrap_or_else(|| PathBuf::from("config/database.json"));
         let mut cfg = if path.exists() {
-            let raw = std::fs::read_to_string(&path).map_err(|e| format!("read config failed: {e}"))?;
+            let raw =
+                std::fs::read_to_string(&path).map_err(|e| format!("read config failed: {e}"))?;
             let trimmed = raw.trim_start_matches('\u{feff}').trim();
             if trimmed.is_empty() {
-                warn!("[DatabaseFactory] config empty at {:?}, using default", path);
+                warn!(
+                    "[DatabaseFactory] config empty at {:?}, using default",
+                    path
+                );
                 DatabaseConfig::default()
             } else {
-                serde_json::from_str::<DatabaseConfig>(trimmed).map_err(|e| format!("parse config failed: {e}"))?
+                serde_json::from_str::<DatabaseConfig>(trimmed)
+                    .map_err(|e| format!("parse config failed: {e}"))?
             }
         } else {
-            warn!("[DatabaseFactory] config not found at {:?}, using default", path);
+            warn!(
+                "[DatabaseFactory] config not found at {:?}, using default",
+                path
+            );
             DatabaseConfig::default()
         };
 
@@ -203,7 +221,10 @@ impl DatabaseFactory {
         }
     }
 
-    pub async fn switch_database(&self, new_config: DatabaseConfig) -> Result<Arc<Database>, String> {
+    pub async fn switch_database(
+        &self,
+        new_config: DatabaseConfig,
+    ) -> Result<Arc<Database>, String> {
         let adapter = self.create_adapter(&new_config).await?;
         let mut inner = self.inner.lock().await;
         inner.adapter = Some(adapter.clone());
@@ -214,16 +235,29 @@ impl DatabaseFactory {
     pub async fn switch_to_sqlite(&self, db_path: Option<String>) -> Result<Arc<Database>, String> {
         let cfg = DatabaseConfig {
             db_type: Some(DatabaseType::Sqlite),
-            sqlite: Some(SqliteConfig { db_path, ..SqliteConfig::default() }),
+            sqlite: Some(SqliteConfig {
+                db_path,
+                ..SqliteConfig::default()
+            }),
             ..DatabaseConfig::default()
         };
         self.switch_database(cfg).await
     }
 
-    pub async fn switch_to_mongodb(&self, host: Option<String>, port: Option<u16>, database: Option<String>) -> Result<Arc<Database>, String> {
+    pub async fn switch_to_mongodb(
+        &self,
+        host: Option<String>,
+        port: Option<u16>,
+        database: Option<String>,
+    ) -> Result<Arc<Database>, String> {
         let cfg = DatabaseConfig {
             db_type: Some(DatabaseType::Mongodb),
-            mongodb: Some(MongoConfig { host, port, database, ..MongoConfig::default() }),
+            mongodb: Some(MongoConfig {
+                host,
+                port,
+                database,
+                ..MongoConfig::default()
+            }),
             ..DatabaseConfig::default()
         };
         self.switch_database(cfg).await
@@ -232,12 +266,17 @@ impl DatabaseFactory {
 
 pub async fn init_global() -> Result<Arc<Database>, String> {
     let factory = Arc::new(DatabaseFactory::new());
-    DB_FACTORY.set(factory.clone()).map_err(|_| "DB factory already initialized".to_string())?;
+    DB_FACTORY
+        .set(factory.clone())
+        .map_err(|_| "DB factory already initialized".to_string())?;
     factory.get_adapter().await
 }
 
 pub fn get_factory() -> Arc<DatabaseFactory> {
-    DB_FACTORY.get().expect("DB factory not initialized").clone()
+    DB_FACTORY
+        .get()
+        .expect("DB factory not initialized")
+        .clone()
 }
 
 pub async fn get_db() -> Result<Arc<Database>, String> {
@@ -249,7 +288,9 @@ pub fn get_db_sync() -> Result<Arc<Database>, String> {
 }
 
 fn apply_env_overrides(mut cfg: DatabaseConfig) -> DatabaseConfig {
-    let db_type_env = std::env::var("DATABASE_TYPE").ok().map(|s| s.trim().to_lowercase());
+    let db_type_env = std::env::var("DATABASE_TYPE")
+        .ok()
+        .map(|s| s.trim().to_lowercase());
     if let Some(t) = db_type_env {
         if t == "sqlite" {
             cfg.db_type = Some(DatabaseType::Sqlite);
@@ -266,18 +307,44 @@ fn apply_env_overrides(mut cfg: DatabaseConfig) -> DatabaseConfig {
         "MONGODB_USER",
         "MONGODB_PASSWORD",
         "MONGODB_AUTH_SOURCE",
-    ].iter().any(|k| std::env::var(k).map(|v| !v.trim().is_empty()).unwrap_or(false));
+    ]
+    .iter()
+    .any(|k| {
+        std::env::var(k)
+            .map(|v| !v.trim().is_empty())
+            .unwrap_or(false)
+    });
 
     if has_mongo_env {
         cfg.db_type = Some(DatabaseType::Mongodb);
         let mut mongo = cfg.mongodb.clone().unwrap_or_default();
-        let host = std::env::var("MONGODB_HOST").ok().filter(|v| !v.trim().is_empty()).or(mongo.host.clone()).unwrap_or_else(|| "localhost".to_string());
-        let port = std::env::var("MONGODB_PORT").ok().and_then(|v| v.parse::<u16>().ok()).or(mongo.port).unwrap_or(27017);
-        let database = std::env::var("MONGODB_DB").ok().filter(|v| !v.trim().is_empty()).or(mongo.database.clone()).unwrap_or_else(|| "chat_app".to_string());
-        let username = std::env::var("MONGODB_USER").ok().filter(|v| !v.trim().is_empty()).or(mongo.username.clone());
-        let password = std::env::var("MONGODB_PASSWORD").ok().filter(|v| !v.trim().is_empty()).or(mongo.password.clone());
+        let host = std::env::var("MONGODB_HOST")
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+            .or(mongo.host.clone())
+            .unwrap_or_else(|| "localhost".to_string());
+        let port = std::env::var("MONGODB_PORT")
+            .ok()
+            .and_then(|v| v.parse::<u16>().ok())
+            .or(mongo.port)
+            .unwrap_or(27017);
+        let database = std::env::var("MONGODB_DB")
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+            .or(mongo.database.clone())
+            .unwrap_or_else(|| "chat_app".to_string());
+        let username = std::env::var("MONGODB_USER")
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+            .or(mongo.username.clone());
+        let password = std::env::var("MONGODB_PASSWORD")
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+            .or(mongo.password.clone());
         let auth_source = std::env::var("MONGODB_AUTH_SOURCE").ok();
-        let conn_env = std::env::var("MONGODB_CONNECTION_STRING").ok().filter(|v| !v.trim().is_empty());
+        let conn_env = std::env::var("MONGODB_CONNECTION_STRING")
+            .ok()
+            .filter(|v| !v.trim().is_empty());
 
         mongo.host = Some(host.clone());
         mongo.port = Some(port);
@@ -293,8 +360,13 @@ fn apply_env_overrides(mut cfg: DatabaseConfig) -> DatabaseConfig {
             } else {
                 "".to_string()
             };
-            let auth_query = auth_source.map(|a| format!("?authSource={}", urlencoding::encode(&a))).unwrap_or_default();
-            mongo.connection_string = Some(format!("mongodb://{}{}:{}/{}{}", cred, host, port, database, auth_query));
+            let auth_query = auth_source
+                .map(|a| format!("?authSource={}", urlencoding::encode(&a)))
+                .unwrap_or_default();
+            mongo.connection_string = Some(format!(
+                "mongodb://{}{}:{}/{}{}",
+                cred, host, port, database, auth_query
+            ));
         }
 
         cfg.mongodb = Some(mongo);
@@ -304,11 +376,15 @@ fn apply_env_overrides(mut cfg: DatabaseConfig) -> DatabaseConfig {
 }
 
 async fn init_sqlite(cfg: &SqliteConfig) -> Result<SqlitePool, String> {
-    let db_path = cfg.db_path.clone().unwrap_or_else(|| "data/chat_app.db".to_string());
+    let db_path = cfg
+        .db_path
+        .clone()
+        .unwrap_or_else(|| "data/chat_app.db".to_string());
     let path = Path::new(&db_path);
     if let Some(parent) = path.parent() {
         if !parent.exists() {
-            std::fs::create_dir_all(parent).map_err(|e| format!("create sqlite dir failed: {e}"))?;
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("create sqlite dir failed: {e}"))?;
         }
     }
 
@@ -327,10 +403,18 @@ async fn init_sqlite(cfg: &SqliteConfig) -> Result<SqlitePool, String> {
         .await
         .map_err(|e| format!("sqlite connect failed: {e}"))?;
 
-    sqlx::query("PRAGMA synchronous = NORMAL").execute(&pool).await.ok();
-    sqlx::query("PRAGMA foreign_keys = ON").execute(&pool).await.ok();
+    sqlx::query("PRAGMA synchronous = NORMAL")
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query("PRAGMA foreign_keys = ON")
+        .execute(&pool)
+        .await
+        .ok();
     if let Some(busy) = cfg.busy_timeout {
-        let _ = sqlx::query(&format!("PRAGMA busy_timeout = {}", busy)).execute(&pool).await;
+        let _ = sqlx::query(&format!("PRAGMA busy_timeout = {}", busy))
+            .execute(&pool)
+            .await;
     }
 
     create_tables_sqlite(&pool).await?;
@@ -550,18 +634,50 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
     ];
 
     for sql in statements {
-        sqlx::query(sql).execute(pool).await.map_err(|e| format!("create table failed: {e}"))?;
+        sqlx::query(sql)
+            .execute(pool)
+            .await
+            .map_err(|e| format!("create table failed: {e}"))?;
     }
 
     ensure_ai_model_config_columns_sqlite(pool).await?;
 
-    ensure_column(pool, "ai_model_configs", "supports_images", "INTEGER DEFAULT 0").await.ok();
-    ensure_column(pool, "ai_model_configs", "supports_reasoning", "INTEGER DEFAULT 0").await.ok();
-    ensure_column(pool, "ai_model_configs", "supports_responses", "INTEGER DEFAULT 0").await.ok();
-    ensure_column(pool, "agents", "mcp_config_ids", "TEXT").await.ok();
-    ensure_column(pool, "agents", "callable_agent_ids", "TEXT").await.ok();
-    ensure_column(pool, "agents", "project_id", "TEXT").await.ok();
-    ensure_column(pool, "agents", "workspace_dir", "TEXT").await.ok();
+    ensure_column(
+        pool,
+        "ai_model_configs",
+        "supports_images",
+        "INTEGER DEFAULT 0",
+    )
+    .await
+    .ok();
+    ensure_column(
+        pool,
+        "ai_model_configs",
+        "supports_reasoning",
+        "INTEGER DEFAULT 0",
+    )
+    .await
+    .ok();
+    ensure_column(
+        pool,
+        "ai_model_configs",
+        "supports_responses",
+        "INTEGER DEFAULT 0",
+    )
+    .await
+    .ok();
+    ensure_column(pool, "agents", "mcp_config_ids", "TEXT")
+        .await
+        .ok();
+    ensure_column(pool, "agents", "callable_agent_ids", "TEXT")
+        .await
+        .ok();
+    ensure_column(pool, "agents", "project_id", "TEXT")
+        .await
+        .ok();
+    ensure_column(pool, "agents", "workspace_dir", "TEXT")
+        .await
+        .ok();
 
     let indexes = vec![
         "CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id)",
@@ -622,8 +738,16 @@ async fn ensure_ai_model_config_columns_sqlite(pool: &SqlitePool) -> Result<(), 
     Ok(())
 }
 
-async fn ensure_column(pool: &SqlitePool, table: &str, column: &str, ddl: &str) -> Result<(), String> {
-    let rows = sqlx::query(&format!("PRAGMA table_info({})", table)).fetch_all(pool).await.map_err(|e| e.to_string())?;
+async fn ensure_column(
+    pool: &SqlitePool,
+    table: &str,
+    column: &str,
+    ddl: &str,
+) -> Result<(), String> {
+    let rows = sqlx::query(&format!("PRAGMA table_info({})", table))
+        .fetch_all(pool)
+        .await
+        .map_err(|e| e.to_string())?;
     let mut exists = false;
     for row in rows {
         let name: String = row.try_get("name").unwrap_or_default();
@@ -634,7 +758,10 @@ async fn ensure_column(pool: &SqlitePool, table: &str, column: &str, ddl: &str) 
     }
     if !exists {
         let sql = format!("ALTER TABLE {} ADD COLUMN {} {}", table, column, ddl);
-        sqlx::query(&sql).execute(pool).await.map_err(|e| e.to_string())?;
+        sqlx::query(&sql)
+            .execute(pool)
+            .await
+            .map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -645,7 +772,10 @@ async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> {
     } else {
         let host = cfg.host.clone().unwrap_or_else(|| "localhost".to_string());
         let port = cfg.port.unwrap_or(27017);
-        let database = cfg.database.clone().unwrap_or_else(|| "chat_app".to_string());
+        let database = cfg
+            .database
+            .clone()
+            .unwrap_or_else(|| "chat_app".to_string());
         let cred = match (&cfg.username, &cfg.password) {
             (Some(u), Some(p)) => format!("{}:{}@", urlencoding::encode(u), urlencoding::encode(p)),
             _ => "".to_string(),
@@ -653,17 +783,30 @@ async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> {
         format!("mongodb://{}{}:{}/{}", cred, host, port, database)
     };
 
-    let mut options = ClientOptions::parse_with_resolver_config(&connection_string, ResolverConfig::cloudflare())
-        .await
-        .map_err(|e| format!("mongodb parse options failed: {e}"))?;
-    if let Some(max_pool) = cfg.max_pool_size { options.max_pool_size = Some(max_pool); }
-    if let Some(min_pool) = cfg.min_pool_size { options.min_pool_size = Some(min_pool); }
-    if let Some(ms) = cfg.server_selection_timeout_ms { options.server_selection_timeout = Some(Duration::from_millis(ms)); }
-    if let Some(ms) = cfg.connect_timeout_ms { options.connect_timeout = Some(Duration::from_millis(ms)); }
+    let mut options =
+        ClientOptions::parse_with_resolver_config(&connection_string, ResolverConfig::cloudflare())
+            .await
+            .map_err(|e| format!("mongodb parse options failed: {e}"))?;
+    if let Some(max_pool) = cfg.max_pool_size {
+        options.max_pool_size = Some(max_pool);
+    }
+    if let Some(min_pool) = cfg.min_pool_size {
+        options.min_pool_size = Some(min_pool);
+    }
+    if let Some(ms) = cfg.server_selection_timeout_ms {
+        options.server_selection_timeout = Some(Duration::from_millis(ms));
+    }
+    if let Some(ms) = cfg.connect_timeout_ms {
+        options.connect_timeout = Some(Duration::from_millis(ms));
+    }
     let _ = cfg.socket_timeout_ms;
 
-    let client = Client::with_options(options).map_err(|e| format!("mongodb client failed: {e}"))?;
-    let db_name = cfg.database.clone().unwrap_or_else(|| "chat_app".to_string());
+    let client =
+        Client::with_options(options).map_err(|e| format!("mongodb client failed: {e}"))?;
+    let db_name = cfg
+        .database
+        .clone()
+        .unwrap_or_else(|| "chat_app".to_string());
     let db = client.database(&db_name);
 
     let collections = vec![
@@ -687,60 +830,133 @@ async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> {
         "session_mcp_servers",
         "user_settings",
     ];
-    let existing = db.list_collection_names(None).await.map_err(|e| e.to_string())?;
+    let existing = db
+        .list_collection_names(None)
+        .await
+        .map_err(|e| e.to_string())?;
     for name in collections {
         if !existing.contains(&name.to_string()) {
             let _ = db.create_collection(name, None).await;
         }
     }
 
-    let _ = db.collection::<mongodb::bson::Document>("sessions")
-        .create_index(IndexModel::builder().keys(doc! { "user_id": 1 }).build(), None)
+    let _ = db
+        .collection::<mongodb::bson::Document>("sessions")
+        .create_index(
+            IndexModel::builder().keys(doc! { "user_id": 1 }).build(),
+            None,
+        )
         .await;
-    let _ = db.collection::<mongodb::bson::Document>("sessions")
-        .create_index(IndexModel::builder().keys(doc! { "project_id": 1 }).build(), None)
+    let _ = db
+        .collection::<mongodb::bson::Document>("sessions")
+        .create_index(
+            IndexModel::builder().keys(doc! { "project_id": 1 }).build(),
+            None,
+        )
         .await;
-    let _ = db.collection::<mongodb::bson::Document>("messages")
-        .create_index(IndexModel::builder().keys(doc! { "session_id": 1 }).build(), None)
+    let _ = db
+        .collection::<mongodb::bson::Document>("messages")
+        .create_index(
+            IndexModel::builder().keys(doc! { "session_id": 1 }).build(),
+            None,
+        )
         .await;
-    let _ = db.collection::<mongodb::bson::Document>("session_summaries")
-        .create_index(IndexModel::builder().keys(doc! { "session_id": 1 }).build(), None)
+    let _ = db
+        .collection::<mongodb::bson::Document>("session_summaries")
+        .create_index(
+            IndexModel::builder().keys(doc! { "session_id": 1 }).build(),
+            None,
+        )
         .await;
-    let _ = db.collection::<mongodb::bson::Document>("session_summaries")
-        .create_index(IndexModel::builder().keys(doc! { "session_id": 1, "last_message_created_at": 1 }).build(), None)
+    let _ = db
+        .collection::<mongodb::bson::Document>("session_summaries")
+        .create_index(
+            IndexModel::builder()
+                .keys(doc! { "session_id": 1, "last_message_created_at": 1 })
+                .build(),
+            None,
+        )
         .await;
-    let _ = db.collection::<mongodb::bson::Document>("session_summary_messages")
-        .create_index(IndexModel::builder().keys(doc! { "session_id": 1 }).build(), None)
+    let _ = db
+        .collection::<mongodb::bson::Document>("session_summary_messages")
+        .create_index(
+            IndexModel::builder().keys(doc! { "session_id": 1 }).build(),
+            None,
+        )
         .await;
-    let _ = db.collection::<mongodb::bson::Document>("session_summary_messages")
-        .create_index(IndexModel::builder().keys(doc! { "summary_id": 1 }).build(), None)
+    let _ = db
+        .collection::<mongodb::bson::Document>("session_summary_messages")
+        .create_index(
+            IndexModel::builder().keys(doc! { "summary_id": 1 }).build(),
+            None,
+        )
         .await;
-    let _ = db.collection::<mongodb::bson::Document>("mcp_change_logs")
-        .create_index(IndexModel::builder().keys(doc! { "server_name": 1 }).build(), None)
+    let _ = db
+        .collection::<mongodb::bson::Document>("mcp_change_logs")
+        .create_index(
+            IndexModel::builder()
+                .keys(doc! { "server_name": 1 })
+                .build(),
+            None,
+        )
         .await;
-    let _ = db.collection::<mongodb::bson::Document>("mcp_change_logs")
-        .create_index(IndexModel::builder().keys(doc! { "session_id": 1 }).build(), None)
+    let _ = db
+        .collection::<mongodb::bson::Document>("mcp_change_logs")
+        .create_index(
+            IndexModel::builder().keys(doc! { "session_id": 1 }).build(),
+            None,
+        )
         .await;
-    let _ = db.collection::<mongodb::bson::Document>("mcp_change_logs")
-        .create_index(IndexModel::builder().keys(doc! { "created_at": 1 }).build(), None)
+    let _ = db
+        .collection::<mongodb::bson::Document>("mcp_change_logs")
+        .create_index(
+            IndexModel::builder().keys(doc! { "created_at": 1 }).build(),
+            None,
+        )
         .await;
-    let _ = db.collection::<mongodb::bson::Document>("agents")
-        .create_index(IndexModel::builder().keys(doc! { "project_id": 1 }).build(), None)
+    let _ = db
+        .collection::<mongodb::bson::Document>("agents")
+        .create_index(
+            IndexModel::builder().keys(doc! { "project_id": 1 }).build(),
+            None,
+        )
         .await;
-    let _ = db.collection::<mongodb::bson::Document>("projects")
-        .create_index(IndexModel::builder().keys(doc! { "user_id": 1 }).build(), None)
+    let _ = db
+        .collection::<mongodb::bson::Document>("projects")
+        .create_index(
+            IndexModel::builder().keys(doc! { "user_id": 1 }).build(),
+            None,
+        )
         .await;
-    let _ = db.collection::<mongodb::bson::Document>("terminals")
-        .create_index(IndexModel::builder().keys(doc! { "user_id": 1 }).build(), None)
+    let _ = db
+        .collection::<mongodb::bson::Document>("terminals")
+        .create_index(
+            IndexModel::builder().keys(doc! { "user_id": 1 }).build(),
+            None,
+        )
         .await;
-    let _ = db.collection::<mongodb::bson::Document>("terminals")
-        .create_index(IndexModel::builder().keys(doc! { "status": 1 }).build(), None)
+    let _ = db
+        .collection::<mongodb::bson::Document>("terminals")
+        .create_index(
+            IndexModel::builder().keys(doc! { "status": 1 }).build(),
+            None,
+        )
         .await;
-    let _ = db.collection::<mongodb::bson::Document>("terminal_logs")
-        .create_index(IndexModel::builder().keys(doc! { "terminal_id": 1 }).build(), None)
+    let _ = db
+        .collection::<mongodb::bson::Document>("terminal_logs")
+        .create_index(
+            IndexModel::builder()
+                .keys(doc! { "terminal_id": 1 })
+                .build(),
+            None,
+        )
         .await;
-    let _ = db.collection::<mongodb::bson::Document>("terminal_logs")
-        .create_index(IndexModel::builder().keys(doc! { "created_at": 1 }).build(), None)
+    let _ = db
+        .collection::<mongodb::bson::Document>("terminal_logs")
+        .create_index(
+            IndexModel::builder().keys(doc! { "created_at": 1 }).build(),
+            None,
+        )
         .await;
 
     Ok(Database::Mongo { client, db })

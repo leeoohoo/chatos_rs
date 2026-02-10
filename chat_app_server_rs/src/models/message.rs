@@ -1,7 +1,7 @@
-﻿use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use uuid::Uuid;
 use sqlx::FromRow;
+use uuid::Uuid;
 
 use crate::repositories::messages as repo;
 
@@ -41,10 +41,14 @@ impl MessageRow {
             role: self.role,
             content: self.content,
             summary: self.summary,
-            tool_calls: self.tool_calls.and_then(|v| serde_json::from_str::<Value>(&v).ok()),
+            tool_calls: self
+                .tool_calls
+                .and_then(|v| serde_json::from_str::<Value>(&v).ok()),
             tool_call_id: self.tool_call_id,
             reasoning: self.reasoning,
-            metadata: self.metadata.and_then(|v| serde_json::from_str::<Value>(&v).ok()),
+            metadata: self
+                .metadata
+                .and_then(|v| serde_json::from_str::<Value>(&v).ok()),
             created_at: self.created_at,
         }
     }
@@ -82,15 +86,27 @@ impl MessageService {
         repo::get_message_by_id(message_id).await
     }
 
-    pub async fn get_by_session(session_id: &str, limit: Option<i64>, offset: i64) -> Result<Vec<Message>, String> {
+    pub async fn get_by_session(
+        session_id: &str,
+        limit: Option<i64>,
+        offset: i64,
+    ) -> Result<Vec<Message>, String> {
         repo::get_messages_by_session(session_id, limit, offset).await
     }
 
-    pub async fn get_recent_by_session(session_id: &str, limit: i64, offset: i64) -> Result<Vec<Message>, String> {
+    pub async fn get_recent_by_session(
+        session_id: &str,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<Message>, String> {
         repo::get_recent_messages_by_session(session_id, limit, offset).await
     }
 
-    pub async fn get_by_session_after(session_id: &str, after_created_at: &str, limit: Option<i64>) -> Result<Vec<Message>, String> {
+    pub async fn get_by_session_after(
+        session_id: &str,
+        after_created_at: &str,
+        limit: Option<i64>,
+    ) -> Result<Vec<Message>, String> {
         repo::get_messages_by_session_after(session_id, after_created_at, limit).await
     }
 
@@ -106,4 +122,3 @@ impl MessageService {
         repo::count_messages_by_session(session_id).await
     }
 }
-

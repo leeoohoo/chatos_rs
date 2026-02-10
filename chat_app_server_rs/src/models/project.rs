@@ -41,7 +41,12 @@ impl ProjectRow {
 }
 
 impl Project {
-    pub fn new(name: String, root_path: String, description: Option<String>, user_id: Option<String>) -> Project {
+    pub fn new(
+        name: String,
+        root_path: String,
+        description: Option<String>,
+        user_id: Option<String>,
+    ) -> Project {
         let now = chrono::Utc::now().to_rfc3339();
         Project {
             id: Uuid::new_v4().to_string(),
@@ -70,7 +75,12 @@ impl ProjectService {
         repo::list_projects(user_id).await
     }
 
-    pub async fn update(id: &str, name: Option<String>, root_path: Option<String>, description: Option<String>) -> Result<(), String> {
+    pub async fn update(
+        id: &str,
+        name: Option<String>,
+        root_path: Option<String>,
+        description: Option<String>,
+    ) -> Result<(), String> {
         repo::update_project(id, name, root_path, description).await
     }
 

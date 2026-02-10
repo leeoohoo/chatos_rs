@@ -91,15 +91,7 @@ impl FsOps {
                 })
                 .collect()
         };
-        Ok((
-            path,
-            size,
-            hash,
-            start,
-            end,
-            total_lines,
-            slice.join("\n"),
-        ))
+        Ok((path, size, hash, start, end, total_lines, slice.join("\n")))
     }
 
     pub fn list_dir(&self, rel_path: &str, max_entries: usize) -> Result<Vec<FileEntry>, String> {

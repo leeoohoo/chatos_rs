@@ -1,10 +1,10 @@
-﻿use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tracing::warn;
 
-use crate::services::v2::message_manager::MessageManager;
-use crate::services::v2::ai_request_handler::AiRequestHandler;
 use crate::services::v2::ai_client::{AiClient, AiClientCallbacks};
+use crate::services::v2::ai_request_handler::AiRequestHandler;
 use crate::services::v2::mcp_tool_execute::McpToolExecute;
+use crate::services::v2::message_manager::MessageManager;
 use crate::utils::attachments;
 
 pub struct AiServer {
@@ -18,10 +18,24 @@ pub struct AiServer {
 }
 
 impl AiServer {
-    pub fn new(openai_api_key: String, base_url: String, default_model: String, default_temperature: f64, mcp_tool_execute: McpToolExecute) -> Self {
+    pub fn new(
+        openai_api_key: String,
+        base_url: String,
+        default_model: String,
+        default_temperature: f64,
+        mcp_tool_execute: McpToolExecute,
+    ) -> Self {
         let message_manager = MessageManager::new();
-        let ai_request_handler = AiRequestHandler::new(openai_api_key.clone(), base_url.clone(), message_manager.clone());
-        let ai_client = AiClient::new(ai_request_handler.clone(), mcp_tool_execute.clone(), message_manager.clone());
+        let ai_request_handler = AiRequestHandler::new(
+            openai_api_key.clone(),
+            base_url.clone(),
+            message_manager.clone(),
+        );
+        let ai_client = AiClient::new(
+            ai_request_handler.clone(),
+            mcp_tool_execute.clone(),
+            message_manager.clone(),
+        );
         Self {
             message_manager,
             ai_request_handler,
@@ -53,28 +67,41 @@ impl AiServer {
 
         let attachments_list = options.attachments.unwrap_or_default();
         let sanitized = attachments::sanitize_attachments_for_db(&attachments_list);
-        let meta = if sanitized.is_empty() { None } else { Some(json!({"attachments": sanitized})) };
-        if let Err(err) = self.message_manager.save_user_message(session_id, user_message, None, meta).await {
+        let meta = if sanitized.is_empty() {
+            None
+        } else {
+            Some(json!({"attachments": sanitized}))
+        };
+        if let Err(err) = self
+            .message_manager
+            .save_user_message(session_id, user_message, None, meta)
+            .await
+        {
             warn!("save user message failed: {}", err);
         }
 
-        let mut content_parts = attachments::build_content_parts_async(user_message, &attachments_list).await;
-        content_parts = attachments::adapt_parts_for_model(&model, &content_parts, options.supports_images);
+        let mut content_parts =
+            attachments::build_content_parts_async(user_message, &attachments_list).await;
+        content_parts =
+            attachments::adapt_parts_for_model(&model, &content_parts, options.supports_images);
 
         let messages = vec![json!({"role": "user", "content": content_parts})];
 
-        let result = self.ai_client.process_request(
-            messages,
-            Some(session_id.to_string()),
-            model,
-            temperature,
-            max_tokens,
-            use_tools,
-            options.callbacks.unwrap_or_default(),
-            reasoning_enabled,
-            Some(provider),
-            thinking_level,
-        ).await?;
+        let result = self
+            .ai_client
+            .process_request(
+                messages,
+                Some(session_id.to_string()),
+                model,
+                temperature,
+                max_tokens,
+                use_tools,
+                options.callbacks.unwrap_or_default(),
+                reasoning_enabled,
+                Some(provider),
+                thinking_level,
+            )
+            .await?;
 
         Ok(result)
     }
@@ -108,4 +135,3 @@ impl Default for AiClientCallbacks {
         }
     }
 }
-

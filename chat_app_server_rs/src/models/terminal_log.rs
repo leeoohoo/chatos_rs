@@ -53,7 +53,11 @@ impl TerminalLogService {
         repo::create_terminal_log(&log).await
     }
 
-    pub async fn list(terminal_id: &str, limit: Option<i64>, offset: i64) -> Result<Vec<TerminalLog>, String> {
+    pub async fn list(
+        terminal_id: &str,
+        limit: Option<i64>,
+        offset: i64,
+    ) -> Result<Vec<TerminalLog>, String> {
         repo::list_terminal_logs(terminal_id, limit, offset).await
     }
 

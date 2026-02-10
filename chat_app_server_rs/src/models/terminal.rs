@@ -74,7 +74,11 @@ impl TerminalService {
         repo::list_terminals(user_id).await
     }
 
-    pub async fn update_status(id: &str, status: Option<String>, last_active_at: Option<String>) -> Result<(), String> {
+    pub async fn update_status(
+        id: &str,
+        status: Option<String>,
+        last_active_at: Option<String>,
+    ) -> Result<(), String> {
         repo::update_terminal_status(id, status, last_active_at).await
     }
 

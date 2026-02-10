@@ -1,7 +1,7 @@
-﻿use serde_json::Value;
+use serde_json::Value;
 
-use crate::repositories::mcp_configs;
 use crate::models::mcp_config::McpConfig;
+use crate::repositories::mcp_configs;
 use crate::services::builtin_mcp::get_builtin_mcp_config;
 use crate::utils::workspace::resolve_workspace_dir;
 
@@ -36,11 +36,19 @@ fn parse_args(args: &Option<Value>) -> Vec<String> {
     match args {
         Some(Value::String(s)) => {
             if let Ok(v) = serde_json::from_str::<Vec<Value>>(s) {
-                return v.iter().filter_map(|v| v.as_str().map(|s| s.trim().to_string())).filter(|s| !s.is_empty()).collect();
+                return v
+                    .iter()
+                    .filter_map(|v| v.as_str().map(|s| s.trim().to_string()))
+                    .filter(|s| !s.is_empty())
+                    .collect();
             }
             return s.split_whitespace().map(|s| s.to_string()).collect();
         }
-        Some(Value::Array(arr)) => arr.iter().filter_map(|v| v.as_str().map(|s| s.trim().to_string())).filter(|s| !s.is_empty()).collect(),
+        Some(Value::Array(arr)) => arr
+            .iter()
+            .filter_map(|v| v.as_str().map(|s| s.trim().to_string()))
+            .filter(|s| !s.is_empty())
+            .collect(),
         _ => Vec::new(),
     }
 }
@@ -81,7 +89,14 @@ fn parse_env(env: &Option<Value>) -> std::collections::HashMap<String, String> {
     map
 }
 
-fn build_servers_from_configs(configs: Vec<McpConfig>, workspace_dir: Option<&str>) -> (Vec<McpHttpServer>, Vec<McpStdioServer>, Vec<McpBuiltinServer>) {
+fn build_servers_from_configs(
+    configs: Vec<McpConfig>,
+    workspace_dir: Option<&str>,
+) -> (
+    Vec<McpHttpServer>,
+    Vec<McpStdioServer>,
+    Vec<McpBuiltinServer>,
+) {
     let mut http_servers = Vec::new();
     let mut stdio_servers = Vec::new();
     let mut builtin_servers = Vec::new();
@@ -104,7 +119,10 @@ fn build_servers_from_configs(configs: Vec<McpConfig>, workspace_dir: Option<&st
             continue;
         }
         if cfg.r#type == "http" {
-            http_servers.push(McpHttpServer { name: server_name, url: cfg.command });
+            http_servers.push(McpHttpServer {
+                name: server_name,
+                url: cfg.command,
+            });
         } else if cfg.r#type == "stdio" {
             let args = parse_args(&cfg.args);
             let env = parse_env(&cfg.env);
@@ -122,10 +140,28 @@ fn build_servers_from_configs(configs: Vec<McpConfig>, workspace_dir: Option<&st
     (http_servers, stdio_servers, builtin_servers)
 }
 
-pub async fn load_mcp_configs_for_user(user_id: Option<String>, mcp_config_ids: Option<Vec<String>>, workspace_dir: Option<&str>) -> Result<(Vec<McpHttpServer>, Vec<McpStdioServer>, Vec<McpBuiltinServer>), String> {
-    let use_filter = mcp_config_ids.as_ref().map(|v| !v.is_empty()).unwrap_or(false);
+pub async fn load_mcp_configs_for_user(
+    user_id: Option<String>,
+    mcp_config_ids: Option<Vec<String>>,
+    workspace_dir: Option<&str>,
+) -> Result<
+    (
+        Vec<McpHttpServer>,
+        Vec<McpStdioServer>,
+        Vec<McpBuiltinServer>,
+    ),
+    String,
+> {
+    let use_filter = mcp_config_ids
+        .as_ref()
+        .map(|v| !v.is_empty())
+        .unwrap_or(false);
     let mut configs = if use_filter {
-        mcp_configs::list_enabled_mcp_configs_by_ids(user_id.clone(), mcp_config_ids.as_ref().unwrap()).await?
+        mcp_configs::list_enabled_mcp_configs_by_ids(
+            user_id.clone(),
+            mcp_config_ids.as_ref().unwrap(),
+        )
+        .await?
     } else {
         mcp_configs::list_enabled_mcp_configs(user_id.clone()).await?
     };
@@ -140,4 +176,3 @@ pub async fn load_mcp_configs_for_user(user_id: Option<String>, mcp_config_ids: 
     }
     Ok(build_servers_from_configs(configs, workspace_dir))
 }
-

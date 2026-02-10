@@ -1,9 +1,12 @@
-use axum::{Json, Router};
 use axum::body::Body;
 use axum::extract::{DefaultBodyLimit, OriginalUri};
-use axum::http::{Request, StatusCode, header::{HeaderName, ACCEPT, AUTHORIZATION, CONTENT_TYPE, ORIGIN}};
-use axum::response::Response;
+use axum::http::{
+    header::{HeaderName, ACCEPT, AUTHORIZATION, CONTENT_TYPE, ORIGIN},
+    Request, StatusCode,
+};
 use axum::response::IntoResponse;
+use axum::response::Response;
+use axum::{Json, Router};
 use once_cell::sync::Lazy;
 use serde_json::json;
 use std::time::Instant;
@@ -17,19 +20,19 @@ use crate::config::Config;
 static START_TIME: Lazy<Instant> = Lazy::new(Instant::now);
 static REQUEST_ID_HEADER: HeaderName = HeaderName::from_static("x-request-id");
 
-pub mod sessions;
-pub mod messages;
-pub mod chat_v2;
-pub mod chat_v3;
 pub mod agents;
 pub mod agents_v3;
 pub mod applications;
-pub mod projects;
-pub mod configs;
 pub mod chat_agent_v2;
-pub mod user_settings;
+pub mod chat_v2;
+pub mod chat_v3;
+pub mod configs;
 pub mod fs;
+pub mod messages;
+pub mod projects;
+pub mod sessions;
 pub mod terminals;
+pub mod user_settings;
 
 pub fn router() -> Router {
     let cfg = Config::get();
@@ -55,7 +58,11 @@ pub fn router() -> Router {
             .allow_methods(Any)
             .allow_credentials(false)
     } else {
-        let origins = cfg.cors_origins.iter().filter_map(|o| o.parse().ok()).collect::<Vec<_>>();
+        let origins = cfg
+            .cors_origins
+            .iter()
+            .filter_map(|o| o.parse().ok())
+            .collect::<Vec<_>>();
         CorsLayer::new()
             .allow_origin(origins)
             .allow_headers(allowed_headers)
@@ -83,9 +90,11 @@ pub fn router() -> Router {
         .on_request(|_req: &Request<Body>, _span: &tracing::Span| {
             info!("request.start");
         })
-        .on_response(|res: &Response, latency: std::time::Duration, _span: &tracing::Span| {
-            info!(status = %res.status(), latency_ms = %latency.as_millis(), "request.end");
-        })
+        .on_response(
+            |res: &Response, latency: std::time::Duration, _span: &tracing::Span| {
+                info!(status = %res.status(), latency_ms = %latency.as_millis(), "request.end");
+            },
+        )
         .on_failure(|err, latency: std::time::Duration, _span: &tracing::Span| {
             tracing::error!(error = %err, latency_ms = %latency.as_millis(), "request.failure");
         });
@@ -111,7 +120,10 @@ pub fn router() -> Router {
         .layer(DefaultBodyLimit::max(50 * 1024 * 1024))
         .layer(trace)
         .layer(PropagateRequestIdLayer::new(REQUEST_ID_HEADER.clone()))
-        .layer(SetRequestIdLayer::new(REQUEST_ID_HEADER.clone(), MakeRequestUuid))
+        .layer(SetRequestIdLayer::new(
+            REQUEST_ID_HEADER.clone(),
+            MakeRequestUuid,
+        ))
 }
 
 async fn health() -> axum::Json<serde_json::Value> {

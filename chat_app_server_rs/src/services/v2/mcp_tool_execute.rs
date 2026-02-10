@@ -1,8 +1,8 @@
-﻿use std::collections::HashMap;
+use std::collections::HashMap;
 use std::process::Stdio;
 
-use serde_json::{Value, json};
 use serde::Serialize;
+use serde_json::{json, Value};
 use tracing::{info, warn};
 use uuid::Uuid;
 
@@ -79,7 +79,10 @@ impl McpToolExecute {
         let builtin_servers = self.builtin_mcp_servers.clone();
         for server in &builtin_servers {
             if let Err(err) = self.build_tools_from_builtin(server) {
-                warn!("failed to build tools from builtin {}: {}", server.name, err);
+                warn!(
+                    "failed to build tools from builtin {}: {}",
+                    server.name, err
+                );
             }
         }
         info!("MCP tools built: {}", self.tools.len());
@@ -89,11 +92,24 @@ impl McpToolExecute {
     async fn build_tools_from_http(&mut self, server: &McpHttpServer) -> Result<(), String> {
         let tools = list_tools_http(&server.url).await?;
         for tool in tools {
-            let tool_name = tool.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            if tool_name.is_empty() { continue; }
+            let tool_name = tool
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            if tool_name.is_empty() {
+                continue;
+            }
             let prefixed = format!("{}_{}", server.name, tool_name);
-            let parameters = tool.get("inputSchema").cloned().unwrap_or(json!({"type":"object","properties":{},"required":[]}));
-            let description = tool.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let parameters = tool
+                .get("inputSchema")
+                .cloned()
+                .unwrap_or(json!({"type":"object","properties":{},"required":[]}));
+            let description = tool
+                .get("description")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
             let openai_tool = json!({
                 "type": "function",
                 "function": {
@@ -103,14 +119,17 @@ impl McpToolExecute {
                 }
             });
             self.tools.push(openai_tool);
-            self.tool_metadata.insert(prefixed.clone(), ToolInfo {
-                original_name: tool_name,
-                server_name: server.name.clone(),
-                server_type: "http".to_string(),
-                server_url: Some(server.url.clone()),
-                server_config: None,
-                tool_info: tool.clone(),
-            });
+            self.tool_metadata.insert(
+                prefixed.clone(),
+                ToolInfo {
+                    original_name: tool_name,
+                    server_name: server.name.clone(),
+                    server_type: "http".to_string(),
+                    server_url: Some(server.url.clone()),
+                    server_config: None,
+                    tool_info: tool.clone(),
+                },
+            );
         }
         Ok(())
     }
@@ -118,11 +137,24 @@ impl McpToolExecute {
     async fn build_tools_from_stdio(&mut self, server: &McpStdioServer) -> Result<(), String> {
         let tools = list_tools_stdio(server).await?;
         for tool in tools {
-            let tool_name = tool.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            if tool_name.is_empty() { continue; }
+            let tool_name = tool
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            if tool_name.is_empty() {
+                continue;
+            }
             let prefixed = format!("{}_{}", server.name, tool_name);
-            let parameters = tool.get("inputSchema").cloned().unwrap_or(json!({"type":"object","properties":{},"required":[]}));
-            let description = tool.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let parameters = tool
+                .get("inputSchema")
+                .cloned()
+                .unwrap_or(json!({"type":"object","properties":{},"required":[]}));
+            let description = tool
+                .get("description")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
             let openai_tool = json!({
                 "type": "function",
                 "function": {
@@ -132,14 +164,17 @@ impl McpToolExecute {
                 }
             });
             self.tools.push(openai_tool);
-            self.tool_metadata.insert(prefixed.clone(), ToolInfo {
-                original_name: tool_name,
-                server_name: server.name.clone(),
-                server_type: "stdio".to_string(),
-                server_url: None,
-                server_config: Some(server.clone()),
-                tool_info: tool.clone(),
-            });
+            self.tool_metadata.insert(
+                prefixed.clone(),
+                ToolInfo {
+                    original_name: tool_name,
+                    server_name: server.name.clone(),
+                    server_type: "stdio".to_string(),
+                    server_url: None,
+                    server_config: Some(server.clone()),
+                    tool_info: tool.clone(),
+                },
+            );
         }
         Ok(())
     }
@@ -159,11 +194,24 @@ impl McpToolExecute {
         let tools = service.list_tools();
         self.builtin_services.insert(server.name.clone(), service);
         for tool in tools {
-            let tool_name = tool.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            if tool_name.is_empty() { continue; }
+            let tool_name = tool
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            if tool_name.is_empty() {
+                continue;
+            }
             let prefixed = format!("{}_{}", server.name, tool_name);
-            let parameters = tool.get("inputSchema").cloned().unwrap_or(json!({"type":"object","properties":{},"required":[]}));
-            let description = tool.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let parameters = tool
+                .get("inputSchema")
+                .cloned()
+                .unwrap_or(json!({"type":"object","properties":{},"required":[]}));
+            let description = tool
+                .get("description")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
             let openai_tool = json!({
                 "type": "function",
                 "function": {
@@ -173,14 +221,17 @@ impl McpToolExecute {
                 }
             });
             self.tools.push(openai_tool);
-            self.tool_metadata.insert(prefixed.clone(), ToolInfo {
-                original_name: tool_name,
-                server_name: server.name.clone(),
-                server_type: "builtin".to_string(),
-                server_url: None,
-                server_config: None,
-                tool_info: tool.clone(),
-            });
+            self.tool_metadata.insert(
+                prefixed.clone(),
+                ToolInfo {
+                    original_name: tool_name,
+                    server_name: server.name.clone(),
+                    server_type: "builtin".to_string(),
+                    server_url: None,
+                    server_config: None,
+                    tool_info: tool.clone(),
+                },
+            );
         }
         Ok(())
     }
@@ -198,22 +249,47 @@ impl McpToolExecute {
         let mut results = Vec::new();
         for tc in tool_calls {
             if let Some(sid) = session_id {
-                if abort_registry::is_aborted(sid) { break; }
+                if abort_registry::is_aborted(sid) {
+                    break;
+                }
             }
-            let tool_name = tc.get("function").and_then(|f| f.get("name")).and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let call_id = tc.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let tool_name = tc
+                .get("function")
+                .and_then(|f| f.get("name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let call_id = tc
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
             if tool_name.is_empty() {
-                let result = ToolResult { tool_call_id: call_id, name: "unknown".to_string(), success: false, is_error: true, content: "工具名称不能为空".to_string() };
+                let result = ToolResult {
+                    tool_call_id: call_id,
+                    name: "unknown".to_string(),
+                    success: false,
+                    is_error: true,
+                    content: "工具名称不能为空".to_string(),
+                };
                 results.push(result);
                 if let Some(cb) = &on_tool_result {
-                    let should_call = session_id.map(|sid| !abort_registry::is_aborted(sid)).unwrap_or(true);
+                    let should_call = session_id
+                        .map(|sid| !abort_registry::is_aborted(sid))
+                        .unwrap_or(true);
                     if should_call {
-                        if let Some(last) = results.last() { cb(last); }
+                        if let Some(last) = results.last() {
+                            cb(last);
+                        }
                     }
                 }
                 continue;
             }
-            let args_val = tc.get("function").and_then(|f| f.get("arguments")).cloned().unwrap_or(Value::String("{}".to_string()));
+            let args_val = tc
+                .get("function")
+                .and_then(|f| f.get("arguments"))
+                .cloned()
+                .unwrap_or(Value::String("{}".to_string()));
             let args: Value = if let Some(s) = args_val.as_str() {
                 match serde_json::from_str::<Value>(s) {
                     Ok(v) => v,
@@ -227,9 +303,13 @@ impl McpToolExecute {
                         };
                         results.push(result);
                         if let Some(cb) = &on_tool_result {
-                            let should_call = session_id.map(|sid| !abort_registry::is_aborted(sid)).unwrap_or(true);
+                            let should_call = session_id
+                                .map(|sid| !abort_registry::is_aborted(sid))
+                                .unwrap_or(true);
                             if should_call {
-                                if let Some(last) = results.last() { cb(last); }
+                                if let Some(last) = results.last() {
+                                    cb(last);
+                                }
                             }
                         }
                         continue;
@@ -240,12 +320,22 @@ impl McpToolExecute {
             };
             match self.call_tool_once(&tool_name, args, session_id).await {
                 Ok(text) => {
-                    let result = ToolResult { tool_call_id: call_id, name: tool_name, success: true, is_error: false, content: text };
+                    let result = ToolResult {
+                        tool_call_id: call_id,
+                        name: tool_name,
+                        success: true,
+                        is_error: false,
+                        content: text,
+                    };
                     results.push(result);
                     if let Some(cb) = &on_tool_result {
-                        let should_call = session_id.map(|sid| !abort_registry::is_aborted(sid)).unwrap_or(true);
+                        let should_call = session_id
+                            .map(|sid| !abort_registry::is_aborted(sid))
+                            .unwrap_or(true);
                         if should_call {
-                            if let Some(last) = results.last() { cb(last); }
+                            if let Some(last) = results.last() {
+                                cb(last);
+                            }
                         }
                     }
                 }
@@ -253,12 +343,22 @@ impl McpToolExecute {
                     if err == "aborted" {
                         break;
                     }
-                    let result = ToolResult { tool_call_id: call_id, name: tool_name, success: false, is_error: true, content: format!("工具执行失败: {}", err) };
+                    let result = ToolResult {
+                        tool_call_id: call_id,
+                        name: tool_name,
+                        success: false,
+                        is_error: true,
+                        content: format!("工具执行失败: {}", err),
+                    };
                     results.push(result);
                     if let Some(cb) = &on_tool_result {
-                        let should_call = session_id.map(|sid| !abort_registry::is_aborted(sid)).unwrap_or(true);
+                        let should_call = session_id
+                            .map(|sid| !abort_registry::is_aborted(sid))
+                            .unwrap_or(true);
                         if should_call {
-                            if let Some(last) = results.last() { cb(last); }
+                            if let Some(last) = results.last() {
+                                cb(last);
+                            }
                         }
                     }
                 }
@@ -267,11 +367,24 @@ impl McpToolExecute {
         results
     }
 
-    async fn call_tool_once(&self, tool_name: &str, args: Value, session_id: Option<&str>) -> Result<String, String> {
-        let info = self.tool_metadata.get(tool_name).ok_or_else(|| format!("工具未找到: {}", tool_name))?;
+    async fn call_tool_once(
+        &self,
+        tool_name: &str,
+        args: Value,
+        session_id: Option<&str>,
+    ) -> Result<String, String> {
+        let info = self
+            .tool_metadata
+            .get(tool_name)
+            .ok_or_else(|| format!("工具未找到: {}", tool_name))?;
         if info.server_type == "http" {
             let url = info.server_url.clone().ok_or("missing server url")?;
-            let result = jsonrpc_http_call(&url, "tools/call", json!({"name": info.original_name, "arguments": args})).await?;
+            let result = jsonrpc_http_call(
+                &url,
+                "tools/call",
+                json!({"name": info.original_name, "arguments": args}),
+            )
+            .await?;
             Ok(to_text(&result))
         } else if info.server_type == "builtin" {
             let service = self
@@ -282,7 +395,13 @@ impl McpToolExecute {
             Ok(to_text(&result))
         } else {
             let config = info.server_config.clone().ok_or("missing server config")?;
-            let result = jsonrpc_stdio_call(&config, "tools/call", json!({"name": info.original_name, "arguments": args}), session_id).await?;
+            let result = jsonrpc_stdio_call(
+                &config,
+                "tools/call",
+                json!({"name": info.original_name, "arguments": args}),
+                session_id,
+            )
+            .await?;
             Ok(to_text(&result))
         }
     }
@@ -302,31 +421,50 @@ fn extract_tools(resp: &Value) -> Result<Vec<Value>, String> {
     if let Some(arr) = resp.get("tools").and_then(|v| v.as_array()) {
         return Ok(arr.clone());
     }
-    if let Some(arr) = resp.get("result").and_then(|r| r.get("tools")).and_then(|v| v.as_array()) {
+    if let Some(arr) = resp
+        .get("result")
+        .and_then(|r| r.get("tools"))
+        .and_then(|v| v.as_array())
+    {
         return Ok(arr.clone());
     }
     Err("tools not found in response".to_string())
 }
 
 fn to_text(result: &Value) -> String {
-    if let Some(s) = result.as_str() { return s.to_string(); }
+    if let Some(s) = result.as_str() {
+        return s.to_string();
+    }
     if let Some(content) = result.get("content").and_then(|v| v.as_array()) {
         for c in content {
             if c.get("type").and_then(|v| v.as_str()) == Some("text") {
-                if let Some(t) = c.get("text").and_then(|v| v.as_str()) { return t.to_string(); }
-                if let Some(t) = c.get("value").and_then(|v| v.as_str()) { return t.to_string(); }
+                if let Some(t) = c.get("text").and_then(|v| v.as_str()) {
+                    return t.to_string();
+                }
+                if let Some(t) = c.get("value").and_then(|v| v.as_str()) {
+                    return t.to_string();
+                }
             }
         }
     }
-    if let Some(text) = result.get("text").and_then(|v| v.as_str()) { return text.to_string(); }
-    if let Some(v) = result.get("value").and_then(|v| v.as_str()) { return v.to_string(); }
+    if let Some(text) = result.get("text").and_then(|v| v.as_str()) {
+        return text.to_string();
+    }
+    if let Some(v) = result.get("value").and_then(|v| v.as_str()) {
+        return v.to_string();
+    }
     result.to_string()
 }
 
 async fn jsonrpc_http_call(url: &str, method: &str, params: Value) -> Result<Value, String> {
     let id = Uuid::new_v4().to_string();
     let payload = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
-    let resp = reqwest::Client::new().post(url).json(&payload).send().await.map_err(|e| e.to_string())?;
+    let resp = reqwest::Client::new()
+        .post(url)
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
     let val: Value = resp.json().await.map_err(|e| e.to_string())?;
     if val.get("error").is_some() {
         return Err(val.to_string());
@@ -334,7 +472,12 @@ async fn jsonrpc_http_call(url: &str, method: &str, params: Value) -> Result<Val
     Ok(val.get("result").cloned().unwrap_or(val))
 }
 
-async fn jsonrpc_stdio_call(cfg: &McpStdioServer, method: &str, params: Value, session_id: Option<&str>) -> Result<Value, String> {
+async fn jsonrpc_stdio_call(
+    cfg: &McpStdioServer,
+    method: &str,
+    params: Value,
+    session_id: Option<&str>,
+) -> Result<Value, String> {
     let id = Uuid::new_v4().to_string();
     let payload = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
 
@@ -348,13 +491,18 @@ async fn jsonrpc_stdio_call(cfg: &McpStdioServer, method: &str, params: Value, s
     if let Some(cwd) = &cfg.cwd {
         cmd.current_dir(cwd);
     }
-    cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
 
     let mut child = cmd.spawn().map_err(|e| e.to_string())?;
     if let Some(mut stdin) = child.stdin.take() {
         let data = payload.to_string() + "\n";
         use tokio::io::AsyncWriteExt;
-        stdin.write_all(data.as_bytes()).await.map_err(|e| e.to_string())?;
+        stdin
+            .write_all(data.as_bytes())
+            .await
+            .map_err(|e| e.to_string())?;
     }
 
     use tokio::io::{AsyncBufReadExt, BufReader};
@@ -362,14 +510,20 @@ async fn jsonrpc_stdio_call(cfg: &McpStdioServer, method: &str, params: Value, s
     let mut reader = BufReader::new(stdout).lines();
     loop {
         if let Some(sid) = session_id {
-            if abort_registry::is_aborted(sid) { return Err("aborted".to_string()); }
+            if abort_registry::is_aborted(sid) {
+                return Err("aborted".to_string());
+            }
         }
         match reader.next_line().await {
             Ok(Some(line)) => {
-                if line.trim().is_empty() { continue; }
+                if line.trim().is_empty() {
+                    continue;
+                }
                 if let Ok(v) = serde_json::from_str::<Value>(&line) {
                     if v.get("id").and_then(|v| v.as_str()) == Some(&id) {
-                        if v.get("error").is_some() { return Err(v.to_string()); }
+                        if v.get("error").is_some() {
+                            return Err(v.to_string());
+                        }
                         return Ok(v.get("result").cloned().unwrap_or(v));
                     }
                 }
@@ -380,4 +534,3 @@ async fn jsonrpc_stdio_call(cfg: &McpStdioServer, method: &str, params: Value, s
     }
     Err("no response from stdio server".to_string())
 }
-

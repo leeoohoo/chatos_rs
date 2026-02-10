@@ -1,8 +1,8 @@
-﻿use mongodb::bson::{doc, Bson, Document};
 use futures::TryStreamExt;
+use mongodb::bson::{doc, Bson, Document};
 
 use crate::models::session_summary::{SessionSummary, SessionSummaryRow};
-use crate::repositories::db::{with_db, to_doc, doc_from_pairs};
+use crate::repositories::db::{doc_from_pairs, to_doc, with_db};
 
 fn normalize_from_doc(doc: &Document) -> Option<SessionSummary> {
     let id = doc.get_str("id").ok()?.to_string();
@@ -17,9 +17,18 @@ fn normalize_from_doc(doc: &Document) -> Option<SessionSummary> {
     let approx_tokens = doc.get_i64("approx_tokens").ok();
     let first_message_id = doc.get_str("first_message_id").ok().map(|s| s.to_string());
     let last_message_id = doc.get_str("last_message_id").ok().map(|s| s.to_string());
-    let first_message_created_at = doc.get_str("first_message_created_at").ok().map(|s| s.to_string());
-    let last_message_created_at = doc.get_str("last_message_created_at").ok().map(|s| s.to_string());
-    let metadata = doc.get_str("metadata").ok().and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok());
+    let first_message_created_at = doc
+        .get_str("first_message_created_at")
+        .ok()
+        .map(|s| s.to_string());
+    let last_message_created_at = doc
+        .get_str("last_message_created_at")
+        .ok()
+        .map(|s| s.to_string());
+    let metadata = doc
+        .get_str("metadata")
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok());
     let created_at = doc.get_str("created_at").ok().unwrap_or("").to_string();
     let updated_at = doc.get_str("updated_at").ok().unwrap_or("").to_string();
     Some(SessionSummary {
@@ -105,7 +114,10 @@ pub async fn create_summary(data: &SessionSummary) -> Result<SessionSummary, Str
     ).await
 }
 
-pub async fn list_summaries_by_session(session_id: &str, limit: Option<i64>) -> Result<Vec<SessionSummary>, String> {
+pub async fn list_summaries_by_session(
+    session_id: &str,
+    limit: Option<i64>,
+) -> Result<Vec<SessionSummary>, String> {
     with_db(
         |db| {
             let session_id = session_id.to_string();
@@ -146,7 +158,9 @@ pub async fn list_summaries_by_session(session_id: &str, limit: Option<i64>) -> 
     ).await
 }
 
-pub async fn get_last_summary_by_session(session_id: &str) -> Result<Option<SessionSummary>, String> {
+pub async fn get_last_summary_by_session(
+    session_id: &str,
+) -> Result<Option<SessionSummary>, String> {
     with_db(
         |db| {
             let session_id = session_id.to_string();

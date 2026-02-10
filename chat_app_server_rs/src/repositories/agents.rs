@@ -1,13 +1,20 @@
-use mongodb::bson::{doc, Bson, Document};
-use futures::TryStreamExt;
-use sqlx::Row;
 use crate::models::agent::{Agent, AgentRow};
-use crate::repositories::db::{with_db, to_doc, doc_from_pairs};
-
+use crate::repositories::db::{doc_from_pairs, to_doc, with_db};
+use futures::TryStreamExt;
+use mongodb::bson::{doc, Bson, Document};
+use sqlx::Row;
 
 fn normalize_doc(doc: &Document) -> Option<Agent> {
-    let mcp_ids = doc.get_str("mcp_config_ids").ok().and_then(|s| serde_json::from_str::<Vec<String>>(s).ok()).unwrap_or_default();
-    let callable_ids = doc.get_str("callable_agent_ids").ok().and_then(|s| serde_json::from_str::<Vec<String>>(s).ok()).unwrap_or_default();
+    let mcp_ids = doc
+        .get_str("mcp_config_ids")
+        .ok()
+        .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
+        .unwrap_or_default();
+    let callable_ids = doc
+        .get_str("callable_agent_ids")
+        .ok()
+        .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
+        .unwrap_or_default();
     Some(Agent {
         id: doc.get_str("id").ok()?.to_string(),
         name: doc.get_str("name").ok()?.to_string(),
@@ -30,12 +37,23 @@ pub async fn list_agents(user_id: Option<String>) -> Result<Vec<Agent>, String> 
         |db| {
             let user_id = user_id.clone();
             Box::pin(async move {
-                let filter = if let Some(uid) = user_id { doc! { "user_id": uid } } else { doc! {} };
-                let mut cursor = db.collection::<Document>("agents").find(filter, None).await.map_err(|e| e.to_string())?;
+                let filter = if let Some(uid) = user_id {
+                    doc! { "user_id": uid }
+                } else {
+                    doc! {}
+                };
+                let mut cursor = db
+                    .collection::<Document>("agents")
+                    .find(filter, None)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 let mut docs = Vec::new();
-                while let Some(doc) = cursor.try_next().await.map_err(|e| e.to_string())? { docs.push(doc); }
-                let mut items: Vec<Agent> = docs.into_iter().filter_map(|d| normalize_doc(&d)).collect();
-                items.sort_by(|a,b| b.created_at.cmp(&a.created_at));
+                while let Some(doc) = cursor.try_next().await.map_err(|e| e.to_string())? {
+                    docs.push(doc);
+                }
+                let mut items: Vec<Agent> =
+                    docs.into_iter().filter_map(|d| normalize_doc(&d)).collect();
+                items.sort_by(|a, b| b.created_at.cmp(&a.created_at));
                 Ok(items)
             })
         },
@@ -43,15 +61,20 @@ pub async fn list_agents(user_id: Option<String>) -> Result<Vec<Agent>, String> 
             let user_id = user_id.clone();
             Box::pin(async move {
                 let mut query = "SELECT * FROM agents".to_string();
-                if user_id.is_some() { query.push_str(" WHERE user_id = ?"); }
+                if user_id.is_some() {
+                    query.push_str(" WHERE user_id = ?");
+                }
                 query.push_str(" ORDER BY created_at DESC");
                 let mut q = sqlx::query_as::<_, AgentRow>(&query);
-                if let Some(uid) = user_id { q = q.bind(uid); }
+                if let Some(uid) = user_id {
+                    q = q.bind(uid);
+                }
                 let rows = q.fetch_all(pool).await.map_err(|e| e.to_string())?;
                 Ok(rows.into_iter().map(|r| r.to_agent()).collect())
             })
-        }
-    ).await
+        },
+    )
+    .await
 }
 
 pub async fn get_agent_by_id(id: &str) -> Result<Option<Agent>, String> {
@@ -59,7 +82,11 @@ pub async fn get_agent_by_id(id: &str) -> Result<Option<Agent>, String> {
         |db| {
             let id = id.to_string();
             Box::pin(async move {
-                let doc = db.collection::<Document>("agents").find_one(doc! { "id": id }, None).await.map_err(|e| e.to_string())?;
+                let doc = db
+                    .collection::<Document>("agents")
+                    .find_one(doc! { "id": id }, None)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 Ok(doc.and_then(|d| normalize_doc(&d)))
             })
         },
@@ -73,8 +100,9 @@ pub async fn get_agent_by_id(id: &str) -> Result<Option<Agent>, String> {
                     .map_err(|e| e.to_string())?;
                 Ok(row.map(|r| r.to_agent()))
             })
-        }
-    ).await
+        },
+    )
+    .await
 }
 
 pub async fn create_agent(data: &Agent) -> Result<(), String> {
@@ -142,7 +170,8 @@ pub async fn update_agent(id: &str, updates: &Agent) -> Result<(), String> {
     let now_mongo = now.clone();
     let now_sqlite = now.clone();
     let mcp_json = serde_json::to_string(&updates.mcp_config_ids).unwrap_or("[]".to_string());
-    let callable_json = serde_json::to_string(&updates.callable_agent_ids).unwrap_or("[]".to_string());
+    let callable_json =
+        serde_json::to_string(&updates.callable_agent_ids).unwrap_or("[]".to_string());
     let updates_mongo = updates.clone();
     let updates_sqlite = updates.clone();
     let mcp_json_mongo = mcp_json.clone();
@@ -198,19 +227,30 @@ pub async fn delete_agent(id: &str) -> Result<(), String> {
         |db| {
             let id = id.to_string();
             Box::pin(async move {
-                db.collection::<Document>("agents").delete_one(doc! { "id": &id }, None).await.map_err(|e| e.to_string())?;
-                db.collection::<Document>("agent_applications").delete_many(doc! { "agent_id": &id }, None).await.map_err(|e| e.to_string())?;
+                db.collection::<Document>("agents")
+                    .delete_one(doc! { "id": &id }, None)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                db.collection::<Document>("agent_applications")
+                    .delete_many(doc! { "agent_id": &id }, None)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 Ok(())
             })
         },
         |pool| {
             let id = id.to_string();
             Box::pin(async move {
-                sqlx::query("DELETE FROM agents WHERE id = ?").bind(&id).execute(pool).await.map_err(|e| e.to_string())?;
+                sqlx::query("DELETE FROM agents WHERE id = ?")
+                    .bind(&id)
+                    .execute(pool)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 Ok(())
             })
-        }
-    ).await
+        },
+    )
+    .await
 }
 
 pub async fn get_app_ids_for_agent(agent_id: &str) -> Result<Vec<String>, String> {
@@ -218,10 +258,16 @@ pub async fn get_app_ids_for_agent(agent_id: &str) -> Result<Vec<String>, String
         |db| {
             let agent_id = agent_id.to_string();
             Box::pin(async move {
-                let mut cursor = db.collection::<Document>("agent_applications").find(doc! { "agent_id": agent_id }, None).await.map_err(|e| e.to_string())?;
+                let mut cursor = db
+                    .collection::<Document>("agent_applications")
+                    .find(doc! { "agent_id": agent_id }, None)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 let mut out = Vec::new();
                 while let Some(doc) = cursor.try_next().await.map_err(|e| e.to_string())? {
-                    if let Ok(app_id) = doc.get_str("application_id") { out.push(app_id.to_string()); }
+                    if let Ok(app_id) = doc.get_str("application_id") {
+                        out.push(app_id.to_string());
+                    }
                 }
                 Ok(out)
             })
@@ -229,11 +275,12 @@ pub async fn get_app_ids_for_agent(agent_id: &str) -> Result<Vec<String>, String
         |pool| {
             let agent_id = agent_id.to_string();
             Box::pin(async move {
-                let rows = sqlx::query("SELECT application_id FROM agent_applications WHERE agent_id = ?")
-                    .bind(&agent_id)
-                    .fetch_all(pool)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                let rows =
+                    sqlx::query("SELECT application_id FROM agent_applications WHERE agent_id = ?")
+                        .bind(&agent_id)
+                        .fetch_all(pool)
+                        .await
+                        .map_err(|e| e.to_string())?;
                 let mut out = Vec::new();
                 for row in rows {
                     let app_id: String = row.try_get("application_id").unwrap_or_default();
@@ -241,8 +288,9 @@ pub async fn get_app_ids_for_agent(agent_id: &str) -> Result<Vec<String>, String
                 }
                 Ok(out)
             })
-        }
-    ).await
+        },
+    )
+    .await
 }
 
 pub async fn set_app_ids_for_agent(agent_id: &str, app_ids: &[String]) -> Result<(), String> {
@@ -281,5 +329,3 @@ pub async fn set_app_ids_for_agent(agent_id: &str, app_ids: &[String]) -> Result
         }
     ).await
 }
-
-

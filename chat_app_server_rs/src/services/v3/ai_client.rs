@@ -1,14 +1,14 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tracing::info;
 use tracing::warn;
 
-use crate::services::v3::ai_request_handler::{AiRequestHandler, StreamCallbacks};
-use crate::services::v3::message_manager::MessageManager;
-use crate::services::v3::mcp_tool_execute::{McpToolExecute, ToolResult};
 use crate::services::user_settings::AiClientSettings;
+use crate::services::v3::ai_request_handler::{AiRequestHandler, StreamCallbacks};
+use crate::services::v3::mcp_tool_execute::{McpToolExecute, ToolResult};
+use crate::services::v3::message_manager::MessageManager;
 use crate::utils::abort_registry;
 
 #[derive(Clone)]
@@ -51,7 +51,11 @@ pub struct AiClient {
 }
 
 impl AiClient {
-    pub fn new(ai_request_handler: AiRequestHandler, mcp_tool_execute: McpToolExecute, message_manager: MessageManager) -> Self {
+    pub fn new(
+        ai_request_handler: AiRequestHandler,
+        mcp_tool_execute: McpToolExecute,
+        message_manager: MessageManager,
+    ) -> Self {
         Self {
             ai_request_handler,
             mcp_tool_execute,
@@ -100,19 +104,36 @@ impl AiClient {
         let mut previous_response_id: Option<String> = None;
         if !prefer_stateless {
             if let Some(sid) = session_id.as_ref() {
-                let limit = if history_limit > 0 { Some(history_limit) } else { None };
-                previous_response_id = self.message_manager.get_last_response_id(sid, limit.unwrap_or(50)).await;
+                let limit = if history_limit > 0 {
+                    Some(history_limit)
+                } else {
+                    None
+                };
+                previous_response_id = self
+                    .message_manager
+                    .get_last_response_id(sid, limit.unwrap_or(50))
+                    .await;
             }
         }
 
         let raw_input = extract_raw_input(&messages);
-        let force_text_content = session_id.as_ref().map(|s| self.force_text_content_sessions.contains(s)).unwrap_or(false);
+        let force_text_content = session_id
+            .as_ref()
+            .map(|s| self.force_text_content_sessions.contains(s))
+            .unwrap_or(false);
         let available_tools = self.mcp_tool_execute.get_available_tools();
         let include_tool_items = !available_tools.is_empty();
 
-        let allow_prev_id = session_id.as_ref().map(|s| !self.prev_response_id_disabled_sessions.contains(s)).unwrap_or(true);
-        let provider_allows_prev = provider == "gpt" && base_url_allows_prev(self.ai_request_handler.base_url());
-        let use_prev_id = !prefer_stateless && previous_response_id.is_some() && allow_prev_id && provider_allows_prev;
+        let allow_prev_id = session_id
+            .as_ref()
+            .map(|s| !self.prev_response_id_disabled_sessions.contains(s))
+            .unwrap_or(true);
+        let provider_allows_prev =
+            provider == "gpt" && base_url_allows_prev(self.ai_request_handler.base_url());
+        let use_prev_id = !prefer_stateless
+            && previous_response_id.is_some()
+            && allow_prev_id
+            && provider_allows_prev;
         let stateless_history_limit = if !use_prev_id && history_limit == 0 {
             warn!("[AI_V3] history_limit=0 with stateless mode; fallback to 20");
             20
@@ -130,7 +151,16 @@ impl AiClient {
             normalize_input_for_provider(&raw_input, force_text_content)
         } else {
             let current_items = build_current_input_items(&raw_input, force_text_content);
-            Value::Array(self.build_stateless_items(session_id.clone(), stateless_history_limit, force_text_content, &current_items, include_tool_items).await)
+            Value::Array(
+                self.build_stateless_items(
+                    session_id.clone(),
+                    stateless_history_limit,
+                    force_text_content,
+                    &current_items,
+                    include_tool_items,
+                )
+                .await,
+            )
         };
 
         self.process_with_tools(
@@ -152,7 +182,8 @@ impl AiClient {
             raw_input,
             stateless_history_limit,
             force_text_content,
-        ).await
+        )
+        .await
     }
 
     async fn process_with_tools(
@@ -187,7 +218,9 @@ impl AiClient {
 
         loop {
             if let Some(sid) = session_id.as_ref() {
-                if abort_registry::is_aborted(sid) { return Err("aborted".to_string()); }
+                if abort_registry::is_aborted(sid) {
+                    return Err("aborted".to_string());
+                }
             }
             if iteration >= self.max_iterations {
                 return Err("达到最大迭代次数".to_string());
@@ -199,24 +232,39 @@ impl AiClient {
             let mut last_error: Option<String> = None;
 
             for _attempt in 0..3 {
-                let req = self.ai_request_handler.handle_request(
-                    input.clone(),
-                    model.clone(),
-                    system_prompt.clone(),
-                    if use_prev_id { previous_response_id.clone() } else { None },
-                    if tools.is_empty() { None } else { Some(tools.clone()) },
-                    Some(temperature),
-                    max_tokens,
-                    StreamCallbacks {
-                        on_chunk: callbacks.on_chunk.clone(),
-                        on_thinking: if reasoning_enabled { callbacks.on_thinking.clone() } else { None },
-                    },
-                    Some(provider.clone()),
-                    thinking_level.clone(),
-                    session_id.clone(),
-                    callbacks.on_chunk.is_some() || callbacks.on_thinking.is_some(),
-                    purpose,
-                ).await;
+                let req = self
+                    .ai_request_handler
+                    .handle_request(
+                        input.clone(),
+                        model.clone(),
+                        system_prompt.clone(),
+                        if use_prev_id {
+                            previous_response_id.clone()
+                        } else {
+                            None
+                        },
+                        if tools.is_empty() {
+                            None
+                        } else {
+                            Some(tools.clone())
+                        },
+                        Some(temperature),
+                        max_tokens,
+                        StreamCallbacks {
+                            on_chunk: callbacks.on_chunk.clone(),
+                            on_thinking: if reasoning_enabled {
+                                callbacks.on_thinking.clone()
+                            } else {
+                                None
+                            },
+                        },
+                        Some(provider.clone()),
+                        thinking_level.clone(),
+                        session_id.clone(),
+                        callbacks.on_chunk.is_some() || callbacks.on_thinking.is_some(),
+                        purpose,
+                    )
+                    .await;
 
                 match req {
                     Ok(resp) => {
@@ -231,8 +279,17 @@ impl AiClient {
                             if let Some(sid) = session_id.as_ref() {
                                 self.prev_response_id_disabled_sessions.insert(sid.clone());
                             }
-                            let current_items = build_current_input_items(&raw_input, force_text_content);
-                            let stateless = self.build_stateless_items(session_id.clone(), history_limit, force_text_content, &current_items, include_tool_items).await;
+                            let current_items =
+                                build_current_input_items(&raw_input, force_text_content);
+                            let stateless = self
+                                .build_stateless_items(
+                                    session_id.clone(),
+                                    history_limit,
+                                    force_text_content,
+                                    &current_items,
+                                    include_tool_items,
+                                )
+                                .await;
                             if !stateless.is_empty() {
                                 use_prev_id = false;
                                 previous_response_id = None;
@@ -244,14 +301,26 @@ impl AiClient {
                             if let Some(sid) = session_id.as_ref() {
                                 self.prev_response_id_disabled_sessions.insert(sid.clone());
                             }
-                            let current_items = build_current_input_items(&raw_input, force_text_content);
-                            let mut stateless = self.build_stateless_items(session_id.clone(), history_limit, force_text_content, &current_items, include_tool_items).await;
+                            let current_items =
+                                build_current_input_items(&raw_input, force_text_content);
+                            let mut stateless = self
+                                .build_stateless_items(
+                                    session_id.clone(),
+                                    history_limit,
+                                    force_text_content,
+                                    &current_items,
+                                    include_tool_items,
+                                )
+                                .await;
                             if include_tool_items {
                                 let mut call_ids: HashSet<String> = HashSet::new();
                                 if let Some(calls) = pending_tool_calls.as_ref() {
                                     for c in calls {
-                                        if let Some(id) = c.get("call_id").and_then(|v| v.as_str()) {
-                                            if !id.is_empty() { call_ids.insert(id.to_string()); }
+                                        if let Some(id) = c.get("call_id").and_then(|v| v.as_str())
+                                        {
+                                            if !id.is_empty() {
+                                                call_ids.insert(id.to_string());
+                                            }
                                         }
                                     }
                                     stateless.extend(calls.clone());
@@ -260,12 +329,16 @@ impl AiClient {
                                     if call_ids.is_empty() {
                                         // no matching tool calls -> skip outputs to avoid invalid input
                                     } else {
-                                        let filtered: Vec<Value> = outputs.iter().filter(|o| {
-                                            o.get("call_id")
-                                                .and_then(|v| v.as_str())
-                                                .map(|id| call_ids.contains(id))
-                                                .unwrap_or(false)
-                                        }).cloned().collect();
+                                        let filtered: Vec<Value> = outputs
+                                            .iter()
+                                            .filter(|o| {
+                                                o.get("call_id")
+                                                    .and_then(|v| v.as_str())
+                                                    .map(|id| call_ids.contains(id))
+                                                    .unwrap_or(false)
+                                            })
+                                            .cloned()
+                                            .collect();
                                         stateless.extend(filtered);
                                     }
                                 }
@@ -296,11 +369,18 @@ impl AiClient {
             };
 
             if let Some(sid) = session_id.as_ref() {
-                if abort_registry::is_aborted(sid) { return Err("aborted".to_string()); }
+                if abort_registry::is_aborted(sid) {
+                    return Err("aborted".to_string());
+                }
             }
 
             let tool_calls = ai_response.tool_calls.clone();
-            if tool_calls.as_ref().and_then(|v| v.as_array()).map(|a| a.is_empty()).unwrap_or(true) {
+            if tool_calls
+                .as_ref()
+                .and_then(|v| v.as_array())
+                .map(|a| a.is_empty())
+                .unwrap_or(true)
+            {
                 return Ok(json!({
                     "success": true,
                     "content": ai_response.content,
@@ -312,17 +392,27 @@ impl AiClient {
             }
 
             let tool_calls_val = tool_calls.unwrap_or(Value::Array(vec![]));
-            if let Some(cb) = &callbacks.on_tools_start { cb(tool_calls_val.clone()); }
+            if let Some(cb) = &callbacks.on_tools_start {
+                cb(tool_calls_val.clone());
+            }
             let tool_calls_arr = tool_calls_val.as_array().cloned().unwrap_or_default();
             let tool_call_items = build_tool_call_items(&tool_calls_arr);
 
             let build_aborted_results = |existing: Option<&Vec<ToolResult>>| -> Vec<ToolResult> {
                 let mut results = existing.cloned().unwrap_or_default();
-                let mut present: HashSet<String> = results.iter().map(|r| r.tool_call_id.clone()).collect();
+                let mut present: HashSet<String> =
+                    results.iter().map(|r| r.tool_call_id.clone()).collect();
                 for tc in &tool_calls_arr {
-                    let id = tc.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    if id.is_empty() || present.contains(&id) { continue; }
-                    let name = tc.get("function")
+                    let id = tc
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    if id.is_empty() || present.contains(&id) {
+                        continue;
+                    }
+                    let name = tc
+                        .get("function")
                         .and_then(|f| f.get("name"))
                         .and_then(|v| v.as_str())
                         .or_else(|| tc.get("name").and_then(|v| v.as_str()))
@@ -349,7 +439,15 @@ impl AiClient {
                             "success": result.success,
                             "isError": result.is_error
                         });
-                        let _ = self.message_manager.save_tool_message(sid, &result.content, &result.tool_call_id, Some(meta)).await;
+                        let _ = self
+                            .message_manager
+                            .save_tool_message(
+                                sid,
+                                &result.content,
+                                &result.tool_call_id,
+                                Some(meta),
+                            )
+                            .await;
                     }
                     return Err("aborted".to_string());
                 }
@@ -359,17 +457,18 @@ impl AiClient {
                 let sid = session_id.clone();
                 std::sync::Arc::new(move |result: &ToolResult| {
                     if let Some(ref sid) = sid {
-                        if abort_registry::is_aborted(sid) { return; }
+                        if abort_registry::is_aborted(sid) {
+                            return;
+                        }
                     }
                     cb(serde_json::to_value(result).unwrap_or(json!({})));
                 }) as std::sync::Arc<dyn Fn(&ToolResult) + Send + Sync>
             });
 
-            let tool_results = self.mcp_tool_execute.execute_tools_stream(
-                &tool_calls_arr,
-                session_id.as_deref(),
-                on_tools_stream_cb
-            ).await;
+            let tool_results = self
+                .mcp_tool_execute
+                .execute_tools_stream(&tool_calls_arr, session_id.as_deref(), on_tools_stream_cb)
+                .await;
 
             if let Some(sid) = session_id.as_ref() {
                 if abort_registry::is_aborted(sid) {
@@ -380,7 +479,15 @@ impl AiClient {
                             "success": result.success,
                             "isError": result.is_error
                         });
-                        let _ = self.message_manager.save_tool_message(sid, &result.content, &result.tool_call_id, Some(meta)).await;
+                        let _ = self
+                            .message_manager
+                            .save_tool_message(
+                                sid,
+                                &result.content,
+                                &result.tool_call_id,
+                                Some(meta),
+                            )
+                            .await;
                     }
                     return Err("aborted".to_string());
                 }
@@ -397,17 +504,23 @@ impl AiClient {
                         "success": result.success,
                         "isError": result.is_error
                     });
-                    let _ = self.message_manager.save_tool_message(sid, &result.content, &result.tool_call_id, Some(meta)).await;
+                    let _ = self
+                        .message_manager
+                        .save_tool_message(sid, &result.content, &result.tool_call_id, Some(meta))
+                        .await;
                 }
             }
 
-            let tool_outputs: Vec<Value> = tool_results.iter().map(|r| {
-                json!({
-                    "type": "function_call_output",
-                    "call_id": r.tool_call_id,
-                    "output": r.content
+            let tool_outputs: Vec<Value> = tool_results
+                .iter()
+                .map(|r| {
+                    json!({
+                        "type": "function_call_output",
+                        "call_id": r.tool_call_id,
+                        "output": r.content
+                    })
                 })
-            }).collect();
+                .collect();
             pending_tool_outputs = Some(tool_outputs.clone());
             pending_tool_calls = Some(tool_call_items.clone());
 
@@ -424,9 +537,21 @@ impl AiClient {
 
             if !next_use_prev_id {
                 let current_items = build_current_input_items(&raw_input, force_text_content);
-                let mut stateless = self.build_stateless_items(session_id.clone(), history_limit, force_text_content, &current_items, include_tool_items).await;
+                let mut stateless = self
+                    .build_stateless_items(
+                        session_id.clone(),
+                        history_limit,
+                        force_text_content,
+                        &current_items,
+                        include_tool_items,
+                    )
+                    .await;
                 if !ai_response.content.is_empty() {
-                    stateless.push(to_message_item("assistant", &Value::String(ai_response.content.clone()), force_text_content));
+                    stateless.push(to_message_item(
+                        "assistant",
+                        &Value::String(ai_response.content.clone()),
+                        force_text_content,
+                    ));
                 }
                 if include_tool_items {
                     stateless.extend(tool_call_items);
@@ -458,17 +583,31 @@ impl AiClient {
         let mut tool_output_ids: HashSet<String> = HashSet::new();
         if let Some(sid) = session_id.as_ref() {
             if history_limit != 0 {
-                let limit = if history_limit > 0 { Some(history_limit) } else { None };
+                let limit = if history_limit > 0 {
+                    Some(history_limit)
+                } else {
+                    None
+                };
                 let summary_limit = Some(2);
-                let (summaries, history) = self.message_manager.get_session_history_with_summaries(sid, limit, summary_limit).await;
+                let (summaries, history) = self
+                    .message_manager
+                    .get_session_history_with_summaries(sid, limit, summary_limit)
+                    .await;
                 let has_summary_table = !summaries.is_empty();
                 summary_count = summaries.len();
                 history_count = history.len();
                 if has_summary_table {
                     for summary in summaries {
                         if !summary.summary_text.is_empty() {
-                            let content = format!("以下是之前对话与工具调用的摘要（可视为“压缩记忆”）：\n\n{}", summary.summary_text);
-                            items.push(to_message_item("system", &Value::String(content), force_text));
+                            let content = format!(
+                                "以下是之前对话与工具调用的摘要（可视为“压缩记忆”）：\n\n{}",
+                                summary.summary_text
+                            );
+                            items.push(to_message_item(
+                                "system",
+                                &Value::String(content),
+                                force_text,
+                            ));
                         }
                     }
                 }
@@ -476,24 +615,53 @@ impl AiClient {
                     for msg in &history {
                         if msg.role == "tool" {
                             if let Some(call_id) = msg.tool_call_id.clone() {
-                                if !call_id.is_empty() { tool_output_ids.insert(call_id); }
+                                if !call_id.is_empty() {
+                                    tool_output_ids.insert(call_id);
+                                }
                             }
                         }
                     }
                 }
                 for msg in history {
-                    if msg.metadata.as_ref().and_then(|m| m.get("type")).and_then(|v| v.as_str()) == Some("session_summary") {
-                        if has_summary_table { continue; }
+                    if msg
+                        .metadata
+                        .as_ref()
+                        .and_then(|m| m.get("type"))
+                        .and_then(|v| v.as_str())
+                        == Some("session_summary")
+                    {
+                        if has_summary_table {
+                            continue;
+                        }
                         if let Some(summary) = msg.summary.clone() {
-                            let content = format!("以下是之前对话与工具调用的摘要（可视为“压缩记忆”）：\n\n{}", summary);
-                            items.push(to_message_item("system", &Value::String(content), force_text));
+                            let content = format!(
+                                "以下是之前对话与工具调用的摘要（可视为“压缩记忆”）：\n\n{}",
+                                summary
+                            );
+                            items.push(to_message_item(
+                                "system",
+                                &Value::String(content),
+                                force_text,
+                            ));
                         }
                         continue;
                     }
-                    if msg.role == "user" || msg.role == "assistant" || msg.role == "system" || msg.role == "developer" {
-                        items.push(to_message_item(&msg.role, &Value::String(msg.content.clone()), force_text));
+                    if msg.role == "user"
+                        || msg.role == "assistant"
+                        || msg.role == "system"
+                        || msg.role == "developer"
+                    {
+                        items.push(to_message_item(
+                            &msg.role,
+                            &Value::String(msg.content.clone()),
+                            force_text,
+                        ));
                         if include_tool_items {
-                            let mut tool_calls = msg.tool_calls.clone().or_else(|| msg.metadata.as_ref().and_then(|m| m.get("toolCalls").cloned()));
+                            let mut tool_calls = msg.tool_calls.clone().or_else(|| {
+                                msg.metadata
+                                    .as_ref()
+                                    .and_then(|m| m.get("toolCalls").cloned())
+                            });
                             if let Some(Value::String(s)) = tool_calls.clone() {
                                 if let Ok(v) = serde_json::from_str::<Value>(&s) {
                                     tool_calls = Some(v);
@@ -502,17 +670,35 @@ impl AiClient {
                             if msg.role == "assistant" {
                                 if let Some(arr) = tool_calls.and_then(|v| v.as_array().cloned()) {
                                     for tc in arr {
-                                        let call_id = tc.get("id")
+                                        let call_id = tc
+                                            .get("id")
                                             .and_then(|v| v.as_str())
                                             .or_else(|| tc.get("call_id").and_then(|v| v.as_str()))
                                             .unwrap_or("")
                                             .to_string();
-                                        if call_id.is_empty() { continue; }
-                                        if !tool_output_ids.contains(&call_id) { continue; }
+                                        if call_id.is_empty() {
+                                            continue;
+                                        }
+                                        if !tool_output_ids.contains(&call_id) {
+                                            continue;
+                                        }
                                         let func = tc.get("function").cloned().unwrap_or(json!({}));
-                                        let name = func.get("name").and_then(|v| v.as_str()).or_else(|| tc.get("name").and_then(|v| v.as_str())).unwrap_or("").to_string();
-                                        let args = func.get("arguments").cloned().or_else(|| tc.get("arguments").cloned()).unwrap_or(Value::String("{}".to_string()));
-                                        let args_str = if let Some(s) = args.as_str() { s.to_string() } else { args.to_string() };
+                                        let name = func
+                                            .get("name")
+                                            .and_then(|v| v.as_str())
+                                            .or_else(|| tc.get("name").and_then(|v| v.as_str()))
+                                            .unwrap_or("")
+                                            .to_string();
+                                        let args = func
+                                            .get("arguments")
+                                            .cloned()
+                                            .or_else(|| tc.get("arguments").cloned())
+                                            .unwrap_or(Value::String("{}".to_string()));
+                                        let args_str = if let Some(s) = args.as_str() {
+                                            s.to_string()
+                                        } else {
+                                            args.to_string()
+                                        };
                                         tool_call_ids.insert(call_id.clone());
                                         items.push(json!({
                                             "type": "function_call",
@@ -563,7 +749,11 @@ impl AiClient {
 }
 
 fn extract_raw_input(messages: &[Value]) -> Value {
-    if let Some(last_user) = messages.iter().rev().find(|m| m.get("role").and_then(|v| v.as_str()) == Some("user")) {
+    if let Some(last_user) = messages
+        .iter()
+        .rev()
+        .find(|m| m.get("role").and_then(|v| v.as_str()) == Some("user"))
+    {
         if let Some(content) = last_user.get("content") {
             return convert_parts_to_response_input(content);
         }
@@ -593,7 +783,10 @@ fn convert_parts_to_response_input(content: &Value) -> Value {
                 if ptype == "input_image" {
                     let image_url = part.get("image_url").cloned().unwrap_or(Value::Null);
                     let file_id = part.get("file_id").cloned().unwrap_or(Value::Null);
-                    let detail = part.get("detail").cloned().unwrap_or(Value::String("auto".to_string()));
+                    let detail = part
+                        .get("detail")
+                        .cloned()
+                        .unwrap_or(Value::String("auto".to_string()));
                     content_list.push(json!({"type": "input_image", "image_url": image_url, "file_id": file_id, "detail": detail}));
                     continue;
                 }
@@ -604,7 +797,10 @@ fn convert_parts_to_response_input(content: &Value) -> Value {
                     }
                 }
                 if ptype == "image_url" {
-                    let url = part.get("image_url").and_then(|v| v.get("url")).and_then(|v| v.as_str())
+                    let url = part
+                        .get("image_url")
+                        .and_then(|v| v.get("url"))
+                        .and_then(|v| v.as_str())
                         .or_else(|| part.get("image_url").and_then(|v| v.as_str()))
                         .unwrap_or("");
                     content_list.push(json!({"type": "input_image", "image_url": url, "detail": part.get("detail").cloned().unwrap_or(Value::String("auto".to_string()))}));
@@ -617,7 +813,9 @@ fn convert_parts_to_response_input(content: &Value) -> Value {
             }
             content_list.push(json!({"type": "input_text", "text": part.to_string()}));
         }
-        return Value::Array(vec![json!({"role": "user", "content": content_list, "type": "message"})]);
+        return Value::Array(vec![
+            json!({"role": "user", "content": content_list, "type": "message"}),
+        ]);
     }
     Value::String(content.to_string())
 }
@@ -640,7 +838,9 @@ fn to_input_text_content(text: String) -> Value {
 }
 
 fn content_parts_to_text(content: &Value) -> String {
-    if let Some(s) = content.as_str() { return s.to_string(); }
+    if let Some(s) = content.as_str() {
+        return s.to_string();
+    }
     if let Some(arr) = content.as_array() {
         let mut parts = Vec::new();
         for part in arr {
@@ -649,16 +849,30 @@ fn content_parts_to_text(content: &Value) -> String {
                 continue;
             }
             if let Some(ptype) = part.get("type").and_then(|v| v.as_str()) {
-                if (ptype == "input_text" || ptype == "output_text" || ptype == "text") && part.get("text").and_then(|v| v.as_str()).is_some() {
-                    parts.push(part.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string());
+                if (ptype == "input_text" || ptype == "output_text" || ptype == "text")
+                    && part.get("text").and_then(|v| v.as_str()).is_some()
+                {
+                    parts.push(
+                        part.get("text")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                    );
                     continue;
                 }
                 if ptype == "input_image" || ptype == "image_url" {
-                    let url = part.get("image_url").and_then(|v| v.get("url")).and_then(|v| v.as_str())
+                    let url = part
+                        .get("image_url")
+                        .and_then(|v| v.get("url"))
+                        .and_then(|v| v.as_str())
                         .or_else(|| part.get("image_url").and_then(|v| v.as_str()))
                         .or_else(|| part.get("file_id").and_then(|v| v.as_str()))
                         .unwrap_or("");
-                    parts.push(if url.is_empty() { "[image]".to_string() } else { format!("[image:{}]", url) });
+                    parts.push(if url.is_empty() {
+                        "[image]".to_string()
+                    } else {
+                        format!("[image:{}]", url)
+                    });
                     continue;
                 }
             }
@@ -675,17 +889,23 @@ fn content_parts_to_text(content: &Value) -> String {
 
 fn normalize_input_to_text_value(input: &Value) -> Value {
     if let Some(arr) = input.as_array() {
-        let mapped: Vec<Value> = arr.iter().map(|item| {
-            if item.get("type").and_then(|v| v.as_str()) == Some("message") {
-                let content = item.get("content").cloned().unwrap_or(Value::Null);
-                let mut obj = item.clone();
-                if let Some(map) = obj.as_object_mut() {
-                    map.insert("content".to_string(), Value::String(content_parts_to_text(&content)));
+        let mapped: Vec<Value> = arr
+            .iter()
+            .map(|item| {
+                if item.get("type").and_then(|v| v.as_str()) == Some("message") {
+                    let content = item.get("content").cloned().unwrap_or(Value::Null);
+                    let mut obj = item.clone();
+                    if let Some(map) = obj.as_object_mut() {
+                        map.insert(
+                            "content".to_string(),
+                            Value::String(content_parts_to_text(&content)),
+                        );
+                    }
+                    return obj;
                 }
-                return obj;
-            }
-            item.clone()
-        }).collect();
+                item.clone()
+            })
+            .collect();
         return Value::Array(mapped);
     }
     input.clone()
@@ -710,21 +930,32 @@ fn build_current_input_items(raw_input: &Value, force_text: bool) -> Vec<Value> 
 fn build_tool_call_items(tool_calls_arr: &[Value]) -> Vec<Value> {
     let mut items = Vec::new();
     for tc in tool_calls_arr {
-        let call_id = tc.get("id")
+        let call_id = tc
+            .get("id")
             .and_then(|v| v.as_str())
             .or_else(|| tc.get("call_id").and_then(|v| v.as_str()))
             .unwrap_or("")
             .to_string();
-        if call_id.is_empty() { continue; }
+        if call_id.is_empty() {
+            continue;
+        }
         let func = tc.get("function").cloned().unwrap_or(json!({}));
-        let name = func.get("name").and_then(|v| v.as_str())
+        let name = func
+            .get("name")
+            .and_then(|v| v.as_str())
             .or_else(|| tc.get("name").and_then(|v| v.as_str()))
             .unwrap_or("")
             .to_string();
-        let args = func.get("arguments").cloned()
+        let args = func
+            .get("arguments")
+            .cloned()
             .or_else(|| tc.get("arguments").cloned())
             .unwrap_or(Value::String("{}".to_string()));
-        let args_str = if let Some(s) = args.as_str() { s.to_string() } else { args.to_string() };
+        let args_str = if let Some(s) = args.as_str() {
+            s.to_string()
+        } else {
+            args.to_string()
+        };
         items.push(json!({
             "type": "function_call",
             "call_id": call_id,
@@ -737,7 +968,8 @@ fn build_tool_call_items(tool_calls_arr: &[Value]) -> Vec<Value> {
 
 fn is_unsupported_previous_response_id_error(err: &str) -> bool {
     let msg = err.to_lowercase();
-    msg.contains("previous_response_id") && (msg.contains("unsupported parameter") || msg.contains("invalid parameter"))
+    msg.contains("previous_response_id")
+        && (msg.contains("unsupported parameter") || msg.contains("invalid parameter"))
 }
 
 fn base_url_allows_prev(base_url: &str) -> bool {
@@ -770,12 +1002,41 @@ fn is_missing_tool_call_error(err: &str) -> bool {
 
 impl AiClientSettings for AiClient {
     fn apply_settings(&mut self, effective: &Value) {
-        if let Some(v) = effective.get("MAX_ITERATIONS").and_then(|v| v.as_i64()) { self.max_iterations = v; }
-        if let Some(v) = effective.get("HISTORY_LIMIT").and_then(|v| v.as_i64()) { self.history_limit = v.max(0); }
-        if let Some(v) = effective.get("SUMMARY_MESSAGE_LIMIT").and_then(|v| v.as_i64()) { self.summary_threshold = v; }
-        if let Some(v) = effective.get("SUMMARY_KEEP_LAST_N").and_then(|v| v.as_i64()) { self.summary_keep_last_n = v; }
-        if let Some(v) = effective.get("SUMMARY_MAX_CONTEXT_TOKENS").and_then(|v| v.as_i64()) { self.max_context_tokens = Some(v); }
-        if let Some(v) = effective.get("SUMMARY_TARGET_TOKENS").and_then(|v| v.as_i64()) { self.target_summary_tokens = Some(v); }
-        if let Some(v) = effective.get("DYNAMIC_SUMMARY_ENABLED").and_then(|v| v.as_bool()) { self.dynamic_summary_enabled = v; }
+        if let Some(v) = effective.get("MAX_ITERATIONS").and_then(|v| v.as_i64()) {
+            self.max_iterations = v;
+        }
+        if let Some(v) = effective.get("HISTORY_LIMIT").and_then(|v| v.as_i64()) {
+            self.history_limit = v.max(0);
+        }
+        if let Some(v) = effective
+            .get("SUMMARY_MESSAGE_LIMIT")
+            .and_then(|v| v.as_i64())
+        {
+            self.summary_threshold = v;
+        }
+        if let Some(v) = effective
+            .get("SUMMARY_KEEP_LAST_N")
+            .and_then(|v| v.as_i64())
+        {
+            self.summary_keep_last_n = v;
+        }
+        if let Some(v) = effective
+            .get("SUMMARY_MAX_CONTEXT_TOKENS")
+            .and_then(|v| v.as_i64())
+        {
+            self.max_context_tokens = Some(v);
+        }
+        if let Some(v) = effective
+            .get("SUMMARY_TARGET_TOKENS")
+            .and_then(|v| v.as_i64())
+        {
+            self.target_summary_tokens = Some(v);
+        }
+        if let Some(v) = effective
+            .get("DYNAMIC_SUMMARY_ENABLED")
+            .and_then(|v| v.as_bool())
+        {
+            self.dynamic_summary_enabled = v;
+        }
     }
 }
