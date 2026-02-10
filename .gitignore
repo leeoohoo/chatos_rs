@@ -16,3 +16,4 @@ logs/
 *.sln
 *.sw?   
 target/
+data/

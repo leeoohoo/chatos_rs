@@ -28,6 +28,7 @@ pub struct TerminalSession {
     current_cwd: Mutex<PathBuf>,
     input_line: Mutex<String>,
     busy: AtomicBool,
+    root_reset_in_progress: AtomicBool,
     last_input_at: AtomicU64,
     last_output_at: AtomicU64,
     last_prompt_at: AtomicU64,
@@ -77,6 +78,7 @@ impl TerminalSession {
             current_cwd: Mutex::new(root_cwd),
             input_line: Mutex::new(String::new()),
             busy: AtomicBool::new(false),
+            root_reset_in_progress: AtomicBool::new(false),
             last_input_at: AtomicU64::new(0),
             last_output_at: AtomicU64::new(0),
             last_prompt_at: AtomicU64::new(0),
@@ -251,6 +253,11 @@ impl TerminalSession {
                     line.clear();
                     forward.push(ch);
                 }
+                c if c as u32 == 9 => {
+                    // Keep tab so we can detect completion-based cd attempts at submit time.
+                    line.push(ch);
+                    forward.push(ch);
+                }
                 _ if ch.is_control() => {
                     forward.push(ch);
                 }
@@ -275,11 +282,42 @@ impl TerminalSession {
         };
 
         if !path_is_within_root(parsed_cwd.as_path(), self.root_cwd.as_path()) {
+            self.reset_shell_to_root(parsed_cwd.as_path());
             return;
         }
 
+        self.root_reset_in_progress.store(false, Ordering::Relaxed);
+
         if let Ok(mut cwd_guard) = self.current_cwd.lock() {
             *cwd_guard = parsed_cwd;
+        }
+    }
+
+    fn reset_shell_to_root(&self, escaped_cwd: &Path) {
+        if self.root_reset_in_progress.swap(true, Ordering::Relaxed) {
+            return;
+        }
+
+        self.emit_guard_output(
+            format!(
+                "Blocked: path escaped terminal root ({}). Resetting to {}",
+                escaped_cwd.display(),
+                self.root_cwd.display()
+            )
+            .as_str(),
+        );
+
+        if let Ok(mut line) = self.input_line.lock() {
+            line.clear();
+        }
+        if let Ok(mut cwd_guard) = self.current_cwd.lock() {
+            *cwd_guard = self.root_cwd.clone();
+        }
+
+        let restore = build_return_to_root_command(self.root_cwd.as_path());
+        if let Ok(mut writer) = self.writer.lock() {
+            let _ = writer.write_all(restore.as_bytes());
+            let _ = writer.flush();
         }
     }
 
@@ -742,6 +780,10 @@ fn normalize_path_for_compare(path: &Path) -> String {
     normalized
 }
 
+fn build_return_to_root_command(root: &Path) -> String {
+    format!("cd {}\n", root.display())
+}
+
 fn now_millis() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
@@ -804,9 +846,11 @@ fn is_prompt_line(line: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        extract_prompt_cwd, input_triggers_busy, is_prompt_line, normalize_path_for_compare,
-        path_is_within_root, sanitize_command_line_for_guard, validate_directory_change_command,
+        build_return_to_root_command, extract_prompt_cwd, input_triggers_busy, is_prompt_line,
+        normalize_path_for_compare, path_is_within_root, sanitize_command_line_for_guard,
+        validate_directory_change_command,
     };
+    use std::path::Path;
 
     #[test]
     fn input_only_marks_busy_when_it_can_change_foreground_command() {
@@ -981,5 +1025,21 @@ mod tests {
         let raw = "\x1b[200~cd /Users/lilei/\tproject\x1b[201~";
         let sanitized = sanitize_command_line_for_guard(raw);
         assert_eq!(sanitized, "cd /Users/lilei/\tproject");
+    }
+
+    #[test]
+    fn build_return_to_root_command_navigates_back_to_root() {
+        let root = if cfg!(windows) {
+            Path::new("C:\\repo\\sandbox")
+        } else {
+            Path::new("/tmp/repo/sandbox")
+        };
+        let command = build_return_to_root_command(root);
+
+        if cfg!(windows) {
+            assert_eq!(command, "cd C:\\repo\\sandbox\n");
+        } else {
+            assert_eq!(command, "cd /tmp/repo/sandbox\n");
+        }
     }
 }
