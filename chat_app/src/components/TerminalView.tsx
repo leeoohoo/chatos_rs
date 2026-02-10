@@ -16,6 +16,19 @@ interface TerminalViewProps {
 type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'error';
 type HistoryState = 'idle' | 'loading' | 'ready' | 'error';
 
+interface CommandHistoryItem {
+  id: string;
+  command: string;
+  createdAt: string;
+}
+
+interface CommandParseState {
+  lineBuffer: string;
+  skipFollowingLf: boolean;
+}
+
+const MAX_COMMAND_HISTORY = 200;
+
 const buildWsUrl = (baseUrl: string, path: string) => {
   const cleanedBase = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
   const cleanedPath = path.startsWith('/') ? path : `/${path}`;
@@ -76,6 +89,114 @@ const getThemeColors = (theme: 'light' | 'dark') => {
   };
 };
 
+const createInitialCommandParseState = (): CommandParseState => ({
+  lineBuffer: '',
+  skipFollowingLf: false,
+});
+
+const stripInputControlSequences = (input: string): string => (
+  input
+    .replace(/\u001b\][^\u001b\u0007]*(?:\u0007|\u001b\\)/g, '')
+    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '')
+    .replace(/\u001b[@-Z\\-_]/g, '')
+);
+
+const parseInputChunkForCommands = (
+  chunk: string,
+  state: CommandParseState,
+): { commands: string[]; nextState: CommandParseState } => {
+  const commands: string[] = [];
+  let lineBuffer = state.lineBuffer;
+  let skipFollowingLf = state.skipFollowingLf;
+  const cleaned = stripInputControlSequences(chunk);
+
+  for (const ch of cleaned) {
+    if (skipFollowingLf && ch !== '\n') {
+      skipFollowingLf = false;
+    }
+
+    if (ch === '\r' || ch === '\n') {
+      if (skipFollowingLf && ch === '\n') {
+        skipFollowingLf = false;
+        continue;
+      }
+
+      const command = lineBuffer.trim();
+      if (command) {
+        commands.push(command);
+      }
+      lineBuffer = '';
+      skipFollowingLf = ch === '\r';
+      continue;
+    }
+
+    if (ch === '\u0008' || ch === '\u007f') {
+      lineBuffer = lineBuffer.slice(0, -1);
+      continue;
+    }
+
+    if (ch === '\u0015') {
+      lineBuffer = '';
+      continue;
+    }
+
+    if (ch === '\u0003' || ch === '\u0004' || ch === '\u001a') {
+      lineBuffer = '';
+      continue;
+    }
+
+    if (ch < ' ' || ch === '\u007f') {
+      continue;
+    }
+
+    lineBuffer += ch;
+  }
+
+  return {
+    commands,
+    nextState: {
+      lineBuffer,
+      skipFollowingLf,
+    },
+  };
+};
+
+const normalizeLogTimestamp = (value: Date | string | undefined): string => {
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.toISOString();
+    }
+  }
+  return new Date().toISOString();
+};
+
+const formatCommandTime = (value: string): string => {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return '--:--:--';
+  }
+  return parsed.toLocaleTimeString('zh-CN', {
+    hour12: false,
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+};
+
+const writeToTerminal = (term: XTerm, data: string): Promise<void> => (
+  new Promise((resolve) => {
+    if (!data) {
+      resolve();
+      return;
+    }
+    term.write(data, () => resolve());
+  })
+);
+
 export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
   const {
     currentTerminal,
@@ -89,11 +210,15 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
   const socketRef = useRef<WebSocket | null>(null);
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const dataHandlerRef = useRef<ReturnType<XTerm['onData']> | null>(null);
+  const inputForwardEnabledRef = useRef(false);
+  const commandParseStateRef = useRef<CommandParseState>(createInitialCommandParseState());
+  const commandSeqRef = useRef(0);
 
   const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected');
   const [historyState, setHistoryState] = useState<HistoryState>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [connectSeq, setConnectSeq] = useState(0);
+  const [commandHistory, setCommandHistory] = useState<CommandHistoryItem[]>([]);
 
   const client = apiClientFromContext ?? apiClient;
   const apiBaseUrl = client.getBaseUrl();
@@ -103,6 +228,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
   const terminalStatus = currentTerminal?.status || 'unknown';
 
   const themeColors = useMemo(() => getThemeColors(actualTheme), [actualTheme]);
+  const displayHistory = useMemo(() => [...commandHistory].reverse(), [commandHistory]);
 
   useEffect(() => {
     const term = terminalRef.current;
@@ -116,9 +242,14 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
       return;
     }
 
+    let cancelled = false;
+
+    commandParseStateRef.current = createInitialCommandParseState();
+    setCommandHistory([]);
     setHistoryState('loading');
     setConnectionState('disconnected');
     setErrorMessage(null);
+    inputForwardEnabledRef.current = false;
 
     const term = new XTerm({
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
@@ -139,6 +270,27 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
     fitRef.current = fitAddon;
 
     dataHandlerRef.current = term.onData((data) => {
+      if (!inputForwardEnabledRef.current) {
+        return;
+      }
+
+      const parsed = parseInputChunkForCommands(data, commandParseStateRef.current);
+      commandParseStateRef.current = parsed.nextState;
+      if (parsed.commands.length > 0) {
+        const createdAt = new Date().toISOString();
+        setCommandHistory((prev) => {
+          const next = [...prev];
+          for (const command of parsed.commands) {
+            next.push({
+              id: `cmd-${commandSeqRef.current++}`,
+              command,
+              createdAt,
+            });
+          }
+          return next.slice(-MAX_COMMAND_HISTORY);
+        });
+      }
+
       const ws = socketRef.current;
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'input', data }));
@@ -160,24 +312,66 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
     const loadHistory = async () => {
       try {
         const logs = await client.listTerminalLogs(currentTerminal.id);
+        if (cancelled) {
+          return;
+        }
+
         const normalized = Array.isArray(logs) ? logs.map(normalizeTerminalLog) : [];
+
         const outputLogs = normalized.filter((log: TerminalLog) => log.logType === 'output' || log.logType === 'system');
         for (const log of outputLogs) {
-          term.write(log.content);
+          await writeToTerminal(term, log.content);
         }
+
+        if (cancelled) {
+          return;
+        }
+
+        const parsedCommands: CommandHistoryItem[] = [];
+        let parseState = createInitialCommandParseState();
+
+        for (const log of normalized) {
+          if (log.logType !== 'input') {
+            continue;
+          }
+          const parsed = parseInputChunkForCommands(log.content, parseState);
+          parseState = parsed.nextState;
+          if (parsed.commands.length === 0) {
+            continue;
+          }
+
+          const createdAt = normalizeLogTimestamp(log.createdAt);
+          for (const command of parsed.commands) {
+            parsedCommands.push({
+              id: `cmd-${commandSeqRef.current++}`,
+              command,
+              createdAt,
+            });
+          }
+        }
+
+        commandParseStateRef.current = parseState;
+        setCommandHistory(parsedCommands.slice(-MAX_COMMAND_HISTORY));
         setHistoryState('ready');
       } catch (error) {
+        if (cancelled) {
+          return;
+        }
         console.error('Failed to load terminal history:', error);
         setHistoryState('error');
         setErrorMessage(error instanceof Error ? error.message : '加载历史失败');
       } finally {
-        setConnectSeq((prev) => prev + 1);
+        if (!cancelled) {
+          setConnectSeq((prev) => prev + 1);
+        }
       }
     };
 
     loadHistory();
 
     return () => {
+      cancelled = true;
+      inputForwardEnabledRef.current = false;
       socketRef.current?.close();
       socketRef.current = null;
       dataHandlerRef.current?.dispose();
@@ -198,29 +392,41 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
 
     const wsUrl = buildWsUrl(apiBaseUrl, `/terminals/${currentTerminal.id}/ws`);
     setConnectionState('connecting');
+    inputForwardEnabledRef.current = false;
+
     const ws = new WebSocket(wsUrl);
     socketRef.current = ws;
 
     ws.onopen = () => {
+      if (socketRef.current !== ws) {
+        return;
+      }
       setConnectionState('connected');
       const term = terminalRef.current;
       if (term) {
         ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
       }
+      inputForwardEnabledRef.current = true;
     };
 
     ws.onmessage = (event) => {
+      if (socketRef.current !== ws) {
+        return;
+      }
+
       try {
         const payload = JSON.parse(event.data);
         if (payload?.type === 'output') {
           terminalRef.current?.write(payload.data ?? '');
         } else if (payload?.type === 'exit') {
+          inputForwardEnabledRef.current = false;
           setConnectionState('disconnected');
           loadTerminals();
         } else if (payload?.type === 'state') {
           loadTerminals();
         } else if (payload?.type === 'error') {
           setErrorMessage(payload.error || '终端发生错误');
+          inputForwardEnabledRef.current = false;
           setConnectionState('error');
         }
       } catch (err) {
@@ -229,18 +435,30 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
     };
 
     ws.onerror = () => {
+      if (socketRef.current !== ws) {
+        return;
+      }
+      inputForwardEnabledRef.current = false;
       setConnectionState('error');
     };
 
     ws.onclose = () => {
+      if (socketRef.current !== ws) {
+        return;
+      }
+      inputForwardEnabledRef.current = false;
       setConnectionState('disconnected');
       loadTerminals();
     };
 
     return () => {
+      inputForwardEnabledRef.current = false;
+      if (socketRef.current === ws) {
+        socketRef.current = null;
+      }
       ws.close();
     };
-  }, [currentTerminal?.id, historyState, apiBaseUrl, connectSeq]);
+  }, [currentTerminal?.id, historyState, apiBaseUrl, connectSeq, loadTerminals]);
 
   useEffect(() => {
     loadTerminals();
@@ -290,8 +508,34 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
         <div className="px-4 py-2 text-xs text-destructive">{errorMessage}</div>
       )}
 
-      <div className="flex-1 overflow-hidden bg-background">
-        <div ref={containerRef} className="h-full w-full" />
+      <div className="flex flex-1 overflow-hidden bg-background">
+        <div className="min-w-0 flex-1 overflow-hidden">
+          <div ref={containerRef} className="h-full w-full" />
+        </div>
+
+        <div className="w-80 max-w-[45%] shrink-0 border-l border-border bg-card/40">
+          <div className="border-b border-border px-3 py-2">
+            <div className="text-sm font-medium text-foreground">历史命令</div>
+            <div className="text-xs text-muted-foreground">{commandHistory.length} 条（仅当前终端）</div>
+          </div>
+
+          <div className="h-[calc(100%-53px)] overflow-y-auto p-2">
+            {displayHistory.length === 0 ? (
+              <div className="rounded border border-dashed border-border px-3 py-4 text-xs text-muted-foreground">
+                暂无命令，执行后会显示在这里
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {displayHistory.map((item) => (
+                  <div key={item.id} className="rounded border border-border/60 bg-background/80 px-2 py-1.5">
+                    <div className="text-[10px] text-muted-foreground">{formatCommandTime(item.createdAt)}</div>
+                    <div className="mt-1 break-all font-mono text-xs text-foreground">{item.command}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
