@@ -2,10 +2,11 @@ use serde_json::Value;
 
 use crate::models::mcp_config::McpConfig;
 use crate::repositories::mcp_configs;
-use crate::services::builtin_mcp::get_builtin_mcp_config;
+use crate::services::builtin_mcp::{
+    builtin_kind_by_command, builtin_kind_by_id, get_builtin_mcp_config, is_builtin_mcp_id,
+    BuiltinMcpKind,
+};
 use crate::utils::workspace::resolve_workspace_dir;
-
-use crate::services::builtin_mcp::is_builtin_mcp_id;
 
 #[derive(Debug, Clone)]
 pub struct McpHttpServer {
@@ -25,7 +26,10 @@ pub struct McpStdioServer {
 #[derive(Debug, Clone)]
 pub struct McpBuiltinServer {
     pub name: String,
+    pub kind: BuiltinMcpKind,
     pub workspace_dir: String,
+    pub user_id: Option<String>,
+    pub project_id: Option<String>,
     pub allow_writes: bool,
     pub max_file_bytes: i64,
     pub max_write_bytes: i64,
@@ -92,6 +96,8 @@ fn parse_env(env: &Option<Value>) -> std::collections::HashMap<String, String> {
 fn build_servers_from_configs(
     configs: Vec<McpConfig>,
     workspace_dir: Option<&str>,
+    user_id: Option<String>,
+    project_id: Option<String>,
 ) -> (
     Vec<McpHttpServer>,
     Vec<McpStdioServer>,
@@ -104,13 +110,21 @@ fn build_servers_from_configs(
     for cfg in configs {
         let server_name = format!("{}_{}", cfg.name, &cfg.id[..8.min(cfg.id.len())]);
         if is_builtin_mcp_id(&cfg.id) {
+            let Some(kind) =
+                builtin_kind_by_command(&cfg.command).or_else(|| builtin_kind_by_id(&cfg.id))
+            else {
+                continue;
+            };
             let root = workspace_dir
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| resolve_workspace_dir(None));
             builtin_servers.push(McpBuiltinServer {
                 name: server_name,
+                kind,
                 workspace_dir: root,
+                user_id: user_id.clone(),
+                project_id: project_id.clone(),
                 allow_writes: true,
                 max_file_bytes: 256 * 1024,
                 max_write_bytes: 5 * 1024 * 1024,
@@ -144,6 +158,7 @@ pub async fn load_mcp_configs_for_user(
     user_id: Option<String>,
     mcp_config_ids: Option<Vec<String>>,
     workspace_dir: Option<&str>,
+    project_id: Option<&str>,
 ) -> Result<
     (
         Vec<McpHttpServer>,
@@ -174,5 +189,13 @@ pub async fn load_mcp_configs_for_user(
             }
         }
     }
-    Ok(build_servers_from_configs(configs, workspace_dir))
+    let normalized_project_id = project_id
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+    Ok(build_servers_from_configs(
+        configs,
+        workspace_dir,
+        user_id,
+        normalized_project_id,
+    ))
 }

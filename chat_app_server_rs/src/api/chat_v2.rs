@@ -116,7 +116,7 @@ async fn agent_chat_stream_simple(
 
 async fn agent_tools(Query(query): Query<UserQuery>) -> (StatusCode, Json<Value>) {
     let (http_servers, stdio_servers, builtin_servers) =
-        load_mcp_configs_for_user(query.user_id, None, None)
+        load_mcp_configs_for_user(query.user_id, None, None, None)
             .await
             .unwrap_or((Vec::new(), Vec::new(), Vec::new()));
     let mut exec = McpToolExecute::new(

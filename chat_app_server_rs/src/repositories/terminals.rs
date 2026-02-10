@@ -10,6 +10,7 @@ fn normalize_doc(doc: &Document) -> Option<Terminal> {
         name: doc.get_str("name").ok()?.to_string(),
         cwd: doc.get_str("cwd").ok()?.to_string(),
         user_id: doc.get_str("user_id").ok().map(|s| s.to_string()),
+        project_id: doc.get_str("project_id").ok().map(|s| s.to_string()),
         status: doc.get_str("status").unwrap_or("running").to_string(),
         created_at: doc.get_str("created_at").unwrap_or("").to_string(),
         updated_at: doc.get_str("updated_at").unwrap_or("").to_string(),
@@ -104,6 +105,7 @@ pub async fn create_terminal(terminal: &Terminal) -> Result<String, String> {
                 ("name", Bson::String(term_mongo.name.clone())),
                 ("cwd", Bson::String(term_mongo.cwd.clone())),
                 ("user_id", term_mongo.user_id.clone().map(Bson::String).unwrap_or(Bson::Null)),
+                ("project_id", term_mongo.project_id.clone().map(Bson::String).unwrap_or(Bson::Null)),
                 ("status", Bson::String(term_mongo.status.clone())),
                 ("created_at", Bson::String(now_mongo.clone())),
                 ("updated_at", Bson::String(now_mongo.clone())),
@@ -116,11 +118,12 @@ pub async fn create_terminal(terminal: &Terminal) -> Result<String, String> {
         },
         |pool| {
             Box::pin(async move {
-                sqlx::query("INSERT INTO terminals (id, name, cwd, user_id, status, created_at, updated_at, last_active_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+                sqlx::query("INSERT INTO terminals (id, name, cwd, user_id, project_id, status, created_at, updated_at, last_active_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
                     .bind(&term_sqlite.id)
                     .bind(&term_sqlite.name)
                     .bind(&term_sqlite.cwd)
                     .bind(&term_sqlite.user_id)
+                    .bind(&term_sqlite.project_id)
                     .bind(&term_sqlite.status)
                     .bind(&now_sqlite)
                     .bind(&now_sqlite)

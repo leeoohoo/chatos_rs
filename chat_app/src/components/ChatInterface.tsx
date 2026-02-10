@@ -295,6 +295,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                       availableAgents={agents}
                       onAgentChange={setSelectedAgent}
                       availableProjects={projects}
+                      currentProject={currentProject}
                     />
                   </div>
                 )}

@@ -23,6 +23,7 @@ pub struct ModelConfig {
     pub use_active_system_context: bool,
     pub user_id: Option<String>,
     pub mcp_config_ids: Vec<String>,
+    pub project_id: Option<String>,
     pub workspace_dir: Option<String>,
     pub lock_mcp: bool,
 }
@@ -65,6 +66,7 @@ pub async fn load_model_config_for_agent(agent_id: &str) -> Result<ModelConfig, 
         use_active_system_context: false,
         user_id: agent.user_id,
         mcp_config_ids: agent.mcp_config_ids,
+        project_id: agent.project_id,
         workspace_dir: agent.workspace_dir,
         lock_mcp: true,
     })
@@ -101,6 +103,7 @@ pub async fn run_chat(
                 effective_user_id.clone(),
                 Some(filtered_ids),
                 workspace_dir_opt,
+                model_config.project_id.as_deref(),
             )
             .await
             .unwrap_or((Vec::new(), Vec::new(), Vec::new()))
@@ -108,9 +111,14 @@ pub async fn run_chat(
             (Vec::new(), Vec::new(), Vec::new())
         }
     } else {
-        load_mcp_configs_for_user(effective_user_id.clone(), None, workspace_dir_opt)
-            .await
-            .unwrap_or((Vec::new(), Vec::new(), Vec::new()))
+        load_mcp_configs_for_user(
+            effective_user_id.clone(),
+            None,
+            workspace_dir_opt,
+            model_config.project_id.as_deref(),
+        )
+        .await
+        .unwrap_or((Vec::new(), Vec::new(), Vec::new()))
     };
     if !workspace_dir.trim().is_empty() {
         for server in stdio_servers.iter_mut() {

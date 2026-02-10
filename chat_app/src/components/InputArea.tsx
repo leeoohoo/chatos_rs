@@ -1,6 +1,8 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
+import ApiClient from '../lib/api/client';
+import { useChatApiClientFromContext } from '../lib/store/ChatStoreContext';
 import { cn } from '../lib/utils';
-import type { InputAreaProps } from '../types';
+import type { FsEntry, InputAreaProps } from '../types';
 
 const MAX_ATTACHMENTS = 20; // 个
 const MAX_FILE_BYTES = 20 * 1024 * 1024; // 20MB
@@ -13,6 +15,14 @@ const formatFileSize = (bytes: number) => {
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 };
+
+const normalizeFsEntry = (raw: any): FsEntry => ({
+  name: raw?.name ?? '',
+  path: raw?.path ?? '',
+  isDir: raw?.is_dir ?? raw?.isDir ?? false,
+  size: raw?.size ?? null,
+  modifiedAt: raw?.modified_at ?? raw?.modifiedAt ?? null,
+});
 
 export const InputArea: React.FC<InputAreaProps> = ({
   onSend,
@@ -40,6 +50,7 @@ export const InputArea: React.FC<InputAreaProps> = ({
   availableAgents = [],
   onAgentChange,
   availableProjects = [],
+  currentProject = null,
 }) => {
   const [message, setMessage] = useState('');
   const [attachments, setAttachments] = useState<File[]>([]);
@@ -51,6 +62,32 @@ export const InputArea: React.FC<InputAreaProps> = ({
   const pickerRef = useRef<HTMLDivElement>(null);
   // 记录全局拖拽层级，避免 dragenter/dragleave 抖动
   const globalDragCounter = useRef(0);
+
+  const apiClientFromContext = useChatApiClientFromContext();
+  const client = useMemo(() => apiClientFromContext || new ApiClient(), [apiClientFromContext]);
+  const projectFilePickerRef = useRef<HTMLDivElement>(null);
+  const [projectFilePickerOpen, setProjectFilePickerOpen] = useState(false);
+  const [projectFileEntries, setProjectFileEntries] = useState<FsEntry[]>([]);
+  const [projectFilePath, setProjectFilePath] = useState<string | null>(null);
+  const [projectFileParent, setProjectFileParent] = useState<string | null>(null);
+  const [projectFileFilter, setProjectFileFilter] = useState('');
+  const [projectFileLoading, setProjectFileLoading] = useState(false);
+  const [projectFileError, setProjectFileError] = useState<string | null>(null);
+  const [projectFileAttachingPath, setProjectFileAttachingPath] = useState<string | null>(null);
+
+  const normalizePath = useCallback((value: string) => {
+    const normalized = value.replace(/\\/g, '/').replace(/\/+/g, '/');
+    if (normalized.length > 1 && normalized.endsWith('/')) {
+      return normalized.slice(0, -1);
+    }
+    return normalized;
+  }, []);
+
+  const isPathWithinRoot = useCallback((candidate: string, root: string) => {
+    const normalizedCandidate = normalizePath(candidate);
+    const normalizedRoot = normalizePath(root);
+    return normalizedCandidate === normalizedRoot || normalizedCandidate.startsWith(`${normalizedRoot}/`);
+  }, [normalizePath]);
 
   const selectedAgent = useMemo(
     () => (selectedAgentId ? (availableAgents || []).find(a => a.id === selectedAgentId) : null),
@@ -73,15 +110,66 @@ export const InputArea: React.FC<InputAreaProps> = ({
     [availableModels]
   );
   const hasAiOptions = (availableModels && availableModels.length > 0) || (availableAgents && availableAgents.length > 0);
+  const projectForAgentFiles = useMemo(() => selectedProject || currentProject || null, [selectedProject, currentProject]);
+  const projectRootForAgentFiles = useMemo(() => {
+    if (!projectForAgentFiles?.rootPath) return null;
+    return normalizePath(projectForAgentFiles.rootPath);
+  }, [projectForAgentFiles?.rootPath, normalizePath]);
+  const showAgentProjectFilePicker = Boolean(selectedAgent && projectRootForAgentFiles);
   const currentAiLabel = useMemo(() => {
     if (selectedAgent) {
-      const projectName = selectedProject?.name || (selectedAgent.project_id ? '未知项目' : '');
+      const projectName = projectForAgentFiles?.name || (selectedAgent.project_id ? '未知项目' : '当前项目');
       return projectName
         ? `Agent: ${selectedAgent.name} · 项目: ${projectName}`
         : `Agent: ${selectedAgent.name}`;
     }
     return selectedModel ? `Model: ${(selectedModel as any).name}` : '选择 AI';
-  }, [selectedAgent, selectedProject, selectedModel]);
+  }, [projectForAgentFiles?.name, selectedAgent, selectedModel]);
+  const projectFilePathLabel = useMemo(() => {
+    if (!projectFilePath || !projectRootForAgentFiles) return '';
+    const normalized = normalizePath(projectFilePath);
+    if (normalized === projectRootForAgentFiles) return '/';
+    const prefix = `${projectRootForAgentFiles}/`;
+    if (normalized.startsWith(prefix)) {
+      return `/${normalized.slice(prefix.length)}`;
+    }
+    return normalized;
+  }, [normalizePath, projectFilePath, projectRootForAgentFiles]);
+  const filteredProjectFileEntries = useMemo(() => {
+    const keyword = projectFileFilter.trim().toLocaleLowerCase();
+    const source = (projectFileEntries || []).slice().sort((a, b) => {
+      if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+    if (!keyword) return source;
+
+    return source.filter((entry) => {
+      const nameText = entry.name.toLocaleLowerCase();
+      const normalizedEntryPath = normalizePath(entry.path).toLocaleLowerCase();
+      let relativePathText = normalizedEntryPath;
+      if (projectRootForAgentFiles) {
+        const normalizedRoot = normalizePath(projectRootForAgentFiles).toLocaleLowerCase();
+        const prefix = `${normalizedRoot}/`;
+        if (normalizedEntryPath.startsWith(prefix)) {
+          relativePathText = normalizedEntryPath.slice(prefix.length);
+        }
+      }
+      return nameText.includes(keyword) || relativePathText.includes(keyword);
+    });
+  }, [normalizePath, projectFileEntries, projectFileFilter, projectRootForAgentFiles]);
+
+  const toRelativeProjectPath = useCallback((absolutePath: string) => {
+    if (!projectRootForAgentFiles) return absolutePath;
+    const normalized = normalizePath(absolutePath);
+    if (normalized === projectRootForAgentFiles) {
+      return absolutePath;
+    }
+    const prefix = `${projectRootForAgentFiles}/`;
+    if (normalized.startsWith(prefix)) {
+      return normalized.slice(prefix.length);
+    }
+    return normalized;
+  }, [normalizePath, projectRootForAgentFiles]);
 
   // 自动调整文本框高度
   const adjustTextareaHeight = useCallback(() => {
@@ -106,6 +194,28 @@ export const InputArea: React.FC<InputAreaProps> = ({
     document.addEventListener('mousedown', onDocClick);
     return () => document.removeEventListener('mousedown', onDocClick);
   }, [pickerOpen]);
+
+  useEffect(() => {
+    if (!projectFilePickerOpen) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (!projectFilePickerRef.current) return;
+      if (!projectFilePickerRef.current.contains(e.target as Node)) {
+        setProjectFilePickerOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [projectFilePickerOpen]);
+
+  useEffect(() => {
+    setProjectFilePickerOpen(false);
+    setProjectFileEntries([]);
+    setProjectFilePath(null);
+    setProjectFileParent(null);
+    setProjectFileFilter('');
+    setProjectFileError(null);
+    setProjectFileAttachingPath(null);
+  }, [selectedAgentId, projectRootForAgentFiles]);
 
   const isFileTypeAllowed = useCallback((file: File) => {
     if (!supportedFileTypes || supportedFileTypes.length === 0) return true;
@@ -166,6 +276,99 @@ export const InputArea: React.FC<InputAreaProps> = ({
       return accepted.length > 0 ? [...prev, ...accepted] : prev;
     });
   }, [isFileTypeAllowed]);
+
+  const loadProjectFileEntries = useCallback(async (nextPath?: string | null) => {
+    if (!projectRootForAgentFiles) return;
+
+    const fallbackRoot = normalizePath(projectRootForAgentFiles);
+    const preferredPath = nextPath ? normalizePath(nextPath) : fallbackRoot;
+    const safePath = isPathWithinRoot(preferredPath, fallbackRoot) ? preferredPath : fallbackRoot;
+
+    setProjectFileLoading(true);
+    setProjectFileError(null);
+    try {
+      const data = await client.listFsEntries(safePath);
+      const currentPathRaw = typeof data?.path === 'string' && data.path ? data.path : safePath;
+      const normalizedCurrent = normalizePath(currentPathRaw);
+      const entriesRaw: any[] = Array.isArray(data?.entries) ? data.entries : [];
+      const normalizedEntries = entriesRaw
+        .map((raw: any) => normalizeFsEntry(raw))
+        .filter((entry: FsEntry) => entry.path && isPathWithinRoot(entry.path, fallbackRoot));
+      const parentRaw = typeof data?.parent === 'string' ? normalizePath(data.parent) : null;
+
+      setProjectFilePath(isPathWithinRoot(normalizedCurrent, fallbackRoot) ? normalizedCurrent : fallbackRoot);
+      if (parentRaw && isPathWithinRoot(parentRaw, fallbackRoot) && parentRaw !== fallbackRoot) {
+        setProjectFileParent(parentRaw);
+      } else {
+        setProjectFileParent(null);
+      }
+      setProjectFileEntries(normalizedEntries);
+    } catch (error: any) {
+      setProjectFileError(error?.message || '加载项目文件失败');
+      setProjectFileEntries([]);
+    } finally {
+      setProjectFileLoading(false);
+    }
+  }, [client, isPathWithinRoot, normalizePath, projectRootForAgentFiles]);
+
+  const handleToggleProjectFilePicker = useCallback(async () => {
+    if (!showAgentProjectFilePicker || disabled) return;
+
+    if (projectFilePickerOpen) {
+      setProjectFilePickerOpen(false);
+      return;
+    }
+
+    const initialPath = projectFilePath && projectRootForAgentFiles && isPathWithinRoot(projectFilePath, projectRootForAgentFiles)
+      ? projectFilePath
+      : projectRootForAgentFiles;
+
+    setProjectFilePickerOpen(true);
+    setProjectFileFilter('');
+    await loadProjectFileEntries(initialPath);
+  }, [
+    disabled,
+    isPathWithinRoot,
+    loadProjectFileEntries,
+    projectFilePath,
+    projectFilePickerOpen,
+    projectRootForAgentFiles,
+    showAgentProjectFilePicker,
+  ]);
+
+  const handleAttachProjectFile = useCallback(async (entry: FsEntry) => {
+    if (!projectRootForAgentFiles) return;
+
+    if (entry.isDir) {
+      await loadProjectFileEntries(entry.path);
+      return;
+    }
+
+    setProjectFileAttachingPath(entry.path);
+    setProjectFileError(null);
+    try {
+      const rawFile = await client.readFsFile(entry.path);
+      const isBinary = rawFile?.is_binary ?? rawFile?.isBinary;
+      if (isBinary) {
+        throw new Error('暂不支持二进制文件，请选择文本文件');
+      }
+      const content = typeof rawFile?.content === 'string' ? rawFile.content : '';
+      const contentType = String(rawFile?.content_type || rawFile?.contentType || 'text/plain');
+      const relativePath = toRelativeProjectPath(entry.path) || entry.name;
+      const fileToAttach = new File([content], relativePath, { type: contentType || 'text/plain' });
+      addFiles([fileToAttach]);
+      setProjectFilePickerOpen(false);
+    } catch (error: any) {
+      const rawMessage = error?.message || '读取项目文件失败';
+      if (String(rawMessage).includes('413')) {
+        setProjectFileError('文件过大，当前最多支持 2MB 的项目文件');
+      } else {
+        setProjectFileError(rawMessage);
+      }
+    } finally {
+      setProjectFileAttachingPath(null);
+    }
+  }, [addFiles, client, loadProjectFileEntries, projectRootForAgentFiles, toRelativeProjectPath]);
 
   // 全局拖拽支持：允许把文件拖到整个应用任意位置
   useEffect(() => {
@@ -371,6 +574,9 @@ export const InputArea: React.FC<InputAreaProps> = ({
       {attachError && (
         <div className="-mt-2 mb-3 text-xs text-destructive">{attachError}</div>
       )}
+      {projectFileError && (
+        <div className="-mt-2 mb-3 text-xs text-destructive">{projectFileError}</div>
+      )}
 
       {/* 输入区域 */}
       <div
@@ -454,6 +660,90 @@ export const InputArea: React.FC<InputAreaProps> = ({
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
             </svg>
           </button>
+        )}
+
+        {allowAttachments && showAgentProjectFilePicker && (
+          <div className="relative flex-shrink-0" ref={projectFilePickerRef}>
+            <button
+              type="button"
+              onClick={() => { void handleToggleProjectFilePicker(); }}
+              disabled={disabled || projectFileAttachingPath !== null}
+              className={cn(
+                'px-2 py-1 rounded-md border text-xs transition-colors',
+                'text-muted-foreground hover:text-foreground hover:bg-accent',
+                (disabled || projectFileAttachingPath !== null) && 'opacity-50 cursor-not-allowed'
+              )}
+              title="从当前项目选择文件"
+            >
+              项目文件
+              <span className="ml-1">▾</span>
+            </button>
+            {projectFilePickerOpen && (
+              <div className="absolute left-0 bottom-full mb-2 z-30 w-80 bg-popover text-popover-foreground border rounded-md shadow-lg">
+                <div className="px-3 py-2 border-b space-y-2">
+                  <div className="space-y-1">
+                    <div
+                      className="text-[11px] text-muted-foreground truncate"
+                      title={projectForAgentFiles?.name || '当前项目'}
+                    >
+                      项目: {projectForAgentFiles?.name || '当前项目'}
+                    </div>
+                    <div
+                      className="text-[11px] text-muted-foreground truncate font-mono"
+                      title={projectFilePathLabel || '/'}
+                    >
+                      路径: {projectFilePathLabel || '/'}
+                    </div>
+                  </div>
+                  <input
+                    type="text"
+                    value={projectFileFilter}
+                    onChange={(event) => setProjectFileFilter(event.target.value)}
+                    placeholder="筛选文件（不区分大小写）..."
+                    className="w-full rounded border bg-background px-2 py-1 text-xs outline-none focus:border-primary"
+                  />
+                </div>
+                <div className="max-h-64 overflow-auto py-1">
+                  {projectFileLoading ? (
+                    <div className="px-3 py-2 text-xs text-muted-foreground">加载中...</div>
+                  ) : (
+                    <>
+                      {projectFileParent && (
+                        <button
+                          type="button"
+                          className="w-full px-3 py-1.5 text-left text-sm hover:bg-accent"
+                          onClick={() => { void loadProjectFileEntries(projectFileParent); }}
+                        >
+                          ..
+                        </button>
+                      )}
+                      {filteredProjectFileEntries.map((entry) => (
+                        <button
+                          key={entry.path}
+                          type="button"
+                          className="w-full px-3 py-1.5 text-left text-sm hover:bg-accent flex items-center justify-between gap-2"
+                          onClick={() => { void handleAttachProjectFile(entry); }}
+                          disabled={projectFileAttachingPath !== null}
+                        >
+                          <span className="truncate">
+                            {entry.isDir ? `[DIR] ${entry.name}` : `[FILE] ${entry.name}`}
+                          </span>
+                          {projectFileAttachingPath === entry.path && (
+                            <span className="text-[11px] text-muted-foreground">处理中...</span>
+                          )}
+                        </button>
+                      ))}
+                      {filteredProjectFileEntries.length === 0 && !projectFileLoading && (
+                        <div className="px-3 py-2 text-xs text-muted-foreground">
+                          {projectFileFilter.trim() ? '没有匹配的文件' : '当前目录没有可选文件'}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
         )}
 
         {reasoningSupported && (

@@ -580,6 +580,7 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
             name TEXT NOT NULL,
             cwd TEXT NOT NULL,
             user_id TEXT,
+            project_id TEXT,
             status TEXT NOT NULL,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -678,6 +679,9 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
     ensure_column(pool, "agents", "workspace_dir", "TEXT")
         .await
         .ok();
+    ensure_column(pool, "terminals", "project_id", "TEXT")
+        .await
+        .ok();
 
     let indexes = vec![
         "CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id)",
@@ -701,6 +705,7 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
         "CREATE INDEX IF NOT EXISTS idx_applications_user_id ON applications(user_id)",
         "CREATE INDEX IF NOT EXISTS idx_projects_user_id ON projects(user_id)",
         "CREATE INDEX IF NOT EXISTS idx_terminals_user_id ON terminals(user_id)",
+        "CREATE INDEX IF NOT EXISTS idx_terminals_project_id ON terminals(project_id)",
         "CREATE INDEX IF NOT EXISTS idx_terminals_status ON terminals(status)",
         "CREATE INDEX IF NOT EXISTS idx_terminal_logs_terminal_id ON terminal_logs(terminal_id)",
         "CREATE INDEX IF NOT EXISTS idx_terminal_logs_created_at ON terminal_logs(created_at)",
@@ -932,6 +937,13 @@ async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> {
         .collection::<mongodb::bson::Document>("terminals")
         .create_index(
             IndexModel::builder().keys(doc! { "user_id": 1 }).build(),
+            None,
+        )
+        .await;
+    let _ = db
+        .collection::<mongodb::bson::Document>("terminals")
+        .create_index(
+            IndexModel::builder().keys(doc! { "project_id": 1 }).build(),
             None,
         )
         .await;

@@ -10,6 +10,7 @@ pub struct Terminal {
     pub name: String,
     pub cwd: String,
     pub user_id: Option<String>,
+    pub project_id: Option<String>,
     pub status: String,
     pub created_at: String,
     pub updated_at: String,
@@ -22,6 +23,7 @@ pub struct TerminalRow {
     pub name: String,
     pub cwd: String,
     pub user_id: Option<String>,
+    pub project_id: Option<String>,
     pub status: String,
     pub created_at: String,
     pub updated_at: String,
@@ -35,6 +37,7 @@ impl TerminalRow {
             name: self.name,
             cwd: self.cwd,
             user_id: self.user_id,
+            project_id: self.project_id,
             status: self.status,
             created_at: self.created_at,
             updated_at: self.updated_at,
@@ -44,13 +47,19 @@ impl TerminalRow {
 }
 
 impl Terminal {
-    pub fn new(name: String, cwd: String, user_id: Option<String>) -> Terminal {
+    pub fn new(
+        name: String,
+        cwd: String,
+        user_id: Option<String>,
+        project_id: Option<String>,
+    ) -> Terminal {
         let now = chrono::Utc::now().to_rfc3339();
         Terminal {
             id: Uuid::new_v4().to_string(),
             name,
             cwd,
             user_id,
+            project_id,
             status: "running".to_string(),
             created_at: now.clone(),
             updated_at: now.clone(),

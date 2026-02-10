@@ -161,6 +161,13 @@ export function createSessionActions({
     },
 
     selectSession: async (sessionId: string) => {
+      const beforeSelect = get();
+      const sameSessionState = beforeSelect.sessionChatState?.[sessionId];
+      if (beforeSelect.currentSessionId === sessionId && sameSessionState?.isStreaming) {
+        debugLog('🔍 当前会话正在流式中，忽略重复切换请求:', sessionId);
+        return;
+      }
+
       try {
         set((state: any) => {
           state.isLoading = true;
@@ -169,15 +176,44 @@ export function createSessionActions({
 
         const session = await fetchSession(client, sessionId);
         const messages = await fetchSessionMessages(client, sessionId, { limit: 10, offset: 0 });
+        const stateSnapshot = get();
+        const snapshotChatState = stateSnapshot.sessionChatState?.[sessionId];
+        const localStreamingMessage = snapshotChatState?.streamingMessageId
+          ? stateSnapshot.messages.find((m: any) => m.id === snapshotChatState.streamingMessageId && m.sessionId === sessionId)
+          : null;
 
         set((state: any) => {
+          const chatState = state.sessionChatState[sessionId];
+          let nextMessages = messages;
+
+          if (chatState?.isStreaming && chatState.streamingMessageId) {
+            const hasStreamingMessage = nextMessages.some((m: any) => m.id === chatState.streamingMessageId);
+            if (!hasStreamingMessage) {
+              nextMessages = [
+                ...nextMessages,
+                localStreamingMessage || {
+                  id: chatState.streamingMessageId,
+                  sessionId,
+                  role: 'assistant',
+                  content: '',
+                  status: 'streaming',
+                  createdAt: new Date(),
+                  metadata: {
+                    toolCalls: [],
+                    contentSegments: [{ content: '', type: 'text' }],
+                    currentSegmentIndex: 0,
+                  },
+                },
+              ];
+            }
+          }
+
           state.currentSessionId = sessionId;
           (state as any).currentSession = session;
-          state.messages = messages;
+          state.messages = nextMessages;
           state.activePanel = 'chat';
           state.isLoading = false;
           state.hasMoreMessages = messages.length === 10;
-          const chatState = state.sessionChatState[sessionId];
           state.isStreaming = chatState?.isStreaming ?? false;
           state.streamingMessageId = chatState?.streamingMessageId ?? null;
           if (chatState) {

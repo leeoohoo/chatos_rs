@@ -7,27 +7,54 @@ pub const CODE_MAINTAINER_DISPLAY_NAME: &str = "Code Maintainer (Builtin)";
 pub const CODE_MAINTAINER_SERVER_NAME: &str = "code_maintainer";
 pub const CODE_MAINTAINER_COMMAND: &str = "builtin:code_maintainer";
 
+pub const TERMINAL_CONTROLLER_MCP_ID: &str = "builtin_terminal_controller";
+pub const TERMINAL_CONTROLLER_DISPLAY_NAME: &str = "Terminal Controller (Builtin)";
+pub const TERMINAL_CONTROLLER_SERVER_NAME: &str = "terminal_controller";
+pub const TERMINAL_CONTROLLER_COMMAND: &str = "builtin:terminal_controller";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BuiltinMcpKind {
+    CodeMaintainer,
+    TerminalController,
+}
+
+pub fn builtin_kind_by_id(id: &str) -> Option<BuiltinMcpKind> {
+    match id {
+        CODE_MAINTAINER_MCP_ID => Some(BuiltinMcpKind::CodeMaintainer),
+        TERMINAL_CONTROLLER_MCP_ID => Some(BuiltinMcpKind::TerminalController),
+        _ => None,
+    }
+}
+
+pub fn builtin_kind_by_command(command: &str) -> Option<BuiltinMcpKind> {
+    match command {
+        CODE_MAINTAINER_COMMAND => Some(BuiltinMcpKind::CodeMaintainer),
+        TERMINAL_CONTROLLER_COMMAND => Some(BuiltinMcpKind::TerminalController),
+        _ => None,
+    }
+}
+
 pub fn is_builtin_mcp_id(id: &str) -> bool {
-    id == CODE_MAINTAINER_MCP_ID
+    builtin_kind_by_id(id).is_some()
 }
 
 pub fn get_builtin_mcp_config(id: &str) -> Option<McpConfig> {
-    if is_builtin_mcp_id(id) {
-        Some(code_maintainer_config())
-    } else {
-        None
+    match builtin_kind_by_id(id) {
+        Some(BuiltinMcpKind::CodeMaintainer) => Some(code_maintainer_config()),
+        Some(BuiltinMcpKind::TerminalController) => Some(terminal_controller_config()),
+        None => None,
     }
 }
 
 pub fn list_builtin_mcp_configs() -> Vec<McpConfig> {
-    vec![code_maintainer_config()]
+    vec![code_maintainer_config(), terminal_controller_config()]
 }
 
 pub fn builtin_display_name(id: &str) -> Option<&'static str> {
-    if is_builtin_mcp_id(id) {
-        Some(CODE_MAINTAINER_DISPLAY_NAME)
-    } else {
-        None
+    match builtin_kind_by_id(id) {
+        Some(BuiltinMcpKind::CodeMaintainer) => Some(CODE_MAINTAINER_DISPLAY_NAME),
+        Some(BuiltinMcpKind::TerminalController) => Some(TERMINAL_CONTROLLER_DISPLAY_NAME),
+        None => None,
     }
 }
 
@@ -39,6 +66,23 @@ fn code_maintainer_config() -> McpConfig {
         command: CODE_MAINTAINER_COMMAND.to_string(),
         r#type: "stdio".to_string(),
         args: Some(json!(["--name", CODE_MAINTAINER_SERVER_NAME])),
+        env: None,
+        cwd: None,
+        user_id: None,
+        enabled: true,
+        created_at: now.clone(),
+        updated_at: now,
+    }
+}
+
+fn terminal_controller_config() -> McpConfig {
+    let now = chrono::Utc::now().to_rfc3339();
+    McpConfig {
+        id: TERMINAL_CONTROLLER_MCP_ID.to_string(),
+        name: TERMINAL_CONTROLLER_SERVER_NAME.to_string(),
+        command: TERMINAL_CONTROLLER_COMMAND.to_string(),
+        r#type: "stdio".to_string(),
+        args: Some(json!(["--name", TERMINAL_CONTROLLER_SERVER_NAME])),
         env: None,
         cwd: None,
         user_id: None,

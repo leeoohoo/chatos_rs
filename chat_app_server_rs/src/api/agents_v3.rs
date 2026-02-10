@@ -130,6 +130,7 @@ async fn stream_agent_v3(sender: SseSender, req: AgentChatRequest) {
             effective_user_id.clone(),
             Some(mcp_ids.clone()),
             workspace_dir_opt,
+            agent.project_id.as_deref(),
         )
         .await
         .unwrap_or((Vec::new(), Vec::new(), Vec::new()))

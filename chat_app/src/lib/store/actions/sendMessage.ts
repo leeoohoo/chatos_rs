@@ -262,34 +262,157 @@ export function createSendMessageHandler({
       const decoder = new TextDecoder();
       let buffer = '';
       let sawDone = false;
+      let streamedTextBuffer = '';
+
+      const extractSseDataEvents = (source: string) => {
+        const events: string[] = [];
+        let cursor = 0;
+
+        while (cursor < source.length) {
+          const crlfIdx = source.indexOf('\r\n\r\n', cursor);
+          const lfIdx = source.indexOf('\n\n', cursor);
+
+          if (crlfIdx === -1 && lfIdx === -1) {
+            break;
+          }
+
+          let boundary = -1;
+          let separatorLength = 0;
+          if (crlfIdx !== -1 && (lfIdx === -1 || crlfIdx < lfIdx)) {
+            boundary = crlfIdx;
+            separatorLength = 4;
+          } else {
+            boundary = lfIdx;
+            separatorLength = 2;
+          }
+
+          const rawEvent = source.slice(cursor, boundary);
+          cursor = boundary + separatorLength;
+
+          const dataLines = rawEvent
+            .split(/\r?\n/)
+            .map((line) => line.trimStart())
+            .filter((line) => line.startsWith('data:'))
+            .map((line) => line.slice(5).trimStart());
+
+          if (dataLines.length > 0) {
+            events.push(dataLines.join('\n').trim());
+          }
+        }
+
+        return { events, rest: source.slice(cursor) };
+      };
+
+      const ensureStreamingMessage = (state: any) => {
+        let message = state.messages.find((m: any) => m.id === tempAssistantMessage.id);
+        if (!message && state.currentSessionId === currentSessionId) {
+          const fallbackMessage = {
+            ...tempAssistantMessage,
+            role: 'assistant' as const,
+            status: 'streaming' as const,
+            content: streamedTextBuffer,
+            metadata: {
+              ...(tempAssistantMessage.metadata || {}),
+              toolCalls: [],
+              contentSegments: [{ content: streamedTextBuffer, type: 'text' as const }],
+              currentSegmentIndex: 0,
+            },
+          };
+          state.messages.push(fallbackMessage);
+          message = fallbackMessage;
+        }
+        return message;
+      };
+
+      const appendTextToStreamingMessage = (contentStr: string) => {
+        if (!contentStr) return;
+        streamedTextBuffer += contentStr;
+
+        set((state: any) => {
+          const message = ensureStreamingMessage(state);
+          if (message && message.metadata) {
+            const currentIndex = message.metadata.currentSegmentIndex || 0;
+            const segments = message.metadata.contentSegments || [];
+
+            if (segments[currentIndex] && segments[currentIndex].type === 'text') {
+              segments[currentIndex].content += contentStr;
+            } else {
+              segments.push({ content: contentStr, type: 'text' as const });
+              message.metadata.currentSegmentIndex = segments.length - 1;
+            }
+
+            message.metadata.contentSegments = segments;
+            message.content = segments
+              .filter((s: any) => s.type === 'text')
+              .map((s: any) => s.content)
+              .join('');
+            (message as any).updatedAt = new Date();
+          }
+        });
+      };
+
+      const applyCompleteContent = (finalContent: string) => {
+        if (!finalContent) return;
+        streamedTextBuffer = finalContent;
+
+        set((state: any) => {
+          const message = ensureStreamingMessage(state);
+          if (!message || !message.metadata) return;
+
+          const segments = message.metadata.contentSegments || [];
+          let textIndex = -1;
+          for (let i = segments.length - 1; i >= 0; i--) {
+            if (segments[i].type === 'text') {
+              textIndex = i;
+              break;
+            }
+          }
+
+          if (textIndex === -1) {
+            segments.push({ content: finalContent, type: 'text' as const });
+            textIndex = segments.length - 1;
+          } else {
+            segments[textIndex].content = finalContent;
+            for (let i = 0; i < segments.length; i++) {
+              if (i !== textIndex && segments[i].type === 'text') {
+                segments[i].content = '';
+              }
+            }
+          }
+
+          message.metadata.contentSegments = segments;
+          message.metadata.currentSegmentIndex = textIndex;
+          message.content = finalContent;
+          (message as any).updatedAt = new Date();
+        });
+      };
 
       try {
         while (true) {
           const { done, value } = await reader.read();
 
-          if (done) {
-            debugLog('✅ 流式响应完成');
-            break;
+          if (value) {
+            buffer += decoder.decode(value, { stream: !done });
           }
 
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split(/\r?\n/);
-          buffer = lines.pop() || '';
+          if (done && buffer.trim() !== '') {
+            // 连接关闭时主动补一个事件分隔，避免尾包没有空行时被丢弃
+            buffer = `${buffer}\n\n`;
+          }
 
-          for (const line of lines) {
-            const trimmed = line.trim();
-            if (trimmed === '' || trimmed.startsWith(':')) continue;
+          const parsedEvents = extractSseDataEvents(buffer);
+          buffer = parsedEvents.rest;
 
-            if (trimmed.startsWith('data:')) {
-              const data = trimmed.slice(5).trim();
+          for (const data of parsedEvents.events) {
+            if (data === '') continue;
 
-              if (data === '[DONE]') {
+            if (data === '[DONE]') {
                 debugLog('✅ 收到完成信号');
                 sawDone = true;
                 break;
               }
 
-              try {
+            try {
                 const parsed = JSON.parse(data);
 
                 // 兼容后端以字符串形式发送的 [DONE]
@@ -303,45 +426,20 @@ export function createSendMessageHandler({
                 if (parsed.type === 'chunk') {
                   // 后端发送格式: {type: 'chunk', content: '...', accumulated: '...'}
                   if (parsed.content) {
-                    // 更新UI中的流式消息，使用分段管理
-                    set((state: any) => {
-                      const message = state.messages.find((m: any) => m.id === tempAssistantMessage.id);
-                      if (message && message.metadata) {
-                        // 确保parsed.content是字符串
-                        const contentStr =
-                          typeof parsed.content === 'string'
-                            ? parsed.content
-                            : typeof parsed === 'string'
-                            ? parsed
-                            : parsed.content || '';
-
-                        // 获取当前分段索引
-                        const currentIndex = message.metadata.currentSegmentIndex || 0;
-                        const segments = message.metadata.contentSegments || [];
-
-                        // 确保当前分段存在且为文本类型
-                        if (segments[currentIndex] && segments[currentIndex].type === 'text') {
-                          segments[currentIndex].content += contentStr;
-                        } else {
-                          // 如果当前分段不存在或不是文本类型，创建新的文本分段
-                          segments.push({ content: contentStr, type: 'text' as const });
-                          message.metadata.currentSegmentIndex = segments.length - 1;
-                        }
-
-                        // 更新完整内容用于向后兼容
-                        message.content = segments
-                          .filter((s: any) => s.type === 'text')
-                          .map((s: any) => s.content)
-                          .join('');
-                        (message as any).updatedAt = new Date();
-                      }
-                    });
+                    const contentStr =
+                      typeof parsed.content === 'string'
+                        ? parsed.content
+                        : typeof parsed === 'string'
+                        ? parsed
+                        : parsed.content || '';
+                    appendTextToStreamingMessage(contentStr);
                   }
+
                 } else if (parsed.type === 'thinking') {
                   // 新增类型：模型的思考过程（与正文分离，可折叠显示，灰色字体）
                   if (parsed.content) {
                     set((state: any) => {
-                      const message = state.messages.find((m: any) => m.id === tempAssistantMessage.id);
+                      const message = ensureStreamingMessage(state);
                       if (message && message.metadata) {
                         const contentStr =
                           typeof parsed.content === 'string'
@@ -377,7 +475,7 @@ export function createSendMessageHandler({
                   const data = parsed.data || {};
                   const header = '【上下文摘要】\\n';
                   set((state: any) => {
-                    const message = state.messages.find((m: any) => m.id === tempAssistantMessage.id);
+                    const message = ensureStreamingMessage(state);
                     if (!message || !message.metadata) return;
                     const segments = message.metadata.contentSegments || [];
 
@@ -409,41 +507,16 @@ export function createSendMessageHandler({
                     }
                     (message as any).updatedAt = new Date();
                   });
-} else if (parsed.type === 'content') {
+                } else if (parsed.type === 'content') {
                   // 兼容旧格式: {type: 'content', content: '...'}
-                  // 更新UI中的流式消息，使用分段管理
-                  set((state: any) => {
-                    const message = state.messages.find((m: any) => m.id === tempAssistantMessage.id);
-                    if (message && message.metadata) {
-                      // 确保parsed.content是字符串
-                      const contentStr =
-                        typeof parsed.content === 'string'
-                          ? parsed.content
-                          : typeof parsed === 'string'
-                          ? parsed
-                          : parsed.content || '';
+                  const contentStr =
+                    typeof parsed.content === 'string'
+                      ? parsed.content
+                      : typeof parsed === 'string'
+                      ? parsed
+                      : parsed.content || '';
+                  appendTextToStreamingMessage(contentStr);
 
-                      // 获取当前分段索引
-                      const currentIndex = message.metadata.currentSegmentIndex || 0;
-                      const segments = message.metadata.contentSegments || [];
-
-                      // 确保当前分段存在且为文本类型
-                      if (segments[currentIndex] && segments[currentIndex].type === 'text') {
-                        segments[currentIndex].content += contentStr;
-                      } else {
-                        // 如果当前分段不存在或不是文本类型，创建新的文本分段
-                        segments.push({ content: contentStr, type: 'text' as const });
-                        message.metadata.currentSegmentIndex = segments.length - 1;
-                      }
-
-                      // 更新完整内容用于向后兼容
-                      message.content = segments
-                        .filter((s: any) => s.type === 'text')
-                        .map((s: any) => s.content)
-                        .join('');
-                      (message as any).updatedAt = new Date();
-                    }
-                  });
                 } else if (parsed.type === 'tools_start') {
                   // 处理工具调用事件
                   debugLog('🔧 收到工具调用:', parsed.data);
@@ -676,13 +749,22 @@ export function createSendMessageHandler({
                   sawDone = true;
                   break;
                 } else if (parsed.type === 'complete') {
+                  const finalContent = parsed?.result?.content;
+                  if (typeof finalContent === 'string' && finalContent.length > 0) {
+                    applyCompleteContent(finalContent);
+                  }
                   sawDone = true;
                   break;
                 }
-              } catch (parseError) {
-                console.warn('解析流式数据失败:', parseError, 'data:', data);
+            } catch (parseError) {
+                const preview = data.length > 400 ? `${data.slice(0, 400)}...` : data;
+                console.warn('解析流式数据失败:', parseError, 'dataPreview:', preview);
               }
             }
+
+          if (done) {
+            debugLog('✅ 流式响应完成');
+            break;
           }
 
           if (sawDone) {

@@ -26,6 +26,11 @@ interface CommandHistoryParseState {
   lineBuffer: string;
 }
 
+interface InputCommandParseState {
+  lineBuffer: string;
+  skipFollowingLf: boolean;
+}
+
 const MAX_COMMAND_HISTORY = 200;
 
 const buildWsUrl = (baseUrl: string, path: string) => {
@@ -92,6 +97,11 @@ const createInitialCommandHistoryParseState = (): CommandHistoryParseState => ({
   lineBuffer: '',
 });
 
+const createInitialInputCommandParseState = (): InputCommandParseState => ({
+  lineBuffer: '',
+  skipFollowingLf: false,
+});
+
 const stripTerminalControlSequences = (input: string): string => (
   input
     .replace(/\u001b\][^\u001b\u0007]*(?:\u0007|\u001b\\)/g, '')
@@ -129,35 +139,48 @@ const looksLikePromptPrefix = (prefixWithMarker: string): boolean => {
     return true;
   }
 
-  if (prefix.includes(':') || prefix.includes('/') || prefix.includes('\\') || prefix.includes('~')) {
+  if (
+    prefix.startsWith('~')
+    || prefix.startsWith('/')
+    || prefix.startsWith('./')
+    || prefix.startsWith('../')
+  ) {
     return true;
   }
 
-  return /^[\w.-]+(?:\s+[\w.-]+)*$/.test(prefix);
+  return /^[A-Za-z]:/.test(prefix) && prefix.charAt(2) === '\\';
+};
+
+const getVisibleLineAfterCarriageReturn = (line: string): string => {
+  const withoutTrailingCr = line.replace(/\r+$/, '');
+  const segments = withoutTrailingCr.split('\r');
+  return segments[segments.length - 1] ?? '';
 };
 
 const extractCommandFromPromptLine = (line: string): string | null => {
-  const visible = collapseBackspaces(line.split('\r').pop() ?? '').trimEnd();
+  const visible = collapseBackspaces(getVisibleLineAfterCarriageReturn(line)).trimEnd();
   if (!visible) {
     return null;
   }
 
-  const windowsPrompt = visible.match(/^([A-Za-z]:\\.*>)\s*(.+)$/);
+  const normalize = (value: string): string => value.replace(/\u0007/g, '').trim();
+
+  const windowsPrompt = visible.match(/^([A-Za-z]:\\\\.*>)\s*(.+)$/);
   if (windowsPrompt?.[2]) {
-    const command = windowsPrompt[2].trim();
-    return command || null;
+    const command = normalize(windowsPrompt[2]);
+    return command.length > 0 && command.length <= 300 ? command : null;
   }
 
   const unixPromptWithSpace = visible.match(/^(.*\s[#$%>])\s+(.+)$/);
   if (unixPromptWithSpace?.[2] && looksLikePromptPrefix(unixPromptWithSpace[1])) {
-    const command = unixPromptWithSpace[2].trim();
-    return command || null;
+    const command = normalize(unixPromptWithSpace[2]);
+    return command.length > 0 && command.length <= 300 ? command : null;
   }
 
   const unixUserHostPrompt = visible.match(/^([^\r\n]*@[^\r\n]*[#$%>])\s+(.+)$/);
   if (unixUserHostPrompt?.[2]) {
-    const command = unixUserHostPrompt[2].trim();
-    return command || null;
+    const command = normalize(unixUserHostPrompt[2]);
+    return command.length > 0 && command.length <= 300 ? command : null;
   }
 
   return null;
@@ -186,6 +209,110 @@ const parseOutputChunkForCommands = (
       lineBuffer: nextLineBuffer,
     },
   };
+};
+
+const parseInputChunkForCommands = (
+  chunk: string,
+  state: InputCommandParseState,
+): { commands: string[]; nextState: InputCommandParseState } => {
+  const commands: string[] = [];
+  let lineBuffer = state.lineBuffer;
+  let skipFollowingLf = state.skipFollowingLf;
+  const cleaned = stripTerminalControlSequences(chunk);
+
+  for (const ch of cleaned) {
+    if (skipFollowingLf && ch !== '\n') {
+      skipFollowingLf = false;
+    }
+
+    if (ch === '\r' || ch === '\n') {
+      if (skipFollowingLf && ch === '\n') {
+        skipFollowingLf = false;
+        continue;
+      }
+
+      const command = lineBuffer.trim();
+      if (command) {
+        commands.push(command);
+      }
+      lineBuffer = '';
+      skipFollowingLf = ch === '\r';
+      continue;
+    }
+
+    if (ch === '\u0008' || ch === '\u007f') {
+      lineBuffer = lineBuffer.slice(0, -1);
+      continue;
+    }
+
+    if (ch === '\u0015' || ch === '\u0003' || ch === '\u0004' || ch === '\u001a') {
+      lineBuffer = '';
+      continue;
+    }
+
+    if (ch < ' ' || ch === '\u007f') {
+      continue;
+    }
+
+    lineBuffer += ch;
+  }
+
+  return {
+    commands,
+    nextState: {
+      lineBuffer,
+      skipFollowingLf,
+    },
+  };
+};
+
+const getCurrentPromptLineFromTerminalBuffer = (term: XTerm): string => {
+  const buffer = term.buffer.active;
+  let y = buffer.cursorY;
+  const parts: string[] = [];
+
+  while (y >= 0) {
+    const line = buffer.getLine(y);
+    if (!line) {
+      break;
+    }
+
+    parts.unshift(line.translateToString(true));
+    if (!line.isWrapped) {
+      break;
+    }
+
+    y -= 1;
+  }
+
+  return parts.join('');
+};
+
+const extractCommandFromTerminalBuffer = (term: XTerm): string | null => {
+  const promptLine = getCurrentPromptLineFromTerminalBuffer(term);
+  return extractCommandFromPromptLine(promptLine);
+};
+
+
+
+const normalizeCommandForCompare = (command: string): string => (
+  command.replace(/\s+/g, ' ').replace(/\u0007/g, '').trim()
+);
+
+const canCommandBeUsed = (command: string): boolean => {
+  const normalized = normalizeCommandForCompare(command);
+  return normalized.length > 0 && normalized.length <= 300;
+};
+
+const canOutputCommandCorrectInput = (inputCommand: string, outputCommand: string): boolean => {
+  const inputNormalized = normalizeCommandForCompare(inputCommand);
+  const outputNormalized = normalizeCommandForCompare(outputCommand);
+
+  if (!inputNormalized || !outputNormalized) {
+    return false;
+  }
+
+  return outputNormalized.startsWith(inputNormalized) || inputNormalized.startsWith(outputNormalized);
 };
 
 const normalizeLogTimestamp = (value: Date | string | undefined): string => {
@@ -238,6 +365,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const dataHandlerRef = useRef<ReturnType<XTerm['onData']> | null>(null);
   const inputForwardEnabledRef = useRef(false);
+  const inputParseStateRef = useRef<InputCommandParseState>(createInitialInputCommandParseState());
   const outputParseStateRef = useRef<CommandHistoryParseState>(createInitialCommandHistoryParseState());
   const commandSeqRef = useRef(0);
 
@@ -257,20 +385,67 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
   const themeColors = useMemo(() => getThemeColors(actualTheme), [actualTheme]);
   const displayHistory = useMemo(() => [...commandHistory].reverse(), [commandHistory]);
 
-  const appendCommands = (commands: string[], createdAt: string) => {
+  const appendCommands = (
+    commands: string[],
+    createdAt: string,
+    mode: 'append' | 'correct' = 'append',
+  ) => {
     if (commands.length === 0) {
       return;
     }
 
     setCommandHistory((prev) => {
       const next = [...prev];
-      for (const command of commands) {
-        next.push({
-          id: `cmd-${commandSeqRef.current++}`,
-          command,
-          createdAt,
-        });
+      const normalizedCommands = commands
+        .map((command) => normalizeCommandForCompare(command))
+        .filter((command) => canCommandBeUsed(command));
+
+      if (normalizedCommands.length === 0) {
+        return next;
       }
+
+      if (mode === 'append') {
+        for (const command of normalizedCommands) {
+          const last = next[next.length - 1];
+          if (last && normalizeCommandForCompare(last.command) === command) {
+            continue;
+          }
+
+          next.push({
+            id: `cmd-${commandSeqRef.current++}`,
+            command,
+            createdAt,
+          });
+        }
+
+        return next.slice(-MAX_COMMAND_HISTORY);
+      }
+
+      if (next.length === 0) {
+        return next;
+      }
+
+      const windowStart = Math.max(0, next.length - 6);
+      for (const outputCommand of normalizedCommands) {
+        for (let i = next.length - 1; i >= windowStart; i -= 1) {
+          const existing = next[i];
+          const existingNormalized = normalizeCommandForCompare(existing.command);
+
+          if (existingNormalized === outputCommand) {
+            break;
+          }
+
+          if (canOutputCommandCorrectInput(existingNormalized, outputCommand) && outputCommand.length > existingNormalized.length) {
+            next[i] = {
+              ...existing,
+              command: outputCommand,
+              createdAt,
+            };
+            break;
+          }
+        }
+      }
+
       return next.slice(-MAX_COMMAND_HISTORY);
     });
   };
@@ -289,6 +464,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
 
     let cancelled = false;
 
+    inputParseStateRef.current = createInitialInputCommandParseState();
     outputParseStateRef.current = createInitialCommandHistoryParseState();
     setCommandHistory([]);
     setHistoryState('loading');
@@ -319,8 +495,26 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
         return;
       }
 
+      const submittedCommand = (data.includes('\r') || data.includes('\n'))
+        ? extractCommandFromTerminalBuffer(term)
+        : null;
+
+      const parsedInput = parseInputChunkForCommands(data, inputParseStateRef.current);
+      inputParseStateRef.current = parsedInput.nextState;
+      appendCommands(parsedInput.commands, new Date().toISOString(), 'append');
+
+      const normalizedSubmittedCommand = submittedCommand
+        ? normalizeCommandForCompare(submittedCommand)
+        : '';
+      if (canCommandBeUsed(normalizedSubmittedCommand)) {
+        appendCommands([normalizedSubmittedCommand], new Date().toISOString(), 'correct');
+      }
+
       const ws = socketRef.current;
       if (ws && ws.readyState === WebSocket.OPEN) {
+        if (canCommandBeUsed(normalizedSubmittedCommand)) {
+          ws.send(JSON.stringify({ type: 'command', command: normalizedSubmittedCommand }));
+        }
         ws.send(JSON.stringify({ type: 'input', data }));
       }
     });
@@ -346,6 +540,8 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
 
         const normalized = Array.isArray(logs) ? logs.map(normalizeTerminalLog) : [];
         const outputLogs = normalized.filter((log: TerminalLog) => log.logType === 'output' || log.logType === 'system');
+        const commandLogs = normalized.filter((log: TerminalLog) => log.logType === 'command');
+        const inputLogs = normalized.filter((log: TerminalLog) => log.logType === 'input');
 
         const outputContent = outputLogs.map((log: TerminalLog) => log.content).join('');
         await writeToTerminal(term, outputContent);
@@ -355,25 +551,98 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
         }
 
         const parsedCommands: CommandHistoryItem[] = [];
-        let parseState = createInitialCommandHistoryParseState();
 
-        for (const log of outputLogs) {
-          const parsed = parseOutputChunkForCommands(log.content, parseState);
-          parseState = parsed.nextState;
-          if (parsed.commands.length === 0) {
-            continue;
-          }
-
-          const createdAt = normalizeLogTimestamp(log.createdAt);
-          for (const command of parsed.commands) {
+        if (commandLogs.length > 0) {
+          for (const log of commandLogs) {
+            const normalizedCommand = normalizeCommandForCompare(log.content);
+            if (!canCommandBeUsed(normalizedCommand)) {
+              continue;
+            }
             parsedCommands.push({
               id: `cmd-${commandSeqRef.current++}`,
-              command,
-              createdAt,
+              command: normalizedCommand,
+              createdAt: normalizeLogTimestamp(log.createdAt),
             });
           }
         }
 
+        let inputState = createInitialInputCommandParseState();
+
+        if (parsedCommands.length === 0) {
+          for (const log of inputLogs) {
+            const parsed = parseInputChunkForCommands(log.content, inputState);
+            inputState = parsed.nextState;
+            if (parsed.commands.length === 0) {
+              continue;
+            }
+
+            const createdAt = normalizeLogTimestamp(log.createdAt);
+            for (const command of parsed.commands) {
+              const normalizedCommand = normalizeCommandForCompare(command);
+              if (!canCommandBeUsed(normalizedCommand)) {
+                continue;
+              }
+
+              parsedCommands.push({
+                id: `cmd-${commandSeqRef.current++}`,
+                command: normalizedCommand,
+                createdAt,
+              });
+            }
+          }
+        }
+
+        const outputDerivedCommands: CommandHistoryItem[] = [];
+        let parseState = createInitialCommandHistoryParseState();
+
+        if (commandLogs.length === 0) {
+          for (const log of outputLogs) {
+            const parsed = parseOutputChunkForCommands(log.content, parseState);
+            parseState = parsed.nextState;
+            if (parsed.commands.length === 0) {
+              continue;
+            }
+
+            const createdAt = normalizeLogTimestamp(log.createdAt);
+            for (const command of parsed.commands) {
+              const normalizedOutputCommand = normalizeCommandForCompare(command);
+              if (!canCommandBeUsed(normalizedOutputCommand)) {
+                continue;
+              }
+
+              outputDerivedCommands.push({
+                id: `cmd-${commandSeqRef.current++}`,
+                command: normalizedOutputCommand,
+                createdAt,
+              });
+
+              if (parsedCommands.length === 0) {
+                continue;
+              }
+
+              const searchStart = Math.max(0, parsedCommands.length - 10);
+              for (let i = parsedCommands.length - 1; i >= searchStart; i -= 1) {
+                const baseCommand = parsedCommands[i].command;
+                if (canOutputCommandCorrectInput(baseCommand, normalizedOutputCommand)
+                  && normalizedOutputCommand.length > normalizeCommandForCompare(baseCommand).length
+                ) {
+                  parsedCommands[i] = {
+                    ...parsedCommands[i],
+                    command: normalizedOutputCommand,
+                    createdAt,
+                  };
+                  break;
+                }
+              }
+            }
+          }
+
+          if (parsedCommands.length === 0 && outputDerivedCommands.length > 0) {
+            parsedCommands.push(...outputDerivedCommands);
+          }
+        }
+
+        inputParseStateRef.current = createInitialInputCommandParseState();
         outputParseStateRef.current = parseState;
         setCommandHistory(parsedCommands.slice(-MAX_COMMAND_HISTORY));
         setHistoryState('ready');
@@ -446,7 +715,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
 
           const parsed = parseOutputChunkForCommands(outputData, outputParseStateRef.current);
           outputParseStateRef.current = parsed.nextState;
-          appendCommands(parsed.commands, new Date().toISOString());
+          appendCommands(parsed.commands, new Date().toISOString(), 'correct');
         } else if (payload?.type === 'exit') {
           inputForwardEnabledRef.current = false;
           setConnectionState('disconnected');

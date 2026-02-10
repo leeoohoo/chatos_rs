@@ -7,6 +7,8 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::builtin::code_maintainer::{CodeMaintainerOptions, CodeMaintainerService};
+use crate::builtin::terminal_controller::{TerminalControllerOptions, TerminalControllerService};
+use crate::services::builtin_mcp::BuiltinMcpKind;
 use crate::services::mcp_loader::{McpBuiltinServer, McpHttpServer, McpStdioServer};
 use crate::utils::abort_registry;
 
@@ -30,13 +32,40 @@ pub struct ToolResult {
 }
 
 #[derive(Clone)]
+enum BuiltinToolService {
+    CodeMaintainer(CodeMaintainerService),
+    TerminalController(TerminalControllerService),
+}
+
+impl BuiltinToolService {
+    fn list_tools(&self) -> Vec<Value> {
+        match self {
+            Self::CodeMaintainer(service) => service.list_tools(),
+            Self::TerminalController(service) => service.list_tools(),
+        }
+    }
+
+    fn call_tool(
+        &self,
+        name: &str,
+        args: Value,
+        session_id: Option<&str>,
+    ) -> Result<Value, String> {
+        match self {
+            Self::CodeMaintainer(service) => service.call_tool(name, args, session_id),
+            Self::TerminalController(service) => service.call_tool(name, args, session_id),
+        }
+    }
+}
+
+#[derive(Clone)]
 pub struct McpToolExecute {
     pub mcp_servers: Vec<McpHttpServer>,
     pub stdio_mcp_servers: Vec<McpStdioServer>,
     pub builtin_mcp_servers: Vec<McpBuiltinServer>,
     pub tools: Vec<Value>,
     pub tool_metadata: HashMap<String, ToolInfo>,
-    builtin_services: HashMap<String, CodeMaintainerService>,
+    builtin_services: HashMap<String, BuiltinToolService>,
 }
 
 impl McpToolExecute {
@@ -180,17 +209,31 @@ impl McpToolExecute {
     }
 
     fn build_tools_from_builtin(&mut self, server: &McpBuiltinServer) -> Result<(), String> {
-        let service = CodeMaintainerService::new(CodeMaintainerOptions {
-            server_name: server.name.clone(),
-            root: std::path::PathBuf::from(&server.workspace_dir),
-            allow_writes: server.allow_writes,
-            max_file_bytes: server.max_file_bytes,
-            max_write_bytes: server.max_write_bytes,
-            search_limit: server.search_limit,
-            session_id: None,
-            run_id: None,
-            db_path: None,
-        })?;
+        let service = match server.kind {
+            BuiltinMcpKind::CodeMaintainer => BuiltinToolService::CodeMaintainer(
+                CodeMaintainerService::new(CodeMaintainerOptions {
+                    server_name: server.name.clone(),
+                    root: std::path::PathBuf::from(&server.workspace_dir),
+                    allow_writes: server.allow_writes,
+                    max_file_bytes: server.max_file_bytes,
+                    max_write_bytes: server.max_write_bytes,
+                    search_limit: server.search_limit,
+                    session_id: None,
+                    run_id: None,
+                    db_path: None,
+                })?,
+            ),
+            BuiltinMcpKind::TerminalController => BuiltinToolService::TerminalController(
+                TerminalControllerService::new(TerminalControllerOptions {
+                    root: std::path::PathBuf::from(&server.workspace_dir),
+                    user_id: server.user_id.clone(),
+                    project_id: server.project_id.clone(),
+                    idle_timeout_ms: 5_000,
+                    max_wait_ms: 60_000,
+                    max_output_chars: 20_000,
+                })?,
+            ),
+        };
         let tools = service.list_tools();
         self.builtin_services.insert(server.name.clone(), service);
         for tool in tools {

@@ -382,8 +382,9 @@ impl TerminalsManager {
         name: String,
         cwd: String,
         user_id: Option<String>,
+        project_id: Option<String>,
     ) -> Result<Terminal, String> {
-        let terminal = Terminal::new(name, cwd, user_id);
+        let terminal = Terminal::new(name, cwd, user_id, project_id);
         terminals::create_terminal(&terminal).await?;
         let _ = self.spawn_session(&terminal)?;
         Ok(terminal)

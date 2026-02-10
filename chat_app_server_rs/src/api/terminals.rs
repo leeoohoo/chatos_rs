@@ -27,6 +27,7 @@ struct CreateTerminalRequest {
     name: Option<String>,
     cwd: Option<String>,
     user_id: Option<String>,
+    project_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -40,6 +41,8 @@ struct TerminalLogQuery {
 enum WsInput {
     #[serde(rename = "input")]
     Input { data: String },
+    #[serde(rename = "command")]
+    Command { command: String },
     #[serde(rename = "resize")]
     Resize { cols: u16, rows: u16 },
     #[serde(rename = "ping")]
@@ -118,7 +121,19 @@ async fn create_terminal(Json(req): Json<CreateTerminalRequest>) -> (StatusCode,
 
     let manager = get_terminal_manager();
     match manager
-        .create(name, cwd.trim().to_string(), req.user_id)
+        .create(
+            name,
+            cwd.trim().to_string(),
+            req.user_id,
+            req.project_id.and_then(|v| {
+                let trimmed = v.trim().to_string();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed)
+                }
+            }),
+        )
         .await
     {
         Ok(terminal) => (StatusCode::CREATED, Json(attach_busy(&manager, terminal))),
@@ -266,6 +281,18 @@ async fn handle_terminal_socket(id: String, mut socket: WebSocket) {
                         let log = TerminalLog::new(id.clone(), "input".to_string(), data);
                         let _ = TerminalLogService::create(log).await;
                         let _ = terminals::touch_terminal(&id).await;
+                    }
+                    Ok(WsInput::Command { command }) => {
+                        let trimmed = command.trim();
+                        if !trimmed.is_empty() {
+                            let log = TerminalLog::new(
+                                id.clone(),
+                                "command".to_string(),
+                                trimmed.to_string(),
+                            );
+                            let _ = TerminalLogService::create(log).await;
+                            let _ = terminals::touch_terminal(&id).await;
+                        }
                     }
                     Ok(WsInput::Resize { cols, rows }) => {
                         if cols > 0 && rows > 0 {

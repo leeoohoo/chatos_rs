@@ -321,6 +321,7 @@ export interface InputAreaProps {
   onAgentChange?: (agentId: string | null) => void;
   // 项目（用于展示智能体关联项目）
   availableProjects?: Project[];
+  currentProject?: Project | null;
 }
 
 export interface SessionListProps {
