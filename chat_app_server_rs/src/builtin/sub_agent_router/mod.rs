@@ -25,6 +25,12 @@ use crate::repositories::{ai_model_configs, mcp_configs};
 use crate::services::builtin_mcp::{list_builtin_mcp_configs, SUB_AGENT_ROUTER_MCP_ID};
 use crate::services::mcp_loader::load_mcp_configs_for_user;
 use crate::services::user_settings::{apply_settings_to_ai_client, get_effective_user_settings};
+use crate::services::v2::ai_client::{
+    AiClient as LegacyAiClient, AiClientCallbacks as LegacyAiClientCallbacks,
+};
+use crate::services::v2::ai_request_handler::AiRequestHandler as LegacyAiRequestHandler;
+use crate::services::v2::mcp_tool_execute::McpToolExecute as LegacyMcpToolExecute;
+use crate::services::v2::message_manager::MessageManager as LegacyMessageManager;
 use crate::services::v3::ai_client::{AiClient, AiClientCallbacks, ProcessOptions};
 use crate::services::v3::ai_request_handler::{AiRequestHandler, StreamCallbacks};
 use crate::services::v3::mcp_tool_execute::McpToolExecute;
@@ -114,6 +120,7 @@ struct ResolvedModel {
     provider: String,
     model: String,
     thinking_level: Option<String>,
+    supports_responses: bool,
     api_key: String,
     base_url: String,
 }
@@ -912,63 +919,9 @@ fn execute_job(
                 }
             }
 
-            let mut mcp_execute = McpToolExecute::new(
-                http_servers.clone(),
-                stdio_servers.clone(),
-                builtin_servers.clone(),
-            );
-
-            if !http_servers.is_empty() || !stdio_servers.is_empty() || !builtin_servers.is_empty()
-            {
-                if let Err(err) = mcp_execute.init().await {
-                    append_job_event(
-                        job_id.as_str(),
-                        "ai_mcp_init_error",
-                        Some(json!({ "error": err })),
-                        session_id.as_str(),
-                        run_id.as_str(),
-                    );
-                }
-            }
-
-            let (tools_before_filter, tools_after_filter) = if allow_policy.configured {
-                filter_tools_by_prefixes(&mut mcp_execute, &allow_policy.prefixes)
-            } else {
-                let count = mcp_execute.tools.len();
-                (count, count)
-            };
-
-            append_job_event(
-                job_id.as_str(),
-                "ai_mcp_ready",
-                Some(json!({
-                    "configured": mcp_selection.configured,
-                    "enabled_mcp_ids": mcp_ids,
-                    "allow_prefixes": allow_policy.prefixes,
-                    "servers": {
-                        "http": http_servers.len(),
-                        "stdio": stdio_servers.len(),
-                        "builtin": builtin_servers.len(),
-                    },
-                    "tools_before_filter": tools_before_filter,
-                    "tools_after_filter": tools_after_filter,
-                })),
-                session_id.as_str(),
-                run_id.as_str(),
-            );
-
-            let message_manager = MessageManager::new();
-            let handler = AiRequestHandler::new(
-                model.api_key.clone(),
-                model.base_url.clone(),
-                message_manager.clone(),
-            );
-            let mut ai_client = AiClient::new(handler, mcp_execute, message_manager);
-
             let effective_settings = get_effective_user_settings(ctx.user_id.clone())
                 .await
                 .unwrap_or_else(|_| json!({}));
-            apply_settings_to_ai_client(&mut ai_client, &effective_settings);
             let max_tokens = effective_settings
                 .get("CHAT_MAX_TOKENS")
                 .and_then(|value| value.as_i64())
@@ -1070,39 +1023,196 @@ fn execute_job(
                 })
             };
 
-            let messages = vec![json!({
-                "role": "user",
-                "content": [
-                    { "type": "input_text", "text": task }
-                ]
-            })];
+            let api_mode = if model.supports_responses {
+                "responses"
+            } else {
+                "chat_completions"
+            };
 
-            let req = ai_client.process_request(
-                messages,
-                Some(session_id.clone()),
-                ProcessOptions {
-                    model: Some(model.model.clone()),
-                    provider: Some(model.provider.clone()),
-                    thinking_level: model.thinking_level.clone(),
-                    temperature: Some(0.7),
+            let response = if model.supports_responses {
+                let mut mcp_execute = McpToolExecute::new(
+                    http_servers.clone(),
+                    stdio_servers.clone(),
+                    builtin_servers.clone(),
+                );
+
+                if !http_servers.is_empty()
+                    || !stdio_servers.is_empty()
+                    || !builtin_servers.is_empty()
+                {
+                    if let Err(err) = mcp_execute.init().await {
+                        append_job_event(
+                            job_id.as_str(),
+                            "ai_mcp_init_error",
+                            Some(json!({ "error": err, "api_mode": api_mode })),
+                            session_id.as_str(),
+                            run_id.as_str(),
+                        );
+                    }
+                }
+
+                let (tools_before_filter, tools_after_filter) = if allow_policy.configured {
+                    filter_tools_by_prefixes(&mut mcp_execute, &allow_policy.prefixes)
+                } else {
+                    let count = mcp_execute.tools.len();
+                    (count, count)
+                };
+
+                append_job_event(
+                    job_id.as_str(),
+                    "ai_mcp_ready",
+                    Some(json!({
+                        "api_mode": api_mode,
+                        "supports_responses": model.supports_responses,
+                        "configured": mcp_selection.configured,
+                        "enabled_mcp_ids": mcp_ids,
+                        "allow_prefixes": allow_policy.prefixes,
+                        "servers": {
+                            "http": http_servers.len(),
+                            "stdio": stdio_servers.len(),
+                            "builtin": builtin_servers.len(),
+                        },
+                        "tools_before_filter": tools_before_filter,
+                        "tools_after_filter": tools_after_filter,
+                    })),
+                    session_id.as_str(),
+                    run_id.as_str(),
+                );
+
+                let message_manager = MessageManager::new();
+                let handler = AiRequestHandler::new(
+                    model.api_key.clone(),
+                    model.base_url.clone(),
+                    message_manager.clone(),
+                );
+                let mut ai_client = AiClient::new(handler, mcp_execute, message_manager);
+                apply_settings_to_ai_client(&mut ai_client, &effective_settings);
+
+                let messages = vec![json!({
+                    "role": "user",
+                    "content": [
+                        { "type": "input_text", "text": task }
+                    ]
+                })];
+
+                let req = ai_client.process_request(
+                    messages,
+                    Some(session_id.clone()),
+                    ProcessOptions {
+                        model: Some(model.model.clone()),
+                        provider: Some(model.provider.clone()),
+                        thinking_level: model.thinking_level.clone(),
+                        temperature: Some(0.7),
+                        max_tokens,
+                        reasoning_enabled: Some(true),
+                        system_prompt: Some(prompt.clone()),
+                        history_limit: None,
+                        purpose: Some("sub_agent_router".to_string()),
+                        callbacks: Some(AiClientCallbacks {
+                            on_chunk: Some(on_chunk.clone()),
+                            on_thinking: Some(on_thinking.clone()),
+                            on_tools_start: Some(on_tools_start.clone()),
+                            on_tools_stream: Some(on_tools_stream.clone()),
+                            on_tools_end: Some(on_tools_end.clone()),
+                        }),
+                    },
+                );
+
+                timeout(Duration::from_millis(ctx.ai_timeout_ms as u64), req)
+                    .await
+                    .map_err(|_| format!("AI timeout after {} ms", ctx.ai_timeout_ms))??
+            } else {
+                let mut mcp_execute = LegacyMcpToolExecute::new(
+                    http_servers.clone(),
+                    stdio_servers.clone(),
+                    builtin_servers.clone(),
+                );
+
+                if !http_servers.is_empty()
+                    || !stdio_servers.is_empty()
+                    || !builtin_servers.is_empty()
+                {
+                    if let Err(err) = mcp_execute.init().await {
+                        append_job_event(
+                            job_id.as_str(),
+                            "ai_mcp_init_error",
+                            Some(json!({ "error": err, "api_mode": api_mode })),
+                            session_id.as_str(),
+                            run_id.as_str(),
+                        );
+                    }
+                }
+
+                let (tools_before_filter, tools_after_filter) = if allow_policy.configured {
+                    filter_legacy_tools_by_prefixes(&mut mcp_execute, &allow_policy.prefixes)
+                } else {
+                    let count = mcp_execute.tools.len();
+                    (count, count)
+                };
+                let use_tools = !mcp_execute.tools.is_empty();
+
+                append_job_event(
+                    job_id.as_str(),
+                    "ai_mcp_ready",
+                    Some(json!({
+                        "api_mode": api_mode,
+                        "supports_responses": model.supports_responses,
+                        "configured": mcp_selection.configured,
+                        "enabled_mcp_ids": mcp_ids,
+                        "allow_prefixes": allow_policy.prefixes,
+                        "servers": {
+                            "http": http_servers.len(),
+                            "stdio": stdio_servers.len(),
+                            "builtin": builtin_servers.len(),
+                        },
+                        "tools_before_filter": tools_before_filter,
+                        "tools_after_filter": tools_after_filter,
+                    })),
+                    session_id.as_str(),
+                    run_id.as_str(),
+                );
+
+                let message_manager = LegacyMessageManager::new();
+                let handler = LegacyAiRequestHandler::new(
+                    model.api_key.clone(),
+                    model.base_url.clone(),
+                    message_manager.clone(),
+                );
+                let mut ai_client = LegacyAiClient::new(handler, mcp_execute, message_manager);
+                apply_settings_to_ai_client(&mut ai_client, &effective_settings);
+                ai_client.set_system_prompt(Some(prompt.clone()));
+
+                let messages = vec![json!({
+                    "role": "user",
+                    "content": task,
+                })];
+
+                let req = ai_client.process_request(
+                    messages,
+                    Some(session_id.clone()),
+                    model.model.clone(),
+                    0.7,
                     max_tokens,
-                    reasoning_enabled: Some(true),
-                    system_prompt: Some(prompt),
-                    history_limit: None,
-                    purpose: Some("sub_agent_router".to_string()),
-                    callbacks: Some(AiClientCallbacks {
-                        on_chunk: Some(on_chunk),
-                        on_thinking: Some(on_thinking),
-                        on_tools_start: Some(on_tools_start),
-                        on_tools_stream: Some(on_tools_stream),
-                        on_tools_end: Some(on_tools_end),
-                    }),
-                },
-            );
+                    use_tools,
+                    LegacyAiClientCallbacks {
+                        on_chunk: Some(on_chunk.clone()),
+                        on_thinking: Some(on_thinking.clone()),
+                        on_tools_start: Some(on_tools_start.clone()),
+                        on_tools_stream: Some(on_tools_stream.clone()),
+                        on_tools_end: Some(on_tools_end.clone()),
+                        on_context_summarized_start: None,
+                        on_context_summarized_stream: None,
+                        on_context_summarized_end: None,
+                    },
+                    true,
+                    Some(model.provider.clone()),
+                    model.thinking_level.clone(),
+                );
 
-            let response = timeout(Duration::from_millis(ctx.ai_timeout_ms as u64), req)
-                .await
-                .map_err(|_| format!("AI timeout after {} ms", ctx.ai_timeout_ms))??;
+                timeout(Duration::from_millis(ctx.ai_timeout_ms as u64), req)
+                    .await
+                    .map_err(|_| format!("AI timeout after {} ms", ctx.ai_timeout_ms))??
+            };
 
             let mut content = response
                 .get("content")
@@ -1692,52 +1802,104 @@ fn run_ai_task(
             );
         }
 
-        let message_manager = MessageManager::new();
-        let handler = AiRequestHandler::new(
-            model.api_key.clone(),
-            model.base_url.clone(),
-            message_manager,
-        );
+        let (response_text, reasoning, finish_reason) = if model.supports_responses {
+            let message_manager = MessageManager::new();
+            let handler = AiRequestHandler::new(
+                model.api_key.clone(),
+                model.base_url.clone(),
+                message_manager,
+            );
 
-        let input = json!([
-            {
-                "role": "user",
-                "content": [
-                    { "type": "input_text", "text": task }
-                ]
-            }
-        ]);
+            let input = json!([
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "input_text", "text": task }
+                    ]
+                }
+            ]);
 
-        let req = handler.handle_request(
-            input,
-            model.model.clone(),
-            Some(prompt),
-            None,
-            None,
-            Some(0.2),
-            None,
-            StreamCallbacks::default(),
-            Some(model.provider.clone()),
-            model.thinking_level.clone(),
-            None,
-            false,
-            "sub_agent_router",
-        );
+            let req = handler.handle_request(
+                input,
+                model.model.clone(),
+                Some(prompt.clone()),
+                None,
+                None,
+                Some(0.2),
+                None,
+                StreamCallbacks::default(),
+                Some(model.provider.clone()),
+                model.thinking_level.clone(),
+                None,
+                false,
+                "sub_agent_router",
+            );
 
-        let response = timeout(Duration::from_millis(timeout_ms as u64), req)
-            .await
-            .map_err(|_| format!("AI timeout after {} ms", timeout_ms))??;
+            let response = timeout(Duration::from_millis(timeout_ms as u64), req)
+                .await
+                .map_err(|_| format!("AI timeout after {} ms", timeout_ms))??;
 
-        let content = if response.content.trim().is_empty() {
-            "(empty)".to_string()
+            let content = if response.content.trim().is_empty() {
+                "(empty)".to_string()
+            } else {
+                response.content.trim().to_string()
+            };
+
+            (content, response.reasoning, response.finish_reason)
         } else {
-            response.content.trim().to_string()
+            let message_manager = LegacyMessageManager::new();
+            let handler = LegacyAiRequestHandler::new(
+                model.api_key.clone(),
+                model.base_url.clone(),
+                message_manager,
+            );
+
+            let messages = vec![
+                json!({
+                    "role": "system",
+                    "content": prompt,
+                }),
+                json!({
+                    "role": "user",
+                    "content": task,
+                }),
+            ];
+
+            let req = handler.handle_request(
+                messages,
+                None,
+                model.model.clone(),
+                Some(0.2),
+                None,
+                crate::services::v2::ai_request_handler::StreamCallbacks {
+                    on_chunk: None,
+                    on_thinking: None,
+                },
+                true,
+                Some(model.provider.clone()),
+                model.thinking_level.clone(),
+                None,
+                false,
+                "sub_agent_router",
+            );
+
+            let response = timeout(Duration::from_millis(timeout_ms as u64), req)
+                .await
+                .map_err(|_| format!("AI timeout after {} ms", timeout_ms))??;
+
+            let content = if response.content.trim().is_empty() {
+                "(empty)".to_string()
+            } else {
+                response.content.trim().to_string()
+            };
+
+            (content, response.reasoning, response.finish_reason)
         };
 
         Ok(AiTaskResult {
-            response: content,
-            reasoning: response.reasoning,
-            finish_reason: response.finish_reason,
+            response: response_text,
+            reasoning,
+            finish_reason,
             model_id: model.id,
             model_name: model.name,
             provider: model.provider,
@@ -1819,7 +1981,7 @@ fn filter_tools_by_prefixes(
 
     let mut kept_tool_names = HashSet::new();
     mcp_execute.tools.retain(|tool| {
-        let Some(name) = tool.get("name").and_then(|value| value.as_str()) else {
+        let Some(name) = extract_tool_name_from_schema(tool) else {
             return false;
         };
 
@@ -1839,6 +2001,59 @@ fn filter_tools_by_prefixes(
         .retain(|name, _| kept_tool_names.contains(name));
 
     (before, kept_tool_names.len())
+}
+
+fn filter_legacy_tools_by_prefixes(
+    mcp_execute: &mut LegacyMcpToolExecute,
+    allow_prefixes: &[String],
+) -> (usize, usize) {
+    let before = mcp_execute.tools.len();
+
+    let prefixes = unique_strings(
+        allow_prefixes
+            .iter()
+            .map(|value| value.trim().to_lowercase())
+            .filter(|value| !value.is_empty()),
+    );
+
+    if prefixes.is_empty() {
+        mcp_execute.tools.clear();
+        mcp_execute.tool_metadata.clear();
+        return (before, 0);
+    }
+
+    let mut kept_tool_names = HashSet::new();
+    mcp_execute.tools.retain(|tool| {
+        let Some(name) = extract_tool_name_from_schema(tool) else {
+            return false;
+        };
+
+        let keep = prefixes
+            .iter()
+            .any(|prefix| tool_matches_allowed_prefix(name, prefix.as_str()));
+
+        if keep {
+            kept_tool_names.insert(name.to_string());
+        }
+
+        keep
+    });
+
+    mcp_execute
+        .tool_metadata
+        .retain(|name, _| kept_tool_names.contains(name));
+
+    (before, kept_tool_names.len())
+}
+
+fn extract_tool_name_from_schema(tool: &Value) -> Option<&str> {
+    tool.get("name")
+        .and_then(|value| value.as_str())
+        .or_else(|| {
+            tool.get("function")
+                .and_then(|func| func.get("name"))
+                .and_then(|value| value.as_str())
+        })
 }
 
 fn tool_matches_allowed_prefix(tool_name: &str, prefix: &str) -> bool {
@@ -1979,6 +2194,10 @@ async fn resolve_model_config(
         {
             return Ok(to_resolved_model(found.clone()));
         }
+        return Err(format!(
+            "Requested model is not enabled or not configured: {}",
+            needle
+        ));
     }
 
     if let Some(first) = enabled_models.into_iter().next() {
@@ -1998,6 +2217,7 @@ async fn resolve_model_config(
         provider: "gpt".to_string(),
         model: fallback_model,
         thinking_level: None,
+        supports_responses: true,
         api_key: cfg.openai_api_key.clone(),
         base_url: cfg.openai_base_url.clone(),
     })
@@ -2017,6 +2237,7 @@ fn to_resolved_model(cfg: crate::models::ai_model_config::AiModelConfig) -> Reso
         provider: normalize_provider(cfg.provider.as_str()),
         model: cfg.model,
         thinking_level: cfg.thinking_level,
+        supports_responses: cfg.supports_responses,
         api_key: cfg
             .api_key
             .as_deref()
