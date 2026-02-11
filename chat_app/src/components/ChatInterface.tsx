@@ -11,6 +11,7 @@ import AgentManager from './AgentManager';
 import UserSettingsPanel from './UserSettingsPanel';
 import ProjectExplorer from './ProjectExplorer';
 import TerminalView from './TerminalView';
+import SubAgentRunPanel from './SubAgentRunPanel';
 // 应用弹窗管理器由 ApplicationsPanel 直接承担
 import ApplicationsPanel from './ApplicationsPanel';
 import { cn } from '../lib/utils';
@@ -89,6 +90,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [showAgentManager, setShowAgentManager] = useState(false);
   const [showApplicationsPanel, setShowApplicationsPanel] = useState(false);
   const [showUserSettings, setShowUserSettings] = useState(false);
+  const [dismissedSubAgentToolCallId, setDismissedSubAgentToolCallId] = useState<string | null>(null);
   const didInitRef = useRef(false);
 
   // 初始化加载会话、AI模型和智能体配置
@@ -118,6 +120,35 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       loadMoreMessages(currentSession.id);
     }
   }, [currentSession, loadMoreMessages]);
+
+  useEffect(() => {
+    setDismissedSubAgentToolCallId(null);
+  }, [currentSession?.id]);
+
+  const latestSubAgentToolCall = useMemo(() => {
+    if (!currentSession) return null;
+    const isRunSubAgent = (name: string) => /(^|_)run_sub_agent$/i.test(name);
+
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const message: any = messages[i];
+      if (message.sessionId !== currentSession.id) continue;
+      const toolCalls = message?.toolCalls || message?.metadata?.toolCalls;
+      if (!Array.isArray(toolCalls) || toolCalls.length === 0) continue;
+
+      for (let j = toolCalls.length - 1; j >= 0; j -= 1) {
+        const toolCall = toolCalls[j];
+        const name = String(toolCall?.name || '');
+        if (isRunSubAgent(name)) {
+          return toolCall;
+        }
+      }
+    }
+
+    return null;
+  }, [currentSession, messages]);
+
+  const showSubAgentPanel = !!latestSubAgentToolCall
+    && dismissedSubAgentToolCallId !== latestSubAgentToolCall.id;
 
   return (
     <div className={cn(
@@ -242,64 +273,76 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
             ) : activePanel === 'terminal' ? (
               <TerminalView className="flex-1" />
             ) : (
-              <>
-                <div className="flex-1 overflow-hidden">
-                  {currentSession ? (
-                    <MessageList
-                      messages={messages}
-                      isLoading={chatIsLoading}
-                      isStreaming={chatIsStreaming}
-                      hasMore={hasMoreMessages}
-                      onLoadMore={handleLoadMore}
-                      customRenderer={customRenderer}
-                    />
-                  ) : (
-                    <div className="flex items-center justify-center h-full">
-                      <div className="text-center">
-                        <h2 className="text-xl font-semibold text-muted-foreground mb-2">
-                          欢迎使用 AI 聊天
-                        </h2>
-                        <p className="text-muted-foreground mb-4">
-                          点击左上角按钮选择会话，或创建新的会话开始对话
-                        </p>
-                        <button
-                          onClick={toggleSidebar}
-                          className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
-                        >
-                          展开会话列表
-                        </button>
+              <div className="flex-1 flex overflow-hidden">
+                <div className={cn(
+                  'flex-1 min-w-0 flex flex-col overflow-hidden',
+                  showSubAgentPanel ? 'border-r border-border' : ''
+                )}>
+                  <div className="flex-1 overflow-hidden">
+                    {currentSession ? (
+                      <MessageList
+                        messages={messages}
+                        isLoading={chatIsLoading}
+                        isStreaming={chatIsStreaming}
+                        hasMore={hasMoreMessages}
+                        onLoadMore={handleLoadMore}
+                        customRenderer={customRenderer}
+                      />
+                    ) : (
+                      <div className="flex items-center justify-center h-full">
+                        <div className="text-center">
+                          <h2 className="text-xl font-semibold text-muted-foreground mb-2">
+                            欢迎使用 AI 聊天
+                          </h2>
+                          <p className="text-muted-foreground mb-4">
+                            点击左上角按钮选择会话，或创建新的会话开始对话
+                          </p>
+                          <button
+                            onClick={toggleSidebar}
+                            className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
+                          >
+                            展开会话列表
+                          </button>
+                        </div>
                       </div>
+                    )}
+                  </div>
+
+                  {/* 输入区域 */}
+                  {currentSession && activePanel === 'chat' && (
+                    <div className="border-t border-border">
+                      <InputArea
+                        onSend={handleMessageSend}
+                        onStop={abortCurrentConversation}
+                        disabled={chatIsLoading || chatIsStreaming}
+                        isStreaming={chatIsStreaming}
+                        placeholder="输入消息..."
+                        allowAttachments={true}
+                        supportedFileTypes={supportedFileTypes}
+                        reasoningSupported={supportsReasoning}
+                        reasoningEnabled={chatConfig?.reasoningEnabled === true}
+                        onReasoningToggle={(enabled) => updateChatConfig({ reasoningEnabled: enabled })}
+                        showModelSelector={true}
+                        selectedModelId={selectedModelId}
+                        availableModels={aiModelConfigs}
+                        onModelChange={setSelectedModel}
+                        selectedAgentId={selectedAgentId}
+                        availableAgents={agents}
+                        onAgentChange={setSelectedAgent}
+                        availableProjects={projects}
+                        currentProject={currentProject}
+                      />
                     </div>
                   )}
                 </div>
 
-                {/* 输入区域 */}
-                {currentSession && activePanel === 'chat' && (
-                  <div className="border-t border-border">
-                    <InputArea
-                      onSend={handleMessageSend}
-                      onStop={abortCurrentConversation}
-                      disabled={chatIsLoading || chatIsStreaming}
-                      isStreaming={chatIsStreaming}
-                      placeholder="输入消息..."
-                      allowAttachments={true}
-                      supportedFileTypes={supportedFileTypes}
-                      reasoningSupported={supportsReasoning}
-                      reasoningEnabled={chatConfig?.reasoningEnabled === true}
-                      onReasoningToggle={(enabled) => updateChatConfig({ reasoningEnabled: enabled })}
-                      showModelSelector={true}
-                      selectedModelId={selectedModelId}
-                      availableModels={aiModelConfigs}
-                      onModelChange={setSelectedModel}
-                      selectedAgentId={selectedAgentId}
-                      availableAgents={agents}
-                      onAgentChange={setSelectedAgent}
-                      availableProjects={projects}
-                      currentProject={currentProject}
-                    />
-                  </div>
+                {showSubAgentPanel && latestSubAgentToolCall && (
+                  <SubAgentRunPanel
+                    toolCall={latestSubAgentToolCall}
+                    onClose={() => setDismissedSubAgentToolCallId(latestSubAgentToolCall.id)}
+                  />
                 )}
-              </>
+              </div>
             )}
           </div>
         </div>

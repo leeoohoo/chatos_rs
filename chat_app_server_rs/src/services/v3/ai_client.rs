@@ -467,7 +467,12 @@ impl AiClient {
 
             let tool_results = self
                 .mcp_tool_execute
-                .execute_tools_stream(&tool_calls_arr, session_id.as_deref(), on_tools_stream_cb)
+                .execute_tools_stream(
+                    &tool_calls_arr,
+                    session_id.as_deref(),
+                    Some(model.as_str()),
+                    on_tools_stream_cb,
+                )
                 .await;
 
             if let Some(sid) = session_id.as_ref() {

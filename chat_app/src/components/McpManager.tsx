@@ -102,16 +102,23 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
   const [settingsLoading, setSettingsLoading] = useState<boolean>(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [settingsSummary, setSettingsSummary] = useState<any>(null);
-  const [agentsJsonInput, setAgentsJsonInput] = useState('');
-  const [skillsJsonInput, setSkillsJsonInput] = useState('');
   const [gitRepositoryInput, setGitRepositoryInput] = useState('');
   const [gitBranchInput, setGitBranchInput] = useState('');
   const [gitAgentsPathInput, setGitAgentsPathInput] = useState('');
   const [gitSkillsPathInput, setGitSkillsPathInput] = useState('');
-  const [settingsSubmitting, setSettingsSubmitting] = useState<'agents' | 'skills' | 'git' | null>(null);
-  const [settingsTab, setSettingsTab] = useState<'overview' | 'git' | 'manual'>('overview');
+  const [settingsSubmitting, setSettingsSubmitting] = useState<'git' | 'plugin' | 'plugin_all' | null>(null);
+  const [settingsTab, setSettingsTab] = useState<'mcp' | 'overview' | 'git' | 'marketplace'>('mcp');
   const [settingsNotice, setSettingsNotice] = useState<string | null>(null);
   const [lastGitImportResult, setLastGitImportResult] = useState<any>(null);
+  const [settingsPluginSearch, setSettingsPluginSearch] = useState('');
+  const [settingsPluginFilter, setSettingsPluginFilter] = useState<'all' | 'installed' | 'pending'>('all');
+  const [settingsMcpLoading, setSettingsMcpLoading] = useState<boolean>(false);
+  const [settingsMcpSaving, setSettingsMcpSaving] = useState<boolean>(false);
+  const [settingsMcpOptions, setSettingsMcpOptions] = useState<any[]>([]);
+  const [settingsMcpEnabledIds, setSettingsMcpEnabledIds] = useState<string[]>([]);
+  const [settingsMcpConfigured, setSettingsMcpConfigured] = useState<boolean>(false);
+  const [settingsMcpUpdatedAt, setSettingsMcpUpdatedAt] = useState<string | null>(null);
+  const [settingsMcpSearch, setSettingsMcpSearch] = useState('');
 
   // 组件初始化时加载MCP配置（StrictMode 下防止重复触发）
   React.useEffect(() => {
@@ -234,18 +241,87 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
     });
   };
 
+  const normalizeIdList = (items: any): string[] => {
+    if (!Array.isArray(items)) return [];
+    const normalized = items
+      .map((item) => String(item || '').trim())
+      .filter(Boolean);
+    return Array.from(new Set(normalized)).sort();
+  };
+
+  const applyMcpPermissionState = (payload: any) => {
+    const options = Array.isArray(payload?.options) ? payload.options : [];
+    const normalizedOptions = options
+      .map((item: any) => {
+        const id = String(item?.id || '').trim();
+        if (!id) return null;
+        return {
+          ...item,
+          id,
+          name: String(item?.name || id),
+          display_name: String(item?.display_name || item?.name || id),
+          tool_prefix: String(item?.tool_prefix || ''),
+          config_enabled: item?.config_enabled !== false,
+        };
+      })
+      .filter(Boolean) as any[];
+
+    const payloadEnabledIds = normalizeIdList(payload?.enabled_mcp_ids);
+    const fallbackEnabledIds = normalizeIdList(
+      normalizedOptions
+        .filter((item: any) => item?.enabled)
+        .map((item: any) => item?.id)
+    );
+
+    setSettingsMcpOptions(normalizedOptions);
+    setSettingsMcpEnabledIds(payloadEnabledIds.length > 0 || payload?.configured ? payloadEnabledIds : fallbackEnabledIds);
+    setSettingsMcpConfigured(Boolean(payload?.configured));
+    setSettingsMcpUpdatedAt(typeof payload?.updated_at === 'string' ? payload.updated_at : null);
+  };
+
   const loadBuiltinSettings = async (configId: string) => {
     setSettingsLoading(true);
+    setSettingsMcpLoading(true);
     setSettingsError(null);
     try {
-      const res = await apiClient.getBuiltinMcpSettings(configId);
-      const data = (res as any)?.data || null;
-      setSettingsSummary(data);
+      const [summaryRes, permissionsRes] = await Promise.all([
+        apiClient.getBuiltinMcpSettings(configId),
+        apiClient.getBuiltinMcpPermissions(configId),
+      ]);
+      const summaryData = (summaryRes as any)?.data || null;
+      const permissionsData = (permissionsRes as any)?.data || null;
+      setSettingsSummary(summaryData);
+      applyMcpPermissionState(permissionsData);
     } catch (error: any) {
       setSettingsSummary(null);
+      setSettingsMcpOptions([]);
+      setSettingsMcpEnabledIds([]);
+      setSettingsMcpConfigured(false);
+      setSettingsMcpUpdatedAt(null);
       setSettingsError(error?.message || '读取内置 MCP 设置失败');
     } finally {
       setSettingsLoading(false);
+      setSettingsMcpLoading(false);
+    }
+  };
+
+  const handleSaveMcpPermissions = async () => {
+    if (!settingsConfig) return;
+
+    setSettingsMcpSaving(true);
+    setSettingsError(null);
+    setSettingsNotice(null);
+    try {
+      const response = await apiClient.updateBuiltinMcpPermissions(settingsConfig.id, {
+        enabled_mcp_ids: normalizeIdList(settingsMcpEnabledIds),
+      });
+      const payload = (response as any)?.data || null;
+      applyMcpPermissionState(payload);
+      setSettingsNotice('Sub-agent 可用 MCP 权限已保存。');
+    } catch (error: any) {
+      setSettingsError(error?.message || '保存 MCP 权限失败');
+    } finally {
+      setSettingsMcpSaving(false);
     }
   };
 
@@ -254,91 +330,46 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
     setSettingsError(null);
     setSettingsNotice(null);
     setLastGitImportResult(null);
-    setSettingsTab('overview');
+    setSettingsTab('mcp');
     setSettingsSummary(null);
-    setAgentsJsonInput('');
-    setSkillsJsonInput('');
     setGitRepositoryInput('');
     setGitBranchInput('');
     setGitAgentsPathInput('');
     setGitSkillsPathInput('');
+    setSettingsPluginSearch('');
+    setSettingsPluginFilter('all');
+    setSettingsMcpOptions([]);
+    setSettingsMcpEnabledIds([]);
+    setSettingsMcpConfigured(false);
+    setSettingsMcpUpdatedAt(null);
+    setSettingsMcpSearch('');
     await loadBuiltinSettings(config.id);
   };
 
   const closeBuiltinSettings = () => {
     setSettingsConfig(null);
     setSettingsLoading(false);
+    setSettingsMcpLoading(false);
+    setSettingsMcpSaving(false);
     setSettingsError(null);
     setSettingsNotice(null);
     setLastGitImportResult(null);
     setSettingsSummary(null);
-    setAgentsJsonInput('');
-    setSkillsJsonInput('');
     setGitRepositoryInput('');
     setGitBranchInput('');
     setGitAgentsPathInput('');
     setGitSkillsPathInput('');
     setSettingsSubmitting(null);
-    setSettingsTab('overview');
+    setSettingsTab('mcp');
+    setSettingsPluginSearch('');
+    setSettingsPluginFilter('all');
+    setSettingsMcpOptions([]);
+    setSettingsMcpEnabledIds([]);
+    setSettingsMcpConfigured(false);
+    setSettingsMcpUpdatedAt(null);
+    setSettingsMcpSearch('');
   };
 
-  const handleImportAgents = async () => {
-    if (!settingsConfig) return;
-    const content = agentsJsonInput.trim();
-    if (!content) {
-      setSettingsError('Please paste agents JSON first.');
-      return;
-    }
-
-    setSettingsSubmitting('agents');
-    setSettingsError(null);
-    setSettingsNotice(null);
-    try {
-      const response = await apiClient.importBuiltinMcpAgents(settingsConfig.id, content);
-      const result = (response as any)?.data || null;
-      const importedCount = typeof result?.agents === 'number' ? result.agents : null;
-      const importedPath = typeof result?.path === 'string' ? result.path : '';
-      setSettingsNotice(
-        `Agents import succeeded${importedCount !== null ? ` (${importedCount})` : ''}${importedPath ? `, path: ${importedPath}` : ''}`
-      );
-      setSettingsTab('overview');
-      setAgentsJsonInput('');
-      await loadBuiltinSettings(settingsConfig.id);
-    } catch (error: any) {
-      setSettingsError(error?.message || 'Agents import failed.');
-    } finally {
-      setSettingsSubmitting(null);
-    }
-  };
-
-  const handleImportSkills = async () => {
-    if (!settingsConfig) return;
-    const content = skillsJsonInput.trim();
-    if (!content) {
-      setSettingsError('Please paste skills/marketplace JSON first.');
-      return;
-    }
-
-    setSettingsSubmitting('skills');
-    setSettingsError(null);
-    setSettingsNotice(null);
-    try {
-      const response = await apiClient.importBuiltinMcpSkills(settingsConfig.id, content);
-      const result = (response as any)?.data || null;
-      const importedCount = typeof result?.plugins === 'number' ? result.plugins : null;
-      const importedPath = typeof result?.path === 'string' ? result.path : '';
-      setSettingsNotice(
-        `Skills import succeeded${importedCount !== null ? ` (${importedCount} plugins)` : ''}${importedPath ? `, path: ${importedPath}` : ''}`
-      );
-      setSettingsTab('overview');
-      setSkillsJsonInput('');
-      await loadBuiltinSettings(settingsConfig.id);
-    } catch (error: any) {
-      setSettingsError(error?.message || 'Skills import failed.');
-    } finally {
-      setSettingsSubmitting(null);
-    }
-  };
 
   const handleImportFromGit = async () => {
     if (!settingsConfig) return;
@@ -374,7 +405,7 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
         setSettingsNotice('Git import request finished but nothing was imported.');
       }
 
-      setSettingsTab('overview');
+      setSettingsTab('marketplace');
       await loadBuiltinSettings(settingsConfig.id);
     } catch (error: any) {
       setSettingsError(error?.message || 'Git import failed.');
@@ -383,30 +414,59 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
     }
   };
 
-  const readJsonFile = (file: File): Promise<string> => new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ''));
-    reader.onerror = () => reject(new Error('读取文件失败'));
-    reader.readAsText(file);
-  });
+  const handleInstallPlugin = async (source: string) => {
+    if (!settingsConfig) return;
+    const normalizedSource = source.trim();
+    if (!normalizedSource) {
+      setSettingsError('plugin source 不能为空');
+      return;
+    }
 
-  const handleSelectJsonFile = async (event: React.ChangeEvent<HTMLInputElement>, target: 'agents' | 'skills') => {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    if (!file) return;
-
+    setSettingsSubmitting('plugin');
+    setSettingsError(null);
+    setSettingsNotice(null);
     try {
-      const text = await readJsonFile(file);
-      setSettingsError(null);
-      setSettingsNotice(null);
-      setSettingsTab('manual');
-      if (target === 'agents') {
-        setAgentsJsonInput(text);
-      } else {
-        setSkillsJsonInput(text);
-      }
+      const response = await apiClient.installBuiltinMcpPlugin(settingsConfig.id, {
+        source: normalizedSource,
+      });
+      const result = (response as any)?.data || null;
+      const installedCount = typeof result?.installed === 'number' ? result.installed : null;
+      const skippedCount = typeof result?.skipped === 'number' ? result.skipped : null;
+      setSettingsNotice(
+        `Plugin 安装完成${installedCount !== null ? `，installed: ${installedCount}` : ''}${skippedCount !== null ? `，skipped: ${skippedCount}` : ''}`
+      );
+      await loadBuiltinSettings(settingsConfig.id);
+      setSettingsTab('overview');
     } catch (error: any) {
-      setSettingsError(error?.message || 'Failed to read JSON file.');
+      setSettingsError(error?.message || '安装 plugin 失败');
+    } finally {
+      setSettingsSubmitting(null);
+    }
+  };
+
+  const handleInstallAllPlugins = async () => {
+    if (!settingsConfig) return;
+
+    setSettingsSubmitting('plugin_all');
+    setSettingsError(null);
+    setSettingsNotice(null);
+    try {
+      const response = await apiClient.installBuiltinMcpPlugin(settingsConfig.id, {
+        install_all: true,
+      });
+      const result = (response as any)?.data || null;
+      const touchedCount = typeof result?.touched === 'number' ? result.touched : null;
+      const installedCount = typeof result?.installed === 'number' ? result.installed : null;
+      const skippedCount = typeof result?.skipped === 'number' ? result.skipped : null;
+      setSettingsNotice(
+        `批量安装完成${touchedCount !== null ? `，matched: ${touchedCount}` : ''}${installedCount !== null ? `，installed: ${installedCount}` : ''}${skippedCount !== null ? `，skipped: ${skippedCount}` : ''}`
+      );
+      setSettingsTab('overview');
+      await loadBuiltinSettings(settingsConfig.id);
+    } catch (error: any) {
+      setSettingsError(error?.message || '批量安装 plugin 失败');
+    } finally {
+      setSettingsSubmitting(null);
     }
   };
 
@@ -414,6 +474,85 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
   const settingsSkills = ((settingsSummary?.items?.skills || []) as any[]);
   const settingsPlugins = ((settingsSummary?.items?.plugins || []) as any[]);
   const lastGitPluginDetails = ((lastGitImportResult?.results?.plugins?.details || []) as any[]);
+
+  const settingsMcpEnabledSet = new Set(settingsMcpEnabledIds);
+  const settingsMcpAllIds = settingsMcpOptions
+    .map((item: any) => String(item?.id || '').trim())
+    .filter(Boolean);
+  const filteredSettingsMcpOptions = settingsMcpOptions.filter((item: any) => {
+    const search = settingsMcpSearch.trim().toLowerCase();
+    if (!search) return true;
+    const haystack = [item?.display_name, item?.name, item?.id, item?.tool_prefix, item?.command]
+      .map((value) => String(value || '').toLowerCase())
+      .join(' ');
+    return haystack.includes(search);
+  });
+
+  const isPluginInstalled = (plugin: any) => {
+    if (typeof plugin?.installed === 'boolean') {
+      return plugin.installed;
+    }
+    const installedAgents = Number(plugin?.counts?.agents?.installed ?? plugin?.agents ?? 0);
+    const installedSkills = Number(plugin?.counts?.skills?.installed ?? plugin?.skills ?? 0);
+    const installedCommands = Number(plugin?.counts?.commands?.installed ?? plugin?.commands ?? 0);
+    return installedAgents + installedSkills + installedCommands > 0;
+  };
+
+  const pluginInstalledTotal = (plugin: any) => {
+    const installedAgents = Number(plugin?.counts?.agents?.installed ?? plugin?.agents ?? 0);
+    const installedSkills = Number(plugin?.counts?.skills?.installed ?? plugin?.skills ?? 0);
+    const installedCommands = Number(plugin?.counts?.commands?.installed ?? plugin?.commands ?? 0);
+    return installedAgents + installedSkills + installedCommands;
+  };
+
+  const pluginDiscoverableTotal = (plugin: any) => {
+    const discoverableAgents = Number(plugin?.counts?.agents?.discoverable ?? 0);
+    const discoverableSkills = Number(plugin?.counts?.skills?.discoverable ?? 0);
+    const discoverableCommands = Number(plugin?.counts?.commands?.discoverable ?? 0);
+    return discoverableAgents + discoverableSkills + discoverableCommands;
+  };
+
+  const filteredSettingsPlugins = settingsPlugins.filter((plugin: any) => {
+    const search = settingsPluginSearch.trim().toLowerCase();
+    if (search) {
+      const haystack = [plugin?.name, plugin?.source, plugin?.category, plugin?.description]
+        .map((item) => String(item || '').toLowerCase())
+        .join(' ');
+      if (!haystack.includes(search)) {
+        return false;
+      }
+    }
+
+    if (settingsPluginFilter === 'installed') {
+      return isPluginInstalled(plugin);
+    }
+    if (settingsPluginFilter === 'pending') {
+      return !isPluginInstalled(plugin);
+    }
+    return true;
+  });
+
+  const toggleMcpPermissionOption = (id: string, enabled: boolean) => {
+    const targetId = String(id || '').trim();
+    if (!targetId) return;
+    setSettingsMcpEnabledIds((prev: string[]) => {
+      const next = new Set(prev);
+      if (enabled) {
+        next.add(targetId);
+      } else {
+        next.delete(targetId);
+      }
+      return Array.from(next).sort();
+    });
+  };
+
+  const enableAllMcpPermissions = () => {
+    setSettingsMcpEnabledIds(Array.from(new Set(settingsMcpAllIds)).sort());
+  };
+
+  const clearAllMcpPermissions = () => {
+    setSettingsMcpEnabledIds([]);
+  };
 
   return (
     <>
@@ -826,8 +965,9 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
                       <div className="text-xs font-mono break-all">agents: {settingsSummary?.paths?.registry || '—'}</div>
                       <div className="text-xs font-mono break-all">skills: {settingsSummary?.paths?.marketplace || '—'}</div>
                       <div className="text-xs font-mono break-all">git-cache: {settingsSummary?.paths?.git_cache_root || '—'}</div>
+                      <div className="text-xs font-mono break-all">mcp-permissions: {settingsSummary?.paths?.mcp_permissions || '—'}</div>
                       <div className="text-xs text-muted-foreground pt-1">
-                        已导入 agents: {settingsSummary?.counts?.agents ?? 0}（registry: {settingsSummary?.counts?.registry_agents ?? 0} / marketplace: {settingsSummary?.counts?.marketplace_agents ?? 0}），plugins: {settingsSummary?.counts?.plugins ?? 0}，skills条目: {settingsSummary?.counts?.skills_entries ?? 0}
+                        已导入 agents: {settingsSummary?.counts?.agents ?? 0}（registry: {settingsSummary?.counts?.registry_agents ?? 0} / marketplace: {settingsSummary?.counts?.marketplace_agents ?? 0}），plugins: {settingsSummary?.counts?.plugins ?? 0}，skills条目: {settingsSummary?.counts?.skills_entries ?? 0}，可安装插件: {settingsSummary?.counts?.installable_plugins ?? 0}
                       </div>
                     </div>
                   )}
@@ -846,7 +986,7 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
 
                   {settingsSummary && (
                     <div className="space-y-4">
-                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
                         <div className="rounded-lg border border-border bg-muted/20 p-3">
                           <div className="text-xs text-muted-foreground">Agents</div>
                           <div className="mt-1 text-lg font-semibold text-foreground">{settingsSummary?.counts?.agents ?? 0}</div>
@@ -863,36 +1003,160 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
                           <div className="text-xs text-muted-foreground">Plugins</div>
                           <div className="mt-1 text-lg font-semibold text-foreground">{settingsSummary?.counts?.plugins ?? 0}</div>
                           <div className="text-[11px] text-muted-foreground">
+                            installable: {settingsSummary?.counts?.installable_plugins ?? 0} / discoverable skills: {settingsSummary?.counts?.discovered_skills ?? 0}
+                          </div>
+                          <div className="text-[11px] text-muted-foreground">
                             registry: {settingsSummary?.valid?.registry ? 'ok' : 'invalid'} / marketplace: {settingsSummary?.valid?.marketplace ? 'ok' : 'invalid'}
+                          </div>
+                        </div>
+                        <div className="rounded-lg border border-border bg-muted/20 p-3">
+                          <div className="text-xs text-muted-foreground">MCP Permissions</div>
+                          <div className="mt-1 text-lg font-semibold text-foreground">
+                            {settingsMcpEnabledIds.length}/{settingsMcpOptions.length}
+                          </div>
+                          <div className="text-[11px] text-muted-foreground">
+                            {settingsMcpConfigured ? 'customized' : 'default(all enabled)'}
+                          </div>
+                          <div className="text-[11px] text-muted-foreground">
+                            {settingsMcpUpdatedAt ? `updated: ${settingsMcpUpdatedAt}` : 'not saved yet'}
                           </div>
                         </div>
                       </div>
 
                       <div className="rounded-lg border border-border bg-muted/20 p-1">
-                        <div className="grid grid-cols-1 gap-1 sm:grid-cols-3">
+                        <div className="grid grid-cols-1 gap-1 sm:grid-cols-4">
+                          <button
+                            type="button"
+                            onClick={() => setSettingsTab('mcp')}
+                            className={`rounded-md px-3 py-2 text-xs font-medium transition-colors ${settingsTab === 'mcp' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:bg-background/50 hover:text-foreground'}`}
+                          >
+                            MCP 权限
+                          </button>
                           <button
                             type="button"
                             onClick={() => setSettingsTab('overview')}
                             className={`rounded-md px-3 py-2 text-xs font-medium transition-colors ${settingsTab === 'overview' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:bg-background/50 hover:text-foreground'}`}
                           >
-                            Overview
+                            已导入内容
                           </button>
                           <button
                             type="button"
                             onClick={() => setSettingsTab('git')}
                             className={`rounded-md px-3 py-2 text-xs font-medium transition-colors ${settingsTab === 'git' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:bg-background/50 hover:text-foreground'}`}
                           >
-                            Git Import
+                            第一步：Git 导入
                           </button>
                           <button
                             type="button"
-                            onClick={() => setSettingsTab('manual')}
-                            className={`rounded-md px-3 py-2 text-xs font-medium transition-colors ${settingsTab === 'manual' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:bg-background/50 hover:text-foreground'}`}
+                            onClick={() => setSettingsTab('marketplace')}
+                            className={`rounded-md px-3 py-2 text-xs font-medium transition-colors ${settingsTab === 'marketplace' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:bg-background/50 hover:text-foreground'}`}
                           >
-                            Manual JSON
+                            第二步：安装插件
                           </button>
                         </div>
                       </div>
+
+                      {settingsTab === 'mcp' && (
+                        <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-4">
+                          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                            <div>
+                              <div className="text-sm font-medium text-foreground">Sub-agent 可用 MCP</div>
+                              <div className="text-xs text-muted-foreground mt-1">
+                                这里控制 sub-agent 在执行时允许访问的 MCP（不包含它自己）。
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={enableAllMcpPermissions}
+                                disabled={settingsMcpSaving || settingsMcpLoading || settingsMcpOptions.length === 0}
+                                className="px-2.5 py-1.5 text-xs rounded-md border border-border bg-background hover:bg-background/80 disabled:opacity-50 disabled:cursor-not-allowed"
+                              >
+                                全选
+                              </button>
+                              <button
+                                type="button"
+                                onClick={clearAllMcpPermissions}
+                                disabled={settingsMcpSaving || settingsMcpLoading || settingsMcpOptions.length === 0}
+                                className="px-2.5 py-1.5 text-xs rounded-md border border-border bg-background hover:bg-background/80 disabled:opacity-50 disabled:cursor-not-allowed"
+                              >
+                                全不选
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => { void handleSaveMcpPermissions(); }}
+                                disabled={settingsMcpSaving || settingsMcpLoading}
+                                className="px-3 py-1.5 text-xs rounded-md bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                              >
+                                {settingsMcpSaving ? '保存中...' : '保存权限'}
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+                            <input
+                              type="text"
+                              value={settingsMcpSearch}
+                              onChange={(event) => setSettingsMcpSearch(event.target.value)}
+                              placeholder="搜索 MCP 名称 / ID / 工具前缀（不区分大小写）"
+                              className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring lg:col-span-2"
+                            />
+                            <div className="h-10 rounded-md border border-border/60 bg-background/60 px-3 text-xs text-muted-foreground flex items-center justify-between">
+                              <span>已选择</span>
+                              <span>{settingsMcpEnabledIds.length}/{settingsMcpOptions.length}</span>
+                            </div>
+                          </div>
+
+                          {settingsMcpLoading ? (
+                            <div className="rounded-md border border-border/60 bg-background/60 px-3 py-4 text-xs text-muted-foreground">
+                              正在加载 MCP 权限列表...
+                            </div>
+                          ) : filteredSettingsMcpOptions.length === 0 ? (
+                            <div className="rounded-md border border-border/60 bg-background/60 px-3 py-4 text-xs text-muted-foreground">
+                              没有匹配的 MCP。
+                            </div>
+                          ) : (
+                            <div className="max-h-[52vh] space-y-2 overflow-auto pr-1">
+                              {filteredSettingsMcpOptions.map((item: any) => {
+                                const id = String(item?.id || '');
+                                const enabled = settingsMcpEnabledSet.has(id);
+                                const builtin = Boolean(item?.builtin);
+                                const configEnabled = item?.config_enabled !== false;
+                                const displayName = item?.display_name || item?.name || id;
+                                const toolPrefix = item?.tool_prefix || '';
+                                return (
+                                  <label
+                                    key={id}
+                                    className="flex items-start gap-3 rounded-md border border-border/60 bg-background/70 px-3 py-2 cursor-pointer"
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={enabled}
+                                      onChange={(event) => toggleMcpPermissionOption(id, event.target.checked)}
+                                      className="mt-0.5 h-4 w-4 rounded border-border"
+                                    />
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex items-center gap-2">
+                                        <div className="text-sm text-foreground truncate">{displayName}</div>
+                                        <span className={`rounded px-1.5 py-0.5 text-[10px] ${builtin ? 'bg-sky-500/10 text-sky-600' : 'bg-violet-500/10 text-violet-600'}`}>
+                                          {builtin ? 'builtin' : 'custom'}
+                                        </span>
+                                        {!configEnabled && (
+                                          <span className="rounded px-1.5 py-0.5 text-[10px] bg-amber-500/10 text-amber-600">
+                                            config disabled
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div className="mt-0.5 text-[11px] text-muted-foreground break-all">id: {id}</div>
+                                      <div className="text-[11px] text-muted-foreground break-all">tool prefix: {toolPrefix || '—'}</div>
+                                    </div>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      )}
 
                       {settingsTab === 'overview' && (
                         <div className="space-y-4">
@@ -909,7 +1173,10 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
                                   <div key={`${plugin?.source || plugin?.name || 'plugin'}-${idx}`} className="rounded-md border border-border/60 bg-background/60 px-2 py-1.5">
                                     <div className="text-xs text-foreground truncate">{plugin?.name || plugin?.source || 'plugin'}</div>
                                     <div className="mt-0.5 text-[11px] text-muted-foreground truncate">
-                                      source: {plugin?.source || 'unknown'} | agents: {plugin?.agents ?? 0} | skills: {plugin?.skills ?? 0} | commands: {plugin?.commands ?? 0}
+                                      source: {plugin?.source || 'unknown'} | installed A/S/C: {plugin?.counts?.agents?.installed ?? plugin?.agents ?? 0}/{plugin?.counts?.skills?.installed ?? plugin?.skills ?? 0}/{plugin?.counts?.commands?.installed ?? plugin?.commands ?? 0}
+                                    </div>
+                                    <div className="text-[11px] text-muted-foreground truncate">
+                                      discoverable A/S/C: {plugin?.counts?.agents?.discoverable ?? 0}/{plugin?.counts?.skills?.discoverable ?? 0}/{plugin?.counts?.commands?.discoverable ?? 0}
                                     </div>
                                   </div>
                                 ))
@@ -925,7 +1192,7 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
                               </div>
                               <div className="mt-3 max-h-56 space-y-2 overflow-auto pr-1">
                                 {settingsAgents.length === 0 ? (
-                                  <div className="text-xs text-muted-foreground">No agent data</div>
+                                  <div className="text-xs text-muted-foreground">No agent data（先到 Marketplace 安装插件）</div>
                                 ) : (
                                   settingsAgents.map((agent: any, idx: number) => (
                                     <div key={`${agent?.id || agent?.path || 'agent'}-${idx}`} className="rounded-md border border-border/60 bg-background/60 px-2 py-1.5">
@@ -953,7 +1220,7 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
                               </div>
                               <div className="mt-3 max-h-56 space-y-2 overflow-auto pr-1">
                                 {settingsSkills.length === 0 ? (
-                                  <div className="text-xs text-muted-foreground">No skill data</div>
+                                  <div className="text-xs text-muted-foreground">No skill data（先到 Marketplace 安装插件）</div>
                                 ) : (
                                   settingsSkills.map((skill: any, idx: number) => (
                                     <div key={`${skill?.id || skill?.path || 'skill'}-${idx}`} className="rounded-md border border-border/60 bg-background/60 px-2 py-1.5">
@@ -966,6 +1233,113 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
                                 )}
                               </div>
                             </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {settingsTab === 'marketplace' && (
+                        <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-4">
+                          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                            <div>
+                              <div className="text-sm font-medium text-foreground">Marketplace 插件安装</div>
+                              <div className="text-xs text-muted-foreground mt-1">
+                                先 Git 导入，再在这里安装插件，安装后会自动写入 agents / skills / commands。
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => { void handleInstallAllPlugins(); }}
+                              disabled={settingsSubmitting !== null}
+                              className="px-3 py-1.5 text-xs rounded-md bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              {settingsSubmitting === 'plugin_all' ? 'Installing...' : 'Install All Plugins'}
+                            </button>
+                          </div>
+
+                          <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+                            <input
+                              type="text"
+                              value={settingsPluginSearch}
+                              onChange={(event) => setSettingsPluginSearch(event.target.value)}
+                              placeholder="搜索插件名称 / source（不区分大小写）"
+                              className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring lg:col-span-2"
+                            />
+                            <select
+                              value={settingsPluginFilter}
+                              onChange={(event) => setSettingsPluginFilter(event.target.value as 'all' | 'installed' | 'pending')}
+                              className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
+                            >
+                              <option value="all">全部</option>
+                              <option value="installed">已安装</option>
+                              <option value="pending">待安装</option>
+                            </select>
+                          </div>
+
+                          <div className="rounded-md border border-border/60 bg-background/50 p-3 text-xs text-muted-foreground">
+                            当前可安装插件: {settingsSummary?.counts?.installable_plugins ?? 0} / 可发现 agents: {settingsSummary?.counts?.discovered_agents ?? 0} / skills: {settingsSummary?.counts?.discovered_skills ?? 0} / commands: {settingsSummary?.counts?.discovered_commands ?? 0}
+                          </div>
+
+                          <div className="max-h-[54vh] space-y-2 overflow-auto pr-1">
+                            {filteredSettingsPlugins.length === 0 ? (
+                              <div className="rounded-md border border-border/60 bg-background/60 px-3 py-2 text-xs text-muted-foreground">
+                                没有匹配的插件。
+                              </div>
+                            ) : (
+                              filteredSettingsPlugins.map((plugin: any, idx: number) => {
+                                const installed = isPluginInstalled(plugin);
+                                const exists = plugin?.exists !== false;
+                                const discoverableTotal = pluginDiscoverableTotal(plugin);
+                                const installedTotal = pluginInstalledTotal(plugin);
+                                const discoverableAgents = Number(plugin?.counts?.agents?.discoverable ?? 0);
+                                const discoverableSkills = Number(plugin?.counts?.skills?.discoverable ?? 0);
+                                const discoverableCommands = Number(plugin?.counts?.commands?.discoverable ?? 0);
+                                const installedAgents = Number(plugin?.counts?.agents?.installed ?? plugin?.agents ?? 0);
+                                const installedSkills = Number(plugin?.counts?.skills?.installed ?? plugin?.skills ?? 0);
+                                const installedCommands = Number(plugin?.counts?.commands?.installed ?? plugin?.commands ?? 0);
+                                const source = String(plugin?.source || '');
+                                const canInstall = exists && discoverableTotal > 0;
+
+                                return (
+                                  <div
+                                    key={`${source || plugin?.name || 'plugin'}-${idx}`}
+                                    className="rounded-md border border-border/60 bg-background/70 px-3 py-2"
+                                  >
+                                    <div className="flex items-start justify-between gap-3">
+                                      <div className="min-w-0 flex-1">
+                                        <div className="flex items-center gap-2">
+                                          <div className="text-sm text-foreground truncate">{plugin?.name || source || 'plugin'}</div>
+                                          <span
+                                            className={`rounded px-1.5 py-0.5 text-[10px] ${installed ? 'bg-emerald-500/10 text-emerald-600' : 'bg-amber-500/10 text-amber-600'}`}
+                                          >
+                                            {installed ? 'installed' : 'pending'}
+                                          </span>
+                                          {!exists && (
+                                            <span className="rounded px-1.5 py-0.5 text-[10px] bg-red-500/10 text-red-600">
+                                              source missing
+                                            </span>
+                                          )}
+                                        </div>
+                                        <div className="mt-0.5 text-[11px] text-muted-foreground break-all">{source || 'unknown source'}</div>
+                                        <div className="mt-1 text-[11px] text-muted-foreground">
+                                          installed A/S/C: {installedAgents}/{installedSkills}/{installedCommands}（total: {installedTotal}）
+                                        </div>
+                                        <div className="text-[11px] text-muted-foreground">
+                                          discoverable A/S/C: {discoverableAgents}/{discoverableSkills}/{discoverableCommands}（total: {discoverableTotal}）
+                                        </div>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={() => { void handleInstallPlugin(source); }}
+                                        disabled={settingsSubmitting !== null || !canInstall}
+                                        className="shrink-0 px-2.5 py-1.5 text-[11px] rounded-md bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                                      >
+                                        {settingsSubmitting === 'plugin' ? 'Installing...' : installed ? 'Reinstall' : 'Install'}
+                                      </button>
+                                    </div>
+                                  </div>
+                                );
+                              })
+                            )}
                           </div>
                         </div>
                       )}
@@ -1055,71 +1429,6 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
                         </div>
                       )}
 
-                      {settingsTab === 'manual' && (
-                        <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-4">
-                          <div className="text-sm font-medium text-foreground">Manual JSON import</div>
-                          <div className="text-xs text-muted-foreground">Use this only when Git import is not suitable.</div>
-                          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-                            <div className="space-y-2">
-                              <div className="flex items-center justify-between">
-                                <label className="text-sm font-medium text-foreground">Import agents (JSON)</label>
-                                <label className="text-xs text-muted-foreground cursor-pointer hover:text-foreground">
-                                  Load JSON file
-                                  <input
-                                    type="file"
-                                    accept=".json,application/json,text/plain"
-                                    className="hidden"
-                                    onChange={(event) => { void handleSelectJsonFile(event, 'agents'); }}
-                                  />
-                                </label>
-                              </div>
-                              <textarea
-                                value={agentsJsonInput}
-                                onChange={(event) => setAgentsJsonInput(event.target.value)}
-                                placeholder='For example: {"agents": [...]}'
-                                className="h-52 w-full rounded-md border border-input bg-background px-3 py-2 text-xs font-mono outline-none focus:ring-2 focus:ring-ring"
-                              />
-                              <button
-                                type="button"
-                                onClick={() => { void handleImportAgents(); }}
-                                disabled={settingsSubmitting !== null}
-                                className="px-3 py-1.5 text-xs rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                              >
-                                {settingsSubmitting === 'agents' ? 'Importing...' : 'Import agents'}
-                              </button>
-                            </div>
-
-                            <div className="space-y-2">
-                              <div className="flex items-center justify-between">
-                                <label className="text-sm font-medium text-foreground">Import skills/marketplace (JSON)</label>
-                                <label className="text-xs text-muted-foreground cursor-pointer hover:text-foreground">
-                                  Load JSON file
-                                  <input
-                                    type="file"
-                                    accept=".json,application/json,text/plain"
-                                    className="hidden"
-                                    onChange={(event) => { void handleSelectJsonFile(event, 'skills'); }}
-                                  />
-                                </label>
-                              </div>
-                              <textarea
-                                value={skillsJsonInput}
-                                onChange={(event) => setSkillsJsonInput(event.target.value)}
-                                placeholder='For example: {"plugins": [...]}'
-                                className="h-52 w-full rounded-md border border-input bg-background px-3 py-2 text-xs font-mono outline-none focus:ring-2 focus:ring-ring"
-                              />
-                              <button
-                                type="button"
-                                onClick={() => { void handleImportSkills(); }}
-                                disabled={settingsSubmitting !== null}
-                                className="px-3 py-1.5 text-xs rounded-md bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                              >
-                                {settingsSubmitting === 'skills' ? 'Importing...' : 'Import skills'}
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      )}
                     </div>
                   )}
                 </>

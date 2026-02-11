@@ -7,8 +7,8 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::builtin::code_maintainer::{CodeMaintainerOptions, CodeMaintainerService};
-use crate::builtin::terminal_controller::{TerminalControllerOptions, TerminalControllerService};
 use crate::builtin::sub_agent_router::{SubAgentRouterOptions, SubAgentRouterService};
+use crate::builtin::terminal_controller::{TerminalControllerOptions, TerminalControllerService};
 use crate::services::builtin_mcp::BuiltinMcpKind;
 use crate::services::mcp_loader::{McpBuiltinServer, McpHttpServer, McpStdioServer};
 use crate::utils::abort_registry;
@@ -243,9 +243,9 @@ impl McpToolExecute {
                     root: std::path::PathBuf::from(&server.workspace_dir),
                     user_id: server.user_id.clone(),
                     project_id: server.project_id.clone(),
-                    timeout_ms: 120_000,
+                    timeout_ms: 86_400_000,
                     max_output_bytes: 2 * 1024 * 1024,
-                    ai_timeout_ms: 120_000,
+                    ai_timeout_ms: 86_400_000,
                     session_id: None,
                     run_id: None,
                 })?,
@@ -304,6 +304,7 @@ impl McpToolExecute {
         &self,
         tool_calls: &[Value],
         session_id: Option<&str>,
+        caller_model: Option<&str>,
         on_tool_result: Option<std::sync::Arc<dyn Fn(&ToolResult) + Send + Sync>>,
     ) -> Vec<ToolResult> {
         let mut results = Vec::new();
@@ -378,7 +379,10 @@ impl McpToolExecute {
             } else {
                 args_val
             };
-            match self.call_tool_once(&tool_name, args, session_id).await {
+            match self
+                .call_tool_once(&tool_name, args, session_id, caller_model)
+                .await
+            {
                 Ok(text) => {
                     let result = ToolResult {
                         tool_call_id: call_id,
@@ -432,6 +436,7 @@ impl McpToolExecute {
         tool_name: &str,
         args: Value,
         session_id: Option<&str>,
+        caller_model: Option<&str>,
     ) -> Result<String, String> {
         let info = self
             .tool_metadata
@@ -451,6 +456,13 @@ impl McpToolExecute {
                 .builtin_services
                 .get(&info.server_name)
                 .ok_or_else(|| "missing builtin service".to_string())?;
+
+            let args = if matches!(service, BuiltinToolService::SubAgentRouter(_)) {
+                inject_sub_agent_router_args(args, caller_model)
+            } else {
+                args
+            };
+
             let result = service.call_tool(&info.original_name, args, session_id)?;
             Ok(to_text(&result))
         } else {
@@ -514,6 +526,26 @@ fn to_text(result: &Value) -> String {
         return v.to_string();
     }
     result.to_string()
+}
+
+fn inject_sub_agent_router_args(args: Value, caller_model: Option<&str>) -> Value {
+    let Some(model_name) = caller_model
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return args;
+    };
+
+    let mut obj = match args {
+        Value::Object(map) => map,
+        Value::Null => serde_json::Map::new(),
+        _ => return args,
+    };
+
+    obj.entry("caller_model".to_string())
+        .or_insert_with(|| Value::String(model_name.to_string()));
+
+    Value::Object(obj)
 }
 
 async fn jsonrpc_http_call(url: &str, method: &str, params: Value) -> Result<Value, String> {
