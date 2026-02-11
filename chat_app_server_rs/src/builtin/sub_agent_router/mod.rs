@@ -12,6 +12,8 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration as StdDuration;
 
 use chrono::Utc;
 use once_cell::sync::Lazy;
@@ -27,6 +29,7 @@ use crate::services::v3::ai_client::{AiClient, AiClientCallbacks, ProcessOptions
 use crate::services::v3::ai_request_handler::{AiRequestHandler, StreamCallbacks};
 use crate::services::v3::mcp_tool_execute::McpToolExecute;
 use crate::services::v3::message_manager::MessageManager;
+use crate::utils::abort_registry;
 use crate::utils::model_config::normalize_provider;
 
 use self::catalog::SubAgentCatalog;
@@ -247,12 +250,17 @@ impl SubAgentRouterService {
             let ctx = ctx.clone();
             service.register_tool(
                 "suggest_sub_agent",
-                "Pick the best sub-agent using task with optional category hint.",
+                "Pick the best sub-agent for the task. Call this at most once per user task.",
                 json!({
                     "type": "object",
                     "properties": {
                         "task": { "type": "string" },
-                        "category": { "type": "string" }
+                        "category": {
+                            "anyOf": [
+                                { "type": "string" },
+                                { "type": "null" }
+                            ]
+                        }
                     },
                     "additionalProperties": false,
                     "required": ["task"]
@@ -268,6 +276,15 @@ impl SubAgentRouterService {
                         .map_err(|_| "catalog lock poisoned".to_string())?;
                     let _ = guard.reload();
                     let agents = guard.list_agents();
+                    let candidates = build_agent_recommendation_candidates(&agents, &guard);
+                    drop(guard);
+
+                    let diagnostics = json!({
+                        "agents_total": agents.len(),
+                        "candidates_total": candidates.len(),
+                        "category": category.clone(),
+                    });
+
                     if agents.is_empty() {
                         return Ok(text_result(with_chatos(
                             ctx.server_name.as_str(),
@@ -275,16 +292,14 @@ impl SubAgentRouterService {
                             json!({
                                 "agent_id": Value::Null,
                                 "reason": "No sub-agents available. Import agents/skills first.",
-                                "skills": []
+                                "skills": [],
+                                "diagnostics": diagnostics,
                             }),
                             "ok",
                         )));
                     }
 
-                    let candidates = build_agent_recommendation_candidates(&agents, &guard);
-                    drop(guard);
-
-                    let llm_pick = pick_agent_with_llm(
+                    let (llm_pick, llm_reason) = pick_agent_with_llm_diagnostics(
                         &ctx,
                         &agents,
                         &candidates,
@@ -296,17 +311,38 @@ impl SubAgentRouterService {
                         caller_model.as_deref(),
                     );
 
+                    let mut fallback_reason = "skipped".to_string();
+                    let mut default_reason = "skipped".to_string();
+
                     let (picked, selector) = if let Some(picked) = llm_pick {
                         (picked, "llm")
-                    } else if let Some(picked) = pick_agent_with_fallback(
-                        &agents,
-                        task.as_str(),
-                        category.clone(),
-                        None,
-                        None,
-                        None,
-                    ) {
+                    } else if let Some(picked) = {
+                        let picked = pick_agent_with_fallback(
+                            &agents,
+                            task.as_str(),
+                            category.clone(),
+                            None,
+                            None,
+                            None,
+                        );
+                        fallback_reason = if picked.is_some() {
+                            "matched".to_string()
+                        } else {
+                            "no_match".to_string()
+                        };
+                        picked
+                    } {
                         (picked, "heuristic")
+                    } else if let Some(picked) = {
+                        let picked = pick_first_available_agent(&agents);
+                        default_reason = if picked.is_some() {
+                            "picked_first_available".to_string()
+                        } else {
+                            "none".to_string()
+                        };
+                        picked
+                    } {
+                        (picked, "default")
                     } else {
                         return Ok(text_result(with_chatos(
                             ctx.server_name.as_str(),
@@ -316,7 +352,13 @@ impl SubAgentRouterService {
                                 "reason": "No matching sub-agent. Import more agents/skills.",
                                 "skills": [],
                                 "filters": {
-                                    "category": category,
+                                    "category": category.clone(),
+                                },
+                                "diagnostics": {
+                                    "catalog": diagnostics,
+                                    "llm": llm_reason,
+                                    "heuristic": fallback_reason,
+                                    "default": default_reason,
                                 }
                             }),
                             "ok",
@@ -334,6 +376,12 @@ impl SubAgentRouterService {
                             "reason": picked.reason,
                             "skills": used_skills,
                             "selector": selector,
+                            "diagnostics": {
+                                "catalog": diagnostics,
+                                "llm": llm_reason,
+                                "heuristic": fallback_reason,
+                                "default": default_reason,
+                            }
                         }),
                         "ok",
                     )))
@@ -453,11 +501,36 @@ fn run_sub_agent_schema() -> Value {
         "type": "object",
         "properties": {
             "task": { "type": "string" },
-            "agent_id": { "type": "string" },
-            "category": { "type": "string" },
-            "skills": { "type": "array", "items": { "type": "string" } },
-            "query": { "type": "string" },
-            "command_id": { "type": "string" }
+            "agent_id": {
+                "anyOf": [
+                    { "type": "string" },
+                    { "type": "null" }
+                ]
+            },
+            "category": {
+                "anyOf": [
+                    { "type": "string" },
+                    { "type": "null" }
+                ]
+            },
+            "skills": {
+                "anyOf": [
+                    { "type": "array", "items": { "type": "string" } },
+                    { "type": "null" }
+                ]
+            },
+            "query": {
+                "anyOf": [
+                    { "type": "string" },
+                    { "type": "null" }
+                ]
+            },
+            "command_id": {
+                "anyOf": [
+                    { "type": "string" },
+                    { "type": "null" }
+                ]
+            }
         },
         "additionalProperties": false,
         "required": ["task"]
@@ -502,23 +575,64 @@ fn run_sub_agent_sync(
         job_id: job.id.clone(),
     };
 
-    let (status, payload, error_text) = match execute_job(execution.clone(), None) {
-        Ok((status, payload)) => (status, payload, None),
-        Err(err) => (
-            "error".to_string(),
-            json!({
-                "status": "error",
-                "job_id": execution.job_id,
-                "agent_id": execution.resolved.agent.id,
-                "agent_name": execution.resolved.agent.name,
-                "command_id": execution.resolved.command.as_ref().map(|c| c.id.clone()),
-                "skills": execution.resolved.used_skills.iter().map(|s| s.id.clone()).collect::<Vec<_>>(),
-                "reason": execution.resolved.reason,
-                "error": err,
-            }),
-            Some(err),
-        ),
+    let cancel_flag = Arc::new(AtomicBool::new(false));
+    set_cancel_flag(job.id.as_str(), cancel_flag.clone());
+
+    if abort_registry::is_aborted(tool_ctx.session_id) {
+        cancel_flag.store(true, Ordering::Relaxed);
+    }
+
+    let session_id = tool_ctx.session_id.to_string();
+    let watcher_done = Arc::new(AtomicBool::new(false));
+    let watcher_done_flag = watcher_done.clone();
+    let cancel_flag_for_watcher = cancel_flag.clone();
+    let cancel_watcher = if session_id.trim().is_empty() {
+        None
+    } else {
+        Some(thread::spawn(move || {
+            while !watcher_done_flag.load(Ordering::Relaxed)
+                && !cancel_flag_for_watcher.load(Ordering::Relaxed)
+            {
+                if abort_registry::is_aborted(session_id.as_str()) {
+                    cancel_flag_for_watcher.store(true, Ordering::Relaxed);
+                    break;
+                }
+                thread::sleep(StdDuration::from_millis(100));
+            }
+        }))
     };
+
+    let (status, payload, error_text) = match execute_job(
+        execution.clone(),
+        Some(cancel_flag.as_ref()),
+    ) {
+        Ok((status, payload)) => (status, payload, None),
+        Err(err) => {
+            let cancelled =
+                err.eq_ignore_ascii_case("aborted") || err.eq_ignore_ascii_case("cancelled");
+            let status = if cancelled { "cancelled" } else { "error" };
+            (
+                status.to_string(),
+                json!({
+                    "status": status,
+                    "job_id": execution.job_id,
+                    "agent_id": execution.resolved.agent.id,
+                    "agent_name": execution.resolved.agent.name,
+                    "command_id": execution.resolved.command.as_ref().map(|c| c.id.clone()),
+                    "skills": execution.resolved.used_skills.iter().map(|s| s.id.clone()).collect::<Vec<_>>(),
+                    "reason": execution.resolved.reason,
+                    "error": err,
+                }),
+                Some(err),
+            )
+        }
+    };
+
+    watcher_done.store(true, Ordering::Relaxed);
+    if let Some(handle) = cancel_watcher {
+        let _ = handle.join();
+    }
+    remove_cancel_flag(job.id.as_str());
     let final_status = map_status_to_job_state(status.as_str());
     let _ = update_job_status(
         job.id.as_str(),
@@ -965,7 +1079,7 @@ fn execute_job(
 
             let req = ai_client.process_request(
                 messages,
-                None,
+                Some(session_id.clone()),
                 ProcessOptions {
                     model: Some(model.model.clone()),
                     provider: Some(model.provider.clone()),
@@ -974,7 +1088,7 @@ fn execute_job(
                     max_tokens,
                     reasoning_enabled: Some(true),
                     system_prompt: Some(prompt),
-                    history_limit: Some(1),
+                    history_limit: None,
                     purpose: Some("sub_agent_router".to_string()),
                     callbacks: Some(AiClientCallbacks {
                         on_chunk: Some(on_chunk),
@@ -1227,6 +1341,27 @@ fn build_agent_recommendation_candidates(
     candidates
 }
 
+fn pick_first_available_agent(agents: &[AgentSpec]) -> Option<PickResult> {
+    let agent = agents.first()?.clone();
+    let used_skills = unique_strings(
+        agent
+            .default_skills
+            .clone()
+            .or_else(|| agent.skills.clone())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|item| item.trim().to_string())
+            .filter(|item| !item.is_empty()),
+    );
+
+    Some(PickResult {
+        agent,
+        score: 0,
+        reason: "default_first_available_agent".to_string(),
+        used_skills,
+    })
+}
+
 fn pick_agent_with_llm(
     ctx: &BoundContext,
     agents: &[AgentSpec],
@@ -1238,11 +1373,39 @@ fn pick_agent_with_llm(
     command_id: Option<String>,
     requested_model: Option<&str>,
 ) -> Option<PickResult> {
-    if agents.is_empty() || candidates.is_empty() {
-        return None;
+    let (picked, _) = pick_agent_with_llm_diagnostics(
+        ctx,
+        agents,
+        candidates,
+        task,
+        category,
+        skills,
+        query,
+        command_id,
+        requested_model,
+    );
+    picked
+}
+
+fn pick_agent_with_llm_diagnostics(
+    ctx: &BoundContext,
+    agents: &[AgentSpec],
+    candidates: &[AgentRecommendationCandidate],
+    task: &str,
+    category: Option<String>,
+    skills: Option<Vec<String>>,
+    query: Option<String>,
+    command_id: Option<String>,
+    requested_model: Option<&str>,
+) -> (Option<PickResult>, String) {
+    if agents.is_empty() {
+        return (None, "no_agents".to_string());
+    }
+    if candidates.is_empty() {
+        return (None, "no_candidates".to_string());
     }
 
-    let recommendation = recommend_agent_with_ai(
+    let recommendation = match recommend_agent_with_ai(
         ctx,
         task,
         category,
@@ -1251,11 +1414,20 @@ fn pick_agent_with_llm(
         command_id,
         candidates,
         requested_model,
-    )
-    .ok()
-    .flatten()?;
+    ) {
+        Ok(Some(value)) => value,
+        Ok(None) => return (None, "llm_empty_or_unparseable".to_string()),
+        Err(err) => {
+            let brief = truncate_for_event(err.as_str(), 240);
+            return (None, format!("llm_error: {}", brief));
+        }
+    };
 
-    let candidate = find_candidate_by_agent_id(candidates, recommendation.agent_id.as_str())?;
+    let Some(candidate) = find_candidate_by_agent_id(candidates, recommendation.agent_id.as_str())
+    else {
+        let agent_hint = truncate_for_event(recommendation.agent_id.as_str(), 120);
+        return (None, format!("llm_unknown_agent: {}", agent_hint));
+    };
     let used_skills = normalize_recommended_skill_ids(
         recommendation.skill_ids.as_slice(),
         candidate.skill_ids.as_slice(),
@@ -1267,12 +1439,15 @@ fn pick_agent_with_llm(
         format!("LLM router: {}", recommendation.reason.trim())
     };
 
-    Some(PickResult {
-        agent: candidate.agent.clone(),
-        score: 100,
-        reason,
-        used_skills,
-    })
+    (
+        Some(PickResult {
+            agent: candidate.agent.clone(),
+            score: 100,
+            reason,
+            used_skills,
+        }),
+        "matched".to_string(),
+    )
 }
 
 fn recommend_agent_with_ai(
@@ -1301,7 +1476,7 @@ fn recommend_agent_with_ai(
     let request_payload = json!({
         "task": task,
         "hints": {
-            "category": category,
+            "category": category.clone(),
             "skills": skills.unwrap_or_default(),
             "query": query,
             "command_id": command_id,
@@ -1452,6 +1627,10 @@ fn resolve_agent_and_command(
     }
 
     let agents = guard.list_agents();
+    if agents.is_empty() {
+        return Err("No sub-agents available. Import agents/skills first.".to_string());
+    }
+
     let candidates = build_agent_recommendation_candidates(&agents, &guard);
     drop(guard);
 
@@ -1469,7 +1648,8 @@ fn resolve_agent_and_command(
     .or_else(|| {
         pick_agent_with_fallback(&agents, task, category, skills, query, command_id.clone())
     })
-    .ok_or_else(|| "No matching sub-agent. Import agents/skills first.".to_string())?;
+    .or_else(|| pick_first_available_agent(&agents))
+    .ok_or_else(|| "No sub-agents available. Import agents/skills first.".to_string())?;
 
     let mut guard = ctx
         .catalog
@@ -2240,6 +2420,18 @@ fn list_job_events(job_id: &str) -> Vec<JobEvent> {
         .ok()
         .and_then(|events| events.get(job_id).cloned())
         .unwrap_or_default()
+}
+
+fn set_cancel_flag(job_id: &str, flag: Arc<AtomicBool>) {
+    if let Ok(mut flags) = JOB_CANCEL_FLAGS.lock() {
+        flags.insert(job_id.to_string(), flag);
+    }
+}
+
+fn remove_cancel_flag(job_id: &str) {
+    if let Ok(mut flags) = JOB_CANCEL_FLAGS.lock() {
+        flags.remove(job_id);
+    }
 }
 
 fn get_cancel_flag(job_id: &str) -> Option<Arc<AtomicBool>> {

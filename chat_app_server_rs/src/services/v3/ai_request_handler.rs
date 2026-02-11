@@ -111,11 +111,13 @@ impl AiRequestHandler {
             session_id.clone().unwrap_or_else(|| "n/a".to_string())
         );
 
+        let persist_messages = purpose != "sub_agent_router";
+
         if stream {
-            self.handle_stream_request(url, payload, callbacks, session_id, token)
+            self.handle_stream_request(url, payload, callbacks, session_id, token, persist_messages)
                 .await
         } else {
-            self.handle_normal_request(url, payload, session_id, token)
+            self.handle_normal_request(url, payload, session_id, token, persist_messages)
                 .await
         }
     }
@@ -126,6 +128,7 @@ impl AiRequestHandler {
         payload: Value,
         session_id: Option<String>,
         token: Option<CancellationToken>,
+        persist_messages: bool,
     ) -> Result<AiResponse, String> {
         let send = self
             .client
@@ -168,31 +171,33 @@ impl AiRequestHandler {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
-        if let Some(session_id) = session_id.clone() {
-            let mut metadata = serde_json::Map::new();
-            if let Some(id) = response_id.clone() {
-                metadata.insert("response_id".to_string(), Value::String(id));
+        if persist_messages {
+            if let Some(session_id) = session_id.clone() {
+                let mut metadata = serde_json::Map::new();
+                if let Some(id) = response_id.clone() {
+                    metadata.insert("response_id".to_string(), Value::String(id));
+                }
+                if let Some(tc) = tool_calls.clone() {
+                    metadata.insert("toolCalls".to_string(), tc);
+                }
+                let meta_val = if metadata.is_empty() {
+                    None
+                } else {
+                    Some(Value::Object(metadata))
+                };
+                let reasoning = None;
+                let _ = self
+                    .message_manager
+                    .save_assistant_message(
+                        &session_id,
+                        &content,
+                        None,
+                        reasoning,
+                        meta_val,
+                        tool_calls.clone(),
+                    )
+                    .await;
             }
-            if let Some(tc) = tool_calls.clone() {
-                metadata.insert("toolCalls".to_string(), tc);
-            }
-            let meta_val = if metadata.is_empty() {
-                None
-            } else {
-                Some(Value::Object(metadata))
-            };
-            let reasoning = None;
-            let _ = self
-                .message_manager
-                .save_assistant_message(
-                    &session_id,
-                    &content,
-                    None,
-                    reasoning,
-                    meta_val,
-                    tool_calls.clone(),
-                )
-                .await;
         }
 
         Ok(AiResponse {
@@ -212,6 +217,7 @@ impl AiRequestHandler {
         callbacks: StreamCallbacks,
         session_id: Option<String>,
         token: Option<CancellationToken>,
+        persist_messages: bool,
     ) -> Result<AiResponse, String> {
         let send = self
             .client
@@ -414,30 +420,32 @@ impl AiRequestHandler {
             usage = response_val.get("usage").cloned();
         }
 
-        if let Some(session_id) = session_id.clone() {
-            let mut metadata = serde_json::Map::new();
-            if let Some(id) = response_id.clone() {
-                metadata.insert("response_id".to_string(), Value::String(id));
+        if persist_messages {
+            if let Some(session_id) = session_id.clone() {
+                let mut metadata = serde_json::Map::new();
+                if let Some(id) = response_id.clone() {
+                    metadata.insert("response_id".to_string(), Value::String(id));
+                }
+                if let Some(tc) = tool_calls.clone() {
+                    metadata.insert("toolCalls".to_string(), tc);
+                }
+                let meta_val = if metadata.is_empty() {
+                    None
+                } else {
+                    Some(Value::Object(metadata))
+                };
+                let _ = self
+                    .message_manager
+                    .save_assistant_message(
+                        &session_id,
+                        &content,
+                        None,
+                        reasoning_opt.clone(),
+                        meta_val,
+                        tool_calls.clone(),
+                    )
+                    .await;
             }
-            if let Some(tc) = tool_calls.clone() {
-                metadata.insert("toolCalls".to_string(), tc);
-            }
-            let meta_val = if metadata.is_empty() {
-                None
-            } else {
-                Some(Value::Object(metadata))
-            };
-            let _ = self
-                .message_manager
-                .save_assistant_message(
-                    &session_id,
-                    &content,
-                    None,
-                    reasoning_opt.clone(),
-                    meta_val,
-                    tool_calls.clone(),
-                )
-                .await;
         }
 
         Ok(AiResponse {

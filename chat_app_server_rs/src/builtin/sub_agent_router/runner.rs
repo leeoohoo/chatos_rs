@@ -93,16 +93,24 @@ pub fn run_command(
     let mut exit_status: Option<std::process::ExitStatus> = None;
     let mut timed_out = false;
     let mut cancelled = false;
+    let mut exit_observed_at: Option<Instant> = None;
 
     loop {
         if exit_status.is_none() {
             if let Ok(Some(status)) = child.try_wait() {
                 exit_status = Some(status);
+                exit_observed_at = Some(Instant::now());
             }
         }
 
-        if stdout_done && stderr_done && exit_status.is_some() {
-            break;
+        if let Some(observed_at) = exit_observed_at {
+            if (stdout_done && stderr_done)
+                || cancelled
+                || timed_out
+                || observed_at.elapsed() >= Duration::from_millis(300)
+            {
+                break;
+            }
         }
 
         if timeout_ms > 0 && !timed_out && start_time.elapsed().as_millis() as i64 >= timeout_ms {

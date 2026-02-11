@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use serde_json::{json, Value};
@@ -130,10 +130,8 @@ impl AiClient {
             .unwrap_or(true);
         let provider_allows_prev =
             provider == "gpt" && base_url_allows_prev(self.ai_request_handler.base_url());
-        let use_prev_id = !prefer_stateless
-            && previous_response_id.is_some()
-            && allow_prev_id
-            && provider_allows_prev;
+        let can_use_prev_id = allow_prev_id && provider_allows_prev;
+        let use_prev_id = !prefer_stateless && previous_response_id.is_some() && can_use_prev_id;
         let stateless_history_limit = if !use_prev_id && history_limit == 0 {
             warn!("[AI_V3] history_limit=0 with stateless mode; fallback to 20");
             20
@@ -141,8 +139,9 @@ impl AiClient {
             history_limit
         };
         info!(
-            "[AI_V3] context mode: use_prev_id={}, provider={}, history_limit={}, has_prev_id={}",
+            "[AI_V3] context mode: use_prev_id={}, can_use_prev_id={}, provider={}, history_limit={}, has_prev_id={}",
             use_prev_id,
+            can_use_prev_id,
             provider,
             stateless_history_limit,
             previous_response_id.is_some()
@@ -179,6 +178,7 @@ impl AiClient {
             &purpose,
             0,
             use_prev_id,
+            can_use_prev_id,
             raw_input,
             stateless_history_limit,
             force_text_content,
@@ -203,11 +203,13 @@ impl AiClient {
         purpose: &str,
         iteration: i64,
         use_prev_id: bool,
+        can_use_prev_id: bool,
         raw_input: Value,
         history_limit: i64,
         force_text_content: bool,
     ) -> Result<Value, String> {
         let include_tool_items = !tools.is_empty();
+        let persist_tool_messages = purpose != "sub_agent_router";
         let mut input = input;
         let mut previous_response_id = previous_response_id;
         let mut use_prev_id = use_prev_id;
@@ -391,11 +393,14 @@ impl AiClient {
                 }));
             }
 
-            let tool_calls_val = tool_calls.unwrap_or(Value::Array(vec![]));
+            let raw_tool_calls = tool_calls.unwrap_or(Value::Array(vec![]));
+            let tool_calls_arr = raw_tool_calls.as_array().cloned().unwrap_or_default();
+            let execution_plan = build_tool_call_execution_plan(&tool_calls_arr);
+            let display_tool_calls = Value::Array(execution_plan.display_calls.clone());
+
             if let Some(cb) = &callbacks.on_tools_start {
-                cb(tool_calls_val.clone());
+                cb(display_tool_calls);
             }
-            let tool_calls_arr = tool_calls_val.as_array().cloned().unwrap_or_default();
             let tool_call_items = build_tool_call_items(&tool_calls_arr);
 
             let build_aborted_results = |existing: Option<&Vec<ToolResult>>| -> Vec<ToolResult> {
@@ -432,22 +437,24 @@ impl AiClient {
 
             if let Some(sid) = session_id.as_ref() {
                 if abort_registry::is_aborted(sid) {
-                    let aborted_results = build_aborted_results(None);
-                    for result in &aborted_results {
-                        let meta = json!({
-                            "toolName": result.name,
-                            "success": result.success,
-                            "isError": result.is_error
-                        });
-                        let _ = self
-                            .message_manager
-                            .save_tool_message(
-                                sid,
-                                &result.content,
-                                &result.tool_call_id,
-                                Some(meta),
-                            )
-                            .await;
+                    if persist_tool_messages {
+                        let aborted_results = build_aborted_results(None);
+                        for result in &aborted_results {
+                            let meta = json!({
+                                "toolName": result.name,
+                                "success": result.success,
+                                "isError": result.is_error
+                            });
+                            let _ = self
+                                .message_manager
+                                .save_tool_message(
+                                    sid,
+                                    &result.content,
+                                    &result.tool_call_id,
+                                    Some(meta),
+                                )
+                                .await;
+                        }
                     }
                     return Err("aborted".to_string());
                 }
@@ -468,17 +475,49 @@ impl AiClient {
             let tool_results = self
                 .mcp_tool_execute
                 .execute_tools_stream(
-                    &tool_calls_arr,
+                    &execution_plan.execute_calls,
                     session_id.as_deref(),
                     Some(model.as_str()),
                     on_tools_stream_cb,
                 )
                 .await;
+            let expanded_tool_results = expand_tool_results_with_aliases(
+                tool_results.as_slice(),
+                &execution_plan.alias_map,
+            );
 
             if let Some(sid) = session_id.as_ref() {
                 if abort_registry::is_aborted(sid) {
-                    let aborted_results = build_aborted_results(Some(&tool_results));
-                    for result in &aborted_results {
+                    if persist_tool_messages {
+                        let aborted_results = build_aborted_results(Some(&expanded_tool_results));
+                        for result in &aborted_results {
+                            let meta = json!({
+                                "toolName": result.name,
+                                "success": result.success,
+                                "isError": result.is_error
+                            });
+                            let _ = self
+                                .message_manager
+                                .save_tool_message(
+                                    sid,
+                                    &result.content,
+                                    &result.tool_call_id,
+                                    Some(meta),
+                                )
+                                .await;
+                        }
+                    }
+                    return Err("aborted".to_string());
+                }
+            }
+
+            if let Some(cb) = &callbacks.on_tools_end {
+                cb(json!({"tool_results": tool_results.clone()}));
+            }
+
+            if persist_tool_messages {
+                if let Some(sid) = session_id.as_ref() {
+                    for result in &expanded_tool_results {
                         let meta = json!({
                             "toolName": result.name,
                             "success": result.success,
@@ -494,29 +533,10 @@ impl AiClient {
                             )
                             .await;
                     }
-                    return Err("aborted".to_string());
                 }
             }
 
-            if let Some(cb) = &callbacks.on_tools_end {
-                cb(json!({"tool_results": tool_results.clone()}));
-            }
-
-            if let Some(sid) = session_id.as_ref() {
-                for result in &tool_results {
-                    let meta = json!({
-                        "toolName": result.name,
-                        "success": result.success,
-                        "isError": result.is_error
-                    });
-                    let _ = self
-                        .message_manager
-                        .save_tool_message(sid, &result.content, &result.tool_call_id, Some(meta))
-                        .await;
-                }
-            }
-
-            let tool_outputs: Vec<Value> = tool_results
+            let tool_outputs: Vec<Value> = expanded_tool_results
                 .iter()
                 .map(|r| {
                     json!({
@@ -531,7 +551,7 @@ impl AiClient {
 
             let mut next_input = Value::Array(tool_outputs.clone());
             let mut next_prev_id = ai_response.response_id.clone();
-            let mut next_use_prev_id = use_prev_id && next_prev_id.is_some();
+            let mut next_use_prev_id = can_use_prev_id && next_prev_id.is_some();
             if use_prev_id && next_prev_id.is_none() {
                 warn!("[AI_V3] missing response_id for tool call; fallback to stateless input");
                 if let Some(sid) = session_id.as_ref() {
@@ -930,6 +950,131 @@ fn build_current_input_items(raw_input: &Value, force_text: bool) -> Vec<Value> 
         return arr.clone();
     }
     vec![to_message_item("user", &normalized, force_text)]
+}
+
+#[derive(Default)]
+struct ToolCallExecutionPlan {
+    display_calls: Vec<Value>,
+    execute_calls: Vec<Value>,
+    alias_map: HashMap<String, Vec<String>>,
+}
+
+fn build_tool_call_execution_plan(tool_calls_arr: &[Value]) -> ToolCallExecutionPlan {
+    let mut plan = ToolCallExecutionPlan::default();
+    let mut exact_key_to_call_id: HashMap<String, String> = HashMap::new();
+    let mut first_suggest_call_id: Option<String> = None;
+
+    for tc in tool_calls_arr {
+        let call_id = tool_call_id(tc);
+        let tool_name = tool_call_name(tc);
+        let mut canonical_call_id: Option<String> = None;
+
+        if is_suggest_sub_agent_tool(tool_name.as_str()) {
+            if let Some(existing) = first_suggest_call_id.as_ref() {
+                canonical_call_id = Some(existing.clone());
+            }
+        }
+
+        if canonical_call_id.is_none() && !call_id.is_empty() {
+            let dedupe_key = format!(
+                "{}::{}",
+                tool_name.to_lowercase(),
+                tool_call_arguments_text(tc)
+            );
+            if let Some(existing) = exact_key_to_call_id.get(&dedupe_key) {
+                canonical_call_id = Some(existing.clone());
+            } else {
+                exact_key_to_call_id.insert(dedupe_key, call_id.clone());
+            }
+        }
+
+        if let Some(existing) = canonical_call_id {
+            if !call_id.is_empty() && call_id != existing {
+                let entry = plan.alias_map.entry(existing).or_default();
+                if !entry.iter().any(|id| id == &call_id) {
+                    entry.push(call_id);
+                }
+            }
+            continue;
+        }
+
+        if is_suggest_sub_agent_tool(tool_name.as_str())
+            && !call_id.is_empty()
+            && first_suggest_call_id.is_none()
+        {
+            first_suggest_call_id = Some(call_id);
+        }
+
+        plan.display_calls.push(tc.clone());
+        plan.execute_calls.push(tc.clone());
+    }
+
+    plan
+}
+
+fn expand_tool_results_with_aliases(
+    tool_results: &[ToolResult],
+    alias_map: &HashMap<String, Vec<String>>,
+) -> Vec<ToolResult> {
+    let mut expanded = Vec::new();
+
+    for result in tool_results {
+        expanded.push(result.clone());
+
+        if let Some(alias_ids) = alias_map.get(result.tool_call_id.as_str()) {
+            for alias_id in alias_ids {
+                if alias_id.trim().is_empty() || alias_id == &result.tool_call_id {
+                    continue;
+                }
+                let mut clone = result.clone();
+                clone.tool_call_id = alias_id.clone();
+                expanded.push(clone);
+            }
+        }
+    }
+
+    expanded
+}
+
+fn tool_call_id(tc: &Value) -> String {
+    tc.get("id")
+        .and_then(|v| v.as_str())
+        .or_else(|| tc.get("call_id").and_then(|v| v.as_str()))
+        .unwrap_or("")
+        .to_string()
+}
+
+fn tool_call_name(tc: &Value) -> String {
+    tc.get("function")
+        .and_then(|f| f.get("name"))
+        .and_then(|v| v.as_str())
+        .or_else(|| tc.get("name").and_then(|v| v.as_str()))
+        .unwrap_or("")
+        .to_string()
+}
+
+fn tool_call_arguments_text(tc: &Value) -> String {
+    let args = tc
+        .get("function")
+        .and_then(|f| f.get("arguments"))
+        .cloned()
+        .or_else(|| tc.get("arguments").cloned())
+        .unwrap_or(Value::String("{}".to_string()));
+
+    if let Some(raw) = args.as_str() {
+        return raw.trim().to_string();
+    }
+
+    args.to_string()
+}
+
+fn is_suggest_sub_agent_tool(tool_name: &str) -> bool {
+    let normalized = tool_name.trim().to_lowercase();
+    if normalized.is_empty() {
+        return false;
+    }
+
+    normalized.ends_with("_suggest_sub_agent") || normalized.contains("__suggest_sub_agent")
 }
 
 fn build_tool_call_items(tool_calls_arr: &[Value]) -> Vec<Value> {
