@@ -1,8 +1,12 @@
-use futures::TryStreamExt;
 use mongodb::bson::{doc, Bson, Document};
 use serde_json::Value;
-use sqlx::Row;
 
+use crate::core::mongo_cursor::{collect_and_map, collect_string_field, sort_by_str_key_desc};
+use crate::core::mongo_query::{filter_optional_user_id, insert_optional_user_id};
+use crate::core::sql_query::{
+    append_optional_user_id_filter, build_select_all_with_optional_user_id,
+};
+use crate::core::sql_rows::collect_string_column;
 use crate::models::mcp_config::{McpConfig, McpConfigRow};
 use crate::repositories::db::{doc_from_pairs, to_doc, with_db};
 
@@ -33,34 +37,22 @@ pub async fn list_mcp_configs(user_id: Option<String>) -> Result<Vec<McpConfig>,
         |db| {
             let user_id = user_id.clone();
             Box::pin(async move {
-                let filter = if let Some(uid) = user_id {
-                    doc! { "user_id": uid }
-                } else {
-                    doc! {}
-                };
-                let mut cursor = db
+                let filter = filter_optional_user_id(user_id);
+                let cursor = db
                     .collection::<Document>("mcp_configs")
                     .find(filter, None)
                     .await
                     .map_err(|e| e.to_string())?;
-                let mut docs = Vec::new();
-                while let Some(doc) = cursor.try_next().await.map_err(|e| e.to_string())? {
-                    docs.push(doc);
-                }
-                let mut items: Vec<McpConfig> =
-                    docs.into_iter().filter_map(|d| normalize_doc(&d)).collect();
-                items.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+                let mut items: Vec<McpConfig> = collect_and_map(cursor, normalize_doc).await?;
+                sort_by_str_key_desc(&mut items, |item| item.created_at.as_str());
                 Ok(items)
             })
         },
         |pool| {
             let user_id = user_id.clone();
             Box::pin(async move {
-                let mut query = "SELECT * FROM mcp_configs".to_string();
-                if user_id.is_some() {
-                    query.push_str(" WHERE user_id = ?");
-                }
-                query.push_str(" ORDER BY created_at DESC");
+                let query =
+                    build_select_all_with_optional_user_id("mcp_configs", user_id.is_some(), true);
                 let mut q = sqlx::query_as::<_, McpConfigRow>(&query);
                 if let Some(uid) = user_id {
                     q = q.bind(uid);
@@ -79,28 +71,20 @@ pub async fn list_enabled_mcp_configs(user_id: Option<String>) -> Result<Vec<Mcp
             let user_id = user_id.clone();
             Box::pin(async move {
                 let mut filter = doc! {};
-                if let Some(uid) = user_id {
-                    filter.insert("user_id", uid);
-                }
-                let mut cursor = db
+                insert_optional_user_id(&mut filter, user_id);
+                let cursor = db
                     .collection::<Document>("mcp_configs")
                     .find(filter, None)
                     .await
                     .map_err(|e| e.to_string())?;
-                let mut docs = Vec::new();
-                while let Some(doc) = cursor.try_next().await.map_err(|e| e.to_string())? {
-                    docs.push(doc);
-                }
-                Ok(docs.into_iter().filter_map(|d| normalize_doc(&d)).collect())
+                collect_and_map(cursor, normalize_doc).await
             })
         },
         |pool| {
             let user_id = user_id.clone();
             Box::pin(async move {
-                let mut query = "SELECT * FROM mcp_configs".to_string();
-                if user_id.is_some() {
-                    query.push_str(" WHERE user_id = ?");
-                }
+                let query =
+                    build_select_all_with_optional_user_id("mcp_configs", user_id.is_some(), false);
                 let mut q = sqlx::query_as::<_, McpConfigRow>(&query);
                 if let Some(uid) = user_id {
                     q = q.bind(uid);
@@ -126,19 +110,13 @@ pub async fn list_enabled_mcp_configs_by_ids(
             let ids = ids.to_vec();
             Box::pin(async move {
                 let mut filter = doc! { "id": { "$in": ids } };
-                if let Some(uid) = user_id {
-                    filter.insert("user_id", uid);
-                }
-                let mut cursor = db
+                insert_optional_user_id(&mut filter, user_id);
+                let cursor = db
                     .collection::<Document>("mcp_configs")
                     .find(filter, None)
                     .await
                     .map_err(|e| e.to_string())?;
-                let mut docs = Vec::new();
-                while let Some(doc) = cursor.try_next().await.map_err(|e| e.to_string())? {
-                    docs.push(doc);
-                }
-                Ok(docs.into_iter().filter_map(|d| normalize_doc(&d)).collect())
+                collect_and_map(cursor, normalize_doc).await
             })
         },
         |pool| {
@@ -147,9 +125,7 @@ pub async fn list_enabled_mcp_configs_by_ids(
             Box::pin(async move {
                 let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
                 let mut query = format!("SELECT * FROM mcp_configs WHERE id IN ({})", placeholders);
-                if user_id.is_some() {
-                    query.push_str(" AND user_id = ?");
-                }
+                append_optional_user_id_filter(&mut query, user_id.is_some(), true);
                 let mut q = sqlx::query_as::<_, McpConfigRow>(&query);
                 for id in &ids {
                     q = q.bind(id);
@@ -342,18 +318,12 @@ pub async fn get_app_ids_for_mcp_config(config_id: &str) -> Result<Vec<String>, 
         |db| {
             let config_id = config_id.to_string();
             Box::pin(async move {
-                let mut cursor = db
+                let cursor = db
                     .collection::<Document>("mcp_config_applications")
                     .find(doc! { "mcp_config_id": config_id }, None)
                     .await
                     .map_err(|e| e.to_string())?;
-                let mut out = Vec::new();
-                while let Some(doc) = cursor.try_next().await.map_err(|e| e.to_string())? {
-                    if let Ok(app_id) = doc.get_str("application_id") {
-                        out.push(app_id.to_string());
-                    }
-                }
-                Ok(out)
+                collect_string_field(cursor, "application_id").await
             })
         },
         |pool| {
@@ -366,12 +336,7 @@ pub async fn get_app_ids_for_mcp_config(config_id: &str) -> Result<Vec<String>, 
                 .fetch_all(pool)
                 .await
                 .map_err(|e| e.to_string())?;
-                let mut out = Vec::new();
-                for row in rows {
-                    let app_id: String = row.try_get("application_id").unwrap_or_default();
-                    out.push(app_id);
-                }
-                Ok(out)
+                Ok(collect_string_column(rows, "application_id"))
             })
         },
     )

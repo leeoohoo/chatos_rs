@@ -143,12 +143,22 @@ impl AiRequestHandler {
         };
 
         let status = resp.status();
-        let val: Value = resp.json().await.map_err(|e| e.to_string())?;
+        let raw = resp.text().await.map_err(|e| e.to_string())?;
         if !status.is_success() {
-            let err_text = truncate_log(&val.to_string(), 2000);
+            let err_text = truncate_log(&raw, 2000);
             error!("[AI] request failed: status={}, error={}", status, err_text);
-            return Err(val.to_string());
+            return Err(format!("status {}: {}", status, err_text));
         }
+
+        let val: Value = serde_json::from_str(raw.as_str()).map_err(|err| {
+            format!(
+                "invalid JSON response (status {}): {}; body_preview={}",
+                status,
+                err,
+                truncate_log(raw.as_str(), 1200)
+            )
+        })?;
+
         let choice = val
             .get("choices")
             .and_then(|c| c.get(0))

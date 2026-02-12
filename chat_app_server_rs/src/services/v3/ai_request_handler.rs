@@ -149,15 +149,24 @@ impl AiRequestHandler {
         };
 
         let status = resp.status();
-        let val: Value = resp.json().await.map_err(|e| e.to_string())?;
+        let raw = resp.text().await.map_err(|e| e.to_string())?;
         if !status.is_success() {
-            let err_text = truncate_log(&val.to_string(), 2000);
+            let err_text = truncate_log(&raw, 2000);
             error!(
                 "[AI_V3] request failed: status={}, error={}",
                 status, err_text
             );
-            return Err(val.to_string());
+            return Err(format!("status {}: {}", status, err_text));
         }
+
+        let val: Value = serde_json::from_str(raw.as_str()).map_err(|err| {
+            format!(
+                "invalid JSON response (status {}): {}; body_preview={}",
+                status,
+                err,
+                truncate_log(raw.as_str(), 1200)
+            )
+        })?;
 
         let tool_calls = extract_tool_calls(&val);
         let content = extract_output_text(&val);
@@ -367,15 +376,17 @@ impl AiRequestHandler {
                             }
                         }
                     }
-                    if response_id.is_none() {
-                        if let Some(id) = v
-                            .get("response")
-                            .and_then(|r| r.get("id"))
-                            .and_then(|v| v.as_str())
-                        {
-                            response_id = Some(id.to_string());
-                        } else if let Some(id) = v.get("id").and_then(|v| v.as_str()) {
-                            response_id = Some(id.to_string());
+                    if let Some(id) = v
+                        .get("response")
+                        .and_then(|r| r.get("id"))
+                        .and_then(|v| v.as_str())
+                    {
+                        response_id = Some(id.to_string());
+                    } else if response_id.is_none() {
+                        if let Some(id) = v.get("id").and_then(|v| v.as_str()) {
+                            if looks_like_response_id(id) {
+                                response_id = Some(id.to_string());
+                            }
                         }
                     }
                     if let Some(u) = v.get("response").and_then(|r| r.get("usage")) {
@@ -585,6 +596,24 @@ fn normalize_reasoning_delta(delta: Option<&Value>) -> String {
         return v.to_string();
     }
     String::new()
+}
+
+fn looks_like_response_id(id: &str) -> bool {
+    let normalized = id.trim().to_lowercase();
+    if normalized.is_empty() {
+        return false;
+    }
+    if normalized.starts_with("event_") || normalized.starts_with("call_") {
+        return false;
+    }
+    if normalized.starts_with("resp_")
+        || normalized.starts_with("response_")
+        || normalized.starts_with("chatcmpl-")
+        || normalized.starts_with("cmpl-")
+    {
+        return true;
+    }
+    normalized.len() >= 16
 }
 
 fn truncate_log(value: &str, max_len: usize) -> String {

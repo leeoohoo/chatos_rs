@@ -1,8 +1,11 @@
-use futures::TryStreamExt;
 use mongodb::bson::{doc, Bson, Document};
 use serde_json::Value;
 use sqlx::Row;
 
+use crate::core::mongo_cursor::{
+    apply_offset_limit, collect_and_map, sort_by_str_key_asc, sort_by_str_key_desc,
+};
+use crate::core::sql_query::append_limit_offset_clause;
 use crate::models::message::{Message, MessageRow};
 use crate::repositories::db::{doc_from_pairs, get_db_sync, to_doc, with_db};
 
@@ -137,26 +140,16 @@ pub async fn get_messages_by_session(
         |db| {
             let session_id = session_id.to_string();
             Box::pin(async move {
-                let mut cursor = db
+                let cursor = db
                     .collection::<Document>("messages")
                     .find(doc! { "session_id": session_id }, None)
                     .await
                     .map_err(|e| e.to_string())?;
-                let mut docs = Vec::new();
-                while let Some(doc) = cursor.try_next().await.map_err(|e| e.to_string())? {
-                    docs.push(doc);
-                }
-                let mut messages: Vec<Message> = docs
-                    .into_iter()
-                    .filter_map(|d| normalize_from_doc(&d))
-                    .collect();
-                messages.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+                let mut messages: Vec<Message> =
+                    collect_and_map(cursor, normalize_from_doc).await?;
+                sort_by_str_key_asc(&mut messages, |m| m.created_at.as_str());
                 if let Some(l) = limit {
-                    messages = messages
-                        .into_iter()
-                        .skip(offset as usize)
-                        .take(l as usize)
-                        .collect();
+                    messages = apply_offset_limit(messages, offset, Some(l));
                 }
                 Ok(messages)
             })
@@ -167,12 +160,13 @@ pub async fn get_messages_by_session(
                 let mut query =
                     "SELECT * FROM messages WHERE session_id = ? ORDER BY created_at ASC"
                         .to_string();
-                if let Some(_) = limit {
-                    query.push_str(" LIMIT ? OFFSET ?");
-                }
+                append_limit_offset_clause(&mut query, limit, offset);
                 let mut q = sqlx::query_as::<_, MessageRow>(&query).bind(&session_id);
                 if let Some(l) = limit {
-                    q = q.bind(l).bind(offset);
+                    q = q.bind(l);
+                    if offset > 0 {
+                        q = q.bind(offset);
+                    }
                 }
                 let rows = q.fetch_all(pool).await.map_err(|e| e.to_string())?;
                 Ok(rows.into_iter().map(|r| r.to_message()).collect())
@@ -191,17 +185,14 @@ pub async fn get_recent_messages_by_session(
         |db| {
             let session_id = session_id.to_string();
             Box::pin(async move {
-                let mut cursor = db.collection::<Document>("messages").find(doc! { "session_id": session_id }, None).await.map_err(|e| e.to_string())?;
-                let mut docs = Vec::new();
-                while let Some(doc) = cursor.try_next().await.map_err(|e| e.to_string())? {
-                    docs.push(doc);
-                }
-                let mut messages: Vec<Message> = docs.into_iter().filter_map(|d| normalize_from_doc(&d)).collect();
-                messages.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-                let start = offset as usize;
-                let end = (offset + limit) as usize;
-                let slice = if start < messages.len() { &messages[start..messages.len().min(end)] } else { &[] };
-                let mut out: Vec<Message> = slice.to_vec();
+                let cursor = db
+                    .collection::<Document>("messages")
+                    .find(doc! { "session_id": session_id }, None)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let mut messages: Vec<Message> = collect_and_map(cursor, normalize_from_doc).await?;
+                sort_by_str_key_desc(&mut messages, |m| m.created_at.as_str());
+                let mut out = apply_offset_limit(messages, offset, Some(limit));
                 out.reverse();
                 Ok(out)
             })
@@ -236,17 +227,16 @@ pub async fn get_messages_by_session_after(
             Box::pin(async move {
                 let mut options = mongodb::options::FindOptions::default();
                 options.sort = Some(doc! { "created_at": 1 });
-                if let Some(l) = limit { options.limit = Some(l); }
-                let mut cursor = db.collection::<Document>("messages")
+                if let Some(l) = limit {
+                    options.limit = Some(l);
+                }
+                let cursor = db
+                    .collection::<Document>("messages")
                     .find(doc! { "session_id": session_id, "created_at": { "$gt": after_created_at } }, options)
                     .await
                     .map_err(|e| e.to_string())?;
-                let mut docs = Vec::new();
-                while let Some(doc) = cursor.try_next().await.map_err(|e| e.to_string())? {
-                    docs.push(doc);
-                }
-                let mut messages: Vec<Message> = docs.into_iter().filter_map(|d| normalize_from_doc(&d)).collect();
-                messages.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+                let mut messages: Vec<Message> = collect_and_map(cursor, normalize_from_doc).await?;
+                sort_by_str_key_asc(&mut messages, |m| m.created_at.as_str());
                 Ok(messages)
             })
         },

@@ -1,6 +1,7 @@
-use futures::TryStreamExt;
 use mongodb::bson::{doc, Bson, Document};
 
+use crate::core::mongo_cursor::{collect_and_map, sort_by_str_key_desc};
+use crate::core::sql_query::append_limit_offset_clause;
 use crate::models::terminal_log::{TerminalLog, TerminalLogRow};
 use crate::repositories::db::{doc_from_pairs, to_doc, with_db};
 
@@ -61,15 +62,11 @@ pub async fn list_terminal_logs(
                 let mut options = mongodb::options::FindOptions::builder().sort(doc! { "created_at": 1 }).build();
                 if let Some(l) = limit { options.limit = Some(l); }
                 if offset > 0 { options.skip = Some(offset as u64); }
-                let mut cursor = db.collection::<Document>("terminal_logs")
+                let cursor = db.collection::<Document>("terminal_logs")
                     .find(doc! { "terminal_id": terminal_id }, options)
                     .await
                     .map_err(|e| e.to_string())?;
-                let mut out = Vec::new();
-                while let Some(doc) = cursor.try_next().await.map_err(|e| e.to_string())? {
-                    if let Some(item) = normalize_doc(&doc) { out.push(item); }
-                }
-                Ok(out)
+                collect_and_map(cursor, normalize_doc).await
             })
         },
         |pool| {
@@ -77,10 +74,7 @@ pub async fn list_terminal_logs(
             let limit = limit.clone();
             Box::pin(async move {
                 let mut query = "SELECT id, terminal_id, type as log_type, content, created_at FROM terminal_logs WHERE terminal_id = ? ORDER BY created_at ASC".to_string();
-                if let Some(_l) = limit {
-                    query.push_str(" LIMIT ?");
-                    if offset > 0 { query.push_str(" OFFSET ?"); }
-                }
+                append_limit_offset_clause(&mut query, limit, offset);
                 let mut q = sqlx::query_as::<_, TerminalLogRow>(&query).bind(&terminal_id);
                 if let Some(l) = limit {
                     q = q.bind(l);
@@ -106,17 +100,13 @@ pub async fn list_terminal_logs_recent(
                     .sort(doc! { "created_at": -1 })
                     .limit(Some(capped_limit))
                     .build();
-                let mut cursor = db
+                let cursor = db
                     .collection::<Document>("terminal_logs")
                     .find(doc! { "terminal_id": terminal_id }, options)
                     .await
                     .map_err(|e| e.to_string())?;
-                let mut out = Vec::new();
-                while let Some(doc) = cursor.try_next().await.map_err(|e| e.to_string())? {
-                    if let Some(item) = normalize_doc(&doc) {
-                        out.push(item);
-                    }
-                }
+                let mut out = collect_and_map(cursor, normalize_doc).await?;
+                sort_by_str_key_desc(&mut out, |item| item.created_at.as_str());
                 out.reverse();
                 Ok(out)
             })

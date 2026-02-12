@@ -1,6 +1,6 @@
-use futures::TryStreamExt;
 use mongodb::bson::{doc, Bson, Document};
 
+use crate::core::mongo_cursor::collect_and_map;
 use crate::models::session_summary_message::{SessionSummaryMessage, SessionSummaryMessageRow};
 use crate::repositories::db::{doc_from_pairs, to_doc, with_db};
 
@@ -88,20 +88,12 @@ pub async fn list_summary_messages_by_summary(
         |db| {
             let summary_id = summary_id.to_string();
             Box::pin(async move {
-                let mut cursor = db
+                let cursor = db
                     .collection::<Document>("session_summary_messages")
                     .find(doc! { "summary_id": summary_id }, None)
                     .await
                     .map_err(|e| e.to_string())?;
-                let mut docs = Vec::new();
-                while let Some(doc) = cursor.try_next().await.map_err(|e| e.to_string())? {
-                    docs.push(doc);
-                }
-                let items: Vec<SessionSummaryMessage> = docs
-                    .into_iter()
-                    .filter_map(|d| normalize_from_doc(&d))
-                    .collect();
-                Ok(items)
+                collect_and_map(cursor, normalize_from_doc).await
             })
         },
         |pool| {

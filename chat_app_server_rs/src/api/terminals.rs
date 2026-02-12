@@ -12,6 +12,7 @@ use serde_json::Value;
 use std::path::Path as FsPath;
 use tokio::sync::mpsc;
 
+use crate::core::validation::{normalize_non_empty, validate_existing_dir};
 use crate::models::terminal::TerminalService;
 use crate::models::terminal_log::{TerminalLog, TerminalLogService};
 use crate::repositories::terminals;
@@ -93,47 +94,32 @@ async fn list_terminals(Query(query): Query<TerminalQuery>) -> (StatusCode, Json
 }
 
 async fn create_terminal(Json(req): Json<CreateTerminalRequest>) -> (StatusCode, Json<Value>) {
-    let cwd = req.cwd.unwrap_or_default();
-    if cwd.trim().is_empty() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": "终端目录不能为空" })),
-        );
-    }
-    let path = FsPath::new(cwd.trim());
-    if !path.exists() || !path.is_dir() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": "终端目录不存在或不是目录" })),
-        );
-    }
-    let name = req
-        .name
-        .and_then(|s| {
-            let trimmed = s.trim().to_string();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed)
-            }
-        })
-        .unwrap_or_else(|| derive_terminal_name(cwd.trim()));
+    let CreateTerminalRequest {
+        name,
+        cwd,
+        user_id,
+        project_id,
+    } = req;
+
+    let cwd = match validate_existing_dir(
+        cwd.as_deref().unwrap_or(""),
+        "终端目录不能为空",
+        "终端目录不存在或不是目录",
+    ) {
+        Ok(path) => path,
+        Err(err) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": err })),
+            )
+        }
+    };
+
+    let name = normalize_non_empty(name).unwrap_or_else(|| derive_terminal_name(&cwd));
 
     let manager = get_terminal_manager();
     match manager
-        .create(
-            name,
-            cwd.trim().to_string(),
-            req.user_id,
-            req.project_id.and_then(|v| {
-                let trimmed = v.trim().to_string();
-                if trimmed.is_empty() {
-                    None
-                } else {
-                    Some(trimmed)
-                }
-            }),
-        )
+        .create(name, cwd, user_id, normalize_non_empty(project_id))
         .await
     {
         Ok(terminal) => (StatusCode::CREATED, Json(attach_busy(&manager, terminal))),

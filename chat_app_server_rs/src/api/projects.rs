@@ -7,9 +7,11 @@ use axum::{
 use pathdiff::diff_paths;
 use serde::Deserialize;
 use serde_json::Value;
-use std::path::Path as FsPath;
 use std::path::Path as StdPath;
 
+use crate::core::validation::{
+    normalize_non_empty, validate_existing_dir, validate_existing_dir_if_present,
+};
 use crate::models::project::{Project, ProjectService};
 use crate::repositories::change_logs;
 
@@ -64,28 +66,34 @@ async fn list_projects(Query(query): Query<ProjectQuery>) -> (StatusCode, Json<V
 }
 
 async fn create_project(Json(req): Json<CreateProjectRequest>) -> (StatusCode, Json<Value>) {
-    let name = req.name.unwrap_or_default();
-    let root_path = req.root_path.unwrap_or_default();
-    if name.trim().is_empty() {
+    let CreateProjectRequest {
+        name,
+        root_path,
+        description,
+        user_id,
+    } = req;
+
+    let Some(name) = normalize_non_empty(name) else {
         return (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({"error": "项目名称不能为空"})),
         );
-    }
-    if root_path.trim().is_empty() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({"error": "项目目录不能为空"})),
-        );
-    }
-    let p = FsPath::new(root_path.trim());
-    if !p.exists() || !p.is_dir() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({"error": "项目目录不存在或不是目录"})),
-        );
-    }
-    let project = Project::new(name, root_path, req.description, req.user_id);
+    };
+    let root_path = match validate_existing_dir(
+        root_path.as_deref().unwrap_or(""),
+        "项目目录不能为空",
+        "项目目录不存在或不是目录",
+    ) {
+        Ok(path) => path,
+        Err(err) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": err})),
+            )
+        }
+    };
+
+    let project = Project::new(name, root_path, description, user_id);
     if let Err(err) = ProjectService::create(project.clone()).await {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -124,23 +132,24 @@ async fn update_project(
     Path(id): Path<String>,
     Json(req): Json<UpdateProjectRequest>,
 ) -> (StatusCode, Json<Value>) {
-    if let Some(ref root_path) = req.root_path {
-        let p = FsPath::new(root_path.trim());
-        if !p.exists() || !p.is_dir() {
+    let UpdateProjectRequest {
+        name,
+        root_path,
+        description,
+    } = req;
+
+    let root_path = match validate_existing_dir_if_present(root_path, "项目目录不存在或不是目录")
+    {
+        Ok(path) => path,
+        Err(err) => {
             return (
                 StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({"error": "项目目录不存在或不是目录"})),
-            );
+                Json(serde_json::json!({"error": err})),
+            )
         }
-    }
-    if let Err(err) = ProjectService::update(
-        &id,
-        req.name.clone(),
-        req.root_path.clone(),
-        req.description.clone(),
-    )
-    .await
-    {
+    };
+
+    if let Err(err) = ProjectService::update(&id, name, root_path, description).await {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": err})),

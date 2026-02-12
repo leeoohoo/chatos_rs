@@ -6,17 +6,16 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::task;
 
 use crate::config::Config;
+use crate::core::chat_stream::{build_v2_callbacks, send_fallback_chunk_if_needed};
 use crate::models::message::MessageService;
 use crate::models::session::SessionService;
 use crate::repositories::system_contexts;
 use crate::services::mcp_loader::load_mcp_configs_for_user;
 use crate::services::session_title::maybe_rename_session_title;
 use crate::services::user_settings::{apply_settings_to_ai_client, get_effective_user_settings};
-use crate::services::v2::ai_client::AiClientCallbacks;
 use crate::services::v2::ai_server::{AiServer, ChatOptions};
 use crate::services::v2::mcp_tool_execute::McpToolExecute;
 use crate::utils::abort_registry;
@@ -330,88 +329,11 @@ async fn stream_chat_v2(
         !api_key.is_empty(),
     );
 
-    let chunk_sent = std::sync::Arc::new(AtomicBool::new(false));
-    let sender_clone = sender.clone();
-    let sid_clone = session_id.clone();
-    let chunk_flag = chunk_sent.clone();
-    let on_chunk = move |chunk: String| {
-        if abort_registry::is_aborted(&sid_clone) {
-            return;
-        }
-        chunk_flag.store(true, Ordering::Relaxed);
-        sender_clone.send_json(&json!({ "type": Events::CHUNK, "timestamp": chrono::Utc::now().to_rfc3339(), "content": chunk }));
-    };
-    let sender_thinking = sender.clone();
-    let sid_thinking = session_id.clone();
-    let on_thinking = move |chunk: String| {
-        if abort_registry::is_aborted(&sid_thinking) {
-            return;
-        }
-        sender_thinking.send_json(&json!({ "type": Events::THINKING, "timestamp": chrono::Utc::now().to_rfc3339(), "content": chunk }));
-    };
-    let sender_tools = sender.clone();
-    let sid_tools = session_id.clone();
-    let on_tools_start = move |tool_calls: Value| {
-        if abort_registry::is_aborted(&sid_tools) {
-            return;
-        }
-        sender_tools.send_json(&json!({ "type": Events::TOOLS_START, "timestamp": chrono::Utc::now().to_rfc3339(), "data": { "tool_calls": tool_calls } }));
-    };
-    let sender_tools_stream = sender.clone();
-    let sid_tools_stream = session_id.clone();
-    let on_tools_stream = move |result: Value| {
-        if abort_registry::is_aborted(&sid_tools_stream) {
-            return;
-        }
-        sender_tools_stream.send_json(&json!({ "type": Events::TOOLS_STREAM, "timestamp": chrono::Utc::now().to_rfc3339(), "data": result }));
-    };
-    let sender_tools_end = sender.clone();
-    let sid_tools_end = session_id.clone();
-    let on_tools_end = move |result: Value| {
-        if abort_registry::is_aborted(&sid_tools_end) {
-            return;
-        }
-        sender_tools_end.send_json(&json!({ "type": Events::TOOLS_END, "timestamp": chrono::Utc::now().to_rfc3339(), "data": result }));
-    };
-
-    let sender_sum_start = sender.clone();
-    let sid_sum_start = session_id.clone();
-    let on_sum_start = move |info: Value| {
-        if abort_registry::is_aborted(&sid_sum_start) {
-            return;
-        }
-        sender_sum_start.send_json(&json!({ "type": Events::CONTEXT_SUMMARIZED_START, "timestamp": chrono::Utc::now().to_rfc3339(), "data": info }));
-    };
-    let sender_sum_stream = sender.clone();
-    let sid_sum_stream = session_id.clone();
-    let on_sum_stream = move |chunk: Value| {
-        if abort_registry::is_aborted(&sid_sum_stream) {
-            return;
-        }
-        sender_sum_stream.send_json(&json!({ "type": Events::CONTEXT_SUMMARIZED_STREAM, "timestamp": chrono::Utc::now().to_rfc3339(), "data": chunk }));
-    };
-    let sender_sum_end = sender.clone();
-    let sid_sum_end = session_id.clone();
-    let on_sum_end = move |info: Value| {
-        if abort_registry::is_aborted(&sid_sum_end) {
-            return;
-        }
-        sender_sum_end.send_json(&json!({ "type": Events::CONTEXT_SUMMARIZED_END, "timestamp": chrono::Utc::now().to_rfc3339(), "data": info }));
-    };
+    let callback_bundle = build_v2_callbacks(&sender, &session_id);
+    let chunk_sent = callback_bundle.chunk_sent;
 
     let attachments_list = req.attachments.unwrap_or_default();
     let att = attachments::parse_attachments(&attachments_list);
-
-    let callbacks = AiClientCallbacks {
-        on_chunk: Some(std::sync::Arc::new(on_chunk)),
-        on_thinking: Some(std::sync::Arc::new(on_thinking)),
-        on_tools_start: Some(std::sync::Arc::new(on_tools_start)),
-        on_tools_stream: Some(std::sync::Arc::new(on_tools_stream)),
-        on_tools_end: Some(std::sync::Arc::new(on_tools_end)),
-        on_context_summarized_start: Some(std::sync::Arc::new(on_sum_start)),
-        on_context_summarized_stream: Some(std::sync::Arc::new(on_sum_stream)),
-        on_context_summarized_end: Some(std::sync::Arc::new(on_sum_end)),
-    };
 
     let result = ai_server
         .chat(
@@ -427,7 +349,7 @@ async fn stream_chat_v2(
                 attachments: Some(att),
                 supports_images: Some(supports_images),
                 reasoning_enabled: Some(effective_reasoning),
-                callbacks: Some(callbacks),
+                callbacks: Some(callback_bundle.callbacks),
             },
         )
         .await;
@@ -436,13 +358,7 @@ async fn stream_chat_v2(
     match result {
         Ok(res) => {
             if !abort_registry::is_aborted(&session_id) {
-                if !chunk_sent.load(Ordering::Relaxed) {
-                    if let Some(text) = res.get("content").and_then(|v| v.as_str()) {
-                        if !text.is_empty() {
-                            sender.send_json(&json!({ "type": Events::CHUNK, "timestamp": chrono::Utc::now().to_rfc3339(), "content": text }));
-                        }
-                    }
-                }
+                send_fallback_chunk_if_needed(&sender, &chunk_sent, &res);
                 sender.send_json(&json!({ "type": Events::COMPLETE, "timestamp": chrono::Utc::now().to_rfc3339(), "result": res }));
                 should_send_done = true;
             } else {
@@ -496,88 +412,11 @@ async fn stream_chat_v2_agent(sender: SseSender, req: ChatRequest, rename_sessio
         }
     };
 
-    let chunk_sent = std::sync::Arc::new(AtomicBool::new(false));
-    let sender_clone = sender.clone();
-    let sid_clone = session_id.clone();
-    let chunk_flag = chunk_sent.clone();
-    let on_chunk = move |chunk: String| {
-        if abort_registry::is_aborted(&sid_clone) {
-            return;
-        }
-        chunk_flag.store(true, Ordering::Relaxed);
-        sender_clone.send_json(&json!({ "type": Events::CHUNK, "timestamp": chrono::Utc::now().to_rfc3339(), "content": chunk }));
-    };
-    let sender_thinking = sender.clone();
-    let sid_thinking = session_id.clone();
-    let on_thinking = move |chunk: String| {
-        if abort_registry::is_aborted(&sid_thinking) {
-            return;
-        }
-        sender_thinking.send_json(&json!({ "type": Events::THINKING, "timestamp": chrono::Utc::now().to_rfc3339(), "content": chunk }));
-    };
-    let sender_tools = sender.clone();
-    let sid_tools = session_id.clone();
-    let on_tools_start = move |tool_calls: Value| {
-        if abort_registry::is_aborted(&sid_tools) {
-            return;
-        }
-        sender_tools.send_json(&json!({ "type": Events::TOOLS_START, "timestamp": chrono::Utc::now().to_rfc3339(), "data": { "tool_calls": tool_calls } }));
-    };
-    let sender_tools_stream = sender.clone();
-    let sid_tools_stream = session_id.clone();
-    let on_tools_stream = move |result: Value| {
-        if abort_registry::is_aborted(&sid_tools_stream) {
-            return;
-        }
-        sender_tools_stream.send_json(&json!({ "type": Events::TOOLS_STREAM, "timestamp": chrono::Utc::now().to_rfc3339(), "data": result }));
-    };
-    let sender_tools_end = sender.clone();
-    let sid_tools_end = session_id.clone();
-    let on_tools_end = move |result: Value| {
-        if abort_registry::is_aborted(&sid_tools_end) {
-            return;
-        }
-        sender_tools_end.send_json(&json!({ "type": Events::TOOLS_END, "timestamp": chrono::Utc::now().to_rfc3339(), "data": result }));
-    };
-
-    let sender_sum_start = sender.clone();
-    let sid_sum_start = session_id.clone();
-    let on_sum_start = move |info: Value| {
-        if abort_registry::is_aborted(&sid_sum_start) {
-            return;
-        }
-        sender_sum_start.send_json(&json!({ "type": Events::CONTEXT_SUMMARIZED_START, "timestamp": chrono::Utc::now().to_rfc3339(), "data": info }));
-    };
-    let sender_sum_stream = sender.clone();
-    let sid_sum_stream = session_id.clone();
-    let on_sum_stream = move |chunk: Value| {
-        if abort_registry::is_aborted(&sid_sum_stream) {
-            return;
-        }
-        sender_sum_stream.send_json(&json!({ "type": Events::CONTEXT_SUMMARIZED_STREAM, "timestamp": chrono::Utc::now().to_rfc3339(), "data": chunk }));
-    };
-    let sender_sum_end = sender.clone();
-    let sid_sum_end = session_id.clone();
-    let on_sum_end = move |info: Value| {
-        if abort_registry::is_aborted(&sid_sum_end) {
-            return;
-        }
-        sender_sum_end.send_json(&json!({ "type": Events::CONTEXT_SUMMARIZED_END, "timestamp": chrono::Utc::now().to_rfc3339(), "data": info }));
-    };
+    let callback_bundle = build_v2_callbacks(&sender, &session_id);
+    let chunk_sent = callback_bundle.chunk_sent;
 
     let attachments_list = req.attachments.unwrap_or_default();
     let att = attachments::parse_attachments(&attachments_list);
-    let callbacks = AiClientCallbacks {
-        on_chunk: Some(std::sync::Arc::new(on_chunk)),
-        on_thinking: Some(std::sync::Arc::new(on_thinking)),
-        on_tools_start: Some(std::sync::Arc::new(on_tools_start)),
-        on_tools_stream: Some(std::sync::Arc::new(on_tools_stream)),
-        on_tools_end: Some(std::sync::Arc::new(on_tools_end)),
-        on_context_summarized_start: Some(std::sync::Arc::new(on_sum_start)),
-        on_context_summarized_stream: Some(std::sync::Arc::new(on_sum_stream)),
-        on_context_summarized_end: Some(std::sync::Arc::new(on_sum_end)),
-    };
-
     let result = crate::services::v2::agent::run_chat(
         &session_id,
         &content,
@@ -585,20 +424,14 @@ async fn stream_chat_v2_agent(sender: SseSender, req: ChatRequest, rename_sessio
         req.user_id.clone(),
         att,
         req.reasoning_enabled,
-        callbacks,
+        callback_bundle.callbacks,
     )
     .await;
 
     match result {
         Ok(res) => {
             if !abort_registry::is_aborted(&session_id) {
-                if !chunk_sent.load(Ordering::Relaxed) {
-                    if let Some(text) = res.get("content").and_then(|v| v.as_str()) {
-                        if !text.is_empty() {
-                            sender.send_json(&json!({ "type": Events::CHUNK, "timestamp": chrono::Utc::now().to_rfc3339(), "content": text }));
-                        }
-                    }
-                }
+                send_fallback_chunk_if_needed(&sender, &chunk_sent, &res);
                 sender.send_json(&json!({ "type": Events::COMPLETE, "timestamp": chrono::Utc::now().to_rfc3339(), "result": res }));
             } else {
                 sender.send_json(&json!({ "type": Events::CANCELLED, "timestamp": chrono::Utc::now().to_rfc3339() }));

@@ -7,8 +7,11 @@ use axum::{
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::models::message::{Message, MessageService};
-use crate::services::session_title::maybe_rename_session_title;
+use crate::core::messages::{
+    build_message, create_message_and_maybe_rename, MessageOut, NewMessageFields,
+};
+use crate::core::pagination::{parse_non_negative_offset, parse_positive_limit};
+use crate::models::message::MessageService;
 
 #[derive(Debug, Deserialize)]
 struct MessagesQuery {
@@ -30,98 +33,10 @@ struct CreateMessageRequest {
     metadata: Option<Value>,
 }
 
-#[derive(Debug, serde::Serialize)]
-struct MessageOut {
-    id: String,
-    #[serde(rename = "sessionId")]
-    session_id: String,
-    role: String,
-    content: String,
-    summary: Option<String>,
-    #[serde(rename = "toolCalls")]
-    tool_calls: Option<Value>,
-    tool_call_id: Option<String>,
-    reasoning: Option<String>,
-    metadata: Option<Value>,
-    created_at: String,
-}
-
-impl From<Message> for MessageOut {
-    fn from(msg: Message) -> Self {
-        MessageOut {
-            id: msg.id,
-            session_id: msg.session_id,
-            role: msg.role,
-            content: msg.content,
-            summary: msg.summary,
-            tool_calls: msg.tool_calls,
-            tool_call_id: msg.tool_call_id,
-            reasoning: msg.reasoning,
-            metadata: msg.metadata,
-            created_at: msg.created_at,
-        }
-    }
-}
-
 pub fn router() -> Router {
     Router::new()
         .route("/api/messages", get(list_messages).post(create_message))
         .route("/api/messages/:id", get(get_message).delete(delete_message))
-}
-
-fn parse_limit(raw: Option<String>) -> Option<i64> {
-    let value = raw.and_then(|s| parse_js_int(&s));
-    value.filter(|v| *v > 0)
-}
-
-fn parse_offset(raw: Option<String>) -> i64 {
-    match raw.and_then(|s| parse_js_int(&s)) {
-        Some(v) if v > 0 => v,
-        _ => 0,
-    }
-}
-
-fn parse_js_int(input: &str) -> Option<i64> {
-    let s = input.trim_start();
-    if s.is_empty() {
-        return None;
-    }
-    let mut chars = s.chars().peekable();
-    let mut sign: i128 = 1;
-    if let Some(&c) = chars.peek() {
-        if c == '+' || c == '-' {
-            if c == '-' {
-                sign = -1;
-            }
-            chars.next();
-        }
-    }
-    let mut value: i128 = 0;
-    let mut any = false;
-    for c in chars {
-        match c.to_digit(10) {
-            Some(d) => {
-                any = true;
-                value = value.saturating_mul(10).saturating_add(d as i128);
-                if value > i64::MAX as i128 {
-                    value = i64::MAX as i128;
-                    break;
-                }
-            }
-            None => break,
-        }
-    }
-    if !any {
-        return None;
-    }
-    let signed = value.saturating_mul(sign);
-    if signed > i64::MAX as i128 {
-        Some(i64::MAX)
-    } else if signed < i64::MIN as i128 {
-        Some(i64::MIN)
-    } else {
-        Some(signed as i64)
-    }
 }
 
 async fn list_messages(Query(query): Query<MessagesQuery>) -> (StatusCode, Json<Value>) {
@@ -131,8 +46,8 @@ async fn list_messages(Query(query): Query<MessagesQuery>) -> (StatusCode, Json<
             Json(serde_json::json!({"error": "必须提供 session_id"})),
         );
     };
-    let limit = parse_limit(query.limit);
-    let offset = parse_offset(query.offset);
+    let limit = parse_positive_limit(query.limit);
+    let offset = parse_non_negative_offset(query.offset);
     match MessageService::get_by_session(&session_id, limit, offset).await {
         Ok(messages) => {
             let out: Vec<Value> = messages
@@ -158,13 +73,20 @@ async fn create_message(Json(req): Json<CreateMessageRequest>) -> (StatusCode, J
             Json(serde_json::json!({"error": "sessionId, role 和 content 不能为空"})),
         );
     }
-    let mut message = Message::new(session_id.clone(), role.clone(), content.clone());
-    message.tool_calls = req.tool_calls;
-    message.tool_call_id = req.tool_call_id;
-    message.reasoning = req.reasoning;
-    message.metadata = req.metadata;
+    let message = build_message(
+        session_id,
+        NewMessageFields {
+            role: Some(role),
+            content: Some(content),
+            tool_calls: req.tool_calls,
+            tool_call_id: req.tool_call_id,
+            reasoning: req.reasoning,
+            metadata: req.metadata,
+        },
+        "user",
+    );
 
-    let saved = match MessageService::create(message).await {
+    let saved = match create_message_and_maybe_rename(message).await {
         Ok(msg) => msg,
         Err(err) => {
             return (
@@ -173,9 +95,7 @@ async fn create_message(Json(req): Json<CreateMessageRequest>) -> (StatusCode, J
             )
         }
     };
-    if role == "user" {
-        let _ = maybe_rename_session_title(&session_id, &content, 30).await;
-    }
+
     (
         StatusCode::CREATED,
         Json(serde_json::to_value(MessageOut::from(saved)).unwrap_or(Value::Null)),

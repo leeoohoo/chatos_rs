@@ -7,6 +7,7 @@ use axum::{
 use serde::Deserialize;
 use uuid::Uuid;
 
+use crate::core::validation::normalize_non_empty;
 use crate::models::application::Application;
 use crate::repositories::applications as repo;
 
@@ -55,22 +56,34 @@ async fn list_apps(Query(query): Query<AppQuery>) -> (StatusCode, Json<serde_jso
 }
 
 async fn create_app(Json(req): Json<CreateAppRequest>) -> (StatusCode, Json<serde_json::Value>) {
-    let name = req.name.unwrap_or_default();
-    let url = req.url.unwrap_or_default();
-    if name.trim().is_empty() || url.trim().is_empty() {
+    let CreateAppRequest {
+        name,
+        url,
+        description,
+        user_id,
+        enabled,
+    } = req;
+    let Some(name) = normalize_non_empty(name) else {
         return (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({"error": "name 和 url 为必填项"})),
         );
-    }
+    };
+    let Some(url) = normalize_non_empty(url) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "name 和 url 为必填项"})),
+        );
+    };
+
     let id = Uuid::new_v4().to_string();
     let app = Application {
         id,
         name,
         url,
-        description: req.description,
-        user_id: req.user_id,
-        enabled: req.enabled.unwrap_or(true),
+        description,
+        user_id,
+        enabled: enabled.unwrap_or(true),
         created_at: chrono::Utc::now().to_rfc3339(),
         updated_at: chrono::Utc::now().to_rfc3339(),
     };

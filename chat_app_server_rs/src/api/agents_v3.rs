@@ -2,17 +2,16 @@ use axum::http::StatusCode;
 use axum::{routing::post, Json, Router};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::task;
 
 use crate::config::Config;
+use crate::core::chat_stream::{build_v3_callbacks, send_fallback_chunk_if_needed};
 use crate::repositories::{
     agents as agents_repo, ai_model_configs as ai_repo, system_contexts as ctx_repo,
 };
 use crate::services::mcp_loader::load_mcp_configs_for_user;
 use crate::services::session_title::maybe_rename_session_title;
 use crate::services::user_settings::{apply_settings_to_ai_client, get_effective_user_settings};
-use crate::services::v3::ai_client::AiClientCallbacks;
 use crate::services::v3::ai_server::{AiServer, ChatOptions};
 use crate::services::v3::mcp_tool_execute::McpToolExecute;
 use crate::utils::abort_registry;
@@ -187,72 +186,11 @@ async fn stream_agent_v3(sender: SseSender, req: AgentChatRequest) {
         .and_then(|v| v.as_i64())
         .filter(|v| *v > 0);
 
-    let chunk_sent = std::sync::Arc::new(AtomicBool::new(false));
-    let sender_clone = sender.clone();
-    let sid_clone = session_id.clone();
-    let chunk_flag = chunk_sent.clone();
-    let on_chunk = move |chunk: String| {
-        if abort_registry::is_aborted(&sid_clone) {
-            return;
-        }
-        chunk_flag.store(true, Ordering::Relaxed);
-        sender_clone.send_json(&json!({ "type": Events::CHUNK, "timestamp": chrono::Utc::now().to_rfc3339(), "content": chunk }));
-    };
-    let sender_thinking = sender.clone();
-    let sid_thinking = session_id.clone();
-    let on_thinking = move |chunk: String| {
-        if abort_registry::is_aborted(&sid_thinking) {
-            return;
-        }
-        sender_thinking.send_json(&json!({ "type": Events::THINKING, "timestamp": chrono::Utc::now().to_rfc3339(), "content": chunk }));
-    };
-    let sender_tools = sender.clone();
-    let sid_tools = session_id.clone();
-    let on_tools_start = move |tool_calls: Value| {
-        if abort_registry::is_aborted(&sid_tools) {
-            return;
-        }
-        sender_tools.send_json(&json!({ "type": Events::TOOLS_START, "timestamp": chrono::Utc::now().to_rfc3339(), "data": { "tool_calls": tool_calls } }));
-    };
-    let sender_tools_stream = sender.clone();
-    let sid_tools_stream = session_id.clone();
-    let on_tools_stream = move |result: Value| {
-        if abort_registry::is_aborted(&sid_tools_stream) {
-            return;
-        }
-        sender_tools_stream.send_json(&json!({ "type": Events::TOOLS_STREAM, "timestamp": chrono::Utc::now().to_rfc3339(), "data": result }));
-    };
-    let sender_tools_end = sender.clone();
-    let sid_tools_end = session_id.clone();
-    let on_tools_end = move |result: Value| {
-        if abort_registry::is_aborted(&sid_tools_end) {
-            return;
-        }
-        sender_tools_end.send_json(&json!({ "type": Events::TOOLS_END, "timestamp": chrono::Utc::now().to_rfc3339(), "data": result }));
-    };
+    let callback_bundle = build_v3_callbacks(&sender, &session_id, use_tools);
+    let chunk_sent = callback_bundle.chunk_sent;
 
     let attachments_list = req.attachments.unwrap_or_default();
     let att = attachments::parse_attachments(&attachments_list);
-
-    let callbacks = AiClientCallbacks {
-        on_chunk: Some(std::sync::Arc::new(on_chunk)),
-        on_thinking: Some(std::sync::Arc::new(on_thinking)),
-        on_tools_start: if use_tools {
-            Some(std::sync::Arc::new(on_tools_start))
-        } else {
-            None
-        },
-        on_tools_stream: if use_tools {
-            Some(std::sync::Arc::new(on_tools_stream))
-        } else {
-            None
-        },
-        on_tools_end: if use_tools {
-            Some(std::sync::Arc::new(on_tools_end))
-        } else {
-            None
-        },
-    };
 
     let result = ai_server
         .chat(
@@ -268,7 +206,7 @@ async fn stream_agent_v3(sender: SseSender, req: AgentChatRequest) {
                 attachments: Some(att),
                 supports_images: Some(supports_images),
                 reasoning_enabled: Some(effective_reasoning),
-                callbacks: Some(callbacks),
+                callbacks: Some(callback_bundle.callbacks),
             },
         )
         .await;
@@ -277,13 +215,7 @@ async fn stream_agent_v3(sender: SseSender, req: AgentChatRequest) {
     match result {
         Ok(res) => {
             if !abort_registry::is_aborted(&session_id) {
-                if !chunk_sent.load(Ordering::Relaxed) {
-                    if let Some(text) = res.get("content").and_then(|v| v.as_str()) {
-                        if !text.is_empty() {
-                            sender.send_json(&json!({ "type": Events::CHUNK, "timestamp": chrono::Utc::now().to_rfc3339(), "content": text }));
-                        }
-                    }
-                }
+                send_fallback_chunk_if_needed(&sender, &chunk_sent, &res);
                 sender.send_json(&json!({ "type": Events::COMPLETE, "timestamp": chrono::Utc::now().to_rfc3339(), "result": res }));
                 should_send_done = true;
             } else {

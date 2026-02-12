@@ -1,6 +1,6 @@
-use futures::TryStreamExt;
 use mongodb::bson::{doc, Bson, Document};
 
+use crate::core::mongo_cursor::{collect_and_map, sort_by_str_key_asc};
 use crate::models::session_summary::{SessionSummary, SessionSummaryRow};
 use crate::repositories::db::{doc_from_pairs, to_doc, with_db};
 
@@ -124,14 +124,17 @@ pub async fn list_summaries_by_session(
             Box::pin(async move {
                 let mut options = mongodb::options::FindOptions::default();
                 options.sort = Some(doc! { "created_at": 1 });
-                if let Some(l) = limit { options.limit = Some(l); }
-                let mut cursor = db.collection::<Document>("session_summaries").find(doc! { "session_id": session_id }, options).await.map_err(|e| e.to_string())?;
-                let mut docs = Vec::new();
-                while let Some(doc) = cursor.try_next().await.map_err(|e| e.to_string())? {
-                    docs.push(doc);
+                if let Some(l) = limit {
+                    options.limit = Some(l);
                 }
-                let mut items: Vec<SessionSummary> = docs.into_iter().filter_map(|d| normalize_from_doc(&d)).collect();
-                items.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+                let cursor = db
+                    .collection::<Document>("session_summaries")
+                    .find(doc! { "session_id": session_id }, options)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let mut items: Vec<SessionSummary> =
+                    collect_and_map(cursor, normalize_from_doc).await?;
+                sort_by_str_key_asc(&mut items, |item| item.created_at.as_str());
                 Ok(items)
             })
         },

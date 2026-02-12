@@ -1,6 +1,8 @@
+use crate::core::mongo_cursor::{collect_and_map, sort_by_str_key_desc};
+use crate::core::mongo_query::filter_optional_user_id;
+use crate::core::sql_query::build_select_all_with_optional_user_id;
 use crate::models::application::{Application, ApplicationRow};
 use crate::repositories::db::{doc_from_pairs, to_doc, with_db};
-use futures::TryStreamExt;
 use mongodb::bson::{doc, Bson, Document};
 
 fn normalize_doc(doc: &Document) -> Option<Application> {
@@ -21,34 +23,22 @@ pub async fn list_applications(user_id: Option<String>) -> Result<Vec<Applicatio
         |db| {
             let user_id = user_id.clone();
             Box::pin(async move {
-                let filter = if let Some(uid) = user_id {
-                    doc! { "user_id": uid }
-                } else {
-                    doc! {}
-                };
-                let mut cursor = db
+                let filter = filter_optional_user_id(user_id);
+                let cursor = db
                     .collection::<Document>("applications")
                     .find(filter, None)
                     .await
                     .map_err(|e| e.to_string())?;
-                let mut docs = Vec::new();
-                while let Some(doc) = cursor.try_next().await.map_err(|e| e.to_string())? {
-                    docs.push(doc);
-                }
-                let mut items: Vec<Application> =
-                    docs.into_iter().filter_map(|d| normalize_doc(&d)).collect();
-                items.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+                let mut items: Vec<Application> = collect_and_map(cursor, normalize_doc).await?;
+                sort_by_str_key_desc(&mut items, |item| item.created_at.as_str());
                 Ok(items)
             })
         },
         |pool| {
             let user_id = user_id.clone();
             Box::pin(async move {
-                let mut query = "SELECT * FROM applications".to_string();
-                if user_id.is_some() {
-                    query.push_str(" WHERE user_id = ?");
-                }
-                query.push_str(" ORDER BY created_at DESC");
+                let query =
+                    build_select_all_with_optional_user_id("applications", user_id.is_some(), true);
                 let mut q = sqlx::query_as::<_, ApplicationRow>(&query);
                 if let Some(uid) = user_id {
                     q = q.bind(uid);

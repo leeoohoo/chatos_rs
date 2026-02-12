@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 
-use futures::TryStreamExt;
 use mongodb::bson::{doc, Bson, Document};
 use mongodb::options::FindOptions;
 use serde::Serialize;
 use sqlx::Row;
 
+use crate::core::mongo_cursor::collect_documents;
+use crate::core::sql_query::append_limit_offset_clause;
 use crate::repositories::db::with_db;
 
 #[derive(Debug, Clone, Serialize)]
@@ -36,15 +37,16 @@ pub async fn list_project_change_logs(
             let paths = paths.clone();
             let limit = limit.clone();
             Box::pin(async move {
-                let mut session_cursor = db
+                let session_cursor = db
                     .collection::<Document>("sessions")
                     .find(doc! { "project_id": &project_id }, None)
                     .await
                     .map_err(|e| e.to_string())?;
+                let session_docs = collect_documents(session_cursor).await?;
 
                 let mut session_titles: HashMap<String, String> = HashMap::new();
                 let mut session_ids: Vec<Bson> = Vec::new();
-                while let Some(doc) = session_cursor.try_next().await.map_err(|e| e.to_string())? {
+                for doc in session_docs {
                     let id = doc.get_str("id").unwrap_or("").to_string();
                     if id.is_empty() {
                         continue;
@@ -68,28 +70,28 @@ pub async fn list_project_change_logs(
                         _ => return Ok(Vec::new()),
                     };
                     let filter = doc! { "path": { "$in": list.clone() } };
-                    let mut cursor = db
+                    let cursor = db
                         .collection::<Document>("mcp_change_logs")
                         .find(filter, options)
                         .await
                         .map_err(|e| e.to_string())?;
-                    let mut out_docs = Vec::new();
+                    let out_docs = collect_documents(cursor).await?;
                     let mut missing_sessions: Vec<Bson> = Vec::new();
-                    while let Some(doc) = cursor.try_next().await.map_err(|e| e.to_string())? {
+                    for doc in &out_docs {
                         if let Ok(sid) = doc.get_str("session_id") {
                             if !sid.trim().is_empty() {
                                 missing_sessions.push(Bson::String(sid.to_string()));
                             }
                         }
-                        out_docs.push(doc);
                     }
                     if !missing_sessions.is_empty() {
-                        let mut title_cursor = db
+                        let title_cursor = db
                             .collection::<Document>("sessions")
                             .find(doc! { "id": { "$in": missing_sessions } }, None)
                             .await
                             .map_err(|e| e.to_string())?;
-                        while let Some(doc) = title_cursor.try_next().await.map_err(|e| e.to_string())? {
+                        let title_docs = collect_documents(title_cursor).await?;
+                        for doc in title_docs {
                             let id = doc.get_str("id").unwrap_or("").to_string();
                             if id.is_empty() {
                                 continue;
@@ -98,10 +100,10 @@ pub async fn list_project_change_logs(
                             session_titles.insert(id, title);
                         }
                     }
-                    let mut out = Vec::new();
-                    for doc in out_docs {
-                        out.push(normalize_doc(&doc, &session_titles));
-                    }
+                    let out = out_docs
+                        .iter()
+                        .map(|doc| normalize_doc(doc, &session_titles))
+                        .collect();
                     return Ok(out);
                 }
 
@@ -112,15 +114,16 @@ pub async fn list_project_change_logs(
                     }
                 }
 
-                let mut cursor = db
+                let cursor = db
                     .collection::<Document>("mcp_change_logs")
                     .find(filter, options)
                     .await
                     .map_err(|e| e.to_string())?;
-                let mut out = Vec::new();
-                while let Some(doc) = cursor.try_next().await.map_err(|e| e.to_string())? {
-                    out.push(normalize_doc(&doc, &session_titles));
-                }
+                let out_docs = collect_documents(cursor).await?;
+                let out = out_docs
+                    .iter()
+                    .map(|doc| normalize_doc(doc, &session_titles))
+                    .collect();
                 Ok(out)
             })
         },
@@ -167,12 +170,7 @@ pub async fn list_project_change_logs(
                     return Ok(Vec::new());
                 }
                 query.push_str(" ORDER BY c.created_at DESC");
-                if let Some(_l) = limit {
-                    query.push_str(" LIMIT ?");
-                    if offset > 0 {
-                        query.push_str(" OFFSET ?");
-                    }
-                }
+                append_limit_offset_clause(&mut query, limit, offset);
 
                 let mut q = sqlx::query(&query);
                 if has_sessions {

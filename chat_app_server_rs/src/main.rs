@@ -1,6 +1,7 @@
 mod api;
 mod builtin;
 mod config;
+mod core;
 mod db;
 mod logger;
 mod models;

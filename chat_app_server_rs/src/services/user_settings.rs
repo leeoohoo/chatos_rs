@@ -1,6 +1,7 @@
 use serde_json::{json, Value};
 
 use crate::config::Config;
+use crate::core::pagination::parse_js_int_value;
 use crate::repositories::user_settings as repo;
 
 pub const USER_SETTING_KEYS: &[&str] = &[
@@ -35,57 +36,6 @@ fn coerce(value: &Value, key: &str) -> Value {
             .unwrap_or(Value::Null),
         "LOG_LEVEL" => Value::String(value.as_str().unwrap_or(&value.to_string()).to_string()),
         _ => value.clone(),
-    }
-}
-
-fn parse_js_int_value(value: &Value) -> Option<i64> {
-    let s = match value {
-        Value::String(v) => v.clone(),
-        _ => value.to_string(),
-    };
-    parse_js_int(&s)
-}
-
-fn parse_js_int(input: &str) -> Option<i64> {
-    let s = input.trim_start();
-    if s.is_empty() {
-        return None;
-    }
-    let mut chars = s.chars().peekable();
-    let mut sign: i128 = 1;
-    if let Some(&c) = chars.peek() {
-        if c == '+' || c == '-' {
-            if c == '-' {
-                sign = -1;
-            }
-            chars.next();
-        }
-    }
-    let mut value: i128 = 0;
-    let mut any = false;
-    for c in chars {
-        match c.to_digit(10) {
-            Some(d) => {
-                any = true;
-                value = value.saturating_mul(10).saturating_add(d as i128);
-                if value > i64::MAX as i128 {
-                    value = i64::MAX as i128;
-                    break;
-                }
-            }
-            None => break,
-        }
-    }
-    if !any {
-        return None;
-    }
-    let signed = value.saturating_mul(sign);
-    if signed > i64::MAX as i128 {
-        Some(i64::MAX)
-    } else if signed < i64::MIN as i128 {
-        Some(i64::MIN)
-    } else {
-        Some(signed as i64)
     }
 }
 

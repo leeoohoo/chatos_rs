@@ -1,36 +1,30 @@
+use crate::core::mongo_cursor::collect_and_map;
 use crate::models::session_mcp_server::SessionMcpServer;
 use crate::repositories::db::{doc_from_pairs, to_doc, with_db};
-use futures::TryStreamExt;
 use mongodb::bson::{doc, Bson, Document};
 use sqlx::Row;
+
+fn normalize_doc(doc: &Document) -> Option<SessionMcpServer> {
+    Some(SessionMcpServer {
+        id: doc.get_str("id").unwrap_or("").to_string(),
+        session_id: doc.get_str("session_id").unwrap_or("").to_string(),
+        mcp_server_name: doc.get_str("mcp_server_name").ok().map(|s| s.to_string()),
+        mcp_config_id: doc.get_str("mcp_config_id").ok().map(|s| s.to_string()),
+        created_at: doc.get_str("created_at").unwrap_or("").to_string(),
+    })
+}
 
 pub async fn list_session_mcp_servers(session_id: &str) -> Result<Vec<SessionMcpServer>, String> {
     with_db(
         |db| {
             let session_id = session_id.to_string();
             Box::pin(async move {
-                let mut cursor = db
+                let cursor = db
                     .collection::<Document>("session_mcp_servers")
                     .find(doc! { "session_id": session_id }, None)
                     .await
                     .map_err(|e| e.to_string())?;
-                let mut out = Vec::new();
-                while let Some(doc) = cursor.try_next().await.map_err(|e| e.to_string())? {
-                    let id = doc.get_str("id").unwrap_or("").to_string();
-                    let session_id = doc.get_str("session_id").unwrap_or("").to_string();
-                    let mcp_server_name =
-                        doc.get_str("mcp_server_name").ok().map(|s| s.to_string());
-                    let mcp_config_id = doc.get_str("mcp_config_id").ok().map(|s| s.to_string());
-                    let created_at = doc.get_str("created_at").unwrap_or("").to_string();
-                    out.push(SessionMcpServer {
-                        id,
-                        session_id,
-                        mcp_server_name,
-                        mcp_config_id,
-                        created_at,
-                    });
-                }
-                Ok(out)
+                collect_and_map(cursor, normalize_doc).await
             })
         },
         |pool| {

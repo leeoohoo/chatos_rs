@@ -1,7 +1,15 @@
-use futures::TryStreamExt;
 use mongodb::bson::{doc, Bson, Document};
 use serde_json::Value;
 
+use crate::core::mongo_cursor::{apply_offset_limit, collect_and_map, sort_by_str_key_desc};
+use crate::core::mongo_query::insert_optional_user_id;
+use crate::core::sql_query::{
+    append_limit_offset_clause, append_optional_user_id_filter,
+    build_select_all_with_optional_user_id,
+};
+use crate::core::update_fields::{
+    mongo_set_doc_from_optional_strings, sqlite_update_parts_from_optional_strings,
+};
 use crate::models::session::{Session, SessionRow};
 use crate::repositories::db::{doc_from_pairs, to_doc, with_db};
 
@@ -108,49 +116,28 @@ pub async fn get_all_sessions(limit: Option<i64>, offset: i64) -> Result<Vec<Ses
     with_db(
         |db| {
             Box::pin(async move {
-                let mut cursor = db
+                let cursor = db
                     .collection::<Document>("sessions")
                     .find(doc! {}, None)
                     .await
                     .map_err(|e| e.to_string())?;
-                let mut docs = Vec::new();
-                while let Some(doc) = cursor.try_next().await.map_err(|e| e.to_string())? {
-                    docs.push(doc);
-                }
-                let mut sessions: Vec<Session> = docs
-                    .into_iter()
-                    .filter_map(|d| normalize_from_doc(&d))
-                    .collect();
-                sessions.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-                if offset > 0 {
-                    sessions = sessions.into_iter().skip(offset as usize).collect();
-                }
-                if let Some(l) = limit {
-                    sessions = sessions.into_iter().take(l as usize).collect();
-                }
+                let mut sessions: Vec<Session> =
+                    collect_and_map(cursor, normalize_from_doc).await?;
+                sort_by_str_key_desc(&mut sessions, |s| s.created_at.as_str());
+                sessions = apply_offset_limit(sessions, offset, limit);
                 Ok(sessions)
             })
         },
         |pool| {
             Box::pin(async move {
-                let mut query = "SELECT * FROM sessions ORDER BY created_at DESC".to_string();
+                let mut query = build_select_all_with_optional_user_id("sessions", false, true);
+                append_limit_offset_clause(&mut query, limit, offset);
                 if let Some(l) = limit {
-                    query.push_str(" LIMIT ?");
+                    let mut q = sqlx::query_as::<_, SessionRow>(&query).bind(l);
                     if offset > 0 {
-                        query.push_str(" OFFSET ?");
-                        let rows = sqlx::query_as::<_, SessionRow>(&query)
-                            .bind(l)
-                            .bind(offset)
-                            .fetch_all(pool)
-                            .await
-                            .map_err(|e| e.to_string())?;
-                        return Ok(rows.into_iter().map(|r| r.to_session()).collect());
+                        q = q.bind(offset);
                     }
-                    let rows = sqlx::query_as::<_, SessionRow>(&query)
-                        .bind(l)
-                        .fetch_all(pool)
-                        .await
-                        .map_err(|e| e.to_string())?;
+                    let rows = q.fetch_all(pool).await.map_err(|e| e.to_string())?;
                     return Ok(rows.into_iter().map(|r| r.to_session()).collect());
                 }
                 let rows = sqlx::query_as::<_, SessionRow>(&query)
@@ -176,32 +163,19 @@ pub async fn get_sessions_by_user_project(
             let project_id = project_id.clone();
             Box::pin(async move {
                 let mut filter = Document::new();
-                if let Some(uid) = user_id {
-                    filter.insert("user_id", uid);
-                }
+                insert_optional_user_id(&mut filter, user_id);
                 if let Some(pid) = project_id {
                     filter.insert("project_id", pid);
                 }
-                let mut cursor = db
+                let cursor = db
                     .collection::<Document>("sessions")
                     .find(filter, None)
                     .await
                     .map_err(|e| e.to_string())?;
-                let mut docs = Vec::new();
-                while let Some(doc) = cursor.try_next().await.map_err(|e| e.to_string())? {
-                    docs.push(doc);
-                }
-                let mut sessions: Vec<Session> = docs
-                    .into_iter()
-                    .filter_map(|d| normalize_from_doc(&d))
-                    .collect();
-                sessions.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-                if offset > 0 {
-                    sessions = sessions.into_iter().skip(offset as usize).collect();
-                }
-                if let Some(l) = limit {
-                    sessions = sessions.into_iter().take(l as usize).collect();
-                }
+                let mut sessions: Vec<Session> =
+                    collect_and_map(cursor, normalize_from_doc).await?;
+                sort_by_str_key_desc(&mut sessions, |s| s.created_at.as_str());
+                sessions = apply_offset_limit(sessions, offset, limit);
                 Ok(sessions)
             })
         },
@@ -211,8 +185,9 @@ pub async fn get_sessions_by_user_project(
             Box::pin(async move {
                 let mut query = "SELECT * FROM sessions WHERE 1=1".to_string();
                 let mut binds: Vec<String> = Vec::new();
+                let has_user_filter = user_id.is_some();
+                append_optional_user_id_filter(&mut query, has_user_filter, true);
                 if let Some(uid) = user_id {
-                    query.push_str(" AND user_id = ?");
                     binds.push(uid);
                 }
                 if let Some(pid) = project_id {
@@ -220,11 +195,8 @@ pub async fn get_sessions_by_user_project(
                     binds.push(pid);
                 }
                 query.push_str(" ORDER BY created_at DESC");
+                append_limit_offset_clause(&mut query, limit, offset);
                 if let Some(l) = limit {
-                    query.push_str(" LIMIT ?");
-                    if offset > 0 {
-                        query.push_str(" OFFSET ?");
-                    }
                     let mut q = sqlx::query_as::<_, SessionRow>(&query);
                     for b in &binds {
                         q = q.bind(b);
@@ -300,16 +272,11 @@ pub async fn update_session(
         |db| {
             let id = id.to_string();
             Box::pin(async move {
-                let mut set_doc = Document::new();
-                if let Some(t) = title_mongo.clone() {
-                    set_doc.insert("title", t);
-                }
-                if let Some(d) = description_mongo.clone() {
-                    set_doc.insert("description", d);
-                }
-                if let Some(m) = metadata_mongo.clone() {
-                    set_doc.insert("metadata", m);
-                }
+                let mut set_doc = mongo_set_doc_from_optional_strings([
+                    ("title", title_mongo.clone()),
+                    ("description", description_mongo.clone()),
+                    ("metadata", metadata_mongo.clone()),
+                ]);
                 set_doc.insert("updated_at", now_mongo.clone());
                 db.collection::<Document>("sessions")
                     .update_one(doc! { "id": &id }, doc! { "$set": set_doc }, None)
@@ -321,27 +288,16 @@ pub async fn update_session(
         |pool| {
             let id = id.to_string();
             Box::pin(async move {
-                let mut set_clause = Vec::new();
-                if title_sqlite.is_some() {
-                    set_clause.push("title = ?");
-                }
-                if description_sqlite.is_some() {
-                    set_clause.push("description = ?");
-                }
-                if metadata_sqlite.is_some() {
-                    set_clause.push("metadata = ?");
-                }
-                set_clause.push("updated_at = ?");
+                let (mut set_clause, binds) = sqlite_update_parts_from_optional_strings([
+                    ("title", title_sqlite),
+                    ("description", description_sqlite),
+                    ("metadata", metadata_sqlite),
+                ]);
+                set_clause.push("updated_at = ?".to_string());
                 let query = format!("UPDATE sessions SET {} WHERE id = ?", set_clause.join(", "));
                 let mut q = sqlx::query(&query);
-                if let Some(t) = title_sqlite {
-                    q = q.bind(t);
-                }
-                if let Some(d) = description_sqlite {
-                    q = q.bind(d);
-                }
-                if let Some(m) = metadata_sqlite {
-                    q = q.bind(m);
+                for bind in binds {
+                    q = q.bind(bind);
                 }
                 q = q.bind(&now_sqlite);
                 q = q.bind(&id);

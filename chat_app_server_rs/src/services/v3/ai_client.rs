@@ -213,10 +213,16 @@ impl AiClient {
         let mut input = input;
         let mut previous_response_id = previous_response_id;
         let mut use_prev_id = use_prev_id;
+        let mut can_use_prev_id = can_use_prev_id;
         let mut force_text_content = force_text_content;
         let mut iteration = iteration;
         let mut pending_tool_outputs: Option<Vec<Value>> = None;
         let mut pending_tool_calls: Option<Vec<Value>> = None;
+        let mut stateless_context_items = if !use_prev_id {
+            input.as_array().cloned()
+        } else {
+            None
+        };
 
         loop {
             if let Some(sid) = session_id.as_ref() {
@@ -281,6 +287,8 @@ impl AiClient {
                             if let Some(sid) = session_id.as_ref() {
                                 self.prev_response_id_disabled_sessions.insert(sid.clone());
                             }
+                            warn!("[AI_V3] previous_response_id unsupported; fallback to stateless mode");
+                            can_use_prev_id = false;
                             let current_items =
                                 build_current_input_items(&raw_input, force_text_content);
                             let stateless = self
@@ -295,6 +303,7 @@ impl AiClient {
                             if !stateless.is_empty() {
                                 use_prev_id = false;
                                 previous_response_id = None;
+                                stateless_context_items = Some(stateless.clone());
                                 input = Value::Array(stateless);
                                 continue;
                             }
@@ -303,51 +312,90 @@ impl AiClient {
                             if let Some(sid) = session_id.as_ref() {
                                 self.prev_response_id_disabled_sessions.insert(sid.clone());
                             }
+                            warn!(
+                                "[AI_V3] function_call_output missing matching tool call in previous response; fallback to stateless mode"
+                            );
+                            can_use_prev_id = false;
                             let current_items =
                                 build_current_input_items(&raw_input, force_text_content);
-                            let mut stateless = self
-                                .build_stateless_items(
+                            let mut stateless = if let Some(items) = stateless_context_items.clone()
+                            {
+                                items
+                            } else {
+                                self.build_stateless_items(
                                     session_id.clone(),
                                     history_limit,
                                     force_text_content,
                                     &current_items,
                                     include_tool_items,
                                 )
-                                .await;
+                                .await
+                            };
                             if include_tool_items {
                                 let mut call_ids: HashSet<String> = HashSet::new();
+                                let mut existing_call_ids: HashSet<String> = stateless
+                                    .iter()
+                                    .filter(|item| {
+                                        item.get("type").and_then(|v| v.as_str())
+                                            == Some("function_call")
+                                    })
+                                    .filter_map(|item| {
+                                        item.get("call_id")
+                                            .and_then(|v| v.as_str())
+                                            .map(|value| value.to_string())
+                                    })
+                                    .collect();
+                                let mut existing_output_ids: HashSet<String> = stateless
+                                    .iter()
+                                    .filter(|item| {
+                                        item.get("type").and_then(|v| v.as_str())
+                                            == Some("function_call_output")
+                                    })
+                                    .filter_map(|item| {
+                                        item.get("call_id")
+                                            .and_then(|v| v.as_str())
+                                            .map(|value| value.to_string())
+                                    })
+                                    .collect();
                                 if let Some(calls) = pending_tool_calls.as_ref() {
                                     for c in calls {
                                         if let Some(id) = c.get("call_id").and_then(|v| v.as_str())
                                         {
                                             if !id.is_empty() {
                                                 call_ids.insert(id.to_string());
+                                                if existing_call_ids.insert(id.to_string()) {
+                                                    stateless.push(c.clone());
+                                                }
                                             }
                                         }
                                     }
-                                    stateless.extend(calls.clone());
                                 }
                                 if let Some(outputs) = pending_tool_outputs.as_ref() {
                                     if call_ids.is_empty() {
                                         // no matching tool calls -> skip outputs to avoid invalid input
                                     } else {
-                                        let filtered: Vec<Value> = outputs
-                                            .iter()
-                                            .filter(|o| {
-                                                o.get("call_id")
-                                                    .and_then(|v| v.as_str())
-                                                    .map(|id| call_ids.contains(id))
-                                                    .unwrap_or(false)
-                                            })
-                                            .cloned()
-                                            .collect();
-                                        stateless.extend(filtered);
+                                        for output in outputs {
+                                            let Some(id) = output
+                                                .get("call_id")
+                                                .and_then(|v| v.as_str())
+                                                .map(|value| value.to_string())
+                                            else {
+                                                continue;
+                                            };
+                                            if !call_ids.contains(id.as_str()) {
+                                                continue;
+                                            }
+                                            if existing_output_ids.insert(id) {
+                                                stateless.push(output.clone());
+                                            }
+                                        }
                                     }
                                 }
                             }
                             if !stateless.is_empty() {
                                 use_prev_id = false;
                                 previous_response_id = None;
+                                stateless_context_items = Some(stateless.clone());
                                 input = Value::Array(stateless);
                                 continue;
                             }
@@ -549,6 +597,26 @@ impl AiClient {
             pending_tool_outputs = Some(tool_outputs.clone());
             pending_tool_calls = Some(tool_call_items.clone());
 
+            let assistant_item = if !ai_response.content.is_empty() {
+                Some(to_message_item(
+                    "assistant",
+                    &Value::String(ai_response.content.clone()),
+                    force_text_content,
+                ))
+            } else {
+                None
+            };
+
+            if let Some(items) = stateless_context_items.as_mut() {
+                if let Some(item) = assistant_item.clone() {
+                    items.push(item);
+                }
+                if include_tool_items {
+                    items.extend(tool_call_items.clone());
+                    items.extend(tool_outputs.clone());
+                }
+            }
+
             let mut next_input = Value::Array(tool_outputs.clone());
             let mut next_prev_id = ai_response.response_id.clone();
             let mut next_use_prev_id = can_use_prev_id && next_prev_id.is_some();
@@ -557,31 +625,36 @@ impl AiClient {
                 if let Some(sid) = session_id.as_ref() {
                     self.prev_response_id_disabled_sessions.insert(sid.clone());
                 }
+                can_use_prev_id = false;
                 next_use_prev_id = false;
             }
 
             if !next_use_prev_id {
-                let current_items = build_current_input_items(&raw_input, force_text_content);
-                let mut stateless = self
-                    .build_stateless_items(
+                let mut stateless = if let Some(items) = stateless_context_items.clone() {
+                    items
+                } else {
+                    let current_items = build_current_input_items(&raw_input, force_text_content);
+                    self.build_stateless_items(
                         session_id.clone(),
                         history_limit,
                         force_text_content,
                         &current_items,
                         include_tool_items,
                     )
-                    .await;
-                if !ai_response.content.is_empty() {
-                    stateless.push(to_message_item(
-                        "assistant",
-                        &Value::String(ai_response.content.clone()),
-                        force_text_content,
-                    ));
+                    .await
+                };
+
+                if stateless_context_items.is_none() {
+                    if let Some(item) = assistant_item {
+                        stateless.push(item);
+                    }
+                    if include_tool_items {
+                        stateless.extend(tool_call_items.clone());
+                        stateless.extend(tool_outputs.clone());
+                    }
+                    stateless_context_items = Some(stateless.clone());
                 }
-                if include_tool_items {
-                    stateless.extend(tool_call_items);
-                    stateless.extend(tool_outputs);
-                }
+
                 next_input = Value::Array(stateless);
                 next_prev_id = None;
             }
