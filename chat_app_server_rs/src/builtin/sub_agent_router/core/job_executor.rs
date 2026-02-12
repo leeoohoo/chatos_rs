@@ -549,9 +549,9 @@ pub(crate) fn execute_job(
                     run_id.as_str(),
                 );
 
-                match timeout(Duration::from_millis(ctx.ai_timeout_ms as u64), req).await {
-                    Ok(result) => result?,
-                    Err(_) => {
+                match crate::core::ai_response::run_with_timeout(ctx.ai_timeout_ms, req).await {
+                    Ok(result) => result,
+                    Err(err) => {
                         append_job_event(
                             job_id.as_str(),
                             "ai_timeout",
@@ -562,7 +562,7 @@ pub(crate) fn execute_job(
                             session_id.as_str(),
                             run_id.as_str(),
                         );
-                        return Err(format!("AI timeout after {} ms", ctx.ai_timeout_ms));
+                        return Err(err);
                     }
                 }
             } else {
@@ -666,9 +666,9 @@ pub(crate) fn execute_job(
                     run_id.as_str(),
                 );
 
-                match timeout(Duration::from_millis(ctx.ai_timeout_ms as u64), req).await {
-                    Ok(result) => result?,
-                    Err(_) => {
+                match crate::core::ai_response::run_with_timeout(ctx.ai_timeout_ms, req).await {
+                    Ok(result) => result,
+                    Err(err) => {
                         append_job_event(
                             job_id.as_str(),
                             "ai_timeout",
@@ -679,7 +679,7 @@ pub(crate) fn execute_job(
                             session_id.as_str(),
                             run_id.as_str(),
                         );
-                        return Err(format!("AI timeout after {} ms", ctx.ai_timeout_ms));
+                        return Err(err);
                     }
                 }
             };
@@ -730,7 +730,7 @@ pub(crate) fn execute_job(
             }
 
             if content.is_empty() {
-                content = "(empty)".to_string();
+                content = crate::core::ai_response::normalize_non_empty_content(content.as_str());
                 content_source = "empty_placeholder".to_string();
             }
             append_job_event(

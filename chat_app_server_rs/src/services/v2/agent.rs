@@ -3,10 +3,10 @@ use serde_json::{json, Value};
 use crate::config::Config;
 use crate::core::agent_runtime::{load_enabled_agent_model, AgentModelLoadError};
 use crate::core::ai_settings::{chat_max_tokens_from_settings, effective_reasoning_enabled};
+use crate::core::chat_context::resolve_system_prompt;
 use crate::core::mcp_runtime::{
     has_any_mcp_server, load_mcp_servers_by_selection, normalize_mcp_ids,
 };
-use crate::repositories::system_contexts;
 use crate::services::user_settings::{apply_settings_to_ai_client, get_effective_user_settings};
 use crate::services::v2::ai_client::AiClientCallbacks;
 use crate::services::v2::ai_server::{AiServer, ChatOptions};
@@ -124,16 +124,14 @@ pub async fn run_chat(
         mcp_tool_execute,
     );
 
-    if let Some(prompt) = model_config.system_prompt.clone() {
+    if let Some(prompt) = resolve_system_prompt(
+        model_config.system_prompt.clone(),
+        model_config.use_active_system_context,
+        effective_user_id.clone(),
+    )
+    .await
+    {
         ai_server.set_system_prompt(Some(prompt));
-    } else if model_config.use_active_system_context {
-        if let Some(uid) = effective_user_id.clone() {
-            if let Ok(Some(ctx)) = system_contexts::get_active_system_context(&uid).await {
-                if let Some(content) = ctx.content {
-                    ai_server.set_system_prompt(Some(content));
-                }
-            }
-        }
     }
 
     let effective_settings = get_effective_user_settings(effective_user_id.clone())

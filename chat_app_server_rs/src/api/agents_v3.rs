@@ -7,13 +7,13 @@ use tokio::task;
 use crate::config::Config;
 use crate::core::agent_runtime::{load_enabled_agent_model, AgentModelLoadError};
 use crate::core::ai_settings::{chat_max_tokens_from_settings, effective_reasoning_enabled};
+use crate::core::chat_context::maybe_spawn_session_title_rename;
 use crate::core::chat_stream::{
     build_v3_callbacks, handle_chat_result, send_error_event, send_start_event,
 };
 use crate::core::mcp_runtime::{
     has_any_mcp_server, load_mcp_servers_by_selection, normalize_mcp_ids,
 };
-use crate::services::session_title::maybe_rename_session_title;
 use crate::services::user_settings::{apply_settings_to_ai_client, get_effective_user_settings};
 use crate::services::v3::ai_server::{AiServer, ChatOptions};
 use crate::services::v3::mcp_tool_execute::McpToolExecute;
@@ -68,13 +68,7 @@ async fn stream_agent_v3(sender: SseSender, req: AgentChatRequest) {
     let cfg = Config::get();
 
     send_start_event(&sender, &session_id);
-    if !session_id.is_empty() && !content.is_empty() {
-        let sid = session_id.clone();
-        let text = content.clone();
-        tokio::spawn(async move {
-            let _ = maybe_rename_session_title(&sid, &text, 30).await;
-        });
-    }
+    maybe_spawn_session_title_rename(true, &session_id, &content, 30);
 
     let resolved = match load_enabled_agent_model(&agent_id).await {
         Ok(value) => value,

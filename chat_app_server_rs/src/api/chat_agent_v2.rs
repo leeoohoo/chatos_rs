@@ -7,11 +7,10 @@ use tokio::task;
 use crate::config::Config;
 use crate::core::ai_model_config::resolve_chat_model_config;
 use crate::core::ai_settings::chat_max_tokens_from_settings;
+use crate::core::chat_context::{resolve_effective_user_id, resolve_system_prompt};
 use crate::core::chat_stream::{
     build_v2_callbacks, handle_chat_result, send_error_event, send_start_event,
 };
-use crate::models::session::SessionService;
-use crate::repositories::system_contexts;
 use crate::services::user_settings::{apply_settings_to_ai_client, get_effective_user_settings};
 use crate::services::v2::agent::{load_model_config_for_agent, run_chat};
 use crate::services::v2::ai_server::{AiServer, ChatOptions};
@@ -151,23 +150,16 @@ async fn stream_chat_v2(sender: SseSender, req: ChatRequest) {
         mcp_exec,
     );
 
-    let mut effective_user_id = req.user_id.clone();
-    if effective_user_id.is_none() && !session_id.is_empty() {
-        if let Ok(Some(sess)) = SessionService::get_by_id(&session_id).await {
-            effective_user_id = sess.user_id;
-        }
-    }
+    let effective_user_id = resolve_effective_user_id(req.user_id.clone(), &session_id).await;
 
-    if let Some(prompt) = model_runtime.system_prompt.clone() {
+    if let Some(prompt) = resolve_system_prompt(
+        model_runtime.system_prompt.clone(),
+        model_runtime.use_active_system_context,
+        effective_user_id.clone(),
+    )
+    .await
+    {
         ai_server.set_system_prompt(Some(prompt));
-    } else if model_runtime.use_active_system_context {
-        if let Some(uid) = effective_user_id.clone() {
-            if let Ok(Some(ctx)) = system_contexts::get_active_system_context(&uid).await {
-                if let Some(content) = ctx.content {
-                    ai_server.set_system_prompt(Some(content));
-                }
-            }
-        }
     }
 
     let effective_settings = get_effective_user_settings(effective_user_id.clone())

@@ -8,12 +8,12 @@ use serde_json::{json, Value};
 use tokio::task;
 use uuid::Uuid;
 
+use crate::core::chat_context::maybe_spawn_session_title_rename;
 use crate::core::chat_stream::{
     build_v2_callbacks, handle_chat_result, send_error_event, send_start_event,
 };
 use crate::models::agent::Agent;
 use crate::repositories::agents as agents_repo;
-use crate::services::session_title::maybe_rename_session_title;
 use crate::services::v2::agent::{load_model_config_for_agent, run_chat};
 use crate::utils::abort_registry;
 use crate::utils::attachments;
@@ -372,13 +372,7 @@ async fn stream_agent_chat(sender: SseSender, req: AgentChatRequest) {
     let content = req.content.clone().unwrap_or_default();
     let agent_id = req.agent_id.clone().unwrap_or_default();
     send_start_event(&sender, &session_id);
-    if !session_id.is_empty() && !content.is_empty() {
-        let sid = session_id.clone();
-        let text = content.clone();
-        tokio::spawn(async move {
-            let _ = maybe_rename_session_title(&sid, &text, 30).await;
-        });
-    }
+    maybe_spawn_session_title_rename(true, &session_id, &content, 30);
 
     let model_cfg = match load_model_config_for_agent(&agent_id).await {
         Ok(cfg) => cfg,

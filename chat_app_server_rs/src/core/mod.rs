@@ -2,6 +2,7 @@ pub mod agent_runtime;
 pub mod ai_model_config;
 pub mod ai_response;
 pub mod ai_settings;
+pub mod chat_context;
 pub mod chat_stream;
 pub mod mcp_runtime;
 pub mod mcp_tools;
