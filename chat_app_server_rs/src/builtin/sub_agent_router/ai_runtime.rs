@@ -6,11 +6,24 @@ pub(super) fn run_ai_task(
     task: &str,
     requested_model: Option<&str>,
 ) -> Result<AiTaskResult, String> {
+    run_ai_task_with_system_messages(ctx, vec![system_prompt.to_string()], task, requested_model)
+}
+
+pub(super) fn run_ai_task_with_system_messages(
+    ctx: &BoundContext,
+    system_messages: Vec<String>,
+    task: &str,
+    requested_model: Option<&str>,
+) -> Result<AiTaskResult, String> {
     let user_id = ctx.user_id.clone();
     let requested = requested_model.map(|v| v.trim().to_string());
-    let prompt = system_prompt.to_string();
-    let task = task.to_string();
+    let task_text = task.to_string();
     let timeout_ms = ctx.ai_timeout_ms;
+    let normalized_system_messages = system_messages
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
     trace_router_node(
         "run_ai_task",
         "start",
@@ -18,9 +31,10 @@ pub(super) fn run_ai_task(
         None,
         None,
         Some(json!({
-            "task": truncate_for_event(task.as_str(), 2_000),
+            "task": truncate_for_event(task_text.as_str(), 2_000),
             "requested_model": requested.clone(),
             "timeout_ms": timeout_ms,
+            "system_message_count": normalized_system_messages.len(),
         })),
     );
 
@@ -55,19 +69,28 @@ pub(super) fn run_ai_task(
                 message_manager,
             );
 
-            let input = json!([
-                {
-                    "role": "user",
-                    "content": [
-                        { "type": "input_text", "text": task }
-                    ]
-                }
-            ]);
+            let mut input = normalized_system_messages
+                .iter()
+                .map(|content| {
+                    json!({
+                        "role": "system",
+                        "content": [
+                            { "type": "input_text", "text": content }
+                        ]
+                    })
+                })
+                .collect::<Vec<_>>();
+            input.push(json!({
+                "role": "user",
+                "content": [
+                    { "type": "input_text", "text": task_text }
+                ]
+            }));
 
             let req = handler.handle_request(
-                input,
+                Value::Array(input),
                 model.model.clone(),
-                Some(prompt.clone()),
+                None,
                 None,
                 None,
                 Some(0.2),
@@ -93,16 +116,19 @@ pub(super) fn run_ai_task(
                 message_manager,
             );
 
-            let messages = vec![
-                json!({
-                    "role": "system",
-                    "content": prompt,
-                }),
-                json!({
-                    "role": "user",
-                    "content": task,
-                }),
-            ];
+            let mut messages = normalized_system_messages
+                .iter()
+                .map(|content| {
+                    json!({
+                        "role": "system",
+                        "content": content,
+                    })
+                })
+                .collect::<Vec<_>>();
+            messages.push(json!({
+                "role": "user",
+                "content": task_text,
+            }));
 
             let req = handler.handle_request(
                 messages,

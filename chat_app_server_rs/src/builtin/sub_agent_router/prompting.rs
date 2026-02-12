@@ -15,20 +15,6 @@ pub(super) fn select_skills(
     catalog.resolve_skills(&preferred)
 }
 
-pub(super) fn resolve_skill_ids(skill_ids: &[String], agent: &AgentSpec) -> Vec<String> {
-    if let Some(skills) = &agent.skills {
-        let available: std::collections::HashSet<String> =
-            skills.iter().map(|s| s.to_lowercase()).collect();
-        skill_ids
-            .iter()
-            .filter(|s| available.is_empty() || available.contains(&s.to_lowercase()))
-            .cloned()
-            .collect()
-    } else {
-        skill_ids.to_vec()
-    }
-}
-
 pub(super) fn build_system_prompt(
     agent: &AgentSpec,
     skills: &[SkillSpec],

@@ -10,6 +10,9 @@ use crate::builtin::sub_agent_router::types::{AgentSpec, RegistryData};
 use crate::builtin::sub_agent_router::utils::ensure_dir;
 
 const SUB_AGENT_ROUTER_STATE_ROOT_ENV: &str = "SUB_AGENT_ROUTER_STATE_ROOT";
+const RECOMMENDER_REFERENCE_DOCS_DIR: &str = "reference_docs";
+const RECOMMENDER_AGENTS_DOC_FILE: &str = "agents.md";
+const RECOMMENDER_SKILLS_DOC_FILE: &str = "agent-skills.md";
 
 #[derive(Debug, Clone)]
 pub struct SubAgentRouterStatePaths {
@@ -371,6 +374,16 @@ pub fn import_from_git(opts: GitImportOptions) -> Result<Value, String> {
     let mut imported_skills = false;
     let mut agents_result: Option<Value> = None;
     let mut skills_result: Option<Value> = None;
+    let imported_reference_docs =
+        copy_recommender_reference_docs_from_repo(repo_root.as_path(), paths.root.as_path())
+            .unwrap_or_else(|err| {
+                json!({
+                    "copied": 0,
+                    "skipped": 2,
+                    "error": err,
+                    "details": []
+                })
+            });
     let mut copied_plugins = json!({
         "copied": 0,
         "skipped": 0,
@@ -412,9 +425,32 @@ pub fn import_from_git(opts: GitImportOptions) -> Result<Value, String> {
         "results": {
             "agents": agents_result,
             "skills": skills_result,
-            "plugins": copied_plugins
+            "plugins": copied_plugins,
+            "reference_docs": imported_reference_docs
         }
     }))
+}
+
+pub fn load_recommender_reference_docs() -> Vec<(String, String)> {
+    let paths = match ensure_state_files() {
+        Ok(value) => value,
+        Err(_) => return Vec::new(),
+    };
+
+    let docs_root = recommender_reference_docs_root(paths.root.as_path());
+    let mut docs = Vec::new();
+
+    for file_name in [RECOMMENDER_AGENTS_DOC_FILE, RECOMMENDER_SKILLS_DOC_FILE] {
+        let path = docs_root.join(file_name);
+        let raw = fs::read_to_string(path.as_path()).unwrap_or_default();
+        let content = raw.trim();
+        if content.is_empty() {
+            continue;
+        }
+        docs.push((file_name.to_string(), content.to_string()));
+    }
+
+    docs
 }
 
 pub fn install_plugins(opts: InstallPluginOptions) -> Result<Value, String> {
@@ -1254,6 +1290,116 @@ fn sanitize_repo_name(value: &str) -> String {
     } else {
         trimmed
     }
+}
+
+fn recommender_reference_docs_root(state_root: &Path) -> PathBuf {
+    state_root.join(RECOMMENDER_REFERENCE_DOCS_DIR)
+}
+
+fn copy_recommender_reference_docs_from_repo(
+    repo_root: &Path,
+    state_root: &Path,
+) -> Result<Value, String> {
+    let docs_root = recommender_reference_docs_root(state_root);
+    ensure_dir(docs_root.as_path())?;
+
+    let specs = [
+        (
+            RECOMMENDER_AGENTS_DOC_FILE,
+            [
+                "docs/agents.md",
+                "docs/agents/docs/agents.md",
+                "chat_app_server_rs/docs/agents/docs/agents.md",
+            ]
+            .as_slice(),
+        ),
+        (
+            RECOMMENDER_SKILLS_DOC_FILE,
+            [
+                "docs/agent-skills.md",
+                "docs/agents/docs/agent-skills.md",
+                "chat_app_server_rs/docs/agents/docs/agent-skills.md",
+            ]
+            .as_slice(),
+        ),
+    ];
+
+    let mut copied = 0usize;
+    let mut skipped = 0usize;
+    let mut details = Vec::new();
+
+    for (file_name, preferred_paths) in specs {
+        let source = find_repo_doc_for_recommender(repo_root, preferred_paths, file_name);
+        let Some(source) = source else {
+            skipped += 1;
+            details.push(json!({
+                "name": file_name,
+                "ok": false,
+                "reason": "not found in repository"
+            }));
+            continue;
+        };
+
+        let destination = docs_root.join(file_name);
+        match copy_reference_doc_file(source.as_path(), destination.as_path()) {
+            Ok(_) => {
+                copied += 1;
+                details.push(json!({
+                    "name": file_name,
+                    "ok": true,
+                    "source": source.to_string_lossy().to_string(),
+                    "dest": destination.to_string_lossy().to_string()
+                }));
+            }
+            Err(err) => {
+                skipped += 1;
+                details.push(json!({
+                    "name": file_name,
+                    "ok": false,
+                    "source": source.to_string_lossy().to_string(),
+                    "reason": err
+                }));
+            }
+        }
+    }
+
+    Ok(json!({
+        "copied": copied,
+        "skipped": skipped,
+        "details": details
+    }))
+}
+
+fn find_repo_doc_for_recommender(
+    repo_root: &Path,
+    preferred_paths: &[&str],
+    file_name: &str,
+) -> Option<PathBuf> {
+    for rel in preferred_paths {
+        let normalized = normalize_repo_relative_path(rel);
+        if normalized.is_empty() {
+            continue;
+        }
+        let candidate = repo_root.join(normalized.as_str());
+        if candidate.exists() && candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+
+    find_default_file_recursively(repo_root, &[file_name])
+}
+
+fn copy_reference_doc_file(src: &Path, dest: &Path) -> Result<(), String> {
+    if !src.exists() || !src.is_file() {
+        return Err(format!("source not found: {}", src.to_string_lossy()));
+    }
+
+    if let Some(parent) = dest.parent() {
+        ensure_dir(parent)?;
+    }
+
+    fs::copy(src, dest).map_err(|err| err.to_string())?;
+    Ok(())
 }
 
 fn copy_plugin_sources_from_repo(

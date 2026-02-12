@@ -55,12 +55,10 @@ use self::core::{
     serialize_agent, serialize_commands, set_cancel_flag, text_result, trace_log_path_string,
     trace_router_node, truncate_for_event, update_job_status, with_chatos,
 };
-use self::prompting::{
-    build_env, build_system_prompt, resolve_allow_prefixes, resolve_skill_ids, select_skills,
-};
+use self::prompting::{build_env, build_system_prompt, resolve_allow_prefixes, select_skills};
 use self::recommendation::{
     build_agent_recommendation_candidates, pick_agent_with_fallback, pick_agent_with_llm,
-    pick_agent_with_llm_diagnostics, pick_first_available_agent,
+    pick_first_available_agent, suggest_sub_agent_text_with_docs,
 };
 use self::registry::AgentRegistry;
 use self::runner::run_command;
@@ -304,142 +302,29 @@ impl SubAgentRouterService {
                         })),
                     );
 
-                    let mut guard = ctx
-                        .catalog
-                        .lock()
-                        .map_err(|_| "catalog lock poisoned".to_string())?;
-                    let _ = guard.reload();
-                    let agents = guard.list_agents();
-                    let candidates = build_agent_recommendation_candidates(&agents, &guard);
-                    drop(guard);
-
-                    let diagnostics = json!({
-                        "agents_total": agents.len(),
-                        "agents_considered": agents.len(),
-                        "candidates_total": candidates.len(),
-                    });
-                    trace_router_node(
-                        "suggest_sub_agent",
-                        "catalog_loaded",
-                        None,
-                        Some(_tool_ctx.session_id),
-                        Some(_tool_ctx.run_id),
-                        Some(diagnostics.clone()),
-                    );
-
-                    if agents.is_empty() {
-                        trace_router_node(
-                            "suggest_sub_agent",
-                            "no_agents",
-                            None,
-                            Some(_tool_ctx.session_id),
-                            Some(_tool_ctx.run_id),
-                            Some(json!({
-                                "reason": "No sub-agents available in catalog.",
-                            })),
-                        );
-                        return Ok(text_result(with_chatos(
-                            ctx.server_name.as_str(),
-                            "suggest_sub_agent",
-                            json!({
-                                "agent_id": Value::Null,
-                                "reason": "No sub-agents available in catalog.",
-                                "skills": [],
-                                "diagnostics": diagnostics,
-                            }),
-                            "ok",
-                        )));
-                    }
-
-                    let (llm_pick, llm_reason) = pick_agent_with_llm_diagnostics(
+                    let ai_text = suggest_sub_agent_text_with_docs(
                         &ctx,
-                        &agents,
-                        &candidates,
                         task.as_str(),
-                        None,
-                        None,
-                        None,
-                        None,
                         caller_model.as_deref(),
-                    );
+                    )?;
                     trace_router_node(
                         "suggest_sub_agent",
-                        "llm_decision",
+                        "finish",
                         None,
                         Some(_tool_ctx.session_id),
                         Some(_tool_ctx.run_id),
                         Some(json!({
-                            "picked": llm_pick.as_ref().map(|pick| pick.agent.id.clone()),
-                            "reason": llm_reason.clone(),
+                            "response_preview": truncate_for_event(ai_text.as_str(), 2_000),
                         })),
                     );
-
-                    let Some(picked) = llm_pick else {
-                        trace_router_node(
-                            "suggest_sub_agent",
-                            "no_match",
-                            None,
-                            Some(_tool_ctx.session_id),
-                            Some(_tool_ctx.run_id),
-                            Some(json!({
-                                "llm": llm_reason.clone(),
-                            })),
-                        );
-                        return Ok(text_result(with_chatos(
-                            ctx.server_name.as_str(),
-                            "suggest_sub_agent",
-                            json!({
-                                "agent_id": Value::Null,
-                                "reason": "LLM did not return a valid recommendation.",
-                                "skills": [],
-                                "diagnostics": {
-                                    "catalog": diagnostics,
-                                    "llm": llm_reason,
-                                }
-                            }),
-                            "ok",
-                        )));
-                    };
-                    let selector = if llm_reason == "matched" {
-                        "llm"
-                    } else if llm_reason.starts_with("heuristic_") {
-                        "heuristic"
-                    } else if llm_reason.starts_with("default_") {
-                        "default"
-                    } else {
-                        "llm"
-                    };
-
-                    let used_skills = resolve_skill_ids(&picked.used_skills, &picked.agent);
-                    trace_router_node(
-                        "suggest_sub_agent",
-                        "selected",
-                        None,
-                        Some(_tool_ctx.session_id),
-                        Some(_tool_ctx.run_id),
-                        Some(json!({
-                            "selector": selector,
-                            "agent_id": picked.agent.id.clone(),
-                            "skills": used_skills.clone(),
-                        })),
-                    );
-                    Ok(text_result(with_chatos(
-                        ctx.server_name.as_str(),
-                        "suggest_sub_agent",
-                        json!({
-                            "agent_id": picked.agent.id.clone(),
-                            "agent_name": picked.agent.name,
-                            "score": picked.score,
-                            "reason": picked.reason,
-                            "skills": used_skills.clone(),
-                            "selector": selector,
-                            "diagnostics": {
-                                "catalog": diagnostics,
-                                "llm": llm_reason,
+                    Ok(json!({
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": ai_text,
                             }
-                        }),
-                        "ok",
-                    )))
+                        ]
+                    }))
                 }),
             );
         }
