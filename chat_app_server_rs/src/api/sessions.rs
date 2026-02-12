@@ -221,7 +221,7 @@ async fn add_mcp_server(
         session_id: session_id.clone(),
         mcp_server_name: req.mcp_server_name.clone(),
         mcp_config_id: req.mcp_config_id.clone(),
-        created_at: chrono::Utc::now().to_rfc3339(),
+        created_at: crate::core::time::now_rfc3339(),
     };
     if let Err(err) = session_mcp_repo::add_session_mcp_server(&item).await {
         return (

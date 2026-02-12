@@ -145,7 +145,7 @@ async fn agent_status() -> Json<Value> {
     Json(json!({
         "status": "ok",
         "version": "2.0.0",
-        "timestamp": chrono::Utc::now().to_rfc3339(),
+        "timestamp": crate::core::time::now_rfc3339(),
         "openai": {
             "configured": !cfg.openai_api_key.is_empty(),
             "base_url": cfg.openai_base_url.clone()
@@ -203,7 +203,7 @@ async fn stream_chat_v2(
     let content = req.content.clone().unwrap_or_default();
     let cfg = Config::get();
 
-    let start_evt = json!({ "type": Events::START, "timestamp": chrono::Utc::now().to_rfc3339(), "session_id": session_id });
+    let start_evt = json!({ "type": Events::START, "timestamp": crate::core::time::now_rfc3339(), "session_id": session_id });
     sender.send_json(&start_evt);
 
     if rename_session && !session_id.is_empty() && !content.is_empty() {
@@ -359,19 +359,19 @@ async fn stream_chat_v2(
         Ok(res) => {
             if !abort_registry::is_aborted(&session_id) {
                 send_fallback_chunk_if_needed(&sender, &chunk_sent, &res);
-                sender.send_json(&json!({ "type": Events::COMPLETE, "timestamp": chrono::Utc::now().to_rfc3339(), "result": res }));
+                sender.send_json(&json!({ "type": Events::COMPLETE, "timestamp": crate::core::time::now_rfc3339(), "result": res }));
                 should_send_done = true;
             } else {
-                sender.send_json(&json!({ "type": Events::CANCELLED, "timestamp": chrono::Utc::now().to_rfc3339() }));
+                sender.send_json(&json!({ "type": Events::CANCELLED, "timestamp": crate::core::time::now_rfc3339() }));
             }
         }
         Err(err) => {
             if abort_registry::is_aborted(&session_id) {
                 log_chat_cancelled(&session_id);
-                sender.send_json(&json!({ "type": Events::CANCELLED, "timestamp": chrono::Utc::now().to_rfc3339() }));
+                sender.send_json(&json!({ "type": Events::CANCELLED, "timestamp": crate::core::time::now_rfc3339() }));
             } else {
                 log_chat_error(&err);
-                sender.send_json(&json!({ "type": Events::ERROR, "timestamp": chrono::Utc::now().to_rfc3339(), "data": { "error": err } }));
+                sender.send_json(&json!({ "type": Events::ERROR, "timestamp": crate::core::time::now_rfc3339(), "data": { "error": err } }));
             }
         }
     }
@@ -385,12 +385,12 @@ async fn stream_chat_v2_agent(sender: SseSender, req: ChatRequest, rename_sessio
     let content = req.content.clone().unwrap_or_default();
     let agent_id = req.agent_id.clone().unwrap_or_default();
     if session_id.is_empty() || content.is_empty() || agent_id.is_empty() {
-        sender.send_json(&json!({ "type": Events::ERROR, "timestamp": chrono::Utc::now().to_rfc3339(), "data": { "error": "session_id, content 和 agent_id 为必填项" } }));
+        sender.send_json(&json!({ "type": Events::ERROR, "timestamp": crate::core::time::now_rfc3339(), "data": { "error": "session_id, content 和 agent_id 为必填项" } }));
         sender.send_done();
         return;
     }
 
-    let start_evt = json!({ "type": Events::START, "timestamp": chrono::Utc::now().to_rfc3339(), "session_id": session_id });
+    let start_evt = json!({ "type": Events::START, "timestamp": crate::core::time::now_rfc3339(), "session_id": session_id });
     sender.send_json(&start_evt);
 
     if rename_session && !session_id.is_empty() && !content.is_empty() {
@@ -406,7 +406,7 @@ async fn stream_chat_v2_agent(sender: SseSender, req: ChatRequest, rename_sessio
     {
         Ok(cfg) => cfg,
         Err(err) => {
-            sender.send_json(&json!({ "type": Events::ERROR, "timestamp": chrono::Utc::now().to_rfc3339(), "data": { "error": err } }));
+            sender.send_json(&json!({ "type": Events::ERROR, "timestamp": crate::core::time::now_rfc3339(), "data": { "error": err } }));
             sender.send_done();
             return;
         }
@@ -432,16 +432,16 @@ async fn stream_chat_v2_agent(sender: SseSender, req: ChatRequest, rename_sessio
         Ok(res) => {
             if !abort_registry::is_aborted(&session_id) {
                 send_fallback_chunk_if_needed(&sender, &chunk_sent, &res);
-                sender.send_json(&json!({ "type": Events::COMPLETE, "timestamp": chrono::Utc::now().to_rfc3339(), "result": res }));
+                sender.send_json(&json!({ "type": Events::COMPLETE, "timestamp": crate::core::time::now_rfc3339(), "result": res }));
             } else {
-                sender.send_json(&json!({ "type": Events::CANCELLED, "timestamp": chrono::Utc::now().to_rfc3339() }));
+                sender.send_json(&json!({ "type": Events::CANCELLED, "timestamp": crate::core::time::now_rfc3339() }));
             }
         }
         Err(err) => {
             if abort_registry::is_aborted(&session_id) {
-                sender.send_json(&json!({ "type": Events::CANCELLED, "timestamp": chrono::Utc::now().to_rfc3339() }));
+                sender.send_json(&json!({ "type": Events::CANCELLED, "timestamp": crate::core::time::now_rfc3339() }));
             } else {
-                sender.send_json(&json!({ "type": Events::ERROR, "timestamp": chrono::Utc::now().to_rfc3339(), "data": { "error": err } }));
+                sender.send_json(&json!({ "type": Events::ERROR, "timestamp": crate::core::time::now_rfc3339(), "data": { "error": err } }));
             }
         }
     }

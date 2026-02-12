@@ -1,7 +1,7 @@
 use mongodb::bson::{doc, Bson, Document};
 use serde_json::Value;
 
-use crate::core::mongo_cursor::{apply_offset_limit, collect_and_map, sort_by_str_key_desc};
+use crate::core::mongo_cursor::{apply_offset_limit, collect_map_sorted_desc};
 use crate::core::mongo_query::insert_optional_user_id;
 use crate::core::sql_query::{
     append_limit_offset_clause, append_optional_user_id_filter,
@@ -38,7 +38,7 @@ fn normalize_from_doc(doc: &Document) -> Option<Session> {
 }
 
 pub async fn create_session(data: &Session) -> Result<String, String> {
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::core::time::now_rfc3339();
     let now_mongo = now.clone();
     let now_sqlite = now.clone();
     let metadata_str = data.metadata.as_ref().map(|m| m.to_string());
@@ -52,10 +52,10 @@ pub async fn create_session(data: &Session) -> Result<String, String> {
             let doc = to_doc(doc_from_pairs(vec![
                 ("id", Bson::String(data_mongo.id.clone())),
                 ("title", Bson::String(data_mongo.title.clone())),
-                ("description", data_mongo.description.clone().map(Bson::String).unwrap_or(Bson::Null)),
-                ("metadata", metadata_mongo.clone().map(Bson::String).unwrap_or(Bson::Null)),
-                ("user_id", data_mongo.user_id.clone().map(Bson::String).unwrap_or(Bson::Null)),
-                ("project_id", data_mongo.project_id.clone().map(Bson::String).unwrap_or(Bson::Null)),
+                ("description", crate::core::values::optional_string_bson(data_mongo.description.clone())),
+                ("metadata", crate::core::values::optional_string_bson(metadata_mongo.clone())),
+                ("user_id", crate::core::values::optional_string_bson(data_mongo.user_id.clone())),
+                ("project_id", crate::core::values::optional_string_bson(data_mongo.project_id.clone())),
                 ("created_at", Bson::String(now_mongo.clone())),
                 ("updated_at", Bson::String(now_mongo.clone())),
             ]));
@@ -122,8 +122,8 @@ pub async fn get_all_sessions(limit: Option<i64>, offset: i64) -> Result<Vec<Ses
                     .await
                     .map_err(|e| e.to_string())?;
                 let mut sessions: Vec<Session> =
-                    collect_and_map(cursor, normalize_from_doc).await?;
-                sort_by_str_key_desc(&mut sessions, |s| s.created_at.as_str());
+                    collect_map_sorted_desc(cursor, normalize_from_doc, |s| s.created_at.as_str())
+                        .await?;
                 sessions = apply_offset_limit(sessions, offset, limit);
                 Ok(sessions)
             })
@@ -173,8 +173,8 @@ pub async fn get_sessions_by_user_project(
                     .await
                     .map_err(|e| e.to_string())?;
                 let mut sessions: Vec<Session> =
-                    collect_and_map(cursor, normalize_from_doc).await?;
-                sort_by_str_key_desc(&mut sessions, |s| s.created_at.as_str());
+                    collect_map_sorted_desc(cursor, normalize_from_doc, |s| s.created_at.as_str())
+                        .await?;
                 sessions = apply_offset_limit(sessions, offset, limit);
                 Ok(sessions)
             })
@@ -257,7 +257,7 @@ pub async fn update_session(
     description: Option<String>,
     metadata: Option<Value>,
 ) -> Result<(), String> {
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::core::time::now_rfc3339();
     let now_mongo = now.clone();
     let now_sqlite = now.clone();
     let metadata_str = metadata.as_ref().map(|m| m.to_string());

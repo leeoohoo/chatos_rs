@@ -1,6 +1,6 @@
 use mongodb::bson::{doc, Bson, Document};
 
-use crate::core::mongo_cursor::{collect_and_map, sort_by_str_key_asc};
+use crate::core::mongo_cursor::collect_map_sorted_asc;
 use crate::models::session_summary::{SessionSummary, SessionSummaryRow};
 use crate::repositories::db::{doc_from_pairs, to_doc, with_db};
 
@@ -65,18 +65,18 @@ pub async fn create_summary(data: &SessionSummary) -> Result<SessionSummary, Str
                 ("id", Bson::String(data_mongo.id.clone())),
                 ("session_id", Bson::String(data_mongo.session_id.clone())),
                 ("summary_text", Bson::String(data_mongo.summary_text.clone())),
-                ("summary_prompt", data_mongo.summary_prompt.clone().map(Bson::String).unwrap_or(Bson::Null)),
-                ("model", data_mongo.model.clone().map(Bson::String).unwrap_or(Bson::Null)),
+                ("summary_prompt", crate::core::values::optional_string_bson(data_mongo.summary_prompt.clone())),
+                ("model", crate::core::values::optional_string_bson(data_mongo.model.clone())),
                 ("temperature", data_mongo.temperature.map(Bson::Double).unwrap_or(Bson::Null)),
                 ("target_summary_tokens", data_mongo.target_summary_tokens.map(Bson::Int64).unwrap_or(Bson::Null)),
                 ("keep_last_n", data_mongo.keep_last_n.map(Bson::Int64).unwrap_or(Bson::Null)),
                 ("message_count", data_mongo.message_count.map(Bson::Int64).unwrap_or(Bson::Null)),
                 ("approx_tokens", data_mongo.approx_tokens.map(Bson::Int64).unwrap_or(Bson::Null)),
-                ("first_message_id", data_mongo.first_message_id.clone().map(Bson::String).unwrap_or(Bson::Null)),
-                ("last_message_id", data_mongo.last_message_id.clone().map(Bson::String).unwrap_or(Bson::Null)),
-                ("first_message_created_at", data_mongo.first_message_created_at.clone().map(Bson::String).unwrap_or(Bson::Null)),
-                ("last_message_created_at", data_mongo.last_message_created_at.clone().map(Bson::String).unwrap_or(Bson::Null)),
-                ("metadata", metadata_mongo.clone().map(Bson::String).unwrap_or(Bson::Null)),
+                ("first_message_id", crate::core::values::optional_string_bson(data_mongo.first_message_id.clone())),
+                ("last_message_id", crate::core::values::optional_string_bson(data_mongo.last_message_id.clone())),
+                ("first_message_created_at", crate::core::values::optional_string_bson(data_mongo.first_message_created_at.clone())),
+                ("last_message_created_at", crate::core::values::optional_string_bson(data_mongo.last_message_created_at.clone())),
+                ("metadata", crate::core::values::optional_string_bson(metadata_mongo.clone())),
                 ("created_at", Bson::String(data_mongo.created_at.clone())),
                 ("updated_at", Bson::String(data_mongo.updated_at.clone())),
             ]));
@@ -132,9 +132,12 @@ pub async fn list_summaries_by_session(
                     .find(doc! { "session_id": session_id }, options)
                     .await
                     .map_err(|e| e.to_string())?;
-                let mut items: Vec<SessionSummary> =
-                    collect_and_map(cursor, normalize_from_doc).await?;
-                sort_by_str_key_asc(&mut items, |item| item.created_at.as_str());
+                let items: Vec<SessionSummary> = collect_map_sorted_asc(
+                    cursor,
+                    normalize_from_doc,
+                    |item| item.created_at.as_str(),
+                )
+                .await?;
                 Ok(items)
             })
         },

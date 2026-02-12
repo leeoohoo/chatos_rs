@@ -1,4 +1,4 @@
-use crate::core::mongo_cursor::{collect_and_map, sort_by_str_key_desc};
+use crate::core::mongo_cursor::collect_map_sorted_desc;
 use crate::core::mongo_query::filter_optional_user_id;
 use crate::core::sql_query::build_select_all_with_optional_user_id;
 use crate::models::application::{Application, ApplicationRow};
@@ -29,8 +29,9 @@ pub async fn list_applications(user_id: Option<String>) -> Result<Vec<Applicatio
                     .find(filter, None)
                     .await
                     .map_err(|e| e.to_string())?;
-                let mut items: Vec<Application> = collect_and_map(cursor, normalize_doc).await?;
-                sort_by_str_key_desc(&mut items, |item| item.created_at.as_str());
+                let items: Vec<Application> =
+                    collect_map_sorted_desc(cursor, normalize_doc, |item| item.created_at.as_str())
+                        .await?;
                 Ok(items)
             })
         },
@@ -81,7 +82,7 @@ pub async fn get_application_by_id(id: &str) -> Result<Option<Application>, Stri
 }
 
 pub async fn create_application(app: &Application) -> Result<Application, String> {
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::core::time::now_rfc3339();
     let now_mongo = now.clone();
     let now_sqlite = now.clone();
     let app_mongo = app.clone();
@@ -92,8 +93,8 @@ pub async fn create_application(app: &Application) -> Result<Application, String
                 ("id", Bson::String(app_mongo.id.clone())),
                 ("name", Bson::String(app_mongo.name.clone())),
                 ("url", Bson::String(app_mongo.url.clone())),
-                ("description", app_mongo.description.clone().map(Bson::String).unwrap_or(Bson::Null)),
-                ("user_id", app_mongo.user_id.clone().map(Bson::String).unwrap_or(Bson::Null)),
+                ("description", crate::core::values::optional_string_bson(app_mongo.description.clone())),
+                ("user_id", crate::core::values::optional_string_bson(app_mongo.user_id.clone())),
                 ("enabled", Bson::Boolean(app_mongo.enabled)),
                 ("created_at", Bson::String(now_mongo.clone())),
                 ("updated_at", Bson::String(now_mongo.clone())),
@@ -111,7 +112,7 @@ pub async fn create_application(app: &Application) -> Result<Application, String
                     .bind(&app_sqlite.url)
                     .bind(&app_sqlite.description)
                     .bind(&app_sqlite.user_id)
-                    .bind(if app_sqlite.enabled {1} else {0})
+                    .bind(crate::core::values::bool_to_sqlite_int(app_sqlite.enabled))
                     .bind(&now_sqlite)
                     .bind(&now_sqlite)
                     .execute(pool)
@@ -124,7 +125,7 @@ pub async fn create_application(app: &Application) -> Result<Application, String
 }
 
 pub async fn update_application(id: &str, updates: &Application) -> Result<(), String> {
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::core::time::now_rfc3339();
     let now_mongo = now.clone();
     let now_sqlite = now.clone();
     let updates_mongo = updates.clone();
@@ -136,7 +137,7 @@ pub async fn update_application(id: &str, updates: &Application) -> Result<(), S
                 let mut set_doc = Document::new();
                 set_doc.insert("name", updates_mongo.name.clone());
                 set_doc.insert("url", updates_mongo.url.clone());
-                set_doc.insert("description", updates_mongo.description.clone().map(Bson::String).unwrap_or(Bson::Null));
+                set_doc.insert("description", crate::core::values::optional_string_bson(updates_mongo.description.clone()));
                 set_doc.insert("enabled", Bson::Boolean(updates_mongo.enabled));
                 set_doc.insert("updated_at", now_mongo.clone());
                 db.collection::<Document>("applications").update_one(doc! { "id": id }, doc! { "$set": set_doc }, None).await.map_err(|e| e.to_string())?;
@@ -150,7 +151,7 @@ pub async fn update_application(id: &str, updates: &Application) -> Result<(), S
                     .bind(&updates_sqlite.name)
                     .bind(&updates_sqlite.url)
                     .bind(&updates_sqlite.description)
-                    .bind(if updates_sqlite.enabled {1} else {0})
+                    .bind(crate::core::values::bool_to_sqlite_int(updates_sqlite.enabled))
                     .bind(&now_sqlite)
                     .bind(&id)
                     .execute(pool)

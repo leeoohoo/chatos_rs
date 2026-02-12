@@ -129,8 +129,8 @@ async fn create_agent(Json(req): Json<AgentRequest>) -> (StatusCode, Json<Value>
         }),
         workspace_dir: sanitize_workspace_dir(req.workspace_dir),
         enabled: req.enabled.unwrap_or(true),
-        created_at: chrono::Utc::now().to_rfc3339(),
-        updated_at: chrono::Utc::now().to_rfc3339(),
+        created_at: crate::core::time::now_rfc3339(),
+        updated_at: crate::core::time::now_rfc3339(),
     };
     if let Err(err) = agents_repo::create_agent(&agent).await {
         return (
@@ -370,7 +370,7 @@ async fn stream_agent_chat(sender: SseSender, req: AgentChatRequest) {
     let session_id = req.session_id.clone().unwrap_or_default();
     let content = req.content.clone().unwrap_or_default();
     let agent_id = req.agent_id.clone().unwrap_or_default();
-    sender.send_json(&json!({ "type": Events::START, "timestamp": chrono::Utc::now().to_rfc3339(), "session_id": session_id }));
+    sender.send_json(&json!({ "type": Events::START, "timestamp": crate::core::time::now_rfc3339(), "session_id": session_id }));
     if !session_id.is_empty() && !content.is_empty() {
         let sid = session_id.clone();
         let text = content.clone();
@@ -382,7 +382,7 @@ async fn stream_agent_chat(sender: SseSender, req: AgentChatRequest) {
     let model_cfg = match load_model_config_for_agent(&agent_id).await {
         Ok(cfg) => cfg,
         Err(err) => {
-            sender.send_json(&json!({ "type": Events::ERROR, "timestamp": chrono::Utc::now().to_rfc3339(), "data": { "error": err } }));
+            sender.send_json(&json!({ "type": Events::ERROR, "timestamp": crate::core::time::now_rfc3339(), "data": { "error": err } }));
             sender.send_done();
             return;
         }
@@ -408,17 +408,17 @@ async fn stream_agent_chat(sender: SseSender, req: AgentChatRequest) {
     match result {
         Ok(res) => {
             if abort_registry::is_aborted(&session_id) {
-                sender.send_json(&json!({ "type": Events::CANCELLED, "timestamp": chrono::Utc::now().to_rfc3339() }));
+                sender.send_json(&json!({ "type": Events::CANCELLED, "timestamp": crate::core::time::now_rfc3339() }));
             } else {
                 send_fallback_chunk_if_needed(&sender, &chunk_sent, &res);
-                sender.send_json(&json!({ "type": Events::COMPLETE, "timestamp": chrono::Utc::now().to_rfc3339(), "result": res }));
+                sender.send_json(&json!({ "type": Events::COMPLETE, "timestamp": crate::core::time::now_rfc3339(), "result": res }));
             }
         }
         Err(err) => {
             if abort_registry::is_aborted(&session_id) {
-                sender.send_json(&json!({ "type": Events::CANCELLED, "timestamp": chrono::Utc::now().to_rfc3339() }));
+                sender.send_json(&json!({ "type": Events::CANCELLED, "timestamp": crate::core::time::now_rfc3339() }));
             } else {
-                sender.send_json(&json!({ "type": Events::ERROR, "timestamp": chrono::Utc::now().to_rfc3339(), "data": { "error": err } }));
+                sender.send_json(&json!({ "type": Events::ERROR, "timestamp": crate::core::time::now_rfc3339(), "data": { "error": err } }));
             }
         }
     }

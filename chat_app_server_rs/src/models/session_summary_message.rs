@@ -45,7 +45,7 @@ impl SessionSummaryMessage {
             summary_id,
             session_id,
             message_id,
-            created_at: chrono::Utc::now().to_rfc3339(),
+            created_at: crate::core::time::now_rfc3339(),
         }
     }
 }

@@ -20,7 +20,7 @@ pub struct McpConfig {
 
 impl McpConfig {
     pub fn new(name: String, command: String) -> Self {
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = crate::core::time::now_rfc3339();
         Self {
             id: Uuid::new_v4().to_string(),
             name,

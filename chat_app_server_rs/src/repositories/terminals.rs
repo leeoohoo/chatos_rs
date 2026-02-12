@@ -1,6 +1,6 @@
 use mongodb::bson::{doc, Bson, Document};
 
-use crate::core::mongo_cursor::{collect_and_map, sort_by_str_key_desc};
+use crate::core::mongo_cursor::collect_map_sorted_desc;
 use crate::core::mongo_query::filter_optional_user_id;
 use crate::core::sql_query::build_select_all_with_optional_user_id;
 use crate::core::update_fields::{
@@ -34,8 +34,9 @@ pub async fn list_terminals(user_id: Option<String>) -> Result<Vec<Terminal>, St
                     .find(filter, None)
                     .await
                     .map_err(|e| e.to_string())?;
-                let mut items: Vec<Terminal> = collect_and_map(cursor, normalize_doc).await?;
-                sort_by_str_key_desc(&mut items, |item| item.created_at.as_str());
+                let items: Vec<Terminal> =
+                    collect_map_sorted_desc(cursor, normalize_doc, |item| item.created_at.as_str())
+                        .await?;
                 Ok(items)
             })
         },
@@ -85,7 +86,7 @@ pub async fn get_terminal_by_id(id: &str) -> Result<Option<Terminal>, String> {
 }
 
 pub async fn create_terminal(terminal: &Terminal) -> Result<String, String> {
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::core::time::now_rfc3339();
     let now_mongo = now.clone();
     let now_sqlite = now.clone();
     let term_mongo = terminal.clone();
@@ -97,8 +98,8 @@ pub async fn create_terminal(terminal: &Terminal) -> Result<String, String> {
                 ("id", Bson::String(term_mongo.id.clone())),
                 ("name", Bson::String(term_mongo.name.clone())),
                 ("cwd", Bson::String(term_mongo.cwd.clone())),
-                ("user_id", term_mongo.user_id.clone().map(Bson::String).unwrap_or(Bson::Null)),
-                ("project_id", term_mongo.project_id.clone().map(Bson::String).unwrap_or(Bson::Null)),
+                ("user_id", crate::core::values::optional_string_bson(term_mongo.user_id.clone())),
+                ("project_id", crate::core::values::optional_string_bson(term_mongo.project_id.clone())),
                 ("status", Bson::String(term_mongo.status.clone())),
                 ("created_at", Bson::String(now_mongo.clone())),
                 ("updated_at", Bson::String(now_mongo.clone())),
@@ -135,7 +136,7 @@ pub async fn update_terminal_status(
     status: Option<String>,
     last_active_at: Option<String>,
 ) -> Result<(), String> {
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::core::time::now_rfc3339();
     let now_mongo = now.clone();
     let now_sqlite = now.clone();
     let status_mongo = status.clone();
@@ -178,7 +179,7 @@ pub async fn update_terminal_status(
 }
 
 pub async fn touch_terminal(id: &str) -> Result<(), String> {
-    update_terminal_status(id, None, Some(chrono::Utc::now().to_rfc3339())).await
+    update_terminal_status(id, None, Some(crate::core::time::now_rfc3339())).await
 }
 
 pub async fn delete_terminal(id: &str) -> Result<(), String> {

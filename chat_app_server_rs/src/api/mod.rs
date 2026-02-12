@@ -129,7 +129,7 @@ pub fn router() -> Router {
 async fn health() -> axum::Json<serde_json::Value> {
     axum::Json(serde_json::json!({
         "status": "ok",
-        "timestamp": chrono::Utc::now().to_rfc3339(),
+        "timestamp": crate::core::time::now_rfc3339(),
         "uptime": START_TIME.elapsed().as_secs_f64()
     }))
 }

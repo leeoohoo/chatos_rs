@@ -1,7 +1,7 @@
 use mongodb::bson::{doc, Bson, Document};
 use serde_json::Value;
 
-use crate::core::mongo_cursor::{collect_and_map, collect_string_field, sort_by_str_key_desc};
+use crate::core::mongo_cursor::{collect_and_map, collect_map_sorted_desc, collect_string_field};
 use crate::core::mongo_query::{filter_optional_user_id, insert_optional_user_id};
 use crate::core::sql_query::{
     append_optional_user_id_filter, build_select_all_with_optional_user_id,
@@ -43,8 +43,9 @@ pub async fn list_mcp_configs(user_id: Option<String>) -> Result<Vec<McpConfig>,
                     .find(filter, None)
                     .await
                     .map_err(|e| e.to_string())?;
-                let mut items: Vec<McpConfig> = collect_and_map(cursor, normalize_doc).await?;
-                sort_by_str_key_desc(&mut items, |item| item.created_at.as_str());
+                let items: Vec<McpConfig> =
+                    collect_map_sorted_desc(cursor, normalize_doc, |item| item.created_at.as_str())
+                        .await?;
                 Ok(items)
             })
         },
@@ -171,7 +172,7 @@ pub async fn get_mcp_config_by_id(id: &str) -> Result<Option<McpConfig>, String>
 }
 
 pub async fn create_mcp_config(cfg: &McpConfig) -> Result<(), String> {
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::core::time::now_rfc3339();
     let now_mongo = now.clone();
     let now_sqlite = now.clone();
     let args_str = cfg.args.as_ref().map(|v| v.to_string());
@@ -190,10 +191,10 @@ pub async fn create_mcp_config(cfg: &McpConfig) -> Result<(), String> {
                 ("name", Bson::String(cfg_mongo.name.clone())),
                 ("command", Bson::String(cfg_mongo.command.clone())),
                 ("type", Bson::String(cfg_mongo.r#type.clone())),
-                ("args", args_str_mongo.clone().map(Bson::String).unwrap_or(Bson::Null)),
-                ("env", env_str_mongo.clone().map(Bson::String).unwrap_or(Bson::Null)),
-                ("cwd", cfg_mongo.cwd.clone().map(Bson::String).unwrap_or(Bson::Null)),
-                ("user_id", cfg_mongo.user_id.clone().map(Bson::String).unwrap_or(Bson::Null)),
+                ("args", crate::core::values::optional_string_bson(args_str_mongo.clone())),
+                ("env", crate::core::values::optional_string_bson(env_str_mongo.clone())),
+                ("cwd", crate::core::values::optional_string_bson(cfg_mongo.cwd.clone())),
+                ("user_id", crate::core::values::optional_string_bson(cfg_mongo.user_id.clone())),
                 ("enabled", Bson::Boolean(cfg_mongo.enabled)),
                 ("created_at", Bson::String(now_mongo.clone())),
                 ("updated_at", Bson::String(now_mongo.clone())),
@@ -214,7 +215,7 @@ pub async fn create_mcp_config(cfg: &McpConfig) -> Result<(), String> {
                     .bind(env_str_sqlite.as_deref())
                     .bind(&cfg_sqlite.cwd)
                     .bind(&cfg_sqlite.user_id)
-                    .bind(if cfg_sqlite.enabled {1} else {0})
+                    .bind(crate::core::values::bool_to_sqlite_int(cfg_sqlite.enabled))
                     .bind(&now_sqlite)
                     .bind(&now_sqlite)
                     .execute(pool)
@@ -227,7 +228,7 @@ pub async fn create_mcp_config(cfg: &McpConfig) -> Result<(), String> {
 }
 
 pub async fn update_mcp_config(id: &str, updates: &McpConfig) -> Result<(), String> {
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::core::time::now_rfc3339();
     let now_mongo = now.clone();
     let now_sqlite = now.clone();
     let args_str = updates.args.as_ref().map(|v| v.to_string());
@@ -247,9 +248,9 @@ pub async fn update_mcp_config(id: &str, updates: &McpConfig) -> Result<(), Stri
                 set_doc.insert("name", updates_mongo.name.clone());
                 set_doc.insert("command", updates_mongo.command.clone());
                 set_doc.insert("type", updates_mongo.r#type.clone());
-                set_doc.insert("args", args_str_mongo.clone().map(Bson::String).unwrap_or(Bson::Null));
-                set_doc.insert("env", env_str_mongo.clone().map(Bson::String).unwrap_or(Bson::Null));
-                set_doc.insert("cwd", updates_mongo.cwd.clone().map(Bson::String).unwrap_or(Bson::Null));
+                set_doc.insert("args", crate::core::values::optional_string_bson(args_str_mongo.clone()));
+                set_doc.insert("env", crate::core::values::optional_string_bson(env_str_mongo.clone()));
+                set_doc.insert("cwd", crate::core::values::optional_string_bson(updates_mongo.cwd.clone()));
                 set_doc.insert("enabled", Bson::Boolean(updates_mongo.enabled));
                 set_doc.insert("updated_at", now_mongo.clone());
                 db.collection::<Document>("mcp_configs").update_one(doc! { "id": id }, doc! { "$set": set_doc }, None).await.map_err(|e| e.to_string())?;
@@ -266,7 +267,7 @@ pub async fn update_mcp_config(id: &str, updates: &McpConfig) -> Result<(), Stri
                     .bind(args_str_sqlite.as_deref())
                     .bind(env_str_sqlite.as_deref())
                     .bind(&updates_sqlite.cwd)
-                    .bind(if updates_sqlite.enabled {1} else {0})
+                    .bind(crate::core::values::bool_to_sqlite_int(updates_sqlite.enabled))
                     .bind(&now_sqlite)
                     .bind(&id)
                     .execute(pool)
@@ -351,7 +352,7 @@ pub async fn set_app_ids_for_mcp_config(config_id: &str, app_ids: &[String]) -> 
             Box::pin(async move {
                 db.collection::<Document>("mcp_config_applications").delete_many(doc! { "mcp_config_id": &config_id }, None).await.map_err(|e| e.to_string())?;
                 if !app_ids.is_empty() {
-                    let now = chrono::Utc::now().to_rfc3339();
+                    let now = crate::core::time::now_rfc3339();
                     let docs: Vec<Document> = app_ids.iter().map(|aid| doc! { "id": format!("{}_{}", config_id, aid), "mcp_config_id": &config_id, "application_id": aid, "created_at": &now }).collect();
                     db.collection::<Document>("mcp_config_applications").insert_many(docs, None).await.map_err(|e| e.to_string())?;
                 }
@@ -367,7 +368,7 @@ pub async fn set_app_ids_for_mcp_config(config_id: &str, app_ids: &[String]) -> 
                     .execute(pool)
                     .await
                     .map_err(|e| e.to_string())?;
-                let now = chrono::Utc::now().to_rfc3339();
+                let now = crate::core::time::now_rfc3339();
                 for aid in app_ids {
                     sqlx::query("INSERT INTO mcp_config_applications (id, mcp_config_id, application_id, created_at) VALUES (?, ?, ?, ?)")
                         .bind(format!("{}_{}", config_id, aid))

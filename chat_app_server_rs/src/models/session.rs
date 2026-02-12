@@ -54,7 +54,7 @@ impl Session {
         user_id: Option<String>,
         project_id: Option<String>,
     ) -> Session {
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = crate::core::time::now_rfc3339();
         Session {
             id: Uuid::new_v4().to_string(),
             title,

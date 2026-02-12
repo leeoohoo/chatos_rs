@@ -66,7 +66,7 @@ impl Message {
             tool_call_id: None,
             reasoning: None,
             metadata: None,
-            created_at: chrono::Utc::now().to_rfc3339(),
+            created_at: crate::core::time::now_rfc3339(),
         }
     }
 }

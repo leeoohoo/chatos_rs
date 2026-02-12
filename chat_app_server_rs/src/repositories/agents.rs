@@ -1,4 +1,4 @@
-use crate::core::mongo_cursor::{collect_and_map, collect_string_field, sort_by_str_key_desc};
+use crate::core::mongo_cursor::{collect_map_sorted_desc, collect_string_field};
 use crate::core::mongo_query::filter_optional_user_id;
 use crate::core::sql_query::build_select_all_with_optional_user_id;
 use crate::core::sql_rows::collect_string_column;
@@ -45,8 +45,9 @@ pub async fn list_agents(user_id: Option<String>) -> Result<Vec<Agent>, String> 
                     .find(filter, None)
                     .await
                     .map_err(|e| e.to_string())?;
-                let mut items: Vec<Agent> = collect_and_map(cursor, normalize_doc).await?;
-                sort_by_str_key_desc(&mut items, |item| item.created_at.as_str());
+                let items: Vec<Agent> =
+                    collect_map_sorted_desc(cursor, normalize_doc, |item| item.created_at.as_str())
+                        .await?;
                 Ok(items)
             })
         },
@@ -96,7 +97,7 @@ pub async fn get_agent_by_id(id: &str) -> Result<Option<Agent>, String> {
 }
 
 pub async fn create_agent(data: &Agent) -> Result<(), String> {
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::core::time::now_rfc3339();
     let now_mongo = now.clone();
     let now_sqlite = now.clone();
     let mcp_json = serde_json::to_string(&data.mcp_config_ids).unwrap_or("[]".to_string());
@@ -114,13 +115,13 @@ pub async fn create_agent(data: &Agent) -> Result<(), String> {
                 ("id", Bson::String(data_mongo.id.clone())),
                 ("name", Bson::String(data_mongo.name.clone())),
                 ("ai_model_config_id", Bson::String(data_mongo.ai_model_config_id.clone())),
-                ("system_context_id", data_mongo.system_context_id.clone().map(Bson::String).unwrap_or(Bson::Null)),
-                ("description", data_mongo.description.clone().map(Bson::String).unwrap_or(Bson::Null)),
-                ("user_id", data_mongo.user_id.clone().map(Bson::String).unwrap_or(Bson::Null)),
+                ("system_context_id", crate::core::values::optional_string_bson(data_mongo.system_context_id.clone())),
+                ("description", crate::core::values::optional_string_bson(data_mongo.description.clone())),
+                ("user_id", crate::core::values::optional_string_bson(data_mongo.user_id.clone())),
                 ("mcp_config_ids", Bson::String(mcp_json_mongo.clone())),
                 ("callable_agent_ids", Bson::String(callable_json_mongo.clone())),
-                ("project_id", data_mongo.project_id.clone().map(Bson::String).unwrap_or(Bson::Null)),
-                ("workspace_dir", data_mongo.workspace_dir.clone().map(Bson::String).unwrap_or(Bson::Null)),
+                ("project_id", crate::core::values::optional_string_bson(data_mongo.project_id.clone())),
+                ("workspace_dir", crate::core::values::optional_string_bson(data_mongo.workspace_dir.clone())),
                 ("enabled", Bson::Boolean(data_mongo.enabled)),
                 ("created_at", Bson::String(now_mongo.clone())),
                 ("updated_at", Bson::String(now_mongo.clone())),
@@ -143,7 +144,7 @@ pub async fn create_agent(data: &Agent) -> Result<(), String> {
                     .bind(&callable_json_sqlite)
                     .bind(&data_sqlite.project_id)
                     .bind(&data_sqlite.workspace_dir)
-                    .bind(if data_sqlite.enabled {1} else {0})
+                    .bind(crate::core::values::bool_to_sqlite_int(data_sqlite.enabled))
                     .bind(&now_sqlite)
                     .bind(&now_sqlite)
                     .execute(pool)
@@ -156,7 +157,7 @@ pub async fn create_agent(data: &Agent) -> Result<(), String> {
 }
 
 pub async fn update_agent(id: &str, updates: &Agent) -> Result<(), String> {
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::core::time::now_rfc3339();
     let now_mongo = now.clone();
     let now_sqlite = now.clone();
     let mcp_json = serde_json::to_string(&updates.mcp_config_ids).unwrap_or("[]".to_string());
@@ -176,13 +177,13 @@ pub async fn update_agent(id: &str, updates: &Agent) -> Result<(), String> {
                 let mut set_doc = Document::new();
                 set_doc.insert("name", updates_mongo.name.clone());
                 set_doc.insert("ai_model_config_id", updates_mongo.ai_model_config_id.clone());
-                set_doc.insert("system_context_id", updates_mongo.system_context_id.clone().map(Bson::String).unwrap_or(Bson::Null));
-                set_doc.insert("description", updates_mongo.description.clone().map(Bson::String).unwrap_or(Bson::Null));
+                set_doc.insert("system_context_id", crate::core::values::optional_string_bson(updates_mongo.system_context_id.clone()));
+                set_doc.insert("description", crate::core::values::optional_string_bson(updates_mongo.description.clone()));
                 set_doc.insert("enabled", Bson::Boolean(updates_mongo.enabled));
                 set_doc.insert("mcp_config_ids", Bson::String(mcp_json_mongo.clone()));
                 set_doc.insert("callable_agent_ids", Bson::String(callable_json_mongo.clone()));
-                set_doc.insert("project_id", updates_mongo.project_id.clone().map(Bson::String).unwrap_or(Bson::Null));
-                set_doc.insert("workspace_dir", updates_mongo.workspace_dir.clone().map(Bson::String).unwrap_or(Bson::Null));
+                set_doc.insert("project_id", crate::core::values::optional_string_bson(updates_mongo.project_id.clone()));
+                set_doc.insert("workspace_dir", crate::core::values::optional_string_bson(updates_mongo.workspace_dir.clone()));
                 set_doc.insert("updated_at", now_mongo.clone());
                 db.collection::<Document>("agents").update_one(doc! { "id": id }, doc! { "$set": set_doc }, None).await.map_err(|e| e.to_string())?;
                 Ok(())
@@ -196,7 +197,7 @@ pub async fn update_agent(id: &str, updates: &Agent) -> Result<(), String> {
                     .bind(&updates_sqlite.ai_model_config_id)
                     .bind(&updates_sqlite.system_context_id)
                     .bind(&updates_sqlite.description)
-                    .bind(if updates_sqlite.enabled {1} else {0})
+                    .bind(crate::core::values::bool_to_sqlite_int(updates_sqlite.enabled))
                     .bind(&mcp_json_sqlite)
                     .bind(&callable_json_sqlite)
                     .bind(&updates_sqlite.project_id)
@@ -280,7 +281,7 @@ pub async fn set_app_ids_for_agent(agent_id: &str, app_ids: &[String]) -> Result
             Box::pin(async move {
                 db.collection::<Document>("agent_applications").delete_many(doc! { "agent_id": &agent_id }, None).await.map_err(|e| e.to_string())?;
                 if !app_ids.is_empty() {
-                    let now = chrono::Utc::now().to_rfc3339();
+                    let now = crate::core::time::now_rfc3339();
                     let docs: Vec<Document> = app_ids.iter().map(|aid| doc! { "id": format!("{}_{}", agent_id, aid), "agent_id": &agent_id, "application_id": aid, "created_at": &now }).collect();
                     db.collection::<Document>("agent_applications").insert_many(docs, None).await.map_err(|e| e.to_string())?;
                 }
@@ -292,7 +293,7 @@ pub async fn set_app_ids_for_agent(agent_id: &str, app_ids: &[String]) -> Result
             let app_ids = app_ids.to_vec();
             Box::pin(async move {
                 sqlx::query("DELETE FROM agent_applications WHERE agent_id = ?").bind(&agent_id).execute(pool).await.map_err(|e| e.to_string())?;
-                let now = chrono::Utc::now().to_rfc3339();
+                let now = crate::core::time::now_rfc3339();
                 for aid in app_ids {
                     sqlx::query("INSERT INTO agent_applications (id, agent_id, application_id, created_at) VALUES (?, ?, ?, ?)")
                         .bind(format!("{}_{}", agent_id, aid))

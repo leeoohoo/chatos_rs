@@ -209,7 +209,7 @@ pub fn save_mcp_permissions(
         configured: true,
         enabled_mcp_ids: ids,
         enabled_tool_prefixes: prefixes,
-        updated_at: chrono::Utc::now().to_rfc3339(),
+        updated_at: crate::core::time::now_rfc3339(),
     };
 
     let text = serde_json::to_string_pretty(&state).map_err(|err| err.to_string())?;

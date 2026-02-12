@@ -59,7 +59,7 @@ pub async fn list_session_mcp_servers(session_id: &str) -> Result<Vec<SessionMcp
 
 pub async fn add_session_mcp_server(item: &SessionMcpServer) -> Result<(), String> {
     let now = if item.created_at.is_empty() {
-        chrono::Utc::now().to_rfc3339()
+        crate::core::time::now_rfc3339()
     } else {
         item.created_at.clone()
     };
@@ -72,8 +72,8 @@ pub async fn add_session_mcp_server(item: &SessionMcpServer) -> Result<(), Strin
             let doc = to_doc(doc_from_pairs(vec![
                 ("id", Bson::String(item_mongo.id.clone())),
                 ("session_id", Bson::String(item_mongo.session_id.clone())),
-                ("mcp_server_name", item_mongo.mcp_server_name.clone().map(Bson::String).unwrap_or(Bson::Null)),
-                ("mcp_config_id", item_mongo.mcp_config_id.clone().map(Bson::String).unwrap_or(Bson::Null)),
+                ("mcp_server_name", crate::core::values::optional_string_bson(item_mongo.mcp_server_name.clone())),
+                ("mcp_config_id", crate::core::values::optional_string_bson(item_mongo.mcp_config_id.clone())),
                 ("created_at", Bson::String(now_mongo.clone())),
             ]));
             Box::pin(async move {

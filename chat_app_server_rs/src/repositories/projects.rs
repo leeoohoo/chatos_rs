@@ -1,6 +1,6 @@
 use mongodb::bson::{doc, Bson, Document};
 
-use crate::core::mongo_cursor::{collect_and_map, sort_by_str_key_desc};
+use crate::core::mongo_cursor::collect_map_sorted_desc;
 use crate::core::mongo_query::filter_optional_user_id;
 use crate::core::sql_query::build_select_all_with_optional_user_id;
 use crate::core::update_fields::{
@@ -32,8 +32,9 @@ pub async fn list_projects(user_id: Option<String>) -> Result<Vec<Project>, Stri
                     .find(filter, None)
                     .await
                     .map_err(|e| e.to_string())?;
-                let mut items: Vec<Project> = collect_and_map(cursor, normalize_doc).await?;
-                sort_by_str_key_desc(&mut items, |item| item.created_at.as_str());
+                let items: Vec<Project> =
+                    collect_map_sorted_desc(cursor, normalize_doc, |item| item.created_at.as_str())
+                        .await?;
                 Ok(items)
             })
         },
@@ -83,7 +84,7 @@ pub async fn get_project_by_id(id: &str) -> Result<Option<Project>, String> {
 }
 
 pub async fn create_project(project: &Project) -> Result<String, String> {
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::core::time::now_rfc3339();
     let now_mongo = now.clone();
     let now_sqlite = now.clone();
     let proj_mongo = project.clone();
@@ -95,8 +96,8 @@ pub async fn create_project(project: &Project) -> Result<String, String> {
                 ("id", Bson::String(proj_mongo.id.clone())),
                 ("name", Bson::String(proj_mongo.name.clone())),
                 ("root_path", Bson::String(proj_mongo.root_path.clone())),
-                ("description", proj_mongo.description.clone().map(Bson::String).unwrap_or(Bson::Null)),
-                ("user_id", proj_mongo.user_id.clone().map(Bson::String).unwrap_or(Bson::Null)),
+                ("description", crate::core::values::optional_string_bson(proj_mongo.description.clone())),
+                ("user_id", crate::core::values::optional_string_bson(proj_mongo.user_id.clone())),
                 ("created_at", Bson::String(now_mongo.clone())),
                 ("updated_at", Bson::String(now_mongo.clone())),
             ]));
@@ -130,7 +131,7 @@ pub async fn update_project(
     root_path: Option<String>,
     description: Option<String>,
 ) -> Result<(), String> {
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::core::time::now_rfc3339();
     let now_mongo = now.clone();
     let now_sqlite = now.clone();
     let name_mongo = name.clone();

@@ -73,7 +73,7 @@ pub fn builtin_display_name(id: &str) -> Option<&'static str> {
 }
 
 fn code_maintainer_config() -> McpConfig {
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::core::time::now_rfc3339();
     McpConfig {
         id: CODE_MAINTAINER_MCP_ID.to_string(),
         name: CODE_MAINTAINER_SERVER_NAME.to_string(),
@@ -90,7 +90,7 @@ fn code_maintainer_config() -> McpConfig {
 }
 
 fn terminal_controller_config() -> McpConfig {
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::core::time::now_rfc3339();
     McpConfig {
         id: TERMINAL_CONTROLLER_MCP_ID.to_string(),
         name: TERMINAL_CONTROLLER_SERVER_NAME.to_string(),
@@ -107,7 +107,7 @@ fn terminal_controller_config() -> McpConfig {
 }
 
 fn sub_agent_router_config() -> McpConfig {
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::core::time::now_rfc3339();
     McpConfig {
         id: SUB_AGENT_ROUTER_MCP_ID.to_string(),
         name: SUB_AGENT_ROUTER_SERVER_NAME.to_string(),

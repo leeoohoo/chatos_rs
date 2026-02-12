@@ -32,7 +32,7 @@ pub fn build_v2_callbacks(sender: &SseSender, session_id: &str) -> StreamCallbac
         }
         chunk_flag.store(true, Ordering::Relaxed);
         sender_chunk.send_json(
-            &json!({ "type": Events::CHUNK, "timestamp": chrono::Utc::now().to_rfc3339(), "content": chunk }),
+            &json!({ "type": Events::CHUNK, "timestamp": crate::core::time::now_rfc3339(), "content": chunk }),
         );
     };
 
@@ -43,7 +43,7 @@ pub fn build_v2_callbacks(sender: &SseSender, session_id: &str) -> StreamCallbac
             return;
         }
         sender_thinking.send_json(
-            &json!({ "type": Events::THINKING, "timestamp": chrono::Utc::now().to_rfc3339(), "content": chunk }),
+            &json!({ "type": Events::THINKING, "timestamp": crate::core::time::now_rfc3339(), "content": chunk }),
         );
     };
 
@@ -53,7 +53,7 @@ pub fn build_v2_callbacks(sender: &SseSender, session_id: &str) -> StreamCallbac
         if abort_registry::is_aborted(&sid_tools_start) {
             return;
         }
-        sender_tools_start.send_json(&json!({ "type": Events::TOOLS_START, "timestamp": chrono::Utc::now().to_rfc3339(), "data": { "tool_calls": tool_calls } }));
+        sender_tools_start.send_json(&json!({ "type": Events::TOOLS_START, "timestamp": crate::core::time::now_rfc3339(), "data": { "tool_calls": tool_calls } }));
     };
 
     let sender_tools_stream = sender.clone();
@@ -63,7 +63,7 @@ pub fn build_v2_callbacks(sender: &SseSender, session_id: &str) -> StreamCallbac
             return;
         }
         sender_tools_stream.send_json(
-            &json!({ "type": Events::TOOLS_STREAM, "timestamp": chrono::Utc::now().to_rfc3339(), "data": result }),
+            &json!({ "type": Events::TOOLS_STREAM, "timestamp": crate::core::time::now_rfc3339(), "data": result }),
         );
     };
 
@@ -74,7 +74,7 @@ pub fn build_v2_callbacks(sender: &SseSender, session_id: &str) -> StreamCallbac
             return;
         }
         sender_tools_end.send_json(
-            &json!({ "type": Events::TOOLS_END, "timestamp": chrono::Utc::now().to_rfc3339(), "data": result }),
+            &json!({ "type": Events::TOOLS_END, "timestamp": crate::core::time::now_rfc3339(), "data": result }),
         );
     };
 
@@ -84,7 +84,7 @@ pub fn build_v2_callbacks(sender: &SseSender, session_id: &str) -> StreamCallbac
         if abort_registry::is_aborted(&sid_sum_start) {
             return;
         }
-        sender_sum_start.send_json(&json!({ "type": Events::CONTEXT_SUMMARIZED_START, "timestamp": chrono::Utc::now().to_rfc3339(), "data": info }));
+        sender_sum_start.send_json(&json!({ "type": Events::CONTEXT_SUMMARIZED_START, "timestamp": crate::core::time::now_rfc3339(), "data": info }));
     };
 
     let sender_sum_stream = sender.clone();
@@ -93,7 +93,7 @@ pub fn build_v2_callbacks(sender: &SseSender, session_id: &str) -> StreamCallbac
         if abort_registry::is_aborted(&sid_sum_stream) {
             return;
         }
-        sender_sum_stream.send_json(&json!({ "type": Events::CONTEXT_SUMMARIZED_STREAM, "timestamp": chrono::Utc::now().to_rfc3339(), "data": chunk }));
+        sender_sum_stream.send_json(&json!({ "type": Events::CONTEXT_SUMMARIZED_STREAM, "timestamp": crate::core::time::now_rfc3339(), "data": chunk }));
     };
 
     let sender_sum_end = sender.clone();
@@ -103,7 +103,7 @@ pub fn build_v2_callbacks(sender: &SseSender, session_id: &str) -> StreamCallbac
             return;
         }
         sender_sum_end.send_json(
-            &json!({ "type": Events::CONTEXT_SUMMARIZED_END, "timestamp": chrono::Utc::now().to_rfc3339(), "data": info }),
+            &json!({ "type": Events::CONTEXT_SUMMARIZED_END, "timestamp": crate::core::time::now_rfc3339(), "data": info }),
         );
     };
 
@@ -141,7 +141,7 @@ pub fn build_v3_callbacks(
         }
         chunk_flag.store(true, Ordering::Relaxed);
         sender_chunk.send_json(
-            &json!({ "type": Events::CHUNK, "timestamp": chrono::Utc::now().to_rfc3339(), "content": chunk }),
+            &json!({ "type": Events::CHUNK, "timestamp": crate::core::time::now_rfc3339(), "content": chunk }),
         );
     };
 
@@ -152,7 +152,7 @@ pub fn build_v3_callbacks(
             return;
         }
         sender_thinking.send_json(
-            &json!({ "type": Events::THINKING, "timestamp": chrono::Utc::now().to_rfc3339(), "content": chunk }),
+            &json!({ "type": Events::THINKING, "timestamp": crate::core::time::now_rfc3339(), "content": chunk }),
         );
     };
 
@@ -163,7 +163,7 @@ pub fn build_v3_callbacks(
             if abort_registry::is_aborted(&sid_tools_start) {
                 return;
             }
-            sender_tools_start.send_json(&json!({ "type": Events::TOOLS_START, "timestamp": chrono::Utc::now().to_rfc3339(), "data": { "tool_calls": tool_calls } }));
+            sender_tools_start.send_json(&json!({ "type": Events::TOOLS_START, "timestamp": crate::core::time::now_rfc3339(), "data": { "tool_calls": tool_calls } }));
         }) as Arc<dyn Fn(Value) + Send + Sync>)
     } else {
         None
@@ -177,7 +177,7 @@ pub fn build_v3_callbacks(
                 return;
             }
             sender_tools_stream.send_json(
-                &json!({ "type": Events::TOOLS_STREAM, "timestamp": chrono::Utc::now().to_rfc3339(), "data": result }),
+                &json!({ "type": Events::TOOLS_STREAM, "timestamp": crate::core::time::now_rfc3339(), "data": result }),
             );
         }) as Arc<dyn Fn(Value) + Send + Sync>)
     } else {
@@ -192,7 +192,7 @@ pub fn build_v3_callbacks(
                 return;
             }
             sender_tools_end.send_json(
-                &json!({ "type": Events::TOOLS_END, "timestamp": chrono::Utc::now().to_rfc3339(), "data": result }),
+                &json!({ "type": Events::TOOLS_END, "timestamp": crate::core::time::now_rfc3339(), "data": result }),
             );
         }) as Arc<dyn Fn(Value) + Send + Sync>)
     } else {
@@ -225,7 +225,7 @@ pub fn send_fallback_chunk_if_needed(
     if let Some(text) = result.get("content").and_then(|v| v.as_str()) {
         if !text.is_empty() {
             sender.send_json(
-                &json!({ "type": Events::CHUNK, "timestamp": chrono::Utc::now().to_rfc3339(), "content": text }),
+                &json!({ "type": Events::CHUNK, "timestamp": crate::core::time::now_rfc3339(), "content": text }),
             );
         }
     }

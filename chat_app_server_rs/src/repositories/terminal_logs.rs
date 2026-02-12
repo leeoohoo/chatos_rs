@@ -1,6 +1,6 @@
 use mongodb::bson::{doc, Bson, Document};
 
-use crate::core::mongo_cursor::{collect_and_map, sort_by_str_key_desc};
+use crate::core::mongo_cursor::{collect_and_map, collect_map_sorted_desc};
 use crate::core::sql_query::append_limit_offset_clause;
 use crate::models::terminal_log::{TerminalLog, TerminalLogRow};
 use crate::repositories::db::{doc_from_pairs, to_doc, with_db};
@@ -105,8 +105,9 @@ pub async fn list_terminal_logs_recent(
                     .find(doc! { "terminal_id": terminal_id }, options)
                     .await
                     .map_err(|e| e.to_string())?;
-                let mut out = collect_and_map(cursor, normalize_doc).await?;
-                sort_by_str_key_desc(&mut out, |item| item.created_at.as_str());
+                let mut out: Vec<TerminalLog> =
+                    collect_map_sorted_desc(cursor, normalize_doc, |item| item.created_at.as_str())
+                        .await?;
                 out.reverse();
                 Ok(out)
             })

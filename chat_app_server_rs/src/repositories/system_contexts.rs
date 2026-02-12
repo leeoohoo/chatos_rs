@@ -1,6 +1,6 @@
 use mongodb::bson::{doc, Bson, Document};
 
-use crate::core::mongo_cursor::{collect_and_map, collect_string_field, sort_by_str_key_desc};
+use crate::core::mongo_cursor::{collect_map_sorted_desc, collect_string_field};
 use crate::core::sql_rows::collect_string_column;
 use crate::models::system_context::{SystemContext, SystemContextRow};
 use crate::repositories::db::{doc_from_pairs, to_doc, with_db};
@@ -27,8 +27,9 @@ pub async fn list_system_contexts(user_id: &str) -> Result<Vec<SystemContext>, S
                     .find(doc! { "user_id": user_id }, None)
                     .await
                     .map_err(|e| e.to_string())?;
-                let mut items: Vec<SystemContext> = collect_and_map(cursor, normalize_doc).await?;
-                sort_by_str_key_desc(&mut items, |item| item.created_at.as_str());
+                let items: Vec<SystemContext> =
+                    collect_map_sorted_desc(cursor, normalize_doc, |item| item.created_at.as_str())
+                        .await?;
                 Ok(items)
             })
         },
@@ -110,7 +111,7 @@ pub async fn get_system_context_by_id(id: &str) -> Result<Option<SystemContext>,
 }
 
 pub async fn create_system_context(ctx: &SystemContext) -> Result<(), String> {
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::core::time::now_rfc3339();
     let now_mongo = now.clone();
     let now_sqlite = now.clone();
     let ctx_mongo = ctx.clone();
@@ -120,7 +121,7 @@ pub async fn create_system_context(ctx: &SystemContext) -> Result<(), String> {
             let doc = to_doc(doc_from_pairs(vec![
                 ("id", Bson::String(ctx_mongo.id.clone())),
                 ("name", Bson::String(ctx_mongo.name.clone())),
-                ("content", ctx_mongo.content.clone().map(Bson::String).unwrap_or(Bson::Null)),
+                ("content", crate::core::values::optional_string_bson(ctx_mongo.content.clone())),
                 ("user_id", Bson::String(ctx_mongo.user_id.clone())),
                 ("is_active", Bson::Boolean(ctx_mongo.is_active)),
                 ("created_at", Bson::String(now_mongo.clone())),
@@ -138,7 +139,7 @@ pub async fn create_system_context(ctx: &SystemContext) -> Result<(), String> {
                     .bind(&ctx_sqlite.name)
                     .bind(&ctx_sqlite.content)
                     .bind(&ctx_sqlite.user_id)
-                    .bind(if ctx_sqlite.is_active {1} else {0})
+                    .bind(crate::core::values::bool_to_sqlite_int(ctx_sqlite.is_active))
                     .bind(&now_sqlite)
                     .bind(&now_sqlite)
                     .execute(pool)
@@ -151,7 +152,7 @@ pub async fn create_system_context(ctx: &SystemContext) -> Result<(), String> {
 }
 
 pub async fn update_system_context(id: &str, updates: &SystemContext) -> Result<(), String> {
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::core::time::now_rfc3339();
     let now_mongo = now.clone();
     let now_sqlite = now.clone();
     let updates_mongo = updates.clone();
@@ -162,7 +163,7 @@ pub async fn update_system_context(id: &str, updates: &SystemContext) -> Result<
             Box::pin(async move {
                 let mut set_doc = Document::new();
                 set_doc.insert("name", updates_mongo.name.clone());
-                set_doc.insert("content", updates_mongo.content.clone().map(Bson::String).unwrap_or(Bson::Null));
+                set_doc.insert("content", crate::core::values::optional_string_bson(updates_mongo.content.clone()));
                 set_doc.insert("is_active", Bson::Boolean(updates_mongo.is_active));
                 set_doc.insert("updated_at", now_mongo.clone());
                 db.collection::<Document>("system_contexts").update_one(doc! { "id": id }, doc! { "$set": set_doc }, None).await.map_err(|e| e.to_string())?;
@@ -175,7 +176,7 @@ pub async fn update_system_context(id: &str, updates: &SystemContext) -> Result<
                 sqlx::query("UPDATE system_contexts SET name = ?, content = ?, is_active = ?, updated_at = ? WHERE id = ?")
                     .bind(&updates_sqlite.name)
                     .bind(&updates_sqlite.content)
-                    .bind(if updates_sqlite.is_active {1} else {0})
+                    .bind(crate::core::values::bool_to_sqlite_int(updates_sqlite.is_active))
                     .bind(&now_sqlite)
                     .bind(&id)
                     .execute(pool)
@@ -219,7 +220,7 @@ pub async fn delete_system_context(id: &str) -> Result<(), String> {
 }
 
 pub async fn activate_system_context(context_id: &str, user_id: &str) -> Result<(), String> {
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::core::time::now_rfc3339();
     let now_mongo = now.clone();
     let now_sqlite = now.clone();
     with_db(
@@ -308,7 +309,7 @@ pub async fn set_app_ids_for_system_context(
             Box::pin(async move {
                 db.collection::<Document>("system_context_applications").delete_many(doc! { "system_context_id": &context_id }, None).await.map_err(|e| e.to_string())?;
                 if !app_ids.is_empty() {
-                    let now = chrono::Utc::now().to_rfc3339();
+                    let now = crate::core::time::now_rfc3339();
                     let docs: Vec<Document> = app_ids.iter().map(|aid| doc! { "id": format!("{}_{}", context_id, aid), "system_context_id": &context_id, "application_id": aid, "created_at": &now }).collect();
                     db.collection::<Document>("system_context_applications").insert_many(docs, None).await.map_err(|e| e.to_string())?;
                 }
@@ -324,7 +325,7 @@ pub async fn set_app_ids_for_system_context(
                     .execute(pool)
                     .await
                     .map_err(|e| e.to_string())?;
-                let now = chrono::Utc::now().to_rfc3339();
+                let now = crate::core::time::now_rfc3339();
                 for aid in app_ids {
                     sqlx::query("INSERT INTO system_context_applications (id, system_context_id, application_id, created_at) VALUES (?, ?, ?, ?)")
                         .bind(format!("{}_{}", context_id, aid))

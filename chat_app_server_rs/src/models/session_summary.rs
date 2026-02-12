@@ -75,7 +75,7 @@ impl SessionSummaryRow {
 
 impl SessionSummary {
     pub fn new(session_id: String, summary_text: String) -> SessionSummary {
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = crate::core::time::now_rfc3339();
         SessionSummary {
             id: Uuid::new_v4().to_string(),
             session_id,

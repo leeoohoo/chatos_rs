@@ -3,7 +3,7 @@ use serde_json::Value;
 use sqlx::Row;
 
 use crate::core::mongo_cursor::{
-    apply_offset_limit, collect_and_map, sort_by_str_key_asc, sort_by_str_key_desc,
+    apply_offset_limit, collect_map_sorted_asc, collect_map_sorted_desc,
 };
 use crate::core::sql_query::append_limit_offset_clause;
 use crate::models::message::{Message, MessageRow};
@@ -60,11 +60,11 @@ pub async fn create_message(data: &Message) -> Result<Message, String> {
                 ("session_id", Bson::String(data_mongo.session_id.clone())),
                 ("role", Bson::String(data_mongo.role.clone())),
                 ("content", Bson::String(data_mongo.content.clone())),
-                ("summary", data_mongo.summary.clone().map(Bson::String).unwrap_or(Bson::Null)),
-                ("tool_calls", tool_calls_mongo.clone().map(Bson::String).unwrap_or(Bson::Null)),
-                ("tool_call_id", data_mongo.tool_call_id.clone().map(Bson::String).unwrap_or(Bson::Null)),
-                ("reasoning", data_mongo.reasoning.clone().map(Bson::String).unwrap_or(Bson::Null)),
-                ("metadata", metadata_mongo.clone().map(Bson::String).unwrap_or(Bson::Null)),
+                ("summary", crate::core::values::optional_string_bson(data_mongo.summary.clone())),
+                ("tool_calls", crate::core::values::optional_string_bson(tool_calls_mongo.clone())),
+                ("tool_call_id", crate::core::values::optional_string_bson(data_mongo.tool_call_id.clone())),
+                ("reasoning", crate::core::values::optional_string_bson(data_mongo.reasoning.clone())),
+                ("metadata", crate::core::values::optional_string_bson(metadata_mongo.clone())),
                 ("created_at", Bson::String(now_mongo.clone())),
             ]));
             Box::pin(async move {
@@ -146,8 +146,8 @@ pub async fn get_messages_by_session(
                     .await
                     .map_err(|e| e.to_string())?;
                 let mut messages: Vec<Message> =
-                    collect_and_map(cursor, normalize_from_doc).await?;
-                sort_by_str_key_asc(&mut messages, |m| m.created_at.as_str());
+                    collect_map_sorted_asc(cursor, normalize_from_doc, |m| m.created_at.as_str())
+                        .await?;
                 if let Some(l) = limit {
                     messages = apply_offset_limit(messages, offset, Some(l));
                 }
@@ -190,8 +190,9 @@ pub async fn get_recent_messages_by_session(
                     .find(doc! { "session_id": session_id }, None)
                     .await
                     .map_err(|e| e.to_string())?;
-                let mut messages: Vec<Message> = collect_and_map(cursor, normalize_from_doc).await?;
-                sort_by_str_key_desc(&mut messages, |m| m.created_at.as_str());
+                let messages: Vec<Message> =
+                    collect_map_sorted_desc(cursor, normalize_from_doc, |m| m.created_at.as_str())
+                        .await?;
                 let mut out = apply_offset_limit(messages, offset, Some(limit));
                 out.reverse();
                 Ok(out)
@@ -235,8 +236,9 @@ pub async fn get_messages_by_session_after(
                     .find(doc! { "session_id": session_id, "created_at": { "$gt": after_created_at } }, options)
                     .await
                     .map_err(|e| e.to_string())?;
-                let mut messages: Vec<Message> = collect_and_map(cursor, normalize_from_doc).await?;
-                sort_by_str_key_asc(&mut messages, |m| m.created_at.as_str());
+                let messages: Vec<Message> =
+                    collect_map_sorted_asc(cursor, normalize_from_doc, |m| m.created_at.as_str())
+                        .await?;
                 Ok(messages)
             })
         },

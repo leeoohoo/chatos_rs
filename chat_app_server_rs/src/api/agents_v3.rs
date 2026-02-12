@@ -65,7 +65,7 @@ async fn stream_agent_v3(sender: SseSender, req: AgentChatRequest) {
     let agent_id = req.agent_id.clone().unwrap_or_default();
     let cfg = Config::get();
 
-    sender.send_json(&json!({ "type": Events::START, "timestamp": chrono::Utc::now().to_rfc3339(), "session_id": session_id }));
+    sender.send_json(&json!({ "type": Events::START, "timestamp": crate::core::time::now_rfc3339(), "session_id": session_id }));
     if !session_id.is_empty() && !content.is_empty() {
         let sid = session_id.clone();
         let text = content.clone();
@@ -77,7 +77,7 @@ async fn stream_agent_v3(sender: SseSender, req: AgentChatRequest) {
     let agent = match agents_repo::get_agent_by_id(&agent_id).await {
         Ok(Some(a)) if a.enabled => a,
         _ => {
-            sender.send_json(&json!({ "type": Events::ERROR, "timestamp": chrono::Utc::now().to_rfc3339(), "data": { "error": "Agent 不存在或已禁用" } }));
+            sender.send_json(&json!({ "type": Events::ERROR, "timestamp": crate::core::time::now_rfc3339(), "data": { "error": "Agent 不存在或已禁用" } }));
             return;
         }
     };
@@ -85,13 +85,13 @@ async fn stream_agent_v3(sender: SseSender, req: AgentChatRequest) {
     let model_cfg = match ai_repo::get_ai_model_config_by_id(&agent.ai_model_config_id).await {
         Ok(Some(m)) if m.enabled => m,
         _ => {
-            sender.send_json(&json!({ "type": Events::ERROR, "timestamp": chrono::Utc::now().to_rfc3339(), "data": { "error": "模型配置不可用或未启用" } }));
+            sender.send_json(&json!({ "type": Events::ERROR, "timestamp": crate::core::time::now_rfc3339(), "data": { "error": "模型配置不可用或未启用" } }));
             return;
         }
     };
 
     if model_cfg.supports_responses != true {
-        sender.send_json(&json!({ "type": Events::ERROR, "timestamp": chrono::Utc::now().to_rfc3339(), "data": { "error": "当前模型未启用 Responses API" } }));
+        sender.send_json(&json!({ "type": Events::ERROR, "timestamp": crate::core::time::now_rfc3339(), "data": { "error": "当前模型未启用 Responses API" } }));
         return;
     }
 
@@ -216,18 +216,18 @@ async fn stream_agent_v3(sender: SseSender, req: AgentChatRequest) {
         Ok(res) => {
             if !abort_registry::is_aborted(&session_id) {
                 send_fallback_chunk_if_needed(&sender, &chunk_sent, &res);
-                sender.send_json(&json!({ "type": Events::COMPLETE, "timestamp": chrono::Utc::now().to_rfc3339(), "result": res }));
+                sender.send_json(&json!({ "type": Events::COMPLETE, "timestamp": crate::core::time::now_rfc3339(), "result": res }));
                 should_send_done = true;
             } else {
-                sender.send_json(&json!({ "type": Events::CANCELLED, "timestamp": chrono::Utc::now().to_rfc3339() }));
+                sender.send_json(&json!({ "type": Events::CANCELLED, "timestamp": crate::core::time::now_rfc3339() }));
             }
         }
         Err(err) => {
             if abort_registry::is_aborted(&session_id) {
-                sender.send_json(&json!({ "type": Events::CANCELLED, "timestamp": chrono::Utc::now().to_rfc3339() }));
+                sender.send_json(&json!({ "type": Events::CANCELLED, "timestamp": crate::core::time::now_rfc3339() }));
             } else {
                 log_chat_error(&err);
-                sender.send_json(&json!({ "type": Events::ERROR, "timestamp": chrono::Utc::now().to_rfc3339(), "data": { "error": err } }));
+                sender.send_json(&json!({ "type": Events::ERROR, "timestamp": crate::core::time::now_rfc3339(), "data": { "error": err } }));
             }
         }
     }

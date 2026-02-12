@@ -253,8 +253,8 @@ async fn create_mcp_config(Json(req): Json<McpConfigRequest>) -> (StatusCode, Js
         cwd: req.cwd,
         user_id: req.user_id,
         enabled: req.enabled.unwrap_or(true),
-        created_at: chrono::Utc::now().to_rfc3339(),
-        updated_at: chrono::Utc::now().to_rfc3339(),
+        created_at: crate::core::time::now_rfc3339(),
+        updated_at: crate::core::time::now_rfc3339(),
     };
     if let Err(err) = mcp_repo::create_mcp_config(&cfg).await {
         return (
@@ -867,8 +867,8 @@ async fn create_ai_model_config(
         supports_images: req.supports_images.unwrap_or(false),
         supports_reasoning: req.supports_reasoning.unwrap_or(false),
         supports_responses: req.supports_responses.unwrap_or(false),
-        created_at: chrono::Utc::now().to_rfc3339(),
-        updated_at: chrono::Utc::now().to_rfc3339(),
+        created_at: crate::core::time::now_rfc3339(),
+        updated_at: crate::core::time::now_rfc3339(),
     };
     if let Err(err) = ai_repo::create_ai_model_config(&cfg).await {
         return (
@@ -1104,8 +1104,8 @@ async fn create_system_context(Json(req): Json<SystemContextRequest>) -> (Status
         content: req.content,
         user_id,
         is_active: req.is_active.unwrap_or(false),
-        created_at: chrono::Utc::now().to_rfc3339(),
-        updated_at: chrono::Utc::now().to_rfc3339(),
+        created_at: crate::core::time::now_rfc3339(),
+        updated_at: crate::core::time::now_rfc3339(),
     };
     if let Err(err) = ctx_repo::create_system_context(&ctx).await {
         return (

@@ -84,8 +84,8 @@ async fn create_app(Json(req): Json<CreateAppRequest>) -> (StatusCode, Json<serd
         description,
         user_id,
         enabled: enabled.unwrap_or(true),
-        created_at: chrono::Utc::now().to_rfc3339(),
-        updated_at: chrono::Utc::now().to_rfc3339(),
+        created_at: crate::core::time::now_rfc3339(),
+        updated_at: crate::core::time::now_rfc3339(),
     };
     if let Err(err) = repo::create_application(&app).await {
         return (
@@ -140,7 +140,7 @@ async fn update_app(
                 update_requested = true;
             }
             if update_requested {
-                existing.updated_at = chrono::Utc::now().to_rfc3339();
+                existing.updated_at = crate::core::time::now_rfc3339();
                 if let Err(err) = repo::update_application(&application_id, &existing).await {
                     return (
                         StatusCode::INTERNAL_SERVER_ERROR,

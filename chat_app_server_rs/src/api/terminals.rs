@@ -288,7 +288,7 @@ async fn handle_terminal_socket(id: String, mut socket: WebSocket) {
                     Ok(WsInput::Ping) => {
                         let _ = out_tx.send(Message::Text(
                             serde_json::to_string(&WsOutput::Pong {
-                                timestamp: chrono::Utc::now().to_rfc3339(),
+                                timestamp: crate::core::time::now_rfc3339(),
                             })
                             .unwrap_or_default(),
                         ));

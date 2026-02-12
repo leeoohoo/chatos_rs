@@ -62,7 +62,7 @@ pub async fn set_user_settings(user_id: &str, settings: &Value) -> Result<(), St
             let user_id = user_id.to_string();
             let settings = settings.clone();
             Box::pin(async move {
-                let now = chrono::Utc::now().to_rfc3339();
+                let now = crate::core::time::now_rfc3339();
                 db.collection::<Document>("user_settings")
                     .update_one(doc! { "user_id": &user_id }, doc! { "$set": { "user_id": &user_id, "settings": json_to_bson(settings), "updated_at": &now } }, mongodb::options::UpdateOptions::builder().upsert(true).build())
                     .await

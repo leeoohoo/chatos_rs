@@ -1,6 +1,6 @@
 use mongodb::bson::{doc, Bson, Document};
 
-use crate::core::mongo_cursor::{collect_and_map, sort_by_str_key_desc};
+use crate::core::mongo_cursor::collect_map_sorted_desc;
 use crate::core::mongo_query::filter_optional_user_id;
 use crate::core::sql_query::build_select_all_with_optional_user_id;
 use crate::models::ai_model_config::{AiModelConfig, AiModelConfigRow};
@@ -39,8 +39,9 @@ pub async fn list_ai_model_configs(user_id: Option<String>) -> Result<Vec<AiMode
                     .find(filter, None)
                     .await
                     .map_err(|e| e.to_string())?;
-                let mut items: Vec<AiModelConfig> = collect_and_map(cursor, normalize_doc).await?;
-                sort_by_str_key_desc(&mut items, |item| item.created_at.as_str());
+                let items: Vec<AiModelConfig> =
+                    collect_map_sorted_desc(cursor, normalize_doc, |item| item.created_at.as_str())
+                        .await?;
                 Ok(items)
             })
         },
@@ -95,7 +96,7 @@ pub async fn get_ai_model_config_by_id(id: &str) -> Result<Option<AiModelConfig>
 }
 
 pub async fn create_ai_model_config(data: &AiModelConfig) -> Result<AiModelConfig, String> {
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::core::time::now_rfc3339();
     let now_mongo = now.clone();
     let now_sqlite = now.clone();
     let data_mongo = data.clone();
@@ -107,10 +108,10 @@ pub async fn create_ai_model_config(data: &AiModelConfig) -> Result<AiModelConfi
                 ("name", Bson::String(data_mongo.name.clone())),
                 ("provider", Bson::String(normalize_provider(&data_mongo.provider))),
                 ("model", Bson::String(data_mongo.model.clone())),
-                ("thinking_level", data_mongo.thinking_level.clone().map(Bson::String).unwrap_or(Bson::Null)),
-                ("api_key", data_mongo.api_key.clone().map(Bson::String).unwrap_or(Bson::Null)),
-                ("base_url", data_mongo.base_url.clone().map(Bson::String).unwrap_or(Bson::Null)),
-                ("user_id", data_mongo.user_id.clone().map(Bson::String).unwrap_or(Bson::Null)),
+                ("thinking_level", crate::core::values::optional_string_bson(data_mongo.thinking_level.clone())),
+                ("api_key", crate::core::values::optional_string_bson(data_mongo.api_key.clone())),
+                ("base_url", crate::core::values::optional_string_bson(data_mongo.base_url.clone())),
+                ("user_id", crate::core::values::optional_string_bson(data_mongo.user_id.clone())),
                 ("enabled", Bson::Boolean(data_mongo.enabled)),
                 ("supports_images", Bson::Boolean(data_mongo.supports_images)),
                 ("supports_reasoning", Bson::Boolean(data_mongo.supports_reasoning)),
@@ -134,10 +135,10 @@ pub async fn create_ai_model_config(data: &AiModelConfig) -> Result<AiModelConfi
                     .bind(&data_sqlite.api_key)
                     .bind(&data_sqlite.base_url)
                     .bind(&data_sqlite.user_id)
-                    .bind(if data_sqlite.enabled {1} else {0})
-                    .bind(if data_sqlite.supports_images {1} else {0})
-                    .bind(if data_sqlite.supports_reasoning {1} else {0})
-                    .bind(if data_sqlite.supports_responses {1} else {0})
+                    .bind(crate::core::values::bool_to_sqlite_int(data_sqlite.enabled))
+                    .bind(crate::core::values::bool_to_sqlite_int(data_sqlite.supports_images))
+                    .bind(crate::core::values::bool_to_sqlite_int(data_sqlite.supports_reasoning))
+                    .bind(crate::core::values::bool_to_sqlite_int(data_sqlite.supports_responses))
                     .bind(&now_sqlite)
                     .bind(&now_sqlite)
                     .execute(pool)
@@ -150,7 +151,7 @@ pub async fn create_ai_model_config(data: &AiModelConfig) -> Result<AiModelConfi
 }
 
 pub async fn update_ai_model_config(id: &str, updates: &AiModelConfig) -> Result<(), String> {
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::core::time::now_rfc3339();
     let now_mongo = now.clone();
     let now_sqlite = now.clone();
     let updates_mongo = updates.clone();
@@ -163,9 +164,9 @@ pub async fn update_ai_model_config(id: &str, updates: &AiModelConfig) -> Result
                 set_doc.insert("name", updates_mongo.name.clone());
                 set_doc.insert("provider", normalize_provider(&updates_mongo.provider));
                 set_doc.insert("model", updates_mongo.model.clone());
-                set_doc.insert("thinking_level", updates_mongo.thinking_level.clone().map(Bson::String).unwrap_or(Bson::Null));
-                set_doc.insert("api_key", updates_mongo.api_key.clone().map(Bson::String).unwrap_or(Bson::Null));
-                set_doc.insert("base_url", updates_mongo.base_url.clone().map(Bson::String).unwrap_or(Bson::Null));
+                set_doc.insert("thinking_level", crate::core::values::optional_string_bson(updates_mongo.thinking_level.clone()));
+                set_doc.insert("api_key", crate::core::values::optional_string_bson(updates_mongo.api_key.clone()));
+                set_doc.insert("base_url", crate::core::values::optional_string_bson(updates_mongo.base_url.clone()));
                 set_doc.insert("enabled", Bson::Boolean(updates_mongo.enabled));
                 set_doc.insert("supports_images", Bson::Boolean(updates_mongo.supports_images));
                 set_doc.insert("supports_reasoning", Bson::Boolean(updates_mongo.supports_reasoning));
@@ -185,10 +186,10 @@ pub async fn update_ai_model_config(id: &str, updates: &AiModelConfig) -> Result
                     .bind(&updates_sqlite.thinking_level)
                     .bind(&updates_sqlite.api_key)
                     .bind(&updates_sqlite.base_url)
-                    .bind(if updates_sqlite.enabled {1} else {0})
-                    .bind(if updates_sqlite.supports_images {1} else {0})
-                    .bind(if updates_sqlite.supports_reasoning {1} else {0})
-                    .bind(if updates_sqlite.supports_responses {1} else {0})
+                    .bind(crate::core::values::bool_to_sqlite_int(updates_sqlite.enabled))
+                    .bind(crate::core::values::bool_to_sqlite_int(updates_sqlite.supports_images))
+                    .bind(crate::core::values::bool_to_sqlite_int(updates_sqlite.supports_reasoning))
+                    .bind(crate::core::values::bool_to_sqlite_int(updates_sqlite.supports_responses))
                     .bind(&now_sqlite)
                     .bind(&id)
                     .execute(pool)

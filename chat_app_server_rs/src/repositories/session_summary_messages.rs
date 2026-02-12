@@ -38,7 +38,7 @@ pub async fn create_summary_message_links(
             let session_id = session_id.clone();
             let ids = ids.clone();
             Box::pin(async move {
-                let now = chrono::Utc::now().to_rfc3339();
+                let now = crate::core::time::now_rfc3339();
                 let count = ids.len();
                 let docs: Vec<Document> = ids.into_iter().map(|mid| {
                     to_doc(doc_from_pairs(vec![
@@ -61,7 +61,7 @@ pub async fn create_summary_message_links(
             let ids = ids.clone();
             Box::pin(async move {
                 let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
-                let now = chrono::Utc::now().to_rfc3339();
+                let now = crate::core::time::now_rfc3339();
                 for mid in ids.iter() {
                     let record = SessionSummaryMessage::new(summary_id.clone(), session_id.clone(), mid.clone());
                     sqlx::query("INSERT INTO session_summary_messages (id, summary_id, session_id, message_id, created_at) VALUES (?, ?, ?, ?, ?)")

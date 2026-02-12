@@ -41,7 +41,7 @@ impl TerminalLog {
             terminal_id,
             log_type,
             content,
-            created_at: chrono::Utc::now().to_rfc3339(),
+            created_at: crate::core::time::now_rfc3339(),
         }
     }
 }

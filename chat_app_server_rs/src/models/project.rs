@@ -47,7 +47,7 @@ impl Project {
         description: Option<String>,
         user_id: Option<String>,
     ) -> Project {
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = crate::core::time::now_rfc3339();
         Project {
             id: Uuid::new_v4().to_string(),
             name,

@@ -34,6 +34,34 @@ pub async fn collect_string_field(
     Ok(out)
 }
 
+pub async fn collect_map_sorted_desc<T, N, K>(
+    cursor: Cursor<Document>,
+    normalize: N,
+    key: K,
+) -> Result<Vec<T>, String>
+where
+    N: FnMut(&Document) -> Option<T>,
+    K: Fn(&T) -> &str,
+{
+    let mut items = collect_and_map(cursor, normalize).await?;
+    sort_by_str_key_desc(&mut items, key);
+    Ok(items)
+}
+
+pub async fn collect_map_sorted_asc<T, N, K>(
+    cursor: Cursor<Document>,
+    normalize: N,
+    key: K,
+) -> Result<Vec<T>, String>
+where
+    N: FnMut(&Document) -> Option<T>,
+    K: Fn(&T) -> &str,
+{
+    let mut items = collect_and_map(cursor, normalize).await?;
+    sort_by_str_key_asc(&mut items, key);
+    Ok(items)
+}
+
 pub fn sort_by_str_key_desc<T, F>(items: &mut [T], key: F)
 where
     F: Fn(&T) -> &str,
@@ -98,5 +126,24 @@ mod tests {
         let items = vec![1, 2, 3];
         let out = apply_offset_limit(items, 1, None);
         assert_eq!(out, vec![2, 3]);
+    }
+
+    #[test]
+    fn sorts_ascending_by_key() {
+        let mut items = vec![
+            Item {
+                created_at: "2024-01-03".to_string(),
+            },
+            Item {
+                created_at: "2024-01-01".to_string(),
+            },
+            Item {
+                created_at: "2024-01-02".to_string(),
+            },
+        ];
+
+        sort_by_str_key_asc(&mut items, |i| i.created_at.as_str());
+        let ordered: Vec<String> = items.into_iter().map(|i| i.created_at).collect();
+        assert_eq!(ordered, vec!["2024-01-01", "2024-01-02", "2024-01-03"]);
     }
 }
