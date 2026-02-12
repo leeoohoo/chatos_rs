@@ -10,7 +10,6 @@ pub struct ResolvedChatModelConfig {
     pub thinking_level: Option<String>,
     pub temperature: f64,
     pub supports_images: bool,
-    pub supports_reasoning: bool,
     pub effective_reasoning: bool,
     pub api_key: String,
     pub base_url: String,
@@ -108,7 +107,6 @@ pub fn resolve_chat_model_config(
         thinking_level,
         temperature,
         supports_images,
-        supports_reasoning,
         effective_reasoning,
         api_key,
         base_url,
@@ -137,7 +135,6 @@ mod tests {
         assert_eq!(resolved.provider, "gpt");
         assert_eq!(resolved.temperature, 0.7);
         assert!(!resolved.supports_images);
-        assert!(!resolved.supports_reasoning);
         assert!(!resolved.effective_reasoning);
         assert_eq!(resolved.api_key, "k");
         assert_eq!(resolved.base_url, "https://example.com");

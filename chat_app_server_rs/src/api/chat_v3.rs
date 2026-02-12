@@ -168,6 +168,7 @@ async fn stream_chat_v3(sender: SseSender, req: ChatRequest) {
         != Some(true)
     {
         send_error_event(&sender, "当前模型未启用 Responses API");
+        sender.send_done();
         return;
     }
 

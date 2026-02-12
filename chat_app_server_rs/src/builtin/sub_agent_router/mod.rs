@@ -59,8 +59,8 @@ use self::prompting::{
     build_env, build_system_prompt, resolve_allow_prefixes, resolve_skill_ids, select_skills,
 };
 use self::recommendation::{
-    build_agent_recommendation_candidates, filter_agents_by_category, pick_agent_with_fallback,
-    pick_agent_with_llm, pick_agent_with_llm_diagnostics, pick_first_available_agent,
+    build_agent_recommendation_candidates, pick_agent_with_fallback, pick_agent_with_llm,
+    pick_agent_with_llm_diagnostics, pick_first_available_agent,
 };
 use self::registry::AgentRegistry;
 use self::runner::run_command;
@@ -71,10 +71,10 @@ use self::utils::{generate_id, normalize_name, tokenize, unique_strings};
 const SUBAGENT_GUARDRAIL: &str = "Tooling guard: sub-agents cannot call mcp_subagent_router_* or other sub-agent routing tools. Complete the task directly with available project/shell/task tools.";
 const ROUTER_TRACE_LOG_FILE: &str = "sub_agent_router_nodes.jsonl";
 const ROUTER_TRACE_PAYLOAD_MAX_CHARS: usize = 20_000;
+const RECOMMENDER_MAX_CANDIDATES_FOR_LLM: usize = 36;
 const RECOMMENDER_MAX_SKILLS_PER_CANDIDATE: usize = 6;
 const RECOMMENDER_MAX_COMMANDS_PER_CANDIDATE: usize = 4;
 const RECOMMENDER_TEXT_MAX_CHARS: usize = 220;
-const RECOMMENDER_RETRY_RAW_RESPONSE_MAX_CHARS: usize = 6_000;
 
 #[derive(Clone)]
 struct JobExecutionContext {
@@ -284,15 +284,13 @@ impl SubAgentRouterService {
                 json!({
                     "type": "object",
                     "properties": {
-                        "task": { "type": "string" },
-                        "category": { "type": "string" }
+                        "task": { "type": "string" }
                     },
                     "additionalProperties": false,
-                    "required": ["task", "category"]
+                    "required": ["task"]
                 }),
                 Arc::new(move |args, _tool_ctx| {
                     let task = required_trimmed_string(&args, "task")?;
-                    let category = required_trimmed_string(&args, "category")?;
                     let caller_model = optional_trimmed_string(&args, "caller_model");
                     trace_router_node(
                         "suggest_sub_agent",
@@ -302,7 +300,6 @@ impl SubAgentRouterService {
                         Some(_tool_ctx.run_id),
                         Some(json!({
                             "task": truncate_for_event(task.as_str(), 2_000),
-                            "category": category.clone(),
                             "caller_model": caller_model.clone(),
                         })),
                     );
@@ -312,16 +309,14 @@ impl SubAgentRouterService {
                         .lock()
                         .map_err(|_| "catalog lock poisoned".to_string())?;
                     let _ = guard.reload();
-                    let all_agents = guard.list_agents();
-                    let agents = filter_agents_by_category(&all_agents, category.as_str());
+                    let agents = guard.list_agents();
                     let candidates = build_agent_recommendation_candidates(&agents, &guard);
                     drop(guard);
 
                     let diagnostics = json!({
-                        "agents_total": all_agents.len(),
-                        "agents_filtered": agents.len(),
+                        "agents_total": agents.len(),
+                        "agents_considered": agents.len(),
                         "candidates_total": candidates.len(),
-                        "category": category.clone(),
                     });
                     trace_router_node(
                         "suggest_sub_agent",
@@ -340,10 +335,7 @@ impl SubAgentRouterService {
                             Some(_tool_ctx.session_id),
                             Some(_tool_ctx.run_id),
                             Some(json!({
-                                "reason": format!(
-                                    "No sub-agents matched category {}.",
-                                    category
-                                ),
+                                "reason": "No sub-agents available in catalog.",
                             })),
                         );
                         return Ok(text_result(with_chatos(
@@ -351,10 +343,7 @@ impl SubAgentRouterService {
                             "suggest_sub_agent",
                             json!({
                                 "agent_id": Value::Null,
-                                "reason": format!(
-                                    "No sub-agents matched category {}.",
-                                    category
-                                ),
+                                "reason": "No sub-agents available in catalog.",
                                 "skills": [],
                                 "diagnostics": diagnostics,
                             }),
@@ -367,7 +356,7 @@ impl SubAgentRouterService {
                         &agents,
                         &candidates,
                         task.as_str(),
-                        Some(category.clone()),
+                        None,
                         None,
                         None,
                         None,
@@ -403,9 +392,6 @@ impl SubAgentRouterService {
                                 "agent_id": Value::Null,
                                 "reason": "LLM did not return a valid recommendation.",
                                 "skills": [],
-                                "filters": {
-                                    "category": category.clone(),
-                                },
                                 "diagnostics": {
                                     "catalog": diagnostics,
                                     "llm": llm_reason,
@@ -414,7 +400,15 @@ impl SubAgentRouterService {
                             "ok",
                         )));
                     };
-                    let selector = "llm";
+                    let selector = if llm_reason == "matched" {
+                        "llm"
+                    } else if llm_reason.starts_with("heuristic_") {
+                        "heuristic"
+                    } else if llm_reason.starts_with("default_") {
+                        "default"
+                    } else {
+                        "llm"
+                    };
 
                     let used_skills = resolve_skill_ids(&picked.used_skills, &picked.agent);
                     trace_router_node(

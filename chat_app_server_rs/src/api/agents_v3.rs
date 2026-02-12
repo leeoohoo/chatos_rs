@@ -74,14 +74,17 @@ async fn stream_agent_v3(sender: SseSender, req: AgentChatRequest) {
         Ok(value) => value,
         Err(AgentModelLoadError::AgentUnavailable) => {
             send_error_event(&sender, "Agent 不存在或已禁用");
+            sender.send_done();
             return;
         }
         Err(AgentModelLoadError::ModelUnavailable) => {
             send_error_event(&sender, "模型配置不可用或未启用");
+            sender.send_done();
             return;
         }
         Err(AgentModelLoadError::Repository(err)) => {
             send_error_event(&sender, &err);
+            sender.send_done();
             return;
         }
     };
@@ -94,6 +97,7 @@ async fn stream_agent_v3(sender: SseSender, req: AgentChatRequest) {
 
     if model_cfg.supports_responses != true {
         send_error_event(&sender, "当前模型未启用 Responses API");
+        sender.send_done();
         return;
     }
 
