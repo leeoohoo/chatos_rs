@@ -80,15 +80,9 @@ pub(super) fn run_ai_task(
                 "sub_agent_router",
             );
 
-            let response = timeout(Duration::from_millis(timeout_ms as u64), req)
-                .await
-                .map_err(|_| format!("AI timeout after {} ms", timeout_ms))??;
+            let response = crate::core::ai_response::run_with_timeout(timeout_ms, req).await?;
 
-            let content = if response.content.trim().is_empty() {
-                "(empty)".to_string()
-            } else {
-                response.content.trim().to_string()
-            };
+            let content = crate::core::ai_response::normalize_non_empty_content(&response.content);
 
             (content, response.reasoning, response.finish_reason)
         } else {
@@ -128,15 +122,9 @@ pub(super) fn run_ai_task(
                 "sub_agent_router",
             );
 
-            let response = timeout(Duration::from_millis(timeout_ms as u64), req)
-                .await
-                .map_err(|_| format!("AI timeout after {} ms", timeout_ms))??;
+            let response = crate::core::ai_response::run_with_timeout(timeout_ms, req).await?;
 
-            let content = if response.content.trim().is_empty() {
-                "(empty)".to_string()
-            } else {
-                response.content.trim().to_string()
-            };
+            let content = crate::core::ai_response::normalize_non_empty_content(&response.content);
 
             (content, response.reasoning, response.finish_reason)
         };
@@ -230,66 +218,65 @@ pub(super) fn filter_tools_by_prefixes(
     mcp_execute: &mut McpToolExecute,
     allow_prefixes: &[String],
 ) -> (usize, usize) {
-    let before = mcp_execute.tools.len();
-
-    let prefixes = unique_strings(
-        allow_prefixes
-            .iter()
-            .map(|value| value.trim().to_lowercase())
-            .filter(|value| !value.is_empty()),
-    );
-
-    if prefixes.is_empty() {
-        mcp_execute.tools.clear();
-        mcp_execute.tool_metadata.clear();
-        return (before, 0);
-    }
-
-    let mut kept_tool_names = HashSet::new();
-    mcp_execute.tools.retain(|tool| {
-        let Some(name) = extract_tool_name_from_schema(tool) else {
-            return false;
-        };
-
-        let keep = prefixes
-            .iter()
-            .any(|prefix| tool_matches_allowed_prefix(name, prefix.as_str()));
-
-        if keep {
-            kept_tool_names.insert(name.to_string());
-        }
-
-        keep
-    });
-
-    mcp_execute
-        .tool_metadata
-        .retain(|name, _| kept_tool_names.contains(name));
-
-    (before, kept_tool_names.len())
+    filter_tools_by_prefixes_impl(mcp_execute, allow_prefixes)
 }
 
 pub(super) fn filter_legacy_tools_by_prefixes(
     mcp_execute: &mut LegacyMcpToolExecute,
     allow_prefixes: &[String],
 ) -> (usize, usize) {
-    let before = mcp_execute.tools.len();
+    filter_tools_by_prefixes_impl(mcp_execute, allow_prefixes)
+}
 
-    let prefixes = unique_strings(
+trait ToolFilterTarget {
+    fn tools_mut(&mut self) -> &mut Vec<Value>;
+    fn retain_tool_metadata_by_names(&mut self, names: &HashSet<String>);
+}
+
+impl ToolFilterTarget for McpToolExecute {
+    fn tools_mut(&mut self) -> &mut Vec<Value> {
+        &mut self.tools
+    }
+
+    fn retain_tool_metadata_by_names(&mut self, names: &HashSet<String>) {
+        self.tool_metadata.retain(|name, _| names.contains(name));
+    }
+}
+
+impl ToolFilterTarget for LegacyMcpToolExecute {
+    fn tools_mut(&mut self) -> &mut Vec<Value> {
+        &mut self.tools
+    }
+
+    fn retain_tool_metadata_by_names(&mut self, names: &HashSet<String>) {
+        self.tool_metadata.retain(|name, _| names.contains(name));
+    }
+}
+
+fn normalize_allow_prefixes(allow_prefixes: &[String]) -> Vec<String> {
+    unique_strings(
         allow_prefixes
             .iter()
             .map(|value| value.trim().to_lowercase())
             .filter(|value| !value.is_empty()),
-    );
+    )
+}
+
+fn filter_tools_by_prefixes_impl<T>(target: &mut T, allow_prefixes: &[String]) -> (usize, usize)
+where
+    T: ToolFilterTarget,
+{
+    let before = target.tools_mut().len();
+    let prefixes = normalize_allow_prefixes(allow_prefixes);
 
     if prefixes.is_empty() {
-        mcp_execute.tools.clear();
-        mcp_execute.tool_metadata.clear();
+        target.tools_mut().clear();
+        target.retain_tool_metadata_by_names(&HashSet::new());
         return (before, 0);
     }
 
     let mut kept_tool_names = HashSet::new();
-    mcp_execute.tools.retain(|tool| {
+    target.tools_mut().retain(|tool| {
         let Some(name) = extract_tool_name_from_schema(tool) else {
             return false;
         };
@@ -305,10 +292,7 @@ pub(super) fn filter_legacy_tools_by_prefixes(
         keep
     });
 
-    mcp_execute
-        .tool_metadata
-        .retain(|name, _| kept_tool_names.contains(name));
-
+    target.retain_tool_metadata_by_names(&kept_tool_names);
     (before, kept_tool_names.len())
 }
 

@@ -8,8 +8,7 @@ use crate::config::Config;
 use crate::core::agent_runtime::{load_enabled_agent_model, AgentModelLoadError};
 use crate::core::ai_settings::{chat_max_tokens_from_settings, effective_reasoning_enabled};
 use crate::core::chat_stream::{
-    build_v3_callbacks, send_cancelled_event, send_complete_event, send_error_event,
-    send_fallback_chunk_if_needed, send_start_event,
+    build_v3_callbacks, handle_chat_result, send_error_event, send_start_event,
 };
 use crate::core::mcp_runtime::{
     has_any_mcp_server, load_mcp_servers_by_selection, normalize_mcp_ids,
@@ -188,26 +187,14 @@ async fn stream_agent_v3(sender: SseSender, req: AgentChatRequest) {
         )
         .await;
 
-    let mut should_send_done = false;
-    match result {
-        Ok(res) => {
-            if !abort_registry::is_aborted(&session_id) {
-                send_fallback_chunk_if_needed(&sender, &chunk_sent, &res);
-                send_complete_event(&sender, &res);
-                should_send_done = true;
-            } else {
-                send_cancelled_event(&sender);
-            }
-        }
-        Err(err) => {
-            if abort_registry::is_aborted(&session_id) {
-                send_cancelled_event(&sender);
-            } else {
-                log_chat_error(&err);
-                send_error_event(&sender, &err);
-            }
-        }
-    }
+    let should_send_done = handle_chat_result(
+        &sender,
+        &session_id,
+        Some(&chunk_sent),
+        result,
+        || {},
+        |err| log_chat_error(err),
+    );
     if should_send_done {
         sender.send_done();
     }

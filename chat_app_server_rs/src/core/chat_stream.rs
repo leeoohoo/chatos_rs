@@ -254,3 +254,38 @@ pub fn send_error_event(sender: &SseSender, error: &str) {
         &json!({ "type": Events::ERROR, "timestamp": crate::core::time::now_rfc3339(), "data": { "error": error } }),
     );
 }
+
+pub fn handle_chat_result(
+    sender: &SseSender,
+    session_id: &str,
+    chunk_sent: Option<&Arc<AtomicBool>>,
+    result: Result<Value, String>,
+    mut on_cancelled: impl FnMut(),
+    mut on_error: impl FnMut(&str),
+) -> bool {
+    match result {
+        Ok(res) => {
+            if abort_registry::is_aborted(session_id) {
+                on_cancelled();
+                send_cancelled_event(sender);
+                return false;
+            }
+
+            if let Some(flag) = chunk_sent {
+                send_fallback_chunk_if_needed(sender, flag, &res);
+            }
+            send_complete_event(sender, &res);
+            true
+        }
+        Err(err) => {
+            if abort_registry::is_aborted(session_id) {
+                on_cancelled();
+                send_cancelled_event(sender);
+            } else {
+                on_error(err.as_str());
+                send_error_event(sender, &err);
+            }
+            false
+        }
+    }
+}

@@ -12,8 +12,7 @@ use crate::config::Config;
 use crate::core::ai_model_config::resolve_chat_model_config;
 use crate::core::ai_settings::chat_max_tokens_from_settings;
 use crate::core::chat_stream::{
-    build_v2_callbacks, send_cancelled_event, send_complete_event, send_error_event,
-    send_fallback_chunk_if_needed, send_start_event,
+    build_v2_callbacks, handle_chat_result, send_error_event, send_start_event,
 };
 use crate::core::mcp_runtime::load_mcp_servers_by_selection;
 use crate::models::message::MessageService;
@@ -301,27 +300,14 @@ async fn stream_chat_v2(
         )
         .await;
 
-    let mut should_send_done = false;
-    match result {
-        Ok(res) => {
-            if !abort_registry::is_aborted(&session_id) {
-                send_fallback_chunk_if_needed(&sender, &chunk_sent, &res);
-                send_complete_event(&sender, &res);
-                should_send_done = true;
-            } else {
-                send_cancelled_event(&sender);
-            }
-        }
-        Err(err) => {
-            if abort_registry::is_aborted(&session_id) {
-                log_chat_cancelled(&session_id);
-                send_cancelled_event(&sender);
-            } else {
-                log_chat_error(&err);
-                send_error_event(&sender, &err);
-            }
-        }
-    }
+    let should_send_done = handle_chat_result(
+        &sender,
+        &session_id,
+        Some(&chunk_sent),
+        result,
+        || log_chat_cancelled(&session_id),
+        |err| log_chat_error(err),
+    );
     if always_send_done || should_send_done {
         sender.send_done();
     }
@@ -373,22 +359,13 @@ async fn stream_chat_v2_agent(sender: SseSender, req: ChatRequest, rename_sessio
     )
     .await;
 
-    match result {
-        Ok(res) => {
-            if !abort_registry::is_aborted(&session_id) {
-                send_fallback_chunk_if_needed(&sender, &chunk_sent, &res);
-                send_complete_event(&sender, &res);
-            } else {
-                send_cancelled_event(&sender);
-            }
-        }
-        Err(err) => {
-            if abort_registry::is_aborted(&session_id) {
-                send_cancelled_event(&sender);
-            } else {
-                send_error_event(&sender, &err);
-            }
-        }
-    }
+    let _ = handle_chat_result(
+        &sender,
+        &session_id,
+        Some(&chunk_sent),
+        result,
+        || {},
+        |_| {},
+    );
     sender.send_done();
 }

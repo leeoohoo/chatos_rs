@@ -9,8 +9,7 @@ use tokio::task;
 use uuid::Uuid;
 
 use crate::core::chat_stream::{
-    build_v2_callbacks, send_cancelled_event, send_complete_event, send_error_event,
-    send_fallback_chunk_if_needed, send_start_event,
+    build_v2_callbacks, handle_chat_result, send_error_event, send_start_event,
 };
 use crate::models::agent::Agent;
 use crate::repositories::agents as agents_repo;
@@ -407,23 +406,14 @@ async fn stream_agent_chat(sender: SseSender, req: AgentChatRequest) {
     )
     .await;
 
-    match result {
-        Ok(res) => {
-            if abort_registry::is_aborted(&session_id) {
-                send_cancelled_event(&sender);
-            } else {
-                send_fallback_chunk_if_needed(&sender, &chunk_sent, &res);
-                send_complete_event(&sender, &res);
-            }
-        }
-        Err(err) => {
-            if abort_registry::is_aborted(&session_id) {
-                send_cancelled_event(&sender);
-            } else {
-                send_error_event(&sender, &err);
-            }
-        }
-    }
+    let _ = handle_chat_result(
+        &sender,
+        &session_id,
+        Some(&chunk_sent),
+        result,
+        || {},
+        |_| {},
+    );
     sender.send_done();
 }
 
