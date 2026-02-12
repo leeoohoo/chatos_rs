@@ -13,12 +13,6 @@ pub(crate) fn run_sub_agent_schema() -> Value {
                     { "type": "null" }
                 ]
             },
-            "category": {
-                "anyOf": [
-                    { "type": "string" },
-                    { "type": "null" }
-                ]
-            },
             "skills": {
                 "anyOf": [
                     { "type": "array", "items": { "type": "string" } },
@@ -39,7 +33,7 @@ pub(crate) fn run_sub_agent_schema() -> Value {
             }
         },
         "additionalProperties": false,
-        "required": ["task"]
+        "required": ["task", "agent_id"]
     })
 }
 
@@ -59,7 +53,6 @@ pub(crate) fn run_sub_agent_sync(
             "task": truncate_for_event(task.as_str(), 2_000),
             "agent_id": optional_trimmed_string(&args, "agent_id"),
             "command_id": optional_trimmed_string(&args, "command_id"),
-            "category": optional_trimmed_string(&args, "category"),
             "query": optional_trimmed_string(&args, "query"),
             "skills": parse_string_array(args.get("skills")).unwrap_or_default(),
         })),

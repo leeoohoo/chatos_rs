@@ -1,14 +1,5 @@
 use super::*;
 
-pub(super) fn run_ai_task(
-    ctx: &BoundContext,
-    system_prompt: &str,
-    task: &str,
-    requested_model: Option<&str>,
-) -> Result<AiTaskResult, String> {
-    run_ai_task_with_system_messages(ctx, vec![system_prompt.to_string()], task, requested_model)
-}
-
 pub(super) fn run_ai_task_with_system_messages(
     ctx: &BoundContext,
     system_messages: Vec<String>,

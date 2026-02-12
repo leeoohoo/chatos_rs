@@ -431,28 +431,6 @@ pub fn import_from_git(opts: GitImportOptions) -> Result<Value, String> {
     }))
 }
 
-pub fn load_recommender_reference_docs() -> Vec<(String, String)> {
-    let paths = match ensure_state_files() {
-        Ok(value) => value,
-        Err(_) => return Vec::new(),
-    };
-
-    let docs_root = recommender_reference_docs_root(paths.root.as_path());
-    let mut docs = Vec::new();
-
-    for file_name in [RECOMMENDER_AGENTS_DOC_FILE, RECOMMENDER_SKILLS_DOC_FILE] {
-        let path = docs_root.join(file_name);
-        let raw = fs::read_to_string(path.as_path()).unwrap_or_default();
-        let content = raw.trim();
-        if content.is_empty() {
-            continue;
-        }
-        docs.push((file_name.to_string(), content.to_string()));
-    }
-
-    docs
-}
-
 pub fn install_plugins(opts: InstallPluginOptions) -> Result<Value, String> {
     let paths = ensure_state_files()?;
     let raw = fs::read_to_string(paths.marketplace_path.as_path())

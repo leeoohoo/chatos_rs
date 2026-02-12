@@ -6,7 +6,6 @@ mod prompting;
 mod recommendation;
 mod registry;
 mod runner;
-mod selector;
 pub mod settings;
 mod types;
 mod utils;
@@ -56,23 +55,15 @@ use self::core::{
     trace_router_node, truncate_for_event, update_job_status, with_chatos,
 };
 use self::prompting::{build_env, build_system_prompt, resolve_allow_prefixes, select_skills};
-use self::recommendation::{
-    build_agent_recommendation_candidates, pick_agent_with_fallback, pick_agent_with_llm,
-    pick_first_available_agent, suggest_sub_agent_text_with_docs,
-};
+use self::recommendation::suggest_sub_agent_text_with_docs;
 use self::registry::AgentRegistry;
 use self::runner::run_command;
-use self::selector::{pick_agent, PickOptions, PickResult};
 use self::types::{AgentSpec, CommandSpec, JobEvent, JobRecord, SkillSpec};
-use self::utils::{generate_id, normalize_name, tokenize, unique_strings};
+use self::utils::{generate_id, normalize_name, unique_strings};
 
 const SUBAGENT_GUARDRAIL: &str = "Tooling guard: sub-agents cannot call mcp_subagent_router_* or other sub-agent routing tools. Complete the task directly with available project/shell/task tools.";
 const ROUTER_TRACE_LOG_FILE: &str = "sub_agent_router_nodes.jsonl";
 const ROUTER_TRACE_PAYLOAD_MAX_CHARS: usize = 20_000;
-const RECOMMENDER_MAX_CANDIDATES_FOR_LLM: usize = 36;
-const RECOMMENDER_MAX_SKILLS_PER_CANDIDATE: usize = 6;
-const RECOMMENDER_MAX_COMMANDS_PER_CANDIDATE: usize = 4;
-const RECOMMENDER_TEXT_MAX_CHARS: usize = 220;
 
 #[derive(Clone)]
 struct JobExecutionContext {
@@ -173,20 +164,6 @@ struct AllowPrefixesPolicy {
 struct EffectiveMcpSelection {
     configured: bool,
     ids: Vec<String>,
-}
-
-#[derive(Clone, Debug)]
-struct AgentRecommendationCandidate {
-    agent: AgentSpec,
-    skill_ids: Vec<String>,
-    prompt_item: Value,
-}
-
-#[derive(Clone, Debug)]
-struct AgentRecommendation {
-    agent_id: String,
-    skill_ids: Vec<String>,
-    reason: String,
 }
 
 impl SubAgentRouterService {
@@ -333,11 +310,9 @@ impl SubAgentRouterService {
             let ctx = ctx.clone();
             service.register_tool(
                 "run_sub_agent",
-                "Run a sub-agent task synchronously. If command is missing, it falls back to AI generation.",
+                "Run a sub-agent task synchronously using the provided agent_id.",
                 run_sub_agent_schema(),
-                Arc::new(move |args, tool_ctx| {
-                    run_sub_agent_sync(ctx.clone(), args, tool_ctx)
-                }),
+                Arc::new(move |args, tool_ctx| run_sub_agent_sync(ctx.clone(), args, tool_ctx)),
             );
         }
 

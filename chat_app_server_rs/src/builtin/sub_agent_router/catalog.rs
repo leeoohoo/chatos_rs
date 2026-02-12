@@ -57,10 +57,6 @@ impl SubAgentCatalog {
         Ok(())
     }
 
-    pub fn list_agents(&self) -> Vec<AgentSpec> {
-        self.agents.values().cloned().collect()
-    }
-
     pub fn get_agent(&self, id: &str) -> Option<AgentSpec> {
         let normalized = normalize_id(Some(id));
         if normalized.is_empty() {

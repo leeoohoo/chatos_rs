@@ -2,61 +2,13 @@ use super::super::*;
 
 pub(crate) fn resolve_agent_and_command(
     ctx: &BoundContext,
-    task: &str,
+    _task: &str,
     args: &Value,
 ) -> Result<ResolvedAgent, String> {
-    let agent_id = optional_trimmed_string(args, "agent_id");
+    let agent_id = optional_trimmed_string(args, "agent_id")
+        .ok_or_else(|| "agent_id is required. Call suggest_sub_agent first.".to_string())?;
     let command_id = optional_trimmed_string(args, "command_id");
-    let category = optional_trimmed_string(args, "category");
-    let query = optional_trimmed_string(args, "query");
     let skills = parse_string_array(args.get("skills"));
-    let caller_model = optional_trimmed_string(args, "caller_model")
-        .or_else(|| optional_trimmed_string(args, "model"));
-
-    let mut guard = ctx
-        .catalog
-        .lock()
-        .map_err(|_| "catalog lock poisoned".to_string())?;
-    let _ = guard.reload();
-
-    if let Some(id) = agent_id {
-        let agent = guard
-            .get_agent(id.as_str())
-            .ok_or_else(|| format!("Sub-agent {} not found.", id))?;
-        let command = guard.resolve_command(&agent, command_id.as_deref());
-        let used_skills = select_skills(&agent, skills, &guard);
-        return Ok(ResolvedAgent {
-            agent,
-            command,
-            used_skills,
-            reason: id,
-        });
-    }
-
-    let agents = guard.list_agents();
-    if agents.is_empty() {
-        return Err("No sub-agents available. Import agents/skills first.".to_string());
-    }
-
-    let candidates = build_agent_recommendation_candidates(&agents, &guard);
-    drop(guard);
-
-    let picked = pick_agent_with_llm(
-        ctx,
-        &agents,
-        &candidates,
-        task,
-        category.clone(),
-        skills.clone(),
-        query.clone(),
-        command_id.clone(),
-        caller_model.as_deref(),
-    )
-    .or_else(|| {
-        pick_agent_with_fallback(&agents, task, category, skills, query, command_id.clone())
-    })
-    .or_else(|| pick_first_available_agent(&agents))
-    .ok_or_else(|| "No sub-agents available. Import agents/skills first.".to_string())?;
 
     let mut guard = ctx
         .catalog
@@ -65,17 +17,16 @@ pub(crate) fn resolve_agent_and_command(
     let _ = guard.reload();
 
     let agent = guard
-        .get_agent(picked.agent.id.as_str())
-        .unwrap_or_else(|| picked.agent.clone());
-
+        .get_agent(agent_id.as_str())
+        .ok_or_else(|| format!("Sub-agent {} not found.", agent_id))?;
     let command = guard.resolve_command(&agent, command_id.as_deref());
-    let used_skills = select_skills(&agent, Some(picked.used_skills.clone()), &guard);
+    let used_skills = select_skills(&agent, skills, &guard);
 
     Ok(ResolvedAgent {
         agent,
         command,
         used_skills,
-        reason: picked.reason,
+        reason: agent_id,
     })
 }
 

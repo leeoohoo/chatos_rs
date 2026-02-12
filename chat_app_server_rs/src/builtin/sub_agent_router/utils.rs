@@ -41,17 +41,6 @@ pub fn ensure_dir(path: &Path) -> Result<(), String> {
     fs::create_dir_all(path).map_err(|err| err.to_string())
 }
 
-pub fn tokenize(text: Option<&str>) -> Vec<String> {
-    let raw = text.unwrap_or("").trim().to_lowercase();
-    if raw.is_empty() {
-        return Vec::new();
-    }
-    raw.split(|c: char| c.is_whitespace() || c == ',' || c == ';' || c == '|' || c == '/')
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
-        .collect()
-}
-
 pub fn unique_strings(values: impl IntoIterator<Item = String>) -> Vec<String> {
     let mut seen = HashSet::new();
     let mut out = Vec::new();
