@@ -199,11 +199,7 @@ pub(super) async fn resolve_effective_mcp_selection(
     }
 
     ids.retain(|id| !id.eq_ignore_ascii_case(SUB_AGENT_ROUTER_MCP_ID));
-    let ids = unique_strings(
-        ids.into_iter()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty()),
-    );
+    let ids = crate::core::mcp_runtime::normalize_mcp_ids(&ids);
 
     if configured {
         return Ok(EffectiveMcpSelection { configured, ids });
@@ -221,14 +217,8 @@ pub(super) async fn resolve_effective_mcp_selection(
 
     all_ids.extend(custom.into_iter().map(|cfg| cfg.id));
 
-    let ids = unique_strings(
-        all_ids
-            .into_iter()
-            .map(|value| value.trim().to_string())
-            .filter(|value| {
-                !value.is_empty() && !value.eq_ignore_ascii_case(SUB_AGENT_ROUTER_MCP_ID)
-            }),
-    );
+    all_ids.retain(|value| !value.eq_ignore_ascii_case(SUB_AGENT_ROUTER_MCP_ID));
+    let ids = crate::core::mcp_runtime::normalize_mcp_ids(&all_ids);
 
     Ok(EffectiveMcpSelection {
         configured: false,

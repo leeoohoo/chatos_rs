@@ -1,8 +1,12 @@
 use serde_json::{json, Value};
 
 use crate::config::Config;
-use crate::repositories::{agents, ai_model_configs, system_contexts};
-use crate::services::mcp_loader::load_mcp_configs_for_user;
+use crate::core::agent_runtime::{load_enabled_agent_model, AgentModelLoadError};
+use crate::core::ai_settings::{chat_max_tokens_from_settings, effective_reasoning_enabled};
+use crate::core::mcp_runtime::{
+    has_any_mcp_server, load_mcp_servers_by_selection, normalize_mcp_ids,
+};
+use crate::repositories::system_contexts;
 use crate::services::user_settings::{apply_settings_to_ai_client, get_effective_user_settings};
 use crate::services::v2::ai_client::AiClientCallbacks;
 use crate::services::v2::ai_server::{AiServer, ChatOptions};
@@ -29,28 +33,16 @@ pub struct ModelConfig {
 }
 
 pub async fn load_model_config_for_agent(agent_id: &str) -> Result<ModelConfig, String> {
-    let agent = agents::get_agent_by_id(agent_id)
-        .await?
-        .ok_or("智能体不存在或未启用")?;
-    if agent.enabled == false {
-        return Err("智能体不存在或未启用".to_string());
-    }
+    let resolved = load_enabled_agent_model(agent_id)
+        .await
+        .map_err(|err| match err {
+            AgentModelLoadError::AgentUnavailable => "智能体不存在或未启用".to_string(),
+            AgentModelLoadError::ModelUnavailable => "模型配置不可用或未启用".to_string(),
+            AgentModelLoadError::Repository(detail) => detail,
+        })?;
 
-    let model_cfg = ai_model_configs::get_ai_model_config_by_id(&agent.ai_model_config_id)
-        .await?
-        .ok_or("模型配置不可用或未启用")?;
-    if model_cfg.enabled == false {
-        return Err("模型配置不可用或未启用".to_string());
-    }
-
-    let mut system_prompt = None;
-    if let Some(ctx_id) = agent.system_context_id.clone() {
-        if let Ok(Some(ctx)) = system_contexts::get_system_context_by_id(&ctx_id).await {
-            if ctx.is_active {
-                system_prompt = ctx.content;
-            }
-        }
-    }
+    let agent = resolved.agent;
+    let model_cfg = resolved.model;
 
     Ok(ModelConfig {
         model_name: model_cfg.model,
@@ -62,7 +54,7 @@ pub async fn load_model_config_for_agent(agent_id: &str) -> Result<ModelConfig, 
         supports_reasoning: model_cfg.supports_reasoning,
         temperature: 0.7,
         max_tokens: None,
-        system_prompt,
+        system_prompt: resolved.system_prompt,
         use_active_system_context: false,
         user_id: agent.user_id,
         mcp_config_ids: agent.mcp_config_ids,
@@ -83,12 +75,7 @@ pub async fn run_chat(
 ) -> Result<Value, String> {
     let cfg = Config::get();
     let effective_user_id = user_id.or(model_config.user_id.clone());
-    let filtered_ids: Vec<String> = model_config
-        .mcp_config_ids
-        .iter()
-        .filter(|s| !s.is_empty())
-        .cloned()
-        .collect();
+    let filtered_ids = normalize_mcp_ids(&model_config.mcp_config_ids);
     let has_mcp = !filtered_ids.is_empty();
     let workspace_dir =
         crate::utils::workspace::resolve_workspace_dir(model_config.workspace_dir.as_deref());
@@ -97,52 +84,26 @@ pub async fn run_chat(
     } else {
         Some(workspace_dir.as_str())
     };
-    let (http_servers, mut stdio_servers, builtin_servers) = if model_config.lock_mcp {
-        if has_mcp {
-            load_mcp_configs_for_user(
-                effective_user_id.clone(),
-                Some(filtered_ids),
-                workspace_dir_opt,
-                model_config.project_id.as_deref(),
-            )
-            .await
-            .unwrap_or((Vec::new(), Vec::new(), Vec::new()))
-        } else {
-            (Vec::new(), Vec::new(), Vec::new())
-        }
+    let selected_ids = if model_config.lock_mcp {
+        filtered_ids.clone()
     } else {
-        load_mcp_configs_for_user(
-            effective_user_id.clone(),
-            None,
-            workspace_dir_opt,
-            model_config.project_id.as_deref(),
-        )
-        .await
-        .unwrap_or((Vec::new(), Vec::new(), Vec::new()))
+        Vec::new()
     };
-    if !workspace_dir.trim().is_empty() {
-        for server in stdio_servers.iter_mut() {
-            if server
-                .cwd
-                .as_ref()
-                .map(|s| s.trim().is_empty())
-                .unwrap_or(true)
-            {
-                server.cwd = Some(workspace_dir.clone());
-            }
-        }
-    }
+    let (http_servers, stdio_servers, builtin_servers) = load_mcp_servers_by_selection(
+        effective_user_id.clone(),
+        model_config.lock_mcp,
+        selected_ids,
+        workspace_dir_opt,
+        model_config.project_id.as_deref(),
+    )
+    .await;
 
     let mut mcp_tool_execute = crate::services::v2::mcp_tool_execute::McpToolExecute::new(
-        http_servers,
-        stdio_servers,
-        builtin_servers,
+        http_servers.clone(),
+        stdio_servers.clone(),
+        builtin_servers.clone(),
     );
-    if has_mcp
-        && (!mcp_tool_execute.mcp_servers.is_empty()
-            || !mcp_tool_execute.stdio_mcp_servers.is_empty()
-            || !mcp_tool_execute.builtin_mcp_servers.is_empty())
-    {
+    if has_mcp && has_any_mcp_server(&http_servers, &stdio_servers, &builtin_servers) {
         let _ = mcp_tool_execute.init().await;
     }
 
@@ -179,14 +140,13 @@ pub async fn run_chat(
         .await
         .unwrap_or_else(|_| json!({}));
     apply_settings_to_ai_client(&mut ai_server.ai_client, &effective_settings);
-    let max_tokens = effective_settings
-        .get("CHAT_MAX_TOKENS")
-        .and_then(|v| v.as_i64())
-        .filter(|v| *v > 0);
+    let max_tokens = chat_max_tokens_from_settings(&effective_settings);
 
-    let effective_reasoning = (model_config.supports_reasoning
-        || model_config.thinking_level.is_some())
-        && reasoning_enabled.unwrap_or(true);
+    let effective_reasoning = effective_reasoning_enabled(
+        model_config.supports_reasoning,
+        model_config.thinking_level.as_deref(),
+        reasoning_enabled.unwrap_or(true),
+    );
 
     let options = ChatOptions {
         model: Some(model_config.model_name.clone()),

@@ -5,18 +5,21 @@ use serde_json::{json, Value};
 use tokio::task;
 
 use crate::config::Config;
-use crate::core::chat_stream::{build_v3_callbacks, send_fallback_chunk_if_needed};
-use crate::repositories::{
-    agents as agents_repo, ai_model_configs as ai_repo, system_contexts as ctx_repo,
+use crate::core::agent_runtime::{load_enabled_agent_model, AgentModelLoadError};
+use crate::core::ai_settings::{chat_max_tokens_from_settings, effective_reasoning_enabled};
+use crate::core::chat_stream::{
+    build_v3_callbacks, send_cancelled_event, send_complete_event, send_error_event,
+    send_fallback_chunk_if_needed, send_start_event,
 };
-use crate::services::mcp_loader::load_mcp_configs_for_user;
+use crate::core::mcp_runtime::{
+    has_any_mcp_server, load_mcp_servers_by_selection, normalize_mcp_ids,
+};
 use crate::services::session_title::maybe_rename_session_title;
 use crate::services::user_settings::{apply_settings_to_ai_client, get_effective_user_settings};
 use crate::services::v3::ai_server::{AiServer, ChatOptions};
 use crate::services::v3::mcp_tool_execute::McpToolExecute;
 use crate::utils::abort_registry;
 use crate::utils::attachments;
-use crate::utils::events::Events;
 use crate::utils::log_helpers::log_chat_error;
 use crate::utils::sse::{sse_channel, SseSender};
 use crate::utils::workspace::resolve_workspace_dir;
@@ -65,7 +68,7 @@ async fn stream_agent_v3(sender: SseSender, req: AgentChatRequest) {
     let agent_id = req.agent_id.clone().unwrap_or_default();
     let cfg = Config::get();
 
-    sender.send_json(&json!({ "type": Events::START, "timestamp": crate::core::time::now_rfc3339(), "session_id": session_id }));
+    send_start_event(&sender, &session_id);
     if !session_id.is_empty() && !content.is_empty() {
         let sid = session_id.clone();
         let text = content.clone();
@@ -74,49 +77,44 @@ async fn stream_agent_v3(sender: SseSender, req: AgentChatRequest) {
         });
     }
 
-    let agent = match agents_repo::get_agent_by_id(&agent_id).await {
-        Ok(Some(a)) if a.enabled => a,
-        _ => {
-            sender.send_json(&json!({ "type": Events::ERROR, "timestamp": crate::core::time::now_rfc3339(), "data": { "error": "Agent 不存在或已禁用" } }));
+    let resolved = match load_enabled_agent_model(&agent_id).await {
+        Ok(value) => value,
+        Err(AgentModelLoadError::AgentUnavailable) => {
+            send_error_event(&sender, "Agent 不存在或已禁用");
+            return;
+        }
+        Err(AgentModelLoadError::ModelUnavailable) => {
+            send_error_event(&sender, "模型配置不可用或未启用");
+            return;
+        }
+        Err(AgentModelLoadError::Repository(err)) => {
+            send_error_event(&sender, &err);
             return;
         }
     };
 
-    let model_cfg = match ai_repo::get_ai_model_config_by_id(&agent.ai_model_config_id).await {
-        Ok(Some(m)) if m.enabled => m,
-        _ => {
-            sender.send_json(&json!({ "type": Events::ERROR, "timestamp": crate::core::time::now_rfc3339(), "data": { "error": "模型配置不可用或未启用" } }));
-            return;
-        }
-    };
+    let crate::core::agent_runtime::EnabledAgentModel {
+        agent,
+        model: model_cfg,
+        system_prompt,
+    } = resolved;
 
     if model_cfg.supports_responses != true {
-        sender.send_json(&json!({ "type": Events::ERROR, "timestamp": crate::core::time::now_rfc3339(), "data": { "error": "当前模型未启用 Responses API" } }));
+        send_error_event(&sender, "当前模型未启用 Responses API");
         return;
-    }
-
-    let mut system_prompt = None;
-    if let Some(ctx_id) = agent.system_context_id.clone() {
-        if let Ok(Some(ctx)) = ctx_repo::get_system_context_by_id(&ctx_id).await {
-            if ctx.is_active {
-                system_prompt = ctx.content;
-            }
-        }
     }
 
     let effective_user_id = req.user_id.clone().or(agent.user_id.clone());
     let supports_images = model_cfg.supports_images;
     let supports_reasoning = model_cfg.supports_reasoning;
     let reasoning_enabled = req.reasoning_enabled.unwrap_or(true);
-    let effective_reasoning =
-        (supports_reasoning || model_cfg.thinking_level.is_some()) && reasoning_enabled;
+    let effective_reasoning = effective_reasoning_enabled(
+        supports_reasoning,
+        model_cfg.thinking_level.as_deref(),
+        reasoning_enabled,
+    );
 
-    let mcp_ids: Vec<String> = agent
-        .mcp_config_ids
-        .iter()
-        .filter(|s| !s.is_empty())
-        .cloned()
-        .collect();
+    let mcp_ids = normalize_mcp_ids(&agent.mcp_config_ids);
     let use_tools = !mcp_ids.is_empty();
     let workspace_dir = resolve_workspace_dir(agent.workspace_dir.as_deref());
     let workspace_dir_opt = if workspace_dir.trim().is_empty() {
@@ -124,38 +122,20 @@ async fn stream_agent_v3(sender: SseSender, req: AgentChatRequest) {
     } else {
         Some(workspace_dir.as_str())
     };
-    let (http_servers, mut stdio_servers, builtin_servers) = if use_tools {
-        load_mcp_configs_for_user(
-            effective_user_id.clone(),
-            Some(mcp_ids.clone()),
-            workspace_dir_opt,
-            agent.project_id.as_deref(),
-        )
-        .await
-        .unwrap_or((Vec::new(), Vec::new(), Vec::new()))
-    } else {
-        (Vec::new(), Vec::new(), Vec::new())
-    };
-    if !workspace_dir.trim().is_empty() {
-        for server in stdio_servers.iter_mut() {
-            if server
-                .cwd
-                .as_ref()
-                .map(|s| s.trim().is_empty())
-                .unwrap_or(true)
-            {
-                server.cwd = Some(workspace_dir.clone());
-            }
-        }
-    }
+    let (http_servers, stdio_servers, builtin_servers) = load_mcp_servers_by_selection(
+        effective_user_id.clone(),
+        true,
+        mcp_ids.clone(),
+        workspace_dir_opt,
+        agent.project_id.as_deref(),
+    )
+    .await;
     let mut mcp_exec = McpToolExecute::new(
         http_servers.clone(),
         stdio_servers.clone(),
         builtin_servers.clone(),
     );
-    if use_tools
-        && (!http_servers.is_empty() || !stdio_servers.is_empty() || !builtin_servers.is_empty())
-    {
+    if use_tools && has_any_mcp_server(&http_servers, &stdio_servers, &builtin_servers) {
         let _ = mcp_exec.init().await;
     }
 
@@ -181,10 +161,7 @@ async fn stream_agent_v3(sender: SseSender, req: AgentChatRequest) {
         .await
         .unwrap_or_else(|_| json!({}));
     apply_settings_to_ai_client(&mut ai_server.ai_client, &effective_settings);
-    let max_tokens = effective_settings
-        .get("CHAT_MAX_TOKENS")
-        .and_then(|v| v.as_i64())
-        .filter(|v| *v > 0);
+    let max_tokens = chat_max_tokens_from_settings(&effective_settings);
 
     let callback_bundle = build_v3_callbacks(&sender, &session_id, use_tools);
     let chunk_sent = callback_bundle.chunk_sent;
@@ -216,18 +193,18 @@ async fn stream_agent_v3(sender: SseSender, req: AgentChatRequest) {
         Ok(res) => {
             if !abort_registry::is_aborted(&session_id) {
                 send_fallback_chunk_if_needed(&sender, &chunk_sent, &res);
-                sender.send_json(&json!({ "type": Events::COMPLETE, "timestamp": crate::core::time::now_rfc3339(), "result": res }));
+                send_complete_event(&sender, &res);
                 should_send_done = true;
             } else {
-                sender.send_json(&json!({ "type": Events::CANCELLED, "timestamp": crate::core::time::now_rfc3339() }));
+                send_cancelled_event(&sender);
             }
         }
         Err(err) => {
             if abort_registry::is_aborted(&session_id) {
-                sender.send_json(&json!({ "type": Events::CANCELLED, "timestamp": crate::core::time::now_rfc3339() }));
+                send_cancelled_event(&sender);
             } else {
                 log_chat_error(&err);
-                sender.send_json(&json!({ "type": Events::ERROR, "timestamp": crate::core::time::now_rfc3339(), "data": { "error": err } }));
+                send_error_event(&sender, &err);
             }
         }
     }

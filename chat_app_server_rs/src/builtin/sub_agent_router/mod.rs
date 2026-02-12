@@ -29,7 +29,6 @@ use tokio::time::{timeout, Duration};
 use crate::config::Config;
 use crate::repositories::{ai_model_configs, mcp_configs};
 use crate::services::builtin_mcp::{list_builtin_mcp_configs, SUB_AGENT_ROUTER_MCP_ID};
-use crate::services::mcp_loader::load_mcp_configs_for_user;
 use crate::services::user_settings::{apply_settings_to_ai_client, get_effective_user_settings};
 use crate::services::v2::ai_client::{
     AiClient as LegacyAiClient, AiClientCallbacks as LegacyAiClientCallbacks,

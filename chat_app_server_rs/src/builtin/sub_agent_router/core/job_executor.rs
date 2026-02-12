@@ -288,29 +288,21 @@ pub(crate) fn execute_job(
             );
 
             let workspace_dir = ctx.workspace_root.to_string_lossy().to_string();
-            let mcp_ids = mcp_selection.ids.clone();
+            let mcp_ids = crate::core::mcp_runtime::normalize_mcp_ids(&mcp_selection.ids);
 
-            let (http_servers, mut stdio_servers, builtin_servers) =
-                if mcp_selection.configured && mcp_ids.is_empty() {
-                    (Vec::new(), Vec::new(), Vec::new())
-                } else {
-                    load_mcp_configs_for_user(
-                        ctx.user_id.clone(),
-                        if mcp_ids.is_empty() {
-                            None
-                        } else {
-                            Some(mcp_ids.clone())
-                        },
-                        if workspace_dir.trim().is_empty() {
-                            None
-                        } else {
-                            Some(workspace_dir.as_str())
-                        },
-                        ctx.project_id.as_deref(),
-                    )
-                    .await
-                    .unwrap_or((Vec::new(), Vec::new(), Vec::new()))
-                };
+            let (http_servers, stdio_servers, builtin_servers) =
+                crate::core::mcp_runtime::load_mcp_servers_by_selection(
+                    ctx.user_id.clone(),
+                    mcp_selection.configured,
+                    mcp_ids.clone(),
+                    if workspace_dir.trim().is_empty() {
+                        None
+                    } else {
+                        Some(workspace_dir.as_str())
+                    },
+                    ctx.project_id.as_deref(),
+                )
+                .await;
             append_job_event(
                 job_id.as_str(),
                 "ai_mcp_configs_loaded",
@@ -324,26 +316,11 @@ pub(crate) fn execute_job(
                 run_id.as_str(),
             );
 
-            if !workspace_dir.trim().is_empty() {
-                for server in stdio_servers.iter_mut() {
-                    if server
-                        .cwd
-                        .as_ref()
-                        .map(|value| value.trim().is_empty())
-                        .unwrap_or(true)
-                    {
-                        server.cwd = Some(workspace_dir.clone());
-                    }
-                }
-            }
-
             let effective_settings = get_effective_user_settings(ctx.user_id.clone())
                 .await
                 .unwrap_or_else(|_| json!({}));
-            let max_tokens = effective_settings
-                .get("CHAT_MAX_TOKENS")
-                .and_then(|value| value.as_i64())
-                .filter(|value| *value > 0);
+            let max_tokens =
+                crate::core::ai_settings::chat_max_tokens_from_settings(&effective_settings);
             let setting_keys = effective_settings
                 .as_object()
                 .map(|map| map.keys().cloned().collect::<Vec<_>>())
@@ -478,10 +455,11 @@ pub(crate) fn execute_job(
                     builtin_servers.clone(),
                 );
 
-                if !http_servers.is_empty()
-                    || !stdio_servers.is_empty()
-                    || !builtin_servers.is_empty()
-                {
+                if crate::core::mcp_runtime::has_any_mcp_server(
+                    &http_servers,
+                    &stdio_servers,
+                    &builtin_servers,
+                ) {
                     if let Err(err) = mcp_execute.init().await {
                         append_job_event(
                             job_id.as_str(),
@@ -594,10 +572,11 @@ pub(crate) fn execute_job(
                     builtin_servers.clone(),
                 );
 
-                if !http_servers.is_empty()
-                    || !stdio_servers.is_empty()
-                    || !builtin_servers.is_empty()
-                {
+                if crate::core::mcp_runtime::has_any_mcp_server(
+                    &http_servers,
+                    &stdio_servers,
+                    &builtin_servers,
+                ) {
                     if let Err(err) = mcp_execute.init().await {
                         append_job_event(
                             job_id.as_str(),

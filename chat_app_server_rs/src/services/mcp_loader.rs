@@ -106,6 +106,9 @@ fn build_servers_from_configs(
     let mut http_servers = Vec::new();
     let mut stdio_servers = Vec::new();
     let mut builtin_servers = Vec::new();
+    let workspace_dir_fallback = workspace_dir
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
 
     for cfg in configs {
         let server_name = format!("{}_{}", cfg.name, &cfg.id[..8.min(cfg.id.len())]);
@@ -115,9 +118,8 @@ fn build_servers_from_configs(
             else {
                 continue;
             };
-            let root = workspace_dir
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
+            let root = workspace_dir_fallback
+                .clone()
                 .unwrap_or_else(|| resolve_workspace_dir(None));
             builtin_servers.push(McpBuiltinServer {
                 name: server_name,
@@ -140,11 +142,17 @@ fn build_servers_from_configs(
         } else if cfg.r#type == "stdio" {
             let args = parse_args(&cfg.args);
             let env = parse_env(&cfg.env);
+            let cwd = cfg
+                .cwd
+                .as_deref()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .or_else(|| workspace_dir_fallback.clone());
             let server = McpStdioServer {
                 name: server_name,
                 command: cfg.command,
                 args: if args.is_empty() { None } else { Some(args) },
-                cwd: cfg.cwd,
+                cwd,
                 env: if env.is_empty() { None } else { Some(env) },
             };
             stdio_servers.push(server);

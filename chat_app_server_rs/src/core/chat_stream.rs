@@ -230,3 +230,27 @@ pub fn send_fallback_chunk_if_needed(
         }
     }
 }
+
+pub fn send_start_event(sender: &SseSender, session_id: &str) {
+    sender.send_json(
+        &json!({ "type": Events::START, "timestamp": crate::core::time::now_rfc3339(), "session_id": session_id }),
+    );
+}
+
+pub fn send_complete_event(sender: &SseSender, result: &Value) {
+    sender.send_json(
+        &json!({ "type": Events::COMPLETE, "timestamp": crate::core::time::now_rfc3339(), "result": result }),
+    );
+}
+
+pub fn send_cancelled_event(sender: &SseSender) {
+    sender.send_json(
+        &json!({ "type": Events::CANCELLED, "timestamp": crate::core::time::now_rfc3339() }),
+    );
+}
+
+pub fn send_error_event(sender: &SseSender, error: &str) {
+    sender.send_json(
+        &json!({ "type": Events::ERROR, "timestamp": crate::core::time::now_rfc3339(), "data": { "error": error } }),
+    );
+}

@@ -9,20 +9,23 @@ use serde_json::{json, Value};
 use tokio::task;
 
 use crate::config::Config;
-use crate::core::chat_stream::{build_v2_callbacks, send_fallback_chunk_if_needed};
+use crate::core::ai_model_config::resolve_chat_model_config;
+use crate::core::ai_settings::chat_max_tokens_from_settings;
+use crate::core::chat_stream::{
+    build_v2_callbacks, send_cancelled_event, send_complete_event, send_error_event,
+    send_fallback_chunk_if_needed, send_start_event,
+};
+use crate::core::mcp_runtime::load_mcp_servers_by_selection;
 use crate::models::message::MessageService;
 use crate::models::session::SessionService;
 use crate::repositories::system_contexts;
-use crate::services::mcp_loader::load_mcp_configs_for_user;
 use crate::services::session_title::maybe_rename_session_title;
 use crate::services::user_settings::{apply_settings_to_ai_client, get_effective_user_settings};
 use crate::services::v2::ai_server::{AiServer, ChatOptions};
 use crate::services::v2::mcp_tool_execute::McpToolExecute;
 use crate::utils::abort_registry;
 use crate::utils::attachments;
-use crate::utils::events::Events;
 use crate::utils::log_helpers::{log_chat_begin, log_chat_cancelled, log_chat_error};
-use crate::utils::model_config::{normalize_provider, normalize_thinking_level};
 use crate::utils::sse::{sse_channel, SseSender};
 
 #[derive(Debug, Deserialize)]
@@ -115,9 +118,7 @@ async fn agent_chat_stream_simple(
 
 async fn agent_tools(Query(query): Query<UserQuery>) -> (StatusCode, Json<Value>) {
     let (http_servers, stdio_servers, builtin_servers) =
-        load_mcp_configs_for_user(query.user_id, None, None, None)
-            .await
-            .unwrap_or((Vec::new(), Vec::new(), Vec::new()));
+        load_mcp_servers_by_selection(query.user_id, false, Vec::new(), None, None).await;
     let mut exec = McpToolExecute::new(
         http_servers.clone(),
         stdio_servers.clone(),
@@ -203,8 +204,7 @@ async fn stream_chat_v2(
     let content = req.content.clone().unwrap_or_default();
     let cfg = Config::get();
 
-    let start_evt = json!({ "type": Events::START, "timestamp": crate::core::time::now_rfc3339(), "session_id": session_id });
-    sender.send_json(&start_evt);
+    send_start_event(&sender, &session_id);
 
     if rename_session && !session_id.is_empty() && !content.is_empty() {
         let sid = session_id.clone();
@@ -215,53 +215,15 @@ async fn stream_chat_v2(
     }
 
     let model_cfg = req.ai_model_config.unwrap_or_else(|| json!({}));
-    let model = model_cfg
-        .get("model_name")
-        .and_then(|v| v.as_str())
-        .unwrap_or("gpt-4")
-        .to_string();
-    let provider = normalize_provider(
-        model_cfg
-            .get("provider")
-            .and_then(|v| v.as_str())
-            .unwrap_or("gpt"),
+    let model_runtime = resolve_chat_model_config(
+        &model_cfg,
+        "gpt-4",
+        &cfg.openai_api_key,
+        &cfg.openai_base_url,
+        req.reasoning_enabled,
+        respect_model_flags,
     );
-    let thinking_level = normalize_thinking_level(
-        &provider,
-        model_cfg.get("thinking_level").and_then(|v| v.as_str()),
-    )
-    .ok()
-    .flatten();
-    let temperature = model_cfg
-        .get("temperature")
-        .and_then(|v| v.as_f64())
-        .unwrap_or(0.7);
-    let supports_images = model_cfg
-        .get("supports_images")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let supports_reasoning = model_cfg
-        .get("supports_reasoning")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let reasoning_enabled = req.reasoning_enabled.unwrap_or_else(|| {
-        model_cfg
-            .get("reasoning_enabled")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true)
-    });
-    let effective_reasoning = (supports_reasoning || thinking_level.is_some()) && reasoning_enabled;
     let use_tools = false;
-    let api_key = model_cfg
-        .get("api_key")
-        .and_then(|v| v.as_str())
-        .unwrap_or(&cfg.openai_api_key)
-        .to_string();
-    let base_url = model_cfg
-        .get("base_url")
-        .and_then(|v| v.as_str())
-        .unwrap_or(&cfg.openai_base_url)
-        .to_string();
 
     let (http_servers, stdio_servers, builtin_servers) = (Vec::new(), Vec::new(), Vec::new());
     let mut mcp_exec = McpToolExecute::new(
@@ -272,10 +234,10 @@ async fn stream_chat_v2(
     let _ = mcp_exec.init().await;
 
     let mut ai_server = AiServer::new(
-        api_key.clone(),
-        base_url.clone(),
-        model.clone(),
-        temperature,
+        model_runtime.api_key.clone(),
+        model_runtime.base_url.clone(),
+        model_runtime.model.clone(),
+        model_runtime.temperature,
         mcp_exec,
     );
 
@@ -286,21 +248,9 @@ async fn stream_chat_v2(
         }
     }
 
-    let allow_active_ctx = if respect_model_flags {
-        model_cfg
-            .get("use_active_system_context")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true)
-    } else {
-        true
-    };
-    if let Some(prompt) = model_cfg
-        .get("system_prompt")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-    {
+    if let Some(prompt) = model_runtime.system_prompt.clone() {
         ai_server.set_system_prompt(Some(prompt));
-    } else if allow_active_ctx {
+    } else if model_runtime.use_active_system_context {
         if let Some(uid) = effective_user_id.clone() {
             if let Ok(Some(ctx)) = system_contexts::get_active_system_context(&uid).await {
                 if let Some(content) = ctx.content {
@@ -314,19 +264,16 @@ async fn stream_chat_v2(
         .await
         .unwrap_or_else(|_| json!({}));
     apply_settings_to_ai_client(&mut ai_server.ai_client, &effective_settings);
-    let max_tokens = effective_settings
-        .get("CHAT_MAX_TOKENS")
-        .and_then(|v| v.as_i64())
-        .filter(|v| *v > 0);
+    let max_tokens = chat_max_tokens_from_settings(&effective_settings);
 
     log_chat_begin(
         &session_id,
-        &model,
-        &base_url,
+        &model_runtime.model,
+        &model_runtime.base_url,
         use_tools,
         http_servers.len(),
         stdio_servers.len() + builtin_servers.len(),
-        !api_key.is_empty(),
+        !model_runtime.api_key.is_empty(),
     );
 
     let callback_bundle = build_v2_callbacks(&sender, &session_id);
@@ -340,15 +287,15 @@ async fn stream_chat_v2(
             &session_id,
             &content,
             ChatOptions {
-                model: Some(model.clone()),
-                provider: Some(provider),
-                thinking_level,
-                temperature: Some(temperature),
+                model: Some(model_runtime.model.clone()),
+                provider: Some(model_runtime.provider.clone()),
+                thinking_level: model_runtime.thinking_level.clone(),
+                temperature: Some(model_runtime.temperature),
                 max_tokens,
                 use_tools: Some(use_tools),
                 attachments: Some(att),
-                supports_images: Some(supports_images),
-                reasoning_enabled: Some(effective_reasoning),
+                supports_images: Some(model_runtime.supports_images),
+                reasoning_enabled: Some(model_runtime.effective_reasoning),
                 callbacks: Some(callback_bundle.callbacks),
             },
         )
@@ -359,19 +306,19 @@ async fn stream_chat_v2(
         Ok(res) => {
             if !abort_registry::is_aborted(&session_id) {
                 send_fallback_chunk_if_needed(&sender, &chunk_sent, &res);
-                sender.send_json(&json!({ "type": Events::COMPLETE, "timestamp": crate::core::time::now_rfc3339(), "result": res }));
+                send_complete_event(&sender, &res);
                 should_send_done = true;
             } else {
-                sender.send_json(&json!({ "type": Events::CANCELLED, "timestamp": crate::core::time::now_rfc3339() }));
+                send_cancelled_event(&sender);
             }
         }
         Err(err) => {
             if abort_registry::is_aborted(&session_id) {
                 log_chat_cancelled(&session_id);
-                sender.send_json(&json!({ "type": Events::CANCELLED, "timestamp": crate::core::time::now_rfc3339() }));
+                send_cancelled_event(&sender);
             } else {
                 log_chat_error(&err);
-                sender.send_json(&json!({ "type": Events::ERROR, "timestamp": crate::core::time::now_rfc3339(), "data": { "error": err } }));
+                send_error_event(&sender, &err);
             }
         }
     }
@@ -385,13 +332,12 @@ async fn stream_chat_v2_agent(sender: SseSender, req: ChatRequest, rename_sessio
     let content = req.content.clone().unwrap_or_default();
     let agent_id = req.agent_id.clone().unwrap_or_default();
     if session_id.is_empty() || content.is_empty() || agent_id.is_empty() {
-        sender.send_json(&json!({ "type": Events::ERROR, "timestamp": crate::core::time::now_rfc3339(), "data": { "error": "session_id, content 和 agent_id 为必填项" } }));
+        send_error_event(&sender, "session_id, content 和 agent_id 为必填项");
         sender.send_done();
         return;
     }
 
-    let start_evt = json!({ "type": Events::START, "timestamp": crate::core::time::now_rfc3339(), "session_id": session_id });
-    sender.send_json(&start_evt);
+    send_start_event(&sender, &session_id);
 
     if rename_session && !session_id.is_empty() && !content.is_empty() {
         let sid = session_id.clone();
@@ -401,16 +347,15 @@ async fn stream_chat_v2_agent(sender: SseSender, req: ChatRequest, rename_sessio
         });
     }
 
-    let model_config = match crate::services::v2::agent::load_model_config_for_agent(&agent_id)
-        .await
-    {
-        Ok(cfg) => cfg,
-        Err(err) => {
-            sender.send_json(&json!({ "type": Events::ERROR, "timestamp": crate::core::time::now_rfc3339(), "data": { "error": err } }));
-            sender.send_done();
-            return;
-        }
-    };
+    let model_config =
+        match crate::services::v2::agent::load_model_config_for_agent(&agent_id).await {
+            Ok(cfg) => cfg,
+            Err(err) => {
+                send_error_event(&sender, &err);
+                sender.send_done();
+                return;
+            }
+        };
 
     let callback_bundle = build_v2_callbacks(&sender, &session_id);
     let chunk_sent = callback_bundle.chunk_sent;
@@ -432,16 +377,16 @@ async fn stream_chat_v2_agent(sender: SseSender, req: ChatRequest, rename_sessio
         Ok(res) => {
             if !abort_registry::is_aborted(&session_id) {
                 send_fallback_chunk_if_needed(&sender, &chunk_sent, &res);
-                sender.send_json(&json!({ "type": Events::COMPLETE, "timestamp": crate::core::time::now_rfc3339(), "result": res }));
+                send_complete_event(&sender, &res);
             } else {
-                sender.send_json(&json!({ "type": Events::CANCELLED, "timestamp": crate::core::time::now_rfc3339() }));
+                send_cancelled_event(&sender);
             }
         }
         Err(err) => {
             if abort_registry::is_aborted(&session_id) {
-                sender.send_json(&json!({ "type": Events::CANCELLED, "timestamp": crate::core::time::now_rfc3339() }));
+                send_cancelled_event(&sender);
             } else {
-                sender.send_json(&json!({ "type": Events::ERROR, "timestamp": crate::core::time::now_rfc3339(), "data": { "error": err } }));
+                send_error_event(&sender, &err);
             }
         }
     }

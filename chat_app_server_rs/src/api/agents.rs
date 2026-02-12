@@ -8,14 +8,16 @@ use serde_json::{json, Value};
 use tokio::task;
 use uuid::Uuid;
 
-use crate::core::chat_stream::{build_v2_callbacks, send_fallback_chunk_if_needed};
+use crate::core::chat_stream::{
+    build_v2_callbacks, send_cancelled_event, send_complete_event, send_error_event,
+    send_fallback_chunk_if_needed, send_start_event,
+};
 use crate::models::agent::Agent;
 use crate::repositories::agents as agents_repo;
 use crate::services::session_title::maybe_rename_session_title;
 use crate::services::v2::agent::{load_model_config_for_agent, run_chat};
 use crate::utils::abort_registry;
 use crate::utils::attachments;
-use crate::utils::events::Events;
 use crate::utils::sse::{sse_channel, SseSender};
 use crate::utils::workspace::{normalize_workspace_dir, sanitize_workspace_dir};
 
@@ -370,7 +372,7 @@ async fn stream_agent_chat(sender: SseSender, req: AgentChatRequest) {
     let session_id = req.session_id.clone().unwrap_or_default();
     let content = req.content.clone().unwrap_or_default();
     let agent_id = req.agent_id.clone().unwrap_or_default();
-    sender.send_json(&json!({ "type": Events::START, "timestamp": crate::core::time::now_rfc3339(), "session_id": session_id }));
+    send_start_event(&sender, &session_id);
     if !session_id.is_empty() && !content.is_empty() {
         let sid = session_id.clone();
         let text = content.clone();
@@ -382,7 +384,7 @@ async fn stream_agent_chat(sender: SseSender, req: AgentChatRequest) {
     let model_cfg = match load_model_config_for_agent(&agent_id).await {
         Ok(cfg) => cfg,
         Err(err) => {
-            sender.send_json(&json!({ "type": Events::ERROR, "timestamp": crate::core::time::now_rfc3339(), "data": { "error": err } }));
+            send_error_event(&sender, &err);
             sender.send_done();
             return;
         }
@@ -408,17 +410,17 @@ async fn stream_agent_chat(sender: SseSender, req: AgentChatRequest) {
     match result {
         Ok(res) => {
             if abort_registry::is_aborted(&session_id) {
-                sender.send_json(&json!({ "type": Events::CANCELLED, "timestamp": crate::core::time::now_rfc3339() }));
+                send_cancelled_event(&sender);
             } else {
                 send_fallback_chunk_if_needed(&sender, &chunk_sent, &res);
-                sender.send_json(&json!({ "type": Events::COMPLETE, "timestamp": crate::core::time::now_rfc3339(), "result": res }));
+                send_complete_event(&sender, &res);
             }
         }
         Err(err) => {
             if abort_registry::is_aborted(&session_id) {
-                sender.send_json(&json!({ "type": Events::CANCELLED, "timestamp": crate::core::time::now_rfc3339() }));
+                send_cancelled_event(&sender);
             } else {
-                sender.send_json(&json!({ "type": Events::ERROR, "timestamp": crate::core::time::now_rfc3339(), "data": { "error": err } }));
+                send_error_event(&sender, &err);
             }
         }
     }
