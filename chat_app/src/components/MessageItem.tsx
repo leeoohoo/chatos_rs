@@ -495,15 +495,70 @@ export const MessageItem = memo(MessageItemComponent, (prevProps, nextProps) => 
     return Number.isNaN(parsed) ? 0 : parsed;
   };
 
-  const getMetaKey = (meta?: Message['metadata']): string => {
-    if (!meta) return '';
-    const toolCallsLen = meta.toolCalls?.length ?? 0;
-    const contentSegmentsLen = meta.contentSegments?.length ?? 0;
+  const summarizeValue = (value: unknown): string => {
+    if (value === null || value === undefined) return "";
+    if (typeof value === "string") {
+      if (!value) return "";
+      const head = value.slice(0, 24);
+      const tail = value.slice(-24);
+      return `${value.length}:${head}:${tail}`;
+    }
+    try {
+      const raw = JSON.stringify(value);
+      if (!raw) return "";
+      return `${raw.length}:${raw.slice(0, 24)}:${raw.slice(-24)}`;
+    } catch {
+      return String(value);
+    }
+  };
+
+  const getToolCalls = (message: Message): any[] => {
+    const topLevel = (message as any).toolCalls;
+    if (Array.isArray(topLevel) && topLevel.length > 0) return topLevel;
+    const fromMeta = message.metadata?.toolCalls;
+    return Array.isArray(fromMeta) ? fromMeta : [];
+  };
+
+  const getToolCallsKey = (message: Message): string => {
+    const toolCalls = getToolCalls(message);
+    if (toolCalls.length === 0) return "";
+    return toolCalls
+      .map((toolCall: any) => {
+        const id = String(toolCall?.id ?? "");
+        const name = String(toolCall?.name ?? "");
+        const completed = toolCall?.completed === true ? "1" : "0";
+        const error = summarizeValue(toolCall?.error ?? "");
+        const streamLog = summarizeValue(toolCall?.streamLog ?? toolCall?.stream_log ?? "");
+        const finalResult = summarizeValue(toolCall?.finalResult ?? toolCall?.final_result ?? "");
+        const result = summarizeValue(toolCall?.result ?? "");
+        const args = summarizeValue(toolCall?.arguments ?? toolCall?.args ?? "");
+        return `${id}~${name}~${completed}~${error}~${streamLog}~${finalResult}~${result}~${args}`;
+      })
+      .join("|");
+  };
+
+  const getContentSegmentsKey = (meta?: Message["metadata"]): string => {
+    const segments = meta?.contentSegments;
+    if (!Array.isArray(segments) || segments.length === 0) return "";
+    return segments
+      .map((segment: any, index: number) => {
+        const type = String(segment?.type ?? "");
+        const toolCallId = String(segment?.toolCallId ?? "");
+        const content = summarizeValue(segment?.content ?? "");
+        return `${index}:${type}:${toolCallId}:${content}`;
+      })
+      .join("|");
+  };
+
+  const getMetaKey = (meta?: Message["metadata"]): string => {
+    if (!meta) return "";
     const attachmentsLen = meta.attachments?.length ?? 0;
-    const summary = meta.summary ?? '';
-    const model = meta.model ?? '';
-    const hidden = (meta as any).hidden ? '1' : '0';
-    return `${toolCallsLen}|${contentSegmentsLen}|${attachmentsLen}|${summary}|${model}|${hidden}`;
+    const summary = meta.summary ?? "";
+    const model = meta.model ?? "";
+    const hidden = (meta as any).hidden ? "1" : "0";
+    const currentSegmentIndex = String(meta.currentSegmentIndex ?? "");
+    const contentSegmentsKey = getContentSegmentsKey(meta);
+    return `${attachmentsLen}|${summary}|${model}|${hidden}|${currentSegmentIndex}|${contentSegmentsKey}`;
   };
 
   // 比较关键属性
@@ -511,14 +566,15 @@ export const MessageItem = memo(MessageItemComponent, (prevProps, nextProps) => 
     prevProps.message.id === nextProps.message.id &&
     prevProps.message.content === nextProps.message.content &&
     prevProps.message.rawContent === nextProps.message.rawContent &&
-    prevProps.message.createdAt === nextProps.message.createdAt &&
+    getTime(prevProps.message.createdAt) === getTime(nextProps.message.createdAt) &&
     prevProps.message.status === nextProps.message.status &&
     prevProps.message.tokensUsed === nextProps.message.tokensUsed &&
     getTime(prevProps.message.updatedAt) === getTime(nextProps.message.updatedAt) &&
     prevProps.isLast === nextProps.isLast &&
     prevProps.isStreaming === nextProps.isStreaming &&
     getMetaKey(prevProps.message.metadata) === getMetaKey(nextProps.message.metadata) &&
-    (prevProps.toolResultKey ?? '') === (nextProps.toolResultKey ?? '')
+    getToolCallsKey(prevProps.message) === getToolCallsKey(nextProps.message) &&
+    (prevProps.toolResultKey ?? "") === (nextProps.toolResultKey ?? "")
   );
 });
 

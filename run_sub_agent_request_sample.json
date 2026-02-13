@@ -1,0 +1,156 @@
+{
+  "note": "Sample payload for run_sub_agent AI request path (based on current code).",
+  "source": {
+    "router": "chat_app_server_rs/src/builtin/sub_agent_router/core/job_executor.rs",
+    "prompt_builder": "chat_app_server_rs/src/builtin/sub_agent_router/prompting.rs",
+    "responses_sender": "chat_app_server_rs/src/services/v3/ai_request_handler.rs",
+    "chat_completions_sender": "chat_app_server_rs/src/services/v2/ai_request_handler.rs"
+  },
+  "tool_call_input_example": {
+    "task": "检查 /Users/lilei/project/my_project/chatos_rs/chat_app 的构建错误并给出修复建议",
+    "agent_id": "frontend-specialist",
+    "skills": [
+      "react-debugging",
+      "vite-build-fixes"
+    ],
+    "command_id": "",
+    "query": "focus on streaming modal issues",
+    "caller_model": "gpt-4.1"
+  },
+  "resolved_context_example": {
+    "agent": {
+      "id": "frontend-specialist",
+      "name": "Frontend Specialist",
+      "description": "擅长 React/TypeScript 前端问题定位与修复",
+      "category": "frontend",
+      "skills": [
+        "react-debugging",
+        "vite-build-fixes",
+        "ui-polish"
+      ],
+      "default_skills": [
+        "react-debugging",
+        "vite-build-fixes"
+      ],
+      "default_command": "",
+      "system_prompt_path": "chat_app_server_rs/docs/agents/skills/frontend/SKILL.md",
+      "plugin": "local"
+    },
+    "selected_command": null,
+    "selected_skills": [
+      {
+        "id": "react-debugging",
+        "name": "React Debugging",
+        "description": "定位 React 渲染/状态问题",
+        "path": "chat_app_server_rs/docs/agents/skills/react-debugging/SKILL.md",
+        "plugin": "local"
+      },
+      {
+        "id": "vite-build-fixes",
+        "name": "Vite Build Fixes",
+        "description": "处理 Vite/TS 打包报错",
+        "path": "chat_app_server_rs/docs/agents/skills/vite-build-fixes/SKILL.md",
+        "plugin": "local"
+      }
+    ],
+    "allow_prefixes": [
+      "code_maintainer",
+      "terminal_controller"
+    ],
+    "workspace_root": "/Users/lilei/project/my_project/chatos_rs"
+  },
+  "system_prompt_sections_example": [
+    "You are Frontend Specialist.",
+    "Agent details:\n{...agent + selected_command + selected_skill_ids + selected_skills (pretty JSON)...}",
+    "Agent profile:\n- id: frontend-specialist\n- name: Frontend Specialist\n- description: 擅长 React/TypeScript 前端问题定位与修复\n- category: frontend\n- default_command: (none)\n- system_prompt_path: chat_app_server_rs/docs/agents/skills/frontend/SKILL.md\n- plugin: local\n- declared_skills: react-debugging, vite-build-fixes, ui-polish\n- default_skills: react-debugging, vite-build-fixes",
+    "Selected command profile:\n- (none; AI direct execution mode)",
+    "Selected skills overview:\n- react-debugging (React Debugging)\n  description: 定位 React 渲染/状态问题\n  path: chat_app_server_rs/docs/agents/skills/react-debugging/SKILL.md\n  plugin: local\n- vite-build-fixes (Vite Build Fixes)\n  description: 处理 Vite/TS 打包报错\n  path: chat_app_server_rs/docs/agents/skills/vite-build-fixes/SKILL.md\n  plugin: local",
+    "<agent system_prompt_path 文件内容>",
+    "Skills:\nSkill: React Debugging\\n<skill file content>\\n\\nSkill: Vite Build Fixes\\n<skill file content>",
+    "Allowed MCP prefixes: code_maintainer, terminal_controller",
+    "Workspace root: /Users/lilei/project/my_project/chatos_rs",
+    "Tool rule: do not assume directories exist...",
+    "Tooling guard: sub-agents cannot call mcp_subagent_router_* ..."
+  ],
+  "payload_to_openai_responses_api_example": {
+    "model": "gpt-4.1",
+    "input": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "检查 /Users/lilei/project/my_project/chatos_rs/chat_app 的构建错误并给出修复建议"
+          }
+        ]
+      }
+    ],
+    "instructions": "<build_system_prompt 拼接后的完整长字符串>",
+    "tools": [
+      {
+        "type": "function",
+        "name": "code_maintainer_read_file",
+        "description": "Read file content",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "path"
+          ]
+        }
+      }
+    ],
+    "tool_choice": "auto",
+    "temperature": 0.7,
+    "max_output_tokens": 12000,
+    "reasoning": {
+      "effort": "medium",
+      "summary": "auto"
+    },
+    "stream": true
+  },
+  "payload_to_openai_chat_completions_example": {
+    "model": "gpt-4o",
+    "messages": [
+      {
+        "role": "system",
+        "content": "<build_system_prompt 拼接后的完整长字符串>"
+      },
+      {
+        "role": "user",
+        "content": "检查 /Users/lilei/project/my_project/chatos_rs/chat_app 的构建错误并给出修复建议"
+      }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "code_maintainer_read_file",
+          "description": "Read file content",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "path"
+            ]
+          }
+        }
+      }
+    ],
+    "tool_choice": "auto",
+    "max_tokens": 12000,
+    "reasoning_effort": "medium",
+    "stream": true,
+    "stream_options": {
+      "include_usage": true
+    }
+  }
+}

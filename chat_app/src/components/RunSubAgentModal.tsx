@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import './RunSubAgentModal.css';
 
@@ -358,6 +359,7 @@ export const RunSubAgentModal: React.FC<RunSubAgentModalProps> = ({ toolCall, on
     if (status === 'error') return mergedErrorText;
     if (status === 'running') {
       if (streamedResponseText.trim()) return streamedResponseText;
+      if (finalResponseText.trim()) return finalResponseText;
       if (streamEvents.length === 0 && hasStream) return streamLog;
       return '';
     }
@@ -520,7 +522,7 @@ export const RunSubAgentModal: React.FC<RunSubAgentModalProps> = ({ toolCall, on
         ? '已完成'
         : '运行中';
 
-  return (
+  const modalContent = (
     <>
       <div
         className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[70]"
@@ -678,6 +680,9 @@ export const RunSubAgentModal: React.FC<RunSubAgentModalProps> = ({ toolCall, on
       </div>
     </>
   );
+
+  if (typeof document === 'undefined') return null;
+  return createPortal(modalContent, document.body);
 };
 
 export default RunSubAgentModal;

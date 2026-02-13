@@ -26,6 +26,162 @@ pub(super) fn build_system_prompt(
     let mut sections = Vec::new();
     sections.push(format!("You are {}.", agent.name));
 
+    let agent_details = json!({
+        "agent": agent,
+        "selected_command": command,
+        "selected_skill_ids": skills
+            .iter()
+            .map(|skill| skill.id.clone())
+            .collect::<Vec<_>>(),
+        "selected_skills": skills,
+    });
+    let agent_details_text =
+        serde_json::to_string_pretty(&agent_details).unwrap_or_else(|_| agent_details.to_string());
+    sections.push(format!(
+        "Agent details:
+{}",
+        agent_details_text
+    ));
+
+    let mut agent_profile_lines = vec![
+        format!("- id: {}", agent.id),
+        format!("- name: {}", agent.name),
+        format!(
+            "- description: {}",
+            agent.description.as_deref().unwrap_or("(empty)")
+        ),
+        format!(
+            "- category: {}",
+            agent.category.as_deref().unwrap_or("(empty)")
+        ),
+        format!(
+            "- default_command: {}",
+            agent.default_command.as_deref().unwrap_or("(none)")
+        ),
+        format!(
+            "- system_prompt_path: {}",
+            agent.system_prompt_path.as_deref().unwrap_or("(none)")
+        ),
+        format!("- plugin: {}", agent.plugin.as_deref().unwrap_or("(none)")),
+    ];
+
+    let declared_skills = agent.skills.clone().unwrap_or_default();
+    agent_profile_lines.push(format!(
+        "- declared_skills: {}",
+        if declared_skills.is_empty() {
+            "(none)".to_string()
+        } else {
+            declared_skills.join(", ")
+        }
+    ));
+
+    let default_skills = agent.default_skills.clone().unwrap_or_default();
+    agent_profile_lines.push(format!(
+        "- default_skills: {}",
+        if default_skills.is_empty() {
+            "(none)".to_string()
+        } else {
+            default_skills.join(", ")
+        }
+    ));
+
+    sections.push(format!(
+        "Agent profile:
+{}",
+        agent_profile_lines.join("\n")
+    ));
+
+    if let Some(selected_command) = command {
+        let mut command_profile_lines = vec![
+            format!("- id: {}", selected_command.id),
+            format!(
+                "- name: {}",
+                selected_command.name.as_deref().unwrap_or("(empty)")
+            ),
+            format!(
+                "- description: {}",
+                selected_command.description.as_deref().unwrap_or("(empty)")
+            ),
+            format!(
+                "- cwd: {}",
+                selected_command
+                    .cwd
+                    .as_deref()
+                    .unwrap_or("(workspace root)")
+            ),
+            format!(
+                "- instructions_path: {}",
+                selected_command
+                    .instructions_path
+                    .as_deref()
+                    .unwrap_or("(none)")
+            ),
+            format!(
+                "- exec: {}",
+                selected_command
+                    .exec
+                    .as_ref()
+                    .map(|parts| parts.join(" "))
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or_else(|| "(none)".to_string())
+            ),
+        ];
+
+        let mut env_keys = selected_command
+            .env
+            .as_ref()
+            .map(|map| map.keys().cloned().collect::<Vec<_>>())
+            .unwrap_or_default();
+        env_keys.sort();
+        command_profile_lines.push(format!(
+            "- env_keys: {}",
+            if env_keys.is_empty() {
+                "(none)".to_string()
+            } else {
+                env_keys.join(", ")
+            }
+        ));
+
+        sections.push(format!(
+            "Selected command profile:
+{}",
+            command_profile_lines.join("\n")
+        ));
+    } else {
+        sections.push(
+            "Selected command profile:
+- (none; AI direct execution mode)"
+                .to_string(),
+        );
+    }
+
+    if skills.is_empty() {
+        sections.push(
+            "Selected skills overview:
+- (none)"
+                .to_string(),
+        );
+    } else {
+        let mut skill_lines = Vec::new();
+        for skill in skills {
+            skill_lines.push(format!("- {} ({})", skill.id, skill.name));
+            skill_lines.push(format!(
+                "  description: {}",
+                skill.description.as_deref().unwrap_or("(empty)")
+            ));
+            skill_lines.push(format!("  path: {}", skill.path));
+            skill_lines.push(format!(
+                "  plugin: {}",
+                skill.plugin.as_deref().unwrap_or("(none)")
+            ));
+        }
+        sections.push(format!(
+            "Selected skills overview:
+{}",
+            skill_lines.join("\n")
+        ));
+    }
+
     if let Some(prompt_path) = agent.system_prompt_path.as_deref() {
         let agent_prompt = catalog.read_content(Some(prompt_path));
         if !agent_prompt.is_empty() {

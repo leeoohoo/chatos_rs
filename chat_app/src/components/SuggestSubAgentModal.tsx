@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { MarkdownRenderer } from './MarkdownRenderer';
 
 interface SuggestSubAgentModalProps {
@@ -155,7 +156,7 @@ export const SuggestSubAgentModal: React.FC<SuggestSubAgentModalProps> = ({ tool
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [onClose]);
 
-  return (
+  const modalContent = (
     <>
       <div
         className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[70]"
@@ -251,6 +252,9 @@ export const SuggestSubAgentModal: React.FC<SuggestSubAgentModalProps> = ({ tool
       </div>
     </>
   );
+
+  if (typeof document === 'undefined') return null;
+  return createPortal(modalContent, document.body);
 };
 
 export default SuggestSubAgentModal;
