@@ -537,6 +537,7 @@ export function createSendMessageHandler({
                       result: tc.result || '', // 初始化result字段
                       finalResult: tc.finalResult || tc.final_result || tc.result || '',
                       streamLog: tc.streamLog || tc.stream_log || '',
+                      completed: tc.completed === true,
                       error: tc.error || undefined, // 可选的error字段
                       createdAt: tc.createdAt || tc.created_at || new Date(), // 添加前端需要的createdAt，支持多种时间格式
                     };
@@ -595,8 +596,11 @@ export function createSendMessageHandler({
                   debugLog('🔧 收到工具结果:', parsed.data);
                   debugLog('🔧 工具结果数据类型:', typeof parsed.data);
 
-                  // 统一处理数组和单个对象
-                  const resultsArray = Array.isArray(parsed.data) ? parsed.data : [parsed.data];
+                  // 兼容多种后端结构：{tool_results:[...]}, {results:[...]}, [...] 或单对象
+                  const rawResults = parsed.data?.tool_results || parsed.data?.results || parsed.data;
+                  const resultsArray = Array.isArray(rawResults)
+                    ? rawResults
+                    : (rawResults ? [rawResults] : []);
 
                   set((state: any) => {
                     const messageIndex = state.messages.findIndex((m: any) => m.id === tempAssistantMessage.id);
@@ -627,6 +631,7 @@ export function createSendMessageHandler({
                             if (result.success === false || result.is_error === true) {
                               // 工具执行失败
                               toolCall.error = result.error || resultContent || '工具执行失败';
+                              toolCall.completed = true;
                               debugLog('❌ 工具执行失败:', {
                                 id: toolCall.id,
                                 name: result.name || toolCall.name,
@@ -642,6 +647,8 @@ export function createSendMessageHandler({
                               } else if (!toolCall.result || toolCall.result.trim() === '') {
                                 toolCall.result = resultContent;
                               }
+
+                              toolCall.completed = true;
 
                               // 清除可能存在的错误状态
                               if (toolCall.error) {
@@ -697,14 +704,13 @@ export function createSendMessageHandler({
                           const chunkContent = typeof rawChunkContent === 'string'
                             ? rawChunkContent
                             : JSON.stringify(rawChunkContent);
-
-                          // 保留完整流式日志，便于右侧过程面板展示
-                          toolCall.streamLog = (toolCall.streamLog || '') + chunkContent;
+                          const isDeltaStream = data.is_stream === true;
 
                           // 检查是否有错误
                           if (data.is_error || !data.success) {
                             // 如果是错误，标记工具调用失败
                             toolCall.error = chunkContent || '工具执行出错';
+                            toolCall.completed = true;
                             debugLog('❌ 工具流式执行出错:', {
                               id: toolCall.id,
                               error: toolCall.error,
@@ -712,8 +718,19 @@ export function createSendMessageHandler({
                               is_error: data.is_error,
                             });
                           } else {
-                            // 正常情况下累积展示结果（最终结果由 tools_end 覆盖）
-                            toolCall.result = (toolCall.result || '') + chunkContent;
+                            if (isDeltaStream) {
+                              // 保留完整流式日志，便于右侧过程面板展示
+                              toolCall.streamLog = (toolCall.streamLog || '') + chunkContent;
+                              // 累积增量输出，提供运行中的实时视觉反馈
+                              toolCall.result = (toolCall.result || '') + chunkContent;
+                            } else {
+                              // 非增量事件通常表示工具已经给出完整结果，直接覆盖即可
+                              if (typeof chunkContent === 'string' && chunkContent.length > 0) {
+                                toolCall.finalResult = chunkContent;
+                              }
+                              toolCall.result = chunkContent;
+                              toolCall.completed = true;
+                            }
                             debugLog('🔧 工具流式数据已更新:', {
                               id: toolCall.id,
                               name: data.name,
@@ -721,7 +738,7 @@ export function createSendMessageHandler({
                               totalLength: toolCall.result.length,
                               streamLogLength: (toolCall.streamLog || '').length,
                               success: data.success,
-                              is_stream: data.is_stream,
+                              is_stream: isDeltaStream,
                             });
                           }
 
@@ -748,6 +765,7 @@ export function createSendMessageHandler({
                             }
                             tc.error = '已取消';
                           }
+                          tc.completed = true;
                         });
                         (message as any).updatedAt = new Date();
                       }

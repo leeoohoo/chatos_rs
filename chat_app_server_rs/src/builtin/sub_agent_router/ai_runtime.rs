@@ -5,6 +5,7 @@ pub(super) fn run_ai_task_with_system_messages(
     system_messages: Vec<String>,
     task: &str,
     requested_model: Option<&str>,
+    on_stream_chunk: Option<ToolStreamChunkCallback>,
 ) -> Result<AiTaskResult, String> {
     let user_id = ctx.user_id.clone();
     let requested = requested_model.map(|v| v.trim().to_string());
@@ -86,7 +87,10 @@ pub(super) fn run_ai_task_with_system_messages(
                 None,
                 Some(0.2),
                 None,
-                StreamCallbacks::default(),
+                StreamCallbacks {
+                    on_chunk: on_stream_chunk.clone(),
+                    on_thinking: None,
+                },
                 Some(model.provider.clone()),
                 model.thinking_level.clone(),
                 None,
@@ -128,7 +132,7 @@ pub(super) fn run_ai_task_with_system_messages(
                 Some(0.2),
                 None,
                 crate::services::v2::ai_request_handler::StreamCallbacks {
-                    on_chunk: None,
+                    on_chunk: on_stream_chunk.clone(),
                     on_thinking: None,
                 },
                 true,

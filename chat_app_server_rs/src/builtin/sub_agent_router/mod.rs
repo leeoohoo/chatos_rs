@@ -25,6 +25,7 @@ use once_cell::sync::Lazy;
 use serde_json::{json, Value};
 
 use crate::config::Config;
+use crate::core::mcp_tools::ToolStreamChunkCallback;
 use crate::repositories::{ai_model_configs, mcp_configs};
 use crate::services::builtin_mcp::{list_builtin_mcp_configs, SUB_AGENT_ROUTER_MCP_ID};
 use crate::services::user_settings::{apply_settings_to_ai_client, get_effective_user_settings};
@@ -109,6 +110,7 @@ type ToolHandler = Arc<dyn Fn(Value, &ToolContext) -> Result<Value, String> + Se
 struct ToolContext<'a> {
     session_id: &'a str,
     run_id: &'a str,
+    on_stream_chunk: Option<ToolStreamChunkCallback>,
 }
 
 #[derive(Clone)]
@@ -283,6 +285,7 @@ impl SubAgentRouterService {
                         &ctx,
                         task.as_str(),
                         caller_model.as_deref(),
+                        _tool_ctx.on_stream_chunk.clone(),
                     )?;
                     trace_router_node(
                         "suggest_sub_agent",
@@ -369,6 +372,7 @@ impl SubAgentRouterService {
         name: &str,
         args: Value,
         session_id: Option<&str>,
+        on_stream_chunk: Option<ToolStreamChunkCallback>,
     ) -> Result<Value, String> {
         let tool = self
             .tools
@@ -387,6 +391,7 @@ impl SubAgentRouterService {
         let ctx = ToolContext {
             session_id: session,
             run_id: run,
+            on_stream_chunk,
         };
 
         trace_router_node(

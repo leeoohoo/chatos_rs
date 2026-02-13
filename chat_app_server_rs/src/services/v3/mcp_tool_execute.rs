@@ -6,7 +6,7 @@ use tracing::{info, warn};
 use crate::core::mcp_tools::{
     build_builtin_tool_service, execute_tools_stream as execute_tools_stream_common,
     inject_sub_agent_router_args, jsonrpc_http_call, jsonrpc_stdio_call, list_tools_http,
-    list_tools_stdio, to_text, BuiltinToolService, ToolResultCallback,
+    list_tools_stdio, to_text, BuiltinToolService, ToolResultCallback, ToolStreamChunkCallback,
 };
 use crate::services::mcp_loader::{McpBuiltinServer, McpHttpServer, McpStdioServer};
 
@@ -239,9 +239,15 @@ impl McpToolExecute {
             tool_calls,
             session_id,
             on_tool_result,
-            |tool_name, args| async move {
-                self.call_tool_once(tool_name.as_str(), args, session_id, caller_model)
-                    .await
+            |tool_name, args, on_stream_chunk| async move {
+                self.call_tool_once(
+                    tool_name.as_str(),
+                    args,
+                    session_id,
+                    caller_model,
+                    on_stream_chunk,
+                )
+                .await
             },
         )
         .await
@@ -253,6 +259,7 @@ impl McpToolExecute {
         args: Value,
         session_id: Option<&str>,
         caller_model: Option<&str>,
+        on_stream_chunk: Option<ToolStreamChunkCallback>,
     ) -> Result<String, String> {
         let info = self
             .tool_metadata
@@ -280,7 +287,8 @@ impl McpToolExecute {
                 args
             };
 
-            let result = service.call_tool(&info.original_name, args, session_id)?;
+            let result =
+                service.call_tool(&info.original_name, args, session_id, on_stream_chunk)?;
             Ok(to_text(&result))
         } else {
             let config = info.server_config.clone().ok_or("missing server config")?;

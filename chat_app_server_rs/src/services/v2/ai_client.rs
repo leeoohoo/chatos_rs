@@ -430,6 +430,7 @@ impl AiClient {
                         name,
                         success: false,
                         is_error: true,
+                        is_stream: false,
                         content: "aborted".to_string(),
                     });
                 }

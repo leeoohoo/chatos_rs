@@ -5,6 +5,7 @@ pub(super) fn suggest_sub_agent_text_with_docs(
     ctx: &BoundContext,
     task: &str,
     requested_model: Option<&str>,
+    on_stream_chunk: Option<ToolStreamChunkCallback>,
 ) -> Result<String, String> {
     let (repo_root, system_messages) = load_recommender_docs_for_suggest()?;
     trace_router_node(
@@ -35,6 +36,7 @@ task:\n{}",
         system_messages,
         request_text.as_str(),
         requested_model,
+        on_stream_chunk,
     )?;
 
     Ok(ai.response)

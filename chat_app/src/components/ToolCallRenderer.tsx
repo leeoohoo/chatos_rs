@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { MarkdownRenderer } from './MarkdownRenderer';
+import SuggestSubAgentModal from './SuggestSubAgentModal';
 import type { ToolCall, Message } from '../types';
 import './ToolCallRenderer.css';
 
@@ -41,6 +42,12 @@ const inferType = (val: any): string => {
     case 'object': return 'object';
     default: return typeof val;
   }
+};
+
+const isSuggestSubAgentTool = (toolName: string): boolean => {
+  const normalized = String(toolName || '').trim().toLowerCase();
+  if (!normalized) return false;
+  return normalized.endsWith('_suggest_sub_agent') || normalized.includes('__suggest_sub_agent');
 };
 
 interface TreeNode {
@@ -188,6 +195,9 @@ export const ToolCallRenderer: React.FC<ToolCallRendererProps> = ({
   className,
 }) => {
   const [showDetails, setShowDetails] = useState(false);
+  const [showSuggestModal, setShowSuggestModal] = useState(false);
+  const toolName = String(toolCall?.name || '');
+  const isSuggestSubAgent = useMemo(() => isSuggestSubAgentTool(toolName), [toolName]);
 
   const toolResultMessage = useMemo(() => {
     const direct = toolResultById?.get(String(toolCall.id));
@@ -203,9 +213,43 @@ export const ToolCallRenderer: React.FC<ToolCallRendererProps> = ({
 
   // 优先使用toolCall.result，如果没有则使用tool消息的内容
   const result = toolCall.result || toolResultMessage?.content;
+  const streamLogText = useMemo(() => {
+    if (typeof (toolCall as any)?.streamLog === 'string') return (toolCall as any).streamLog;
+    return '';
+  }, [toolCall]);
+  const resultText = useMemo(() => {
+    if (typeof result === 'string') return result;
+    if (result === null || result === undefined) return '';
+    try {
+      return JSON.stringify(result);
+    } catch {
+      return '';
+    }
+  }, [result]);
+  const finalResultText = useMemo(() => {
+    const raw = (toolCall as any)?.finalResult;
+    if (typeof raw === 'string') return raw;
+    if (raw === null || raw === undefined) return '';
+    try {
+      return JSON.stringify(raw);
+    } catch {
+      return '';
+    }
+  }, [toolCall]);
   
   const hasError = !!toolCall.error;
   const hasResult = !!result;
+  const hasStreamLog = streamLogText.trim().length > 0;
+  const hasPersistedResult = !!toolResultMessage?.content;
+  const isMarkedCompleted = (toolCall as any)?.completed === true;
+  const looksCompletedFromSnapshot =
+    hasStreamLog && resultText.trim().length > 0 && resultText !== streamLogText;
+  const hasFinalResult =
+    isMarkedCompleted
+    || finalResultText.trim().length > 0
+    || hasPersistedResult
+    || looksCompletedFromSnapshot
+    || (!hasStreamLog && hasResult);
   
   const hasArguments = useMemo(() => {
     if (!toolCall.arguments) return false;
@@ -290,12 +334,32 @@ export const ToolCallRenderer: React.FC<ToolCallRendererProps> = ({
 
   // 移除未使用的表格格式化方法
 
-  const statusText = hasError ? '错误' : (hasResult ? '完成' : '等待中');
-  const statusClass = hasError ? 'error' : (hasResult ? 'success' : 'pending');
+  const statusText = hasError
+    ? '错误'
+    : (isSuggestSubAgent
+      ? (hasFinalResult ? '完成' : '运行中')
+      : (hasResult ? '完成' : '等待中'));
+  const statusClass = hasError
+    ? 'error'
+    : (isSuggestSubAgent
+      ? (hasFinalResult ? 'success' : 'pending')
+      : (hasResult ? 'success' : 'pending'));
+  const canToggleDetails = !isSuggestSubAgent && (hasArguments || hasResult || hasError);
 
   return (
     <div className={`tool-call-renderer tool-call-container${className ? ` ${className}` : ''}`}>
-      <div className={`tool-chip ${showDetails ? 'expanded' : ''}`}>
+      <div
+        className={`tool-chip ${showDetails ? 'expanded' : ''} ${isSuggestSubAgent ? 'cursor-pointer hover:border-blue-400/70 dark:hover:border-blue-500/70' : ''}`}
+        onClick={isSuggestSubAgent ? () => setShowSuggestModal(true) : undefined}
+        role={isSuggestSubAgent ? 'button' : undefined}
+        tabIndex={isSuggestSubAgent ? 0 : undefined}
+        onKeyDown={isSuggestSubAgent ? (event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            setShowSuggestModal(true);
+          }
+        } : undefined}
+      >
         <div className="tool-chip-left">
           <svg className="tool-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <path d="M13 2 3 14h7l-1 8 12-14h-7l1-6z" />
@@ -303,8 +367,9 @@ export const ToolCallRenderer: React.FC<ToolCallRendererProps> = ({
           <span className="tool-name" title={toolCall.name}>@{toolCall.name}</span>
           <span className={`tool-status ${statusClass}`}>{statusText}</span>
         </div>
-        {(hasArguments || hasResult || hasError) && (
+        {canToggleDetails && (
           <button
+            type="button"
             onClick={() => setShowDetails(!showDetails)}
             className={`tool-toggle ${showDetails ? 'expanded' : ''}`}
             aria-label={showDetails ? '收起详情' : '查看详情'}
@@ -316,10 +381,30 @@ export const ToolCallRenderer: React.FC<ToolCallRendererProps> = ({
             </svg>
           </button>
         )}
+        {isSuggestSubAgent && (
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              setShowSuggestModal(true);
+            }}
+            className="tool-toggle"
+            aria-label="打开推荐详情弹窗"
+            title="打开推荐详情弹窗"
+          >
+            <svg className="tool-toggle-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M14 3h7v7" />
+              <path d="M10 14 21 3" />
+              <path d="M21 14v7h-7" />
+              <path d="M3 10V3h7" />
+              <path d="M3 21h7v-7" />
+            </svg>
+          </button>
+        )}
       </div>
 
       {/* 详细信息 - 展开时显示 */}
-      {showDetails && (
+      {canToggleDetails && showDetails && (
          <div className="details-container">
          
           {/* 参数详情 - 移动到详情里面，移除标题 */}
@@ -364,6 +449,18 @@ export const ToolCallRenderer: React.FC<ToolCallRendererProps> = ({
             })()}
           </div>
         </div>
+      )}
+
+      {isSuggestSubAgent && showSuggestModal && (
+        <SuggestSubAgentModal
+          toolCall={{
+            ...toolCall,
+            result,
+            finalResult: (toolCall as any)?.finalResult,
+            persistedResult: toolResultMessage?.content,
+          }}
+          onClose={() => setShowSuggestModal(false)}
+        />
       )}
     </div>
   );
