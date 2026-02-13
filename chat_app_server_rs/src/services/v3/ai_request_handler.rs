@@ -7,6 +7,7 @@ use tracing::{error, info};
 
 use crate::services::v3::message_manager::MessageManager;
 use crate::utils::abort_registry;
+use crate::utils::model_config::is_gpt_provider;
 
 #[derive(Debug, Clone)]
 pub struct AiResponse {
@@ -87,7 +88,11 @@ impl AiRequestHandler {
         if let Some(level) =
             normalize_reasoning_effort(provider.as_deref(), thinking_level.as_deref())
         {
-            payload["reasoning"] = json!({ "effort": level });
+            let mut reasoning_payload = json!({ "effort": level });
+            if is_gpt_provider(provider.as_deref().unwrap_or("gpt")) {
+                reasoning_payload["summary"] = Value::String("auto".to_string());
+            }
+            payload["reasoning"] = reasoning_payload;
         }
         if stream {
             payload["stream"] = Value::Bool(true);
@@ -322,15 +327,12 @@ impl AiRequestHandler {
                                     }
                                 }
                             }
-                        } else if t == "response.reasoning.delta"
-                            || t == "response.reasoning_text.delta"
-                            || t == "response.reasoning_summary_text.delta"
+                        } else if let Some(reasoning_delta) = extract_reasoning_event_text(t, &v)
                         {
-                            let delta = normalize_reasoning_delta(v.get("delta"));
-                            if !delta.is_empty() {
-                                reasoning.push_str(&delta);
+                            if !reasoning_delta.is_empty() {
+                                reasoning.push_str(&reasoning_delta);
                                 if let Some(cb) = &callbacks.on_thinking {
-                                    cb(delta);
+                                    cb(reasoning_delta);
                                 }
                             }
                         } else if t == "response.completed" {
@@ -411,7 +413,12 @@ impl AiRequestHandler {
             }
         }
         let reasoning_opt = if reasoning.is_empty() {
-            None
+            let fallback = extract_reasoning_from_response(&response_val);
+            if fallback.is_empty() {
+                None
+            } else {
+                Some(fallback)
+            }
         } else {
             Some(reasoning.clone())
         };
@@ -582,20 +589,146 @@ fn extract_text_from_fields(value: &Value, fields: &[&str]) -> Option<String> {
     None
 }
 
-fn normalize_reasoning_delta(delta: Option<&Value>) -> String {
-    if let Some(v) = delta {
-        if let Some(s) = v.as_str() {
-            return s.to_string();
+fn extract_reasoning_event_text(event_type: &str, event: &Value) -> Option<String> {
+    let is_reasoning_event = event_type.starts_with("response.reasoning")
+        || event_type.starts_with("response.reasoning_text")
+        || event_type.starts_with("response.reasoning_summary");
+
+    if is_reasoning_event {
+        for key in ["delta", "summary_text", "summary", "text", "part", "item", "content"] {
+            if let Some(value) = event.get(key) {
+                let text = normalize_reasoning_delta(Some(value));
+                if !text.is_empty() {
+                    return Some(text);
+                }
+            }
         }
-        if v.is_null() {
-            return String::new();
+
+        if let Some(response) = event.get("response") {
+            let text = extract_reasoning_from_response(response);
+            if !text.is_empty() {
+                return Some(text);
+            }
         }
-        if let Ok(s) = serde_json::to_string(v) {
-            return s;
-        }
-        return v.to_string();
     }
+
+    if event_type == "response.output_item.added"
+        || event_type == "response.output_item.delta"
+        || event_type == "response.output_item.done"
+    {
+        let item = event.get("item").or_else(|| event.get("output_item"));
+        if let Some(item) = item {
+            let item_type = item.get("type").and_then(|v| v.as_str()).unwrap_or("");
+            if item_type == "reasoning" || item_type == "reasoning_summary" {
+                let text = extract_reasoning_from_response(&json!({ "output": [item.clone()] }));
+                if !text.is_empty() {
+                    return Some(text);
+                }
+            }
+        }
+    }
+
+    None
+}
+
+fn extract_reasoning_from_response(response: &Value) -> String {
+    if let Some(reasoning) = response
+        .get("reasoning")
+        .or_else(|| response.get("reasoning_summary"))
+    {
+        let text = normalize_reasoning_delta(Some(reasoning));
+        if !text.is_empty() {
+            return text;
+        }
+    }
+
+    let mut parts = Vec::new();
+    if let Some(output_items) = response.get("output").and_then(|v| v.as_array()) {
+        for item in output_items {
+            let item_type = item.get("type").and_then(|v| v.as_str()).unwrap_or("");
+            if item_type != "reasoning" && item_type != "reasoning_summary" {
+                continue;
+            }
+
+            let mut item_has_text = false;
+            for key in ["summary", "content", "text", "delta", "reasoning"] {
+                if let Some(value) = item.get(key) {
+                    let text = normalize_reasoning_delta(Some(value));
+                    if !text.is_empty() {
+                        parts.push(text);
+                        item_has_text = true;
+                    }
+                }
+            }
+
+            if !item_has_text {
+                let text = normalize_reasoning_delta(Some(item));
+                if !text.is_empty() {
+                    parts.push(text);
+                }
+            }
+        }
+    }
+
+    parts.join("")
+}
+
+fn extract_reasoning_text(value: &Value) -> String {
+    if let Some(s) = value.as_str() {
+        return s.to_string();
+    }
+
+    if let Some(arr) = value.as_array() {
+        let mut out = String::new();
+        for item in arr {
+            let text = extract_reasoning_text(item);
+            if !text.is_empty() {
+                out.push_str(&text);
+            }
+        }
+        return out;
+    }
+
+    let Some(obj) = value.as_object() else {
+        return String::new();
+    };
+
+    for key in [
+        "text",
+        "summary_text",
+        "delta",
+        "content",
+        "summary",
+        "reasoning",
+        "reasoning_text",
+        "value",
+        "part",
+        "item",
+    ] {
+        if let Some(inner) = obj.get(key) {
+            let text = extract_reasoning_text(inner);
+            if !text.is_empty() {
+                return text;
+            }
+        }
+    }
+
+    if let Some(parts) = obj.get("content").and_then(|v| v.as_array()) {
+        let mut out = String::new();
+        for part in parts {
+            let text = extract_reasoning_text(part);
+            if !text.is_empty() {
+                out.push_str(&text);
+            }
+        }
+        return out;
+    }
+
     String::new()
+}
+
+fn normalize_reasoning_delta(delta: Option<&Value>) -> String {
+    delta.map(extract_reasoning_text).unwrap_or_default()
 }
 
 fn looks_like_response_id(id: &str) -> bool {

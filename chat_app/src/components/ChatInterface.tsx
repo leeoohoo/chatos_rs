@@ -11,7 +11,6 @@ import AgentManager from './AgentManager';
 import UserSettingsPanel from './UserSettingsPanel';
 import ProjectExplorer from './ProjectExplorer';
 import TerminalView from './TerminalView';
-import SubAgentRunPanel from './SubAgentRunPanel';
 // 应用弹窗管理器由 ApplicationsPanel 直接承担
 import ApplicationsPanel from './ApplicationsPanel';
 import { cn } from '../lib/utils';
@@ -90,7 +89,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [showAgentManager, setShowAgentManager] = useState(false);
   const [showApplicationsPanel, setShowApplicationsPanel] = useState(false);
   const [showUserSettings, setShowUserSettings] = useState(false);
-  const [dismissedSubAgentToolCallId, setDismissedSubAgentToolCallId] = useState<string | null>(null);
   const didInitRef = useRef(false);
 
   // 初始化加载会话、AI模型和智能体配置
@@ -121,34 +119,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     }
   }, [currentSession, loadMoreMessages]);
 
-  useEffect(() => {
-    setDismissedSubAgentToolCallId(null);
-  }, [currentSession?.id]);
-
-  const latestSubAgentToolCall = useMemo(() => {
-    if (!currentSession) return null;
-    const isRunSubAgent = (name: string) => /(^|_)run_sub_agent$/i.test(name);
-
-    for (let i = messages.length - 1; i >= 0; i -= 1) {
-      const message: any = messages[i];
-      if (message.sessionId !== currentSession.id) continue;
-      const toolCalls = message?.toolCalls || message?.metadata?.toolCalls;
-      if (!Array.isArray(toolCalls) || toolCalls.length === 0) continue;
-
-      for (let j = toolCalls.length - 1; j >= 0; j -= 1) {
-        const toolCall = toolCalls[j];
-        const name = String(toolCall?.name || '');
-        if (isRunSubAgent(name)) {
-          return toolCall;
-        }
-      }
-    }
-
-    return null;
-  }, [currentSession, messages]);
-
-  const showSubAgentPanel = !!latestSubAgentToolCall
-    && dismissedSubAgentToolCallId !== latestSubAgentToolCall.id;
 
   return (
     <div className={cn(
@@ -274,10 +244,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
               <TerminalView className="flex-1" />
             ) : (
               <div className="flex-1 flex overflow-hidden">
-                <div className={cn(
-                  'flex-1 min-w-0 flex flex-col overflow-hidden',
-                  showSubAgentPanel ? 'border-r border-border' : ''
-                )}>
+                <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
                   <div className="flex-1 overflow-hidden">
                     {currentSession ? (
                       <MessageList
@@ -335,13 +302,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                     </div>
                   )}
                 </div>
-
-                {showSubAgentPanel && latestSubAgentToolCall && (
-                  <SubAgentRunPanel
-                    toolCall={latestSubAgentToolCall}
-                    onClose={() => setDismissedSubAgentToolCallId(latestSubAgentToolCall.id)}
-                  />
-                )}
               </div>
             )}
           </div>

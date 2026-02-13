@@ -1,0 +1,29 @@
+.run-sub-agent-markdown-wrap {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.run-sub-agent-markdown-wrap .markdown-renderer,
+.run-sub-agent-markdown-wrap .run-sub-agent-markdown {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+}
+
+.run-sub-agent-markdown-wrap .markdown-renderer code {
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.run-sub-agent-markdown-wrap .markdown-renderer pre,
+.run-sub-agent-markdown-wrap .markdown-renderer .code-block,
+.run-sub-agent-markdown-wrap .markdown-renderer table {
+  max-width: 100%;
+}
+
+.run-sub-agent-markdown-wrap .markdown-renderer pre,
+.run-sub-agent-markdown-wrap .markdown-renderer table {
+  overflow-x: auto;
+}

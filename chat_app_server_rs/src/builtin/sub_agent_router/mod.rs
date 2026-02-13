@@ -49,11 +49,13 @@ use self::ai_runtime::{
 };
 use self::catalog::SubAgentCatalog;
 use self::core::{
-    append_job_event, block_on_result, canonical_or_original, create_job, get_cancel_flag,
-    list_job_events, map_status_to_job_state, optional_trimmed_string, parse_string_array,
-    remove_cancel_flag, required_trimmed_string, run_sub_agent_schema, run_sub_agent_sync,
-    serialize_agent, serialize_commands, set_cancel_flag, text_result, trace_log_path_string,
-    trace_router_node, truncate_for_event, update_job_status, with_chatos,
+    append_job_event, block_on_result, canonical_or_original, create_job,
+    emit_job_progress_update, get_cancel_flag, list_job_events, map_status_to_job_state,
+    optional_trimmed_string, parse_string_array, remove_cancel_flag, remove_job_stream_sink,
+    required_trimmed_string, run_sub_agent_schema, run_sub_agent_sync, serialize_agent,
+    serialize_commands, set_cancel_flag, set_job_stream_sink, text_result,
+    trace_log_path_string, trace_router_node, truncate_for_event, update_job_status,
+    with_chatos,
 };
 use self::prompting::{build_env, build_system_prompt, resolve_allow_prefixes, select_skills};
 use self::recommendation::suggest_sub_agent_text_with_docs;

@@ -80,6 +80,9 @@ pub(crate) fn run_sub_agent_sync(
         tool_ctx.session_id,
         tool_ctx.run_id,
     );
+    if let Some(on_stream_chunk) = tool_ctx.on_stream_chunk.clone() {
+        set_job_stream_sink(job.id.as_str(), on_stream_chunk);
+    }
     let _ = update_job_status(job.id.as_str(), "running", None, None);
     append_job_event(
         job.id.as_str(),
@@ -289,6 +292,8 @@ pub(crate) fn run_sub_agent_sync(
                 .unwrap_or(Value::Null),
         );
     }
+
+    remove_job_stream_sink(job.id.as_str());
 
     Ok(text_result(with_chatos(
         ctx.server_name.as_str(),

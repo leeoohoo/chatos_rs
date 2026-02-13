@@ -11,7 +11,7 @@ pub(super) use io::{
     with_chatos,
 };
 pub(super) use jobs::{
-    append_job_event, block_on_result, create_job, get_cancel_flag, list_job_events,
-    remove_cancel_flag, set_cancel_flag, trace_log_path_string, trace_router_node,
-    update_job_status,
+    append_job_event, block_on_result, create_job, emit_job_progress_update, get_cancel_flag,
+    list_job_events, remove_cancel_flag, remove_job_stream_sink, set_cancel_flag,
+    set_job_stream_sink, trace_log_path_string, trace_router_node, update_job_status,
 };

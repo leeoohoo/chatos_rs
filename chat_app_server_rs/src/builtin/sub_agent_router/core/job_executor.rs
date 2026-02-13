@@ -341,6 +341,9 @@ pub(crate) fn execute_job(
 
             let on_chunk = {
                 let chunk_buffer = chunk_buffer.clone();
+                let job_id = job_id.clone();
+                let session_id = session_id.clone();
+                let run_id = run_id.clone();
                 Arc::new(move |chunk: String| {
                     if chunk.trim().is_empty() {
                         return;
@@ -359,11 +362,21 @@ pub(crate) fn execute_job(
                             *guard = trimmed;
                         }
                     }
+                    emit_job_progress_update(
+                        job_id.as_str(),
+                        "ai_content_stream",
+                        Some(json!({ "chunk": chunk })),
+                        session_id.as_str(),
+                        run_id.as_str(),
+                    );
                 })
             };
 
             let on_thinking = {
                 let thinking_buffer = thinking_buffer.clone();
+                let job_id = job_id.clone();
+                let session_id = session_id.clone();
+                let run_id = run_id.clone();
                 Arc::new(move |chunk: String| {
                     if chunk.trim().is_empty() {
                         return;
@@ -382,6 +395,13 @@ pub(crate) fn execute_job(
                             *guard = trimmed;
                         }
                     }
+                    emit_job_progress_update(
+                        job_id.as_str(),
+                        "ai_reasoning_stream",
+                        Some(json!({ "chunk": chunk })),
+                        session_id.as_str(),
+                        run_id.as_str(),
+                    );
                 })
             };
 
