@@ -17,12 +17,12 @@ export function createMessageActions({ set, get, client }: Deps) {
           state.error = null;
         });
 
-        const messages = await fetchSessionMessages(client, sessionId, { limit: 10, offset: 0 });
+        const messages = await fetchSessionMessages(client, sessionId, { limit: 50, offset: 0 });
 
         set((state: any) => {
           state.messages = messages;
           state.isLoading = false;
-          state.hasMoreMessages = messages.length === 10;
+          state.hasMoreMessages = messages.length >= 50;
         });
       } catch (error) {
         console.error('Failed to load messages:', error);
@@ -37,12 +37,12 @@ export function createMessageActions({ set, get, client }: Deps) {
       try {
         const current = get();
         const offset = current.messages.length;
-        const page = await fetchSessionMessages(client, sessionId, { limit: 10, offset });
+        const page = await fetchSessionMessages(client, sessionId, { limit: 50, offset });
         set((state: any) => {
           const existingIds = new Set(state.messages.map((m: any) => m.id));
           const older = page.filter((m: any) => !existingIds.has(m.id));
           state.messages = [...older, ...state.messages];
-          state.hasMoreMessages = page.length === 10;
+          state.hasMoreMessages = page.length >= 50;
         });
       } catch (error) {
         console.error('Failed to load more messages:', error);

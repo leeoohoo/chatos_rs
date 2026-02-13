@@ -2,16 +2,89 @@ import type { Message } from '../../../types';
 import type ApiClient from '../../api/client';
 import { debugLog } from '@/lib/utils';
 
+
+const parseMaybeJson = (value: any): any => {
+  if (typeof value !== 'string') return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+};
+
+const normalizeToolCallsArray = (value: any): any[] => {
+  const parsed = parseMaybeJson(value);
+  if (Array.isArray(parsed)) return parsed;
+  if (parsed && typeof parsed === 'object') return [parsed];
+  return [];
+};
+
+const extractToolCallsFromMessage = (message: any): any[] => {
+  const topLevel = normalizeToolCallsArray(message?.toolCalls);
+  if (topLevel.length > 0) return topLevel;
+
+  const parsedMetadata = parseMaybeJson(message?.metadata);
+  return normalizeToolCallsArray(parsedMetadata?.toolCalls);
+};
+
+const collectMissingAssistantToolCallIds = (messages: any[]): string[] => {
+  const assistantCallIds = new Set<string>();
+  const toolResultIds = new Set<string>();
+
+  messages.forEach((message: any) => {
+    if (message?.role === 'assistant') {
+      extractToolCallsFromMessage(message).forEach((toolCall: any) => {
+        const id = toolCall?.id || toolCall?.tool_call_id || toolCall?.toolCallId;
+        if (id) assistantCallIds.add(String(id));
+      });
+    }
+
+    if (message?.role === 'tool') {
+      const id = message?.tool_call_id || message?.toolCallId;
+      if (id) toolResultIds.add(String(id));
+    }
+  });
+
+  return Array.from(toolResultIds).filter((id) => !assistantCallIds.has(id));
+};
+
 export const fetchSessionMessages = async (
   client: ApiClient,
   sessionId: string,
-  options: { limit?: number; offset?: number } = { limit: 10, offset: 0 }
+  options: { limit?: number; offset?: number } = { limit: 50, offset: 0 }
 ): Promise<Message[]> => {
-  const limit = options.limit ?? 10;
+  const limit = options.limit ?? 50;
   const offset = options.offset ?? 0;
-  const messages = await client.getSessionMessages(sessionId, { limit, offset });
 
-  const parsedMessages = messages.map((message: any) => {
+  let rawMessages = await client.getSessionMessages(sessionId, { limit, offset });
+
+  // When a long tool run inserts many rows, the latest page can contain tool results but miss
+  // the corresponding assistant tool_call row, which breaks modal reconstruction after session switch.
+  if (offset === 0 && limit > 0) {
+    const seenIds = new Set<string>(rawMessages.map((message: any) => String(message?.id || '')));
+    let nextOffset = offset + rawMessages.length;
+
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const missingToolCallIds = collectMissingAssistantToolCallIds(rawMessages);
+      if (missingToolCallIds.length === 0) break;
+
+      const older = await client.getSessionMessages(sessionId, { limit, offset: nextOffset });
+      if (!Array.isArray(older) || older.length === 0) break;
+      nextOffset += older.length;
+
+      const dedupOlder = older.filter((message: any) => {
+        const id = String(message?.id || '');
+        if (!id || seenIds.has(id)) return false;
+        seenIds.add(id);
+        return true;
+      });
+      if (dedupOlder.length === 0) break;
+
+      rawMessages = [...dedupOlder, ...rawMessages];
+    }
+  }
+
+  const parsedMessages = rawMessages.map((message: any) => {
     let parsedMetadata = undefined;
     if (message.metadata) {
       try {
@@ -66,6 +139,9 @@ export const fetchSessionMessages = async (
     if (msg.role === 'assistant' && sourceToolCalls && Array.isArray(sourceToolCalls)) {
       debugLog('[Store] 处理工具调用:', { messageId: msg.id, sourceToolCalls });
       toolCalls = sourceToolCalls.map((toolCall: any) => {
+        const toolCallId = toolCall.id || toolCall.tool_call_id || toolCall.toolCallId;
+        const toolResult = toolCallId ? toolResultsMap.get(String(toolCallId)) : undefined;
+
         if (toolCall.function) {
           let parsedArguments = {};
           try {
@@ -77,10 +153,8 @@ export const fetchSessionMessages = async (
             parsedArguments = {};
           }
 
-          const toolResult = toolResultsMap.get(toolCall.id);
-
           return {
-            id: toolCall.id || `tool_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            id: toolCallId || `tool_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
             messageId: msg.id,
             name: toolCall.function.name,
             arguments: parsedArguments,
@@ -89,7 +163,28 @@ export const fetchSessionMessages = async (
             createdAt: msg.createdAt
           };
         }
-        return null;
+
+        let parsedArguments = toolCall.arguments ?? toolCall.args ?? {};
+        if (typeof parsedArguments === 'string') {
+          try {
+            parsedArguments = JSON.parse(parsedArguments);
+          } catch {
+            // keep raw string when it's not JSON
+          }
+        }
+
+        return {
+          id: toolCallId || `tool_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          messageId: msg.id,
+          name: toolCall.name || toolCall.tool_name || toolCall.toolName || 'unknown_tool',
+          arguments: parsedArguments,
+          result: toolCall.result ?? toolCall.finalResult ?? toolCall.final_result ?? toolResult?.content,
+          finalResult: toolCall.finalResult ?? toolCall.final_result,
+          streamLog: toolCall.streamLog ?? toolCall.stream_log ?? '',
+          completed: toolCall.completed === true,
+          error: toolCall.error || toolResult?.error || undefined,
+          createdAt: toolCall.createdAt || toolCall.created_at || msg.createdAt,
+        };
       }).filter(Boolean);
     }
 

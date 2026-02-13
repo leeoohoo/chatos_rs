@@ -175,7 +175,7 @@ export function createSessionActions({
         });
 
         const session = await fetchSession(client, sessionId);
-        const messages = await fetchSessionMessages(client, sessionId, { limit: 10, offset: 0 });
+        const messages = await fetchSessionMessages(client, sessionId, { limit: 50, offset: 0 });
         const stateSnapshot = get();
         const snapshotChatState = stateSnapshot.sessionChatState?.[sessionId];
         const localStreamingMessage = snapshotChatState?.streamingMessageId
@@ -213,7 +213,7 @@ export function createSessionActions({
           state.messages = nextMessages;
           state.activePanel = 'chat';
           state.isLoading = false;
-          state.hasMoreMessages = messages.length === 10;
+          state.hasMoreMessages = messages.length >= 50;
           state.isStreaming = chatState?.isStreaming ?? false;
           state.streamingMessageId = chatState?.streamingMessageId ?? null;
           if (chatState) {

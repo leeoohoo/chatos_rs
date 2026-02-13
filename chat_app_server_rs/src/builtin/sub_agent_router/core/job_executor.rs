@@ -672,6 +672,7 @@ pub(crate) fn execute_job(
                     true,
                     Some(model.provider.clone()),
                     model.thinking_level.clone(),
+                    Some("sub_agent_router".to_string()),
                 );
                 append_job_event(
                     job_id.as_str(),

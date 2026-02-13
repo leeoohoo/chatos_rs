@@ -67,6 +67,78 @@ const parseTask = (rawArguments: unknown): string => {
   return '';
 };
 
+const toStringList = (value: unknown): string[] => {
+  const values: string[] = [];
+
+  const append = (raw: unknown) => {
+    const normalized = safeString(raw).trim();
+    if (normalized) values.push(normalized);
+  };
+
+  if (Array.isArray(value)) {
+    value.forEach((item) => {
+      if (typeof item === 'string') {
+        append(item);
+        return;
+      }
+      if (item && typeof item === 'object') {
+        const objectItem = item as Record<string, unknown>;
+        append(objectItem.id ?? objectItem.skill_id ?? objectItem.skillId ?? objectItem.name);
+        return;
+      }
+      append(item);
+    });
+  } else if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return [];
+
+    const parsed = tryParseJson(trimmed);
+    if (Array.isArray(parsed)) {
+      return toStringList(parsed);
+    }
+
+    if (trimmed.includes(',')) {
+      trimmed.split(',').forEach((item) => append(item));
+    } else {
+      append(trimmed);
+    }
+  }
+
+  const seen = new Set<string>();
+  return values.filter((item) => {
+    if (seen.has(item)) return false;
+    seen.add(item);
+    return true;
+  });
+};
+
+const parseSkillsFromArguments = (rawArguments: unknown): string[] => {
+  if (!rawArguments) return [];
+
+  if (typeof rawArguments === 'object') {
+    const args = rawArguments as Record<string, unknown>;
+    return toStringList(args.skills);
+  }
+
+  if (typeof rawArguments !== 'string') return [];
+
+  const parsed = tryParseJson(rawArguments);
+  if (parsed && typeof parsed === 'object') {
+    return toStringList((parsed as Record<string, unknown>).skills);
+  }
+
+  return [];
+};
+
+const extractSkillIds = (payload: any): string[] => toStringList(
+  payload?.skills
+  ?? payload?.selected_skill_ids
+  ?? payload?.selected_skills
+  ?? payload?.used_skills
+  ?? payload?.skill_ids
+  ?? payload?.resolved_skills,
+);
+
 const toPayloadPreview = (payload: any, max = 180): string => {
   if (payload === null || payload === undefined) return '';
 
@@ -92,28 +164,72 @@ const toPayloadPreview = (payload: any, max = 180): string => {
   return normalized.length > max ? `${normalized.slice(0, max)}...` : normalized;
 };
 
+const normalizedReasoningKey = (value: string): string => (
+  value
+    .toLowerCase()
+    .replace(/\*+/g, '')
+    .replace(/[`~]/g, '')
+    .replace(/[，。！？!?,.:;；、'\"“”‘’(){}\[\]-]/g, '')
+    .replace(/\s+/g, '')
+);
+
 const joinStreamText = (current: string, chunk: string): string => {
-  if (!current) return chunk;
   if (!chunk) return current;
+  if (!current) return chunk;
 
-  const prev = current[current.length - 1] || '';
-  const next = chunk[0] || '';
-  const prevWord = /[A-Za-z0-9\u4e00-\u9fa5]/.test(prev);
-  const nextWord = /[A-Za-z0-9\u4e00-\u9fa5]/.test(next);
-  const needsSpace = prevWord && nextWord && !/\s/.test(prev) && !/\s/.test(next);
+  // Some providers stream cumulative snapshots, others stream deltas.
+  if (chunk.startsWith(current)) return chunk;
+  if (current.startsWith(chunk)) return current;
+  if (current.includes(chunk)) return current;
+  if (chunk.includes(current)) return chunk;
 
-  return needsSpace ? `${current} ${chunk}` : `${current}${chunk}`;
+  const maxOverlap = Math.min(current.length, chunk.length);
+  for (let overlap = maxOverlap; overlap >= 8; overlap -= 1) {
+    if (current.slice(-overlap) === chunk.slice(0, overlap)) {
+      return `${current}${chunk.slice(overlap)}`;
+    }
+  }
+
+  return `${current}${chunk}`;
+};
+
+const collapseRepeatedReasoningLines = (value: string): string => {
+  const lines = value
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const compact: string[] = [];
+  let previousKey = '';
+
+  lines.forEach((line) => {
+    const key = normalizedReasoningKey(line);
+    if (!key) return;
+    if (key === previousKey) return;
+    compact.push(line);
+    previousKey = key;
+  });
+
+  return compact.join('\n');
 };
 
 const formatReasoningForDisplay = (value: string): string => {
-  const normalized = value.replace(/\r\n?/g, '\n').trim();
+  const normalized = value
+    .replace(/\r\n?/g, '\n')
+    .replace(/\*{2,}/g, '')
+    .replace(/\u200b/g, '')
+    .trim();
   if (!normalized) return '';
 
   let output = normalized;
+  // Split common stream-merge artifacts like `inspectionStarting`.
   output = output.replace(/([a-z0-9])([A-Z])/g, '$1\n$2');
+  // Break long reasoning text by sentence punctuation.
   output = output.replace(/([。！？!?])\s*/g, '$1\n');
-  output = output.replace(/(Planning|Inspecting|Reading|Summarizing|Confirming|Verifying|Scanning|Analyzing)(?=[A-Z])/g, '$1\n');
+  // Also break known reasoning verbs even if no punctuation was emitted.
+  output = output.replace(/\b(Starting|Planning|Inspecting|Reading|Summarizing|Preparing|Confirming|Verifying|Scanning|Analyzing|Reviewing|Drafting|Checking|Investigating)\b/g, '\n$1');
   output = output.replace(/\n{3,}/g, '\n\n');
+  output = collapseRepeatedReasoningLines(output);
 
   return output.trim();
 };
@@ -224,8 +340,10 @@ const normalizeStatus = (status: string): string => {
 
 export const RunSubAgentModal: React.FC<RunSubAgentModalProps> = ({ toolCall, onClose }) => {
   const bodyRef = useRef<HTMLDivElement | null>(null);
+  const reasoningCacheRef = useRef<string>('');
 
   const task = useMemo(() => parseTask(toolCall?.arguments), [toolCall?.arguments]);
+  const requestedSkillIds = useMemo(() => parseSkillsFromArguments(toolCall?.arguments), [toolCall?.arguments]);
   const streamLog = safeString(toolCall?.streamLog);
   const finalText = safeString(toolCall?.finalResult);
   const fallbackText = safeString(toolCall?.result);
@@ -316,6 +434,12 @@ export const RunSubAgentModal: React.FC<RunSubAgentModalProps> = ({ toolCall, on
     return content;
   }, [events]);
 
+  useEffect(() => {
+    const normalized = streamedReasoningText.trim();
+    if (!normalized) return;
+    reasoningCacheRef.current = normalized;
+  }, [streamedReasoningText]);
+
   const finalResponseText = useMemo(() => {
     const fromFinal = safeString(finalObj?.response);
     if (fromFinal.trim()) return fromFinal;
@@ -350,9 +474,32 @@ export const RunSubAgentModal: React.FC<RunSubAgentModalProps> = ({ toolCall, on
   }, [finalObj, finalRawText, events, hasFinal, hasPersisted, hasFallback, finalText, persistedText, fallbackText, streamLog]);
 
   const reasoningText = useMemo(() => {
-    const finalReasoning = safeString(finalObj?.reasoning);
-    if (finalReasoning.trim()) return formatReasoningForDisplay(finalReasoning);
-    return formatReasoningForDisplay(streamedReasoningText);
+    const streamRaw = safeString(
+      streamedReasoningText.trim()
+        ? streamedReasoningText
+        : reasoningCacheRef.current,
+    );
+    const streamReasoning = formatReasoningForDisplay(streamRaw);
+    const finalReasoning = formatReasoningForDisplay(safeString(finalObj?.reasoning));
+
+    if (streamReasoning && finalReasoning) {
+      const streamKey = normalizedReasoningKey(streamReasoning);
+      const finalKey = normalizedReasoningKey(finalReasoning);
+
+      if (!streamKey) return finalReasoning;
+      if (!finalKey) return streamReasoning;
+      if (streamKey === finalKey) {
+        return streamReasoning.length >= finalReasoning.length
+          ? streamReasoning
+          : finalReasoning;
+      }
+      if (streamKey.includes(finalKey)) return streamReasoning;
+      if (finalKey.includes(streamKey)) return finalReasoning;
+      return collapseRepeatedReasoningLines(`${streamReasoning}
+${finalReasoning}`);
+    }
+
+    return streamReasoning || finalReasoning;
   }, [finalObj, streamedReasoningText]);
 
   const assistantText = useMemo(() => {
@@ -489,6 +636,22 @@ export const RunSubAgentModal: React.FC<RunSubAgentModalProps> = ({ toolCall, on
     return fromEvent ? safeString(fromEvent.payload?.agent_id) : '';
   }, [events, finalObj]);
 
+
+  const usedSkillIds = useMemo(() => {
+    const fromFinal = extractSkillIds(finalObj);
+    if (fromFinal.length > 0) return fromFinal;
+
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      const fromEvent = extractSkillIds(events[index]?.payload);
+      if (fromEvent.length > 0) return fromEvent;
+    }
+
+    const fromToolCall = extractSkillIds(toolCall);
+    if (fromToolCall.length > 0) return fromToolCall;
+
+    return requestedSkillIds;
+  }, [finalObj, events, toolCall, requestedSkillIds]);
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -539,6 +702,21 @@ export const RunSubAgentModal: React.FC<RunSubAgentModalProps> = ({ toolCall, on
                   {jobId ? `job: ${jobId}` : ''}
                   {jobId && agentId ? ' · ' : ''}
                   {agentId ? `agent: ${agentId}` : ''}
+                </div>
+              )}
+              {usedSkillIds.length > 0 && (
+                <div className="mt-1 flex items-start gap-1.5">
+                  <span className="pt-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">skills</span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {usedSkillIds.map((skillId) => (
+                      <span
+                        key={`skill-${skillId}`}
+                        className="inline-flex items-center rounded-full border border-blue-500/25 bg-blue-500/10 px-2 py-0.5 text-[10px] font-medium text-blue-600 dark:text-blue-300"
+                      >
+                        {skillId}
+                      </span>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
@@ -669,9 +847,7 @@ export const RunSubAgentModal: React.FC<RunSubAgentModalProps> = ({ toolCall, on
               {reasoningText.trim().length > 0 && (
                 <div className="rounded-lg border border-border bg-card px-4 py-3 space-y-2">
                   <div className="text-xs font-medium text-muted-foreground">思考摘要</div>
-                  <div className="run-sub-agent-markdown-wrap">
-                    <MarkdownRenderer content={reasoningText} isStreaming={status === 'running'} className="run-sub-agent-markdown" />
-                  </div>
+                  <div className="text-sm leading-6 text-foreground/90 whitespace-pre-wrap break-words">{reasoningText}</div>
                 </div>
               )}
             </div>

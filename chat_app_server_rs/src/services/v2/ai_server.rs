@@ -100,6 +100,7 @@ impl AiServer {
                 reasoning_enabled,
                 Some(provider),
                 thinking_level,
+                Some("chat".to_string()),
             )
             .await?;
 

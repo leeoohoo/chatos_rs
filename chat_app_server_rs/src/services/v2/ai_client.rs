@@ -80,6 +80,7 @@ impl AiClient {
         reasoning_enabled: bool,
         provider: Option<String>,
         thinking_level: Option<String>,
+        purpose: Option<String>,
     ) -> Result<Value, String> {
         let mut all_messages: Vec<Value> = Vec::new();
 
@@ -184,6 +185,7 @@ impl AiClient {
             reasoning_enabled,
             provider,
             thinking_level,
+            purpose,
             0,
         )
         .await
@@ -201,10 +203,13 @@ impl AiClient {
         reasoning_enabled: bool,
         provider: Option<String>,
         thinking_level: Option<String>,
+        purpose: Option<String>,
         iteration: i64,
     ) -> Result<Value, String> {
         let mut messages = messages;
         let mut iteration = iteration;
+        let purpose = purpose.unwrap_or_else(|| "chat".to_string());
+        let persist_tool_messages = purpose != "sub_agent_router";
 
         loop {
             if let Some(sid) = session_id.as_ref() {
@@ -342,7 +347,7 @@ impl AiClient {
                         thinking_level.clone(),
                         session_id.clone(),
                         callbacks.on_chunk.is_some() || callbacks.on_thinking.is_some(),
-                        "chat",
+                        purpose.as_str(),
                     )
                     .await;
 
@@ -439,22 +444,24 @@ impl AiClient {
 
             if let Some(sid) = session_id.as_ref() {
                 if abort_registry::is_aborted(sid) {
-                    let aborted_results = build_aborted_results(None);
-                    for result in &aborted_results {
-                        let meta = json!({
-                            "toolName": result.name,
-                            "success": result.success,
-                            "isError": result.is_error
-                        });
-                        let _ = self
-                            .message_manager
-                            .save_tool_message(
-                                sid,
-                                &result.content,
-                                &result.tool_call_id,
-                                Some(meta),
-                            )
-                            .await;
+                    if persist_tool_messages {
+                        let aborted_results = build_aborted_results(None);
+                        for result in &aborted_results {
+                            let meta = json!({
+                                "toolName": result.name,
+                                "success": result.success,
+                                "isError": result.is_error
+                            });
+                            let _ = self
+                                .message_manager
+                                .save_tool_message(
+                                    sid,
+                                    &result.content,
+                                    &result.tool_call_id,
+                                    Some(meta),
+                                )
+                                .await;
+                        }
                     }
                     return Err("aborted".to_string());
                 }
@@ -484,8 +491,36 @@ impl AiClient {
 
             if let Some(sid) = session_id.as_ref() {
                 if abort_registry::is_aborted(sid) {
-                    let aborted_results = build_aborted_results(Some(&tool_results));
-                    for result in &aborted_results {
+                    if persist_tool_messages {
+                        let aborted_results = build_aborted_results(Some(&tool_results));
+                        for result in &aborted_results {
+                            let meta = json!({
+                                "toolName": result.name,
+                                "success": result.success,
+                                "isError": result.is_error
+                            });
+                            let _ = self
+                                .message_manager
+                                .save_tool_message(
+                                    sid,
+                                    &result.content,
+                                    &result.tool_call_id,
+                                    Some(meta),
+                                )
+                                .await;
+                        }
+                    }
+                    return Err("aborted".to_string());
+                }
+            }
+
+            if let Some(cb) = &callbacks.on_tools_end {
+                cb(json!({"tool_results": tool_results.clone()}));
+            }
+
+            if persist_tool_messages {
+                if let Some(sid) = session_id.as_ref() {
+                    for result in &tool_results {
                         let meta = json!({
                             "toolName": result.name,
                             "success": result.success,
@@ -501,25 +536,6 @@ impl AiClient {
                             )
                             .await;
                     }
-                    return Err("aborted".to_string());
-                }
-            }
-
-            if let Some(cb) = &callbacks.on_tools_end {
-                cb(json!({"tool_results": tool_results.clone()}));
-            }
-
-            if let Some(sid) = session_id.as_ref() {
-                for result in &tool_results {
-                    let meta = json!({
-                        "toolName": result.name,
-                        "success": result.success,
-                        "isError": result.is_error
-                    });
-                    let _ = self
-                        .message_manager
-                        .save_tool_message(sid, &result.content, &result.tool_call_id, Some(meta))
-                        .await;
                 }
             }
 
