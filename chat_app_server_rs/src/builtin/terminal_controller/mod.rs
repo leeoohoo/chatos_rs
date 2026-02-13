@@ -460,10 +460,10 @@ fn resolve_target_path(project_root: &Path, path_input: &str) -> Result<PathBuf,
 
 fn build_input_payload(project_root: &Path, target_path: &Path, command: &str) -> String {
     let mut payload = String::new();
-    payload.push_str(format!("cd {}\n", shell_quote_path(project_root)).as_str());
+    payload.push_str(cd_command_for_path(project_root).as_str());
 
     if !same_path(target_path, project_root) {
-        payload.push_str(format!("cd {}\n", shell_quote_path(target_path)).as_str());
+        payload.push_str(cd_command_for_path(target_path).as_str());
     }
 
     payload.push_str(command);
@@ -528,7 +528,30 @@ fn terminal_cwd_in_root(cwd: &str, root: &Path) -> bool {
 
 fn canonicalize_path(path: &Path) -> Result<PathBuf, String> {
     std::fs::canonicalize(path)
+        .map(normalize_canonical_path)
         .map_err(|err| format!("canonicalize {} failed: {}", path.display(), err))
+}
+
+fn cd_command_for_path(path: &Path) -> String {
+    if cfg!(windows) {
+        return format!("cd /d {}\n", shell_quote_path(path));
+    }
+    format!("cd {}\n", shell_quote_path(path))
+}
+
+fn normalize_canonical_path(path: PathBuf) -> PathBuf {
+    if !cfg!(windows) {
+        return path;
+    }
+
+    let raw = path.to_string_lossy().to_string();
+    if let Some(stripped) = raw.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{}", stripped));
+    }
+    if let Some(stripped) = raw.strip_prefix(r"\\?\") {
+        return PathBuf::from(stripped);
+    }
+    path
 }
 
 fn same_path(left: &Path, right: &Path) -> bool {
@@ -560,7 +583,7 @@ fn derive_terminal_name(root: &Path) -> String {
 fn shell_quote_path(path: &Path) -> String {
     let raw = path.to_string_lossy().to_string();
     if cfg!(windows) {
-        return format!("\"{}\"", raw.replace('"', "\\\""));
+        return format!("\"{}\"", raw.replace('"', "\"\""));
     }
     format!("'{}'", raw.replace('"', "\\\"").replace('\'', "'\"'\"'"))
 }

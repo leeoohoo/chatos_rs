@@ -31,10 +31,13 @@ pub struct ToolResult {
     pub name: String,
     pub success: bool,
     pub is_error: bool,
+    #[serde(default)]
+    pub is_stream: bool,
     pub content: String,
 }
 
 pub type ToolResultCallback = Arc<dyn Fn(&ToolResult) + Send + Sync>;
+pub type ToolStreamChunkCallback = Arc<dyn Fn(String) + Send + Sync>;
 
 #[derive(Clone)]
 pub enum BuiltinToolService {
@@ -57,11 +60,14 @@ impl BuiltinToolService {
         name: &str,
         args: Value,
         session_id: Option<&str>,
+        on_stream_chunk: Option<ToolStreamChunkCallback>,
     ) -> Result<Value, String> {
         match self {
             Self::CodeMaintainer(service) => service.call_tool(name, args, session_id),
             Self::TerminalController(service) => service.call_tool(name, args, session_id),
-            Self::SubAgentRouter(service) => service.call_tool(name, args, session_id),
+            Self::SubAgentRouter(service) => {
+                service.call_tool(name, args, session_id, on_stream_chunk)
+            }
         }
     }
 }
@@ -117,7 +123,7 @@ pub async fn execute_tools_stream<F, Fut>(
     mut call_tool_once: F,
 ) -> Vec<ToolResult>
 where
-    F: FnMut(String, Value) -> Fut,
+    F: FnMut(String, Value, Option<ToolStreamChunkCallback>) -> Fut,
     Fut: Future<Output = Result<String, String>>,
 {
     let mut results = Vec::new();
@@ -148,6 +154,7 @@ where
                     name: "unknown".to_string(),
                     success: false,
                     is_error: true,
+                    is_stream: false,
                     content: "工具名称不能为空".to_string(),
                 },
                 session_id,
@@ -172,6 +179,7 @@ where
                         name: tool_name.clone(),
                         success: false,
                         is_error: true,
+                        is_stream: false,
                         content: format!("参数解析失败: {}", err),
                     },
                     session_id,
@@ -181,7 +189,31 @@ where
             }
         };
 
-        match call_tool_once(tool_name.clone(), args).await {
+        let on_stream_chunk = on_tool_result.as_ref().map(|callback| {
+            let callback = Arc::clone(callback);
+            let sid = session_id.map(|value| value.to_string());
+            let stream_call_id = call_id.clone();
+            let stream_tool_name = tool_name.clone();
+            Arc::new(move |chunk: String| {
+                if chunk.is_empty() {
+                    return;
+                }
+                if !is_active(sid.as_deref()) {
+                    return;
+                }
+                let event = ToolResult {
+                    tool_call_id: stream_call_id.clone(),
+                    name: stream_tool_name.clone(),
+                    success: true,
+                    is_error: false,
+                    is_stream: true,
+                    content: chunk,
+                };
+                callback(&event);
+            }) as ToolStreamChunkCallback
+        });
+
+        match call_tool_once(tool_name.clone(), args, on_stream_chunk).await {
             Ok(text) => {
                 push_tool_result(
                     &mut results,
@@ -190,6 +222,7 @@ where
                         name: tool_name,
                         success: true,
                         is_error: false,
+                        is_stream: false,
                         content: text,
                     },
                     session_id,
@@ -208,6 +241,7 @@ where
                         name: tool_name,
                         success: false,
                         is_error: true,
+                        is_stream: false,
                         content: format!("工具执行失败: {}", err),
                     },
                     session_id,

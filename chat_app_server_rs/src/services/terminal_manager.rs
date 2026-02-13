@@ -43,8 +43,8 @@ impl TerminalSession {
             return Err("cwd does not exist".to_string());
         }
 
-        let root_cwd =
-            std::fs::canonicalize(&cwd).map_err(|e| format!("canonicalize cwd failed: {e}"))?;
+        let root_cwd = canonicalize_path(Path::new(&cwd))
+            .map_err(|e| format!("canonicalize cwd failed: {e}"))?;
 
         let pty_system = native_pty_system();
         let pair = pty_system
@@ -436,16 +436,20 @@ fn spawn_shell(
 
 fn select_shell() -> String {
     if cfg!(windows) {
+        if let Ok(comspec) = std::env::var("COMSPEC") {
+            let trimmed = comspec.trim();
+            if !trimmed.is_empty() && Path::new(trimmed).exists() {
+                return trimmed.to_string();
+            }
+        }
+        if let Some(path) = find_in_path(&["cmd.exe", "cmd"]) {
+            return path;
+        }
         if let Some(path) = find_in_path(&["pwsh.exe", "pwsh"]) {
             return path;
         }
         if let Some(path) = find_in_path(&["powershell.exe", "powershell"]) {
             return path;
-        }
-        if let Ok(comspec) = std::env::var("COMSPEC") {
-            if !comspec.trim().is_empty() {
-                return comspec;
-            }
         }
         return "cmd.exe".to_string();
     }
@@ -705,7 +709,7 @@ fn canonicalize_prompt_path(raw_path: &str) -> Option<PathBuf> {
         return None;
     }
 
-    std::fs::canonicalize(path).ok()
+    canonicalize_path(path).ok()
 }
 
 fn infer_prompt_cwd_from_context(
@@ -728,11 +732,11 @@ fn infer_prompt_cwd_from_context(
             let rel = normalized_hint.trim_start_matches("~/");
             base.join(rel)
         };
-        return std::fs::canonicalize(candidate).ok();
+        return canonicalize_path(candidate.as_path()).ok();
     }
 
     if Path::new(normalized_hint).is_absolute() {
-        return std::fs::canonicalize(normalized_hint).ok();
+        return canonicalize_path(Path::new(normalized_hint)).ok();
     }
 
     if normalized_hint == "." {
@@ -740,7 +744,7 @@ fn infer_prompt_cwd_from_context(
     }
 
     if normalized_hint == ".." {
-        return std::fs::canonicalize(current_cwd.parent()?).ok();
+        return canonicalize_path(current_cwd.parent()?).ok();
     }
 
     if current_cwd
@@ -759,11 +763,11 @@ fn infer_prompt_cwd_from_context(
             .map(|name| name == normalized_hint)
             .unwrap_or(false)
         {
-            return std::fs::canonicalize(parent_raw).ok();
+            return canonicalize_path(parent_raw).ok();
         }
     }
 
-    std::fs::canonicalize(current_cwd.join(normalized_hint)).ok()
+    canonicalize_path(current_cwd.join(normalized_hint).as_path()).ok()
 }
 
 fn extract_prompt_dir_hint(line: &str) -> Option<String> {
@@ -830,7 +834,7 @@ fn resolve_cd_target(root_cwd: &Path, current_cwd: &Path, target: Option<&str>) 
         current_cwd.join(raw_target)
     };
 
-    std::fs::canonicalize(candidate).ok()
+    canonicalize_path(candidate.as_path()).ok()
 }
 
 fn path_is_within_root(candidate: &Path, root: &Path) -> bool {
@@ -848,6 +852,12 @@ fn path_is_within_root(candidate: &Path, root: &Path) -> bool {
 fn normalize_path_for_compare(path: &Path) -> String {
     let mut normalized = path.to_string_lossy().replace('\\', "/");
 
+    if let Some(stripped) = normalized.strip_prefix("//?/UNC/") {
+        normalized = format!("//{}", stripped);
+    } else if let Some(stripped) = normalized.strip_prefix("//?/") {
+        normalized = stripped.to_string();
+    }
+
     while normalized.ends_with('/') && normalized.len() > 1 {
         normalized.pop();
     }
@@ -860,7 +870,37 @@ fn normalize_path_for_compare(path: &Path) -> String {
 }
 
 fn build_return_to_root_command(root: &Path) -> String {
-    format!("cd {}\n", root.display())
+    if cfg!(windows) {
+        return format!("cd /d {}\n", shell_quote_path_for_shell(root));
+    }
+    format!("cd {}\n", shell_quote_path_for_shell(root))
+}
+
+fn canonicalize_path(path: &Path) -> Result<PathBuf, std::io::Error> {
+    std::fs::canonicalize(path).map(normalize_canonical_path)
+}
+
+fn normalize_canonical_path(path: PathBuf) -> PathBuf {
+    if !cfg!(windows) {
+        return path;
+    }
+
+    let raw = path.to_string_lossy().to_string();
+    if let Some(stripped) = raw.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{}", stripped));
+    }
+    if let Some(stripped) = raw.strip_prefix(r"\\?\") {
+        return PathBuf::from(stripped);
+    }
+    path
+}
+
+fn shell_quote_path_for_shell(path: &Path) -> String {
+    let raw = path.to_string_lossy().to_string();
+    if cfg!(windows) {
+        return format!("\"{}\"", raw.replace('"', "\"\""));
+    }
+    format!("'{}'", raw.replace('"', "\\\"").replace('\'', "'\"'\"'"))
 }
 
 fn now_millis() -> u64 {
