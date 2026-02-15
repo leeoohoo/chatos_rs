@@ -358,7 +358,11 @@ async fn capture_command_output(
                 break "terminal_exit";
             }
             Ok(Ok(TerminalEvent::State(_))) => {}
-            Ok(Err(broadcast::error::RecvError::Lagged(_))) => {}
+            Ok(Err(broadcast::error::RecvError::Lagged(_))) => {
+                // Lagged means output is still flowing; treat it as activity so we
+                // do not declare idle while the command is still running.
+                last_output_at = Instant::now();
+            }
             Ok(Err(broadcast::error::RecvError::Closed)) => {
                 break "receiver_closed";
             }
@@ -466,9 +470,10 @@ fn build_input_payload(project_root: &Path, target_path: &Path, command: &str) -
         payload.push_str(cd_command_for_path(target_path).as_str());
     }
 
-    payload.push_str(command);
-    if !command.ends_with('\n') && !command.ends_with('\r') {
-        payload.push('\n');
+    let normalized_command = normalize_shell_input(command);
+    payload.push_str(normalized_command.as_str());
+    if !normalized_command.ends_with('\n') && !normalized_command.ends_with('\r') {
+        payload.push_str(shell_input_newline());
     }
 
     payload
@@ -534,9 +539,25 @@ fn canonicalize_path(path: &Path) -> Result<PathBuf, String> {
 
 fn cd_command_for_path(path: &Path) -> String {
     if cfg!(windows) {
-        return format!("cd /d {}\n", shell_quote_path(path));
+        return format!("cd /d {}{}", shell_quote_path(path), shell_input_newline());
     }
-    format!("cd {}\n", shell_quote_path(path))
+    format!("cd {}{}", shell_quote_path(path), shell_input_newline())
+}
+
+fn shell_input_newline() -> &'static str {
+    if cfg!(windows) {
+        "\r"
+    } else {
+        "\n"
+    }
+}
+
+fn normalize_shell_input(input: &str) -> String {
+    if !cfg!(windows) {
+        return input.to_string();
+    }
+
+    input.replace("\r\n", "\r").replace('\n', "\r")
 }
 
 fn normalize_canonical_path(path: PathBuf) -> PathBuf {
@@ -626,4 +647,40 @@ fn text_result(data: serde_json::Value) -> serde_json::Value {
             { "type": "text", "text": text }
         ]
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{build_input_payload, normalize_shell_input};
+    use std::path::Path;
+
+    #[test]
+    fn normalize_shell_input_uses_windows_return_key() {
+        let raw = "echo one\necho two\r\necho three\r";
+        let normalized = normalize_shell_input(raw);
+
+        if cfg!(windows) {
+            assert_eq!(normalized, "echo one\recho two\recho three\r");
+        } else {
+            assert_eq!(normalized, raw);
+        }
+    }
+
+    #[test]
+    fn build_input_payload_uses_shell_line_endings() {
+        let root = if cfg!(windows) {
+            Path::new(r"C:\\repo\\sandbox")
+        } else {
+            Path::new("/tmp/repo/sandbox")
+        };
+
+        let payload = build_input_payload(root, root, "echo hi");
+
+        if cfg!(windows) {
+            assert!(payload.contains("\r"));
+            assert!(!payload.contains("\n"));
+        } else {
+            assert!(payload.contains("\n"));
+        }
+    }
 }

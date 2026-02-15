@@ -78,6 +78,11 @@ pub fn load_marketplace(marketplace_path: &Path, plugins_root: Option<&Path>) ->
         }
 
         let plugin_name = plugin.name.unwrap_or_default();
+        let plugin_scope = resolve_plugin_scope(
+            plugin_root.as_path(),
+            source.as_str(),
+            plugin_name.as_str(),
+        );
         let plugin_category = plugin
             .category
             .map(|c| c.trim().to_string())
@@ -103,11 +108,16 @@ pub fn load_marketplace(marketplace_path: &Path, plugins_root: Option<&Path>) ->
                 continue;
             }
             let meta = read_markdown_meta(&resolved);
-            let id = derive_id(&resolved);
+            let local_id = derive_id(&resolved);
+            let id = build_agent_id(plugin_scope.as_str(), local_id.as_str());
             agents.push(AgentSpec {
                 id: id.clone(),
                 name: if meta.title.is_empty() {
-                    id
+                    if local_id.is_empty() {
+                        id.clone()
+                    } else {
+                        local_id
+                    }
                 } else {
                     meta.title
                 },
@@ -145,10 +155,63 @@ fn resolve_plugin_root(
     }
     if let Some(root) = plugins_root {
         if !root.as_os_str().is_empty() {
-            return root.join(source);
+            let normalized = normalize_plugin_source_for_root(source);
+            if !normalized.is_empty() {
+                return root.join(normalized);
+            }
+            return root.to_path_buf();
         }
     }
     marketplace_dir.join(source)
+}
+
+fn normalize_plugin_source_for_root(source: &str) -> String {
+    let mut normalized = source.trim().replace('\\', "/");
+    while let Some(rest) = normalized.strip_prefix("./") {
+        normalized = rest.to_string();
+    }
+    normalized = normalized.trim_start_matches('/').to_string();
+    if let Some(rest) = normalized.strip_prefix("plugins/") {
+        normalized = rest.to_string();
+    }
+    normalized.trim_matches('/').to_string()
+}
+
+fn resolve_plugin_scope(plugin_root: &Path, source: &str, plugin_name: &str) -> String {
+    if let Some(folder_name) = plugin_root.file_name().and_then(|name| name.to_str()) {
+        let slug = slugify(folder_name);
+        if !slug.is_empty() {
+            return slug;
+        }
+    }
+
+    let normalized_source = normalize_plugin_source_for_root(source);
+    if let Some(last_segment) = normalized_source.rsplit('/').next() {
+        let slug = slugify(last_segment);
+        if !slug.is_empty() {
+            return slug;
+        }
+    }
+
+    let slug = slugify(plugin_name);
+    if !slug.is_empty() {
+        return slug;
+    }
+
+    "plugin".to_string()
+}
+
+fn build_agent_id(plugin_scope: &str, local_id: &str) -> String {
+    let local = slugify(local_id);
+    if local.is_empty() {
+        return plugin_scope.to_string();
+    }
+
+    if plugin_scope.trim().is_empty() {
+        return local;
+    }
+
+    format!("{}/{}", plugin_scope.trim(), local)
 }
 
 fn build_command_specs(root: &Path, entries: Vec<String>) -> Vec<CommandSpec> {
@@ -263,11 +326,20 @@ fn read_markdown_meta(path: &Path) -> MarkdownMeta {
         }
     };
 
-    let mut title = String::new();
-    let mut description = String::new();
-    let mut found_title = false;
+    let (frontmatter, content_lines) = parse_frontmatter(&text);
 
-    for line in text.lines() {
+    let mut title = frontmatter
+        .get("name")
+        .cloned()
+        .or_else(|| frontmatter.get("title").cloned())
+        .unwrap_or_default();
+    let mut description = frontmatter
+        .get("description")
+        .cloned()
+        .unwrap_or_default();
+    let mut found_title = !title.is_empty();
+
+    for line in content_lines {
         let trimmed = line.trim();
         if !found_title && trimmed.starts_with('#') {
             title = trimmed.trim_start_matches('#').trim().to_string();
@@ -283,6 +355,60 @@ fn read_markdown_meta(path: &Path) -> MarkdownMeta {
     }
 
     MarkdownMeta { title, description }
+}
+
+fn parse_frontmatter<'a>(text: &'a str) -> (std::collections::HashMap<String, String>, Vec<&'a str>) {
+    let lines = text.lines().collect::<Vec<_>>();
+    if lines.first().map(|line| line.trim()) != Some("---") {
+        return (std::collections::HashMap::new(), lines);
+    }
+
+    let Some(frontmatter_end) = lines
+        .iter()
+        .enumerate()
+        .skip(1)
+        .find_map(|(idx, line)| (line.trim() == "---").then_some(idx))
+    else {
+        return (std::collections::HashMap::new(), lines);
+    };
+
+    let mut frontmatter = std::collections::HashMap::new();
+    for line in &lines[1..frontmatter_end] {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let Some((key, value)) = trimmed.split_once(':') else {
+            continue;
+        };
+
+        let normalized_key = key.trim().to_lowercase();
+        if normalized_key.is_empty() {
+            continue;
+        }
+
+        let cleaned_value = cleanup_frontmatter_value(value);
+        if cleaned_value.is_empty() {
+            continue;
+        }
+
+        frontmatter.insert(normalized_key, cleaned_value);
+    }
+
+    let body = lines[(frontmatter_end + 1)..].to_vec();
+    (frontmatter, body)
+}
+
+fn cleanup_frontmatter_value(raw: &str) -> String {
+    let mut value = raw.trim().to_string();
+    if (value.starts_with('"') && value.ends_with('"'))
+        || (value.starts_with('\'') && value.ends_with('\''))
+    {
+        if value.len() >= 2 {
+            value = value[1..value.len() - 1].to_string();
+        }
+    }
+    value.trim().to_string()
 }
 
 fn derive_id(path: &Path) -> String {
@@ -317,4 +443,159 @@ fn slugify(value: &str) -> String {
         }
     }
     out.trim_matches('-').to_string()
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::{load_marketplace, resolve_plugin_root};
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn resolves_dot_plugins_source_under_plugins_root() {
+        let marketplace_dir = Path::new("C:/state");
+        let plugins_root = Path::new("C:/state/plugins");
+
+        let resolved = resolve_plugin_root(
+            "./plugins/code-documentation",
+            marketplace_dir,
+            Some(plugins_root),
+        );
+
+        assert_eq!(resolved, PathBuf::from("C:/state/plugins/code-documentation"));
+    }
+
+    #[test]
+    fn resolves_plugins_prefixed_source_under_plugins_root() {
+        let marketplace_dir = Path::new("C:/state");
+        let plugins_root = Path::new("C:/state/plugins");
+
+        let resolved = resolve_plugin_root(
+            "plugins/code-documentation",
+            marketplace_dir,
+            Some(plugins_root),
+        );
+
+        assert_eq!(resolved, PathBuf::from("C:/state/plugins/code-documentation"));
+    }
+
+    #[test]
+    fn resolves_plain_relative_source_under_plugins_root() {
+        let marketplace_dir = Path::new("C:/state");
+        let plugins_root = Path::new("C:/state/plugins");
+
+        let resolved = resolve_plugin_root("code-documentation", marketplace_dir, Some(plugins_root));
+
+        assert_eq!(resolved, PathBuf::from("C:/state/plugins/code-documentation"));
+    }
+
+    #[test]
+    fn resolves_windows_style_plugins_source_under_plugins_root() {
+        let marketplace_dir = Path::new("C:/state");
+        let plugins_root = Path::new("C:/state/plugins");
+
+        let resolved = resolve_plugin_root(
+            r".\\plugins\\code-documentation",
+            marketplace_dir,
+            Some(plugins_root),
+        );
+
+        assert_eq!(resolved, PathBuf::from("C:/state/plugins/code-documentation"));
+    }
+
+    #[test]
+    fn keeps_marketplace_relative_path_without_plugins_root() {
+        let marketplace_dir = Path::new("C:/state");
+
+        let resolved = resolve_plugin_root("./plugins/code-documentation", marketplace_dir, None);
+
+        assert_eq!(resolved, PathBuf::from("C:/state/plugins/code-documentation"));
+    }
+
+    #[test]
+    fn loads_agents_from_dot_plugins_source_with_plugins_root() {
+        use std::fs;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be after epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("sub_agent_router_marketplace_{unique}"));
+        let plugins_root = root.join("plugins");
+        let plugin_root = plugins_root.join("code-documentation");
+        let agents_dir = plugin_root.join("agents");
+
+        fs::create_dir_all(&agents_dir).expect("create agents dir");
+        fs::write(
+            agents_dir.join("code-reviewer.md"),
+            "---
+name: code-reviewer
+---
+",
+        )
+        .expect("write agent file");
+
+        let marketplace_path = root.join("marketplace.json");
+        fs::write(
+            &marketplace_path,
+            r#"{"plugins":[{"name":"code-documentation","source":"./plugins/code-documentation","agents":["agents/code-reviewer.md"],"skills":[],"commands":[]}]}"#,
+        )
+        .expect("write marketplace file");
+
+        let result = load_marketplace(marketplace_path.as_path(), Some(plugins_root.as_path()));
+        assert_eq!(result.agents.len(), 1);
+        assert_eq!(result.agents[0].id, "code-documentation/code-reviewer");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+
+    #[test]
+    fn prefers_frontmatter_name_and_description_for_agent_meta() {
+        use std::fs;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be after epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("sub_agent_router_frontmatter_{unique}"));
+        let plugins_root = root.join("plugins");
+        let plugin_root = plugins_root.join("comprehensive-review");
+        let agents_dir = plugin_root.join("agents");
+
+        fs::create_dir_all(&agents_dir).expect("create agents dir");
+        fs::write(
+            agents_dir.join("code-reviewer.md"),
+            "---
+name: code-reviewer
+description: security and reliability reviewer
+---
+
+# Expert Purpose
+
+This heading should not override frontmatter.
+",
+        )
+        .expect("write agent file");
+
+        let marketplace_path = root.join("marketplace.json");
+        fs::write(
+            &marketplace_path,
+            r#"{"plugins":[{"name":"comprehensive-review","source":"./plugins/comprehensive-review","agents":["agents/code-reviewer.md"],"skills":[],"commands":[]}]}"#,
+        )
+        .expect("write marketplace file");
+
+        let result = load_marketplace(marketplace_path.as_path(), Some(plugins_root.as_path()));
+        assert_eq!(result.agents.len(), 1);
+        assert_eq!(result.agents[0].id, "comprehensive-review/code-reviewer");
+        assert_eq!(result.agents[0].name, "code-reviewer");
+        assert_eq!(
+            result.agents[0].description.as_deref(),
+            Some("security and reliability reviewer")
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
 }

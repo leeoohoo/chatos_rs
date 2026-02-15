@@ -182,6 +182,7 @@ impl AiClient {
             raw_input,
             stateless_history_limit,
             force_text_content,
+            prefer_stateless,
         )
         .await
     }
@@ -207,6 +208,7 @@ impl AiClient {
         raw_input: Value,
         history_limit: i64,
         force_text_content: bool,
+        prefer_stateless: bool,
     ) -> Result<Value, String> {
         let include_tool_items = !tools.is_empty();
         let persist_tool_messages = purpose != "sub_agent_router";
@@ -620,7 +622,11 @@ impl AiClient {
 
             let mut next_input = Value::Array(tool_outputs.clone());
             let mut next_prev_id = ai_response.response_id.clone();
-            let mut next_use_prev_id = can_use_prev_id && next_prev_id.is_some();
+            let mut next_use_prev_id = should_use_prev_id_for_next_turn(
+                prefer_stateless,
+                can_use_prev_id,
+                next_prev_id.is_some(),
+            );
             if use_prev_id && next_prev_id.is_none() {
                 warn!("[AI_V3] missing response_id for tool call; fallback to stateless input");
                 if let Some(sid) = session_id.as_ref() {
@@ -1190,6 +1196,15 @@ fn build_tool_call_items(tool_calls_arr: &[Value]) -> Vec<Value> {
     items
 }
 
+
+fn should_use_prev_id_for_next_turn(
+    prefer_stateless: bool,
+    can_use_prev_id: bool,
+    has_next_response_id: bool,
+) -> bool {
+    !prefer_stateless && can_use_prev_id && has_next_response_id
+}
+
 fn is_unsupported_previous_response_id_error(err: &str) -> bool {
     let msg = err.to_lowercase();
     msg.contains("previous_response_id")
@@ -1262,5 +1277,24 @@ impl AiClientSettings for AiClient {
         {
             self.dynamic_summary_enabled = v;
         }
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::should_use_prev_id_for_next_turn;
+
+    #[test]
+    fn keeps_stateless_mode_when_prefer_stateless_enabled() {
+        assert!(!should_use_prev_id_for_next_turn(true, true, true));
+        assert!(!should_use_prev_id_for_next_turn(true, true, false));
+    }
+
+    #[test]
+    fn allows_prev_id_when_stateful_and_response_id_exists() {
+        assert!(should_use_prev_id_for_next_turn(false, true, true));
+        assert!(!should_use_prev_id_for_next_turn(false, true, false));
+        assert!(!should_use_prev_id_for_next_turn(false, false, true));
     }
 }

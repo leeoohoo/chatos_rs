@@ -37,6 +37,9 @@ struct TerminalLogQuery {
     offset: Option<i64>,
 }
 
+const DEFAULT_TERMINAL_HISTORY_LIMIT: i64 = 1200;
+const MAX_TERMINAL_HISTORY_LIMIT: i64 = 5000;
+
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
 enum WsInput {
@@ -165,9 +168,10 @@ async fn list_terminal_logs(
     Path(id): Path<String>,
     Query(query): Query<TerminalLogQuery>,
 ) -> (StatusCode, Json<Value>) {
-    let limit = query.limit;
-    let offset = query.offset.unwrap_or(0);
-    match TerminalLogService::list(&id, limit, offset).await {
+    let limit = normalize_history_limit(query.limit);
+    let offset = normalize_history_offset(query.offset);
+
+    match list_terminal_logs_recent_page(id.as_str(), limit, offset).await {
         Ok(list) => (
             StatusCode::OK,
             Json(serde_json::to_value(list).unwrap_or(Value::Null)),
@@ -177,6 +181,32 @@ async fn list_terminal_logs(
             Json(serde_json::json!({ "error": err })),
         ),
     }
+}
+
+fn normalize_history_limit(limit: Option<i64>) -> i64 {
+    limit
+        .unwrap_or(DEFAULT_TERMINAL_HISTORY_LIMIT)
+        .clamp(1, MAX_TERMINAL_HISTORY_LIMIT)
+}
+
+fn normalize_history_offset(offset: Option<i64>) -> i64 {
+    offset.unwrap_or(0).max(0)
+}
+
+async fn list_terminal_logs_recent_page(
+    terminal_id: &str,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<TerminalLog>, String> {
+    let fetch_limit = limit.saturating_add(offset).max(limit);
+    let mut logs = TerminalLogService::list_recent(terminal_id, fetch_limit).await?;
+
+    if offset > 0 {
+        let keep = logs.len().saturating_sub(offset as usize);
+        logs.truncate(keep);
+    }
+
+    Ok(logs)
 }
 
 async fn terminal_ws(Path(id): Path<String>, ws: WebSocketUpgrade) -> impl IntoResponse {
@@ -345,4 +375,24 @@ fn attach_busy(
         map.insert("busy".to_string(), Value::Bool(busy));
     }
     value
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::{normalize_history_limit, normalize_history_offset};
+
+    #[test]
+    fn history_limit_defaults_and_clamps() {
+        assert_eq!(normalize_history_limit(None), 1200);
+        assert_eq!(normalize_history_limit(Some(0)), 1);
+        assert_eq!(normalize_history_limit(Some(999_999)), 5000);
+    }
+
+    #[test]
+    fn history_offset_defaults_and_is_non_negative() {
+        assert_eq!(normalize_history_offset(None), 0);
+        assert_eq!(normalize_history_offset(Some(-10)), 0);
+        assert_eq!(normalize_history_offset(Some(25)), 25);
+    }
 }

@@ -67,7 +67,7 @@ impl TerminalSession {
             .take_writer()
             .map_err(|e| format!("take writer failed: {e}"))?;
 
-        let (sender, _) = broadcast::channel(1024);
+        let (sender, _) = broadcast::channel(4096);
 
         let session = Arc::new(TerminalSession {
             id: terminal.id.clone(),
@@ -89,6 +89,12 @@ impl TerminalSession {
         std::thread::spawn(move || {
             let mut buf = [0u8; 4096];
             let mut line_buffer = String::new();
+            let mut output_log_buffer = String::new();
+            let flush_interval = std::time::Duration::from_millis(250);
+            let touch_interval = std::time::Duration::from_millis(1_000);
+            let mut last_flush = std::time::Instant::now();
+            let mut last_touch = std::time::Instant::now();
+
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) => break,
@@ -98,6 +104,7 @@ impl TerminalSession {
                             .sender
                             .send(TerminalEvent::Output(text.clone()));
                         session_clone.mark_output();
+
                         let cleaned = strip_ansi(&text);
                         if !cleaned.is_empty() {
                             line_buffer.push_str(&cleaned);
@@ -119,16 +126,38 @@ impl TerminalSession {
                                 session_clone.mark_prompt();
                             }
                         }
-                        let terminal_id = session_clone.id.clone();
-                        let handle = handle.clone();
-                        handle.spawn(async move {
-                            let _ = terminals::touch_terminal(&terminal_id).await;
-                            let log = TerminalLog::new(terminal_id, "output".to_string(), text);
-                            let _ = terminal_logs::create_terminal_log(&log).await;
-                        });
+
+                        output_log_buffer.push_str(&text);
+                        let should_flush = !output_log_buffer.is_empty()
+                            && (output_log_buffer.len() >= 8 * 1024
+                                || last_flush.elapsed() >= flush_interval);
+
+                        if should_flush {
+                            spawn_terminal_output_persist(
+                                handle.clone(),
+                                session_clone.id.clone(),
+                                std::mem::take(&mut output_log_buffer),
+                            );
+                            let now = std::time::Instant::now();
+                            last_flush = now;
+                            last_touch = now;
+                        } else if last_touch.elapsed() >= touch_interval {
+                            spawn_terminal_touch(handle.clone(), session_clone.id.clone());
+                            last_touch = std::time::Instant::now();
+                        }
                     }
                     Err(_) => break,
                 }
+            }
+
+            if !output_log_buffer.is_empty() {
+                spawn_terminal_output_persist(
+                    handle.clone(),
+                    session_clone.id.clone(),
+                    output_log_buffer,
+                );
+            } else if last_touch.elapsed() >= touch_interval {
+                spawn_terminal_touch(handle.clone(), session_clone.id.clone());
             }
         });
 
@@ -140,7 +169,8 @@ impl TerminalSession {
     }
 
     pub fn write_input(&self, data: &str) -> Result<(), String> {
-        let (forward_data, blocked_messages) = self.apply_directory_guard(data);
+        let normalized = normalize_shell_input(data);
+        let (forward_data, blocked_messages) = self.apply_directory_guard(normalized.as_str());
         self.mark_input(&forward_data);
 
         if !forward_data.is_empty() {
@@ -418,6 +448,25 @@ pub fn get_terminal_manager() -> Arc<TerminalsManager> {
     TERMINAL_MANAGER
         .get_or_init(|| Arc::new(TerminalsManager::new()))
         .clone()
+}
+
+
+fn spawn_terminal_touch(handle: tokio::runtime::Handle, terminal_id: String) {
+    handle.spawn(async move {
+        let _ = terminals::touch_terminal(terminal_id.as_str()).await;
+    });
+}
+
+fn spawn_terminal_output_persist(
+    handle: tokio::runtime::Handle,
+    terminal_id: String,
+    output: String,
+) {
+    handle.spawn(async move {
+        let _ = terminals::touch_terminal(terminal_id.as_str()).await;
+        let log = TerminalLog::new(terminal_id, "output".to_string(), output);
+        let _ = terminal_logs::create_terminal_log(&log).await;
+    });
 }
 
 fn spawn_shell(
@@ -871,9 +920,29 @@ fn normalize_path_for_compare(path: &Path) -> String {
 
 fn build_return_to_root_command(root: &Path) -> String {
     if cfg!(windows) {
-        return format!("cd /d {}\n", shell_quote_path_for_shell(root));
+        return format!(
+            "cd /d {}{}",
+            shell_quote_path_for_shell(root),
+            shell_input_newline()
+        );
     }
-    format!("cd {}\n", shell_quote_path_for_shell(root))
+    format!("cd {}{}", shell_quote_path_for_shell(root), shell_input_newline())
+}
+
+fn shell_input_newline() -> &'static str {
+    if cfg!(windows) {
+        "\r"
+    } else {
+        "\n"
+    }
+}
+
+fn normalize_shell_input(data: &str) -> String {
+    if !cfg!(windows) {
+        return data.to_string();
+    }
+
+    data.replace("\r\n", "\r").replace('\n', "\r")
 }
 
 fn canonicalize_path(path: &Path) -> Result<PathBuf, std::io::Error> {
@@ -1211,9 +1280,21 @@ mod tests {
         let command = build_return_to_root_command(root);
 
         if cfg!(windows) {
-            assert_eq!(command, "cd C:\\repo\\sandbox\n");
+            assert_eq!(command, "cd /d \"C:\\repo\\sandbox\"\r");
         } else {
             assert_eq!(command, "cd /tmp/repo/sandbox\n");
+        }
+    }
+
+    #[test]
+    fn normalize_shell_input_uses_windows_return_key() {
+        let raw = "echo one\necho two\r\necho three\r";
+        let normalized = super::normalize_shell_input(raw);
+
+        if cfg!(windows) {
+            assert_eq!(normalized, "echo one\recho two\recho three\r");
+        } else {
+            assert_eq!(normalized, raw);
         }
     }
 }

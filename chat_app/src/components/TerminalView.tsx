@@ -32,6 +32,8 @@ interface InputCommandParseState {
 }
 
 const MAX_COMMAND_HISTORY = 200;
+const TERMINAL_HISTORY_PAGE_SIZE = 1200;
+const TERMINAL_HISTORY_MAX_LIMIT = 5000;
 
 const buildWsUrl = (baseUrl: string, path: string) => {
   const cleanedBase = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
@@ -374,6 +376,8 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [connectSeq, setConnectSeq] = useState(0);
   const [commandHistory, setCommandHistory] = useState<CommandHistoryItem[]>([]);
+  const [historyLogLimit, setHistoryLogLimit] = useState(TERMINAL_HISTORY_PAGE_SIZE);
+  const [canLoadMoreHistory, setCanLoadMoreHistory] = useState(false);
 
   const client = apiClientFromContext ?? apiClient;
   const apiBaseUrl = client.getBaseUrl();
@@ -458,6 +462,11 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
   }, [themeColors]);
 
   useEffect(() => {
+    setHistoryLogLimit(TERMINAL_HISTORY_PAGE_SIZE);
+    setCanLoadMoreHistory(false);
+  }, [currentTerminal?.id]);
+
+  useEffect(() => {
     if (!currentTerminal || !containerRef.current) {
       return;
     }
@@ -533,12 +542,16 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
 
     const loadHistory = async () => {
       try {
-        const logs = await client.listTerminalLogs(currentTerminal.id);
+        const logs = await client.listTerminalLogs(currentTerminal.id, { limit: historyLogLimit, offset: 0 });
         if (cancelled) {
           return;
         }
 
         const normalized = Array.isArray(logs) ? logs.map(normalizeTerminalLog) : [];
+        setCanLoadMoreHistory(
+          normalized.length >= historyLogLimit && historyLogLimit < TERMINAL_HISTORY_MAX_LIMIT
+        );
+
         const outputLogs = normalized.filter((log: TerminalLog) => log.logType === 'output' || log.logType === 'system');
         const commandLogs = normalized.filter((log: TerminalLog) => log.logType === 'command');
         const inputLogs = normalized.filter((log: TerminalLog) => log.logType === 'input');
@@ -652,6 +665,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
         }
         console.error('Failed to load terminal history:', error);
         setHistoryState('error');
+        setCanLoadMoreHistory(false);
         setErrorMessage(error instanceof Error ? error.message : '加载历史失败');
       } finally {
         if (!cancelled) {
@@ -677,7 +691,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
       setHistoryState('idle');
       setConnectionState('disconnected');
     };
-  }, [currentTerminal?.id, client]);
+  }, [currentTerminal?.id, client, historyLogLimit]);
 
   useEffect(() => {
     if (!currentTerminal) return;
@@ -789,6 +803,14 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
             {connectionState === 'connected' ? '已连接' : connectionState === 'connecting' ? '连接中' : connectionState === 'error' ? '连接错误' : '未连接'}
           </span>
           <span>状态: {terminalStatus}</span>
+          <button
+            type="button"
+            disabled={historyState === 'loading' || !canLoadMoreHistory}
+            onClick={() => setHistoryLogLimit((prev) => Math.min(prev + TERMINAL_HISTORY_PAGE_SIZE, TERMINAL_HISTORY_MAX_LIMIT))}
+            className="rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Load More History
+          </button>
           <button
             type="button"
             onClick={() => setConnectSeq((prev) => prev + 1)}
