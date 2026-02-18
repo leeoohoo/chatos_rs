@@ -8,6 +8,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use uuid::Uuid;
 
 use crate::builtin::code_maintainer::{CodeMaintainerOptions, CodeMaintainerService};
+use crate::builtin::task_manager::{TaskManagerOptions, TaskManagerService};
 use crate::builtin::sub_agent_router::{SubAgentRouterOptions, SubAgentRouterService};
 use crate::builtin::terminal_controller::{TerminalControllerOptions, TerminalControllerService};
 use crate::services::builtin_mcp::BuiltinMcpKind;
@@ -43,6 +44,7 @@ pub type ToolStreamChunkCallback = Arc<dyn Fn(String) + Send + Sync>;
 pub enum BuiltinToolService {
     CodeMaintainer(CodeMaintainerService),
     TerminalController(TerminalControllerService),
+    TaskManager(TaskManagerService),
     SubAgentRouter(SubAgentRouterService),
 }
 
@@ -51,6 +53,7 @@ impl BuiltinToolService {
         match self {
             Self::CodeMaintainer(service) => service.list_tools(),
             Self::TerminalController(service) => service.list_tools(),
+            Self::TaskManager(service) => service.list_tools(),
             Self::SubAgentRouter(service) => service.list_tools(),
         }
     }
@@ -60,11 +63,15 @@ impl BuiltinToolService {
         name: &str,
         args: Value,
         session_id: Option<&str>,
+        conversation_turn_id: Option<&str>,
         on_stream_chunk: Option<ToolStreamChunkCallback>,
     ) -> Result<Value, String> {
         match self {
             Self::CodeMaintainer(service) => service.call_tool(name, args, session_id),
             Self::TerminalController(service) => service.call_tool(name, args, session_id),
+            Self::TaskManager(service) => {
+                service.call_tool(name, args, session_id, conversation_turn_id, on_stream_chunk)
+            }
             Self::SubAgentRouter(service) => {
                 service.call_tool(name, args, session_id, on_stream_chunk)
             }
@@ -98,6 +105,13 @@ pub fn build_builtin_tool_service(server: &McpBuiltinServer) -> Result<BuiltinTo
                 max_output_chars: 20_000,
             })?;
             Ok(BuiltinToolService::TerminalController(service))
+        }
+        BuiltinMcpKind::TaskManager => {
+            let service = TaskManagerService::new(TaskManagerOptions {
+                server_name: server.name.clone(),
+                review_timeout_ms: crate::services::task_manager::REVIEW_TIMEOUT_MS_DEFAULT,
+            })?;
+            Ok(BuiltinToolService::TaskManager(service))
         }
         BuiltinMcpKind::SubAgentRouter => {
             let service = SubAgentRouterService::new(SubAgentRouterOptions {

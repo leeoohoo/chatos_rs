@@ -64,13 +64,26 @@ impl AiServer {
         let use_tools = options.use_tools.unwrap_or(true);
         let max_tokens = options.max_tokens;
         let reasoning_enabled = options.reasoning_enabled.unwrap_or(true);
+        let turn_id = options
+            .turn_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| value.to_string());
 
         let attachments_list = options.attachments.unwrap_or_default();
         let sanitized = attachments::sanitize_attachments_for_db(&attachments_list);
-        let meta = if sanitized.is_empty() {
+        let meta = if sanitized.is_empty() && turn_id.is_none() {
             None
         } else {
-            Some(json!({"attachments": sanitized}))
+            let mut map = serde_json::Map::new();
+            if !sanitized.is_empty() {
+                map.insert("attachments".to_string(), json!(sanitized));
+            }
+            if let Some(turn) = turn_id.clone() {
+                map.insert("conversation_turn_id".to_string(), Value::String(turn));
+            }
+            Some(Value::Object(map))
         };
         if let Err(err) = self
             .message_manager
@@ -110,6 +123,7 @@ impl AiServer {
                     system_prompt: None,
                     history_limit: None,
                     purpose: Some("chat".to_string()),
+                    conversation_turn_id: turn_id.clone(),
                     callbacks: Some(if use_tools {
                         callbacks
                     } else {
@@ -141,4 +155,5 @@ pub struct ChatOptions {
     pub supports_images: Option<bool>,
     pub reasoning_enabled: Option<bool>,
     pub callbacks: Option<AiClientCallbacks>,
+    pub turn_id: Option<String>,
 }

@@ -11,7 +11,8 @@ import {
   getSessionMessagesIPC,
   createMessageIPC,
   getUserSettingsIPC,
-  updateUserSettingsIPC
+  updateUserSettingsIPC,
+  submitTaskReviewDecisionIPC
 } from '../ipc/transport';
 import { debugLog } from '@/lib/utils';
 // 使用相对路径，让浏览器自动处理协议和域名
@@ -845,10 +846,18 @@ class ApiClient {
   }
 
   // 流式聊天接口
-  async streamChat(sessionId: string, content: string, modelConfig: any, userId?: string, attachments?: any[], reasoningEnabled?: boolean): Promise<ReadableStream> {
+  async streamChat(
+    sessionId: string,
+    content: string,
+    modelConfig: any,
+    userId?: string,
+    attachments?: any[],
+    reasoningEnabled?: boolean,
+    options?: { turnId?: string }
+  ): Promise<ReadableStream> {
     // Prefer IPC transport when available (Electron). Fallback to HTTP/SSE.
     if (ipcAvailable()) {
-      return streamChatIPC(sessionId, content, modelConfig, userId, attachments, reasoningEnabled);
+      return streamChatIPC(sessionId, content, modelConfig, userId, attachments, reasoningEnabled, options?.turnId);
     }
     const useResponses = modelConfig?.supports_responses === true;
     const url = `${this.baseUrl}/${useResponses ? 'agent_v3' : 'agent_v2'}/chat/stream`;
@@ -864,6 +873,7 @@ class ApiClient {
         user_id: userId,
         attachments: attachments || [],
         reasoning_enabled: reasoningEnabled,
+        turn_id: options?.turnId,
         ai_model_config: {
           provider: modelConfig.provider,
           model_name: modelConfig.model_name,
@@ -896,7 +906,7 @@ class ApiClient {
     userId?: string,
     attachments?: any[],
     reasoningEnabled?: boolean,
-    options?: { useResponses?: boolean }
+    options?: { useResponses?: boolean; turnId?: string }
   ): Promise<ReadableStream> {
     if (ipcAvailable()) {
       return streamAgentChatIPC(sessionId, content, agentId, userId, attachments, reasoningEnabled, options);
@@ -917,6 +927,7 @@ class ApiClient {
         user_id: userId,
         attachments: attachments || [],
         reasoning_enabled: reasoningEnabled,
+        turn_id: options?.turnId,
       }),
     });
 
@@ -929,6 +940,55 @@ class ApiClient {
     }
 
     return response.body;
+  }
+
+  async getTaskManagerTasks(
+    sessionId: string,
+    options?: { conversationTurnId?: string; includeDone?: boolean; limit?: number }
+  ): Promise<any[]> {
+    if (!sessionId) {
+      return [];
+    }
+
+    const params = new URLSearchParams();
+    params.set('session_id', sessionId);
+    if (options?.conversationTurnId) {
+      params.set('conversation_turn_id', options.conversationTurnId);
+    }
+    if (options?.includeDone === true) {
+      params.set('include_done', 'true');
+    }
+    if (typeof options?.limit === 'number') {
+      params.set('limit', String(options.limit));
+    }
+
+    const result = await this.request<any>('/task-manager/tasks?' + params.toString());
+    if (Array.isArray(result)) {
+      return result;
+    }
+    return Array.isArray(result?.tasks) ? result.tasks : [];
+  }
+
+  async submitTaskReviewDecision(
+    reviewId: string,
+    payload: { action: 'confirm' | 'cancel'; tasks?: any[]; reason?: string }
+  ): Promise<any> {
+    if (!reviewId) {
+      throw new Error('reviewId is required');
+    }
+
+    if (ipcAvailable()) {
+      try {
+        return await submitTaskReviewDecisionIPC(reviewId, payload);
+      } catch (error) {
+        // Fallback to HTTP when IPC bridge does not implement this API.
+      }
+    }
+
+    return this.request<any>(`/task-manager/reviews/${encodeURIComponent(reviewId)}/decision`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
   }
 
   // 停止聊天流

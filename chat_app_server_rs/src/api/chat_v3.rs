@@ -35,6 +35,7 @@ struct ChatRequest {
     user_id: Option<String>,
     attachments: Option<Vec<Value>>,
     reasoning_enabled: Option<bool>,
+    turn_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -247,6 +248,7 @@ async fn stream_chat_v3(sender: SseSender, req: ChatRequest) {
                 supports_images: Some(model_runtime.supports_images),
                 reasoning_enabled: Some(model_runtime.effective_reasoning),
                 callbacks: Some(callback_bundle.callbacks),
+                turn_id: req.turn_id.clone(),
             },
         )
         .await;

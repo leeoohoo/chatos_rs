@@ -31,6 +31,7 @@ struct AgentChatRequest {
     user_id: Option<String>,
     attachments: Option<Vec<Value>>,
     reasoning_enabled: Option<bool>,
+    turn_id: Option<String>,
 }
 
 pub fn router() -> Router {
@@ -181,6 +182,7 @@ async fn stream_agent_v3(sender: SseSender, req: AgentChatRequest) {
                 supports_images: Some(supports_images),
                 reasoning_enabled: Some(effective_reasoning),
                 callbacks: Some(callback_bundle.callbacks),
+                turn_id: req.turn_id.clone(),
             },
         )
         .await;

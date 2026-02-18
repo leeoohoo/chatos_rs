@@ -72,6 +72,7 @@ impl AiClient {
         &mut self,
         messages: Vec<Value>,
         session_id: Option<String>,
+        turn_id: Option<String>,
         model: String,
         temperature: f64,
         max_tokens: Option<i64>,
@@ -178,6 +179,7 @@ impl AiClient {
             all_messages,
             tools,
             session_id,
+            turn_id,
             model,
             temperature,
             max_tokens,
@@ -196,6 +198,7 @@ impl AiClient {
         messages: Vec<Value>,
         tools: Option<Vec<Value>>,
         session_id: Option<String>,
+        turn_id: Option<String>,
         model: String,
         temperature: f64,
         max_tokens: Option<i64>,
@@ -484,6 +487,7 @@ impl AiClient {
                 .execute_tools_stream(
                     &tool_calls_arr,
                     session_id.as_deref(),
+                    turn_id.as_deref(),
                     Some(model.as_str()),
                     on_tools_stream_cb,
                 )

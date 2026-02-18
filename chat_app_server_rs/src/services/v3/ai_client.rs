@@ -31,6 +31,7 @@ pub struct ProcessOptions {
     pub system_prompt: Option<String>,
     pub history_limit: Option<i64>,
     pub purpose: Option<String>,
+    pub conversation_turn_id: Option<String>,
     pub callbacks: Option<AiClientCallbacks>,
 }
 
@@ -92,6 +93,12 @@ impl AiClient {
         let system_prompt = options.system_prompt.or_else(|| self.system_prompt.clone());
         let history_limit = options.history_limit.unwrap_or(self.history_limit);
         let purpose = options.purpose.unwrap_or_else(|| "chat".to_string());
+        let turn_id = options
+            .conversation_turn_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| value.to_string());
         let callbacks = options.callbacks.unwrap_or_else(|| AiClientCallbacks {
             on_chunk: None,
             on_thinking: None,
@@ -167,6 +174,7 @@ impl AiClient {
             previous_response_id,
             available_tools,
             session_id,
+            turn_id,
             model,
             provider,
             thinking_level,
@@ -193,6 +201,7 @@ impl AiClient {
         previous_response_id: Option<String>,
         tools: Vec<Value>,
         session_id: Option<String>,
+        turn_id: Option<String>,
         model: String,
         provider: String,
         thinking_level: Option<String>,
@@ -528,6 +537,7 @@ impl AiClient {
                 .execute_tools_stream(
                     &execution_plan.execute_calls,
                     session_id.as_deref(),
+                    turn_id.as_deref(),
                     Some(model.as_str()),
                     on_tools_stream_cb,
                 )

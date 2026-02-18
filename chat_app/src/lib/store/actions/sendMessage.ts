@@ -1,6 +1,117 @@
 import type { Message } from '../../../types';
 import type ApiClient from '../../api/client';
+import type { TaskReviewDraft, TaskReviewPanelState } from '../types';
 import { debugLog } from '@/lib/utils';
+
+const TASK_CREATE_REVIEW_REQUIRED_EVENT = 'task_create_review_required';
+
+const createInternalId = (prefix: string) => {
+  const randomPart =
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID().replace(/-/g, '')
+      : Date.now().toString() + '_' + Math.random().toString(36).slice(2, 10);
+  return prefix + '_' + randomPart;
+};
+
+const normalizeTaskPriority = (value: unknown): TaskReviewDraft['priority'] => {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (normalized === 'high') return 'high';
+  if (normalized === 'low') return 'low';
+  return 'medium';
+};
+
+const normalizeTaskStatus = (value: unknown): TaskReviewDraft['status'] => {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (normalized === 'doing') return 'doing';
+  if (normalized === 'blocked') return 'blocked';
+  if (normalized === 'done') return 'done';
+  return 'todo';
+};
+
+const parseTaskTags = (value: unknown): string[] => {
+  const source = Array.isArray(value)
+    ? value
+    : typeof value === 'string'
+      ? value.split(',')
+      : [];
+
+  const seen = new Set<string>();
+  const tags: string[] = [];
+  source.forEach((item) => {
+    const tag = String(item ?? '').trim();
+    if (!tag || seen.has(tag)) {
+      return;
+    }
+    seen.add(tag);
+    tags.push(tag);
+  });
+  return tags;
+};
+
+const toTaskReviewDraft = (raw: any, index: number): TaskReviewDraft => {
+  const title = String(raw?.title ?? '').trim();
+  const details = String(raw?.details ?? raw?.description ?? '').trim();
+  const dueRaw = raw?.due_at ?? raw?.dueAt;
+  const dueAt = typeof dueRaw === 'string' ? dueRaw.trim() : '';
+
+  return {
+    id: typeof raw?.id === 'string' && raw.id.trim() ? raw.id : createInternalId('draft' + (index + 1)),
+    title,
+    details,
+    priority: normalizeTaskPriority(raw?.priority),
+    status: normalizeTaskStatus(raw?.status),
+    tags: parseTaskTags(raw?.tags),
+    dueAt: dueAt || null,
+  };
+};
+
+const extractTaskReviewPanelFromToolStream = (
+  streamPayload: any,
+  fallbackSessionId: string,
+  fallbackTurnId: string
+): TaskReviewPanelState | null => {
+  const rawContent = typeof streamPayload?.content === 'string' ? streamPayload.content.trim() : '';
+  if (!rawContent) {
+    return null;
+  }
+
+  let parsedChunk: any = null;
+  try {
+    parsedChunk = JSON.parse(rawContent);
+  } catch (_) {
+    return null;
+  }
+
+  if (parsedChunk?.event !== TASK_CREATE_REVIEW_REQUIRED_EVENT) {
+    return null;
+  }
+
+  const payload = parsedChunk?.data ?? {};
+  const reviewId = typeof payload?.review_id === 'string' ? payload.review_id.trim() : '';
+  if (!reviewId) {
+    return null;
+  }
+
+  const sessionId = typeof payload?.session_id === 'string' && payload.session_id.trim()
+    ? payload.session_id.trim()
+    : fallbackSessionId;
+  const conversationTurnId = typeof payload?.conversation_turn_id === 'string' && payload.conversation_turn_id.trim()
+    ? payload.conversation_turn_id.trim()
+    : fallbackTurnId;
+
+  const rawDraftTasks = Array.isArray(payload?.draft_tasks) ? payload.draft_tasks : [];
+  const drafts = rawDraftTasks.map((task: any, index: number) => toTaskReviewDraft(task, index));
+
+  return {
+    reviewId,
+    sessionId,
+    conversationTurnId,
+    drafts,
+    timeoutMs: typeof payload?.timeout_ms === 'number' ? payload.timeout_ms : undefined,
+    submitting: false,
+    error: null,
+  };
+};
 
 // 工厂函数：创建 sendMessage 处理器，注入依赖以便于在 store 外部维护
 export function createSendMessageHandler({
@@ -55,6 +166,8 @@ export function createSendMessageHandler({
     } else {
       throw new Error('请先选择一个模型或智能体');
     }
+
+    const conversationTurnId = createInternalId('turn');
 
     try {
       const activeModelConfig = selectedAgent
@@ -134,6 +247,7 @@ export function createSendMessageHandler({
         status: 'completed',
         createdAt: userMessageTime,
         metadata: {
+          conversation_turn_id: conversationTurnId,
           ...(previewAttachments.length > 0 ? { attachments: previewAttachments as any } : {}),
           model: selectedAgent ? `[Agent] ${selectedAgent.name}` : selectedModel.model_name,
           ...(selectedModel
@@ -170,6 +284,7 @@ export function createSendMessageHandler({
         status: 'streaming' as const,
         createdAt: assistantMessageTime,
         metadata: {
+          conversation_turn_id: conversationTurnId,
           model: selectedAgent ? `[Agent] ${selectedAgent.name}` : selectedModel.model_name,
           ...(selectedModel
             ? {
@@ -206,6 +321,7 @@ export function createSendMessageHandler({
       const chatRequest = selectedAgent
         ? {
             session_id: currentSessionId,
+            turn_id: conversationTurnId,
             message: content,
             // 仅在选择智能体时携带智能体信息，不包含模型配置
             agent_id: selectedAgent.id,
@@ -215,6 +331,7 @@ export function createSendMessageHandler({
           }
         : {
             session_id: currentSessionId,
+            turn_id: conversationTurnId,
             message: content,
             // 仅在选择模型时携带模型配置
             model_config: {
@@ -243,7 +360,7 @@ export function createSendMessageHandler({
             getUserIdParam(),
             apiAttachments,
             reasoningEnabled,
-            { useResponses: activeModelConfig?.supports_responses === true }
+            { useResponses: activeModelConfig?.supports_responses === true, turnId: conversationTurnId }
           )
         : await client.streamChat(
             currentSessionId,
@@ -251,7 +368,8 @@ export function createSendMessageHandler({
             selectedModel,
             getUserIdParam(),
             apiAttachments,
-            reasoningEnabled
+            reasoningEnabled,
+            { turnId: conversationTurnId }
           );
 
       if (!response) {
@@ -680,6 +798,34 @@ export function createSendMessageHandler({
                   // 处理工具流式返回内容
                   debugLog('🔧 收到工具流式数据:', parsed.data);
                   const data = parsed.data;
+                  const reviewPanel = extractTaskReviewPanelFromToolStream(
+                    data,
+                    currentSessionId,
+                    conversationTurnId
+                  );
+                  if (reviewPanel) {
+                    debugLog('📝 收到任务确认事件，打开任务编辑面板:', reviewPanel);
+                    set((state: any) => {
+                      state.taskReviewPanel = reviewPanel;
+                      const messageIndex = state.messages.findIndex((m: any) => m.id === tempAssistantMessage.id);
+                      if (messageIndex === -1) {
+                        return;
+                      }
+                      const message = state.messages[messageIndex];
+                      if (message.metadata && message.metadata.toolCalls) {
+                        const toolCallId = data?.toolCallId || data?.tool_call_id || data?.id;
+                        if (toolCallId) {
+                          const toolCall = message.metadata.toolCalls.find((tc: any) => tc.id === toolCallId);
+                          if (toolCall) {
+                            toolCall.result = '等待你确认任务列表...';
+                            toolCall.completed = false;
+                          }
+                        }
+                      }
+                      (message as any).updatedAt = new Date();
+                    });
+                    continue;
+                  }
 
                   set((state: any) => {
                     const messageIndex = state.messages.findIndex((m: any) => m.id === tempAssistantMessage.id);
@@ -813,6 +959,13 @@ export function createSendMessageHandler({
             state.isStreaming = false;
             state.streamingMessageId = null;
           }
+          if (
+            state.taskReviewPanel
+            && state.taskReviewPanel.sessionId === currentSessionId
+            && state.taskReviewPanel.conversationTurnId === conversationTurnId
+          ) {
+            state.taskReviewPanel = null;
+          }
         });
       }
 
@@ -843,6 +996,13 @@ export function createSendMessageHandler({
           state.isStreaming = false;
           state.streamingMessageId = null;
           state.error = error instanceof Error ? error.message : 'Failed to send message';
+        }
+        if (
+          state.taskReviewPanel
+          && state.taskReviewPanel.sessionId === currentSessionId
+          && state.taskReviewPanel.conversationTurnId === conversationTurnId
+        ) {
+          state.taskReviewPanel = null;
         }
       });
 

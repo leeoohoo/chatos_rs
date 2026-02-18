@@ -1,5 +1,25 @@
 import type { Message, Session, ChatConfig, Theme, McpConfig, AiModelConfig, SystemContext, AgentConfig, Application, Project, Terminal } from '../../types';
 
+export interface TaskReviewDraft {
+  id: string;
+  title: string;
+  details: string;
+  priority: 'high' | 'medium' | 'low';
+  status: 'todo' | 'doing' | 'blocked' | 'done';
+  tags: string[];
+  dueAt?: string | null;
+}
+
+export interface TaskReviewPanelState {
+  reviewId: string;
+  sessionId: string;
+  conversationTurnId: string;
+  drafts: TaskReviewDraft[];
+  timeoutMs?: number;
+  submitting?: boolean;
+  error?: string | null;
+}
+
 export interface ChatState {
   // 会话相关
   sessions: Session[];
@@ -24,6 +44,7 @@ export interface ChatState {
   streamingMessageId: string | null;
   hasMoreMessages: boolean;
   sessionChatState: Record<string, { isLoading: boolean; isStreaming: boolean; streamingMessageId: string | null }>;
+  taskReviewPanel: TaskReviewPanelState | null;
 
   // UI状态
   sidebarOpen: boolean;
@@ -80,6 +101,7 @@ export interface ChatActions {
   updateStreamingMessage: (content: string) => void;
   stopStreaming: () => void;
   abortCurrentConversation: () => void;
+  setTaskReviewPanel: (panel: TaskReviewPanelState | null) => void;
 
   // UI操作
   toggleSidebar: () => void;

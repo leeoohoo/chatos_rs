@@ -15,5 +15,7 @@ impl Events {
     pub const COMPLETE: &'static str = "complete";
     pub const CANCELLED: &'static str = "cancelled";
     pub const ERROR: &'static str = "error";
+    pub const TASK_CREATE_REVIEW_REQUIRED: &'static str = "task_create_review_required";
+    pub const TASK_CREATE_REVIEW_RESOLVED: &'static str = "task_create_review_resolved";
     pub const HEARTBEAT: &'static str = "heartbeat";
 }

@@ -27,6 +27,7 @@ struct ChatRequest {
     ai_model_config: Option<Value>,
     user_id: Option<String>,
     reasoning_enabled: Option<bool>,
+    turn_id: Option<String>,
     agent_id: Option<String>,
     attachments: Option<Vec<Value>>,
 }
@@ -96,6 +97,7 @@ async fn stream_chat_v2_agent(sender: SseSender, req: ChatRequest) {
         req.user_id.clone(),
         att,
         req.reasoning_enabled,
+        req.turn_id.clone(),
         callback_bundle.callbacks,
     )
     .await;
@@ -189,6 +191,7 @@ async fn stream_chat_v2(sender: SseSender, req: ChatRequest) {
                 supports_images: Some(model_runtime.supports_images),
                 reasoning_enabled: Some(model_runtime.effective_reasoning),
                 callbacks: Some(callback_bundle.callbacks),
+                turn_id: req.turn_id.clone(),
             },
         )
         .await;

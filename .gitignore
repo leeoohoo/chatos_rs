@@ -17,3 +17,4 @@ logs/
 *.sw?   
 target/
 data/
+/chat_app_server_rs/docs

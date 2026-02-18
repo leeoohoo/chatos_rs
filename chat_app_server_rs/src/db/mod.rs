@@ -502,6 +502,20 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
             run_id TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )"#,
+        r#"CREATE TABLE IF NOT EXISTS task_manager_tasks (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            conversation_turn_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            details TEXT NOT NULL,
+            priority TEXT NOT NULL,
+            status TEXT NOT NULL,
+            tags_json TEXT NOT NULL,
+            due_at TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+        )"#,
         r#"CREATE TABLE IF NOT EXISTS mcp_config_profiles (
             id TEXT PRIMARY KEY,
             mcp_config_id TEXT NOT NULL,
@@ -694,6 +708,9 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
         "CREATE INDEX IF NOT EXISTS idx_mcp_change_logs_server_name ON mcp_change_logs(server_name)",
         "CREATE INDEX IF NOT EXISTS idx_mcp_change_logs_session_id ON mcp_change_logs(session_id)",
         "CREATE INDEX IF NOT EXISTS idx_mcp_change_logs_created_at ON mcp_change_logs(created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_task_manager_tasks_session_turn ON task_manager_tasks(session_id, conversation_turn_id)",
+        "CREATE INDEX IF NOT EXISTS idx_task_manager_tasks_session_created_at ON task_manager_tasks(session_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_task_manager_tasks_turn_created_at ON task_manager_tasks(conversation_turn_id, created_at)",
         "CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)",
         "CREATE INDEX IF NOT EXISTS idx_sessions_project_id ON sessions(project_id)",
         "CREATE INDEX IF NOT EXISTS idx_mcp_configs_user_id ON mcp_configs(user_id)",
@@ -821,6 +838,7 @@ async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> {
         "session_summary_messages",
         "mcp_configs",
         "mcp_change_logs",
+        "task_manager_tasks",
         "mcp_config_profiles",
         "ai_model_configs",
         "system_contexts",
@@ -916,6 +934,31 @@ async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> {
         .collection::<mongodb::bson::Document>("mcp_change_logs")
         .create_index(
             IndexModel::builder().keys(doc! { "created_at": 1 }).build(),
+            None,
+        )
+        .await;
+    let _ = db
+        .collection::<mongodb::bson::Document>("task_manager_tasks")
+        .create_index(
+            IndexModel::builder()
+                .keys(doc! { "session_id": 1, "conversation_turn_id": 1 })
+                .build(),
+            None,
+        )
+        .await;
+    let _ = db
+        .collection::<mongodb::bson::Document>("task_manager_tasks")
+        .create_index(
+            IndexModel::builder().keys(doc! { "session_id": 1, "created_at": -1 }).build(),
+            None,
+        )
+        .await;
+    let _ = db
+        .collection::<mongodb::bson::Document>("task_manager_tasks")
+        .create_index(
+            IndexModel::builder()
+                .keys(doc! { "conversation_turn_id": 1, "created_at": -1 })
+                .build(),
             None,
         )
         .await;

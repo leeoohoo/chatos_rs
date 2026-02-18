@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useChatStoreFromContext } from '../lib/store/ChatStoreContext';
+import { useChatApiClientFromContext, useChatStoreFromContext } from '../lib/store/ChatStoreContext';
 import { MessageList } from './MessageList';
 import { InputArea } from './InputArea';
 import { SessionList } from './SessionList';
@@ -13,8 +13,12 @@ import ProjectExplorer from './ProjectExplorer';
 import TerminalView from './TerminalView';
 // 应用弹窗管理器由 ApplicationsPanel 直接承担
 import ApplicationsPanel from './ApplicationsPanel';
+import TaskDraftPanel from './TaskDraftPanel';
+import TaskWorkbar, { type TaskWorkbarItem } from './TaskWorkbar';
+import ApiClient from '../lib/api/client';
 import { cn } from '../lib/utils';
 import type { ChatInterfaceProps } from '../types';
+import type { TaskReviewDraft } from '../lib/store/types';
 
 const SESSION_PAGE_SIZE = 30;
 
@@ -52,9 +56,14 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     updateChatConfig,
     abortCurrentConversation,
     sessionChatState = {},
+    taskReviewPanel,
+    setTaskReviewPanel,
     // applications,  // 不再在此组件中使用
     // selectedApplicationId,  // 不再用于自动显示
   } = useChatStoreFromContext();
+
+  const apiClientFromContext = useChatApiClientFromContext();
+  const apiClient = useMemo(() => apiClientFromContext || new ApiClient(), [apiClientFromContext]);
 
   const selectedAgent = useMemo(
     () => (selectedAgentId ? agents.find((a: any) => a.id === selectedAgentId) : null),
@@ -90,6 +99,56 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [showApplicationsPanel, setShowApplicationsPanel] = useState(false);
   const [showUserSettings, setShowUserSettings] = useState(false);
   const didInitRef = useRef(false);
+  const [workbarTasks, setWorkbarTasks] = useState<TaskWorkbarItem[]>([]);
+  const [workbarLoading, setWorkbarLoading] = useState(false);
+  const [workbarError, setWorkbarError] = useState<string | null>(null);
+
+  const normalizeWorkbarTask = useCallback((raw: any): TaskWorkbarItem => {
+    const statusRaw = String(raw?.status || 'todo').toLowerCase();
+    const status: TaskWorkbarItem['status'] =
+      statusRaw === 'doing' || statusRaw === 'blocked' || statusRaw === 'done'
+        ? statusRaw
+        : 'todo';
+
+    const priorityRaw = String(raw?.priority || 'medium').toLowerCase();
+    const priority: TaskWorkbarItem['priority'] =
+      priorityRaw === 'high' || priorityRaw === 'low' ? priorityRaw : 'medium';
+
+    return {
+      id: String(raw?.id || ''),
+      title: String(raw?.title || ''),
+      details: String(raw?.details || ''),
+      status,
+      priority,
+      conversationTurnId: String(raw?.conversation_turn_id || ''),
+      createdAt: String(raw?.created_at || ''),
+      dueAt: raw?.due_at ? String(raw.due_at) : null,
+      tags: Array.isArray(raw?.tags) ? raw.tags.map((tag: any) => String(tag)) : [],
+    };
+  }, []);
+
+  const loadWorkbarTasks = useCallback(async (sessionId: string, conversationTurnId?: string) => {
+    if (!sessionId) {
+      setWorkbarTasks([]);
+      setWorkbarError(null);
+      return;
+    }
+
+    setWorkbarLoading(true);
+    setWorkbarError(null);
+    try {
+      const tasks = await apiClient.getTaskManagerTasks(sessionId, {
+        conversationTurnId,
+        includeDone: false,
+        limit: 100,
+      });
+      setWorkbarTasks(tasks.map(normalizeWorkbarTask));
+    } catch (error) {
+      setWorkbarError(error instanceof Error ? error.message : '任务加载失败');
+    } finally {
+      setWorkbarLoading(false);
+    }
+  }, [apiClient, normalizeWorkbarTask]);
 
   // 初始化加载会话、AI模型和智能体配置
   useEffect(() => {
@@ -102,6 +161,16 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     loadAiModelConfigs();
     loadAgents();
   }, [loadSessions, loadProjects, loadAiModelConfigs, loadAgents]);
+
+  useEffect(() => {
+    if (!currentSession || activePanel !== 'chat') {
+      setWorkbarTasks([]);
+      setWorkbarError(null);
+      return;
+    }
+
+    void loadWorkbarTasks(currentSession.id);
+  }, [activePanel, currentSession, loadWorkbarTasks]);
 
   // 处理消息发送
   const handleMessageSend = useCallback(async (content: string, attachments?: File[]) => {
@@ -118,6 +187,72 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       loadMoreMessages(currentSession.id);
     }
   }, [currentSession, loadMoreMessages]);
+
+  const handleTaskReviewConfirm = useCallback(async (drafts: TaskReviewDraft[]) => {
+    if (!taskReviewPanel) {
+      return;
+    }
+
+    const pendingPanel = {
+      ...taskReviewPanel,
+      drafts,
+      submitting: true,
+      error: null,
+    };
+    setTaskReviewPanel(pendingPanel);
+
+    try {
+      await apiClient.submitTaskReviewDecision(taskReviewPanel.reviewId, {
+        action: 'confirm',
+        tasks: drafts.map((draft) => ({
+          title: draft.title,
+          details: draft.details,
+          priority: draft.priority,
+          status: draft.status,
+          tags: draft.tags,
+          due_at: draft.dueAt || undefined,
+        })),
+      });
+      setTaskReviewPanel(null);
+      await loadWorkbarTasks(taskReviewPanel.sessionId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '任务确认提交失败';
+      setTaskReviewPanel({
+        ...pendingPanel,
+        submitting: false,
+        error: message,
+      });
+    }
+  }, [apiClient, loadWorkbarTasks, setTaskReviewPanel, taskReviewPanel]);
+
+  const handleTaskReviewCancel = useCallback(async () => {
+    if (!taskReviewPanel) {
+      return;
+    }
+
+    const pendingPanel = {
+      ...taskReviewPanel,
+      submitting: true,
+      error: null,
+    };
+    setTaskReviewPanel(pendingPanel);
+
+    try {
+      await apiClient.submitTaskReviewDecision(taskReviewPanel.reviewId, {
+        action: 'cancel',
+        reason: 'user_cancelled',
+      });
+      setTaskReviewPanel(null);
+      await loadWorkbarTasks(taskReviewPanel.sessionId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '任务取消提交失败';
+      setTaskReviewPanel({
+        ...pendingPanel,
+        submitting: false,
+        error: message,
+      });
+    }
+  }, [apiClient, loadWorkbarTasks, setTaskReviewPanel, taskReviewPanel]);
 
 
   return (
@@ -278,6 +413,21 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                   {/* 输入区域 */}
                   {currentSession && activePanel === 'chat' && (
                     <div className="border-t border-border">
+                      <TaskWorkbar
+                        tasks={workbarTasks}
+                        isLoading={workbarLoading}
+                        error={workbarError}
+                        onRefresh={() => {
+                          void loadWorkbarTasks(currentSession.id);
+                        }}
+                      />
+                      {taskReviewPanel && taskReviewPanel.sessionId === currentSession.id ? (
+                        <TaskDraftPanel
+                          panel={taskReviewPanel}
+                          onConfirm={handleTaskReviewConfirm}
+                          onCancel={handleTaskReviewCancel}
+                        />
+                      ) : null}
                       <InputArea
                         onSend={handleMessageSend}
                         onStop={abortCurrentConversation}

@@ -31,6 +31,7 @@ pub mod fs;
 pub mod messages;
 pub mod projects;
 pub mod sessions;
+pub mod task_manager;
 pub mod terminals;
 pub mod user_settings;
 
@@ -108,6 +109,7 @@ pub fn router() -> Router {
         .nest("/api/agents", agents::router())
         .nest("/api/applications", applications::router())
         .merge(projects::router())
+        .merge(task_manager::router())
         .merge(terminals::router())
         .merge(configs::router())
         .merge(fs::router())

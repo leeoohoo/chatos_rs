@@ -64,6 +64,7 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                     streamingMessageId: null,
                     hasMoreMessages: true,
                     sessionChatState: {},
+                    taskReviewPanel: null,
                     sidebarOpen: true,
                     theme: 'light',
                     chatConfig: {
@@ -91,6 +92,11 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                     ...createMessageActions({ set, get, client }),
                     sendMessage: createSendMessageHandler({ set, get, client, getUserIdParam }),
                     ...createStreamingActions({ set, get, client }),
+                    setTaskReviewPanel: (panel: ChatState['taskReviewPanel']) => {
+                        set((state: any) => {
+                            state.taskReviewPanel = panel;
+                        });
+                    },
                     ...createUiActions({ set }),
 
                     // 配置操作（拆分到独立模块）

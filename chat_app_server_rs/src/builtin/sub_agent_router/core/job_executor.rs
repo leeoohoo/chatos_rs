@@ -548,6 +548,7 @@ pub(crate) fn execute_job(
                         system_prompt: Some(prompt.clone()),
                         history_limit: None,
                         purpose: Some("sub_agent_router".to_string()),
+                        conversation_turn_id: None,
                         callbacks: Some(AiClientCallbacks {
                             on_chunk: Some(on_chunk.clone()),
                             on_thinking: Some(on_thinking.clone()),
@@ -655,6 +656,7 @@ pub(crate) fn execute_job(
                 let req = ai_client.process_request(
                     messages,
                     Some(session_id.clone()),
+                    Some(run_id.clone()),
                     model.model.clone(),
                     0.7,
                     max_tokens,

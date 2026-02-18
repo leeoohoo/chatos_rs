@@ -71,6 +71,7 @@ pub async fn run_chat(
     user_id: Option<String>,
     attachments: Vec<Attachment>,
     reasoning_enabled: Option<bool>,
+    turn_id: Option<String>,
     callbacks: AiClientCallbacks,
 ) -> Result<Value, String> {
     let cfg = Config::get();
@@ -157,6 +158,7 @@ pub async fn run_chat(
         supports_images: Some(model_config.supports_images),
         reasoning_enabled: Some(effective_reasoning),
         callbacks: Some(callbacks),
+        turn_id,
     };
 
     ai_server.chat(session_id, content, options).await

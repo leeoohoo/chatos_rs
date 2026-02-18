@@ -91,7 +91,8 @@ export function streamChatIPC(
   modelConfig: any,
   userId?: string,
   attachments?: any[],
-  reasoningEnabled?: boolean
+  reasoningEnabled?: boolean,
+  turnId?: string
 ): ReadableStream<Uint8Array> {
   const arg = {
     session_id: sessionId,
@@ -99,6 +100,7 @@ export function streamChatIPC(
     user_id: userId,
     attachments: attachments || [],
     reasoning_enabled: reasoningEnabled,
+    turn_id: turnId,
     ai_model_config: {
       provider: modelConfig?.provider,
       model_name: modelConfig?.model_name,
@@ -122,7 +124,7 @@ export function streamAgentChatIPC(
   userId?: string,
   attachments?: any[],
   reasoningEnabled?: boolean,
-  options?: { useResponses?: boolean }
+  options?: { useResponses?: boolean; turnId?: string }
 ): ReadableStream<Uint8Array> {
   const arg = {
     session_id: sessionId,
@@ -131,6 +133,7 @@ export function streamAgentChatIPC(
     user_id: userId,
     attachments: attachments || [],
     reasoning_enabled: reasoningEnabled,
+    turn_id: options?.turnId,
     use_responses: options?.useResponses === true
   };
   return toReadableStreamFromIPC(sessionId, arg);
@@ -277,4 +280,12 @@ export async function updateApplicationIPC(id: string, data: any) {
 }
 export async function deleteApplicationIPC(id: string) {
   const api = (window as any).chatAPI; if (api?.deleteApplication) return api.deleteApplication(id); throw new Error('IPC deleteApplication not available');
+}
+
+export async function submitTaskReviewDecisionIPC(reviewId: string, payload: any) {
+  const api = (window as any).chatAPI;
+  if (api?.submitTaskReviewDecision) {
+    return api.submitTaskReviewDecision(reviewId, payload);
+  }
+  throw new Error('IPC submitTaskReviewDecision not available');
 }

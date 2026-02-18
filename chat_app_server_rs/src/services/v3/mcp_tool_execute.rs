@@ -232,6 +232,7 @@ impl McpToolExecute {
         &self,
         tool_calls: &[Value],
         session_id: Option<&str>,
+        conversation_turn_id: Option<&str>,
         caller_model: Option<&str>,
         on_tool_result: Option<ToolResultCallback>,
     ) -> Vec<ToolResult> {
@@ -244,6 +245,7 @@ impl McpToolExecute {
                     tool_name.as_str(),
                     args,
                     session_id,
+                    conversation_turn_id,
                     caller_model,
                     on_stream_chunk,
                 )
@@ -258,6 +260,7 @@ impl McpToolExecute {
         tool_name: &str,
         args: Value,
         session_id: Option<&str>,
+        conversation_turn_id: Option<&str>,
         caller_model: Option<&str>,
         on_stream_chunk: Option<ToolStreamChunkCallback>,
     ) -> Result<String, String> {
@@ -287,8 +290,13 @@ impl McpToolExecute {
                 args
             };
 
-            let result =
-                service.call_tool(&info.original_name, args, session_id, on_stream_chunk)?;
+            let result = service.call_tool(
+                &info.original_name,
+                args,
+                session_id,
+                conversation_turn_id,
+                on_stream_chunk,
+            )?;
             Ok(to_text(&result))
         } else {
             let config = info.server_config.clone().ok_or("missing server config")?;
@@ -359,6 +367,16 @@ fn normalize_json_schema(schema: &Value) -> Value {
                 "required".to_string(),
                 Value::Array(required.into_iter().map(Value::String).collect()),
             );
+        }
+
+        let is_object_schema = obj
+            .get("type")
+            .and_then(|value| value.as_str())
+            .map(|value| value == "object")
+            .unwrap_or(false)
+            || obj.contains_key("properties");
+        if is_object_schema {
+            obj.insert("additionalProperties".to_string(), Value::Bool(false));
         }
 
         if let Some(items) = obj.get_mut("items") {
