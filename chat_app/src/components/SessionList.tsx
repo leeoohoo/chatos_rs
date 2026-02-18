@@ -84,6 +84,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     updateSession,
     loadSessions,
     sessionChatState,
+    taskReviewPanelsBySession = {},
     projects,
     currentProject,
     loadProjects,
@@ -498,6 +499,20 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
                                     <span className={cn('inline-flex items-center gap-1', isBusy ? 'text-amber-600' : 'text-muted-foreground')}>
                                       <span className={cn('inline-block w-2 h-2 rounded-full', isBusy ? 'bg-amber-500' : 'bg-muted-foreground/40')} />
                                       {isBusy ? '执行中' : '空闲'}
+                                    </span>
+                                  );
+                                })()}
+                                {(() => {
+                                  const pendingCount = Array.isArray(taskReviewPanelsBySession?.[session.id])
+                                    ? taskReviewPanelsBySession[session.id].length
+                                    : 0;
+                                  if (pendingCount <= 0) {
+                                    return null;
+                                  }
+                                  return (
+                                    <span className="inline-flex items-center gap-1 text-blue-600">
+                                      <span className="inline-block w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+                                      {`\u5f85\u5904\u7406 ${pendingCount}`}
                                     </span>
                                   );
                                 })()}

@@ -45,6 +45,7 @@ export interface ChatState {
   hasMoreMessages: boolean;
   sessionChatState: Record<string, { isLoading: boolean; isStreaming: boolean; streamingMessageId: string | null }>;
   taskReviewPanel: TaskReviewPanelState | null;
+  taskReviewPanelsBySession: Record<string, TaskReviewPanelState[]>;
 
   // UI状态
   sidebarOpen: boolean;
@@ -102,6 +103,8 @@ export interface ChatActions {
   stopStreaming: () => void;
   abortCurrentConversation: () => void;
   setTaskReviewPanel: (panel: TaskReviewPanelState | null) => void;
+  upsertTaskReviewPanel: (panel: TaskReviewPanelState) => void;
+  removeTaskReviewPanel: (reviewId: string, sessionId?: string) => void;
 
   // UI操作
   toggleSidebar: () => void;

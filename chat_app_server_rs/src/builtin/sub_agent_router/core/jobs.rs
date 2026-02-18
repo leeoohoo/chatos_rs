@@ -110,6 +110,24 @@ pub(crate) fn remove_job_stream_sink(job_id: &str) {
     }
 }
 
+pub(crate) fn emit_job_raw_stream_chunk(job_id: &str, raw_chunk: &str) {
+    let sink = JOB_STREAM_CHUNK_SINKS
+        .lock()
+        .ok()
+        .and_then(|sinks| sinks.get(job_id).cloned());
+
+    let Some(callback) = sink else {
+        return;
+    };
+
+    let payload = raw_chunk.trim();
+    if payload.is_empty() {
+        return;
+    }
+
+    callback(payload.to_string());
+}
+
 pub(crate) fn emit_job_progress_update(
     job_id: &str,
     event_type: &str,

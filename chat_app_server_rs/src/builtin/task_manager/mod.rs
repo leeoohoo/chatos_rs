@@ -81,8 +81,7 @@ impl TaskManagerService {
                     "priority": { "type": "string", "enum": ["high", "medium", "low"] },
                     "status": { "type": "string", "enum": ["todo", "doing", "blocked", "done"] },
                     "tags": { "type": "array", "items": { "type": "string" } },
-                    "due_at": { "type": "string" },
-                    "timeout_ms": { "type": "integer", "minimum": 10000, "maximum": 600000 }
+                    "due_at": { "type": "string" }
                 },
                 "additionalProperties": false
             }),
@@ -211,11 +210,8 @@ fn handle_add_task(args: Value, ctx: &ToolContext, default_timeout_ms: u64) -> R
         return Err("tasks is required".to_string());
     }
 
-    let timeout_ms = args
-        .get("timeout_ms")
-        .and_then(|value| value.as_u64())
-        .unwrap_or(default_timeout_ms)
-        .clamp(10_000, 600_000);
+    // Keep review timeout fixed by server policy to avoid per-call drift.
+    let timeout_ms = default_timeout_ms;
 
     let (review_payload, receiver) = block_on_result(create_task_review(
         ctx.session_id,
@@ -438,6 +434,15 @@ mod tests {
             .expect("add_task should expose inputSchema");
 
         assert_eq!(schema.get("additionalProperties"), Some(&Value::Bool(false)));
+
+        let root_properties = schema
+            .get("properties")
+            .and_then(Value::as_object)
+            .expect("add_task schema should expose root properties");
+        assert!(
+            !root_properties.contains_key("timeout_ms"),
+            "add_task schema should not allow timeout override"
+        );
 
         let task_item_schema = schema
             .get("properties")

@@ -50,10 +50,10 @@ use self::ai_runtime::{
 use self::catalog::SubAgentCatalog;
 use self::core::{
     append_job_event, block_on_result, canonical_or_original, create_job,
-    emit_job_progress_update, get_cancel_flag, list_job_events, map_status_to_job_state,
-    optional_trimmed_string, parse_string_array, remove_cancel_flag, remove_job_stream_sink,
-    required_trimmed_string, run_sub_agent_schema, run_sub_agent_sync, serialize_agent,
-    serialize_commands, set_cancel_flag, set_job_stream_sink, text_result,
+    emit_job_progress_update, emit_job_raw_stream_chunk, get_cancel_flag, list_job_events,
+    map_status_to_job_state, optional_trimmed_string, parse_string_array, remove_cancel_flag,
+    remove_job_stream_sink, required_trimmed_string, run_sub_agent_schema, run_sub_agent_sync,
+    serialize_agent, serialize_commands, set_cancel_flag, set_job_stream_sink, text_result,
     trace_log_path_string, trace_router_node, truncate_for_event, update_job_status,
     with_chatos,
 };
@@ -76,6 +76,7 @@ struct JobExecutionContext {
     resolved: ResolvedAgent,
     session_id: String,
     run_id: String,
+    conversation_turn_id: String,
     job_id: String,
 }
 
@@ -112,6 +113,7 @@ type ToolHandler = Arc<dyn Fn(Value, &ToolContext) -> Result<Value, String> + Se
 struct ToolContext<'a> {
     session_id: &'a str,
     run_id: &'a str,
+    conversation_turn_id: &'a str,
     on_stream_chunk: Option<ToolStreamChunkCallback>,
 }
 
@@ -374,6 +376,7 @@ impl SubAgentRouterService {
         name: &str,
         args: Value,
         session_id: Option<&str>,
+        conversation_turn_id: Option<&str>,
         on_stream_chunk: Option<ToolStreamChunkCallback>,
     ) -> Result<Value, String> {
         let tool = self
@@ -389,10 +392,14 @@ impl SubAgentRouterService {
         } else {
             self.default_run_id.as_str()
         };
+        let conversation_turn = conversation_turn_id
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or(run);
 
         let ctx = ToolContext {
             session_id: session,
             run_id: run,
+            conversation_turn_id: conversation_turn,
             on_stream_chunk,
         };
 
@@ -404,6 +411,7 @@ impl SubAgentRouterService {
             Some(run),
             Some(json!({
                 "tool": name,
+                "conversation_turn_id": conversation_turn,
                 "args": args.clone(),
             })),
         );

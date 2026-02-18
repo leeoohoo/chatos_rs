@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use crate::repositories::db::with_db;
 
-pub const REVIEW_TIMEOUT_MS_DEFAULT: u64 = 120_000;
+pub const REVIEW_TIMEOUT_MS_DEFAULT: u64 = 86_400_000;
 pub const REVIEW_TIMEOUT_ERR: &str = "review_timeout";
 pub const REVIEW_NOT_FOUND_ERR: &str = "review_not_found";
 
@@ -193,7 +193,7 @@ pub async fn create_task_review(
         return Err("at least one draft task is required".to_string());
     }
 
-    let timeout_ms = timeout_ms.clamp(10_000, 600_000);
+    let timeout_ms = timeout_ms.clamp(10_000, REVIEW_TIMEOUT_MS_DEFAULT);
     let payload = TaskCreateReviewPayload {
         review_id: format!("rev_{}", Uuid::new_v4().simple()),
         session_id,
@@ -210,7 +210,7 @@ pub async fn wait_for_task_review_decision(
     receiver: oneshot::Receiver<TaskReviewDecision>,
     timeout_ms: u64,
 ) -> Result<TaskReviewDecision, String> {
-    let bounded_timeout = timeout_ms.clamp(1_000, 600_000);
+    let bounded_timeout = timeout_ms.clamp(1_000, REVIEW_TIMEOUT_MS_DEFAULT);
     match tokio::time::timeout(Duration::from_millis(bounded_timeout), receiver).await {
         Ok(Ok(decision)) => Ok(decision),
         Ok(Err(_)) => Err("review_listener_closed".to_string()),

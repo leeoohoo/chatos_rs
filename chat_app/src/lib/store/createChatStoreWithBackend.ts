@@ -16,7 +16,7 @@ import { createStreamingActions } from './actions/streaming';
 import { createAgentActions } from './actions/agents';
 import { createSystemContextActions } from './actions/systemContexts';
 import { createUiActions } from './actions/ui';
-import type { ChatActions, ChatState, ChatStoreConfig } from './types';
+import type { ChatActions, ChatState, ChatStoreConfig, TaskReviewPanelState } from './types';
 
 export type { ChatActions, ChatState, ChatStoreConfig } from './types';
 
@@ -65,6 +65,7 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                     hasMoreMessages: true,
                     sessionChatState: {},
                     taskReviewPanel: null,
+                    taskReviewPanelsBySession: {},
                     sidebarOpen: true,
                     theme: 'light',
                     chatConfig: {
@@ -95,6 +96,53 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                     setTaskReviewPanel: (panel: ChatState['taskReviewPanel']) => {
                         set((state: any) => {
                             state.taskReviewPanel = panel;
+                        });
+                    },
+                    upsertTaskReviewPanel: (panel: TaskReviewPanelState) => {
+                        if (!panel || !panel.reviewId || !panel.sessionId) {
+                            return;
+                        }
+                        set((state: any) => {
+                            const sessionId = panel.sessionId;
+                            const panels = Array.isArray(state.taskReviewPanelsBySession?.[sessionId])
+                                ? state.taskReviewPanelsBySession[sessionId]
+                                : [];
+                            const index = panels.findIndex((item: any) => item.reviewId === panel.reviewId);
+                            if (index >= 0) {
+                                panels[index] = panel;
+                            } else {
+                                panels.push(panel);
+                            }
+                            state.taskReviewPanelsBySession[sessionId] = panels;
+                            if (state.currentSessionId === sessionId) {
+                                state.taskReviewPanel = panels[0] || panel;
+                            }
+                        });
+                    },
+                    removeTaskReviewPanel: (reviewId: string, sessionId?: string) => {
+                        if (!reviewId) {
+                            return;
+                        }
+                        set((state: any) => {
+                            const candidates = sessionId
+                                ? [sessionId]
+                                : Object.keys(state.taskReviewPanelsBySession || {});
+                            for (const sid of candidates) {
+                                const panels = state.taskReviewPanelsBySession?.[sid];
+                                if (!Array.isArray(panels) || panels.length === 0) {
+                                    continue;
+                                }
+                                const nextPanels = panels.filter((item: any) => item.reviewId !== reviewId);
+                                if (nextPanels.length > 0) {
+                                    state.taskReviewPanelsBySession[sid] = nextPanels;
+                                } else {
+                                    delete state.taskReviewPanelsBySession[sid];
+                                }
+                                if (state.currentSessionId === sid) {
+                                    state.taskReviewPanel = nextPanels[0] || null;
+                                }
+                                break;
+                            }
                         });
                     },
                     ...createUiActions({ set }),

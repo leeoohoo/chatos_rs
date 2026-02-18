@@ -1,6 +1,26 @@
 use super::super::*;
 use super::agent_resolver::resolve_command_cwd;
 
+fn extract_task_review_event_stream_chunk(result: &Value) -> Option<String> {
+    let raw_content = result.get("content").and_then(|value| value.as_str())?.trim();
+    if raw_content.is_empty() {
+        return None;
+    }
+
+    let parsed: Value = serde_json::from_str(raw_content).ok()?;
+    let event_name = parsed.get("event").and_then(|value| value.as_str())?;
+
+    if matches!(
+        event_name,
+        crate::utils::events::Events::TASK_CREATE_REVIEW_REQUIRED
+            | crate::utils::events::Events::TASK_CREATE_REVIEW_RESOLVED
+    ) {
+        Some(raw_content.to_string())
+    } else {
+        None
+    }
+}
+
 pub(crate) fn execute_job(
     execution: JobExecutionContext,
     cancel_flag: Option<&AtomicBool>,
@@ -241,6 +261,7 @@ pub(crate) fn execute_job(
         let job_id = execution.job_id.clone();
         let session_id = execution.session_id.clone();
         let run_id = execution.run_id.clone();
+        let conversation_turn_id = execution.conversation_turn_id.clone();
 
         block_on_result(async move {
             let model = resolve_model_config(ctx.user_id.clone(), requested).await?;
@@ -434,6 +455,11 @@ pub(crate) fn execute_job(
                         session_id.as_str(),
                         run_id.as_str(),
                     );
+
+                    if let Some(raw_chunk) = extract_task_review_event_stream_chunk(&result) {
+                        // Re-emit task review events as raw tool chunks so the top-level chat UI can open the review panel.
+                        emit_job_raw_stream_chunk(job_id.as_str(), raw_chunk.as_str());
+                    }
                 })
             };
 
@@ -548,7 +574,7 @@ pub(crate) fn execute_job(
                         system_prompt: Some(prompt.clone()),
                         history_limit: None,
                         purpose: Some("sub_agent_router".to_string()),
-                        conversation_turn_id: None,
+                        conversation_turn_id: Some(conversation_turn_id.clone()),
                         callbacks: Some(AiClientCallbacks {
                             on_chunk: Some(on_chunk.clone()),
                             on_thinking: Some(on_thinking.clone()),
@@ -656,7 +682,7 @@ pub(crate) fn execute_job(
                 let req = ai_client.process_request(
                     messages,
                     Some(session_id.clone()),
-                    Some(run_id.clone()),
+                    Some(conversation_turn_id.clone()),
                     model.model.clone(),
                     0.7,
                     max_tokens,

@@ -119,6 +119,7 @@ pub(crate) fn run_sub_agent_sync(
         resolved: resolved.clone(),
         session_id: tool_ctx.session_id.to_string(),
         run_id: tool_ctx.run_id.to_string(),
+        conversation_turn_id: tool_ctx.conversation_turn_id.to_string(),
         job_id: job.id.clone(),
     };
 

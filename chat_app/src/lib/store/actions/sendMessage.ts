@@ -92,12 +92,13 @@ const extractTaskReviewPanelFromToolStream = (
     return null;
   }
 
-  const sessionId = typeof payload?.session_id === 'string' && payload.session_id.trim()
-    ? payload.session_id.trim()
-    : fallbackSessionId;
-  const conversationTurnId = typeof payload?.conversation_turn_id === 'string' && payload.conversation_turn_id.trim()
+  const payloadSessionId = typeof payload?.session_id === 'string' ? payload.session_id.trim() : '';
+  const sessionId = payloadSessionId || fallbackSessionId;
+
+  const payloadTurnId = typeof payload?.conversation_turn_id === 'string'
     ? payload.conversation_turn_id.trim()
-    : fallbackTurnId;
+    : '';
+  const conversationTurnId = payloadTurnId || fallbackTurnId;
 
   const rawDraftTasks = Array.isArray(payload?.draft_tasks) ? payload.draft_tasks : [];
   const drafts = rawDraftTasks.map((task: any, index: number) => toTaskReviewDraft(task, index));
@@ -806,7 +807,21 @@ export function createSendMessageHandler({
                   if (reviewPanel) {
                     debugLog('📝 收到任务确认事件，打开任务编辑面板:', reviewPanel);
                     set((state: any) => {
-                      state.taskReviewPanel = reviewPanel;
+                      const sessionId = reviewPanel.sessionId;
+                      const panels = Array.isArray(state.taskReviewPanelsBySession?.[sessionId])
+                        ? state.taskReviewPanelsBySession[sessionId]
+                        : [];
+                      const index = panels.findIndex((item: any) => item.reviewId === reviewPanel.reviewId);
+                      if (index >= 0) {
+                        panels[index] = reviewPanel;
+                      } else {
+                        panels.push(reviewPanel);
+                      }
+                      state.taskReviewPanelsBySession[sessionId] = panels;
+                      if (state.currentSessionId === sessionId) {
+                        state.taskReviewPanel = panels[0] || reviewPanel;
+                      }
+
                       const messageIndex = state.messages.findIndex((m: any) => m.id === tempAssistantMessage.id);
                       if (messageIndex === -1) {
                         return;
@@ -817,7 +832,7 @@ export function createSendMessageHandler({
                         if (toolCallId) {
                           const toolCall = message.metadata.toolCalls.find((tc: any) => tc.id === toolCallId);
                           if (toolCall) {
-                            toolCall.result = '等待你确认任务列表...';
+                            toolCall.result = 'Waiting for task confirmation...';
                             toolCall.completed = false;
                           }
                         }
@@ -959,13 +974,6 @@ export function createSendMessageHandler({
             state.isStreaming = false;
             state.streamingMessageId = null;
           }
-          if (
-            state.taskReviewPanel
-            && state.taskReviewPanel.sessionId === currentSessionId
-            && state.taskReviewPanel.conversationTurnId === conversationTurnId
-          ) {
-            state.taskReviewPanel = null;
-          }
         });
       }
 
@@ -996,13 +1004,6 @@ export function createSendMessageHandler({
           state.isStreaming = false;
           state.streamingMessageId = null;
           state.error = error instanceof Error ? error.message : 'Failed to send message';
-        }
-        if (
-          state.taskReviewPanel
-          && state.taskReviewPanel.sessionId === currentSessionId
-          && state.taskReviewPanel.conversationTurnId === conversationTurnId
-        ) {
-          state.taskReviewPanel = null;
         }
       });
 

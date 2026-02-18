@@ -56,8 +56,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     updateChatConfig,
     abortCurrentConversation,
     sessionChatState = {},
-    taskReviewPanel,
-    setTaskReviewPanel,
+    taskReviewPanelsBySession = {},
+    upsertTaskReviewPanel,
+    removeTaskReviewPanel,
     // applications,  // 不再在此组件中使用
     // selectedApplicationId,  // 不再用于自动显示
   } = useChatStoreFromContext();
@@ -102,6 +103,17 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [workbarTasks, setWorkbarTasks] = useState<TaskWorkbarItem[]>([]);
   const [workbarLoading, setWorkbarLoading] = useState(false);
   const [workbarError, setWorkbarError] = useState<string | null>(null);
+
+  const activeTaskReviewPanel = useMemo(() => {
+    if (!currentSession) {
+      return null;
+    }
+    const panels = taskReviewPanelsBySession[currentSession.id];
+    if (!Array.isArray(panels) || panels.length === 0) {
+      return null;
+    }
+    return panels[0];
+  }, [currentSession, taskReviewPanelsBySession]);
 
   const normalizeWorkbarTask = useCallback((raw: any): TaskWorkbarItem => {
     const statusRaw = String(raw?.status || 'todo').toLowerCase();
@@ -189,20 +201,20 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   }, [currentSession, loadMoreMessages]);
 
   const handleTaskReviewConfirm = useCallback(async (drafts: TaskReviewDraft[]) => {
-    if (!taskReviewPanel) {
+    if (!activeTaskReviewPanel) {
       return;
     }
 
     const pendingPanel = {
-      ...taskReviewPanel,
+      ...activeTaskReviewPanel,
       drafts,
       submitting: true,
       error: null,
     };
-    setTaskReviewPanel(pendingPanel);
+    upsertTaskReviewPanel(pendingPanel);
 
     try {
-      await apiClient.submitTaskReviewDecision(taskReviewPanel.reviewId, {
+      await apiClient.submitTaskReviewDecision(activeTaskReviewPanel.reviewId, {
         action: 'confirm',
         tasks: drafts.map((draft) => ({
           title: draft.title,
@@ -213,46 +225,46 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
           due_at: draft.dueAt || undefined,
         })),
       });
-      setTaskReviewPanel(null);
-      await loadWorkbarTasks(taskReviewPanel.sessionId);
+      removeTaskReviewPanel(activeTaskReviewPanel.reviewId, activeTaskReviewPanel.sessionId);
+      await loadWorkbarTasks(activeTaskReviewPanel.sessionId);
     } catch (error) {
       const message = error instanceof Error ? error.message : '任务确认提交失败';
-      setTaskReviewPanel({
+      upsertTaskReviewPanel({
         ...pendingPanel,
         submitting: false,
         error: message,
       });
     }
-  }, [apiClient, loadWorkbarTasks, setTaskReviewPanel, taskReviewPanel]);
+  }, [activeTaskReviewPanel, apiClient, loadWorkbarTasks, removeTaskReviewPanel, upsertTaskReviewPanel]);
 
   const handleTaskReviewCancel = useCallback(async () => {
-    if (!taskReviewPanel) {
+    if (!activeTaskReviewPanel) {
       return;
     }
 
     const pendingPanel = {
-      ...taskReviewPanel,
+      ...activeTaskReviewPanel,
       submitting: true,
       error: null,
     };
-    setTaskReviewPanel(pendingPanel);
+    upsertTaskReviewPanel(pendingPanel);
 
     try {
-      await apiClient.submitTaskReviewDecision(taskReviewPanel.reviewId, {
+      await apiClient.submitTaskReviewDecision(activeTaskReviewPanel.reviewId, {
         action: 'cancel',
         reason: 'user_cancelled',
       });
-      setTaskReviewPanel(null);
-      await loadWorkbarTasks(taskReviewPanel.sessionId);
+      removeTaskReviewPanel(activeTaskReviewPanel.reviewId, activeTaskReviewPanel.sessionId);
+      await loadWorkbarTasks(activeTaskReviewPanel.sessionId);
     } catch (error) {
       const message = error instanceof Error ? error.message : '任务取消提交失败';
-      setTaskReviewPanel({
+      upsertTaskReviewPanel({
         ...pendingPanel,
         submitting: false,
         error: message,
       });
     }
-  }, [apiClient, loadWorkbarTasks, setTaskReviewPanel, taskReviewPanel]);
+  }, [activeTaskReviewPanel, apiClient, loadWorkbarTasks, removeTaskReviewPanel, upsertTaskReviewPanel]);
 
 
   return (
@@ -421,9 +433,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                           void loadWorkbarTasks(currentSession.id);
                         }}
                       />
-                      {taskReviewPanel && taskReviewPanel.sessionId === currentSession.id ? (
+                      {activeTaskReviewPanel ? (
                         <TaskDraftPanel
-                          panel={taskReviewPanel}
+                          panel={activeTaskReviewPanel}
                           onConfirm={handleTaskReviewConfirm}
                           onCancel={handleTaskReviewCancel}
                         />

@@ -73,7 +73,7 @@ impl BuiltinToolService {
                 service.call_tool(name, args, session_id, conversation_turn_id, on_stream_chunk)
             }
             Self::SubAgentRouter(service) => {
-                service.call_tool(name, args, session_id, on_stream_chunk)
+                service.call_tool(name, args, session_id, conversation_turn_id, on_stream_chunk)
             }
         }
     }
