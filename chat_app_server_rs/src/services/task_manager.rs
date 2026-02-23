@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use mongodb::bson::{doc, Bson, Document};
-use mongodb::options::FindOptions;
+use mongodb::options::{FindOneAndUpdateOptions, FindOptions, ReturnDocument};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, QueryBuilder, Sqlite};
@@ -14,6 +14,7 @@ use crate::repositories::db::with_db;
 pub const REVIEW_TIMEOUT_MS_DEFAULT: u64 = 86_400_000;
 pub const REVIEW_TIMEOUT_ERR: &str = "review_timeout";
 pub const REVIEW_NOT_FOUND_ERR: &str = "review_not_found";
+pub const TASK_NOT_FOUND_ERR: &str = "task_not_found";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskDraft {
@@ -28,6 +29,22 @@ pub struct TaskDraft {
     pub tags: Vec<String>,
     #[serde(default)]
     pub due_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TaskUpdatePatch {
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub details: Option<String>,
+    #[serde(default)]
+    pub priority: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub tags: Option<Vec<String>>,
+    #[serde(default)]
+    pub due_at: Option<Option<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -172,6 +189,53 @@ impl TaskRow {
             created_at: self.created_at,
             updated_at: self.updated_at,
         }
+    }
+}
+
+impl TaskUpdatePatch {
+    fn is_empty(&self) -> bool {
+        self.title.is_none()
+            && self.details.is_none()
+            && self.priority.is_none()
+            && self.status.is_none()
+            && self.tags.is_none()
+            && self.due_at.is_none()
+    }
+
+    fn normalized(mut self) -> Result<Self, String> {
+        if let Some(title) = self.title.take() {
+            let title = title.trim().to_string();
+            if title.is_empty() {
+                return Err("task title is required".to_string());
+            }
+            self.title = Some(title);
+        }
+
+        if let Some(details) = self.details.take() {
+            self.details = Some(details.trim().to_string());
+        }
+
+        if let Some(priority) = self.priority.take() {
+            self.priority = Some(normalize_priority(priority.as_str()));
+        }
+
+        if let Some(status) = self.status.take() {
+            self.status = Some(normalize_status(status.as_str()));
+        }
+
+        if let Some(tags) = self.tags.take() {
+            self.tags = Some(normalize_tags(tags));
+        }
+
+        if let Some(due_at) = self.due_at.take() {
+            let normalized = due_at
+                .as_deref()
+                .and_then(trimmed_non_empty)
+                .map(|value| value.to_string());
+            self.due_at = Some(normalized);
+        }
+
+        Ok(self)
     }
 }
 
@@ -397,6 +461,276 @@ pub async fn list_tasks_for_context(
     .await
 }
 
+pub async fn update_task_by_id(
+    session_id: &str,
+    task_id: &str,
+    patch: TaskUpdatePatch,
+) -> Result<TaskRecord, String> {
+    let session_id = trimmed_non_empty(session_id)
+        .ok_or_else(|| "session_id is required".to_string())?
+        .to_string();
+    let task_id = trimmed_non_empty(task_id)
+        .ok_or_else(|| "task_id is required".to_string())?
+        .to_string();
+
+    let patch = patch.normalized()?;
+    if patch.is_empty() {
+        return Err("at least one task field is required".to_string());
+    }
+
+    let updated_at = crate::core::time::now_rfc3339();
+
+    let session_id_for_mongo = session_id.clone();
+    let task_id_for_mongo = task_id.clone();
+    let title_for_mongo = patch.title.clone();
+    let details_for_mongo = patch.details.clone();
+    let priority_for_mongo = patch.priority.clone();
+    let status_for_mongo = patch.status.clone();
+    let tags_for_mongo = patch.tags.clone();
+    let due_at_for_mongo = patch.due_at.clone();
+    let updated_at_for_mongo = updated_at.clone();
+
+    let session_id_for_sqlite = session_id.clone();
+    let task_id_for_sqlite = task_id.clone();
+    let title_for_sqlite = patch.title.clone();
+    let details_for_sqlite = patch.details.clone();
+    let priority_for_sqlite = patch.priority.clone();
+    let status_for_sqlite = patch.status.clone();
+    let tags_for_sqlite = patch.tags.clone();
+    let due_at_for_sqlite = patch.due_at.clone();
+    let updated_at_for_sqlite = updated_at.clone();
+
+    with_db(
+        move |db| {
+            let session_id = session_id_for_mongo.clone();
+            let task_id = task_id_for_mongo.clone();
+            let title = title_for_mongo.clone();
+            let details = details_for_mongo.clone();
+            let priority = priority_for_mongo.clone();
+            let status = status_for_mongo.clone();
+            let tags = tags_for_mongo.clone();
+            let due_at = due_at_for_mongo.clone();
+            let updated_at = updated_at_for_mongo.clone();
+
+            Box::pin(async move {
+                let mut set_doc = doc! { "updated_at": updated_at };
+
+                if let Some(value) = title {
+                    set_doc.insert("title", Bson::String(value));
+                }
+                if let Some(value) = details {
+                    set_doc.insert("details", Bson::String(value));
+                }
+                if let Some(value) = priority {
+                    set_doc.insert("priority", Bson::String(value));
+                }
+                if let Some(value) = status {
+                    set_doc.insert("status", Bson::String(value));
+                }
+                if let Some(values) = tags {
+                    set_doc.insert(
+                        "tags",
+                        Bson::Array(values.into_iter().map(Bson::String).collect()),
+                    );
+                }
+                if let Some(value) = due_at {
+                    match value {
+                        Some(due_at) => {
+                            set_doc.insert("due_at", Bson::String(due_at));
+                        }
+                        None => {
+                            set_doc.insert("due_at", Bson::Null);
+                        }
+                    }
+                }
+
+                let options = FindOneAndUpdateOptions::builder()
+                    .return_document(ReturnDocument::After)
+                    .build();
+
+                let updated = db
+                    .collection::<Document>("task_manager_tasks")
+                    .find_one_and_update(
+                        doc! { "session_id": session_id, "id": task_id },
+                        doc! { "$set": set_doc },
+                        options,
+                    )
+                    .await
+                    .map_err(|err| err.to_string())?
+                    .and_then(|document| task_record_from_doc(&document))
+                    .ok_or_else(|| TASK_NOT_FOUND_ERR.to_string())?;
+
+                Ok(updated)
+            })
+        },
+        move |pool| {
+            let session_id = session_id_for_sqlite.clone();
+            let task_id = task_id_for_sqlite.clone();
+            let title = title_for_sqlite.clone();
+            let details = details_for_sqlite.clone();
+            let priority = priority_for_sqlite.clone();
+            let status = status_for_sqlite.clone();
+            let tags = tags_for_sqlite.clone();
+            let due_at = due_at_for_sqlite.clone();
+            let updated_at = updated_at_for_sqlite.clone();
+
+            Box::pin(async move {
+                let mut qb = QueryBuilder::<Sqlite>::new("UPDATE task_manager_tasks SET ");
+                let mut has_assignment = false;
+
+                if let Some(value) = title {
+                    if has_assignment {
+                        qb.push(", ");
+                    }
+                    has_assignment = true;
+                    qb.push("title = ");
+                    qb.push_bind(value);
+                }
+                if let Some(value) = details {
+                    if has_assignment {
+                        qb.push(", ");
+                    }
+                    has_assignment = true;
+                    qb.push("details = ");
+                    qb.push_bind(value);
+                }
+                if let Some(value) = priority {
+                    if has_assignment {
+                        qb.push(", ");
+                    }
+                    has_assignment = true;
+                    qb.push("priority = ");
+                    qb.push_bind(value);
+                }
+                if let Some(value) = status {
+                    if has_assignment {
+                        qb.push(", ");
+                    }
+                    has_assignment = true;
+                    qb.push("status = ");
+                    qb.push_bind(value);
+                }
+                if let Some(values) = tags {
+                    if has_assignment {
+                        qb.push(", ");
+                    }
+                    has_assignment = true;
+                    qb.push("tags_json = ");
+                    qb.push_bind(
+                        serde_json::to_string(&values).unwrap_or_else(|_| "[]".to_string()),
+                    );
+                }
+                if let Some(value) = due_at {
+                    if has_assignment {
+                        qb.push(", ");
+                    }
+                    has_assignment = true;
+                    match value {
+                        Some(due_at) => {
+                            qb.push("due_at = ");
+                            qb.push_bind(due_at);
+                        }
+                        None => {
+                            qb.push("due_at = NULL");
+                        }
+                    }
+                }
+
+                if has_assignment {
+                    qb.push(", ");
+                }
+                qb.push("updated_at = ");
+                qb.push_bind(updated_at);
+
+                qb.push(" WHERE session_id = ");
+                qb.push_bind(&session_id);
+                qb.push(" AND id = ");
+                qb.push_bind(&task_id);
+
+                let result = qb
+                    .build()
+                    .execute(pool)
+                    .await
+                    .map_err(|err| err.to_string())?;
+
+                if result.rows_affected() == 0 {
+                    return Err(TASK_NOT_FOUND_ERR.to_string());
+                }
+
+                let row = sqlx::query_as::<_, TaskRow>(
+                    "SELECT id, session_id, conversation_turn_id, title, details, priority, status, tags_json, due_at, created_at, updated_at FROM task_manager_tasks WHERE session_id = ? AND id = ? LIMIT 1",
+                )
+                .bind(&session_id)
+                .bind(&task_id)
+                .fetch_optional(pool)
+                .await
+                .map_err(|err| err.to_string())?
+                .ok_or_else(|| TASK_NOT_FOUND_ERR.to_string())?;
+
+                Ok(row.into_record())
+            })
+        },
+    )
+    .await
+}
+
+pub async fn complete_task_by_id(session_id: &str, task_id: &str) -> Result<TaskRecord, String> {
+    update_task_by_id(
+        session_id,
+        task_id,
+        TaskUpdatePatch {
+            status: Some("done".to_string()),
+            ..TaskUpdatePatch::default()
+        },
+    )
+    .await
+}
+
+pub async fn delete_task_by_id(session_id: &str, task_id: &str) -> Result<bool, String> {
+    let session_id = trimmed_non_empty(session_id)
+        .ok_or_else(|| "session_id is required".to_string())?
+        .to_string();
+    let task_id = trimmed_non_empty(task_id)
+        .ok_or_else(|| "task_id is required".to_string())?
+        .to_string();
+
+    let session_id_for_mongo = session_id.clone();
+    let task_id_for_mongo = task_id.clone();
+    let session_id_for_sqlite = session_id.clone();
+    let task_id_for_sqlite = task_id.clone();
+
+    with_db(
+        move |db| {
+            let session_id = session_id_for_mongo.clone();
+            let task_id = task_id_for_mongo.clone();
+            Box::pin(async move {
+                let result = db
+                    .collection::<Document>("task_manager_tasks")
+                    .delete_one(doc! { "session_id": session_id, "id": task_id }, None)
+                    .await
+                    .map_err(|err| err.to_string())?;
+                Ok(result.deleted_count > 0)
+            })
+        },
+        move |pool| {
+            let session_id = session_id_for_sqlite.clone();
+            let task_id = task_id_for_sqlite.clone();
+            Box::pin(async move {
+                let result = sqlx::query(
+                    "DELETE FROM task_manager_tasks WHERE session_id = ? AND id = ?",
+                )
+                .bind(session_id)
+                .bind(task_id)
+                .execute(pool)
+                .await
+                .map_err(|err| err.to_string())?;
+                Ok(result.rows_affected() > 0)
+            })
+        },
+    )
+    .await
+}
+
 fn normalize_task_drafts(drafts: Vec<TaskDraft>) -> Result<Vec<TaskDraft>, String> {
     let mut out = Vec::new();
     for draft in drafts {
@@ -549,7 +883,7 @@ fn default_status() -> String {
 mod tests {
     use super::{
         create_task_review, normalize_task_draft, submit_task_review_decision,
-        wait_for_task_review_decision, TaskDraft, TaskReviewAction,
+        wait_for_task_review_decision, TaskDraft, TaskReviewAction, TaskUpdatePatch,
     };
 
     #[test]
@@ -572,6 +906,25 @@ mod tests {
         assert_eq!(normalized.due_at, None);
     }
 
+    #[test]
+    fn normalize_update_patch_applies_defaults() {
+        let patch = TaskUpdatePatch {
+            title: Some("  Refine workbar  ".to_string()),
+            details: Some("  trim me  ".to_string()),
+            priority: Some("unknown".to_string()),
+            status: Some("invalid".to_string()),
+            tags: Some(vec![" ui ".to_string(), "ui".to_string(), "".to_string()]),
+            due_at: Some(Some("  ".to_string())),
+        };
+
+        let normalized = patch.normalized().expect("patch normalize should succeed");
+        assert_eq!(normalized.title.as_deref(), Some("Refine workbar"));
+        assert_eq!(normalized.details.as_deref(), Some("trim me"));
+        assert_eq!(normalized.priority.as_deref(), Some("medium"));
+        assert_eq!(normalized.status.as_deref(), Some("todo"));
+        assert_eq!(normalized.tags, Some(vec!["ui".to_string()]));
+        assert_eq!(normalized.due_at, Some(None));
+    }
 
     #[tokio::test]
     async fn review_confirm_flow_returns_updated_tasks() {

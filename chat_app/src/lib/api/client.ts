@@ -969,6 +969,64 @@ class ApiClient {
     return Array.isArray(result?.tasks) ? result.tasks : [];
   }
 
+  async updateTaskManagerTask(
+    sessionId: string,
+    taskId: string,
+    payload: {
+      title?: string;
+      details?: string;
+      priority?: 'high' | 'medium' | 'low';
+      status?: 'todo' | 'doing' | 'blocked' | 'done';
+      tags?: string[];
+      due_at?: string | null;
+    }
+  ): Promise<any> {
+    if (!sessionId) {
+      throw new Error('sessionId is required');
+    }
+    if (!taskId) {
+      throw new Error('taskId is required');
+    }
+
+    const params = new URLSearchParams();
+    params.set('session_id', sessionId);
+    return this.request<any>('/task-manager/tasks/' + encodeURIComponent(taskId) + '?' + params.toString(), {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async completeTaskManagerTask(sessionId: string, taskId: string): Promise<any> {
+    if (!sessionId) {
+      throw new Error('sessionId is required');
+    }
+    if (!taskId) {
+      throw new Error('taskId is required');
+    }
+
+    const params = new URLSearchParams();
+    params.set('session_id', sessionId);
+    return this.request<any>('/task-manager/tasks/' + encodeURIComponent(taskId) + '/complete?' + params.toString(), {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+  }
+
+  async deleteTaskManagerTask(sessionId: string, taskId: string): Promise<any> {
+    if (!sessionId) {
+      throw new Error('sessionId is required');
+    }
+    if (!taskId) {
+      throw new Error('taskId is required');
+    }
+
+    const params = new URLSearchParams();
+    params.set('session_id', sessionId);
+    return this.request<any>('/task-manager/tasks/' + encodeURIComponent(taskId) + '?' + params.toString(), {
+      method: 'DELETE',
+    });
+  }
+
   async submitTaskReviewDecision(
     reviewId: string,
     payload: { action: 'confirm' | 'cancel'; tasks?: any[]; reason?: string }

@@ -1,15 +1,16 @@
-﻿use axum::http::StatusCode;
+use axum::http::StatusCode;
 use axum::{
     extract::{Path, Query},
-    routing::{get, post},
+    routing::{get, patch, post},
     Json, Router,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::services::task_manager::{
-    list_tasks_for_context, submit_task_review_decision, TaskDraft, TaskReviewAction,
-    REVIEW_NOT_FOUND_ERR,
+    complete_task_by_id, delete_task_by_id, list_tasks_for_context, submit_task_review_decision,
+    update_task_by_id, TaskDraft, TaskReviewAction, TaskUpdatePatch, REVIEW_NOT_FOUND_ERR,
+    TASK_NOT_FOUND_ERR,
 };
 
 #[derive(Debug, Deserialize)]
@@ -27,6 +28,24 @@ struct TaskListQuery {
     limit: Option<usize>,
 }
 
+#[derive(Debug, Deserialize)]
+struct SessionScopeQuery {
+    session_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateTaskRequest {
+    title: Option<String>,
+    details: Option<String>,
+    description: Option<String>,
+    priority: Option<String>,
+    status: Option<String>,
+    tags: Option<Vec<String>>,
+    due_at: Option<Option<String>>,
+    #[serde(rename = "dueAt")]
+    due_at_legacy: Option<Option<String>>,
+}
+
 pub fn router() -> Router {
     Router::new()
         .route(
@@ -34,6 +53,11 @@ pub fn router() -> Router {
             post(submit_review_decision),
         )
         .route("/api/task-manager/tasks", get(list_tasks))
+        .route("/api/task-manager/tasks/:task_id", patch(update_task).delete(delete_task))
+        .route(
+            "/api/task-manager/tasks/:task_id/complete",
+            post(complete_task),
+        )
 }
 
 async fn list_tasks(Query(query): Query<TaskListQuery>) -> (StatusCode, Json<Value>) {
@@ -62,6 +86,134 @@ async fn list_tasks(Query(query): Query<TaskListQuery>) -> (StatusCode, Json<Val
                 "count": tasks.len(),
                 "tasks": tasks,
             })),
+        ),
+        Err(err) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "success": false, "error": err })),
+        ),
+    }
+}
+
+async fn update_task(
+    Path(task_id): Path<String>,
+    Query(scope): Query<SessionScopeQuery>,
+    Json(req): Json<UpdateTaskRequest>,
+) -> (StatusCode, Json<Value>) {
+    if scope.session_id.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "success": false, "error": "session_id is required" })),
+        );
+    }
+    if task_id.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "success": false, "error": "task_id is required" })),
+        );
+    }
+
+    let patch = TaskUpdatePatch {
+        title: req.title,
+        details: req.details.or(req.description),
+        priority: req.priority,
+        status: req.status,
+        tags: req.tags,
+        due_at: req.due_at.or(req.due_at_legacy),
+    };
+
+    let empty_patch = patch.title.is_none()
+        && patch.details.is_none()
+        && patch.priority.is_none()
+        && patch.status.is_none()
+        && patch.tags.is_none()
+        && patch.due_at.is_none();
+    if empty_patch {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "success": false, "error": "at least one field is required" })),
+        );
+    }
+
+    match update_task_by_id(scope.session_id.as_str(), task_id.as_str(), patch).await {
+        Ok(task) => (
+            StatusCode::OK,
+            Json(json!({
+                "success": true,
+                "task": task,
+            })),
+        ),
+        Err(err) if err == TASK_NOT_FOUND_ERR => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "success": false, "error": err })),
+        ),
+        Err(err) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "success": false, "error": err })),
+        ),
+    }
+}
+
+async fn complete_task(
+    Path(task_id): Path<String>,
+    Query(scope): Query<SessionScopeQuery>,
+) -> (StatusCode, Json<Value>) {
+    if scope.session_id.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "success": false, "error": "session_id is required" })),
+        );
+    }
+    if task_id.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "success": false, "error": "task_id is required" })),
+        );
+    }
+
+    match complete_task_by_id(scope.session_id.as_str(), task_id.as_str()).await {
+        Ok(task) => (
+            StatusCode::OK,
+            Json(json!({
+                "success": true,
+                "task": task,
+            })),
+        ),
+        Err(err) if err == TASK_NOT_FOUND_ERR => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "success": false, "error": err })),
+        ),
+        Err(err) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "success": false, "error": err })),
+        ),
+    }
+}
+
+async fn delete_task(
+    Path(task_id): Path<String>,
+    Query(scope): Query<SessionScopeQuery>,
+) -> (StatusCode, Json<Value>) {
+    if scope.session_id.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "success": false, "error": "session_id is required" })),
+        );
+    }
+    if task_id.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "success": false, "error": "task_id is required" })),
+        );
+    }
+
+    match delete_task_by_id(scope.session_id.as_str(), task_id.as_str()).await {
+        Ok(true) => (
+            StatusCode::OK,
+            Json(json!({ "success": true, "deleted": true })),
+        ),
+        Ok(false) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "success": false, "deleted": false, "error": TASK_NOT_FOUND_ERR })),
         ),
         Err(err) => (
             StatusCode::BAD_REQUEST,
