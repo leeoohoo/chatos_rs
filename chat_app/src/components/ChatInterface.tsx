@@ -787,6 +787,12 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   }, [activeTaskReviewPanel, apiClient, loadCurrentTurnWorkbarTasks, loadHistoryWorkbarTasks, removeTaskReviewPanel, upsertTaskReviewPanel]);
 
 
+  if (showSystemContextEditor) {
+    return (
+      <SystemContextEditor onClose={() => setShowSystemContextEditor(false)} />
+    );
+  }
+
   return (
     <div className={cn(
       'flex flex-col h-screen bg-background text-foreground',
@@ -1022,9 +1028,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         )}
         
         {/* 绯荤粺涓婁笅鏂囩紪杈戝櫒 */}
-        {showSystemContextEditor && (
-          <SystemContextEditor onClose={() => setShowSystemContextEditor(false)} />
-        )}
 
         {showUserSettings && (
           <UserSettingsPanel onClose={() => setShowUserSettings(false)} />

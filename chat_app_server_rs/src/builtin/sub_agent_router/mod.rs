@@ -44,7 +44,8 @@ use crate::utils::model_config::normalize_provider;
 
 use self::ai_runtime::{
     filter_legacy_tools_by_prefixes, filter_tools_by_prefixes, resolve_effective_mcp_selection,
-    resolve_model_config, summarize_single_tool_result_for_event, summarize_tool_calls_for_event,
+    resolve_model_config, resolve_selected_system_context_prompt,
+    summarize_single_tool_result_for_event, summarize_tool_calls_for_event,
     summarize_tool_results_for_event,
 };
 use self::catalog::SubAgentCatalog;
@@ -170,6 +171,13 @@ struct AllowPrefixesPolicy {
 struct EffectiveMcpSelection {
     configured: bool,
     ids: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+struct SelectedSystemContextPrompt {
+    context_id: String,
+    context_name: String,
+    content: String,
 }
 
 impl SubAgentRouterService {
@@ -482,8 +490,13 @@ pub fn get_mcp_permissions_settings() -> Result<Value, String> {
 pub fn save_mcp_permissions_settings(
     enabled_mcp_ids: &[String],
     enabled_tool_prefixes: &[String],
+    selected_system_context_id: Option<&str>,
 ) -> Result<Value, String> {
-    settings::save_mcp_permissions(enabled_mcp_ids, enabled_tool_prefixes)
+    settings::save_mcp_permissions(
+        enabled_mcp_ids,
+        enabled_tool_prefixes,
+        selected_system_context_id,
+    )
 }
 
 pub fn import_agents_from_json(raw: &str) -> Result<Value, String> {

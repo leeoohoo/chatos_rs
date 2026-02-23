@@ -127,6 +127,25 @@ export interface ChatActions {
   updateSystemContext: (id: string, name: string, content: string, appIds?: string[]) => Promise<any>;
   deleteSystemContext: (id: string) => Promise<void>;
   activateSystemContext: (id: string) => Promise<void>;
+  generateSystemContextDraft: (payload: {
+    scene: string;
+    style?: string;
+    language?: string;
+    output_format?: string;
+    constraints?: string[];
+    forbidden?: string[];
+    candidate_count?: number;
+    ai_model_config?: any;
+  }) => Promise<any>;
+  optimizeSystemContextDraft: (payload: {
+    content: string;
+    goal?: string;
+    keep_intent?: boolean;
+    ai_model_config?: any;
+  }) => Promise<any>;
+  evaluateSystemContextDraft: (payload: {
+    content: string;
+  }) => Promise<any>;
   // 应用管理
   loadApplications: () => Promise<void>;
   createApplication: (name: string, url: string, iconUrl?: string) => Promise<void>;

@@ -118,5 +118,61 @@ export function createSystemContextActions({ set, client, getUserIdParam }: Deps
         });
       }
     },
+
+    generateSystemContextDraft: async (payload: {
+      scene: string;
+      style?: string;
+      language?: string;
+      output_format?: string;
+      constraints?: string[];
+      forbidden?: string[];
+      candidate_count?: number;
+      ai_model_config?: any;
+    }) => {
+      try {
+        return await client.generateSystemContextDraft({
+          user_id: getUserIdParam(),
+          ...payload,
+        });
+      } catch (error) {
+        console.error('Failed to generate system context draft:', error);
+        set((state: any) => {
+          state.error = error instanceof Error ? error.message : 'Failed to generate system context draft';
+        });
+        return null;
+      }
+    },
+
+    optimizeSystemContextDraft: async (payload: {
+      content: string;
+      goal?: string;
+      keep_intent?: boolean;
+      ai_model_config?: any;
+    }) => {
+      try {
+        return await client.optimizeSystemContextDraft({
+          user_id: getUserIdParam(),
+          ...payload,
+        });
+      } catch (error) {
+        console.error('Failed to optimize system context draft:', error);
+        set((state: any) => {
+          state.error = error instanceof Error ? error.message : 'Failed to optimize system context draft';
+        });
+        return null;
+      }
+    },
+
+    evaluateSystemContextDraft: async (payload: { content: string }) => {
+      try {
+        return await client.evaluateSystemContextDraft(payload);
+      } catch (error) {
+        console.error('Failed to evaluate system context draft:', error);
+        set((state: any) => {
+          state.error = error instanceof Error ? error.message : 'Failed to evaluate system context draft';
+        });
+        return null;
+      }
+    },
   };
 }

@@ -1,38 +1,48 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useChatStoreFromContext } from '../lib/store/ChatStoreContext';
 import { useChatStore } from '../lib/store';
 import type { SystemContext } from '../types';
 import ConfirmDialog from './ui/ConfirmDialog';
 import { useConfirmDialog } from '../hooks/useConfirmDialog';
 
-// 图标组件
+interface SystemContextEditorProps {
+  onClose?: () => void;
+  store?: any;
+}
+
+type ViewMode = 'list' | 'create' | 'edit';
+
+type PromptQualityReport = {
+  clarity?: number;
+  constraint_completeness?: number;
+  conflict_risk?: number;
+  verbosity?: number;
+  overall?: number;
+  warnings?: string[];
+};
+
+type PromptCandidate = {
+  title?: string;
+  content: string;
+  score?: number;
+  report?: PromptQualityReport;
+};
+
 const DocumentIcon = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
   </svg>
 );
 
-const XMarkIcon = () => (
-  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-  </svg>
-);
-
-const SaveIcon = () => (
-  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
-  </svg>
-);
-
 const PlusIcon = () => (
-  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
   </svg>
 );
 
-const EditIcon = () => (
+const SaveIcon = () => (
   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
   </svg>
 );
 
@@ -42,382 +52,632 @@ const TrashIcon = () => (
   </svg>
 );
 
-const CheckIcon = () => (
-  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+const XMarkIcon = () => (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
   </svg>
 );
 
-interface SystemContextEditorProps {
-  onClose?: () => void;
-  store?: any; // 可选的store参数，用于在没有Context Provider的情况下使用
+function splitLines(value: string): string[] {
+  return value
+    .split(/\r?\n/)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
 }
 
-type ViewMode = 'list' | 'create' | 'edit';
+function readContextContent(context: any): string {
+  if (typeof context?.content === 'string') {
+    return context.content;
+  }
+  return '';
+}
+
+function readContextName(context: any): string {
+  if (typeof context?.name === 'string') {
+    return context.name;
+  }
+  return '';
+}
+
+function readContextUpdatedAt(context: any): string {
+  const raw = context?.updatedAt || context?.updated_at || context?.createdAt || context?.created_at;
+  if (!raw) {
+    return '-';
+  }
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) {
+    return String(raw);
+  }
+  return date.toLocaleString();
+}
 
 const SystemContextEditor: React.FC<SystemContextEditorProps> = ({ onClose, store: externalStore }) => {
-  // 尝试使用外部传入的store，如果没有则尝试使用Context，最后回退到默认store
-  let storeData;
-  
+  let storeData: any;
+
   if (externalStore) {
-    // 使用外部传入的store
     storeData = externalStore();
   } else {
-    // 尝试使用Context store，如果失败则使用默认store
     try {
       storeData = useChatStoreFromContext();
-    } catch (error) {
-      // 如果Context不可用，使用默认store
+    } catch {
       storeData = useChatStore();
     }
   }
 
-  const { 
-    systemContexts, 
-    activeSystemContext: _activeSystemContext,
-    loadSystemContexts, 
+  const {
+    systemContexts,
+    loadSystemContexts,
     createSystemContext,
-    updateSystemContext, 
+    updateSystemContext,
     deleteSystemContext,
-    activateSystemContext,
-    applications,
-    loadApplications
+    generateSystemContextDraft,
+    optimizeSystemContextDraft,
+    evaluateSystemContextDraft,
+    aiModelConfigs,
+    selectedModelId,
   } = storeData;
-  
+
   const [viewMode, setViewMode] = useState<ViewMode>('list');
-  const [editingContext, setEditingContext] = useState<SystemContext | null>(null);
+  const [selectedContextId, setSelectedContextId] = useState<string | null>(null);
+  const [searchKeyword, setSearchKeyword] = useState('');
   const [formData, setFormData] = useState({ name: '', content: '' });
+  const [selectedAppIds, setSelectedAppIds] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [selectedAppIds, setSelectedAppIds] = useState<string[]>([]);
-  
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const [assistantForm, setAssistantForm] = useState({
+    scene: '',
+    style: '专业、简洁',
+    language: '中文',
+    outputFormat: '结构化：结论/步骤/代码/风险',
+    constraintsText: '',
+    forbiddenText: '',
+    optimizeGoal: '提升约束完整性与可执行性',
+  });
+  const [assistantBusy, setAssistantBusy] = useState(false);
+  const [assistantError, setAssistantError] = useState<string | null>(null);
+  const [candidates, setCandidates] = useState<PromptCandidate[]>([]);
+  const [qualityReport, setQualityReport] = useState<PromptQualityReport | null>(null);
+
   const { dialogState, showConfirmDialog, handleConfirm, handleCancel } = useConfirmDialog();
 
-  // 组件初始化时加载系统上下文列表（StrictMode 下防止重复触发）
   useEffect(() => {
-    const key = '__systemContextEditorInitAt__';
-    const last = (window as any)[key] || 0;
-    const now = Date.now();
-    if (typeof last === 'number' && now - last < 1000) {
-      return;
-    }
-    (window as any)[key] = now;
-    const loadContexts = async () => {
+    const loadData = async () => {
       setIsLoading(true);
       try {
         await loadSystemContexts();
-        try { await (loadApplications?.()); } catch {}
-      } catch (error) {
-        console.error('Failed to load system contexts:', error);
       } finally {
         setIsLoading(false);
       }
     };
-    loadContexts();
+    void loadData();
   }, [loadSystemContexts]);
 
-  // 创建新上下文
-  const handleCreate = () => {
-    setFormData({ name: '', content: '' });
-    setEditingContext(null);
-    setViewMode('create');
-  };
+  const normalizedContexts = useMemo(() => {
+    return Array.isArray(systemContexts) ? systemContexts : [];
+  }, [systemContexts]);
 
-  // 编辑上下文
-  const handleEdit = (context: SystemContext) => {
-    setFormData({ name: context.name, content: context.content });
-    setEditingContext(context);
-    setSelectedAppIds(Array.isArray((context as any).app_ids) ? (context as any).app_ids : []);
+  const filteredContexts = useMemo(() => {
+    const keyword = searchKeyword.trim().toLowerCase();
+    if (!keyword) {
+      return normalizedContexts;
+    }
+    return normalizedContexts.filter((context: any) => {
+      const name = readContextName(context).toLowerCase();
+      const content = readContextContent(context).toLowerCase();
+      return name.includes(keyword) || content.includes(keyword);
+    });
+  }, [normalizedContexts, searchKeyword]);
+
+  const selectedModelConfig = useMemo(() => {
+    if (!selectedModelId || !Array.isArray(aiModelConfigs)) {
+      return null;
+    }
+    return aiModelConfigs.find((model: any) => model.id === selectedModelId) || null;
+  }, [aiModelConfigs, selectedModelId]);
+
+  const fillEditorFromContext = (context: any) => {
+    setSelectedContextId(context?.id || null);
+    setFormData({
+      name: readContextName(context),
+      content: readContextContent(context),
+    });
+    const appIds = Array.isArray(context?.app_ids) ? context.app_ids : [];
+    setSelectedAppIds(appIds);
+    setAssistantForm((prev) => ({
+      ...prev,
+      scene: readContextName(context) || prev.scene,
+    }));
+    setCandidates([]);
+    setQualityReport(null);
+    setActionError(null);
+    setAssistantError(null);
     setViewMode('edit');
   };
 
-  // 保存上下文
+  const handleCreate = () => {
+    setViewMode('create');
+    setSelectedContextId(null);
+    setFormData({ name: '', content: '' });
+    setSelectedAppIds([]);
+    setCandidates([]);
+    setQualityReport(null);
+    setActionError(null);
+    setAssistantError(null);
+    setAssistantForm((prev) => ({
+      ...prev,
+      scene: '',
+    }));
+  };
+
   const handleSave = async () => {
-    if (!formData.name.trim() || !formData.content.trim()) {
-      alert('请填写名称和内容');
+    const name = formData.name.trim();
+    const content = formData.content.trim();
+    if (!name || !content) {
+      setActionError('名称和内容不能为空。');
       return;
     }
 
+    setActionError(null);
     setIsSaving(true);
     try {
       if (viewMode === 'create') {
-        await createSystemContext(formData.name, formData.content, selectedAppIds);
-      } else if (viewMode === 'edit' && editingContext) {
-        await updateSystemContext(editingContext.id, formData.name, formData.content, selectedAppIds);
+        const created = await createSystemContext(name, content, selectedAppIds);
+        if (created?.id) {
+          setSelectedContextId(created.id);
+        }
+      } else if (viewMode === 'edit' && selectedContextId) {
+        await updateSystemContext(selectedContextId, name, content, selectedAppIds);
       }
+      await loadSystemContexts();
       setViewMode('list');
     } catch (error) {
-      console.error('Failed to save system context:', error);
-      alert('保存失败，请重试');
+      setActionError(error instanceof Error ? error.message : '保存失败。');
     } finally {
       setIsSaving(false);
     }
   };
 
-  // 删除上下文
-  const handleDelete = async (context: SystemContext) => {
+  const handleDelete = (context: SystemContext) => {
     showConfirmDialog({
-      title: '删除确认',
-      message: `确定要删除上下文 "${context.name}" 吗？此操作无法撤销。`,
+      title: '删除系统提示词',
+      message: `确定删除 "${(context as any).name || ''}" 吗？此操作无法撤销。`,
       confirmText: '删除',
       cancelText: '取消',
       type: 'danger',
       onConfirm: async () => {
         try {
-          await deleteSystemContext(context.id);
+          await deleteSystemContext((context as any).id);
+          if ((context as any).id === selectedContextId) {
+            setSelectedContextId(null);
+            setFormData({ name: '', content: '' });
+            setSelectedAppIds([]);
+            setViewMode('list');
+          }
+          await loadSystemContexts();
         } catch (error) {
-          console.error('Failed to delete system context:', error);
-          alert('删除失败，请重试');
+          setActionError(error instanceof Error ? error.message : '删除失败。');
         }
-      }
+      },
     });
   };
 
-  // 激活上下文
-  const handleActivate = async (context: SystemContext) => {
+  const handleBackToList = () => {
+    setViewMode('list');
+    setActionError(null);
+  };
+
+  const handleSelectCandidate = (candidate: PromptCandidate) => {
+    setFormData((prev) => ({
+      ...prev,
+      content: candidate.content,
+      name: prev.name || assistantForm.scene || prev.name,
+    }));
+    if (candidate.report) {
+      setQualityReport(candidate.report);
+    }
+  };
+
+  const getModelPayload = () => {
+    if (!selectedModelConfig) {
+      return undefined;
+    }
+
+    return {
+      model_name: selectedModelConfig.model_name || selectedModelConfig.model,
+      model: selectedModelConfig.model,
+      provider: selectedModelConfig.provider,
+      api_key: selectedModelConfig.api_key,
+      base_url: selectedModelConfig.base_url,
+      temperature: 0.5,
+    };
+  };
+
+  const handleAiGenerate = async () => {
+    if (typeof generateSystemContextDraft !== 'function') {
+      setAssistantError('当前环境不可用 AI 生成功能。');
+      return;
+    }
+
+    const scene = assistantForm.scene.trim() || formData.name.trim();
+    if (!scene) {
+      setAssistantError('请先填写 AI 场景。');
+      return;
+    }
+
+    setAssistantBusy(true);
+    setAssistantError(null);
     try {
-      await activateSystemContext(context.id);
-      // 重新加载系统上下文列表以更新UI状态
-      await loadSystemContexts();
-    } catch (error) {
-      console.error('Failed to activate system context:', error);
-      alert('激活失败，请重试');
-    }
-  };
+      const response = await generateSystemContextDraft({
+        scene,
+        style: assistantForm.style.trim() || undefined,
+        language: assistantForm.language.trim() || undefined,
+        output_format: assistantForm.outputFormat.trim() || undefined,
+        constraints: splitLines(assistantForm.constraintsText),
+        forbidden: splitLines(assistantForm.forbiddenText),
+        candidate_count: 3,
+        ai_model_config: getModelPayload(),
+      });
 
-  // 处理键盘快捷键
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.ctrlKey && e.key === 's') {
-      e.preventDefault();
-      if (viewMode !== 'list') {
-        handleSave();
+      const resultCandidates = Array.isArray(response?.candidates)
+        ? response.candidates.filter((item: any) => typeof item?.content === 'string' && item.content.trim().length > 0)
+        : [];
+
+      if (resultCandidates.length === 0) {
+        setAssistantError('AI 未返回可用候选内容。');
+        return;
       }
+
+      setCandidates(resultCandidates);
+      if (!formData.content.trim()) {
+        handleSelectCandidate(resultCandidates[0]);
+      }
+    } catch (error) {
+      setAssistantError(error instanceof Error ? error.message : 'AI 生成失败。');
+    } finally {
+      setAssistantBusy(false);
     }
   };
 
-  // 渲染列表视图
-  const renderListView = () => (
-    <div className="p-6 overflow-hidden flex flex-col" style={{ height: 'calc(90vh - 120px)' }}>
-      {/* 说明文字 */}
-      <div className="mb-4 p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
-        <p className="text-sm text-blue-800 dark:text-blue-200">
-          <strong>系统上下文</strong>将作为每次对话的系统提示词，支持 Markdown 格式。
-          您可以创建多个上下文配置，但同一时间只能激活一个。
-        </p>
-      </div>
+  const handleAiOptimize = async () => {
+    if (typeof optimizeSystemContextDraft !== 'function') {
+      setAssistantError('当前环境不可用 AI 优化功能。');
+      return;
+    }
 
-      {/* 上下文列表 */}
-      <div className="flex-1 overflow-y-auto">
-        {isLoading ? (
-          <div className="flex items-center justify-center h-32">
-            <div className="text-muted-foreground">加载中...</div>
-          </div>
-        ) : systemContexts.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-32 text-muted-foreground">
-            <DocumentIcon />
-            <p className="mt-2">暂无系统上下文配置</p>
-            <p className="text-sm">点击"新建"按钮创建第一个配置</p>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {systemContexts.map((context: SystemContext) => (
-              <div
-                key={context.id}
-                className={`p-4 border rounded-lg transition-colors ${
-                  context.isActive
-                    ? 'border-green-500 bg-green-50 dark:bg-green-900/20'
-                    : 'border-border bg-card'
-                }`}
-              >
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <div className="flex items-center space-x-2">
-                      <h3 className="font-medium text-foreground">
-                        {context.name}
-                      </h3>
-                      {context.isActive && (
-                        <span className="inline-flex items-center px-2 py-1 text-xs font-medium bg-green-100 text-green-800 rounded-full dark:bg-green-800 dark:text-green-100">
-                          <CheckIcon />
-                          <span className="ml-1">已激活</span>
-                        </span>
-                      )}
-                    </div>
-                    <p className="mt-1 text-sm text-muted-foreground line-clamp-2">
-                      {context.content.substring(0, 100)}
-                      {context.content.length > 100 && '...'}
-                    </p>
-                    <p className="mt-2 text-xs text-muted-foreground">
-                      创建时间: {new Date(context.createdAt).toLocaleString()}
-                    </p>
-                  </div>
-                  <div className="flex items-center space-x-2 ml-4">
-                    {!context.isActive && (
-                      <button
-                        onClick={() => handleActivate(context)}
-                        className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
-                      >
-                        激活
-                      </button>
-                    )}
-                    <button
-                      onClick={() => handleEdit(context)}
-                      className="p-2 text-muted-foreground hover:text-blue-600 hover:bg-accent rounded transition-colors"
-                    >
-                      <EditIcon />
-                    </button>
-                    <button
-                      onClick={() => handleDelete(context)}
-                      className="p-2 text-muted-foreground hover:text-red-600 hover:bg-accent rounded transition-colors"
-                    >
-                      <TrashIcon />
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
+    const content = formData.content.trim();
+    if (!content) {
+      setAssistantError('请先输入内容再进行 AI 优化。');
+      return;
+    }
 
-  // 渲染编辑视图
-  const renderEditView = () => (
-    <div className="p-6 overflow-hidden flex flex-col" style={{ height: 'calc(90vh - 120px)' }}>
-      {/* 说明文字 */}
-      <div className="mb-4 p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
-        <p className="text-sm text-blue-800 dark:text-blue-200">
-          {viewMode === 'create' ? '创建新的系统上下文配置' : '编辑系统上下文配置'}
-        </p>
-        <p className="text-xs text-blue-600 dark:text-blue-300 mt-2">
-          提示：使用 Ctrl+S 快速保存
-        </p>
-      </div>
+    setAssistantBusy(true);
+    setAssistantError(null);
+    try {
+      const response = await optimizeSystemContextDraft({
+        content,
+        goal: assistantForm.optimizeGoal.trim() || undefined,
+        keep_intent: true,
+        ai_model_config: getModelPayload(),
+      });
 
-      {/* 表单 */}
-      <div className="flex-1 flex flex-col space-y-4">
-        {/* 名称输入 */}
-        <div>
-          <label className="block text-sm font-medium text-foreground mb-2">
-            配置名称
-          </label>
-          <input
-            type="text"
-            value={formData.name}
-            onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-            className="w-full px-3 py-2 border border-input bg-background text-foreground rounded-lg focus:outline-none focus:ring-2 focus:ring-ring"
-            placeholder="例如：编程助手、翻译专家、创意写作等"
-          />
-        </div>
+      const optimized = typeof response?.optimized_content === 'string' ? response.optimized_content.trim() : '';
+      if (!optimized) {
+        setAssistantError('AI 优化返回为空。');
+        return;
+      }
 
-        {/* 关联应用（多选） */}
-        <div>
-          <label className="block text-sm font-medium text-foreground mb-2">关联应用（多选）</label>
-          <div className="space-y-2 max-h-32 overflow-y-auto p-2 border rounded-md">
-            {(applications || []).map((app: any) => (
-              <label key={app.id} className="flex items-center space-x-2">
-                <input
-                  type="checkbox"
-                  checked={selectedAppIds.includes(app.id)}
-                  onChange={(e) => {
-                    const checked = e.target.checked;
-                    setSelectedAppIds((prev) => (
-                      checked ? [...prev, app.id] : prev.filter(id => id !== app.id)
-                    ));
-                  }}
-                />
-                <span>{app.name}</span>
-              </label>
-            ))}
-            {(applications || []).length === 0 && (
-              <div className="text-xs text-muted-foreground">暂无应用，可在“应用管理”中创建。</div>
-            )}
-          </div>
-        </div>
+      setFormData((prev) => ({
+        ...prev,
+        content: optimized,
+      }));
+      setCandidates([
+        {
+          title: '优化结果',
+          content: optimized,
+          score: response?.score_after,
+          report: response?.report_after,
+        },
+      ]);
+      if (response?.report_after) {
+        setQualityReport(response.report_after);
+      }
+    } catch (error) {
+      setAssistantError(error instanceof Error ? error.message : 'AI 优化失败。');
+    } finally {
+      setAssistantBusy(false);
+    }
+  };
 
-        {/* 内容编辑 */}
-        <div className="flex-1 flex flex-col">
-          <div className="mb-2 flex items-center justify-between">
-            <label className="block text-sm font-medium text-foreground">
-              Markdown 内容
-            </label>
-            <div className="text-xs text-muted-foreground">
-              {formData.content.length} 字符
-            </div>
-          </div>
-          
-          <textarea
-            value={formData.content}
-            onChange={(e) => setFormData({ ...formData, content: e.target.value })}
-            onKeyDown={handleKeyDown}
-            className="flex-1 w-full px-4 py-3 border border-input bg-background text-foreground rounded-lg focus:outline-none focus:ring-2 focus:ring-ring resize-none font-mono text-sm"
-            placeholder="请输入系统上下文内容，支持 Markdown 格式...\n\n例如：\n# AI 助手角色设定\n\n你是一个专业的编程助手，具有以下特点：\n- 提供准确、简洁的代码解决方案\n- 遵循最佳实践和代码规范\n- 耐心解答技术问题\n\n## 回答风格\n- 使用中文回答\n- 代码示例要完整可运行\n- 提供必要的解释说明"
-            spellCheck={false}
-          />
-        </div>
+  const handleAiEvaluate = async () => {
+    if (typeof evaluateSystemContextDraft !== 'function') {
+      setAssistantError('当前环境不可用 AI 评估功能。');
+      return;
+    }
 
-        {/* 底部提示 */}
-        <div className="text-xs text-muted-foreground">
-          <p>• 支持标准 Markdown 语法：标题、列表、代码块、链接等</p>
-          <p>• 内容将在每次对话开始时自动发送给 AI</p>
-          <p>• 留空则使用默认系统提示词</p>
-        </div>
-      </div>
-    </div>
-  );
+    const content = formData.content.trim();
+    if (!content) {
+      setAssistantError('请先输入内容再进行 AI 评估。');
+      return;
+    }
+
+    setAssistantBusy(true);
+    setAssistantError(null);
+    try {
+      const response = await evaluateSystemContextDraft({ content });
+      if (response?.report) {
+        setQualityReport(response.report);
+      } else {
+        setAssistantError('AI 评估未返回报告。');
+      }
+    } catch (error) {
+      setAssistantError(error instanceof Error ? error.message : 'AI 评估失败。');
+    } finally {
+      setAssistantBusy(false);
+    }
+  };
+
+  const selectedContextName = useMemo(() => {
+    const current = normalizedContexts.find((item: any) => item.id === selectedContextId);
+    return current ? readContextName(current) : '';
+  }, [normalizedContexts, selectedContextId]);
 
   return (
-    <div className="modal-container">
-      <div className="modal-content w-full max-w-4xl max-h-[90vh] overflow-hidden">
-        {/* 头部 */}
-        <div className="flex items-center justify-between p-6 border-b border-border">
-          <div className="flex items-center space-x-3">
-            <DocumentIcon />
-            <h2 className="text-xl font-semibold text-foreground">
-              系统上下文设置
-            </h2>
-          </div>
-          <div className="flex items-center space-x-2">
-            {viewMode === 'list' ? (
-              <button
-                onClick={handleCreate}
-                className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
-              >
-                <PlusIcon />
-                <span>新建</span>
-              </button>
-            ) : (
-              <>
-                <button
-                  onClick={handleSave}
-                  disabled={isSaving}
-                  className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  <SaveIcon />
-                  <span>{isSaving ? '保存中...' : '保存'}</span>
-                </button>
-                <button
-                  onClick={() => setViewMode('list')}
-                  className="px-4 py-2 text-secondary-foreground border border-border rounded-md hover:bg-accent focus:outline-none focus:ring-2 focus:ring-ring transition-colors"
-                >
-                  取消
-                </button>
-              </>
-            )}
-            <button
-              onClick={onClose}
-              className="p-2 text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg transition-colors"
-            >
-              <XMarkIcon />
-            </button>
+    <div className="h-screen w-full bg-background text-foreground flex flex-col">
+      <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+        <div className="flex items-center gap-3">
+          <DocumentIcon />
+          <div>
+            <h2 className="text-xl font-semibold">系统提示词管理</h2>
+            <p className="text-xs text-muted-foreground">全屏工作区（AI 生成 / 优化 / 评估）</p>
           </div>
         </div>
-
-        {/* 内容区域 */}
-        {viewMode === 'list' ? renderListView() : renderEditView()}
+        <button
+          onClick={onClose}
+          className="inline-flex items-center gap-2 px-3 py-2 text-sm border border-border rounded-md hover:bg-accent"
+        >
+          <XMarkIcon />
+          <span>返回</span>
+        </button>
       </div>
 
-      {/* 确认对话框 */}
+      <div className="flex-1 min-h-0 flex">
+        <aside className="w-80 min-w-80 border-r border-border flex flex-col">
+          <div className="p-4 border-b border-border space-y-3">
+            <button
+              onClick={handleCreate}
+              className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700"
+            >
+              <PlusIcon />
+              <span>新建提示词</span>
+            </button>
+            <input
+              type="text"
+              value={searchKeyword}
+              onChange={(e) => setSearchKeyword(e.target.value)}
+              placeholder="搜索提示词"
+              className="w-full px-3 py-2 text-sm border border-input bg-background rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+          </div>
+
+          <div className="flex-1 overflow-y-auto">
+            {isLoading ? (
+              <div className="p-4 text-sm text-muted-foreground">加载中...</div>
+            ) : filteredContexts.length === 0 ? (
+              <div className="p-4 text-sm text-muted-foreground">暂无提示词</div>
+            ) : (
+              <ul className="divide-y divide-border">
+                {filteredContexts.map((context: any) => {
+                  const active = context.id === selectedContextId;
+                  return (
+                    <li key={context.id} className={active ? 'bg-blue-50 dark:bg-blue-950/20' : ''}>
+                      <div className="flex items-center justify-between gap-2 px-4 py-3">
+                        <button
+                          onClick={() => fillEditorFromContext(context)}
+                          className="flex-1 text-left"
+                        >
+                          <p className="text-sm font-medium truncate">{readContextName(context)}</p>
+                          <p className="text-xs text-muted-foreground truncate">更新时间：{readContextUpdatedAt(context)}</p>
+                        </button>
+                        <button
+                          onClick={() => handleDelete(context)}
+                          className="p-1 text-muted-foreground hover:text-red-600"
+                          title="删除"
+                        >
+                          <TrashIcon />
+                        </button>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        </aside>
+
+        <section className="flex-1 min-w-0 flex flex-col">
+          <div className="px-6 py-4 border-b border-border">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="text-sm text-muted-foreground">模式：</span>
+              <span className="text-sm font-medium">{viewMode === 'create' ? '新建' : viewMode === 'edit' ? '编辑' : '列表'}</span>
+              {selectedContextName ? (
+                <span className="text-xs px-2 py-1 rounded-full bg-accent text-secondary-foreground">{selectedContextName}</span>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="flex-1 min-h-0 overflow-y-auto px-6 py-5 space-y-4">
+            <div className="grid grid-cols-1 gap-4">
+              <div className="max-w-xl">
+                <label className="block text-sm font-medium mb-2">名称</label>
+                <input
+                  type="text"
+                  value={formData.name}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, name: e.target.value }))}
+                  placeholder="例如：编程助手"
+                  className="w-full px-3 py-2 border border-input bg-background rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-4 gap-3">
+              <input
+                value={assistantForm.scene}
+                onChange={(e) => setAssistantForm((prev) => ({ ...prev, scene: e.target.value }))}
+                placeholder="AI 场景"
+                className="px-3 py-2 text-sm border border-input bg-background rounded-md"
+              />
+              <input
+                value={assistantForm.style}
+                onChange={(e) => setAssistantForm((prev) => ({ ...prev, style: e.target.value }))}
+                placeholder="AI 风格"
+                className="px-3 py-2 text-sm border border-input bg-background rounded-md"
+              />
+              <input
+                value={assistantForm.language}
+                onChange={(e) => setAssistantForm((prev) => ({ ...prev, language: e.target.value }))}
+                placeholder="AI 语言"
+                className="px-3 py-2 text-sm border border-input bg-background rounded-md"
+              />
+              <input
+                value={assistantForm.outputFormat}
+                onChange={(e) => setAssistantForm((prev) => ({ ...prev, outputFormat: e.target.value }))}
+                placeholder="AI 输出格式"
+                className="px-3 py-2 text-sm border border-input bg-background rounded-md"
+              />
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+              <textarea
+                value={assistantForm.constraintsText}
+                onChange={(e) => setAssistantForm((prev) => ({ ...prev, constraintsText: e.target.value }))}
+                placeholder="AI 约束（每行一条）"
+                rows={3}
+                className="w-full px-3 py-2 text-sm border border-input bg-background rounded-md resize-none"
+              />
+              <textarea
+                value={assistantForm.forbiddenText}
+                onChange={(e) => setAssistantForm((prev) => ({ ...prev, forbiddenText: e.target.value }))}
+                placeholder="AI 禁止项（每行一条）"
+                rows={3}
+                className="w-full px-3 py-2 text-sm border border-input bg-background rounded-md resize-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-2">优化目标</label>
+              <input
+                value={assistantForm.optimizeGoal}
+                onChange={(e) => setAssistantForm((prev) => ({ ...prev, optimizeGoal: e.target.value }))}
+                placeholder="希望 AI 优化什么？"
+                className="w-full px-3 py-2 text-sm border border-input bg-background rounded-md"
+              />
+            </div>
+
+            {assistantError ? (
+              <div className="text-sm text-red-600 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900 rounded-md px-3 py-2">
+                {assistantError}
+              </div>
+            ) : null}
+
+            {qualityReport ? (
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-xs">
+                <div className="px-2 py-2 border rounded-md">清晰度: {qualityReport.clarity ?? '-'}</div>
+                <div className="px-2 py-2 border rounded-md">约束完整度: {qualityReport.constraint_completeness ?? '-'}</div>
+                <div className="px-2 py-2 border rounded-md">冲突风险: {qualityReport.conflict_risk ?? '-'}</div>
+                <div className="px-2 py-2 border rounded-md">冗长度: {qualityReport.verbosity ?? '-'}</div>
+                <div className="px-2 py-2 border rounded-md font-medium">总分: {qualityReport.overall ?? '-'}</div>
+              </div>
+            ) : null}
+
+            {candidates.length > 0 ? (
+              <div className="space-y-2">
+                <p className="text-sm font-medium">AI 候选</p>
+                <div className="space-y-2 max-h-48 overflow-y-auto">
+                  {candidates.map((candidate, index) => (
+                    <div key={`${candidate.title || 'candidate'}-${index}`} className="border border-border rounded-md p-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-sm font-medium">
+                          {candidate.title || `候选-${index + 1}`}
+                          {typeof candidate.score === 'number' ? ` - 评分 ${candidate.score}` : ''}
+                        </div>
+                        <button
+                          onClick={() => handleSelectCandidate(candidate)}
+                          className="px-2 py-1 text-xs border border-border rounded hover:bg-accent"
+                        >
+                          使用此版本
+                        </button>
+                      </div>
+                      <p className="mt-2 text-xs text-muted-foreground line-clamp-2">{candidate.content}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            <div className="min-h-[360px] flex flex-col">
+              <div className="mb-2 flex items-center justify-between">
+                <label className="text-sm font-medium">提示词内容</label>
+                <span className="text-xs text-muted-foreground">{formData.content.length} 字符</span>
+              </div>
+              <textarea
+                value={formData.content}
+                onChange={(e) => setFormData((prev) => ({ ...prev, content: e.target.value }))}
+                className="flex-1 w-full min-h-[360px] px-4 py-3 border border-input bg-background rounded-md resize-none font-mono text-sm"
+                placeholder="在这里编写或让 AI 生成系统提示词内容..."
+              />
+            </div>
+
+            {actionError ? (
+              <div className="text-sm text-red-600">{actionError}</div>
+            ) : null}
+          </div>
+
+          <div className="px-6 py-3 border-t border-border flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleAiGenerate}
+                disabled={assistantBusy}
+                className="px-3 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+              >
+                {assistantBusy ? '执行中...' : 'AI 生成'}
+              </button>
+              <button
+                onClick={handleAiOptimize}
+                disabled={assistantBusy}
+                className="px-3 py-2 text-sm border border-border rounded-md hover:bg-accent disabled:opacity-50"
+              >
+                AI 优化
+              </button>
+              <button
+                onClick={handleAiEvaluate}
+                disabled={assistantBusy}
+                className="px-3 py-2 text-sm border border-border rounded-md hover:bg-accent disabled:opacity-50"
+              >
+                AI 评估
+              </button>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleBackToList}
+                className="px-3 py-2 text-sm border border-border rounded-md hover:bg-accent"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleSave}
+                disabled={isSaving}
+                className="inline-flex items-center gap-2 px-4 py-2 text-sm bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50"
+              >
+                <SaveIcon />
+                <span>{isSaving ? '保存中...' : '保存'}</span>
+              </button>
+            </div>
+          </div>
+        </section>
+      </div>
+
       <ConfirmDialog
         isOpen={dialogState.isOpen}
         title={dialogState.title}

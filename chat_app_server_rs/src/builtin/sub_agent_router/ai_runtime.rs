@@ -235,6 +235,54 @@ pub(super) async fn resolve_effective_mcp_selection(
     })
 }
 
+pub(super) async fn resolve_selected_system_context_prompt(
+    user_id: Option<String>,
+) -> Result<Option<SelectedSystemContextPrompt>, String> {
+    let saved = settings::load_mcp_permissions()?;
+    let selected_context_id = saved
+        .get("selected_system_context_id")
+        .and_then(|value| value.as_str())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    let Some(context_id) = selected_context_id else {
+        return Ok(None);
+    };
+
+    let Some(context) = crate::repositories::system_contexts::get_system_context_by_id(context_id.as_str()).await? else {
+        return Ok(None);
+    };
+
+    if let Some(uid) = user_id.as_deref() {
+        if !context.user_id.trim().is_empty() && context.user_id.trim() != uid {
+            return Ok(None);
+        }
+    }
+
+    let content = context
+        .content
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string);
+
+    let Some(content) = content else {
+        return Ok(None);
+    };
+
+    let context_name = context.name.trim();
+
+    Ok(Some(SelectedSystemContextPrompt {
+        context_id,
+        context_name: if context_name.is_empty() {
+            "(unnamed)".to_string()
+        } else {
+            context_name.to_string()
+        },
+        content,
+    }))
+}
+
 pub(super) fn filter_tools_by_prefixes(
     mcp_execute: &mut McpToolExecute,
     allow_prefixes: &[String],

@@ -79,7 +79,7 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
     }
   }
 
-  const { mcpConfigs, updateMcpConfig, deleteMcpConfig, loadMcpConfigs } = storeData;
+  const { mcpConfigs, updateMcpConfig, deleteMcpConfig, loadMcpConfigs, systemContexts, loadSystemContexts } = storeData;
   const { dialogState, showConfirmDialog, handleConfirm, handleCancel } = useConfirmDialog();
 
   const [showAddForm, setShowAddForm] = useState(false);
@@ -119,6 +119,7 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
   const [settingsMcpConfigured, setSettingsMcpConfigured] = useState<boolean>(false);
   const [settingsMcpUpdatedAt, setSettingsMcpUpdatedAt] = useState<string | null>(null);
   const [settingsMcpSearch, setSettingsMcpSearch] = useState('');
+  const [settingsSelectedSystemContextId, setSettingsSelectedSystemContextId] = useState('');
 
   // 组件初始化时加载MCP配置（StrictMode 下防止重复触发）
   React.useEffect(() => {
@@ -273,10 +274,15 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
         .map((item: any) => item?.id)
     );
 
+    const selectedSystemContextId = typeof payload?.selected_system_context_id === 'string'
+      ? payload.selected_system_context_id.trim()
+      : '';
+
     setSettingsMcpOptions(normalizedOptions);
     setSettingsMcpEnabledIds(payloadEnabledIds.length > 0 || payload?.configured ? payloadEnabledIds : fallbackEnabledIds);
     setSettingsMcpConfigured(Boolean(payload?.configured));
     setSettingsMcpUpdatedAt(typeof payload?.updated_at === 'string' ? payload.updated_at : null);
+    setSettingsSelectedSystemContextId(selectedSystemContextId);
   };
 
   const loadBuiltinSettings = async (configId: string) => {
@@ -298,6 +304,7 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
       setSettingsMcpEnabledIds([]);
       setSettingsMcpConfigured(false);
       setSettingsMcpUpdatedAt(null);
+      setSettingsSelectedSystemContextId('');
       setSettingsError(error?.message || '读取内置 MCP 设置失败');
     } finally {
       setSettingsLoading(false);
@@ -314,6 +321,7 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
     try {
       const response = await apiClient.updateBuiltinMcpPermissions(settingsConfig.id, {
         enabled_mcp_ids: normalizeIdList(settingsMcpEnabledIds),
+        selected_system_context_id: settingsSelectedSystemContextId,
       });
       const payload = (response as any)?.data || null;
       applyMcpPermissionState(payload);
@@ -343,6 +351,12 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
     setSettingsMcpConfigured(false);
     setSettingsMcpUpdatedAt(null);
     setSettingsMcpSearch('');
+    setSettingsSelectedSystemContextId('');
+    try {
+      await loadSystemContexts?.();
+    } catch {
+      // ignore system context loading failures for this panel
+    }
     await loadBuiltinSettings(config.id);
   };
 
@@ -368,6 +382,7 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
     setSettingsMcpConfigured(false);
     setSettingsMcpUpdatedAt(null);
     setSettingsMcpSearch('');
+    setSettingsSelectedSystemContextId('');
   };
 
 
@@ -487,6 +502,14 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
       .join(' ');
     return haystack.includes(search);
   });
+
+  const settingsSystemContextOptions = (Array.isArray(systemContexts) ? systemContexts : [])
+    .map((item: any) => ({
+      id: String(item?.id || '').trim(),
+      name: String(item?.name || '').trim(),
+      is_active: Boolean(item?.is_active ?? item?.isActive),
+    }))
+    .filter((item: any) => item.id.length > 0);
 
   const isPluginInstalled = (plugin: any) => {
     if (typeof plugin?.installed === 'boolean') {
@@ -1090,6 +1113,25 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
                               >
                                 {settingsMcpSaving ? '保存中...' : '保存权限'}
                               </button>
+                            </div>
+                          </div>
+
+                          <div className="rounded-md border border-border/60 bg-background/60 p-3 space-y-2">
+                            <div className="text-xs font-medium text-foreground">Sub-agent 系统提示词</div>
+                            <select
+                              value={settingsSelectedSystemContextId}
+                              onChange={(event) => setSettingsSelectedSystemContextId(event.target.value)}
+                              className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
+                            >
+                              <option value="">不使用额外系统提示词</option>
+                              {settingsSystemContextOptions.map((item: any) => (
+                                <option key={item.id} value={item.id}>
+                                  {item.name || item.id}{item.is_active ? '（当前激活）' : ''}
+                                </option>
+                              ))}
+                            </select>
+                            <div className="text-[11px] text-muted-foreground">
+                              执行 sub-agent 时会先注入该系统提示词，再执行 sub-agent 自身提示词。
                             </div>
                           </div>
 

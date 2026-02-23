@@ -62,6 +62,7 @@ struct SubAgentRouterMcpPermissions {
     configured: bool,
     enabled_mcp_ids: Vec<String>,
     enabled_tool_prefixes: Vec<String>,
+    selected_system_context_id: Option<String>,
     updated_at: String,
 }
 
@@ -71,6 +72,7 @@ impl Default for SubAgentRouterMcpPermissions {
             configured: false,
             enabled_mcp_ids: Vec::new(),
             enabled_tool_prefixes: Vec::new(),
+            selected_system_context_id: None,
             updated_at: String::new(),
         }
     }
@@ -181,6 +183,7 @@ pub fn load_mcp_permissions() -> Result<Value, String> {
         "configured": state.configured,
         "enabled_mcp_ids": state.enabled_mcp_ids,
         "enabled_tool_prefixes": state.enabled_tool_prefixes,
+        "selected_system_context_id": state.selected_system_context_id,
         "updated_at": state.updated_at,
         "path": paths.mcp_permissions_path.to_string_lossy().to_string()
     }))
@@ -189,8 +192,11 @@ pub fn load_mcp_permissions() -> Result<Value, String> {
 pub fn save_mcp_permissions(
     enabled_mcp_ids: &[String],
     enabled_tool_prefixes: &[String],
+    selected_system_context_id: Option<&str>,
 ) -> Result<Value, String> {
     let paths = ensure_state_files()?;
+    let previous_state = read_mcp_permissions_state(paths.mcp_permissions_path.as_path())
+        .unwrap_or_else(|_| SubAgentRouterMcpPermissions::default());
 
     let mut ids = enabled_mcp_ids
         .iter()
@@ -212,6 +218,10 @@ pub fn save_mcp_permissions(
         configured: true,
         enabled_mcp_ids: ids,
         enabled_tool_prefixes: prefixes,
+        selected_system_context_id: match selected_system_context_id {
+            Some(value) => normalize_optional_string(Some(value)),
+            None => previous_state.selected_system_context_id,
+        },
         updated_at: crate::core::time::now_rfc3339(),
     };
 
@@ -223,6 +233,7 @@ pub fn save_mcp_permissions(
         "configured": state.configured,
         "enabled_mcp_ids": state.enabled_mcp_ids,
         "enabled_tool_prefixes": state.enabled_tool_prefixes,
+        "selected_system_context_id": state.selected_system_context_id,
         "updated_at": state.updated_at,
         "path": paths.mcp_permissions_path.to_string_lossy().to_string()
     }))
@@ -271,6 +282,12 @@ fn read_mcp_permissions_state(path: &Path) -> Result<SubAgentRouterMcpPermission
         enabled_tool_prefixes.sort();
         enabled_tool_prefixes.dedup();
 
+        let selected_system_context_id = normalize_optional_string(
+            value
+                .get("selected_system_context_id")
+                .and_then(|v| v.as_str()),
+        );
+
         let updated_at = value
             .get("updated_at")
             .and_then(|v| v.as_str())
@@ -281,9 +298,16 @@ fn read_mcp_permissions_state(path: &Path) -> Result<SubAgentRouterMcpPermission
             configured,
             enabled_mcp_ids,
             enabled_tool_prefixes,
+            selected_system_context_id,
             updated_at,
         })
     })
+}
+
+fn normalize_optional_string(value: Option<&str>) -> Option<String> {
+    value
+        .map(|item| item.trim().to_string())
+        .filter(|item| !item.is_empty())
 }
 
 pub fn import_agents_json(raw: &str) -> Result<Value, String> {

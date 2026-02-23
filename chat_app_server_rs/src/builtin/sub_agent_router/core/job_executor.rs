@@ -212,7 +212,10 @@ pub(crate) fn execute_job(
         execution.run_id.as_str(),
     );
 
-    let system_prompt = {
+    let selected_system_context_prompt =
+        block_on_result(resolve_selected_system_context_prompt(execution.ctx.user_id.clone()))?;
+
+    let base_system_prompt = {
         let mut guard = execution
             .ctx
             .catalog
@@ -228,12 +231,26 @@ pub(crate) fn execute_job(
         )
     };
 
+    let system_prompt = if let Some(selected) = selected_system_context_prompt.as_ref() {
+        format!(
+            "## Global System Prompt (from System Prompt Manager)\n{}\n\n## Sub-agent Router Prompt\n{}",
+            selected.content, base_system_prompt
+        )
+    } else {
+        base_system_prompt
+    };
+
     append_job_event(
         execution.job_id.as_str(),
         "system_prompt_ready",
         Some(json!({
             "chars": system_prompt.chars().count(),
             "preview": truncate_for_event(system_prompt.as_str(), 2_000),
+            "selected_system_context": selected_system_context_prompt.as_ref().map(|item| json!({
+                "id": item.context_id.clone(),
+                "name": item.context_name.clone(),
+                "chars": item.content.chars().count(),
+            })),
         })),
         execution.session_id.as_str(),
         execution.run_id.as_str(),

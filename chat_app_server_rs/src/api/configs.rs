@@ -103,6 +103,7 @@ struct BuiltinPluginInstallRequest {
 #[derive(Debug, Deserialize)]
 struct BuiltinMcpPermissionsRequest {
     enabled_mcp_ids: Option<Vec<String>>,
+    selected_system_context_id: Option<String>,
 }
 
 pub fn router() -> Router {
@@ -490,7 +491,7 @@ async fn update_builtin_mcp_permissions(
     if config_id != SUB_AGENT_ROUTER_MCP_ID {
         return (
             StatusCode::BAD_REQUEST,
-            Json(json!({"error": "该内置 MCP 暂不支持 MCP 权限设置"})),
+            Json(json!({"error": "Builtin MCP does not support MCP permission settings"})),
         );
     }
 
@@ -499,7 +500,7 @@ async fn update_builtin_mcp_permissions(
         Err(err) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": format!("读取 MCP 列表失败: {}", err)})),
+                Json(json!({"error": format!("Failed to load MCP options: {}", err)})),
             )
         }
     };
@@ -541,14 +542,60 @@ async fn update_builtin_mcp_permissions(
             .collect(),
     );
 
-    match save_sub_agent_router_mcp_permissions(&enabled_mcp_ids, &enabled_tool_prefixes) {
+    let previous_selected_system_context_id = get_sub_agent_router_mcp_permissions()
+        .ok()
+        .and_then(|state| {
+            state
+                .get("selected_system_context_id")
+                .and_then(|v| v.as_str())
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+        });
+
+    let selected_system_context_id_for_save = if req.selected_system_context_id.is_some() {
+        req.selected_system_context_id
+            .as_deref()
+            .map(str::trim)
+            .map(|v| v.to_string())
+    } else {
+        previous_selected_system_context_id
+    };
+
+    let selected_system_context_id_for_validation = selected_system_context_id_for_save
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty());
+
+    if let Some(context_id) = selected_system_context_id_for_validation {
+        match ctx_repo::get_system_context_by_id(context_id).await {
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({"error": "Selected system prompt not found"})),
+                )
+            }
+            Err(err) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": format!("Failed to validate selected system prompt: {}", err)})),
+                )
+            }
+        }
+    }
+
+    match save_sub_agent_router_mcp_permissions(
+        &enabled_mcp_ids,
+        &enabled_tool_prefixes,
+        selected_system_context_id_for_save.as_deref(),
+    ) {
         Ok(state) => {
             let payload = build_sub_agent_router_mcp_permissions_payload(state, options);
             (StatusCode::OK, Json(json!({"ok": true, "data": payload})))
         }
         Err(err) => (
             StatusCode::BAD_REQUEST,
-            Json(json!({"error": format!("保存 MCP 权限设置失败: {}", err)})),
+            Json(json!({"error": format!("Failed to save MCP permissions: {}", err)})),
         ),
     }
 }
@@ -1516,6 +1563,13 @@ fn build_sub_agent_router_mcp_permissions_payload(state: Value, options: Vec<Val
         })
         .collect::<Vec<_>>();
 
+    let selected_system_context_id = state
+        .get("selected_system_context_id")
+        .and_then(|v| v.as_str())
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty())
+        .map(|v| v.to_string());
+
     json!({
         "configured": configured,
         "updated_at": state.get("updated_at").cloned().unwrap_or(Value::Null),
@@ -1525,6 +1579,7 @@ fn build_sub_agent_router_mcp_permissions_payload(state: Value, options: Vec<Val
         "unknown_mcp_ids": unknown_saved_ids,
         "enabled_tool_prefixes": effective_prefixes,
         "saved_enabled_tool_prefixes": saved_prefixes,
+        "selected_system_context_id": selected_system_context_id,
         "options": options_with_enabled
     })
 }

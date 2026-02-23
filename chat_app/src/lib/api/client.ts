@@ -341,7 +341,7 @@ class ApiClient {
 
   async updateBuiltinMcpPermissions(
     id: string,
-    payload: { enabled_mcp_ids: string[] }
+    payload: { enabled_mcp_ids: string[]; selected_system_context_id?: string }
   ): Promise<any> {
     return this.request<any>(`/mcp-configs/${id}/builtin/mcp-permissions`, {
       method: 'POST',
@@ -511,6 +511,45 @@ class ApiClient {
     return this.request<any>(`/system-contexts/${id}/activate`, {
       method: 'POST',
       body: JSON.stringify({ user_id: userId, is_active: true }),
+    });
+  }
+
+  async generateSystemContextDraft(data: {
+    user_id: string;
+    scene: string;
+    style?: string;
+    language?: string;
+    output_format?: string;
+    constraints?: string[];
+    forbidden?: string[];
+    candidate_count?: number;
+    ai_model_config?: any;
+  }): Promise<any> {
+    return this.request<any>('/system-contexts/ai/generate', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async optimizeSystemContextDraft(data: {
+    user_id: string;
+    content: string;
+    goal?: string;
+    keep_intent?: boolean;
+    ai_model_config?: any;
+  }): Promise<any> {
+    return this.request<any>('/system-contexts/ai/optimize', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async evaluateSystemContextDraft(data: {
+    content: string;
+  }): Promise<any> {
+    return this.request<any>('/system-contexts/ai/evaluate', {
+      method: 'POST',
+      body: JSON.stringify(data),
     });
   }
 
