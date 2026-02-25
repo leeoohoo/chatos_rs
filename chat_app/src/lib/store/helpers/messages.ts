@@ -2,7 +2,6 @@ import type { Message } from '../../../types';
 import type ApiClient from '../../api/client';
 import { debugLog } from '@/lib/utils';
 
-
 const parseMaybeJson = (value: any): any => {
   if (typeof value !== 'string') return value;
   try {
@@ -19,148 +18,193 @@ const normalizeToolCallsArray = (value: any): any[] => {
   return [];
 };
 
-const extractToolCallsFromMessage = (message: any): any[] => {
-  const topLevel = normalizeToolCallsArray(message?.toolCalls);
-  if (topLevel.length > 0) return topLevel;
-
-  const parsedMetadata = parseMaybeJson(message?.metadata);
-  return normalizeToolCallsArray(parsedMetadata?.toolCalls);
-};
-
-const collectMissingAssistantToolCallIds = (messages: any[]): string[] => {
-  const assistantCallIds = new Set<string>();
-  const toolResultIds = new Set<string>();
-
-  messages.forEach((message: any) => {
-    if (message?.role === 'assistant') {
-      extractToolCallsFromMessage(message).forEach((toolCall: any) => {
-        const id = toolCall?.id || toolCall?.tool_call_id || toolCall?.toolCallId;
-        if (id) assistantCallIds.add(String(id));
-      });
-    }
-
-    if (message?.role === 'tool') {
-      const id = message?.tool_call_id || message?.toolCallId;
-      if (id) toolResultIds.add(String(id));
-    }
-  });
-
-  return Array.from(toolResultIds).filter((id) => !assistantCallIds.has(id));
-};
-
-export const fetchSessionMessages = async (
-  client: ApiClient,
-  sessionId: string,
-  options: { limit?: number; offset?: number } = { limit: 50, offset: 0 }
-): Promise<Message[]> => {
-  const limit = options.limit ?? 50;
-  const offset = options.offset ?? 0;
-
-  let rawMessages = await client.getSessionMessages(sessionId, { limit, offset });
-
-  // When a long tool run inserts many rows, the latest page can contain tool results but miss
-  // the corresponding assistant tool_call row, which breaks modal reconstruction after session switch.
-  if (offset === 0 && limit > 0) {
-    const seenIds = new Set<string>(rawMessages.map((message: any) => String(message?.id || '')));
-    let nextOffset = offset + rawMessages.length;
-
-    for (let attempt = 0; attempt < 4; attempt += 1) {
-      const missingToolCallIds = collectMissingAssistantToolCallIds(rawMessages);
-      if (missingToolCallIds.length === 0) break;
-
-      const older = await client.getSessionMessages(sessionId, { limit, offset: nextOffset });
-      if (!Array.isArray(older) || older.length === 0) break;
-      nextOffset += older.length;
-
-      const dedupOlder = older.filter((message: any) => {
-        const id = String(message?.id || '');
-        if (!id || seenIds.has(id)) return false;
-        seenIds.add(id);
-        return true;
-      });
-      if (dedupOlder.length === 0) break;
-
-      rawMessages = [...dedupOlder, ...rawMessages];
-    }
+const normalizeContentSegmentsArray = (value: any): any[] => {
+  const parsed = parseMaybeJson(value);
+  if (!Array.isArray(parsed)) {
+    return [];
   }
 
-  const parsedMessages = rawMessages.map((message: any) => {
-    let parsedMetadata = undefined;
-    if (message.metadata) {
-      try {
-        parsedMetadata = typeof message.metadata === 'string' ? JSON.parse(message.metadata) : message.metadata;
-      } catch (error) {
-        console.warn('Failed to parse message metadata:', error);
-        parsedMetadata = {};
+  return parsed
+    .map((segment: any) => {
+      if (!segment || typeof segment !== 'object') {
+        return null;
       }
-    }
 
-    let parsedTopLevelToolCalls = undefined;
-    if (message.toolCalls) {
-      try {
-        parsedTopLevelToolCalls = typeof message.toolCalls === 'string' ? JSON.parse(message.toolCalls) : message.toolCalls;
-      } catch (error) {
-        console.warn('Failed to parse top-level toolCalls:', error);
+      const rawType = String(segment.type || '').trim().toLowerCase();
+      const normalizedType =
+        rawType === 'tool' || rawType === 'toolcall'
+          ? 'tool_call'
+          : rawType === 'tool_call' || rawType === 'thinking' || rawType === 'text'
+            ? rawType
+            : '';
+
+      if (!normalizedType) {
+        return null;
       }
-    }
+
+      if (normalizedType === 'tool_call') {
+        const toolCallId =
+          segment.toolCallId ||
+          segment.tool_call_id ||
+          segment.tool_callId ||
+          segment.toolCallID ||
+          segment.tool_call_ID;
+
+        if (!toolCallId) {
+          return null;
+        }
+
+        return {
+          type: 'tool_call',
+          toolCallId: String(toolCallId),
+        };
+      }
+
+      const content = typeof segment.content === 'string' ? segment.content : String(segment.content ?? '');
+      if (!content) {
+        return null;
+      }
+
+      return {
+        type: normalizedType,
+        content,
+      };
+    })
+    .filter(Boolean);
+};
+
+const isNonEmptyString = (value: unknown): value is string => (
+  typeof value === 'string' && value.trim().length > 0
+);
+
+const normalizeToolCallId = (value: any): string => {
+  if (!value) {
+    return '';
+  }
+  return String(value).trim();
+};
+
+const isMeaningfulReasoning = (value: unknown): value is string => {
+  if (!isNonEmptyString(value)) {
+    return false;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  return !['minimal', 'low', 'medium', 'high', 'detailed'].includes(normalized);
+};
+
+const parseMessageMetadata = (metadata: any): any => {
+  if (!metadata) {
+    return undefined;
+  }
+  if (typeof metadata !== 'string') {
+    return metadata;
+  }
+  try {
+    return JSON.parse(metadata);
+  } catch {
+    return {};
+  }
+};
+
+const normalizeDate = (value: unknown): Date => {
+  const date = new Date(value as any);
+  return Number.isNaN(date.getTime()) ? new Date() : date;
+};
+
+const normalizeAttachments = (metadata: any, messageId: string, createdAt: Date): any[] | undefined => {
+  const rawAttachments = metadata?.attachments;
+  if (!Array.isArray(rawAttachments) || rawAttachments.length === 0) {
+    return undefined;
+  }
+
+  return rawAttachments.map((attachment: any, index: number) => {
+    const mime = attachment.mimeType || attachment.mime || 'application/octet-stream';
+    const hasPreview = Boolean(attachment.preview || attachment.url);
+    const baseType = mime.startsWith('image/')
+      ? 'image'
+      : mime.startsWith('audio/')
+        ? 'audio'
+        : 'file';
+    const type = hasPreview ? (attachment.type || baseType) : (baseType === 'image' ? 'file' : baseType);
+
+    return {
+      id: attachment.id || `${messageId}_att_${index}`,
+      messageId,
+      type,
+      name: attachment.name || `attachment-${index + 1}`,
+      url: attachment.preview || attachment.url || '',
+      size: attachment.size || 0,
+      mimeType: mime,
+      createdAt,
+    };
+  });
+};
+
+const normalizeRawMessages = (rawMessages: any[], sessionId: string): Message[] => {
+  const parsedMessages = rawMessages.map((message: any) => {
+    const metadata = parseMessageMetadata(message.metadata);
+    const topLevelToolCalls = normalizeToolCallsArray(message.toolCalls ?? message.tool_calls);
 
     return {
       id: message.id,
-      sessionId: message.session_id,
+      sessionId: message.session_id ?? message.sessionId ?? sessionId,
       role: message.role as 'user' | 'assistant' | 'system' | 'tool',
-      content: message.content,
+      content: typeof message.content === 'string' ? message.content : String(message.content ?? ''),
       summary: message.summary,
-      toolCallId: message.tool_call_id,
+      toolCallId: message.tool_call_id ?? message.toolCallId,
       reasoning: message.reasoning,
-      metadata: parsedMetadata,
-      topLevelToolCalls: parsedTopLevelToolCalls,
-      createdAt: new Date(message.created_at),
-      originalMessage: message
+      metadata,
+      topLevelToolCalls,
+      createdAt: normalizeDate(message.created_at ?? message.createdAt),
     };
   });
 
   const toolResultsMap = new Map<string, { content: string; error?: string }>();
-
-  parsedMessages.forEach(msg => {
-    if (msg.role === 'tool' && msg.toolCallId) {
-      const isError = msg.metadata?.isError || false;
-      toolResultsMap.set(msg.toolCallId, {
-        content: msg.content,
-        error: isError ? msg.content : undefined
-      });
+  parsedMessages.forEach((message) => {
+    const toolCallId = normalizeToolCallId(message.toolCallId);
+    if (message.role !== 'tool' || !toolCallId) {
+      return;
     }
+
+    const isError = message.metadata?.isError || message.metadata?.is_error || false;
+    toolResultsMap.set(toolCallId, {
+      content: message.content,
+      error: isError ? message.content : undefined,
+    });
   });
 
-  const normalized = parsedMessages.map(msg => {
-    let toolCalls = undefined;
+  return parsedMessages.map((message) => {
+    let toolCalls: any[] | undefined;
+    const sourceToolCalls = message.topLevelToolCalls.length > 0
+      ? message.topLevelToolCalls
+      : normalizeToolCallsArray(message.metadata?.toolCalls ?? message.metadata?.tool_calls);
 
-    const sourceToolCalls = (msg as any).topLevelToolCalls || msg.metadata?.toolCalls;
-
-    if (msg.role === 'assistant' && sourceToolCalls && Array.isArray(sourceToolCalls)) {
-      debugLog('[Store] 处理工具调用:', { messageId: msg.id, sourceToolCalls });
+    if (message.role === 'assistant' && sourceToolCalls.length > 0) {
       toolCalls = sourceToolCalls.map((toolCall: any) => {
-        const toolCallId = toolCall.id || toolCall.tool_call_id || toolCall.toolCallId;
-        const toolResult = toolCallId ? toolResultsMap.get(String(toolCallId)) : undefined;
+        const toolCallId = normalizeToolCallId(
+          toolCall?.id || toolCall?.tool_call_id || toolCall?.toolCallId,
+        ) || `tool_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+        const toolResult = toolResultsMap.get(toolCallId);
 
         if (toolCall.function) {
-          let parsedArguments = {};
+          let parsedArguments: Record<string, any> | string = {};
           try {
             parsedArguments = typeof toolCall.function.arguments === 'string'
               ? JSON.parse(toolCall.function.arguments)
               : toolCall.function.arguments;
-          } catch (error) {
-            console.warn('Failed to parse tool call arguments:', error);
+          } catch {
             parsedArguments = {};
           }
 
           return {
-            id: toolCallId || `tool_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-            messageId: msg.id,
+            id: toolCallId,
+            messageId: message.id,
             name: toolCall.function.name,
             arguments: parsedArguments,
-            result: toolResult?.content || undefined,
-            error: toolResult?.error || undefined,
-            createdAt: msg.createdAt
+            result: toolResult?.content,
+            error: toolResult?.error,
+            createdAt: message.createdAt,
           };
         }
 
@@ -169,13 +213,13 @@ export const fetchSessionMessages = async (
           try {
             parsedArguments = JSON.parse(parsedArguments);
           } catch {
-            // keep raw string when it's not JSON
+            // keep the original string when parsing fails
           }
         }
 
         return {
-          id: toolCallId || `tool_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-          messageId: msg.id,
+          id: toolCallId,
+          messageId: message.id,
           name: toolCall.name || toolCall.tool_name || toolCall.toolName || 'unknown_tool',
           arguments: parsedArguments,
           result: toolCall.result ?? toolCall.finalResult ?? toolCall.final_result ?? toolResult?.content,
@@ -183,106 +227,464 @@ export const fetchSessionMessages = async (
           streamLog: toolCall.streamLog ?? toolCall.stream_log ?? '',
           completed: toolCall.completed === true,
           error: toolCall.error || toolResult?.error || undefined,
-          createdAt: toolCall.createdAt || toolCall.created_at || msg.createdAt,
+          createdAt: toolCall.createdAt || toolCall.created_at || message.createdAt,
         };
-      }).filter(Boolean);
-    }
-
-    const contentSegments: any[] = [];
-    const hasReasoning = typeof msg.reasoning === 'string' && msg.reasoning.trim().length > 0;
-    if (msg.role === 'assistant' && hasReasoning) {
-      contentSegments.push({ type: 'thinking', content: msg.reasoning });
-    }
-    if (typeof msg.content === 'string' && msg.content.trim().length > 0) {
-      contentSegments.push({ type: 'text', content: msg.content });
-    }
-    if (toolCalls && Array.isArray(toolCalls) && toolCalls.length > 0) {
-      toolCalls.forEach((tc: any) => {
-        contentSegments.push({ type: 'tool_call', toolCallId: tc.id });
       });
     }
 
-    let normalizedAttachments: any[] | undefined = undefined;
-    try {
-      const rawAtts: any[] = (msg.metadata && (msg.metadata as any).attachments) || [];
-      if (Array.isArray(rawAtts) && rawAtts.length > 0) {
-        normalizedAttachments = rawAtts.map((a: any, idx: number) => {
-          const mime = a.mimeType || a.mime || 'application/octet-stream';
-          const hasPreview = Boolean(a.preview || a.url);
-          const baseType = mime.startsWith('image/') ? 'image' : (mime.startsWith('audio/') ? 'audio' : 'file');
-          const type = hasPreview ? (a.type || baseType) : (baseType === 'image' ? 'file' : baseType);
-          return {
-            id: a.id || `${msg.id}_att_${idx}`,
-            messageId: msg.id,
-            type,
-            name: a.name || `attachment-${idx + 1}`,
-            url: a.preview || a.url || '',
-            size: a.size || 0,
-            mimeType: mime,
-            createdAt: msg.createdAt
-          };
-        });
-      }
-    } catch (_) {}
+    const existingContentSegments = normalizeContentSegmentsArray(
+      message.metadata?.contentSegments ?? message.metadata?.content_segments,
+    );
+
+    const fallbackContentSegments: any[] = [];
+    if (message.role === 'assistant' && isMeaningfulReasoning(message.reasoning)) {
+      fallbackContentSegments.push({ type: 'thinking', content: message.reasoning });
+    }
+    if (toolCalls && toolCalls.length > 0) {
+      toolCalls.forEach((toolCall) => {
+        if (toolCall?.id) {
+          fallbackContentSegments.push({ type: 'tool_call', toolCallId: toolCall.id });
+        }
+      });
+    }
+    if (isNonEmptyString(message.content)) {
+      fallbackContentSegments.push({ type: 'text', content: message.content });
+    }
+
+    const attachments = normalizeAttachments(message.metadata, message.id, message.createdAt);
 
     return {
-      id: msg.id,
-      sessionId: msg.sessionId,
-      role: msg.role,
-      content: msg.content,
-      rawContent: msg.summary,
+      id: message.id,
+      sessionId: message.sessionId,
+      role: message.role,
+      content: message.content,
+      rawContent: message.summary,
       tokensUsed: undefined,
       status: 'completed' as const,
-      createdAt: msg.createdAt,
+      createdAt: message.createdAt,
       updatedAt: undefined,
-      toolCallId: msg.toolCallId,
+      toolCallId: message.toolCallId,
       metadata: {
-        ...msg.metadata,
-        ...(normalizedAttachments ? { attachments: normalizedAttachments } : {}),
-        toolCalls: toolCalls,
-        contentSegments: contentSegments.length > 0 ? contentSegments : msg.metadata?.contentSegments
+        ...message.metadata,
+        ...(attachments ? { attachments } : {}),
+        toolCalls,
+        contentSegments: existingContentSegments.length > 0 ? existingContentSegments : fallbackContentSegments,
+      },
+    };
+  });
+};
+
+
+
+const countThinkingSegments = (message: Message): number => {
+  const segments = message.metadata?.contentSegments;
+  if (!Array.isArray(segments) || segments.length === 0) {
+    return 0;
+  }
+
+  return segments.filter((segment: any) => (
+    segment?.type === 'thinking' && isMeaningfulReasoning(segment?.content)
+  )).length;
+};
+
+const isSessionSummaryMessage = (message: Message): boolean => (
+  message.role === 'assistant' && message.metadata?.type === 'session_summary'
+);
+
+const ensureCompactHistoryShape = (messages: Message[]): Message[] => {
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return messages;
+  }
+
+  const hasServerCompactMarkers = messages.some((message) => (
+    message.role === 'user' && Boolean(message.metadata?.historyProcess)
+  ));
+  if (hasServerCompactMarkers) {
+    return messages
+      .filter((message) => message.metadata?.historyProcessPlaceholder !== true)
+      .map((message) => {
+        if (!message.metadata?.historyFinalForUserMessageId) {
+          return message;
+        }
+
+        return {
+          ...message,
+          metadata: {
+            ...(message.metadata || {}),
+            historyProcessExpanded: message.metadata?.historyProcessExpanded === true,
+          },
+        };
+      });
+  }
+
+  const userIndexes: number[] = [];
+  messages.forEach((message, index) => {
+    if (message.role === 'user') {
+      userIndexes.push(index);
+    }
+  });
+
+  if (userIndexes.length === 0) {
+    return messages;
+  }
+
+  const result: Message[] = [];
+
+  userIndexes.forEach((userIndex, userPos) => {
+    const nextUserIndex = userPos + 1 < userIndexes.length
+      ? userIndexes[userPos + 1]
+      : messages.length;
+    const userMessage = messages[userIndex];
+    const userMessageId = userMessage.id;
+
+    let finalAssistantIndex = -1;
+    for (let i = nextUserIndex - 1; i > userIndex; i -= 1) {
+      const candidate = messages[i];
+      if (candidate.role !== 'assistant' || isSessionSummaryMessage(candidate)) {
+        continue;
       }
+      finalAssistantIndex = i;
+      if (isNonEmptyString(candidate.content)) {
+        break;
+      }
+    }
+
+    let toolCallCount = 0;
+    let thinkingCount = 0;
+    const inlineProcessMessages: Message[] = [];
+
+    for (let i = userIndex + 1; i < nextUserIndex; i += 1) {
+      const message = messages[i];
+      if (message.role === 'assistant' && !isSessionSummaryMessage(message)) {
+        toolCallCount += message.metadata?.toolCalls?.length || 0;
+        thinkingCount += countThinkingSegments(message);
+      }
+
+      if (i !== finalAssistantIndex && (message.role === 'assistant' || message.role === 'tool')) {
+        if (message.role === 'assistant' && isSessionSummaryMessage(message)) {
+          continue;
+        }
+
+        inlineProcessMessages.push({
+          ...message,
+          metadata: {
+            ...(message.metadata || {}),
+            hidden: false,
+            historyProcessPlaceholder: false,
+            historyProcessLoaded: true,
+            historyProcessUserMessageId: userMessageId,
+          },
+        });
+      }
+    }
+
+    const processMessageCount = inlineProcessMessages.length;
+
+    result.push({
+      ...userMessage,
+      metadata: {
+        ...(userMessage.metadata || {}),
+        historyProcess: {
+          hasProcess: processMessageCount > 0,
+          toolCallCount,
+          thinkingCount,
+          processMessageCount,
+          userMessageId,
+          finalAssistantMessageId: finalAssistantIndex >= 0 ? messages[finalAssistantIndex].id : null,
+        },
+        ...(processMessageCount > 0 ? { historyProcessInlineMessages: inlineProcessMessages } : {}),
+      },
+    });
+
+    if (finalAssistantIndex < 0) {
+      return;
+    }
+
+    const finalAssistant = messages[finalAssistantIndex];
+    const textSegments = Array.isArray(finalAssistant.metadata?.contentSegments)
+      ? finalAssistant.metadata?.contentSegments.filter((segment: any) => segment?.type === 'text')
+      : [];
+
+    result.push({
+      ...finalAssistant,
+      metadata: {
+        ...(finalAssistant.metadata || {}),
+        toolCalls: [],
+        contentSegments: textSegments,
+        hidden: false,
+        historyFinalForUserMessageId: userMessageId,
+        historyProcessExpanded: false,
+      },
+    });
+  });
+
+  return result;
+};
+
+export const fetchSessionMessages = async (
+  client: ApiClient,
+  sessionId: string,
+  options: { limit?: number; offset?: number } = { limit: 50, offset: 0 },
+): Promise<Message[]> => {
+  const limit = options.limit ?? 50;
+  const offset = options.offset ?? 0;
+
+  const rawMessages = await client.getSessionMessages(sessionId, {
+    limit,
+    offset,
+    compact: true,
+  });
+
+  const normalized = ensureCompactHistoryShape(normalizeRawMessages(rawMessages, sessionId));
+  debugLog('[Store] Loaded compact session messages', {
+    sessionId,
+    requested: { limit, offset },
+    received: normalized.length,
+  });
+  return normalized;
+};
+
+export const fetchTurnProcessMessages = async (
+  client: ApiClient,
+  sessionId: string,
+  userMessageId: string,
+): Promise<Message[]> => {
+  if (!userMessageId) {
+    return [];
+  }
+
+  const rawMessages = await client.getSessionTurnProcessMessages(sessionId, userMessageId);
+  const normalized = normalizeRawMessages(rawMessages, sessionId);
+
+  return normalized.map((message) => ({
+    ...message,
+    metadata: {
+      ...message.metadata,
+      hidden: false,
+      historyProcessPlaceholder: false,
+      historyProcessLoaded: true,
+      historyProcessUserMessageId: userMessageId,
+      historyProcessExpanded: true,
+    },
+  }));
+};
+
+
+export type TurnProcessState = {
+  expanded: boolean;
+  loaded: boolean;
+  loading: boolean;
+};
+
+const withUserProcessMeta = (
+  message: Message,
+  state?: Partial<TurnProcessState>,
+): Message => {
+  if (message.role !== 'user') {
+    return message;
+  }
+
+  const historyProcess = message.metadata?.historyProcess;
+  if (!historyProcess || typeof historyProcess !== 'object') {
+    return message;
+  }
+
+  const nextHistoryProcess = {
+    ...historyProcess,
+    ...(state || {}),
+  };
+
+  return {
+    ...message,
+    metadata: {
+      ...(message.metadata || {}),
+      historyProcess: nextHistoryProcess,
+    },
+  };
+};
+
+export const setTurnProcessExpanded = (
+  messages: Message[],
+  userMessageId: string,
+  expanded: boolean,
+): Message[] => {
+  return messages.map((message) => {
+    if (message.id === userMessageId) {
+      return withUserProcessMeta(message, { expanded });
+    }
+
+    const finalForUserMessageId = message.metadata?.historyFinalForUserMessageId;
+    if (finalForUserMessageId === userMessageId) {
+      return {
+        ...message,
+        metadata: {
+          ...(message.metadata || {}),
+          historyProcessExpanded: expanded,
+        },
+      };
+    }
+
+    const turnUserMessageId = message.metadata?.historyProcessUserMessageId;
+    if (turnUserMessageId !== userMessageId) {
+      return message;
+    }
+
+    return {
+      ...message,
+      metadata: {
+        ...(message.metadata || {}),
+        hidden: !expanded,
+        historyProcessExpanded: expanded,
+      },
+    };
+  });
+};
+
+export const mergeTurnProcessMessages = (
+  messages: Message[],
+  userMessageId: string,
+  processMessages: Message[],
+  expanded: boolean,
+): Message[] => {
+  const processById = new Map<string, Message>();
+  processMessages.forEach((message) => {
+    processById.set(message.id, message);
+  });
+
+  const merged = messages.map((message) => {
+    if (message.id === userMessageId) {
+      return withUserProcessMeta(message, { expanded, loaded: true, loading: false });
+    }
+
+    const finalForUserMessageId = message.metadata?.historyFinalForUserMessageId;
+    if (finalForUserMessageId === userMessageId) {
+      return {
+        ...message,
+        metadata: {
+          ...(message.metadata || {}),
+          historyProcessExpanded: expanded,
+        },
+      };
+    }
+
+    const turnUserMessageId = message.metadata?.historyProcessUserMessageId;
+    if (turnUserMessageId !== userMessageId) {
+      return message;
+    }
+
+    const hydrated = processById.get(message.id) || message;
+    return {
+      ...hydrated,
+      metadata: {
+        ...(hydrated.metadata || {}),
+        hidden: !expanded,
+        historyProcessPlaceholder: false,
+        historyProcessLoaded: true,
+        historyProcessUserMessageId: userMessageId,
+        historyProcessExpanded: expanded,
+      },
     };
   });
 
-  const toHide = new Set<string>();
-  for (let i = 0; i < normalized.length; i++) {
-    const m = normalized[i];
-    if (m?.metadata?.type === 'session_summary') {
-      const summaryText = (typeof m.rawContent === 'string' && m.rawContent.length > 0)
-        ? m.rawContent
-        : (typeof (m.metadata as any)?.summary === 'string' && (m.metadata as any).summary.length > 0)
-          ? (m.metadata as any).summary
-          : (typeof m.content === 'string' ? m.content : '');
-
-      let targetIdx = -1;
-      for (let j = i + 1; j < normalized.length; j++) {
-        if (normalized[j]?.role === 'assistant') { targetIdx = j; break; }
-      }
-      if (targetIdx == -1) {
-        for (let j = i - 1; j >= 0; j--) {
-          if (normalized[j]?.role === 'assistant') { targetIdx = j; break; }
-        }
-      }
-
-      if (targetIdx !== -1) {
-        const target = normalized[targetIdx];
-        const header = '【上下文摘要】\n';
-        const segs = (target.metadata?.contentSegments || []).slice();
-        const lastIdx = segs.length - 1;
-        if (lastIdx >= 0 && segs[lastIdx].type === 'thinking' && String((segs[lastIdx] as any).content || '').startsWith(header)) {
-          (segs[lastIdx] as any).content = header + String(summaryText || '');
-        } else {
-          segs.push({ type: 'thinking', content: header + String(summaryText || '') });
-        }
-        target.metadata = target.metadata || {} as any;
-        (target.metadata as any).contentSegments = segs;
-        m.metadata = (m.metadata || {}) as any;
-        (m.metadata as any).hidden = true;
-        toHide.add(m.id);
-      }
-    }
+  const existingIds = new Set(merged.map((message) => message.id));
+  const missingMessages = processMessages.filter((message) => !existingIds.has(message.id));
+  if (missingMessages.length === 0) {
+    return merged;
   }
 
-  return normalized;
+  const insertionIndex = merged.findIndex(
+    (message) => message.metadata?.historyFinalForUserMessageId === userMessageId,
+  );
+
+  const normalizedMissing = missingMessages.map((message) => ({
+    ...message,
+    metadata: {
+      ...(message.metadata || {}),
+      hidden: !expanded,
+      historyProcessPlaceholder: false,
+      historyProcessLoaded: true,
+      historyProcessUserMessageId: userMessageId,
+      historyProcessExpanded: expanded,
+    },
+  }));
+
+  if (insertionIndex < 0) {
+    return [...merged, ...normalizedMissing];
+  }
+
+  return [
+    ...merged.slice(0, insertionIndex),
+    ...normalizedMissing,
+    ...merged.slice(insertionIndex),
+  ];
+};
+
+export const applyTurnProcessCache = (
+  messages: Message[],
+  processCache?: Record<string, Message[]>,
+  processState?: Record<string, TurnProcessState>,
+): Message[] => {
+  if (!processCache && !processState) {
+    return messages;
+  }
+
+  return messages.map((message) => {
+    if (message.role === 'user') {
+      const userMessageId = message.id;
+      const state = processState?.[userMessageId];
+      if (!state) {
+        return message;
+      }
+      return withUserProcessMeta(message, {
+        expanded: state.expanded,
+        loading: state.loading,
+        loaded: state.loaded,
+      });
+    }
+
+    const finalForUserMessageId = message.metadata?.historyFinalForUserMessageId;
+    if (finalForUserMessageId) {
+      const turnState = processState?.[finalForUserMessageId];
+      return {
+        ...message,
+        metadata: {
+          ...(message.metadata || {}),
+          historyProcessExpanded: turnState?.expanded === true,
+        },
+      };
+    }
+
+    const turnUserMessageId = message.metadata?.historyProcessUserMessageId;
+    if (!turnUserMessageId) {
+      return message;
+    }
+
+    const turnState = processState?.[turnUserMessageId];
+    const expanded = turnState?.expanded === true;
+    const loaded = turnState?.loaded === true;
+    const visible = expanded && loaded;
+    const cached = processCache?.[turnUserMessageId]?.find((item) => item.id === message.id);
+    if (!cached) {
+      return {
+        ...message,
+        metadata: {
+          ...(message.metadata || {}),
+          hidden: !visible,
+          historyProcessExpanded: expanded,
+        },
+      };
+    }
+
+    return {
+      ...cached,
+      metadata: {
+        ...(cached.metadata || {}),
+        hidden: !visible,
+        historyProcessUserMessageId: turnUserMessageId,
+        historyProcessLoaded: true,
+        historyProcessPlaceholder: false,
+        historyProcessExpanded: expanded,
+      },
+    };
+  });
 };

@@ -9,6 +9,7 @@ import {
   getSessionIPC,
   deleteSessionIPC,
   getSessionMessagesIPC,
+  getSessionTurnProcessMessagesIPC,
   createMessageIPC,
   getUserSettingsIPC,
   updateUserSettingsIPC,
@@ -124,15 +125,28 @@ class ApiClient {
     });
   }
 
-  async getSessionMessages(sessionId: string, params?: { limit?: number; offset?: number }): Promise<any[]> {
+  async getSessionMessages(sessionId: string, params?: { limit?: number; offset?: number; compact?: boolean }): Promise<any[]> {
     if (ipcAvailable()) {
       return getSessionMessagesIPC(sessionId, params);
     }
     const qs: string[] = [];
     if (params?.limit !== undefined) qs.push(`limit=${encodeURIComponent(String(params.limit))}`);
     if (params?.offset !== undefined) qs.push(`offset=${encodeURIComponent(String(params.offset))}`);
+    if (params?.compact !== undefined) qs.push(`compact=${params.compact ? 'true' : 'false'}`);
     const query = qs.length ? `?${qs.join('&')}` : '';
     return this.request<any[]>(`/sessions/${sessionId}/messages${query}`);
+  }
+
+  async getSessionTurnProcessMessages(sessionId: string, userMessageId: string): Promise<any[]> {
+    if (ipcAvailable()) {
+      try {
+        return await getSessionTurnProcessMessagesIPC(sessionId, userMessageId);
+      } catch (_) {
+        // Fallback to HTTP when IPC bridge has not implemented this API yet.
+      }
+    }
+
+    return this.request<any[]>(`/sessions/${sessionId}/turns/${encodeURIComponent(userMessageId)}/process`);
   }
 
   // 项目相关API

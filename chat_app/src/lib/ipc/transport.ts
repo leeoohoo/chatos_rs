@@ -173,10 +173,16 @@ export async function deleteSessionIPC(id: string) {
   throw new Error('IPC deleteSession not available');
 }
 
-export async function getSessionMessagesIPC(sessionId: string, opts?: { limit?: number; offset?: number }) {
+export async function getSessionMessagesIPC(sessionId: string, opts?: { limit?: number; offset?: number; compact?: boolean }) {
   const api = (window as any).chatAPI;
   if (api?.getSessionMessages) return api.getSessionMessages(sessionId, opts || {});
   throw new Error('IPC getSessionMessages not available');
+}
+
+export async function getSessionTurnProcessMessagesIPC(sessionId: string, userMessageId: string) {
+  const api = (window as any).chatAPI;
+  if (api?.getSessionTurnProcessMessages) return api.getSessionTurnProcessMessages(sessionId, userMessageId);
+  throw new Error('IPC getSessionTurnProcessMessages not available');
 }
 
 export async function createMessageIPC(payload: any) {

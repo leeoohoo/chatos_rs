@@ -131,6 +131,7 @@ interface MessageItemProps {
   isStreaming?: boolean;
   onEdit?: (messageId: string, content: string) => void;
   onDelete?: (messageId: string) => void;
+  onToggleTurnProcess?: (userMessageId: string) => void;
   allMessages?: Message[]; // 添加所有消息的引用
   toolResultById?: Map<string, Message>;
   toolResultKey?: string;
@@ -146,6 +147,7 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
   isStreaming = false,
   onEdit,
   onDelete,
+  onToggleTurnProcess,
   allMessages = [],
   toolResultById,
   customRenderer,
@@ -170,6 +172,20 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
   const isAssistant = message.role === 'assistant';
   const isSystem = message.role === 'system';
   const isTool = message.role === 'tool';
+
+  const historyProcess = isUser ? (message.metadata?.historyProcess as any) : null;
+  const hasHistoryProcess = Boolean(historyProcess?.hasProcess);
+  const historyProcessExpanded = historyProcess?.expanded === true;
+  const historyProcessLoading = historyProcess?.loading === true;
+  const historyToolCount = Number(historyProcess?.toolCallCount || 0);
+  const historyThinkingCount = Number(historyProcess?.thinkingCount || 0);
+
+  const turnProcessExpanded = message.metadata?.historyProcessExpanded === true;
+  const collapseAssistantProcessByDefault = (
+    isAssistant
+    && Boolean(message.metadata?.historyFinalForUserMessageId || message.metadata?.historyProcessUserMessageId)
+    && !turnProcessExpanded
+  );
 
   // 隐藏tool角色的消息，因为它们应该作为工具调用的结果显示
   if (isTool) {
@@ -264,6 +280,29 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
         )}
 
         {/* 特殊渲染：会话摘要提示 */}
+        {isUser && hasHistoryProcess && (
+          <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
+            <button
+              type="button"
+              onClick={() => onToggleTurnProcess?.(message.id)}
+              disabled={historyProcessLoading || !onToggleTurnProcess}
+              className="px-2 py-0.5 rounded border border-border bg-muted text-muted-foreground hover:text-foreground hover:bg-accent disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              {historyProcessLoading
+                ? 'Loading...'
+                : historyProcessExpanded
+                  ? 'Hide process'
+                  : 'Show process'}
+            </button>
+            <span className="px-2 py-0.5 rounded bg-muted text-muted-foreground">
+              Tools: {historyToolCount}
+            </span>
+            <span className="px-2 py-0.5 rounded bg-muted text-muted-foreground">
+              Thinking: {historyThinkingCount}
+            </span>
+          </div>
+        )}
+
         {message.metadata?.type === 'session_summary' && (
           <div className="mb-3 border border-amber-300 dark:border-amber-600/50 bg-amber-50 dark:bg-amber-950/20 rounded-md p-3">
             <div className="text-xs text-amber-900 dark:text-amber-200 font-medium mb-1">
@@ -348,6 +387,11 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
                       j += 1;
                     }
 
+                    if (collapseAssistantProcessByDefault) {
+                      index = j;
+                      continue;
+                    }
+
                     if (groupedToolCalls.length > 0) {
                       nodes.push(
                         <ToolCallTimeline
@@ -378,13 +422,18 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
                   }
 
                   if (segment.type === 'thinking') {
+                    if (collapseAssistantProcessByDefault) {
+                      index += 1;
+                      continue;
+                    }
+
                     nodes.push(
                       <details
                         key={`thinking-${index}`}
                         className="group border border-gray-200 dark:border-gray-700 rounded-md bg-muted px-3 py-2"
                       >
                         <summary className="cursor-pointer text-xs text-gray-500 dark:text-gray-400 select-none">
-                          思考过程
+                          Thinking
                         </summary>
                         <div className="mt-1">
                           <MarkdownRenderer
@@ -421,7 +470,7 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
                   )}
                   
                   {/* 渲染工具调用（历史消息兼容） - 修复：确保工具调用总是被渲染 */}
-                  {toolCalls.length > 0 && (
+                  {!collapseAssistantProcessByDefault && toolCalls.length > 0 && (
                     <div className="space-y-0.5">
                       <ToolCallTimeline
                         toolCalls={toolCalls as ToolCall[]}
@@ -558,7 +607,14 @@ export const MessageItem = memo(MessageItemComponent, (prevProps, nextProps) => 
     const hidden = (meta as any).hidden ? "1" : "0";
     const currentSegmentIndex = String(meta.currentSegmentIndex ?? "");
     const contentSegmentsKey = getContentSegmentsKey(meta);
-    return `${attachmentsLen}|${summary}|${model}|${hidden}|${currentSegmentIndex}|${contentSegmentsKey}`;
+    const process = (meta as any).historyProcess || {};
+    const processKey = `${process.hasProcess ? '1' : '0'}:${process.toolCallCount ?? 0}:${process.thinkingCount ?? 0}:${process.expanded ? '1' : '0'}:${process.loading ? '1' : '0'}:${process.loaded ? '1' : '0'}`;
+    const processUserId = String((meta as any).historyProcessUserMessageId ?? "");
+    const processPlaceholder = (meta as any).historyProcessPlaceholder ? "1" : "0";
+    const processLoaded = (meta as any).historyProcessLoaded ? "1" : "0";
+    const processExpanded = (meta as any).historyProcessExpanded ? "1" : "0";
+    const finalForUser = String((meta as any).historyFinalForUserMessageId ?? "");
+    return `${attachmentsLen}|${summary}|${model}|${hidden}|${currentSegmentIndex}|${contentSegmentsKey}|${processKey}|${processUserId}|${processPlaceholder}|${processLoaded}|${processExpanded}|${finalForUser}`;
   };
 
   // 比较关键属性

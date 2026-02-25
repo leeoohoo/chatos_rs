@@ -10,6 +10,7 @@ export const MessageList: React.FC<MessageListProps> = ({
   isStreaming = false,
   hasMore = false,
   onLoadMore,
+  onToggleTurnProcess,
   onMessageEdit,
   onMessageDelete,
   customRenderer,
@@ -178,6 +179,7 @@ export const MessageList: React.FC<MessageListProps> = ({
             isStreaming={isStreaming && index === lastVisibleIndex}
             onEdit={onMessageEdit}
             onDelete={onMessageDelete}
+            onToggleTurnProcess={onToggleTurnProcess}
             allMessages={messages}
             toolResultById={toolResultById}
             toolResultKey={toolResultKeyByMessageId.get(message.id) || ''}

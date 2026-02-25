@@ -1,7 +1,7 @@
 import type { Session } from '../../../types';
 import type ApiClient from '../../api/client';
 import { fetchSession } from '../helpers/sessions';
-import { fetchSessionMessages } from '../helpers/messages';
+import { applyTurnProcessCache, fetchSessionMessages } from '../helpers/messages';
 import { debugLog } from '@/lib/utils';
 
 const cloneStreamingMessageDraft = <T,>(value: T): T => {
@@ -17,6 +17,22 @@ const cloneStreamingMessageDraft = <T,>(value: T): T => {
     return JSON.parse(JSON.stringify(value));
   } catch {
     return value;
+  }
+};
+
+const ensureSessionTurnMaps = (state: any, sessionId: string) => {
+  if (!state.sessionTurnProcessState) {
+    state.sessionTurnProcessState = {};
+  }
+  if (!state.sessionTurnProcessState[sessionId]) {
+    state.sessionTurnProcessState[sessionId] = {};
+  }
+
+  if (!state.sessionTurnProcessCache) {
+    state.sessionTurnProcessCache = {};
+  }
+  if (!state.sessionTurnProcessCache[sessionId]) {
+    state.sessionTurnProcessCache[sessionId] = {};
   }
 };
 
@@ -234,6 +250,14 @@ export function createSessionActions({
             }
           }
 
+          ensureSessionTurnMaps(state, sessionId);
+
+          nextMessages = applyTurnProcessCache(
+            nextMessages,
+            state.sessionTurnProcessCache?.[sessionId],
+            state.sessionTurnProcessState?.[sessionId],
+          );
+
           state.currentSessionId = sessionId;
           (state as any).currentSession = session;
           state.messages = nextMessages;
@@ -297,6 +321,12 @@ export function createSessionActions({
           }
           if (state.sessionChatState && sessionId in state.sessionChatState) {
             delete state.sessionChatState[sessionId];
+          }
+          if (state.sessionTurnProcessState && sessionId in state.sessionTurnProcessState) {
+            delete state.sessionTurnProcessState[sessionId];
+          }
+          if (state.sessionTurnProcessCache && sessionId in state.sessionTurnProcessCache) {
+            delete state.sessionTurnProcessCache[sessionId];
           }
           if (state.currentSessionId === sessionId) {
             state.currentSessionId = null;

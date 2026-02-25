@@ -40,6 +40,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     loadProjects,
     // selectSession,
     loadMoreMessages,
+    toggleTurnProcess,
     sendMessage,
     clearError,
     sidebarOpen,
@@ -714,6 +715,13 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     }
   }, [currentSession, loadMoreMessages]);
 
+  const handleToggleTurnProcess = useCallback((userMessageId: string) => {
+    if (!userMessageId) {
+      return;
+    }
+    void toggleTurnProcess(userMessageId);
+  }, [toggleTurnProcess]);
+
   const handleTaskReviewConfirm = useCallback(async (drafts: TaskReviewDraft[]) => {
     if (!activeTaskReviewPanel) {
       return;
@@ -926,6 +934,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                         isStreaming={chatIsStreaming}
                         hasMore={hasMoreMessages}
                         onLoadMore={handleLoadMore}
+                        onToggleTurnProcess={handleToggleTurnProcess}
                         customRenderer={customRenderer}
                       />
                     ) : (

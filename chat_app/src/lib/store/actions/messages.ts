@@ -1,6 +1,12 @@
 import type { Message } from '../../../types';
 import type ApiClient from '../../api/client';
-import { fetchSessionMessages } from '../helpers/messages';
+import {
+  applyTurnProcessCache,
+  fetchSessionMessages,
+  fetchTurnProcessMessages,
+  mergeTurnProcessMessages,
+  setTurnProcessExpanded,
+} from '../helpers/messages';
 
 const cloneStreamingMessageDraft = <T,>(value: T): T => {
   try {
@@ -24,6 +30,34 @@ interface Deps {
   client: ApiClient;
 }
 
+const countLoadedBaseMessages = (messages: any[]): number => (
+  (messages || []).filter((message: any) => !message?.metadata?.historyProcessUserMessageId).length
+);
+
+const getInlineTurnProcessMessages = (messages: any[], userMessageId: string): Message[] => {
+  const userMessage = (messages || []).find((message: any) => (
+    message?.id === userMessageId && message?.role === 'user'
+  ));
+  const inlineMessages = userMessage?.metadata?.historyProcessInlineMessages;
+  return Array.isArray(inlineMessages) ? inlineMessages : [];
+};
+
+const ensureSessionTurnMaps = (state: any, sessionId: string) => {
+  if (!state.sessionTurnProcessState) {
+    state.sessionTurnProcessState = {};
+  }
+  if (!state.sessionTurnProcessState[sessionId]) {
+    state.sessionTurnProcessState[sessionId] = {};
+  }
+
+  if (!state.sessionTurnProcessCache) {
+    state.sessionTurnProcessCache = {};
+  }
+  if (!state.sessionTurnProcessCache[sessionId]) {
+    state.sessionTurnProcessCache[sessionId] = {};
+  }
+};
+
 export function createMessageActions({ set, get, client }: Deps) {
   return {
     loadMessages: async (sessionId: string) => {
@@ -36,6 +70,8 @@ export function createMessageActions({ set, get, client }: Deps) {
         const messages = await fetchSessionMessages(client, sessionId, { limit: 50, offset: 0 });
 
         set((state: any) => {
+          ensureSessionTurnMaps(state, sessionId);
+
           const chatState = state.sessionChatState?.[sessionId];
           const draftMessage = state.sessionStreamingMessageDrafts?.[sessionId];
           let nextMessages = messages;
@@ -46,6 +82,12 @@ export function createMessageActions({ set, get, client }: Deps) {
               nextMessages = [...nextMessages, cloneStreamingMessageDraft(draftMessage)];
             }
           }
+
+          nextMessages = applyTurnProcessCache(
+            nextMessages,
+            state.sessionTurnProcessCache?.[sessionId],
+            state.sessionTurnProcessState?.[sessionId],
+          );
 
           state.messages = nextMessages;
           state.isLoading = false;
@@ -63,12 +105,20 @@ export function createMessageActions({ set, get, client }: Deps) {
     loadMoreMessages: async (sessionId: string) => {
       try {
         const current = get();
-        const offset = current.messages.length;
+        const offset = countLoadedBaseMessages(current.messages);
         const page = await fetchSessionMessages(client, sessionId, { limit: 50, offset });
         set((state: any) => {
+          ensureSessionTurnMaps(state, sessionId);
+
           const existingIds = new Set(state.messages.map((m: any) => m.id));
           const older = page.filter((m: any) => !existingIds.has(m.id));
-          state.messages = [...older, ...state.messages];
+          const merged = [...older, ...state.messages];
+
+          state.messages = applyTurnProcessCache(
+            merged,
+            state.sessionTurnProcessCache?.[sessionId],
+            state.sessionTurnProcessState?.[sessionId],
+          );
           state.hasMoreMessages = page.length >= 50;
         });
       } catch (error) {
@@ -77,6 +127,112 @@ export function createMessageActions({ set, get, client }: Deps) {
           state.error = error instanceof Error ? error.message : 'Failed to load more messages';
         });
       }
+    },
+
+    toggleTurnProcess: async (userMessageId: string) => {
+      const snapshot = get();
+      const sessionId = snapshot.currentSessionId;
+      if (!sessionId || !userMessageId) {
+        return;
+      }
+
+      const currentState = snapshot.sessionTurnProcessState?.[sessionId]?.[userMessageId] || {
+        expanded: false,
+        loaded: false,
+        loading: false,
+      };
+      const nextExpanded = !currentState.expanded;
+
+      if (nextExpanded && !currentState.loaded && !currentState.loading) {
+        const inlineProcessMessages = getInlineTurnProcessMessages(snapshot.messages, userMessageId);
+        if (inlineProcessMessages.length > 0) {
+          set((state: any) => {
+            ensureSessionTurnMaps(state, sessionId);
+            state.sessionTurnProcessCache[sessionId][userMessageId] = inlineProcessMessages;
+            state.sessionTurnProcessState[sessionId][userMessageId] = {
+              expanded: true,
+              loaded: true,
+              loading: false,
+            };
+
+            state.messages = mergeTurnProcessMessages(
+              state.messages,
+              userMessageId,
+              inlineProcessMessages,
+              true,
+            );
+          });
+          return;
+        }
+
+        set((state: any) => {
+          ensureSessionTurnMaps(state, sessionId);
+          state.sessionTurnProcessState[sessionId][userMessageId] = {
+            expanded: true,
+            loaded: false,
+            loading: true,
+          };
+          state.messages = applyTurnProcessCache(
+            state.messages,
+            state.sessionTurnProcessCache?.[sessionId],
+            state.sessionTurnProcessState?.[sessionId],
+          );
+        });
+
+        try {
+          const processMessages = await fetchTurnProcessMessages(client, sessionId, userMessageId);
+          set((state: any) => {
+            ensureSessionTurnMaps(state, sessionId);
+            state.sessionTurnProcessCache[sessionId][userMessageId] = processMessages;
+            state.sessionTurnProcessState[sessionId][userMessageId] = {
+              expanded: true,
+              loaded: true,
+              loading: false,
+            };
+
+            state.messages = mergeTurnProcessMessages(
+              state.messages,
+              userMessageId,
+              processMessages,
+              true,
+            );
+          });
+        } catch (error) {
+          console.error('Failed to load turn process messages:', error);
+          set((state: any) => {
+            ensureSessionTurnMaps(state, sessionId);
+            state.sessionTurnProcessState[sessionId][userMessageId] = {
+              expanded: false,
+              loaded: false,
+              loading: false,
+            };
+            state.messages = applyTurnProcessCache(
+              setTurnProcessExpanded(state.messages, userMessageId, false),
+              state.sessionTurnProcessCache?.[sessionId],
+              state.sessionTurnProcessState?.[sessionId],
+            );
+            state.error = error instanceof Error ? error.message : 'Failed to load turn process messages';
+          });
+        }
+
+        return;
+      }
+
+      set((state: any) => {
+        ensureSessionTurnMaps(state, sessionId);
+        state.sessionTurnProcessState[sessionId][userMessageId] = {
+          expanded: nextExpanded,
+          loaded: currentState.loaded,
+          loading: false,
+        };
+
+        const toggled = setTurnProcessExpanded(state.messages, userMessageId, nextExpanded);
+        state.messages = applyTurnProcessCache(
+          toggled,
+          state.sessionTurnProcessCache?.[sessionId],
+          state.sessionTurnProcessState?.[sessionId],
+        );
+      });
     },
 
     updateMessage: async (messageId: string, _updates: Partial<Message>) => {

@@ -277,12 +277,39 @@ export function createSendMessageHandler({
                 },
               }
             : {}),
+          historyProcess: {
+            hasProcess: false,
+            toolCallCount: 0,
+            thinkingCount: 0,
+            processMessageCount: 0,
+            userMessageId: '',
+            finalAssistantMessageId: null,
+            expanded: false,
+            loaded: true,
+            loading: false,
+          },
         },
       };
       tempUserId = userMessage.id;
+      if (userMessage.metadata?.historyProcess) {
+        userMessage.metadata.historyProcess.userMessageId = userMessage.id;
+      }
 
       set((state: any) => {
         state.messages.push(userMessage);
+
+        if (!state.sessionTurnProcessState) {
+          state.sessionTurnProcessState = {};
+        }
+        if (!state.sessionTurnProcessState[currentSessionId]) {
+          state.sessionTurnProcessState[currentSessionId] = {};
+        }
+        state.sessionTurnProcessState[currentSessionId][userMessage.id] = {
+          expanded: false,
+          loaded: true,
+          loading: false,
+        };
+
         const prev = state.sessionChatState[currentSessionId] || { isLoading: false, isStreaming: false, streamingMessageId: null };
         state.sessionChatState[currentSessionId] = { ...prev, isLoading: true, isStreaming: true };
         if (state.currentSessionId === currentSessionId) {
@@ -313,6 +340,8 @@ export function createSendMessageHandler({
                 },
               }
             : {}),
+          historyFinalForUserMessageId: userMessage.id,
+          historyProcessExpanded: false,
           toolCalls: [], // 初始化工具调用数组
           contentSegments: [{ content: '', type: 'text' as const }], // 初始化内容分段
           currentSegmentIndex: 0, // 当前正在写入的分段索引
@@ -322,6 +351,12 @@ export function createSendMessageHandler({
 
       set((state: any) => {
         state.messages.push(tempAssistantMessage);
+
+        const linkedUserMessage = state.messages.find((m: any) => m.id === userMessage.id && m.role === 'user');
+        if (linkedUserMessage?.metadata?.historyProcess) {
+          linkedUserMessage.metadata.historyProcess.finalAssistantMessageId = tempAssistantMessage.id;
+        }
+
         const prev = state.sessionChatState[currentSessionId] || { isLoading: false, isStreaming: false, streamingMessageId: null };
         state.sessionChatState[currentSessionId] = {
           ...prev,
@@ -479,6 +514,53 @@ export function createSendMessageHandler({
         state.sessionStreamingMessageDrafts[currentSessionId] = cloneStreamingMessageDraft(message);
       };
 
+      const updateTurnHistoryProcess = (state: any, updater: (current: any) => Partial<any>) => {
+        if (!tempUserId) {
+          return;
+        }
+
+        const userMessage = state.messages.find((m: any) => m.id === tempUserId && m.role === 'user');
+        if (!userMessage) {
+          return;
+        }
+
+        if (!userMessage.metadata) {
+          userMessage.metadata = {} as any;
+        }
+
+        const current = userMessage.metadata.historyProcess || {
+          hasProcess: false,
+          toolCallCount: 0,
+          thinkingCount: 0,
+          processMessageCount: 0,
+          userMessageId: tempUserId,
+          finalAssistantMessageId: tempAssistantMessage.id,
+          expanded: false,
+          loaded: true,
+          loading: false,
+        };
+
+        const patch = updater(current) || {};
+        const next = {
+          ...current,
+          ...patch,
+          userMessageId: tempUserId,
+          finalAssistantMessageId: tempAssistantMessage.id,
+        };
+
+        const toolCallCount = Number(next.toolCallCount || 0);
+        const thinkingCount = Number(next.thinkingCount || 0);
+        const processMessageCount = Number(next.processMessageCount || 0);
+        next.hasProcess = Boolean(next.hasProcess || toolCallCount > 0 || thinkingCount > 0 || processMessageCount > 0);
+
+        userMessage.metadata.historyProcess = next;
+
+        const assistantMessage = state.messages.find((m: any) => m.id === tempAssistantMessage.id && m.role === 'assistant');
+        if (assistantMessage?.metadata) {
+          assistantMessage.metadata.historyProcessExpanded = next.expanded === true;
+        }
+      };
+
       const appendTextToStreamingMessage = (contentStr: string) => {
         if (!contentStr) return;
         streamedTextBuffer += contentStr;
@@ -604,25 +686,33 @@ export function createSendMessageHandler({
                             : typeof parsed === 'string'
                             ? parsed
                             : parsed.content || '';
-
                         const segments = message.metadata.contentSegments || [];
                         const lastIdx = segments.length - 1;
+                        let createdThinkingSegment = false;
 
                         if (lastIdx >= 0 && segments[lastIdx].type === 'thinking') {
-                          // 继续在当前思考分段追加
+                          // Continue appending to the current thinking segment
                           (segments[lastIdx] as any).content += contentStr;
                           message.metadata.currentSegmentIndex = lastIdx;
                         } else {
-                          // 创建新的思考分段
+                          // Start a new thinking segment
                           segments.push({ content: contentStr, type: 'thinking' as const });
                           message.metadata.currentSegmentIndex = segments.length - 1;
+                          createdThinkingSegment = true;
                         }
 
-                        // 正文只汇总 text 分段，思考不并入 message.content
+                        // Keep only text segments in message.content
                         message.content = segments
                           .filter((s: any) => s.type === 'text')
                           .map((s: any) => s.content)
                           .join('');
+
+                        updateTurnHistoryProcess(state, (current: any) => ({
+                          hasProcess: true,
+                          thinkingCount: Number(current?.thinkingCount || 0) + (createdThinkingSegment ? 1 : 0),
+                          processMessageCount: Number(current?.processMessageCount || 0) + (createdThinkingSegment ? 1 : 0),
+                        }));
+
                         (message as any).updatedAt = new Date();
                       }
                       persistStreamingMessageDraft(state, message);
@@ -663,6 +753,13 @@ export function createSendMessageHandler({
                       message.metadata.contentSegments = segments;
                       message.metadata.currentSegmentIndex = idx;
                     }
+
+                    updateTurnHistoryProcess(state, (current: any) => ({
+                      hasProcess: true,
+                      thinkingCount: Number(current?.thinkingCount || 0) + (parsed.type === 'context_summarized_start' ? 1 : 0),
+                      processMessageCount: Number(current?.processMessageCount || 0) + (parsed.type === 'context_summarized_start' ? 1 : 0),
+                    }));
+
                     (message as any).updatedAt = new Date();
                     persistStreamingMessageDraft(state, message);
                   });
@@ -748,7 +845,14 @@ export function createSendMessageHandler({
                     // 为工具调用后的内容创建新的文本分段
                     segments.push({ content: '', type: 'text' as const });
                     message.metadata!.currentSegmentIndex = segments.length - 1;
-                    debugLog('🔧 更新后的toolCalls:', message.metadata.toolCalls);
+
+                    updateTurnHistoryProcess(state, (current: any) => ({
+                      hasProcess: true,
+                      toolCallCount: Number(current?.toolCallCount || 0) + toolCallsArray.length,
+                      processMessageCount: Number(current?.processMessageCount || 0) + toolCallsArray.length,
+                    }));
+
+                    debugLog('[tools_start] updated toolCalls:', message.metadata.toolCalls);
                     (message as any).updatedAt = new Date();
                     persistStreamingMessageDraft(state, message);
                   });

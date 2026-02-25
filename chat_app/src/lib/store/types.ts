@@ -45,6 +45,8 @@ export interface ChatState {
   hasMoreMessages: boolean;
   sessionChatState: Record<string, { isLoading: boolean; isStreaming: boolean; streamingMessageId: string | null }>;
   sessionStreamingMessageDrafts: Record<string, Message | null>;
+  sessionTurnProcessState: Record<string, Record<string, { expanded: boolean; loaded: boolean; loading: boolean }>>;
+  sessionTurnProcessCache: Record<string, Record<string, Message[]>>;
   taskReviewPanel: TaskReviewPanelState | null;
   taskReviewPanelsBySession: Record<string, TaskReviewPanelState[]>;
 
@@ -94,6 +96,7 @@ export interface ChatActions {
   // 消息操作
   loadMessages: (sessionId: string) => Promise<void>;
   loadMoreMessages: (sessionId: string) => Promise<void>;
+  toggleTurnProcess: (userMessageId: string) => Promise<void>;
   sendMessage: (content: string, attachments?: any[]) => Promise<void>;
   updateMessage: (messageId: string, updates: Partial<Message>) => Promise<void>;
   deleteMessage: (messageId: string) => Promise<void>;

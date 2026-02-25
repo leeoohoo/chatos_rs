@@ -293,6 +293,7 @@ export interface MessageListProps {
   isStreaming?: boolean;
   hasMore?: boolean;
   onLoadMore?: () => void;
+  onToggleTurnProcess?: (userMessageId: string) => void;
   onMessageEdit?: (messageId: string, content: string) => void;
   onMessageDelete?: (messageId: string) => void;
   customRenderer?: {
