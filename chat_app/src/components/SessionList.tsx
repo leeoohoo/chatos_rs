@@ -127,6 +127,9 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
   const [dirPickerLoading, setDirPickerLoading] = useState(false);
   const [dirPickerError, setDirPickerError] = useState<string | null>(null);
   const [showHiddenDirs, setShowHiddenDirs] = useState(false);
+  const [dirPickerNewFolderName, setDirPickerNewFolderName] = useState('');
+  const [dirPickerCreatingFolder, setDirPickerCreatingFolder] = useState(false);
+  const [dirPickerCreateModalOpen, setDirPickerCreateModalOpen] = useState(false);
 
   const apiClient = useChatApiClientFromContext();
   const apiBaseUrl = apiClient?.getBaseUrl ? apiClient.getBaseUrl() : '/api';
@@ -315,9 +318,80 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
   const openDirPicker = async (target: 'project' | 'terminal') => {
     setDirPickerTarget(target);
     setShowHiddenDirs(false);
+    setDirPickerNewFolderName('');
+    setDirPickerCreateModalOpen(false);
+    setDirPickerError(null);
     setDirPickerOpen(true);
     const current = (target === 'project' ? projectRoot : terminalRoot).trim();
     await loadDirEntries(current ? current : null);
+  };
+
+  const closeDirPicker = () => {
+    setDirPickerOpen(false);
+    setDirPickerCreateModalOpen(false);
+    setDirPickerNewFolderName('');
+  };
+
+  const openCreateDirModal = () => {
+    if (!dirPickerPath) {
+      setDirPickerError('请先进入一个父目录后再新建目录');
+      return;
+    }
+    setDirPickerError(null);
+    setDirPickerNewFolderName('');
+    setDirPickerCreateModalOpen(true);
+  };
+
+  const createDirInPicker = async () => {
+    const basePath = dirPickerPath;
+    if (!basePath) {
+      setDirPickerError('请先进入一个父目录后再新建目录');
+      return;
+    }
+    const name = dirPickerNewFolderName.trim();
+    if (!name) {
+      setDirPickerError('请输入新目录名称');
+      return;
+    }
+
+    setDirPickerCreatingFolder(true);
+    setDirPickerError(null);
+    try {
+      let data: any = null;
+      if (apiClient?.createFsDirectory) {
+        data = await apiClient.createFsDirectory(basePath, name);
+      } else {
+        const resp = await fetch(`${apiBaseUrl}/fs/mkdir`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ parent_path: basePath, name }),
+        });
+        data = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+          throw new Error(data?.error || `HTTP ${resp.status}`);
+        }
+      }
+
+      const apiPath = typeof data?.path === 'string' ? data.path.trim() : '';
+      const fallbackSep = basePath.includes('\\') && !basePath.includes('/') ? '\\' : '/';
+      const normalizedBase = basePath.replace(/[\\/]+$/, '');
+      const createdPath = apiPath || `${normalizedBase}${fallbackSep}${name}`;
+
+      setDirPickerNewFolderName('');
+      setDirPickerCreateModalOpen(false);
+
+      if (dirPickerTarget === 'project') {
+        setProjectRoot(createdPath);
+      } else {
+        setTerminalRoot(createdPath);
+      }
+
+      await loadDirEntries(createdPath);
+    } catch (err: any) {
+      setDirPickerError(err?.message || '新建目录失败');
+    } finally {
+      setDirPickerCreatingFolder(false);
+    }
   };
 
   const chooseDir = (path: string | null) => {
@@ -327,7 +401,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     } else {
       setTerminalRoot(path);
     }
-    setDirPickerOpen(false);
+    closeDirPicker();
   };
 
   const handleDeleteSession = async (sessionId: string) => {
@@ -922,13 +996,13 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
       {/* 目录选择弹窗 */}
       {dirPickerOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="fixed inset-0 bg-black/50" onClick={() => setDirPickerOpen(false)} />
+          <div className="fixed inset-0 bg-black/50" onClick={closeDirPicker} />
           <div className="relative bg-card border border-border rounded-lg shadow-xl w-[640px] max-h-[80vh] p-6 flex flex-col">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-lg font-semibold text-foreground">
                 {dirPickerTarget === 'terminal' ? '选择终端目录' : '选择项目目录'}
               </h3>
-              <button onClick={() => setDirPickerOpen(false)} className="p-2 text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg transition-colors">
+              <button onClick={closeDirPicker} className="p-2 text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg transition-colors">
                 <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
@@ -954,6 +1028,16 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
               >
                 选择当前目录
               </button>
+              {dirPickerTarget === 'project' && (
+                <button
+                  type="button"
+                  onClick={openCreateDirModal}
+                  disabled={!dirPickerPath || dirPickerCreatingFolder}
+                  className="px-3 py-1.5 rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {dirPickerCreatingFolder ? '新建中...' : '新建目录'}
+                </button>
+              )}
               {dirPickerTarget === 'project' && (
                 <button
                   type="button"
@@ -986,8 +1070,57 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
                 </div>
               )}
             </div>
-            {dirPickerError && (
+            {dirPickerError && !dirPickerCreateModalOpen && (
               <div className="mt-2 text-xs text-red-500">{dirPickerError}</div>
+            )}
+
+            {dirPickerCreateModalOpen && (
+              <div className="absolute inset-0 z-10 flex items-center justify-center">
+                <div className="absolute inset-0 bg-black/40" onClick={() => !dirPickerCreatingFolder && setDirPickerCreateModalOpen(false)} />
+                <div className="relative w-[420px] max-w-[90%] rounded-lg border border-border bg-card p-4 shadow-xl">
+                  <div className="text-sm font-medium text-foreground mb-2">新建目录</div>
+                  <div className="text-xs text-muted-foreground mb-3 break-all">
+                    当前路径：<span className="text-foreground">{dirPickerPath || '-'}</span>
+                  </div>
+                  <input
+                    autoFocus
+                    value={dirPickerNewFolderName}
+                    onChange={(e) => setDirPickerNewFolderName(e.target.value)}
+                    placeholder="请输入新目录名称"
+                    className="w-full px-3 py-2 rounded border border-border bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        createDirInPicker();
+                      } else if (e.key === 'Escape' && !dirPickerCreatingFolder) {
+                        e.preventDefault();
+                        setDirPickerCreateModalOpen(false);
+                      }
+                    }}
+                  />
+                  {dirPickerError && (
+                    <div className="mt-2 text-xs text-red-500">{dirPickerError}</div>
+                  )}
+                  <div className="mt-4 flex justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setDirPickerCreateModalOpen(false)}
+                      disabled={dirPickerCreatingFolder}
+                      className="px-3 py-1.5 rounded bg-muted text-muted-foreground hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      取消
+                    </button>
+                    <button
+                      type="button"
+                      onClick={createDirInPicker}
+                      disabled={dirPickerCreatingFolder}
+                      className="px-3 py-1.5 rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {dirPickerCreatingFolder ? '新建中...' : '确定'}
+                    </button>
+                  </div>
+                </div>
+              </div>
             )}
           </div>
         </div>

@@ -1,5 +1,9 @@
 use axum::http::StatusCode;
-use axum::{extract::Query, routing::get, Json, Router};
+use axum::{
+    extract::Query,
+    routing::{get, post},
+    Json, Router,
+};
 use base64::Engine;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -29,12 +33,103 @@ struct FsSearchQuery {
     limit: Option<usize>,
 }
 
+#[derive(Debug, Deserialize)]
+struct FsMkdirRequest {
+    parent_path: Option<String>,
+    name: Option<String>,
+}
+
 pub fn router() -> Router {
     Router::new()
         .route("/api/fs/list", get(list_dirs))
         .route("/api/fs/entries", get(list_entries))
         .route("/api/fs/search", get(search_entries))
+        .route("/api/fs/mkdir", post(create_dir))
         .route("/api/fs/read", get(read_file))
+}
+
+async fn create_dir(Json(req): Json<FsMkdirRequest>) -> (StatusCode, Json<Value>) {
+    let parent_raw = req
+        .parent_path
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    if parent_raw.is_none() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "父目录不能为空" })),
+        );
+    }
+
+    let name_raw = req
+        .name
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    if name_raw.is_none() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "目录名称不能为空" })),
+        );
+    }
+
+    let name = name_raw.unwrap();
+    if name == "." || name == ".." || name.contains('/') || name.contains('\\') || name.contains('\0') {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "目录名称不合法" })),
+        );
+    }
+
+    let parent = PathBuf::from(parent_raw.unwrap());
+    if !parent.exists() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "父目录不存在" })),
+        );
+    }
+    if !parent.is_dir() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "父路径不是目录" })),
+        );
+    }
+
+    let target = parent.join(&name);
+    if target.exists() {
+        if target.is_dir() {
+            return (
+                StatusCode::OK,
+                Json(json!({
+                    "path": target.to_string_lossy(),
+                    "parent": parent.to_string_lossy(),
+                    "name": name,
+                    "created": false
+                })),
+            );
+        }
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "同名文件已存在" })),
+        );
+    }
+
+    if let Err(err) = fs::create_dir(&target) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": err.to_string() })),
+        );
+    }
+
+    (
+        StatusCode::CREATED,
+        Json(json!({
+            "path": target.to_string_lossy(),
+            "parent": parent.to_string_lossy(),
+            "name": name,
+            "created": true
+        })),
+    )
 }
 
 async fn list_dirs(Query(query): Query<FsQuery>) -> (StatusCode, Json<Value>) {

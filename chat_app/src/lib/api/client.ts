@@ -233,6 +233,16 @@ class ApiClient {
     return this.request<any>(`/fs/read${qs}`);
   }
 
+  async createFsDirectory(parentPath: string, name: string): Promise<any> {
+    return this.request<any>('/fs/mkdir', {
+      method: 'POST',
+      body: JSON.stringify({
+        parent_path: parentPath,
+        name,
+      }),
+    });
+  }
+
   // 消息相关API
   async createMessage(data: {
     id: string;

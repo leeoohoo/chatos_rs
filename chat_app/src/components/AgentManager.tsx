@@ -120,6 +120,9 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
   const [projectPickerRoots, setProjectPickerRoots] = useState<FsEntry[]>([]);
   const [projectPickerLoading, setProjectPickerLoading] = useState(false);
   const [projectPickerError, setProjectPickerError] = useState<string | null>(null);
+  const [projectPickerNewFolderName, setProjectPickerNewFolderName] = useState('');
+  const [projectPickerCreatingFolder, setProjectPickerCreatingFolder] = useState(false);
+  const [projectPickerCreateModalOpen, setProjectPickerCreateModalOpen] = useState(false);
 
   const loadAll = async () => {
     setIsLoading(true);
@@ -261,7 +264,59 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
 
   const openProjectPicker = async () => {
     setProjectPickerOpen(true);
+    setProjectPickerError(null);
+    setProjectPickerNewFolderName('');
+    setProjectPickerCreateModalOpen(false);
     await loadProjectEntries(null);
+  };
+
+  const closeProjectPicker = () => {
+    setProjectPickerOpen(false);
+    setProjectPickerCreateModalOpen(false);
+    setProjectPickerNewFolderName('');
+  };
+
+  const openProjectCreateDirModal = () => {
+    if (!projectPickerPath) {
+      setProjectPickerError('请先进入一个父目录后再新建目录');
+      return;
+    }
+    setProjectPickerError(null);
+    setProjectPickerNewFolderName('');
+    setProjectPickerCreateModalOpen(true);
+  };
+
+  const createProjectPickerDir = async () => {
+    const basePath = projectPickerPath;
+    if (!basePath) {
+      setProjectPickerError('请先进入一个父目录后再新建目录');
+      return;
+    }
+    const folderName = projectPickerNewFolderName.trim();
+    if (!folderName) {
+      setProjectPickerError('请输入新目录名称');
+      return;
+    }
+
+    setProjectPickerCreatingFolder(true);
+    setProjectPickerError(null);
+    try {
+      const data = await client.createFsDirectory(basePath, folderName);
+
+      const apiPath = typeof data?.path === 'string' ? data.path.trim() : '';
+      const fallbackSep = basePath.includes('\\') && !basePath.includes('/') ? '\\' : '/';
+      const normalizedBase = basePath.replace(/[\\/]+$/, '');
+      const createdPath = apiPath || `${normalizedBase}${fallbackSep}${folderName}`;
+
+      setProjectPickerNewFolderName('');
+      setProjectPickerCreateModalOpen(false);
+      await loadProjectEntries(createdPath);
+      await createProjectFromPath(createdPath);
+    } catch (err: any) {
+      setProjectPickerError(err?.message || '新建目录失败');
+    } finally {
+      setProjectPickerCreatingFolder(false);
+    }
   };
 
   const createProjectFromPath = async (path: string | null) => {
@@ -273,7 +328,7 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
       }
       const project = await createProject(name, path);
       setFormData(prev => ({ ...prev, project_id: project.id }));
-      setProjectPickerOpen(false);
+      closeProjectPicker();
     } catch (err: any) {
       setProjectPickerError(err?.message || '创建项目失败');
     }
@@ -719,14 +774,14 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
         )}
         {projectPickerOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center">
-            <div className="fixed inset-0 bg-black/50" onClick={() => setProjectPickerOpen(false)} />
+            <div className="fixed inset-0 bg-black/50" onClick={closeProjectPicker} />
             <div className="relative bg-card border border-border rounded-lg shadow-xl w-[640px] max-h-[80vh] p-6 flex flex-col">
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center space-x-2">
                   <RobotIcon />
                   <h3 className="text-lg font-semibold text-foreground">选择项目目录</h3>
                 </div>
-                <button onClick={() => setProjectPickerOpen(false)} className="p-2 text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg transition-colors">
+                <button onClick={closeProjectPicker} className="p-2 text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg transition-colors">
                   <XMarkIcon />
                 </button>
               </div>
@@ -751,6 +806,14 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
                 >
                   选择当前目录
                 </button>
+                <button
+                  type="button"
+                  onClick={openProjectCreateDirModal}
+                  disabled={!projectPickerPath || projectPickerCreatingFolder}
+                  className="px-3 py-1.5 rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {projectPickerCreatingFolder ? '新建中...' : '新建目录'}
+                </button>
               </div>
               <div className="mt-3 flex-1 overflow-y-auto border border-border rounded">
                 {projectPickerLoading && (
@@ -774,8 +837,57 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
                   </div>
                 )}
               </div>
-              {projectPickerError && (
+              {projectPickerError && !projectPickerCreateModalOpen && (
                 <div className="mt-2 text-xs text-red-500">{projectPickerError}</div>
+              )}
+
+              {projectPickerCreateModalOpen && (
+                <div className="absolute inset-0 z-10 flex items-center justify-center">
+                  <div className="absolute inset-0 bg-black/40" onClick={() => !projectPickerCreatingFolder && setProjectPickerCreateModalOpen(false)} />
+                  <div className="relative w-[420px] max-w-[90%] rounded-lg border border-border bg-card p-4 shadow-xl">
+                    <div className="text-sm font-medium text-foreground mb-2">新建目录</div>
+                    <div className="text-xs text-muted-foreground mb-3 break-all">
+                      当前路径：<span className="text-foreground">{projectPickerPath || '-'}</span>
+                    </div>
+                    <input
+                      autoFocus
+                      value={projectPickerNewFolderName}
+                      onChange={(e) => setProjectPickerNewFolderName(e.target.value)}
+                      placeholder="请输入新目录名称"
+                      className="w-full px-3 py-2 rounded border border-border bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          createProjectPickerDir();
+                        } else if (e.key === 'Escape' && !projectPickerCreatingFolder) {
+                          e.preventDefault();
+                          setProjectPickerCreateModalOpen(false);
+                        }
+                      }}
+                    />
+                    {projectPickerError && (
+                      <div className="mt-2 text-xs text-red-500">{projectPickerError}</div>
+                    )}
+                    <div className="mt-4 flex justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setProjectPickerCreateModalOpen(false)}
+                        disabled={projectPickerCreatingFolder}
+                        className="px-3 py-1.5 rounded bg-muted text-muted-foreground hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        取消
+                      </button>
+                      <button
+                        type="button"
+                        onClick={createProjectPickerDir}
+                        disabled={projectPickerCreatingFolder}
+                        className="px-3 py-1.5 rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {projectPickerCreatingFolder ? '新建中...' : '确定'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
               )}
             </div>
           </div>
