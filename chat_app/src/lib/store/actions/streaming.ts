@@ -1,6 +1,22 @@
 import type ApiClient from '../../api/client';
 import { debugLog } from '@/lib/utils';
 
+const cloneStreamingMessageDraft = <T,>(value: T): T => {
+  try {
+    if (typeof structuredClone === 'function') {
+      return structuredClone(value);
+    }
+  } catch {
+    // ignore and fallback to JSON clone
+  }
+
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return value;
+  }
+};
+
 interface Deps {
   set: any;
   get: any;
@@ -71,6 +87,37 @@ export function createStreamingActions({ set, get, client }: Deps) {
         const sessionId = state.currentSessionId;
         const streamingId = state.streamingMessageId;
         if (sessionId) {
+          const currentDraft = state.sessionStreamingMessageDrafts?.[sessionId];
+          if (currentDraft) {
+            const cancelledDraft = cloneStreamingMessageDraft(currentDraft);
+            const metadataToolCalls = (cancelledDraft as any)?.metadata?.toolCalls;
+            if (Array.isArray(metadataToolCalls)) {
+              metadataToolCalls.forEach((tc: any) => {
+                if (!tc.error) {
+                  const hasResult = tc.result !== undefined && tc.result !== null && String(tc.result).trim() !== '';
+                  if (!hasResult) {
+                    tc.result = tc.result || '';
+                  }
+                  tc.error = '已取消';
+                }
+                tc.completed = true;
+              });
+            }
+            (cancelledDraft as any).status = 'completed';
+
+            const existingIndex = state.messages.findIndex((m: any) => m.id === (cancelledDraft as any).id);
+            const shouldWriteToCurrentMessages = existingIndex !== -1 || state.currentSessionId === sessionId;
+            if (existingIndex !== -1) {
+              state.messages[existingIndex] = {
+                ...state.messages[existingIndex],
+                ...cancelledDraft,
+              };
+            } else if (shouldWriteToCurrentMessages) {
+              state.messages.push(cancelledDraft);
+            }
+            state.sessionStreamingMessageDrafts[sessionId] = null;
+          }
+
           const prev = state.sessionChatState[sessionId] || { isLoading: false, isStreaming: false, streamingMessageId: null };
           state.sessionChatState[sessionId] = { ...prev, isLoading: false, isStreaming: false, streamingMessageId: null };
         }

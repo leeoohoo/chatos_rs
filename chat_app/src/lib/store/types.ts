@@ -44,6 +44,7 @@ export interface ChatState {
   streamingMessageId: string | null;
   hasMoreMessages: boolean;
   sessionChatState: Record<string, { isLoading: boolean; isStreaming: boolean; streamingMessageId: string | null }>;
+  sessionStreamingMessageDrafts: Record<string, Message | null>;
   taskReviewPanel: TaskReviewPanelState | null;
   taskReviewPanelsBySession: Record<string, TaskReviewPanelState[]>;
 

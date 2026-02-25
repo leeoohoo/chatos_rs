@@ -4,6 +4,22 @@ import { fetchSession } from '../helpers/sessions';
 import { fetchSessionMessages } from '../helpers/messages';
 import { debugLog } from '@/lib/utils';
 
+const cloneStreamingMessageDraft = <T,>(value: T): T => {
+  try {
+    if (typeof structuredClone === 'function') {
+      return structuredClone(value);
+    }
+  } catch {
+    // ignore and fallback to JSON clone
+  }
+
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return value;
+  }
+};
+
 interface Deps {
   set: any;
   get: any;
@@ -143,6 +159,10 @@ export function createSessionActions({
           state.currentSessionId = formattedSession.id;
           state.currentSession = formattedSession;
           state.messages = [];
+          if (!state.sessionStreamingMessageDrafts) {
+            state.sessionStreamingMessageDrafts = {};
+          }
+          state.sessionStreamingMessageDrafts[formattedSession.id] = null;
           state.activePanel = 'chat';
           state.error = null;
         });
@@ -184,14 +204,20 @@ export function createSessionActions({
 
         set((state: any) => {
           const chatState = state.sessionChatState[sessionId];
+          const draftMessage = state.sessionStreamingMessageDrafts?.[sessionId];
           let nextMessages = messages;
 
           if (chatState?.isStreaming && chatState.streamingMessageId) {
             const hasStreamingMessage = nextMessages.some((m: any) => m.id === chatState.streamingMessageId);
             if (!hasStreamingMessage) {
+              let restoredStreamingMessage: any = null;
+              if (draftMessage && typeof draftMessage === 'object') {
+                restoredStreamingMessage = cloneStreamingMessageDraft(draftMessage);
+              }
+
               nextMessages = [
                 ...nextMessages,
-                localStreamingMessage || {
+                restoredStreamingMessage || localStreamingMessage || {
                   id: chatState.streamingMessageId,
                   sessionId,
                   role: 'assistant',
@@ -266,6 +292,12 @@ export function createSessionActions({
 
         set((state: any) => {
           state.sessions = state.sessions.filter((s: any) => s.id !== sessionId);
+          if (state.sessionStreamingMessageDrafts && sessionId in state.sessionStreamingMessageDrafts) {
+            delete state.sessionStreamingMessageDrafts[sessionId];
+          }
+          if (state.sessionChatState && sessionId in state.sessionChatState) {
+            delete state.sessionChatState[sessionId];
+          }
           if (state.currentSessionId === sessionId) {
             state.currentSessionId = null;
             state.currentSession = null;

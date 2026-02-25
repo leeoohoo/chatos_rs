@@ -2,6 +2,22 @@ import type { Message } from '../../../types';
 import type ApiClient from '../../api/client';
 import { fetchSessionMessages } from '../helpers/messages';
 
+const cloneStreamingMessageDraft = <T,>(value: T): T => {
+  try {
+    if (typeof structuredClone === 'function') {
+      return structuredClone(value);
+    }
+  } catch {
+    // ignore and fallback to JSON clone
+  }
+
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return value;
+  }
+};
+
 interface Deps {
   set: any;
   get: any;
@@ -20,7 +36,18 @@ export function createMessageActions({ set, get, client }: Deps) {
         const messages = await fetchSessionMessages(client, sessionId, { limit: 50, offset: 0 });
 
         set((state: any) => {
-          state.messages = messages;
+          const chatState = state.sessionChatState?.[sessionId];
+          const draftMessage = state.sessionStreamingMessageDrafts?.[sessionId];
+          let nextMessages = messages;
+
+          if (chatState?.isStreaming && chatState.streamingMessageId) {
+            const hasStreamingMessage = nextMessages.some((m: any) => m.id === chatState.streamingMessageId);
+            if (!hasStreamingMessage && draftMessage && typeof draftMessage === 'object') {
+              nextMessages = [...nextMessages, cloneStreamingMessageDraft(draftMessage)];
+            }
+          }
+
+          state.messages = nextMessages;
           state.isLoading = false;
           state.hasMoreMessages = messages.length >= 50;
         });

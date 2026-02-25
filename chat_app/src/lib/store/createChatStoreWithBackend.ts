@@ -64,6 +64,7 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                     streamingMessageId: null,
                     hasMoreMessages: true,
                     sessionChatState: {},
+                    sessionStreamingMessageDrafts: {},
                     taskReviewPanel: null,
                     taskReviewPanelsBySession: {},
                     sidebarOpen: true,
