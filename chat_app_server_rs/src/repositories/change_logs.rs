@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use mongodb::bson::{doc, Bson, Document};
 use mongodb::options::FindOptions;
@@ -25,36 +25,22 @@ pub struct ChangeLogItem {
 }
 
 pub async fn list_project_change_logs(
-    project_id: &str,
+    _project_id: &str,
     paths: Option<Vec<String>>,
     limit: Option<i64>,
     offset: i64,
 ) -> Result<Vec<ChangeLogItem>, String> {
-    let project_id = project_id.to_string();
     with_db(
         |db| {
-            let project_id = project_id.clone();
             let paths = paths.clone();
             let limit = limit.clone();
             Box::pin(async move {
-                let session_cursor = db
-                    .collection::<Document>("sessions")
-                    .find(doc! { "project_id": &project_id }, None)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                let session_docs = collect_documents(session_cursor).await?;
+                let list = match paths {
+                    Some(v) if !v.is_empty() => v,
+                    _ => return Ok(Vec::new()),
+                };
 
-                let mut session_titles: HashMap<String, String> = HashMap::new();
-                let mut session_ids: Vec<Bson> = Vec::new();
-                for doc in session_docs {
-                    let id = doc.get_str("id").unwrap_or("").to_string();
-                    if id.is_empty() {
-                        continue;
-                    }
-                    let title = doc.get_str("title").unwrap_or("").to_string();
-                    session_titles.insert(id.clone(), title);
-                    session_ids.push(Bson::String(id));
-                }
+                let regex_values = build_path_regexes(&list);
 
                 let mut options = FindOptions::builder().sort(doc! { "created_at": -1 }).build();
                 if let Some(l) = limit {
@@ -64,55 +50,20 @@ pub async fn list_project_change_logs(
                     options.skip = Some(offset as u64);
                 }
 
-                if session_ids.is_empty() {
-                    let list = match paths {
-                        Some(v) if !v.is_empty() => v,
-                        _ => return Ok(Vec::new()),
-                    };
-                    let filter = doc! { "path": { "$in": list.clone() } };
-                    let cursor = db
-                        .collection::<Document>("mcp_change_logs")
-                        .find(filter, options)
-                        .await
-                        .map_err(|e| e.to_string())?;
-                    let out_docs = collect_documents(cursor).await?;
-                    let mut missing_sessions: Vec<Bson> = Vec::new();
-                    for doc in &out_docs {
-                        if let Ok(sid) = doc.get_str("session_id") {
-                            if !sid.trim().is_empty() {
-                                missing_sessions.push(Bson::String(sid.to_string()));
-                            }
+                let mut regex_filters: Vec<Document> = Vec::new();
+                for pattern in &regex_values {
+                    regex_filters.push(doc! {
+                        "path": {
+                            "$regex": pattern,
+                            "$options": if cfg!(windows) { "i" } else { "" }
                         }
-                    }
-                    if !missing_sessions.is_empty() {
-                        let title_cursor = db
-                            .collection::<Document>("sessions")
-                            .find(doc! { "id": { "$in": missing_sessions } }, None)
-                            .await
-                            .map_err(|e| e.to_string())?;
-                        let title_docs = collect_documents(title_cursor).await?;
-                        for doc in title_docs {
-                            let id = doc.get_str("id").unwrap_or("").to_string();
-                            if id.is_empty() {
-                                continue;
-                            }
-                            let title = doc.get_str("title").unwrap_or("").to_string();
-                            session_titles.insert(id, title);
-                        }
-                    }
-                    let out = out_docs
-                        .iter()
-                        .map(|doc| normalize_doc(doc, &session_titles))
-                        .collect();
-                    return Ok(out);
+                    });
                 }
-
-                let mut filter = doc! { "session_id": { "$in": session_ids } };
-                if let Some(list) = paths {
-                    if !list.is_empty() {
-                        filter.insert("path", doc! { "$in": list });
-                    }
-                }
+                let filter = if regex_filters.is_empty() {
+                    doc! { "path": { "$in": list } }
+                } else {
+                    doc! { "$or": regex_filters }
+                };
 
                 let cursor = db
                     .collection::<Document>("mcp_change_logs")
@@ -120,6 +71,39 @@ pub async fn list_project_change_logs(
                     .await
                     .map_err(|e| e.to_string())?;
                 let out_docs = collect_documents(cursor).await?;
+
+                let mut session_ids: HashSet<String> = HashSet::new();
+                for doc in &out_docs {
+                    if let Ok(sid) = doc.get_str("session_id") {
+                        let sid = sid.trim();
+                        if !sid.is_empty() {
+                            session_ids.insert(sid.to_string());
+                        }
+                    }
+                }
+
+                let mut session_titles: HashMap<String, String> = HashMap::new();
+                if !session_ids.is_empty() {
+                    let missing_sessions: Vec<Bson> = session_ids
+                        .into_iter()
+                        .map(Bson::String)
+                        .collect();
+                    let title_cursor = db
+                        .collection::<Document>("sessions")
+                        .find(doc! { "id": { "$in": missing_sessions } }, None)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    let title_docs = collect_documents(title_cursor).await?;
+                    for doc in title_docs {
+                        let id = doc.get_str("id").unwrap_or("").trim().to_string();
+                        if id.is_empty() {
+                            continue;
+                        }
+                        let title = doc.get_str("title").unwrap_or("").to_string();
+                        session_titles.insert(id, title);
+                    }
+                }
+
                 let out = out_docs
                     .iter()
                     .map(|doc| normalize_doc(doc, &session_titles))
@@ -128,58 +112,54 @@ pub async fn list_project_change_logs(
             })
         },
         |pool| {
-            let project_id = project_id.clone();
             let paths = paths.clone();
             Box::pin(async move {
-                let session_rows = sqlx::query("SELECT id, title FROM sessions WHERE project_id = ?")
-                    .bind(&project_id)
-                    .fetch_all(pool)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                let mut has_sessions = false;
-                for row in session_rows {
-                    let id: String = row.try_get("id").unwrap_or_default();
-                    if !id.is_empty() {
-                        has_sessions = true;
-                        break;
+                let list = match paths {
+                    Some(v) if !v.is_empty() => v,
+                    _ => return Ok(Vec::new()),
+                };
+
+                let normalized_paths = build_normalized_paths(&list);
+                if normalized_paths.is_empty() {
+                    return Ok(Vec::new());
+                }
+
+                let mut where_parts: Vec<String> = Vec::new();
+                for _ in &normalized_paths {
+                    if cfg!(windows) {
+                        where_parts
+                            .push(r"LOWER(REPLACE(c.path, '\', '/')) = LOWER(?)".to_string());
+                    } else {
+                        where_parts.push(r"REPLACE(c.path, '\', '/') = ?".to_string());
+                    }
+                }
+                for _ in &normalized_paths {
+                    if cfg!(windows) {
+                        where_parts.push(
+                            r"LOWER(REPLACE(c.path, '\', '/')) LIKE LOWER(?) ESCAPE '!'"
+                                .to_string(),
+                        );
+                    } else {
+                        where_parts.push(r"REPLACE(c.path, '\', '/') LIKE ? ESCAPE '!'".to_string());
                     }
                 }
 
-                let mut query = String::from(
+                let mut query = format!(
                     "SELECT c.id, c.server_name, c.path, c.action, c.bytes, c.sha256, c.diff, c.session_id, c.run_id, c.created_at, s.title as session_title \
                     FROM mcp_change_logs c \
                     LEFT JOIN sessions s ON s.id = c.session_id \
-                    WHERE s.project_id = ?",
+                    WHERE {}",
+                    where_parts.join(" OR "),
                 );
-                if !has_sessions {
-                    query = String::from(
-                        "SELECT c.id, c.server_name, c.path, c.action, c.bytes, c.sha256, c.diff, c.session_id, c.run_id, c.created_at, s.title as session_title \
-                        FROM mcp_change_logs c \
-                        LEFT JOIN sessions s ON s.id = c.session_id \
-                        WHERE 1 = 1",
-                    );
-                }
-                if let Some(ref list) = paths {
-                    if !list.is_empty() {
-                        let placeholders = std::iter::repeat("?").take(list.len()).collect::<Vec<_>>().join(", ");
-                        query.push_str(&format!(" AND c.path IN ({})", placeholders));
-                    } else if !has_sessions {
-                        return Ok(Vec::new());
-                    }
-                } else if !has_sessions {
-                    return Ok(Vec::new());
-                }
                 query.push_str(" ORDER BY c.created_at DESC");
                 append_limit_offset_clause(&mut query, limit, offset);
 
                 let mut q = sqlx::query(&query);
-                if has_sessions {
-                    q = q.bind(&project_id);
+                for path in &normalized_paths {
+                    q = q.bind(path);
                 }
-                if let Some(ref list) = paths {
-                    for p in list {
-                        q = q.bind(p);
-                    }
+                for path in &normalized_paths {
+                    q = q.bind(path_to_sql_like(path));
                 }
                 if let Some(l) = limit {
                     q = q.bind(l);
@@ -255,4 +235,64 @@ fn normalize_doc(doc: &Document, session_titles: &HashMap<String, String>) -> Ch
         created_at,
         session_title,
     }
+}
+
+fn build_path_regexes(paths: &[String]) -> Vec<String> {
+    let normalized = build_normalized_paths(paths);
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut out: Vec<String> = Vec::new();
+    for value in normalized {
+        let pattern = path_to_regex(&value);
+        if seen.insert(pattern.clone()) {
+            out.push(pattern);
+        }
+    }
+    out
+}
+
+fn build_normalized_paths(paths: &[String]) -> Vec<String> {
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut out: Vec<String> = Vec::new();
+    for raw in paths {
+        let normalized = normalize_path(raw);
+        if normalized.is_empty() {
+            continue;
+        }
+        if seen.insert(normalized.clone()) {
+            out.push(normalized);
+        }
+    }
+    out
+}
+
+fn normalize_path(value: &str) -> String {
+    let mut normalized = value.trim().replace('\\', "/");
+    while normalized.contains("//") {
+        normalized = normalized.replace("//", "/");
+    }
+    if normalized.len() > 1 {
+        normalized = normalized.trim_end_matches('/').to_string();
+    }
+    normalized
+}
+
+fn path_to_regex(path: &str) -> String {
+    let escaped = regex::escape(path);
+    let slash_flexible = escaped.replace('/', r"[\\/]");
+    format!(r"(^|[\\/]){}$", slash_flexible)
+}
+
+fn path_to_sql_like(path: &str) -> String {
+    let trimmed = path.trim_start_matches('/');
+    let mut escaped = String::new();
+    for ch in trimmed.chars() {
+        match ch {
+            '!' | '%' | '_' => {
+                escaped.push('!');
+                escaped.push(ch);
+            }
+            _ => escaped.push(ch),
+        }
+    }
+    format!("%/{}", escaped)
 }
