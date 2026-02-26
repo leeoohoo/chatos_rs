@@ -377,7 +377,6 @@ fn attach_busy(
     value
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::{normalize_history_limit, normalize_history_offset};

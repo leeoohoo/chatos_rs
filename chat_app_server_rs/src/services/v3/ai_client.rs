@@ -1206,7 +1206,6 @@ fn build_tool_call_items(tool_calls_arr: &[Value]) -> Vec<Value> {
     items
 }
 
-
 fn should_use_prev_id_for_next_turn(
     prefer_stateless: bool,
     can_use_prev_id: bool,
@@ -1289,7 +1288,6 @@ impl AiClientSettings for AiClient {
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {

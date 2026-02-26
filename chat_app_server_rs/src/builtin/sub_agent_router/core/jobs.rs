@@ -136,7 +136,14 @@ pub(crate) fn emit_job_progress_update(
     run_id: &str,
 ) {
     let now = Utc::now().to_rfc3339();
-    emit_progress_stream_chunk(job_id, event_type, payload, session_id, run_id, now.as_str());
+    emit_progress_stream_chunk(
+        job_id,
+        event_type,
+        payload,
+        session_id,
+        run_id,
+        now.as_str(),
+    );
 }
 
 pub(crate) fn create_job(

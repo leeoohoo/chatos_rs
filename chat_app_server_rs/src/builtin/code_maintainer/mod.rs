@@ -22,6 +22,8 @@ pub struct CodeMaintainerOptions {
     pub max_file_bytes: i64,
     pub max_write_bytes: i64,
     pub search_limit: usize,
+    pub enable_read_tools: bool,
+    pub enable_write_tools: bool,
     pub session_id: Option<String>,
     pub run_id: Option<String>,
     pub db_path: Option<String>,
@@ -88,8 +90,14 @@ impl CodeMaintainerService {
         } else {
             "Writes disabled"
         };
+        let enable_read_tools = opts.enable_read_tools;
+        let enable_write_tools = opts.enable_write_tools;
 
-        {
+        if !enable_read_tools && !enable_write_tools {
+            return Err("No tools are enabled for this code maintainer instance".to_string());
+        }
+
+        if enable_read_tools {
             let fs_ops = fs_ops.clone();
             service.register_tool(
                 "read_file_raw",
@@ -118,7 +126,7 @@ impl CodeMaintainerService {
             );
         }
 
-        {
+        if enable_read_tools {
             let fs_ops = fs_ops.clone();
             let max_file_bytes = opts.max_file_bytes;
             service.register_tool(
@@ -170,7 +178,7 @@ impl CodeMaintainerService {
             );
         }
 
-        {
+        if enable_read_tools {
             let fs_ops = fs_ops.clone();
             service.register_tool(
                 "list_dir",
@@ -196,7 +204,7 @@ impl CodeMaintainerService {
             );
         }
 
-        {
+        if enable_read_tools {
             let fs_ops = fs_ops.clone();
             service.register_tool(
                 "search_text",
@@ -229,7 +237,7 @@ impl CodeMaintainerService {
             );
         }
 
-        {
+        if enable_write_tools {
             let fs_ops = fs_ops.clone();
             let change_log = change_log.clone();
             let max_file_bytes = opts.max_file_bytes;
@@ -281,7 +289,7 @@ impl CodeMaintainerService {
             );
         }
 
-        {
+        if enable_write_tools {
             let fs_ops = fs_ops.clone();
             let change_log = change_log.clone();
             let max_file_bytes = opts.max_file_bytes;
@@ -339,7 +347,7 @@ impl CodeMaintainerService {
             );
         }
 
-        {
+        if enable_write_tools {
             let fs_ops = fs_ops.clone();
             let change_log = change_log.clone();
             let max_file_bytes = opts.max_file_bytes;
@@ -391,7 +399,7 @@ impl CodeMaintainerService {
             );
         }
 
-        {
+        if enable_write_tools {
             let change_log = change_log.clone();
             let fs_ops = fs_ops.clone();
             let root = root.clone();

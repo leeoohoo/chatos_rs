@@ -78,11 +78,8 @@ pub fn load_marketplace(marketplace_path: &Path, plugins_root: Option<&Path>) ->
         }
 
         let plugin_name = plugin.name.unwrap_or_default();
-        let plugin_scope = resolve_plugin_scope(
-            plugin_root.as_path(),
-            source.as_str(),
-            plugin_name.as_str(),
-        );
+        let plugin_scope =
+            resolve_plugin_scope(plugin_root.as_path(), source.as_str(), plugin_name.as_str());
         let plugin_category = plugin
             .category
             .map(|c| c.trim().to_string())
@@ -333,10 +330,7 @@ fn read_markdown_meta(path: &Path) -> MarkdownMeta {
         .cloned()
         .or_else(|| frontmatter.get("title").cloned())
         .unwrap_or_default();
-    let mut description = frontmatter
-        .get("description")
-        .cloned()
-        .unwrap_or_default();
+    let mut description = frontmatter.get("description").cloned().unwrap_or_default();
     let mut found_title = !title.is_empty();
 
     for line in content_lines {
@@ -357,7 +351,9 @@ fn read_markdown_meta(path: &Path) -> MarkdownMeta {
     MarkdownMeta { title, description }
 }
 
-fn parse_frontmatter<'a>(text: &'a str) -> (std::collections::HashMap<String, String>, Vec<&'a str>) {
+fn parse_frontmatter<'a>(
+    text: &'a str,
+) -> (std::collections::HashMap<String, String>, Vec<&'a str>) {
     let lines = text.lines().collect::<Vec<_>>();
     if lines.first().map(|line| line.trim()) != Some("---") {
         return (std::collections::HashMap::new(), lines);
@@ -445,7 +441,6 @@ fn slugify(value: &str) -> String {
     out.trim_matches('-').to_string()
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::{load_marketplace, resolve_plugin_root};
@@ -462,7 +457,10 @@ mod tests {
             Some(plugins_root),
         );
 
-        assert_eq!(resolved, PathBuf::from("C:/state/plugins/code-documentation"));
+        assert_eq!(
+            resolved,
+            PathBuf::from("C:/state/plugins/code-documentation")
+        );
     }
 
     #[test]
@@ -476,7 +474,10 @@ mod tests {
             Some(plugins_root),
         );
 
-        assert_eq!(resolved, PathBuf::from("C:/state/plugins/code-documentation"));
+        assert_eq!(
+            resolved,
+            PathBuf::from("C:/state/plugins/code-documentation")
+        );
     }
 
     #[test]
@@ -484,9 +485,13 @@ mod tests {
         let marketplace_dir = Path::new("C:/state");
         let plugins_root = Path::new("C:/state/plugins");
 
-        let resolved = resolve_plugin_root("code-documentation", marketplace_dir, Some(plugins_root));
+        let resolved =
+            resolve_plugin_root("code-documentation", marketplace_dir, Some(plugins_root));
 
-        assert_eq!(resolved, PathBuf::from("C:/state/plugins/code-documentation"));
+        assert_eq!(
+            resolved,
+            PathBuf::from("C:/state/plugins/code-documentation")
+        );
     }
 
     #[test]
@@ -500,7 +505,10 @@ mod tests {
             Some(plugins_root),
         );
 
-        assert_eq!(resolved, PathBuf::from("C:/state/plugins/code-documentation"));
+        assert_eq!(
+            resolved,
+            PathBuf::from("C:/state/plugins/code-documentation")
+        );
     }
 
     #[test]
@@ -509,7 +517,10 @@ mod tests {
 
         let resolved = resolve_plugin_root("./plugins/code-documentation", marketplace_dir, None);
 
-        assert_eq!(resolved, PathBuf::from("C:/state/plugins/code-documentation"));
+        assert_eq!(
+            resolved,
+            PathBuf::from("C:/state/plugins/code-documentation")
+        );
     }
 
     #[test]
@@ -549,7 +560,6 @@ name: code-reviewer
 
         let _ = fs::remove_dir_all(root);
     }
-
 
     #[test]
     fn prefers_frontmatter_name_and_description_for_agent_meta() {

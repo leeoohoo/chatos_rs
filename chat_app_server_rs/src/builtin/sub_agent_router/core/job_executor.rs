@@ -2,7 +2,10 @@ use super::super::*;
 use super::agent_resolver::resolve_command_cwd;
 
 fn extract_task_review_event_stream_chunk(result: &Value) -> Option<String> {
-    let raw_content = result.get("content").and_then(|value| value.as_str())?.trim();
+    let raw_content = result
+        .get("content")
+        .and_then(|value| value.as_str())?
+        .trim();
     if raw_content.is_empty() {
         return None;
     }
@@ -212,8 +215,9 @@ pub(crate) fn execute_job(
         execution.run_id.as_str(),
     );
 
-    let selected_system_context_prompt =
-        block_on_result(resolve_selected_system_context_prompt(execution.ctx.user_id.clone()))?;
+    let selected_system_context_prompt = block_on_result(resolve_selected_system_context_prompt(
+        execution.ctx.user_id.clone(),
+    ))?;
 
     let base_system_prompt = {
         let mut guard = execution

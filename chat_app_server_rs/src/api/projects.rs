@@ -290,7 +290,10 @@ fn add_path_variants(out: &mut Vec<String>, seen: &mut HashSet<String>, raw: &st
 
     push_candidate(out, seen, normalized.clone());
 
-    let without_dot = normalized.trim_start_matches("./").trim_start_matches('/').to_string();
+    let without_dot = normalized
+        .trim_start_matches("./")
+        .trim_start_matches('/')
+        .to_string();
     if !without_dot.is_empty() {
         push_candidate(out, seen, without_dot.clone());
         push_candidate(out, seen, without_dot.replace('/', "\\"));

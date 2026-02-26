@@ -106,7 +106,10 @@ struct TaskReviewHub {
 }
 
 impl TaskReviewHub {
-    async fn register(&self, payload: TaskCreateReviewPayload) -> oneshot::Receiver<TaskReviewDecision> {
+    async fn register(
+        &self,
+        payload: TaskCreateReviewPayload,
+    ) -> oneshot::Receiver<TaskReviewDecision> {
         let review_id = payload.review_id.clone();
         let (sender, receiver) = oneshot::channel();
         let mut pending = self.pending.lock().await;
@@ -244,7 +247,13 @@ pub async fn create_task_review(
     conversation_turn_id: &str,
     draft_tasks: Vec<TaskDraft>,
     timeout_ms: u64,
-) -> Result<(TaskCreateReviewPayload, oneshot::Receiver<TaskReviewDecision>), String> {
+) -> Result<
+    (
+        TaskCreateReviewPayload,
+        oneshot::Receiver<TaskReviewDecision>,
+    ),
+    String,
+> {
     let session_id = trimmed_non_empty(session_id)
         .ok_or_else(|| "session_id is required for task review".to_string())?
         .to_string();
@@ -291,7 +300,8 @@ pub async fn submit_task_review_decision(
     tasks: Option<Vec<TaskDraft>>,
     reason: Option<String>,
 ) -> Result<TaskCreateReviewPayload, String> {
-    let review_id = trimmed_non_empty(review_id).ok_or_else(|| "review_id is required".to_string())?;
+    let review_id =
+        trimmed_non_empty(review_id).ok_or_else(|| "review_id is required".to_string())?;
     TASK_REVIEW_HUB
         .resolve(review_id, action, tasks, reason)
         .await
@@ -716,14 +726,13 @@ pub async fn delete_task_by_id(session_id: &str, task_id: &str) -> Result<bool, 
             let session_id = session_id_for_sqlite.clone();
             let task_id = task_id_for_sqlite.clone();
             Box::pin(async move {
-                let result = sqlx::query(
-                    "DELETE FROM task_manager_tasks WHERE session_id = ? AND id = ?",
-                )
-                .bind(session_id)
-                .bind(task_id)
-                .execute(pool)
-                .await
-                .map_err(|err| err.to_string())?;
+                let result =
+                    sqlx::query("DELETE FROM task_manager_tasks WHERE session_id = ? AND id = ?")
+                        .bind(session_id)
+                        .bind(task_id)
+                        .execute(pool)
+                        .await
+                        .map_err(|err| err.to_string())?;
                 Ok(result.rows_affected() > 0)
             })
         },
@@ -829,8 +838,16 @@ fn task_record_from_doc(doc: &Document) -> Option<TaskRecord> {
     let details = doc.get_str("details").ok().unwrap_or_default().to_string();
     let priority = doc.get_str("priority").ok().unwrap_or("medium").to_string();
     let status = doc.get_str("status").ok().unwrap_or("todo").to_string();
-    let created_at = doc.get_str("created_at").ok().unwrap_or_default().to_string();
-    let updated_at = doc.get_str("updated_at").ok().unwrap_or_default().to_string();
+    let created_at = doc
+        .get_str("created_at")
+        .ok()
+        .unwrap_or_default()
+        .to_string();
+    let updated_at = doc
+        .get_str("updated_at")
+        .ok()
+        .unwrap_or_default()
+        .to_string();
 
     let tags = match doc.get("tags") {
         Some(Bson::Array(arr)) => arr
@@ -937,9 +954,10 @@ mod tests {
             due_at: None,
         };
 
-        let (payload, receiver) = create_task_review("session_test", "turn_test", vec![draft], 30_000)
-            .await
-            .expect("create review should succeed");
+        let (payload, receiver) =
+            create_task_review("session_test", "turn_test", vec![draft], 30_000)
+                .await
+                .expect("create review should succeed");
 
         let updated_tasks = vec![TaskDraft {
             title: "Updated task".to_string(),
@@ -981,9 +999,10 @@ mod tests {
             due_at: None,
         };
 
-        let (payload, receiver) = create_task_review("session_test", "turn_cancel", vec![draft], 30_000)
-            .await
-            .expect("create review should succeed");
+        let (payload, receiver) =
+            create_task_review("session_test", "turn_cancel", vec![draft], 30_000)
+                .await
+                .expect("create review should succeed");
 
         submit_task_review_decision(
             payload.review_id.as_str(),

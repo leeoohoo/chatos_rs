@@ -121,13 +121,14 @@ fn build_servers_from_configs(
             let root = workspace_dir_fallback
                 .clone()
                 .unwrap_or_else(|| resolve_workspace_dir(None));
+            let allow_writes = !matches!(kind, BuiltinMcpKind::CodeMaintainerRead);
             builtin_servers.push(McpBuiltinServer {
                 name: server_name,
                 kind,
                 workspace_dir: root,
                 user_id: user_id.clone(),
                 project_id: project_id.clone(),
-                allow_writes: true,
+                allow_writes,
                 max_file_bytes: 256 * 1024,
                 max_write_bytes: 5 * 1024 * 1024,
                 search_limit: 40,

@@ -53,7 +53,10 @@ pub fn router() -> Router {
             post(submit_review_decision),
         )
         .route("/api/task-manager/tasks", get(list_tasks))
-        .route("/api/task-manager/tasks/:task_id", patch(update_task).delete(delete_task))
+        .route(
+            "/api/task-manager/tasks/:task_id",
+            patch(update_task).delete(delete_task),
+        )
         .route(
             "/api/task-manager/tasks/:task_id/complete",
             post(complete_task),

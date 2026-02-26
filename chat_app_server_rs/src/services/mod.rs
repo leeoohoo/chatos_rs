@@ -1,6 +1,8 @@
+pub mod ai_prompt_tool;
 pub mod builtin_mcp;
 pub mod mcp_loader;
 pub mod session_title;
+pub mod system_context_ai;
 pub mod task_manager;
 pub mod terminal_manager;
 pub mod user_settings;

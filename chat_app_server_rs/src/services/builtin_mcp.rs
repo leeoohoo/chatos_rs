@@ -2,10 +2,18 @@ use serde_json::json;
 
 use crate::models::mcp_config::McpConfig;
 
-pub const CODE_MAINTAINER_MCP_ID: &str = "builtin_code_maintainer";
-pub const CODE_MAINTAINER_DISPLAY_NAME: &str = "Code Maintainer (Builtin)";
-pub const CODE_MAINTAINER_SERVER_NAME: &str = "code_maintainer";
-pub const CODE_MAINTAINER_COMMAND: &str = "builtin:code_maintainer";
+pub const LEGACY_CODE_MAINTAINER_MCP_ID: &str = "builtin_code_maintainer";
+pub const LEGACY_CODE_MAINTAINER_COMMAND: &str = "builtin:code_maintainer";
+
+pub const CODE_MAINTAINER_READ_MCP_ID: &str = "builtin_code_maintainer_read";
+pub const CODE_MAINTAINER_READ_DISPLAY_NAME: &str = "Code Maintainer Read (Builtin)";
+pub const CODE_MAINTAINER_READ_SERVER_NAME: &str = "code_maintainer_read";
+pub const CODE_MAINTAINER_READ_COMMAND: &str = "builtin:code_maintainer_read";
+
+pub const CODE_MAINTAINER_WRITE_MCP_ID: &str = "builtin_code_maintainer_write";
+pub const CODE_MAINTAINER_WRITE_DISPLAY_NAME: &str = "Code Maintainer Write (Builtin)";
+pub const CODE_MAINTAINER_WRITE_SERVER_NAME: &str = "code_maintainer_write";
+pub const CODE_MAINTAINER_WRITE_COMMAND: &str = "builtin:code_maintainer_write";
 
 pub const TERMINAL_CONTROLLER_MCP_ID: &str = "builtin_terminal_controller";
 pub const TERMINAL_CONTROLLER_DISPLAY_NAME: &str = "Terminal Controller (Builtin)";
@@ -24,7 +32,8 @@ pub const SUB_AGENT_ROUTER_COMMAND: &str = "builtin:sub_agent_router";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuiltinMcpKind {
-    CodeMaintainer,
+    CodeMaintainerRead,
+    CodeMaintainerWrite,
     TerminalController,
     TaskManager,
     SubAgentRouter,
@@ -32,7 +41,10 @@ pub enum BuiltinMcpKind {
 
 pub fn builtin_kind_by_id(id: &str) -> Option<BuiltinMcpKind> {
     match id {
-        CODE_MAINTAINER_MCP_ID => Some(BuiltinMcpKind::CodeMaintainer),
+        CODE_MAINTAINER_READ_MCP_ID => Some(BuiltinMcpKind::CodeMaintainerRead),
+        CODE_MAINTAINER_WRITE_MCP_ID | LEGACY_CODE_MAINTAINER_MCP_ID => {
+            Some(BuiltinMcpKind::CodeMaintainerWrite)
+        }
         TERMINAL_CONTROLLER_MCP_ID => Some(BuiltinMcpKind::TerminalController),
         TASK_MANAGER_MCP_ID => Some(BuiltinMcpKind::TaskManager),
         SUB_AGENT_ROUTER_MCP_ID => Some(BuiltinMcpKind::SubAgentRouter),
@@ -42,7 +54,10 @@ pub fn builtin_kind_by_id(id: &str) -> Option<BuiltinMcpKind> {
 
 pub fn builtin_kind_by_command(command: &str) -> Option<BuiltinMcpKind> {
     match command {
-        CODE_MAINTAINER_COMMAND => Some(BuiltinMcpKind::CodeMaintainer),
+        CODE_MAINTAINER_READ_COMMAND => Some(BuiltinMcpKind::CodeMaintainerRead),
+        CODE_MAINTAINER_WRITE_COMMAND | LEGACY_CODE_MAINTAINER_COMMAND => {
+            Some(BuiltinMcpKind::CodeMaintainerWrite)
+        }
         TERMINAL_CONTROLLER_COMMAND => Some(BuiltinMcpKind::TerminalController),
         TASK_MANAGER_COMMAND => Some(BuiltinMcpKind::TaskManager),
         SUB_AGENT_ROUTER_COMMAND => Some(BuiltinMcpKind::SubAgentRouter),
@@ -55,18 +70,23 @@ pub fn is_builtin_mcp_id(id: &str) -> bool {
 }
 
 pub fn get_builtin_mcp_config(id: &str) -> Option<McpConfig> {
-    match builtin_kind_by_id(id) {
-        Some(BuiltinMcpKind::CodeMaintainer) => Some(code_maintainer_config()),
-        Some(BuiltinMcpKind::TerminalController) => Some(terminal_controller_config()),
-        Some(BuiltinMcpKind::TaskManager) => Some(task_manager_config()),
-        Some(BuiltinMcpKind::SubAgentRouter) => Some(sub_agent_router_config()),
-        None => None,
+    match id {
+        CODE_MAINTAINER_READ_MCP_ID => Some(code_maintainer_read_config()),
+        CODE_MAINTAINER_WRITE_MCP_ID => Some(code_maintainer_write_config()),
+        LEGACY_CODE_MAINTAINER_MCP_ID => Some(legacy_code_maintainer_write_config()),
+        _ => match builtin_kind_by_id(id) {
+            Some(BuiltinMcpKind::TerminalController) => Some(terminal_controller_config()),
+            Some(BuiltinMcpKind::TaskManager) => Some(task_manager_config()),
+            Some(BuiltinMcpKind::SubAgentRouter) => Some(sub_agent_router_config()),
+            _ => None,
+        },
     }
 }
 
 pub fn list_builtin_mcp_configs() -> Vec<McpConfig> {
     vec![
-        code_maintainer_config(),
+        code_maintainer_read_config(),
+        code_maintainer_write_config(),
         terminal_controller_config(),
         task_manager_config(),
         sub_agent_router_config(),
@@ -74,23 +94,60 @@ pub fn list_builtin_mcp_configs() -> Vec<McpConfig> {
 }
 
 pub fn builtin_display_name(id: &str) -> Option<&'static str> {
-    match builtin_kind_by_id(id) {
-        Some(BuiltinMcpKind::CodeMaintainer) => Some(CODE_MAINTAINER_DISPLAY_NAME),
-        Some(BuiltinMcpKind::TerminalController) => Some(TERMINAL_CONTROLLER_DISPLAY_NAME),
-        Some(BuiltinMcpKind::TaskManager) => Some(TASK_MANAGER_DISPLAY_NAME),
-        Some(BuiltinMcpKind::SubAgentRouter) => Some(SUB_AGENT_ROUTER_DISPLAY_NAME),
-        None => None,
+    match id {
+        CODE_MAINTAINER_READ_MCP_ID => Some(CODE_MAINTAINER_READ_DISPLAY_NAME),
+        CODE_MAINTAINER_WRITE_MCP_ID | LEGACY_CODE_MAINTAINER_MCP_ID => {
+            Some(CODE_MAINTAINER_WRITE_DISPLAY_NAME)
+        }
+        TERMINAL_CONTROLLER_MCP_ID => Some(TERMINAL_CONTROLLER_DISPLAY_NAME),
+        TASK_MANAGER_MCP_ID => Some(TASK_MANAGER_DISPLAY_NAME),
+        SUB_AGENT_ROUTER_MCP_ID => Some(SUB_AGENT_ROUTER_DISPLAY_NAME),
+        _ => None,
     }
 }
 
-fn code_maintainer_config() -> McpConfig {
+fn code_maintainer_read_config() -> McpConfig {
     let now = crate::core::time::now_rfc3339();
     McpConfig {
-        id: CODE_MAINTAINER_MCP_ID.to_string(),
-        name: CODE_MAINTAINER_SERVER_NAME.to_string(),
-        command: CODE_MAINTAINER_COMMAND.to_string(),
+        id: CODE_MAINTAINER_READ_MCP_ID.to_string(),
+        name: CODE_MAINTAINER_READ_SERVER_NAME.to_string(),
+        command: CODE_MAINTAINER_READ_COMMAND.to_string(),
         r#type: "stdio".to_string(),
-        args: Some(json!(["--name", CODE_MAINTAINER_SERVER_NAME])),
+        args: Some(json!(["--name", CODE_MAINTAINER_READ_SERVER_NAME])),
+        env: None,
+        cwd: None,
+        user_id: None,
+        enabled: true,
+        created_at: now.clone(),
+        updated_at: now,
+    }
+}
+
+fn code_maintainer_write_config() -> McpConfig {
+    let now = crate::core::time::now_rfc3339();
+    McpConfig {
+        id: CODE_MAINTAINER_WRITE_MCP_ID.to_string(),
+        name: CODE_MAINTAINER_WRITE_SERVER_NAME.to_string(),
+        command: CODE_MAINTAINER_WRITE_COMMAND.to_string(),
+        r#type: "stdio".to_string(),
+        args: Some(json!(["--name", CODE_MAINTAINER_WRITE_SERVER_NAME])),
+        env: None,
+        cwd: None,
+        user_id: None,
+        enabled: true,
+        created_at: now.clone(),
+        updated_at: now,
+    }
+}
+
+fn legacy_code_maintainer_write_config() -> McpConfig {
+    let now = crate::core::time::now_rfc3339();
+    McpConfig {
+        id: LEGACY_CODE_MAINTAINER_MCP_ID.to_string(),
+        name: CODE_MAINTAINER_WRITE_SERVER_NAME.to_string(),
+        command: LEGACY_CODE_MAINTAINER_COMMAND.to_string(),
+        r#type: "stdio".to_string(),
+        args: Some(json!(["--name", CODE_MAINTAINER_WRITE_SERVER_NAME])),
         env: None,
         cwd: None,
         user_id: None,

@@ -66,9 +66,7 @@ fn build_live_agent_catalog_for_suggest(ctx: &BoundContext) -> Result<String, St
 
     let max_items = 400usize;
     let mut lines = Vec::new();
-    lines.push(
-        "Live agent catalog (must choose one exact agent_id from this list):".to_string(),
-    );
+    lines.push("Live agent catalog (must choose one exact agent_id from this list):".to_string());
 
     for agent in agents.iter().take(max_items) {
         let command_ids = agent
@@ -309,7 +307,8 @@ mod tests {
     #[test]
     fn replace_keyed_line_updates_existing_key() {
         let input = "agent_id: code-reviewer\nskills: a,b\nreason: test";
-        let updated = replace_keyed_line_value(input, "agent_id", "application-performance/code-reviewer");
+        let updated =
+            replace_keyed_line_value(input, "agent_id", "application-performance/code-reviewer");
         assert!(updated.contains("agent_id: application-performance/code-reviewer"));
         assert!(updated.contains("skills: a,b"));
     }

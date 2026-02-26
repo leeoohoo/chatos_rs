@@ -74,7 +74,12 @@ async fn create_dir(Json(req): Json<FsMkdirRequest>) -> (StatusCode, Json<Value>
     }
 
     let name = name_raw.unwrap();
-    if name == "." || name == ".." || name.contains('/') || name.contains('\\') || name.contains('\0') {
+    if name == "."
+        || name == ".."
+        || name.contains('/')
+        || name.contains('\\')
+        || name.contains('\0')
+    {
         return (
             StatusCode::BAD_REQUEST,
             Json(json!({ "error": "目录名称不合法" })),

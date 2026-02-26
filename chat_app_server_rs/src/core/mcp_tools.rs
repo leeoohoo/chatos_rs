@@ -8,8 +8,8 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use uuid::Uuid;
 
 use crate::builtin::code_maintainer::{CodeMaintainerOptions, CodeMaintainerService};
-use crate::builtin::task_manager::{TaskManagerOptions, TaskManagerService};
 use crate::builtin::sub_agent_router::{SubAgentRouterOptions, SubAgentRouterService};
+use crate::builtin::task_manager::{TaskManagerOptions, TaskManagerService};
 use crate::builtin::terminal_controller::{TerminalControllerOptions, TerminalControllerService};
 use crate::services::builtin_mcp::BuiltinMcpKind;
 use crate::services::mcp_loader::{McpBuiltinServer, McpStdioServer};
@@ -69,19 +69,43 @@ impl BuiltinToolService {
         match self {
             Self::CodeMaintainer(service) => service.call_tool(name, args, session_id),
             Self::TerminalController(service) => service.call_tool(name, args, session_id),
-            Self::TaskManager(service) => {
-                service.call_tool(name, args, session_id, conversation_turn_id, on_stream_chunk)
-            }
-            Self::SubAgentRouter(service) => {
-                service.call_tool(name, args, session_id, conversation_turn_id, on_stream_chunk)
-            }
+            Self::TaskManager(service) => service.call_tool(
+                name,
+                args,
+                session_id,
+                conversation_turn_id,
+                on_stream_chunk,
+            ),
+            Self::SubAgentRouter(service) => service.call_tool(
+                name,
+                args,
+                session_id,
+                conversation_turn_id,
+                on_stream_chunk,
+            ),
         }
     }
 }
 
 pub fn build_builtin_tool_service(server: &McpBuiltinServer) -> Result<BuiltinToolService, String> {
     match server.kind {
-        BuiltinMcpKind::CodeMaintainer => {
+        BuiltinMcpKind::CodeMaintainerRead => {
+            let service = CodeMaintainerService::new(CodeMaintainerOptions {
+                server_name: server.name.clone(),
+                root: std::path::PathBuf::from(&server.workspace_dir),
+                allow_writes: false,
+                max_file_bytes: server.max_file_bytes,
+                max_write_bytes: server.max_write_bytes,
+                search_limit: server.search_limit,
+                enable_read_tools: true,
+                enable_write_tools: false,
+                session_id: None,
+                run_id: None,
+                db_path: None,
+            })?;
+            Ok(BuiltinToolService::CodeMaintainer(service))
+        }
+        BuiltinMcpKind::CodeMaintainerWrite => {
             let service = CodeMaintainerService::new(CodeMaintainerOptions {
                 server_name: server.name.clone(),
                 root: std::path::PathBuf::from(&server.workspace_dir),
@@ -89,6 +113,8 @@ pub fn build_builtin_tool_service(server: &McpBuiltinServer) -> Result<BuiltinTo
                 max_file_bytes: server.max_file_bytes,
                 max_write_bytes: server.max_write_bytes,
                 search_limit: server.search_limit,
+                enable_read_tools: false,
+                enable_write_tools: true,
                 session_id: None,
                 run_id: None,
                 db_path: None,

@@ -136,10 +136,11 @@ export function createSystemContextActions({ set, client, getUserIdParam }: Deps
         });
       } catch (error) {
         console.error('Failed to generate system context draft:', error);
+        const message = error instanceof Error ? error.message : 'Failed to generate system context draft';
         set((state: any) => {
-          state.error = error instanceof Error ? error.message : 'Failed to generate system context draft';
+          state.error = message;
         });
-        return null;
+        throw (error instanceof Error ? error : new Error(message));
       }
     },
 
@@ -156,10 +157,11 @@ export function createSystemContextActions({ set, client, getUserIdParam }: Deps
         });
       } catch (error) {
         console.error('Failed to optimize system context draft:', error);
+        const message = error instanceof Error ? error.message : 'Failed to optimize system context draft';
         set((state: any) => {
-          state.error = error instanceof Error ? error.message : 'Failed to optimize system context draft';
+          state.error = message;
         });
-        return null;
+        throw (error instanceof Error ? error : new Error(message));
       }
     },
 
@@ -168,10 +170,11 @@ export function createSystemContextActions({ set, client, getUserIdParam }: Deps
         return await client.evaluateSystemContextDraft(payload);
       } catch (error) {
         console.error('Failed to evaluate system context draft:', error);
+        const message = error instanceof Error ? error.message : 'Failed to evaluate system context draft';
         set((state: any) => {
-          state.error = error instanceof Error ? error.message : 'Failed to evaluate system context draft';
+          state.error = message;
         });
-        return null;
+        throw (error instanceof Error ? error : new Error(message));
       }
     },
   };

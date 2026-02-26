@@ -327,8 +327,7 @@ impl AiRequestHandler {
                                     }
                                 }
                             }
-                        } else if let Some(reasoning_delta) = extract_reasoning_event_text(t, &v)
-                        {
+                        } else if let Some(reasoning_delta) = extract_reasoning_event_text(t, &v) {
                             if !reasoning_delta.is_empty() {
                                 reasoning.push_str(&reasoning_delta);
                                 if let Some(cb) = &callbacks.on_thinking {
@@ -595,7 +594,15 @@ fn extract_reasoning_event_text(event_type: &str, event: &Value) -> Option<Strin
         || event_type.starts_with("response.reasoning_summary");
 
     if is_reasoning_event {
-        for key in ["delta", "summary_text", "summary", "text", "part", "item", "content"] {
+        for key in [
+            "delta",
+            "summary_text",
+            "summary",
+            "text",
+            "part",
+            "item",
+            "content",
+        ] {
             if let Some(value) = event.get(key) {
                 let text = normalize_reasoning_delta(Some(value));
                 if !text.is_empty() {

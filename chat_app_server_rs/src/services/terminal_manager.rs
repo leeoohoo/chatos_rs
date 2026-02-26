@@ -450,7 +450,6 @@ pub fn get_terminal_manager() -> Arc<TerminalsManager> {
         .clone()
 }
 
-
 fn spawn_terminal_touch(handle: tokio::runtime::Handle, terminal_id: String) {
     handle.spawn(async move {
         let _ = terminals::touch_terminal(terminal_id.as_str()).await;
@@ -926,7 +925,11 @@ fn build_return_to_root_command(root: &Path) -> String {
             shell_input_newline()
         );
     }
-    format!("cd {}{}", shell_quote_path_for_shell(root), shell_input_newline())
+    format!(
+        "cd {}{}",
+        shell_quote_path_for_shell(root),
+        shell_input_newline()
+    )
 }
 
 fn shell_input_newline() -> &'static str {

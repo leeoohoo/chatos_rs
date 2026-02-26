@@ -292,15 +292,13 @@ fn extract_tool_call_id(tool_call: &Value) -> Option<String> {
         return None;
     };
 
-    ["id", "tool_call_id", "toolCallId"]
-        .iter()
-        .find_map(|key| {
-            map.get(*key)
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToOwned::to_owned)
-        })
+    ["id", "tool_call_id", "toolCallId"].iter().find_map(|key| {
+        map.get(*key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+    })
 }
 
 fn parse_tool_calls_value(value: &Value) -> Vec<Value> {
@@ -366,7 +364,10 @@ fn is_meaningful_reasoning(reasoning: Option<&str>) -> bool {
     };
 
     let normalized = reasoning.to_ascii_lowercase();
-    !matches!(normalized.as_str(), "minimal" | "low" | "medium" | "high" | "detailed")
+    !matches!(
+        normalized.as_str(),
+        "minimal" | "low" | "medium" | "high" | "detailed"
+    )
 }
 
 fn count_assistant_thinking_steps(message: &Message) -> usize {
@@ -444,7 +445,10 @@ fn enrich_assistant_message_for_display(message: &mut Message) {
     }
 
     if !segments.is_empty() {
-        metadata.insert("contentSegments".to_string(), Value::Array(segments.clone()));
+        metadata.insert(
+            "contentSegments".to_string(),
+            Value::Array(segments.clone()),
+        );
         metadata.insert(
             "currentSegmentIndex".to_string(),
             Value::Number(Number::from((segments.len() - 1) as u64)),
@@ -602,7 +606,11 @@ fn build_compact_history_messages(messages: Vec<Message>) -> Vec<Message> {
     compact
 }
 
-fn apply_recent_offset_limit(messages: Vec<Message>, limit: Option<i64>, offset: i64) -> Vec<Message> {
+fn apply_recent_offset_limit(
+    messages: Vec<Message>,
+    limit: Option<i64>,
+    offset: i64,
+) -> Vec<Message> {
     let Some(limit) = limit else {
         return messages;
     };
@@ -669,7 +677,9 @@ async fn get_session_messages(
         Ok(list) => {
             let out: Vec<Value> = list
                 .into_iter()
-                .map(|message| serde_json::to_value(MessageOut::from(message)).unwrap_or(Value::Null))
+                .map(|message| {
+                    serde_json::to_value(MessageOut::from(message)).unwrap_or(Value::Null)
+                })
                 .collect();
             (StatusCode::OK, Json(Value::Array(out)))
         }
@@ -728,13 +738,17 @@ async fn get_session_turn_process_messages(
 
             let out: Vec<Value> = process_messages
                 .into_iter()
-                .map(|message| serde_json::to_value(MessageOut::from(message)).unwrap_or(Value::Null))
+                .map(|message| {
+                    serde_json::to_value(MessageOut::from(message)).unwrap_or(Value::Null)
+                })
                 .collect();
             (StatusCode::OK, Json(Value::Array(out)))
         }
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": "Failed to get turn process messages", "detail": err})),
+            Json(
+                serde_json::json!({"error": "Failed to get turn process messages", "detail": err}),
+            ),
         ),
     }
 }

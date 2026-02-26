@@ -949,7 +949,9 @@ async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> {
     let _ = db
         .collection::<mongodb::bson::Document>("task_manager_tasks")
         .create_index(
-            IndexModel::builder().keys(doc! { "session_id": 1, "created_at": -1 }).build(),
+            IndexModel::builder()
+                .keys(doc! { "session_id": 1, "created_at": -1 })
+                .build(),
             None,
         )
         .await;

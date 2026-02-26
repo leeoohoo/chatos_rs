@@ -8,8 +8,9 @@ use uuid::Uuid;
 use crate::core::mcp_tools::ToolStreamChunkCallback;
 use crate::services::task_manager::{
     complete_task_by_id, create_task_review, create_tasks_for_turn, delete_task_by_id,
-    list_tasks_for_context, update_task_by_id, wait_for_task_review_decision, TaskCreateReviewPayload,
-    TaskDraft, TaskReviewAction, TaskUpdatePatch, REVIEW_TIMEOUT_ERR, TASK_NOT_FOUND_ERR,
+    list_tasks_for_context, update_task_by_id, wait_for_task_review_decision,
+    TaskCreateReviewPayload, TaskDraft, TaskReviewAction, TaskUpdatePatch, REVIEW_TIMEOUT_ERR,
+    TASK_NOT_FOUND_ERR,
 };
 use crate::utils::events::Events;
 
@@ -284,7 +285,11 @@ impl TaskManagerService {
     }
 }
 
-fn handle_add_task(args: Value, ctx: &ToolContext, default_timeout_ms: u64) -> Result<Value, String> {
+fn handle_add_task(
+    args: Value,
+    ctx: &ToolContext,
+    default_timeout_ms: u64,
+) -> Result<Value, String> {
     let draft_tasks = parse_task_drafts(&args)?;
     if draft_tasks.is_empty() {
         return Err("tasks is required".to_string());
@@ -366,8 +371,8 @@ fn parse_update_patch(value: &Value) -> Result<TaskUpdatePatch, String> {
             if trimmed.is_empty() {
                 return Err("changes cannot be empty".to_string());
             }
-            let parsed: Value =
-                serde_json::from_str(trimmed).map_err(|_| "changes must be valid JSON".to_string())?;
+            let parsed: Value = serde_json::from_str(trimmed)
+                .map_err(|_| "changes must be valid JSON".to_string())?;
             parsed
                 .as_object()
                 .cloned()
@@ -423,7 +428,9 @@ fn parse_tags(value: &Value, field: &str) -> Result<Vec<String>, String> {
             .map(|item| item.trim().to_string())
             .filter(|item| !item.is_empty())
             .collect()),
-        _ => Err(format!("{field} must be an array or comma-separated string")),
+        _ => Err(format!(
+            "{field} must be an array or comma-separated string"
+        )),
     }
 }
 
@@ -616,7 +623,10 @@ mod tests {
             .get("inputSchema")
             .expect("add_task should expose inputSchema");
 
-        assert_eq!(schema.get("additionalProperties"), Some(&Value::Bool(false)));
+        assert_eq!(
+            schema.get("additionalProperties"),
+            Some(&Value::Bool(false))
+        );
 
         let root_properties = schema
             .get("properties")
@@ -655,7 +665,10 @@ mod tests {
         .expect("update patch should parse");
 
         assert_eq!(patch.details.as_deref(), Some("refresh docs"));
-        assert_eq!(patch.tags, Some(vec!["backend".to_string(), "task".to_string()]));
+        assert_eq!(
+            patch.tags,
+            Some(vec!["backend".to_string(), "task".to_string()])
+        );
         assert_eq!(patch.due_at, Some(None));
     }
 

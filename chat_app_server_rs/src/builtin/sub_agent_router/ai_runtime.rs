@@ -249,7 +249,9 @@ pub(super) async fn resolve_selected_system_context_prompt(
         return Ok(None);
     };
 
-    let Some(context) = crate::repositories::system_contexts::get_system_context_by_id(context_id.as_str()).await? else {
+    let Some(context) =
+        crate::repositories::system_contexts::get_system_context_by_id(context_id.as_str()).await?
+    else {
         return Ok(None);
     };
 
