@@ -17,9 +17,14 @@ pub struct Config {
     pub summary_max_context_tokens: i64,
     pub summary_keep_last_n: i64,
     pub summary_target_tokens: i64,
+    pub summary_merge_target_tokens: i64,
     pub summary_temperature: f64,
     pub summary_cooldown_seconds: i64,
     pub dynamic_summary_enabled: bool,
+    pub summary_bisect_enabled: bool,
+    pub summary_bisect_max_depth: i64,
+    pub summary_bisect_min_messages: i64,
+    pub summary_retry_on_context_overflow: bool,
 }
 
 static CONFIG: OnceCell<Config> = OnceCell::new();
@@ -83,9 +88,21 @@ impl Config {
         let summary_max_context_tokens = read_int("SUMMARY_MAX_CONTEXT_TOKENS", 6000);
         let summary_keep_last_n = read_int("SUMMARY_KEEP_LAST_N", 6);
         let summary_target_tokens = read_int("SUMMARY_TARGET_TOKENS", 700);
+        let summary_merge_target_tokens =
+            read_int("SUMMARY_MERGE_TARGET_TOKENS", summary_target_tokens);
         let summary_temperature = read_num("SUMMARY_TEMPERATURE", 0.2);
         let summary_cooldown_seconds = read_int("SUMMARY_COOLDOWN_SECONDS", 60);
         let dynamic_summary_enabled = std::env::var("DYNAMIC_SUMMARY_ENABLED")
+            .unwrap_or_else(|_| "true".to_string())
+            .to_lowercase()
+            != "false";
+        let summary_bisect_enabled = std::env::var("SUMMARY_BISECT_ENABLED")
+            .unwrap_or_else(|_| "true".to_string())
+            .to_lowercase()
+            != "false";
+        let summary_bisect_max_depth = read_int("SUMMARY_BISECT_MAX_DEPTH", 6);
+        let summary_bisect_min_messages = read_int("SUMMARY_BISECT_MIN_MESSAGES", 4);
+        let summary_retry_on_context_overflow = std::env::var("SUMMARY_RETRY_ON_CONTEXT_OVERFLOW")
             .unwrap_or_else(|_| "true".to_string())
             .to_lowercase()
             != "false";
@@ -105,9 +122,14 @@ impl Config {
             summary_max_context_tokens,
             summary_keep_last_n,
             summary_target_tokens,
+            summary_merge_target_tokens,
             summary_temperature,
             summary_cooldown_seconds,
             dynamic_summary_enabled,
+            summary_bisect_enabled,
+            summary_bisect_max_depth,
+            summary_bisect_min_messages,
+            summary_retry_on_context_overflow,
         })
     }
 
@@ -145,10 +167,30 @@ impl Config {
             "    • SUMMARY_TARGET_TOKENS: {}",
             self.summary_target_tokens
         );
+        println!(
+            "    • SUMMARY_MERGE_TARGET_TOKENS: {}",
+            self.summary_merge_target_tokens
+        );
         println!("    • SUMMARY_TEMPERATURE: {}", self.summary_temperature);
         println!(
             "    • SUMMARY_COOLDOWN_SECONDS: {}",
             self.summary_cooldown_seconds
+        );
+        println!(
+            "    • SUMMARY_BISECT_ENABLED: {}",
+            self.summary_bisect_enabled
+        );
+        println!(
+            "    • SUMMARY_BISECT_MAX_DEPTH: {}",
+            self.summary_bisect_max_depth
+        );
+        println!(
+            "    • SUMMARY_BISECT_MIN_MESSAGES: {}",
+            self.summary_bisect_min_messages
+        );
+        println!(
+            "    • SUMMARY_RETRY_ON_CONTEXT_OVERFLOW: {}",
+            self.summary_retry_on_context_overflow
         );
     }
 }

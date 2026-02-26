@@ -186,7 +186,7 @@ pub fn build_v3_callbacks(
 
     let on_tools_end = if enable_tools {
         let sender_tools_end = sender.clone();
-        let sid_tools_end = sid;
+        let sid_tools_end = sid.clone();
         Some(Arc::new(move |result: Value| {
             if abort_registry::is_aborted(&sid_tools_end) {
                 return;
@@ -199,12 +199,42 @@ pub fn build_v3_callbacks(
         None
     };
 
+    let sender_sum_start = sender.clone();
+    let sid_sum_start = sid.clone();
+    let on_sum_start = Arc::new(move |info: Value| {
+        if abort_registry::is_aborted(&sid_sum_start) {
+            return;
+        }
+        sender_sum_start.send_json(&json!({ "type": Events::CONTEXT_SUMMARIZED_START, "timestamp": crate::core::time::now_rfc3339(), "data": info }));
+    }) as Arc<dyn Fn(Value) + Send + Sync>;
+
+    let sender_sum_stream = sender.clone();
+    let sid_sum_stream = sid.clone();
+    let on_sum_stream = Arc::new(move |chunk: Value| {
+        if abort_registry::is_aborted(&sid_sum_stream) {
+            return;
+        }
+        sender_sum_stream.send_json(&json!({ "type": Events::CONTEXT_SUMMARIZED_STREAM, "timestamp": crate::core::time::now_rfc3339(), "data": chunk }));
+    }) as Arc<dyn Fn(Value) + Send + Sync>;
+
+    let sender_sum_end = sender.clone();
+    let sid_sum_end = sid;
+    let on_sum_end = Arc::new(move |info: Value| {
+        if abort_registry::is_aborted(&sid_sum_end) {
+            return;
+        }
+        sender_sum_end.send_json(&json!({ "type": Events::CONTEXT_SUMMARIZED_END, "timestamp": crate::core::time::now_rfc3339(), "data": info }));
+    }) as Arc<dyn Fn(Value) + Send + Sync>;
+
     let callbacks = V3AiClientCallbacks {
         on_chunk: Some(Arc::new(on_chunk)),
         on_thinking: Some(Arc::new(on_thinking)),
         on_tools_start,
         on_tools_stream,
         on_tools_end,
+        on_context_summarized_start: Some(on_sum_start),
+        on_context_summarized_stream: Some(on_sum_stream),
+        on_context_summarized_end: Some(on_sum_end),
     };
 
     StreamCallbacksV3 {

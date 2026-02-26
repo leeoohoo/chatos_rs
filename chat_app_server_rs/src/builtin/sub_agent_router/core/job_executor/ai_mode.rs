@@ -275,6 +275,9 @@ pub(super) fn execute_ai_mode(
                             on_tools_start: Some(callbacks.on_tools_start.clone()),
                             on_tools_stream: Some(callbacks.on_tools_stream.clone()),
                             on_tools_end: Some(callbacks.on_tools_end.clone()),
+                            on_context_summarized_start: None,
+                            on_context_summarized_stream: None,
+                            on_context_summarized_end: None,
                         }),
                     },
                 );

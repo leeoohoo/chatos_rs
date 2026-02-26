@@ -1,39 +1,24 @@
 use serde_json::{json, Value};
-use tracing::{info, warn};
+use tracing::warn;
 
 use crate::config::Config;
 use crate::models::message::Message;
-use crate::models::session_summary::{SessionSummary, SessionSummaryService};
-use crate::models::session_summary_message::SessionSummaryMessageService;
-use crate::services::v2::ai_request_handler::{AiRequestHandler, StreamCallbacks};
+use crate::services::summary::engine::{maybe_summarize, retry_after_context_overflow};
+use crate::services::summary::persist::persist_summary;
+use crate::services::summary::types::{
+    build_summarizer_system_prompt, PersistSummaryPayload, SummaryOptions, SummaryResult,
+    SummarySourceInfo, SummaryTrigger,
+};
+use crate::services::v2::ai_request_handler::AiRequestHandler;
 use crate::services::v2::message_manager::MessageManager;
-use crate::utils::abort_registry;
+use crate::services::v2::summary_adapter::V2SummaryAdapter;
 
-fn estimate_tokens(text: &str) -> usize {
-    if text.is_empty() {
-        return 0;
-    }
-    (text.len() + 3) / 4
-}
-
-fn build_summarizer_system_prompt(target_tokens: i64) -> String {
-    format!(
-        "你是一名对话压缩专家。请将之前的对话（包含多次工具调用的结果）压缩为清晰、可追踪的上下文摘要。\n- 用中文输出\n- 严格保留重要事实、参数、路径、表名/字段名、ID 等关键细节\n- 去重冗余内容；保留结论与未解决的问题\n- 最终长度控制在约 {} tokens\n- 输出为自然文本，分点列出要点即可",
-        target_tokens
-    )
-}
+pub use crate::services::summary::types::SummaryCallbacks;
 
 pub struct ConversationSummarizer {
     ai_request_handler: AiRequestHandler,
     message_manager: MessageManager,
     defaults: SummaryDefaults,
-}
-
-#[derive(Clone, Default)]
-pub struct SummaryCallbacks {
-    pub on_start: Option<std::sync::Arc<dyn Fn(Value) + Send + Sync>>,
-    pub on_stream: Option<std::sync::Arc<dyn Fn(String) + Send + Sync>>,
-    pub on_end: Option<std::sync::Arc<dyn Fn(Value) + Send + Sync>>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -46,13 +31,19 @@ pub struct InMemorySummaryResult {
     pub truncated: bool,
 }
 
+#[derive(Debug, Clone)]
 struct SummaryDefaults {
     message_limit: i64,
     max_context_tokens: i64,
-    keep_last_n: i64,
+    keep_last_n: usize,
     target_summary_tokens: i64,
+    merge_target_tokens: i64,
     model: String,
     temperature: f64,
+    bisect_enabled: bool,
+    bisect_max_depth: usize,
+    bisect_min_messages: usize,
+    retry_on_context_overflow: bool,
 }
 
 impl ConversationSummarizer {
@@ -64,10 +55,15 @@ impl ConversationSummarizer {
             defaults: SummaryDefaults {
                 message_limit: cfg.summary_message_limit,
                 max_context_tokens: cfg.summary_max_context_tokens,
-                keep_last_n: cfg.summary_keep_last_n,
+                keep_last_n: cfg.summary_keep_last_n.max(0) as usize,
                 target_summary_tokens: cfg.summary_target_tokens,
+                merge_target_tokens: cfg.summary_merge_target_tokens,
                 model: "gpt-4".to_string(),
                 temperature: cfg.summary_temperature,
+                bisect_enabled: cfg.summary_bisect_enabled,
+                bisect_max_depth: cfg.summary_bisect_max_depth.max(1) as usize,
+                bisect_min_messages: cfg.summary_bisect_min_messages.max(1) as usize,
+                retry_on_context_overflow: cfg.summary_retry_on_context_overflow,
             },
         }
     }
@@ -77,192 +73,50 @@ impl ConversationSummarizer {
         session_id: &str,
         opts: Option<SummaryOverrides>,
     ) -> Result<Option<(String, Vec<Value>)>, String> {
-        let overrides = opts.unwrap_or_default();
-        let message_limit = overrides
-            .message_limit
-            .unwrap_or(self.defaults.message_limit);
-        let max_context_tokens = overrides
-            .max_context_tokens
-            .unwrap_or(self.defaults.max_context_tokens);
-        let keep_last_n = overrides.keep_last_n.unwrap_or(self.defaults.keep_last_n);
-        let target_summary_tokens = overrides
-            .target_summary_tokens
-            .unwrap_or(self.defaults.target_summary_tokens);
-        let model = overrides
-            .model
-            .unwrap_or_else(|| self.defaults.model.clone());
-        let temperature = overrides.temperature.unwrap_or(self.defaults.temperature);
+        let effective_records = self.load_effective_records(session_id).await;
+        let effective_messages = map_records_to_messages(effective_records.as_slice());
+        let options = self.resolve_options(opts.unwrap_or_default());
 
-        let all_messages = self
-            .message_manager
-            .get_session_messages(session_id, None)
-            .await;
-        let effective_records: Vec<Message> = all_messages
-            .into_iter()
-            .filter(|m| {
-                m.metadata
-                    .as_ref()
-                    .and_then(|v| v.get("type"))
-                    .and_then(|v| v.as_str())
-                    != Some("session_summary")
-            })
-            .collect();
-        let effective_messages: Vec<Value> = effective_records.iter().map(|m| {
-            if m.role == "tool" {
-                json!({"role": "tool", "tool_call_id": m.tool_call_id.clone().unwrap_or_default(), "content": m.content})
-            } else {
-                let mut msg = json!({"role": m.role, "content": m.content});
-                if let Some(tc) = &m.tool_calls { msg["tool_calls"] = tc.clone(); }
-                msg
-            }
-        }).collect();
-
-        let total_tokens = estimate_messages_tokens(&effective_messages);
-
-        let need = (effective_messages.len() as i64 >= message_limit)
-            || (total_tokens >= max_context_tokens);
-        info!(
-            "[SUM] check: session={}, messages={}, tokens={}, need={}",
-            session_id,
-            effective_messages.len(),
-            total_tokens,
-            need
+        let adapter = V2SummaryAdapter::new(
+            self.ai_request_handler.clone(),
+            self.message_manager.clone(),
         );
-        if !need {
+        let result = maybe_summarize(
+            &adapter,
+            effective_messages.as_slice(),
+            &options,
+            Some(session_id.to_string()),
+            None,
+            SummaryTrigger::Proactive,
+        )
+        .await?;
+
+        if !result.summarized {
             return Ok(None);
         }
 
-        let keep_last_n = keep_last_n.max(0) as usize;
-        let mut kept_start = effective_records.len().saturating_sub(keep_last_n);
-        while kept_start > 0 && kept_start < effective_records.len() {
-            if effective_records[kept_start].role != "tool" {
-                break;
-            }
-            kept_start -= 1;
-        }
-        let kept = if keep_last_n > 0 {
-            effective_messages[kept_start..].to_vec()
-        } else {
-            Vec::new()
-        };
-        let mut to_summarize = if keep_last_n > 0 {
-            effective_messages[..kept_start].to_vec()
-        } else {
-            effective_messages.clone()
-        };
-        let mut to_summarize_records = if keep_last_n > 0 {
-            effective_records[..kept_start].to_vec()
-        } else {
-            effective_records.clone()
-        };
-        if max_context_tokens > 0 {
-            let total = estimate_messages_tokens(&to_summarize);
-            if total > max_context_tokens {
-                let truncated = truncate_messages_by_tokens(&to_summarize, max_context_tokens);
-                let dropped = to_summarize.len().saturating_sub(truncated.len());
-                if dropped > 0 && dropped <= to_summarize_records.len() {
-                    to_summarize_records = to_summarize_records[dropped..].to_vec();
-                }
-                to_summarize = truncated;
-            }
-        }
-
-        let system_prompt = build_summarizer_system_prompt(target_summary_tokens);
-        let mut summarize_messages = Vec::new();
-        summarize_messages.push(json!({"role": "system", "content": system_prompt}));
-        summarize_messages.extend(to_summarize.clone());
-        summarize_messages.push(json!({"role": "user", "content": "请基于以上对话与工具调用结果，生成用于继续对话的上下文摘要。"}));
-
-        if abort_registry::is_aborted(session_id) {
-            return Err("aborted".to_string());
-        }
-
-        let resp = self
-            .ai_request_handler
-            .handle_request(
-                summarize_messages,
-                None,
-                model.clone(),
-                Some(temperature),
-                None,
-                StreamCallbacks {
-                    on_chunk: None,
-                    on_thinking: None,
-                },
-                false,
-                None,
-                None,
-                Some(session_id.to_string()),
-                false,
-                "summary",
-            )
-            .await?;
-
-        let summary_text = resp.content.clone();
-        let next_system_prompt = format!(
-            "以下是之前对话与工具调用的摘要（可视为“压缩记忆”）：\n\n{}",
-            summary_text
-        );
-
-        let mut summary_id: Option<String> = None;
-        if !to_summarize_records.is_empty() {
-            let mut record = SessionSummary::new(session_id.to_string(), summary_text.clone());
-            record.summary_prompt = Some(system_prompt.clone());
-            record.model = Some(model.clone());
-            record.temperature = Some(temperature);
-            record.target_summary_tokens = Some(target_summary_tokens);
-            record.keep_last_n = Some(keep_last_n as i64);
-            record.message_count = Some(to_summarize_records.len() as i64);
-            record.approx_tokens = Some(estimate_messages_tokens(&to_summarize));
-            record.first_message_id = to_summarize_records.first().map(|m| m.id.clone());
-            record.last_message_id = to_summarize_records.last().map(|m| m.id.clone());
-            record.first_message_created_at =
-                to_summarize_records.first().map(|m| m.created_at.clone());
-            record.last_message_created_at =
-                to_summarize_records.last().map(|m| m.created_at.clone());
-
-            let record_id = record.id.clone();
-            match SessionSummaryService::create(record).await {
-                Ok(_) => {
-                    summary_id = Some(record_id.clone());
-                    let message_ids: Vec<String> =
-                        to_summarize_records.iter().map(|m| m.id.clone()).collect();
-                    if let Err(err) = SessionSummaryMessageService::create_links(
-                        &record_id,
-                        session_id,
-                        &message_ids,
-                    )
-                    .await
-                    {
-                        warn!("[SUM] create summary message links failed: {}", err);
-                    }
-                }
-                Err(err) => {
-                    warn!("[SUM] create summary record failed: {}", err);
-                }
-            }
-        }
-
-        // persist summary message
-        let mut summary_meta = json!({"type": "session_summary", "keepLastN": keep_last_n as i64, "summary_timestamp": chrono::Utc::now().timestamp_millis()});
-        if let Some(id) = summary_id.clone() {
-            if let Some(map) = summary_meta.as_object_mut() {
-                map.insert("summary_id".to_string(), Value::String(id));
-            }
-        }
-        let _ = self
-            .message_manager
-            .save_assistant_message(
+        if let Some(summary_text) = result.summary_text.as_ref() {
+            let source = build_source_info(
+                effective_records.as_slice(),
+                result.summarized_messages.len(),
+                result.kept_messages.len(),
+            );
+            self.persist_result(
+                &adapter,
                 session_id,
-                "【上下文已压缩为摘要】",
-                Some(summary_text.clone()),
-                None,
-                Some(summary_meta),
-                None,
+                summary_text,
+                &result,
+                &options,
+                source,
+                SummaryTrigger::Proactive,
             )
             .await;
+        }
 
-        Ok(Some((next_system_prompt, kept)))
+        Ok(result
+            .system_prompt
+            .clone()
+            .map(|prompt| (prompt, result.kept_messages.clone())))
     }
 
     pub async fn maybe_summarize_in_memory(
@@ -273,212 +127,197 @@ impl ConversationSummarizer {
         persist: bool,
         callbacks: Option<SummaryCallbacks>,
     ) -> Result<InMemorySummaryResult, String> {
-        let overrides = opts.unwrap_or_default();
-        let message_limit = overrides
-            .message_limit
-            .unwrap_or(self.defaults.message_limit);
-        let max_context_tokens = overrides
-            .max_context_tokens
-            .unwrap_or(self.defaults.max_context_tokens);
-        let keep_last_n = overrides
-            .keep_last_n
-            .unwrap_or(self.defaults.keep_last_n)
-            .max(0) as usize;
-        let target_summary_tokens = overrides
-            .target_summary_tokens
-            .unwrap_or(self.defaults.target_summary_tokens);
-        let model = overrides
-            .model
-            .unwrap_or_else(|| self.defaults.model.clone());
-        let temperature = overrides.temperature.unwrap_or(self.defaults.temperature);
+        let options = self.resolve_options(opts.unwrap_or_default());
+        let adapter = V2SummaryAdapter::new(
+            self.ai_request_handler.clone(),
+            self.message_manager.clone(),
+        );
 
-        let mut total_tokens = 0i64;
-        for msg in messages {
-            if let Some(content) = msg.get("content") {
-                total_tokens += estimate_tokens_value(content) as i64;
-            }
-        }
+        let result = maybe_summarize(
+            &adapter,
+            messages,
+            &options,
+            session_id.clone(),
+            callbacks,
+            SummaryTrigger::Proactive,
+        )
+        .await?;
 
-        let need = (messages.len() as i64 >= message_limit) || (total_tokens >= max_context_tokens);
-        if !need {
+        if !result.summarized {
             return Ok(InMemorySummaryResult::default());
         }
 
-        let mut kept_start = messages.len().saturating_sub(keep_last_n);
-        while kept_start > 0 && kept_start < messages.len() {
-            if messages[kept_start].get("role").and_then(|v| v.as_str()) != Some("tool") {
-                break;
-            }
-            kept_start -= 1;
-        }
-        let _kept = if keep_last_n > 0 {
-            messages[kept_start..].to_vec()
-        } else {
-            Vec::new()
-        };
-        let mut to_summarize = if keep_last_n > 0 {
-            messages[..kept_start].to_vec()
-        } else {
-            messages.to_vec()
-        };
-        if max_context_tokens > 0 {
-            let total = estimate_messages_tokens(&to_summarize);
-            if total > max_context_tokens {
-                to_summarize = truncate_messages_by_tokens(&to_summarize, max_context_tokens);
-            }
-        }
-
-        if let Some(cb) = callbacks.as_ref().and_then(|c| c.on_start.clone()) {
-            cb(json!({ "keepLastN": keep_last_n, "summarize_count": to_summarize.len() }));
-        }
-
-        let system_prompt = build_summarizer_system_prompt(target_summary_tokens);
-        let mut summarize_messages = Vec::new();
-        summarize_messages.push(json!({"role": "system", "content": system_prompt}));
-        summarize_messages.extend(to_summarize.clone());
-        summarize_messages.push(json!({"role": "user", "content": "请基于以上对话与工具调用结果，生成用于继续对话的上下文摘要。"}));
-
-        if let Some(sid) = session_id.as_ref() {
-            if abort_registry::is_aborted(sid) {
-                return Err("aborted".to_string());
+        if persist {
+            if let (Some(sid), Some(summary_text)) =
+                (session_id.as_ref(), result.summary_text.as_ref())
+            {
+                let effective_records = self.load_effective_records(sid).await;
+                let source = build_source_info(
+                    effective_records.as_slice(),
+                    result.summarized_messages.len(),
+                    result.kept_messages.len(),
+                );
+                self.persist_result(
+                    &adapter,
+                    sid,
+                    summary_text,
+                    &result,
+                    &options,
+                    source,
+                    SummaryTrigger::Proactive,
+                )
+                .await;
             }
         }
 
-        let stream_cb = callbacks.as_ref().and_then(|c| c.on_stream.clone());
-        let resp = self
-            .ai_request_handler
-            .handle_request(
-                summarize_messages,
-                None,
-                model.clone(),
-                Some(temperature),
-                None,
-                StreamCallbacks {
-                    on_chunk: stream_cb,
-                    on_thinking: None,
-                },
-                false,
-                None,
-                None,
-                session_id.clone(),
-                callbacks
-                    .as_ref()
-                    .and_then(|c| c.on_stream.as_ref())
-                    .is_some(),
-                "summary",
-            )
-            .await?;
+        Ok(to_in_memory_result(&result, options.keep_last_n))
+    }
 
-        let summary_text = resp.content.clone();
-        let next_system_prompt = format!(
-            "以下是之前对话与工具调用的摘要（可视为“压缩记忆”）：\n\n{}",
-            summary_text
+    pub async fn retry_after_context_overflow_in_memory(
+        &self,
+        messages: &[Value],
+        err: &str,
+        opts: Option<SummaryOverrides>,
+        session_id: Option<String>,
+        persist: bool,
+        callbacks: Option<SummaryCallbacks>,
+    ) -> Result<Option<InMemorySummaryResult>, String> {
+        let options = self.resolve_options(opts.unwrap_or_default());
+        let adapter = V2SummaryAdapter::new(
+            self.ai_request_handler.clone(),
+            self.message_manager.clone(),
         );
 
+        let result = retry_after_context_overflow(
+            &adapter,
+            messages,
+            err,
+            &options,
+            session_id.clone(),
+            callbacks,
+        )
+        .await?;
+
+        let Some(result) = result else {
+            return Ok(None);
+        };
+
         if persist {
-            if let Some(sid) = session_id.as_ref() {
-                let mut summary_id: Option<String> = None;
-                let all_messages = self.message_manager.get_session_messages(sid, None).await;
-                let effective_records: Vec<Message> = all_messages
-                    .into_iter()
-                    .filter(|m| {
-                        m.metadata
-                            .as_ref()
-                            .and_then(|v| v.get("type"))
-                            .and_then(|v| v.as_str())
-                            != Some("session_summary")
-                    })
-                    .collect();
-
-                if !effective_records.is_empty() {
-                    let mut kept_start = effective_records.len().saturating_sub(keep_last_n);
-                    while kept_start > 0 && kept_start < effective_records.len() {
-                        if effective_records[kept_start].role != "tool" {
-                            break;
-                        }
-                        kept_start -= 1;
-                    }
-                    let to_summarize_records = if keep_last_n > 0 {
-                        effective_records[..kept_start].to_vec()
-                    } else {
-                        effective_records.clone()
-                    };
-                    if !to_summarize_records.is_empty() {
-                        let mut record = SessionSummary::new(sid.to_string(), summary_text.clone());
-                        record.summary_prompt = Some(system_prompt.clone());
-                        record.model = Some(model.clone());
-                        record.temperature = Some(temperature);
-                        record.target_summary_tokens = Some(target_summary_tokens);
-                        record.keep_last_n = Some(keep_last_n as i64);
-                        record.message_count = Some(to_summarize_records.len() as i64);
-                        record.approx_tokens = Some(estimate_messages_tokens(&to_summarize) as i64);
-                        record.first_message_id =
-                            to_summarize_records.first().map(|m| m.id.clone());
-                        record.last_message_id = to_summarize_records.last().map(|m| m.id.clone());
-                        record.first_message_created_at =
-                            to_summarize_records.first().map(|m| m.created_at.clone());
-                        record.last_message_created_at =
-                            to_summarize_records.last().map(|m| m.created_at.clone());
-
-                        let record_id = record.id.clone();
-                        match SessionSummaryService::create(record).await {
-                            Ok(_) => {
-                                summary_id = Some(record_id.clone());
-                                let message_ids: Vec<String> =
-                                    to_summarize_records.iter().map(|m| m.id.clone()).collect();
-                                if let Err(err) = SessionSummaryMessageService::create_links(
-                                    &record_id,
-                                    sid,
-                                    &message_ids,
-                                )
-                                .await
-                                {
-                                    warn!("[SUM-MEM] create summary message links failed: {}", err);
-                                }
-                            }
-                            Err(err) => {
-                                warn!("[SUM-MEM] create summary record failed: {}", err);
-                            }
-                        }
-                    }
-                }
-
-                let mut summary_meta = json!({"type": "session_summary", "keepLastN": keep_last_n as i64, "summary_timestamp": chrono::Utc::now().timestamp_millis()});
-                if let Some(id) = summary_id.clone() {
-                    if let Some(map) = summary_meta.as_object_mut() {
-                        map.insert("summary_id".to_string(), Value::String(id));
-                    }
-                }
-                let _ = self
-                    .message_manager
-                    .save_assistant_message(
-                        sid,
-                        "【上下文已压缩为摘要】",
-                        Some(summary_text.clone()),
-                        None,
-                        Some(summary_meta),
-                        None,
-                    )
-                    .await;
+            if let (Some(sid), Some(summary_text)) =
+                (session_id.as_ref(), result.summary_text.as_ref())
+            {
+                let effective_records = self.load_effective_records(sid).await;
+                let source = build_source_info(
+                    effective_records.as_slice(),
+                    result.summarized_messages.len(),
+                    result.kept_messages.len(),
+                );
+                self.persist_result(
+                    &adapter,
+                    sid,
+                    summary_text,
+                    &result,
+                    &options,
+                    source,
+                    SummaryTrigger::OverflowRetry,
+                )
+                .await;
             }
         }
 
-        let preview: String = summary_text.chars().take(800).collect();
-        let truncated = summary_text.len() > preview.len();
-        if let Some(cb) = callbacks.as_ref().and_then(|c| c.on_end.clone()) {
-            cb(
-                json!({ "summary_preview": preview, "full_summary": summary_text, "truncated": truncated, "keepLastN": keep_last_n }),
-            );
-        }
+        Ok(Some(to_in_memory_result(&result, options.keep_last_n)))
+    }
 
-        Ok(InMemorySummaryResult {
-            summarized: true,
-            system_prompt: Some(next_system_prompt),
-            summary: Some(summary_text),
-            keep_last_n: keep_last_n,
-            summarize_count: to_summarize.len(),
-            truncated,
-        })
+    async fn load_effective_records(&self, session_id: &str) -> Vec<Message> {
+        self.message_manager
+            .get_session_messages(session_id, None)
+            .await
+            .into_iter()
+            .filter(|message| {
+                message
+                    .metadata
+                    .as_ref()
+                    .and_then(|value| value.get("type"))
+                    .and_then(|value| value.as_str())
+                    != Some("session_summary")
+            })
+            .collect()
+    }
+
+    async fn persist_result(
+        &self,
+        adapter: &V2SummaryAdapter,
+        session_id: &str,
+        summary_text: &str,
+        result: &SummaryResult,
+        options: &SummaryOptions,
+        source: SummarySourceInfo,
+        trigger: SummaryTrigger,
+    ) {
+        let payload = PersistSummaryPayload {
+            session_id: session_id.to_string(),
+            summary_text: summary_text.to_string(),
+            summary_prompt: build_summarizer_system_prompt(options.target_summary_tokens),
+            model: options.model.clone(),
+            temperature: options.temperature,
+            target_summary_tokens: options.target_summary_tokens,
+            keep_last_n: options.keep_last_n as i64,
+            approx_tokens: result.stats.input_tokens,
+            trigger,
+            truncated: result.truncated,
+            stats: result.stats.clone(),
+            source,
+        };
+
+        match persist_summary(adapter, payload).await {
+            Ok(outcome) => {
+                if let Some(summary_id) = outcome.summary_id {
+                    tracing::info!("[SUM-V2] persisted summary_id={}", summary_id);
+                }
+            }
+            Err(err) => {
+                warn!("[SUM-V2] persist summary failed: {}", err);
+            }
+        }
+    }
+
+    fn resolve_options(&self, overrides: SummaryOverrides) -> SummaryOptions {
+        SummaryOptions {
+            message_limit: overrides
+                .message_limit
+                .unwrap_or(self.defaults.message_limit),
+            max_context_tokens: overrides
+                .max_context_tokens
+                .unwrap_or(self.defaults.max_context_tokens),
+            keep_last_n: overrides
+                .keep_last_n
+                .unwrap_or(self.defaults.keep_last_n as i64)
+                .max(0) as usize,
+            target_summary_tokens: overrides
+                .target_summary_tokens
+                .unwrap_or(self.defaults.target_summary_tokens),
+            merge_target_tokens: overrides
+                .merge_target_tokens
+                .unwrap_or(self.defaults.merge_target_tokens),
+            model: overrides
+                .model
+                .unwrap_or_else(|| self.defaults.model.clone()),
+            temperature: overrides.temperature.unwrap_or(self.defaults.temperature),
+            bisect_enabled: overrides
+                .bisect_enabled
+                .unwrap_or(self.defaults.bisect_enabled),
+            bisect_max_depth: overrides
+                .bisect_max_depth
+                .unwrap_or(self.defaults.bisect_max_depth as i64)
+                .max(1) as usize,
+            bisect_min_messages: overrides
+                .bisect_min_messages
+                .unwrap_or(self.defaults.bisect_min_messages as i64)
+                .max(1) as usize,
+            retry_on_context_overflow: overrides
+                .retry_on_context_overflow
+                .unwrap_or(self.defaults.retry_on_context_overflow),
+        }
     }
 }
 
@@ -488,144 +327,74 @@ pub struct SummaryOverrides {
     pub max_context_tokens: Option<i64>,
     pub keep_last_n: Option<i64>,
     pub target_summary_tokens: Option<i64>,
+    pub merge_target_tokens: Option<i64>,
     pub model: Option<String>,
     pub temperature: Option<f64>,
+    pub bisect_enabled: Option<bool>,
+    pub bisect_max_depth: Option<i64>,
+    pub bisect_min_messages: Option<i64>,
+    pub retry_on_context_overflow: Option<bool>,
 }
 
-fn estimate_tokens_value(content: &Value) -> usize {
-    if let Some(s) = content.as_str() {
-        return estimate_tokens(s);
-    }
-    if let Some(arr) = content.as_array() {
-        let mut sum = 0usize;
-        for part in arr {
-            if let Some(s) = part.as_str() {
-                sum += estimate_tokens(s);
-                continue;
-            }
-            if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
-                if let Some(ptype) = part.get("type").and_then(|v| v.as_str()) {
-                    if ptype == "text" || ptype == "input_text" || ptype == "output_text" {
-                        sum += estimate_tokens(text);
-                        continue;
-                    }
+fn map_records_to_messages(records: &[Message]) -> Vec<Value> {
+    records
+        .iter()
+        .map(|message| {
+            if message.role == "tool" {
+                json!({
+                    "role": "tool",
+                    "tool_call_id": message.tool_call_id.clone().unwrap_or_default(),
+                    "content": message.content
+                })
+            } else {
+                let mut item = json!({
+                    "role": message.role,
+                    "content": message.content
+                });
+                if let Some(tool_calls) = message.tool_calls.clone() {
+                    item["tool_calls"] = tool_calls;
                 }
-                sum += estimate_tokens(text);
+                item
             }
-        }
-        return sum;
-    }
-    if let Some(obj) = content.as_object() {
-        if let Some(text) = obj.get("text").and_then(|v| v.as_str()) {
-            return estimate_tokens(text);
-        }
-        return estimate_tokens(&content.to_string());
-    }
-    0
+        })
+        .collect()
 }
 
-fn estimate_messages_tokens(messages: &[Value]) -> i64 {
-    let mut total = 0i64;
-    for msg in messages {
-        let mut t = estimate_tokens_value(msg.get("content").unwrap_or(&Value::Null)) as i64;
-        if let Some(tc) = msg.get("tool_calls") {
-            t += estimate_tokens(&tc.to_string()) as i64;
-        }
-        total += t;
+fn build_source_info(
+    records: &[Message],
+    summarized_messages_len: usize,
+    kept_messages_len: usize,
+) -> SummarySourceInfo {
+    if records.is_empty() || summarized_messages_len == 0 {
+        return SummarySourceInfo::default();
     }
-    total
+
+    let total = records.len();
+    let kept_start = total.saturating_sub(kept_messages_len);
+    let summarize_end = kept_start.min(total);
+    let summarize_start = summarize_end.saturating_sub(summarized_messages_len.min(summarize_end));
+
+    if summarize_start >= summarize_end {
+        return SummarySourceInfo::default();
+    }
+
+    let slice = &records[summarize_start..summarize_end];
+    SummarySourceInfo {
+        message_ids: slice.iter().map(|item| item.id.clone()).collect(),
+        first_message_id: slice.first().map(|item| item.id.clone()),
+        last_message_id: slice.last().map(|item| item.id.clone()),
+        first_message_created_at: slice.first().map(|item| item.created_at.clone()),
+        last_message_created_at: slice.last().map(|item| item.created_at.clone()),
+    }
 }
 
-fn truncate_messages_by_tokens(messages: &[Value], max_tokens: i64) -> Vec<Value> {
-    if max_tokens <= 0 || messages.is_empty() {
-        return Vec::new();
+fn to_in_memory_result(result: &SummaryResult, keep_last_n: usize) -> InMemorySummaryResult {
+    InMemorySummaryResult {
+        summarized: result.summarized,
+        system_prompt: result.system_prompt.clone(),
+        summary: result.summary_text.clone(),
+        keep_last_n,
+        summarize_count: result.summarized_messages.len(),
+        truncated: result.truncated,
     }
-    let mut remaining = max_tokens;
-    let mut out_rev: Vec<Value> = Vec::new();
-    for msg in messages.iter().rev() {
-        let t = estimate_tokens_value(msg.get("content").unwrap_or(&Value::Null)) as i64;
-        if remaining - t < 0 {
-            if out_rev.is_empty() && remaining > 0 {
-                out_rev.push(truncate_message_content(msg, remaining));
-            }
-            break;
-        }
-        remaining -= t;
-        out_rev.push(msg.clone());
-    }
-    out_rev.reverse();
-    out_rev
-}
-
-fn truncate_message_content(msg: &Value, max_tokens: i64) -> Value {
-    if max_tokens <= 0 {
-        return msg.clone();
-    }
-    let mut out = msg.clone();
-    if let Some(obj) = out.as_object_mut() {
-        let content = obj.get("content").cloned().unwrap_or(Value::Null);
-        obj.insert(
-            "content".to_string(),
-            truncate_content_value(&content, max_tokens),
-        );
-    }
-    out
-}
-
-fn truncate_content_value(content: &Value, max_tokens: i64) -> Value {
-    if max_tokens <= 0 {
-        return Value::String(String::new());
-    }
-    if let Some(s) = content.as_str() {
-        return Value::String(truncate_text_by_tokens(s, max_tokens));
-    }
-    if let Some(arr) = content.as_array() {
-        let mut out = Vec::new();
-        let mut remaining = max_tokens;
-        for part in arr {
-            if remaining <= 0 {
-                break;
-            }
-            if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
-                let truncated = truncate_text_by_tokens(text, remaining);
-                let used = estimate_tokens(&truncated) as i64;
-                let mut new_part = part.clone();
-                if let Some(map) = new_part.as_object_mut() {
-                    map.insert("text".to_string(), Value::String(truncated));
-                }
-                out.push(new_part);
-                remaining -= used;
-                continue;
-            }
-            if let Some(s) = part.as_str() {
-                let truncated = truncate_text_by_tokens(s, remaining);
-                let used = estimate_tokens(&truncated) as i64;
-                out.push(Value::String(truncated));
-                remaining -= used;
-                continue;
-            }
-            out.push(part.clone());
-        }
-        return Value::Array(out);
-    }
-    Value::String(truncate_text_by_tokens(&content.to_string(), max_tokens))
-}
-
-fn truncate_text_by_tokens(text: &str, max_tokens: i64) -> String {
-    if max_tokens <= 0 {
-        return String::new();
-    }
-    let max_chars = (max_tokens * 4) as usize;
-    if text.len() <= max_chars {
-        return text.to_string();
-    }
-    if max_chars == 0 {
-        return String::new();
-    }
-    let marker = "\n...[truncated]";
-    if max_chars <= marker.len() {
-        return marker[..max_chars].to_string();
-    }
-    let cut = max_chars - marker.len();
-    format!("{}{}", &text[..cut], marker)
 }

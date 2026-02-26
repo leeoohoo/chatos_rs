@@ -48,6 +48,11 @@ pub struct AiClient {
     dynamic_summary_enabled: bool,
     max_context_tokens: i64,
     target_summary_tokens: i64,
+    merge_target_summary_tokens: i64,
+    summary_bisect_enabled: bool,
+    summary_bisect_max_depth: i64,
+    summary_bisect_min_messages: i64,
+    summary_retry_on_context_overflow: bool,
     summarizer: Option<ConversationSummarizer>,
     anchor_user_content: Option<Value>,
 }
@@ -72,6 +77,11 @@ impl AiClient {
             dynamic_summary_enabled: cfg.dynamic_summary_enabled,
             max_context_tokens: cfg.summary_max_context_tokens,
             target_summary_tokens: cfg.summary_target_tokens,
+            merge_target_summary_tokens: cfg.summary_merge_target_tokens,
+            summary_bisect_enabled: cfg.summary_bisect_enabled,
+            summary_bisect_max_depth: cfg.summary_bisect_max_depth,
+            summary_bisect_min_messages: cfg.summary_bisect_min_messages,
+            summary_retry_on_context_overflow: cfg.summary_retry_on_context_overflow,
             summarizer: None,
             anchor_user_content: None,
         }
@@ -305,8 +315,15 @@ impl AiClient {
                                     max_context_tokens: Some(1),
                                     keep_last_n: Some(0),
                                     target_summary_tokens: Some(self.target_summary_tokens),
+                                    merge_target_tokens: Some(self.merge_target_summary_tokens),
                                     model: Some(model.clone()),
                                     temperature: Some(0.2),
+                                    bisect_enabled: Some(self.summary_bisect_enabled),
+                                    bisect_max_depth: Some(self.summary_bisect_max_depth),
+                                    bisect_min_messages: Some(self.summary_bisect_min_messages),
+                                    retry_on_context_overflow: Some(
+                                        self.summary_retry_on_context_overflow,
+                                    ),
                                 }),
                                 session_id.clone(),
                                 true,
@@ -549,15 +566,21 @@ impl AiClient {
                     };
 
                 let res = summarizer
-                    .maybe_summarize_in_memory(
+                    .retry_after_context_overflow_in_memory(
                         &trimmed_for_summary,
+                        err,
                         Some(SummaryOverrides {
                             message_limit: Some(1),
                             max_context_tokens: Some(1),
                             keep_last_n: Some(0),
                             target_summary_tokens: Some(self.target_summary_tokens),
+                            merge_target_tokens: Some(self.merge_target_summary_tokens),
                             model: Some(model.to_string()),
                             temperature: Some(0.2),
+                            bisect_enabled: Some(self.summary_bisect_enabled),
+                            bisect_max_depth: Some(self.summary_bisect_max_depth),
+                            bisect_min_messages: Some(self.summary_bisect_min_messages),
+                            retry_on_context_overflow: Some(self.summary_retry_on_context_overflow),
                         }),
                         session_id.clone(),
                         true,
@@ -566,7 +589,7 @@ impl AiClient {
                     .await;
 
                 match res {
-                    Ok(res) => {
+                    Ok(Some(res)) => {
                         if res.summarized {
                             self.summary_system_prompt = res.system_prompt.clone();
                             let mut rebuilt = Vec::new();
@@ -584,6 +607,7 @@ impl AiClient {
                             }
                         }
                     }
+                    Ok(None) => {}
                     Err(err) => {
                         warn!("[SUM-MEM] retry summary failed: {}", err);
                     }
@@ -640,6 +664,36 @@ impl AiClientSettings for AiClient {
             .and_then(|v| v.as_i64())
         {
             self.target_summary_tokens = v;
+        }
+        if let Some(v) = effective
+            .get("SUMMARY_MERGE_TARGET_TOKENS")
+            .and_then(|v| v.as_i64())
+        {
+            self.merge_target_summary_tokens = v;
+        }
+        if let Some(v) = effective
+            .get("SUMMARY_BISECT_ENABLED")
+            .and_then(|v| v.as_bool())
+        {
+            self.summary_bisect_enabled = v;
+        }
+        if let Some(v) = effective
+            .get("SUMMARY_BISECT_MAX_DEPTH")
+            .and_then(|v| v.as_i64())
+        {
+            self.summary_bisect_max_depth = v.max(1);
+        }
+        if let Some(v) = effective
+            .get("SUMMARY_BISECT_MIN_MESSAGES")
+            .and_then(|v| v.as_i64())
+        {
+            self.summary_bisect_min_messages = v.max(1);
+        }
+        if let Some(v) = effective
+            .get("SUMMARY_RETRY_ON_CONTEXT_OVERFLOW")
+            .and_then(|v| v.as_bool())
+        {
+            self.summary_retry_on_context_overflow = v;
         }
     }
 }

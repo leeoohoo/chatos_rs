@@ -11,7 +11,12 @@ pub const USER_SETTING_KEYS: &[&str] = &[
     "SUMMARY_MAX_CONTEXT_TOKENS",
     "SUMMARY_KEEP_LAST_N",
     "SUMMARY_TARGET_TOKENS",
+    "SUMMARY_MERGE_TARGET_TOKENS",
     "SUMMARY_COOLDOWN_SECONDS",
+    "SUMMARY_BISECT_ENABLED",
+    "SUMMARY_BISECT_MAX_DEPTH",
+    "SUMMARY_BISECT_MIN_MESSAGES",
+    "SUMMARY_RETRY_ON_CONTEXT_OVERFLOW",
     "MAX_ITERATIONS",
     "LOG_LEVEL",
     "HISTORY_LIMIT",
@@ -23,12 +28,18 @@ fn coerce(value: &Value, key: &str) -> Value {
         return Value::Null;
     }
     match key {
-        "SUMMARY_ENABLED" | "DYNAMIC_SUMMARY_ENABLED" => Value::Bool(js_truthy(value)),
+        "SUMMARY_ENABLED"
+        | "DYNAMIC_SUMMARY_ENABLED"
+        | "SUMMARY_BISECT_ENABLED"
+        | "SUMMARY_RETRY_ON_CONTEXT_OVERFLOW" => Value::Bool(js_truthy(value)),
         "SUMMARY_MESSAGE_LIMIT"
         | "SUMMARY_MAX_CONTEXT_TOKENS"
         | "SUMMARY_KEEP_LAST_N"
         | "SUMMARY_TARGET_TOKENS"
+        | "SUMMARY_MERGE_TARGET_TOKENS"
         | "SUMMARY_COOLDOWN_SECONDS"
+        | "SUMMARY_BISECT_MAX_DEPTH"
+        | "SUMMARY_BISECT_MIN_MESSAGES"
         | "MAX_ITERATIONS"
         | "HISTORY_LIMIT"
         | "CHAT_MAX_TOKENS" => parse_js_int_value(value)
@@ -81,7 +92,12 @@ pub fn get_default_user_settings() -> Value {
         "SUMMARY_MAX_CONTEXT_TOKENS": cfg.summary_max_context_tokens,
         "SUMMARY_KEEP_LAST_N": cfg.summary_keep_last_n,
         "SUMMARY_TARGET_TOKENS": cfg.summary_target_tokens,
+        "SUMMARY_MERGE_TARGET_TOKENS": cfg.summary_merge_target_tokens,
         "SUMMARY_COOLDOWN_SECONDS": cfg.summary_cooldown_seconds,
+        "SUMMARY_BISECT_ENABLED": cfg.summary_bisect_enabled,
+        "SUMMARY_BISECT_MAX_DEPTH": cfg.summary_bisect_max_depth,
+        "SUMMARY_BISECT_MIN_MESSAGES": cfg.summary_bisect_min_messages,
+        "SUMMARY_RETRY_ON_CONTEXT_OVERFLOW": cfg.summary_retry_on_context_overflow,
         "MAX_ITERATIONS": max_iterations,
         "LOG_LEVEL": cfg.log_level,
         "HISTORY_LIMIT": history_limit,

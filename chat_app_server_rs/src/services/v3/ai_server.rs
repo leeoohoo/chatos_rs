@@ -95,6 +95,9 @@ impl AiServer {
             on_tools_start: None,
             on_tools_stream: None,
             on_tools_end: None,
+            on_context_summarized_start: None,
+            on_context_summarized_stream: None,
+            on_context_summarized_end: None,
         });
 
         let result = self
@@ -122,6 +125,9 @@ impl AiServer {
                             on_tools_start: None,
                             on_tools_stream: None,
                             on_tools_end: None,
+                            on_context_summarized_start: callbacks.on_context_summarized_start,
+                            on_context_summarized_stream: callbacks.on_context_summarized_stream,
+                            on_context_summarized_end: callbacks.on_context_summarized_end,
                         }
                     }),
                 },

@@ -327,3 +327,44 @@
   - `src/services/v3/ai_request_handler/parser.rs`：`apply_stream_event_captures_provider_error_from_failed_event`
   - `src/services/v3/ai_client/prev_context.rs`：context overflow 检测与 history_limit 递减测试
 - 已通过 `cargo fmt`、`cargo check`、`cargo test ai_common`、`cargo test prev_context`、`cargo test v3::ai_request_handler::parser`、`cargo test ai_client`。
+
+## 持续优化记录（2026-02-26, 第24轮）
+- 已落地“对话总结统一抽象 + 超长二分总结”首版实现，并完成 v2/v3 双链路接入：
+  - 新增共享模块 `src/services/summary/`：
+    - `types.rs`：统一 SummaryOptions / Callbacks / Result / Stats / Trigger 数据结构
+    - `traits.rs`：统一 `SummaryLlmClient` / `SummaryStore` 适配接口
+    - `token_budget.rs`：统一 token 估算、上下文超窗识别、token budget 解析与截断
+    - `splitter.rs`：二分切分策略（避免 tool_call 与 tool_output 断裂）
+    - `engine.rs`：`maybe_summarize`（主动）+ `retry_after_context_overflow`（兜底）+ 递归二分总结与 pairwise merge
+    - `persist.rs`：统一摘要 metadata 组装与持久化入口
+- v2 接入（保持原有回调协议不变）：
+  - 新增 `src/services/v2/summary_adapter.rs`，对接 v2 chat/completions 总结请求与摘要落库
+  - `src/services/v2/conversation_summarizer.rs` 重构为调用 shared engine（主动总结 + overflow retry）
+  - `src/services/v2/ai_client/token_compaction.rs` 下沉复用 shared token_budget 能力
+  - `src/services/v2/ai_client/mod.rs`：
+    - `try_compact_for_token_limit` 优先走 shared `retry_after_context_overflow`
+    - 接入 bisect/retry 相关新配置项
+- v3 接入（新增主动总结 + 兜底总结，保留 history_limit 递减作为次级兜底）：
+  - 新增 `src/services/v3/summary_adapter.rs`，对接 v3 responses 总结请求与摘要落库
+  - `src/services/v3/ai_client/mod.rs`：
+    - 在 stateless 主链路请求前接入 `maybe_proactive_summarize_stateless_input`
+    - 在 `context_length_exceeded` 错误分支接入 `try_summary_after_context_overflow`
+    - 摘要失败后继续执行既有 `history_limit` 递减策略
+  - `src/services/v3/ai_server.rs`、`src/core/chat_stream.rs`、`src/builtin/sub_agent_router/core/job_executor/ai_mode.rs`：
+    - 扩展 v3 回调结构，补齐 context_summarized start/stream/end 事件透传
+- 配置与用户设置扩展：
+  - `src/config.rs` 新增：
+    - `SUMMARY_MERGE_TARGET_TOKENS`
+    - `SUMMARY_BISECT_ENABLED`
+    - `SUMMARY_BISECT_MAX_DEPTH`
+    - `SUMMARY_BISECT_MIN_MESSAGES`
+    - `SUMMARY_RETRY_ON_CONTEXT_OVERFLOW`
+  - `src/services/user_settings.rs` 同步新增以上 keys 的默认值、coerce 与下发逻辑
+- 新增测试覆盖：
+  - `src/services/summary/token_budget.rs`
+  - `src/services/summary/splitter.rs`
+  - `src/services/summary/engine.rs`
+- 本轮验证：
+  - `cargo check -q`
+  - `cargo test summary --quiet`
+  - `cargo test ai_client --quiet`
