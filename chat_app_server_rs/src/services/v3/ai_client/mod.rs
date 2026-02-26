@@ -5,10 +5,10 @@ use serde_json::{json, Value};
 use tracing::info;
 use tracing::warn;
 
-use crate::services::ai_common::build_aborted_tool_results;
+use crate::services::ai_common::{build_aborted_tool_results, build_tool_stream_callback};
 use crate::services::user_settings::AiClientSettings;
 use crate::services::v3::ai_request_handler::{AiRequestHandler, StreamCallbacks};
-use crate::services::v3::mcp_tool_execute::{McpToolExecute, ToolResult};
+use crate::services::v3::mcp_tool_execute::McpToolExecute;
 use crate::services::v3::message_manager::MessageManager;
 use crate::utils::abort_registry;
 
@@ -491,17 +491,8 @@ impl AiClient {
                 }
             }
 
-            let on_tools_stream_cb = callbacks.on_tools_stream.clone().map(|cb| {
-                let sid = session_id.clone();
-                std::sync::Arc::new(move |result: &ToolResult| {
-                    if let Some(ref sid) = sid {
-                        if abort_registry::is_aborted(sid) {
-                            return;
-                        }
-                    }
-                    cb(serde_json::to_value(result).unwrap_or(json!({})));
-                }) as std::sync::Arc<dyn Fn(&ToolResult) + Send + Sync>
-            });
+            let on_tools_stream_cb =
+                build_tool_stream_callback(callbacks.on_tools_stream.clone(), session_id.clone());
 
             let tool_results = self
                 .mcp_tool_execute

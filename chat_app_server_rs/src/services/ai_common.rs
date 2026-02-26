@@ -1,11 +1,13 @@
 use std::collections::HashSet;
 use std::future::Future;
+use std::sync::Arc;
 
 use futures::{Stream, StreamExt};
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
-use crate::core::mcp_tools::ToolResult;
+use crate::core::mcp_tools::{ToolResult, ToolResultCallback};
+use crate::utils::abort_registry;
 use crate::utils::attachments::{self, Attachment};
 
 pub(crate) fn normalize_turn_id(turn_id: Option<&str>) -> Option<String> {
@@ -175,6 +177,24 @@ pub(crate) fn build_tool_result_metadata(result: &ToolResult) -> Value {
     })
 }
 
+pub(crate) fn build_tool_stream_callback(
+    callback: Option<Arc<dyn Fn(Value) + Send + Sync>>,
+    session_id: Option<String>,
+) -> Option<ToolResultCallback> {
+    callback.map(|cb| {
+        let sid = session_id.clone();
+        Arc::new(move |result: &ToolResult| {
+            if let Some(ref sid) = sid {
+                if abort_registry::is_aborted(sid) {
+                    return;
+                }
+            }
+
+            cb(serde_json::to_value(result).unwrap_or(json!({})));
+        }) as ToolResultCallback
+    })
+}
+
 pub(crate) fn build_aborted_tool_results(
     tool_calls: &[Value],
     existing: Option<&[ToolResult]>,
@@ -318,6 +338,74 @@ mod tests {
         assert!(merged
             .iter()
             .any(|item| item.tool_call_id == "call_missing" && !item.success && item.is_error));
+    }
+
+    #[test]
+    fn build_tool_stream_callback_emits_result_when_not_aborted() {
+        let session_id = "ai_common_tool_stream_emit";
+        abort_registry::clear(session_id);
+
+        let captured = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+        let on_stream = {
+            let captured = captured.clone();
+            Arc::new(move |value: Value| {
+                captured.lock().expect("lock poisoned").push(value);
+            }) as Arc<dyn Fn(Value) + Send + Sync>
+        };
+
+        let callback = build_tool_stream_callback(Some(on_stream), Some(session_id.to_string()))
+            .expect("callback should be built");
+
+        callback(&ToolResult {
+            tool_call_id: "call_1".to_string(),
+            name: "mcp.search".to_string(),
+            success: true,
+            is_error: false,
+            is_stream: false,
+            content: "ok".to_string(),
+        });
+
+        let events = captured.lock().expect("lock poisoned");
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0]
+                .get("tool_call_id")
+                .and_then(|value| value.as_str()),
+            Some("call_1")
+        );
+
+        abort_registry::clear(session_id);
+    }
+
+    #[test]
+    fn build_tool_stream_callback_skips_result_when_aborted() {
+        let session_id = "ai_common_tool_stream_aborted";
+        abort_registry::clear(session_id);
+        abort_registry::abort(session_id);
+
+        let captured = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+        let on_stream = {
+            let captured = captured.clone();
+            Arc::new(move |value: Value| {
+                captured.lock().expect("lock poisoned").push(value);
+            }) as Arc<dyn Fn(Value) + Send + Sync>
+        };
+
+        let callback = build_tool_stream_callback(Some(on_stream), Some(session_id.to_string()))
+            .expect("callback should be built");
+
+        callback(&ToolResult {
+            tool_call_id: "call_2".to_string(),
+            name: "mcp.read".to_string(),
+            success: true,
+            is_error: false,
+            is_stream: false,
+            content: "ok".to_string(),
+        });
+
+        assert!(captured.lock().expect("lock poisoned").is_empty());
+
+        abort_registry::clear(session_id);
     }
 
     #[test]

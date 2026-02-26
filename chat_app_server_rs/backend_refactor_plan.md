@@ -279,3 +279,15 @@
   - `await_with_optional_abort_returns_aborted_when_token_cancelled`
 - 本轮目标是继续统一跨版本请求生命周期控制，保持行为不变并进一步减少并行演进成本。
 - 已通过 `cargo fmt`、`cargo check`、`cargo test ai_common`、`cargo test ai_request_handler`、`cargo test ai_client`、`cargo test sub_agent_router`、`cargo test task_manager`、`cargo test terminal_manager`。
+
+## 持续优化记录（2026-02-26, 第21轮）
+- 已在 `src/services/ai_common.rs` 新增跨版本共享 helper：
+  - `build_tool_stream_callback`（统一 tool 流式回调的 aborted 检查与 `ToolResult -> JSON` 转换）
+- `v2/v3 ai_client` 已复用该 helper，移除重复的 `on_tools_stream_cb` 闭包模板：
+  - `src/services/v2/ai_client/mod.rs`
+  - `src/services/v3/ai_client/mod.rs`
+- 为新增 helper 增补单测（`src/services/ai_common.rs`）：
+  - `build_tool_stream_callback_emits_result_when_not_aborted`
+  - `build_tool_stream_callback_skips_result_when_aborted`
+- 本轮延续“流式链路统一”策略，进一步减少 v2/v3 并行维护中的重复代码与行为漂移风险。
+- 已通过 `cargo fmt`、`cargo check`、`cargo test ai_common`、`cargo test ai_request_handler`、`cargo test ai_client`、`cargo test sub_agent_router`、`cargo test task_manager`、`cargo test terminal_manager`。
