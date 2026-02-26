@@ -11,6 +11,8 @@ export const MessageList: React.FC<MessageListProps> = ({
   hasMore = false,
   onLoadMore,
   onToggleTurnProcess,
+  activeTurnProcessUserMessageId,
+  loadingTurnProcessUserMessageId,
   onMessageEdit,
   onMessageDelete,
   customRenderer,
@@ -21,7 +23,14 @@ export const MessageList: React.FC<MessageListProps> = ({
   const [autoScroll, setAutoScroll] = useState<boolean>(true);
   const [isAtBottom, setIsAtBottom] = useState<boolean>(true);
   const visibleMessages = useMemo(
-    () => (messages || []).filter(m => !(m as any)?.metadata?.hidden && m.role !== 'tool'),
+    () => (messages || []).filter((message) => {
+      const metadata = (message as any)?.metadata;
+      if (metadata?.hidden) return false;
+      if (message.role === 'tool') return false;
+      // 过程消息统一由右侧抽屉展示，不在主聊天流中展开
+      if (metadata?.historyProcessUserMessageId) return false;
+      return true;
+    }),
     [messages]
   );
   const lastVisibleIndex = visibleMessages.length - 1;
@@ -180,6 +189,8 @@ export const MessageList: React.FC<MessageListProps> = ({
             onEdit={onMessageEdit}
             onDelete={onMessageDelete}
             onToggleTurnProcess={onToggleTurnProcess}
+            activeTurnProcessUserMessageId={activeTurnProcessUserMessageId}
+            loadingTurnProcessUserMessageId={loadingTurnProcessUserMessageId}
             allMessages={messages}
             toolResultById={toolResultById}
             toolResultKey={toolResultKeyByMessageId.get(message.id) || ''}

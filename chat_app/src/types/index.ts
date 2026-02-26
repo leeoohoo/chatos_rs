@@ -294,6 +294,8 @@ export interface MessageListProps {
   hasMore?: boolean;
   onLoadMore?: () => void;
   onToggleTurnProcess?: (userMessageId: string) => void;
+  activeTurnProcessUserMessageId?: string | null;
+  loadingTurnProcessUserMessageId?: string | null;
   onMessageEdit?: (messageId: string, content: string) => void;
   onMessageDelete?: (messageId: string) => void;
   customRenderer?: {

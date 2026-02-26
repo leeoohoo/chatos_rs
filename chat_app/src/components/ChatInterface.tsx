@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useChatApiClientFromContext, useChatStoreFromContext } from '../lib/store/ChatStoreContext';
 import { MessageList } from './MessageList';
+import TurnProcessDrawer from './TurnProcessDrawer';
 import { InputArea } from './InputArea';
 import { SessionList } from './SessionList';
 import { ThemeToggle } from './ThemeToggle';
@@ -57,6 +58,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     updateChatConfig,
     abortCurrentConversation,
     sessionChatState = {},
+    sessionTurnProcessState = {},
     taskReviewPanelsBySession = {},
     upsertTaskReviewPanel,
     removeTaskReviewPanel,
@@ -86,6 +88,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const currentChatState = useMemo(() => (
     currentSession ? sessionChatState[currentSession.id] : undefined
   ), [currentSession, sessionChatState]);
+  const currentSessionTurnState = useMemo(() => (
+    currentSession ? (sessionTurnProcessState[currentSession.id] || {}) : {}
+  ), [currentSession, sessionTurnProcessState]);
   const chatIsLoading = currentChatState?.isLoading ?? false;
   const chatIsStreaming = currentChatState?.isStreaming ?? false;
   const headerTitle = activePanel === 'project'
@@ -100,6 +105,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [showAgentManager, setShowAgentManager] = useState(false);
   const [showApplicationsPanel, setShowApplicationsPanel] = useState(false);
   const [showUserSettings, setShowUserSettings] = useState(false);
+  const [activeTurnProcessUserMessageId, setActiveTurnProcessUserMessageId] = useState<string | null>(null);
+  const [loadingTurnProcessUserMessageId, setLoadingTurnProcessUserMessageId] = useState<string | null>(null);
   const didInitRef = useRef(false);
   const [workbarCurrentTurnTasks, setWorkbarCurrentTurnTasks] = useState<TaskWorkbarItem[]>([]);
   const [workbarHistoryTasks, setWorkbarHistoryTasks] = useState<TaskWorkbarItem[]>([]);
@@ -699,6 +706,12 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     void loadHistoryWorkbarTasks(currentSession.id);
   }, [activeConversationTurnId, activePanel, currentSession, loadCurrentTurnWorkbarTasks, loadHistoryWorkbarTasks]);
 
+
+  useEffect(() => {
+    setActiveTurnProcessUserMessageId(null);
+    setLoadingTurnProcessUserMessageId(null);
+  }, [activePanel, currentSession?.id]);
+
   // 澶勭悊娑堟伅鍙戦€?
   const handleMessageSend = useCallback(async (content: string, attachments?: File[]) => {
     try {
@@ -715,12 +728,61 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     }
   }, [currentSession, loadMoreMessages]);
 
+  useEffect(() => {
+    if (!loadingTurnProcessUserMessageId) {
+      return;
+    }
+
+    const targetState = currentSessionTurnState[loadingTurnProcessUserMessageId];
+    if (!targetState?.loading) {
+      setLoadingTurnProcessUserMessageId(null);
+    }
+  }, [currentSessionTurnState, loadingTurnProcessUserMessageId]);
+
+  const handleCloseTurnProcessDrawer = useCallback(() => {
+    setActiveTurnProcessUserMessageId(null);
+    setLoadingTurnProcessUserMessageId(null);
+  }, []);
+
   const handleToggleTurnProcess = useCallback((userMessageId: string) => {
     if (!userMessageId) {
       return;
     }
-    void toggleTurnProcess(userMessageId);
-  }, [toggleTurnProcess]);
+
+    if (activeTurnProcessUserMessageId === userMessageId) {
+      handleCloseTurnProcessDrawer();
+      return;
+    }
+
+    setActiveTurnProcessUserMessageId(userMessageId);
+
+    const turnState = currentSessionTurnState[userMessageId];
+    if (turnState?.loading) {
+      setLoadingTurnProcessUserMessageId(userMessageId);
+      return;
+    }
+
+    if (turnState?.loaded) {
+      setLoadingTurnProcessUserMessageId(null);
+      return;
+    }
+
+    setLoadingTurnProcessUserMessageId(userMessageId);
+    void toggleTurnProcess(userMessageId)
+      .catch((error) => {
+        console.error('Failed to load turn process messages:', error);
+      })
+      .finally(() => {
+        setLoadingTurnProcessUserMessageId((current) => (
+          current === userMessageId ? null : current
+        ));
+      });
+  }, [
+    activeTurnProcessUserMessageId,
+    currentSessionTurnState,
+    handleCloseTurnProcessDrawer,
+    toggleTurnProcess,
+  ]);
 
   const handleTaskReviewConfirm = useCallback(async (drafts: TaskReviewDraft[]) => {
     if (!activeTaskReviewPanel) {
@@ -907,7 +969,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
           )}
 
         {/* 涓诲尯鍩燂細宸︿晶浼氳瘽鍒楄〃 + 鍙充晶鑱婂ぉ */}
-        <div className="flex flex-1 overflow-hidden">
+        <div className="flex flex-1 min-h-0 overflow-hidden">
           <SessionList
             collapsed={!sidebarOpen}
             onToggleCollapse={toggleSidebar}
@@ -918,13 +980,13 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
           {/* 澶栭儴鍙互閫氳繃 subscribeSelectedApplication 鐩戝惉搴旂敤閫夋嫨浜嬩欢 */}
           {/* 鐒跺悗鑷鍐冲畾濡備綍鎵撳紑/鏄剧ず搴旂敤锛圗lectron 绐楀彛銆亀indow.open 绛夛級 */}
 
-          <div className="flex-1 flex flex-col overflow-hidden">
+          <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
             {activePanel === 'project' ? (
               <ProjectExplorer project={currentProject} className="flex-1" />
             ) : activePanel === 'terminal' ? (
               <TerminalView className="flex-1" />
             ) : (
-              <div className="flex-1 flex overflow-hidden">
+              <div className="flex-1 min-h-0 flex overflow-hidden">
                 <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
                   <div className="flex-1 overflow-hidden">
                     {currentSession ? (
@@ -935,6 +997,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                         hasMore={hasMoreMessages}
                         onLoadMore={handleLoadMore}
                         onToggleTurnProcess={handleToggleTurnProcess}
+                        activeTurnProcessUserMessageId={activeTurnProcessUserMessageId}
+                        loadingTurnProcessUserMessageId={loadingTurnProcessUserMessageId}
                         customRenderer={customRenderer}
                       />
                     ) : (
@@ -1019,6 +1083,14 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
               </div>
             )}
           </div>
+
+          <TurnProcessDrawer
+            open={Boolean(activeTurnProcessUserMessageId)}
+            userMessageId={activeTurnProcessUserMessageId}
+            messages={messages}
+            isLoading={Boolean(loadingTurnProcessUserMessageId)}
+            onClose={handleCloseTurnProcessDrawer}
+          />
         </div>
         
         {/* MCP绠＄悊鍣?*/}

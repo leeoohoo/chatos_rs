@@ -132,6 +132,9 @@ interface MessageItemProps {
   onEdit?: (messageId: string, content: string) => void;
   onDelete?: (messageId: string) => void;
   onToggleTurnProcess?: (userMessageId: string) => void;
+  activeTurnProcessUserMessageId?: string | null;
+  loadingTurnProcessUserMessageId?: string | null;
+  renderContext?: 'chat' | 'process_drawer';
   allMessages?: Message[]; // 添加所有消息的引用
   toolResultById?: Map<string, Message>;
   toolResultKey?: string;
@@ -148,6 +151,9 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
   onEdit,
   onDelete,
   onToggleTurnProcess,
+  activeTurnProcessUserMessageId = null,
+  loadingTurnProcessUserMessageId = null,
+  renderContext = 'chat',
   allMessages = [],
   toolResultById,
   customRenderer,
@@ -174,18 +180,67 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
   const isTool = message.role === 'tool';
 
   const historyProcess = isUser ? (message.metadata?.historyProcess as any) : null;
-  const hasHistoryProcess = Boolean(historyProcess?.hasProcess);
-  const historyProcessExpanded = historyProcess?.expanded === true;
-  const historyProcessLoading = historyProcess?.loading === true;
-  const historyToolCount = Number(historyProcess?.toolCallCount || 0);
-  const historyThinkingCount = Number(historyProcess?.thinkingCount || 0);
 
-  const turnProcessExpanded = message.metadata?.historyProcessExpanded === true;
-  const collapseAssistantProcessByDefault = (
+  // 部分历史数据只把过程信息保存在最终assistant消息里，user消息的historyProcess.hasProcess可能为false
+  const derivedProcessStats = useMemo(() => {
+    if (!isUser) {
+      return { hasProcess: false, toolCallCount: 0, thinkingCount: 0 };
+    }
+
+    const finalAssistantForUser = allMessages.find((candidate) => (
+      candidate.role === 'assistant'
+      && candidate.metadata?.historyFinalForUserMessageId === message.id
+    ));
+
+    if (!finalAssistantForUser) {
+      return { hasProcess: false, toolCallCount: 0, thinkingCount: 0 };
+    }
+
+    const toolCalls = Array.isArray(finalAssistantForUser.metadata?.toolCalls)
+      ? finalAssistantForUser.metadata.toolCalls
+      : [];
+    const segments = Array.isArray(finalAssistantForUser.metadata?.contentSegments)
+      ? finalAssistantForUser.metadata.contentSegments
+      : [];
+
+    const toolCallSegmentCount = segments.filter((segment: any) => (
+      segment?.type === 'tool_call' && Boolean(segment?.toolCallId)
+    )).length;
+    const thinkingSegmentCount = segments.filter((segment: any) => (
+      segment?.type === 'thinking'
+      && typeof segment?.content === 'string'
+      && segment.content.trim().length > 0
+    )).length;
+
+    const toolCallCount = Math.max(toolCalls.length, toolCallSegmentCount);
+    return {
+      hasProcess: toolCallCount > 0 || thinkingSegmentCount > 0,
+      toolCallCount,
+      thinkingCount: thinkingSegmentCount,
+    };
+  }, [allMessages, isUser, message.id]);
+
+  const hasHistoryProcess = Boolean(historyProcess?.hasProcess || derivedProcessStats.hasProcess);
+  const historyProcessExpanded = isUser
+    ? activeTurnProcessUserMessageId === message.id
+    : false;
+  const historyProcessLoading = isUser
+    ? loadingTurnProcessUserMessageId === message.id || historyProcess?.loading === true
+    : false;
+  const historyToolCount = Math.max(
+    Number(historyProcess?.toolCallCount || 0),
+    derivedProcessStats.toolCallCount,
+  );
+  const historyThinkingCount = Math.max(
+    Number(historyProcess?.thinkingCount || 0),
+    derivedProcessStats.thinkingCount,
+  );
+
+  const isTurnLinkedAssistant = (
     isAssistant
     && Boolean(message.metadata?.historyFinalForUserMessageId || message.metadata?.historyProcessUserMessageId)
-    && !turnProcessExpanded
   );
+  const collapseAssistantProcessByDefault = isTurnLinkedAssistant && renderContext !== 'process_drawer';
 
   // 隐藏tool角色的消息，因为它们应该作为工具调用的结果显示
   if (isTool) {
@@ -628,6 +683,9 @@ export const MessageItem = memo(MessageItemComponent, (prevProps, nextProps) => 
     getTime(prevProps.message.updatedAt) === getTime(nextProps.message.updatedAt) &&
     prevProps.isLast === nextProps.isLast &&
     prevProps.isStreaming === nextProps.isStreaming &&
+    (prevProps.activeTurnProcessUserMessageId ?? "") === (nextProps.activeTurnProcessUserMessageId ?? "") &&
+    (prevProps.loadingTurnProcessUserMessageId ?? "") === (nextProps.loadingTurnProcessUserMessageId ?? "") &&
+    (prevProps.renderContext ?? 'chat') === (nextProps.renderContext ?? 'chat') &&
     getMetaKey(prevProps.message.metadata) === getMetaKey(nextProps.message.metadata) &&
     getToolCallsKey(prevProps.message) === getToolCallsKey(nextProps.message) &&
     (prevProps.toolResultKey ?? "") === (nextProps.toolResultKey ?? "")
