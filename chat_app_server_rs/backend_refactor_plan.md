@@ -291,3 +291,39 @@
   - `build_tool_stream_callback_skips_result_when_aborted`
 - 本轮延续“流式链路统一”策略，进一步减少 v2/v3 并行维护中的重复代码与行为漂移风险。
 - 已通过 `cargo fmt`、`cargo check`、`cargo test ai_common`、`cargo test ai_request_handler`、`cargo test ai_client`、`cargo test sub_agent_router`、`cargo test task_manager`、`cargo test terminal_manager`。
+
+## 持续优化记录（2026-02-26, 第22轮）
+- 线上问题修复：会话流式返回 `finish_reason=failed` 时，之前会被误判为成功并输出 `success=true`。
+- 已在 `src/services/ai_common.rs` 新增共享 helper：
+  - `completion_failed_error`（统一识别 `finish_reason=failed/error`，并构建可观测错误信息）
+- `v2/v3 ai_client` 在“无 tool_calls 直接返回成功”之前新增失败判定：
+  - `src/services/v2/ai_client/mod.rs`
+  - `src/services/v3/ai_client/mod.rs`
+  - 若模型返回 failed/error，将直接 `Err(...)`，避免再返回空内容的 success complete 事件。
+- 为新增 helper 增补单测（`src/services/ai_common.rs`）：
+  - `completion_failed_error_uses_finish_reason_and_preview`
+- 已通过 `cargo fmt`、`cargo check`、`cargo test ai_common`、`cargo test ai_request_handler`、`cargo test ai_client`、`cargo test sub_agent_router`、`cargo test task_manager`、`cargo test terminal_manager`。
+
+## 持续优化记录（2026-02-26, 第23轮）
+- 已定位本次会话报错根因：上游 Responses 流中返回 `response.failed`，错误码为 `context_length_exceeded`（输入上下文超过模型窗口）。
+  - 复现方式：按该会话最近 20 条历史构建 stateless input 后，请求体约 1.6MB；上游返回 `error.code=context_length_exceeded`。
+- 已增强 v3 上游错误透传能力（避免只看到 `finish_reason=failed`）：
+  - `src/services/v3/ai_request_handler/parser.rs`
+    - `StreamState` 新增 `provider_error`
+    - 解析 `event:error` / `response.failed.response.error`
+  - `src/services/v3/ai_request_handler/mod.rs`
+    - `AiResponse` 新增 `provider_error`
+    - normal/stream 路径统一回传 `error` 字段
+  - `src/services/ai_common.rs`
+    - `completion_failed_error` 支持拼接 provider error（`code/type/message/param`）
+- 已新增“上下文超限自愈”重试逻辑（v3）：
+  - `src/services/v3/ai_client/prev_context.rs`
+    - 新增 `is_context_length_exceeded_error`
+    - 新增 `reduce_history_limit`（history_limit 按 1/2 递减到 1）
+  - `src/services/v3/ai_client/mod.rs`
+    - 请求失败或 `finish_reason=failed` 且命中 context overflow 时，自动缩小 `history_limit` 并重建 stateless input 重试（而非直接报错）
+- 已补充测试：
+  - `src/services/ai_common.rs`：`completion_failed_error_uses_finish_reason_and_preview`（覆盖 provider error 展示）
+  - `src/services/v3/ai_request_handler/parser.rs`：`apply_stream_event_captures_provider_error_from_failed_event`
+  - `src/services/v3/ai_client/prev_context.rs`：context overflow 检测与 history_limit 递减测试
+- 已通过 `cargo fmt`、`cargo check`、`cargo test ai_common`、`cargo test prev_context`、`cargo test v3::ai_request_handler::parser`、`cargo test ai_client`。

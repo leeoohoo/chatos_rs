@@ -70,6 +70,89 @@ pub(crate) fn truncate_log(value: &str, max_len: usize) -> String {
     out
 }
 
+pub(crate) fn completion_failed_error(
+    finish_reason: Option<&str>,
+    content: &str,
+    reasoning: Option<&str>,
+    provider_error: Option<&Value>,
+) -> Option<String> {
+    let reason = finish_reason
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("unknown");
+    let normalized = reason.to_ascii_lowercase();
+    if normalized != "failed" && normalized != "error" {
+        return None;
+    }
+
+    let mut segments = vec![format!("finish_reason={}", reason)];
+
+    if let Some(error_preview) = provider_error
+        .and_then(build_provider_error_preview)
+        .filter(|value| !value.trim().is_empty())
+    {
+        segments.push(format!("provider_error={}", error_preview));
+    }
+
+    if !content.trim().is_empty() {
+        segments.push(format!("content_preview={}", truncate_log(content, 300)));
+        return Some(format!("ai response failed: {}", segments.join("; ")));
+    }
+
+    if let Some(reasoning) = reasoning {
+        if !reasoning.trim().is_empty() {
+            segments.push(format!(
+                "reasoning_preview={}",
+                truncate_log(reasoning, 300)
+            ));
+            return Some(format!("ai response failed: {}", segments.join("; ")));
+        }
+    }
+
+    Some(format!("ai response failed: {}", segments.join("; ")))
+}
+
+fn build_provider_error_preview(provider_error: &Value) -> Option<String> {
+    if provider_error.is_null() {
+        return None;
+    }
+
+    if let Some(object) = provider_error.as_object() {
+        let mut parts = Vec::new();
+        if let Some(code) = object.get("code").and_then(|v| v.as_str()) {
+            if !code.trim().is_empty() {
+                parts.push(format!("code={}", code.trim()));
+            }
+        }
+        if let Some(kind) = object.get("type").and_then(|v| v.as_str()) {
+            if !kind.trim().is_empty() {
+                parts.push(format!("type={}", kind.trim()));
+            }
+        }
+        if let Some(message) = object.get("message").and_then(|v| v.as_str()) {
+            if !message.trim().is_empty() {
+                parts.push(format!("message={}", truncate_log(message.trim(), 300)));
+            }
+        }
+        if let Some(param) = object.get("param").and_then(|v| v.as_str()) {
+            if !param.trim().is_empty() {
+                parts.push(format!("param={}", param.trim()));
+            }
+        }
+
+        if !parts.is_empty() {
+            return Some(parts.join(", "));
+        }
+    }
+
+    let raw = provider_error.to_string();
+    if raw.trim().is_empty() {
+        None
+    } else {
+        Some(truncate_log(raw.trim(), 300))
+    }
+}
+
 pub(crate) fn build_assistant_message_metadata(
     tool_calls: Option<&Value>,
     response_id: Option<&str>,
@@ -256,6 +339,32 @@ mod tests {
         let value = truncate_log("abcdefgh", 4);
         assert_eq!(value, "abcd...[truncated]");
         assert_eq!(truncate_log("abc", 4), "abc");
+    }
+
+    #[test]
+    fn completion_failed_error_uses_finish_reason_and_preview() {
+        let err = completion_failed_error(Some("failed"), "", Some("detailed reasoning"), None)
+            .expect("should return error");
+        assert!(err.contains("finish_reason=failed"));
+        assert!(err.contains("reasoning_preview=detailed reasoning"));
+
+        let err = completion_failed_error(Some("error"), "body", None, None)
+            .expect("should return error");
+        assert!(err.contains("content_preview=body"));
+
+        let provider_error = json!({
+            "code": "context_length_exceeded",
+            "type": "invalid_request_error",
+            "message": "too long",
+            "param": "input"
+        });
+        let err = completion_failed_error(Some("failed"), "", None, Some(&provider_error))
+            .expect("should include provider error");
+        assert!(err.contains("provider_error=code=context_length_exceeded"));
+        assert!(err.contains("type=invalid_request_error"));
+        assert!(err.contains("message=too long"));
+
+        assert!(completion_failed_error(Some("stop"), "", None, None).is_none());
     }
 
     #[test]

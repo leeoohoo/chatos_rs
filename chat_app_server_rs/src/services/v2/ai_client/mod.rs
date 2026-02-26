@@ -2,7 +2,9 @@ use serde_json::{json, Value};
 use tracing::{info, warn};
 
 use crate::config::Config;
-use crate::services::ai_common::{build_aborted_tool_results, build_tool_stream_callback};
+use crate::services::ai_common::{
+    build_aborted_tool_results, build_tool_stream_callback, completion_failed_error,
+};
 use crate::services::user_settings::AiClientSettings;
 use crate::services::v2::ai_request_handler::{AiRequestHandler, StreamCallbacks};
 use crate::services::v2::conversation_summarizer::{ConversationSummarizer, SummaryOverrides};
@@ -397,6 +399,15 @@ impl AiClient {
                 Some(r) => r,
                 None => return Err(last_err.unwrap_or_else(|| "request failed".to_string())),
             };
+
+            if let Some(err) = completion_failed_error(
+                resp.finish_reason.as_deref(),
+                resp.content.as_str(),
+                resp.reasoning.as_deref(),
+                None,
+            ) {
+                return Err(err);
+            }
 
             let tool_calls = resp.tool_calls.clone();
             if tool_calls.is_none()

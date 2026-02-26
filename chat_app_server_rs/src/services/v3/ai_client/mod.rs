@@ -5,7 +5,9 @@ use serde_json::{json, Value};
 use tracing::info;
 use tracing::warn;
 
-use crate::services::ai_common::{build_aborted_tool_results, build_tool_stream_callback};
+use crate::services::ai_common::{
+    build_aborted_tool_results, build_tool_stream_callback, completion_failed_error,
+};
 use crate::services::user_settings::AiClientSettings;
 use crate::services::v3::ai_request_handler::{AiRequestHandler, StreamCallbacks};
 use crate::services::v3::mcp_tool_execute::McpToolExecute;
@@ -21,8 +23,9 @@ use self::input_transform::{
     normalize_input_to_text_value, to_message_item,
 };
 use self::prev_context::{
-    base_url_allows_prev, is_invalid_input_text_error, is_missing_tool_call_error,
-    is_unsupported_previous_response_id_error, should_use_prev_id_for_next_turn,
+    base_url_allows_prev, is_context_length_exceeded_error, is_invalid_input_text_error,
+    is_missing_tool_call_error, is_unsupported_previous_response_id_error, reduce_history_limit,
+    should_use_prev_id_for_next_turn,
 };
 use self::tool_plan::{
     build_tool_call_execution_plan, build_tool_call_items, expand_tool_results_with_aliases,
@@ -243,6 +246,7 @@ impl AiClient {
         let mut use_prev_id = use_prev_id;
         let mut can_use_prev_id = can_use_prev_id;
         let mut force_text_content = force_text_content;
+        let mut adaptive_history_limit = history_limit;
         let mut iteration = iteration;
         let mut pending_tool_outputs: Option<Vec<Value>> = None;
         let mut pending_tool_calls: Option<Vec<Value>> = None;
@@ -322,7 +326,7 @@ impl AiClient {
                             let stateless = self
                                 .build_stateless_items(
                                     session_id.clone(),
-                                    history_limit,
+                                    adaptive_history_limit,
                                     force_text_content,
                                     &current_items,
                                     include_tool_items,
@@ -352,7 +356,7 @@ impl AiClient {
                             } else {
                                 self.build_stateless_items(
                                     session_id.clone(),
-                                    history_limit,
+                                    adaptive_history_limit,
                                     force_text_content,
                                     &current_items,
                                     include_tool_items,
@@ -436,6 +440,35 @@ impl AiClient {
                             input = normalize_input_to_text_value(&input);
                             continue;
                         }
+                        if is_context_length_exceeded_error(&err_msg) {
+                            if let Some(next_limit) = reduce_history_limit(adaptive_history_limit) {
+                                warn!(
+                                    "[AI_V3] context length exceeded; reduce history_limit {} -> {}",
+                                    adaptive_history_limit,
+                                    next_limit
+                                );
+                                adaptive_history_limit = next_limit;
+                                can_use_prev_id = false;
+                                let current_items =
+                                    build_current_input_items(&raw_input, force_text_content);
+                                let stateless = self
+                                    .build_stateless_items(
+                                        session_id.clone(),
+                                        adaptive_history_limit,
+                                        force_text_content,
+                                        &current_items,
+                                        include_tool_items,
+                                    )
+                                    .await;
+                                if !stateless.is_empty() {
+                                    use_prev_id = false;
+                                    previous_response_id = None;
+                                    stateless_context_items = Some(stateless.clone());
+                                    input = Value::Array(stateless);
+                                    continue;
+                                }
+                            }
+                        }
                         break;
                     }
                 }
@@ -445,6 +478,44 @@ impl AiClient {
                 Some(resp) => resp,
                 None => return Err(last_error.unwrap_or_else(|| "request failed".to_string())),
             };
+
+            if let Some(err) = completion_failed_error(
+                ai_response.finish_reason.as_deref(),
+                ai_response.content.as_str(),
+                ai_response.reasoning.as_deref(),
+                ai_response.provider_error.as_ref(),
+            ) {
+                if is_context_length_exceeded_error(&err) {
+                    if let Some(next_limit) = reduce_history_limit(adaptive_history_limit) {
+                        warn!(
+                            "[AI_V3] failed response due to context overflow; reduce history_limit {} -> {}",
+                            adaptive_history_limit,
+                            next_limit
+                        );
+                        adaptive_history_limit = next_limit;
+                        can_use_prev_id = false;
+                        use_prev_id = false;
+                        previous_response_id = None;
+                        let current_items =
+                            build_current_input_items(&raw_input, force_text_content);
+                        let stateless = self
+                            .build_stateless_items(
+                                session_id.clone(),
+                                adaptive_history_limit,
+                                force_text_content,
+                                &current_items,
+                                include_tool_items,
+                            )
+                            .await;
+                        if !stateless.is_empty() {
+                            stateless_context_items = Some(stateless.clone());
+                            input = Value::Array(stateless);
+                            continue;
+                        }
+                    }
+                }
+                return Err(err);
+            }
 
             if let Some(sid) = session_id.as_ref() {
                 if abort_registry::is_aborted(sid) {
@@ -592,7 +663,7 @@ impl AiClient {
                     let current_items = build_current_input_items(&raw_input, force_text_content);
                     self.build_stateless_items(
                         session_id.clone(),
-                        history_limit,
+                        adaptive_history_limit,
                         force_text_content,
                         &current_items,
                         include_tool_items,

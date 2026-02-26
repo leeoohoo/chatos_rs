@@ -8,6 +8,7 @@ pub(super) struct StreamState {
     pub response_obj: Option<Value>,
     pub response_id: Option<String>,
     pub finish_reason: Option<String>,
+    pub provider_error: Option<Value>,
     pub sent_any_chunk: bool,
 }
 
@@ -367,6 +368,22 @@ pub(super) fn apply_stream_event(state: &mut StreamState, event: &Value) -> Stre
         } else if event_type == "response.failed" {
             if let Some(response) = event.get("response") {
                 state.response_obj = Some(response.clone());
+                if let Some(error_obj) = response.get("error") {
+                    if !error_obj.is_null() {
+                        state.provider_error = Some(error_obj.clone());
+                    }
+                }
+            }
+            if let Some(error_obj) = event.get("error") {
+                if !error_obj.is_null() {
+                    state.provider_error = Some(error_obj.clone());
+                }
+            }
+        } else if event_type == "error" {
+            if let Some(error_obj) = event.get("error") {
+                if !error_obj.is_null() {
+                    state.provider_error = Some(error_obj.clone());
+                }
             }
         } else if state.response_obj.is_none() {
             if let Some(response) = event.get("response") {
@@ -401,6 +418,21 @@ pub(super) fn apply_stream_event(state: &mut StreamState, event: &Value) -> Stre
         .and_then(|response| response.get("usage"))
     {
         state.usage = Some(usage.clone());
+    }
+
+    if state.provider_error.is_none() {
+        if let Some(error_obj) = event
+            .get("response")
+            .and_then(|response| response.get("error"))
+        {
+            if !error_obj.is_null() {
+                state.provider_error = Some(error_obj.clone());
+            }
+        } else if let Some(error_obj) = event.get("error") {
+            if !error_obj.is_null() {
+                state.provider_error = Some(error_obj.clone());
+            }
+        }
     }
 
     payload
@@ -515,5 +547,33 @@ mod tests {
         assert!(state.sent_any_chunk);
         assert_eq!(state.response_id.as_deref(), Some("resp_1"));
         assert!(state.usage.is_some());
+    }
+
+    #[test]
+    fn apply_stream_event_captures_provider_error_from_failed_event() {
+        let mut state = StreamState::default();
+        let event = json!({
+            "type": "response.failed",
+            "response": {
+                "id": "resp_fail",
+                "status": "failed",
+                "error": {
+                    "code": "context_length_exceeded",
+                    "message": "too long"
+                }
+            }
+        });
+
+        let _ = apply_stream_event(&mut state, &event);
+
+        assert_eq!(state.response_id.as_deref(), Some("resp_fail"));
+        assert_eq!(
+            state
+                .provider_error
+                .as_ref()
+                .and_then(|value| value.get("code"))
+                .and_then(|value| value.as_str()),
+            Some("context_length_exceeded")
+        );
     }
 }

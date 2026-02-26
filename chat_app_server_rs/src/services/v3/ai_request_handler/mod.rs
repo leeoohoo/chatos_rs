@@ -25,6 +25,7 @@ pub struct AiResponse {
     pub reasoning: Option<String>,
     pub tool_calls: Option<Value>,
     pub finish_reason: Option<String>,
+    pub provider_error: Option<Value>,
     pub usage: Option<Value>,
     pub response_id: Option<String>,
 }
@@ -182,6 +183,7 @@ impl AiRequestHandler {
             .get("status")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
+        let provider_error = val.get("error").cloned().filter(|value| !value.is_null());
         let response_id = val
             .get("id")
             .and_then(|v| v.as_str())
@@ -211,6 +213,7 @@ impl AiRequestHandler {
             reasoning: None,
             tool_calls,
             finish_reason,
+            provider_error,
             usage,
             response_id,
         })
@@ -306,6 +309,10 @@ impl AiRequestHandler {
         if stream_state.usage.is_none() {
             stream_state.usage = response_val.get("usage").cloned();
         }
+        if stream_state.provider_error.is_none() {
+            stream_state.provider_error =
+                response_val.get("error").cloned().filter(|v| !v.is_null());
+        }
 
         if persist_messages {
             if let Some(session_id) = session_id.clone() {
@@ -332,6 +339,7 @@ impl AiRequestHandler {
             reasoning: reasoning_opt,
             tool_calls,
             finish_reason: stream_state.finish_reason,
+            provider_error: stream_state.provider_error,
             usage: stream_state.usage,
             response_id: stream_state.response_id,
         })

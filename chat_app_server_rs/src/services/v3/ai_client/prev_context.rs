@@ -44,9 +44,27 @@ pub(super) fn is_missing_tool_call_error(err: &str) -> bool {
         && (message.contains("function call output") || message.contains("function_call_output"))
 }
 
+pub(super) fn is_context_length_exceeded_error(err: &str) -> bool {
+    let message = err.to_lowercase();
+    message.contains("context_length_exceeded")
+        || message.contains("input exceeds the context window")
+        || message.contains("maximum context length")
+        || (message.contains("context window") && message.contains("exceed"))
+}
+
+pub(super) fn reduce_history_limit(limit: i64) -> Option<i64> {
+    if limit <= 1 {
+        return None;
+    }
+
+    Some((limit / 2).max(1))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::should_use_prev_id_for_next_turn;
+    use super::{
+        is_context_length_exceeded_error, reduce_history_limit, should_use_prev_id_for_next_turn,
+    };
 
     #[test]
     fn keeps_stateless_mode_when_prefer_stateless_enabled() {
@@ -59,5 +77,24 @@ mod tests {
         assert!(should_use_prev_id_for_next_turn(false, true, true));
         assert!(!should_use_prev_id_for_next_turn(false, true, false));
         assert!(!should_use_prev_id_for_next_turn(false, false, true));
+    }
+
+    #[test]
+    fn detects_context_window_overflow_errors() {
+        assert!(is_context_length_exceeded_error(
+            "context_length_exceeded: input exceeds the context window"
+        ));
+        assert!(is_context_length_exceeded_error(
+            "Your input exceeds the context window of this model"
+        ));
+        assert!(!is_context_length_exceeded_error("rate_limit_exceeded"));
+    }
+
+    #[test]
+    fn reduce_history_limit_halves_until_one() {
+        assert_eq!(reduce_history_limit(20), Some(10));
+        assert_eq!(reduce_history_limit(3), Some(1));
+        assert_eq!(reduce_history_limit(1), None);
+        assert_eq!(reduce_history_limit(0), None);
     }
 }
