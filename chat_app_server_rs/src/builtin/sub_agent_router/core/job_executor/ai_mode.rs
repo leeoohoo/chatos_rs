@@ -1,220 +1,11 @@
-use super::super::*;
-use super::agent_resolver::resolve_command_cwd;
+use super::super::super::*;
+use super::stream_callbacks::create_ai_stream_callbacks;
 
-fn extract_task_review_event_stream_chunk(result: &Value) -> Option<String> {
-    let raw_content = result
-        .get("content")
-        .and_then(|value| value.as_str())?
-        .trim();
-    if raw_content.is_empty() {
-        return None;
-    }
-
-    let parsed: Value = serde_json::from_str(raw_content).ok()?;
-    let event_name = parsed.get("event").and_then(|value| value.as_str())?;
-
-    if matches!(
-        event_name,
-        crate::utils::events::Events::TASK_CREATE_REVIEW_REQUIRED
-            | crate::utils::events::Events::TASK_CREATE_REVIEW_RESOLVED
-    ) {
-        Some(raw_content.to_string())
-    } else {
-        None
-    }
-}
-
-pub(crate) fn execute_job(
-    execution: JobExecutionContext,
-    cancel_flag: Option<&AtomicBool>,
+pub(super) fn execute_ai_mode(
+    execution: &JobExecutionContext,
+    requested_model: Option<String>,
+    allow_policy: &AllowPrefixesPolicy,
 ) -> Result<(String, Value), String> {
-    if let Some(flag) = cancel_flag {
-        if flag.load(Ordering::Relaxed) {
-            append_job_event(
-                execution.job_id.as_str(),
-                "execute_cancelled_precheck",
-                Some(json!({ "reason": "cancel_flag" })),
-                execution.session_id.as_str(),
-                execution.run_id.as_str(),
-            );
-            return Ok((
-                "cancelled".to_string(),
-                json!({
-                    "status": "cancelled",
-                    "job_id": execution.job_id,
-                    "agent_id": execution.resolved.agent.id,
-                    "agent_name": execution.resolved.agent.name,
-                    "command_id": execution.resolved.command.as_ref().map(|c| c.id.clone()),
-                    "skills": execution.resolved.used_skills.iter().map(|s| s.id.clone()).collect::<Vec<_>>(),
-                    "reason": execution.resolved.reason,
-                    "error": "cancelled"
-                }),
-            ));
-        }
-    }
-
-    let requested_model = optional_trimmed_string(&execution.args, "caller_model")
-        .or_else(|| optional_trimmed_string(&execution.args, "model"));
-    let allow_policy = resolve_allow_prefixes(execution.args.get("mcp_allow_prefixes"));
-    append_job_event(
-        execution.job_id.as_str(),
-        "execute_prepare",
-        Some(json!({
-            "agent_id": execution.resolved.agent.id,
-            "agent_name": execution.resolved.agent.name,
-            "command_id": execution.resolved.command.as_ref().map(|c| c.id.clone()),
-            "skills": execution
-                .resolved
-                .used_skills
-                .iter()
-                .map(|s| s.id.clone())
-                .collect::<Vec<_>>(),
-            "requested_model": requested_model.clone(),
-            "allow_prefixes": allow_policy.prefixes.clone(),
-            "query": optional_trimmed_string(&execution.args, "query").unwrap_or_default(),
-        })),
-        execution.session_id.as_str(),
-        execution.run_id.as_str(),
-    );
-
-    let run_env = build_env(
-        execution.task.as_str(),
-        &execution.resolved.agent,
-        execution.resolved.command.as_ref(),
-        &execution.resolved.used_skills,
-        execution.session_id.as_str(),
-        execution.run_id.as_str(),
-        optional_trimmed_string(&execution.args, "query").as_deref(),
-        optional_trimmed_string(&execution.args, "model").as_deref(),
-        optional_trimmed_string(&execution.args, "caller_model").as_deref(),
-        &allow_policy.prefixes,
-        execution.ctx.project_id.as_deref(),
-    );
-    append_job_event(
-        execution.job_id.as_str(),
-        "env_ready",
-        Some(json!({
-            "entries": run_env.len(),
-            "keys": run_env.keys().cloned().collect::<Vec<_>>(),
-        })),
-        execution.session_id.as_str(),
-        execution.run_id.as_str(),
-    );
-
-    if let Some(cmd) = execution
-        .resolved
-        .command
-        .clone()
-        .and_then(|command| command.exec)
-    {
-        append_job_event(
-            execution.job_id.as_str(),
-            "execute_mode_selected",
-            Some(json!({
-                "mode": "command",
-            })),
-            execution.session_id.as_str(),
-            execution.run_id.as_str(),
-        );
-        let cwd = resolve_command_cwd(
-            execution.ctx.workspace_root.as_path(),
-            execution
-                .resolved
-                .command
-                .as_ref()
-                .and_then(|command| command.cwd.as_deref()),
-        );
-
-        append_job_event(
-            execution.job_id.as_str(),
-            "command_start",
-            Some(json!({
-                "command": cmd.clone(),
-                "cwd": cwd,
-                "timeout_ms": execution.ctx.timeout_ms,
-            })),
-            execution.session_id.as_str(),
-            execution.run_id.as_str(),
-        );
-
-        let result = run_command(
-            &cmd,
-            &run_env,
-            cwd.as_deref(),
-            execution.ctx.timeout_ms,
-            execution.ctx.max_output_bytes,
-            None,
-            cancel_flag,
-        )?;
-
-        let status = if matches!(result.error.as_deref(), Some("cancelled")) {
-            "cancelled".to_string()
-        } else if result.exit_code.unwrap_or(0) == 0 && !result.timed_out {
-            "ok".to_string()
-        } else {
-            "error".to_string()
-        };
-
-        let payload = json!({
-            "status": status,
-            "job_id": execution.job_id,
-            "agent_id": execution.resolved.agent.id,
-            "agent_name": execution.resolved.agent.name,
-            "command_id": execution.resolved.command.as_ref().map(|c| c.id.clone()),
-            "skills": execution.resolved.used_skills.iter().map(|s| s.id.clone()).collect::<Vec<_>>(),
-            "reason": execution.resolved.reason,
-            "stdout": result.stdout,
-            "stderr": result.stderr,
-            "exit_code": result.exit_code,
-            "signal": result.signal,
-            "duration_ms": result.duration_ms,
-            "started_at": result.started_at,
-            "finished_at": result.finished_at,
-            "stdout_truncated": result.stdout_truncated,
-            "stderr_truncated": result.stderr_truncated,
-            "error": result.error,
-            "timed_out": result.timed_out,
-        });
-
-        append_job_event(
-            execution.job_id.as_str(),
-            "command_finish",
-            Some(json!({
-                "status": payload.get("status").cloned().unwrap_or(Value::String("error".to_string())),
-                "exit_code": result.exit_code,
-                "signal": result.signal,
-                "duration_ms": result.duration_ms,
-                "timed_out": result.timed_out,
-                "error": result.error,
-                "stdout_preview": truncate_for_event(result.stdout.as_str(), 2000),
-                "stderr_preview": truncate_for_event(result.stderr.as_str(), 2000),
-                "stdout_truncated": result.stdout_truncated,
-                "stderr_truncated": result.stderr_truncated,
-            })),
-            execution.session_id.as_str(),
-            execution.run_id.as_str(),
-        );
-
-        return Ok((
-            payload
-                .get("status")
-                .and_then(|v| v.as_str())
-                .unwrap_or("error")
-                .to_string(),
-            payload,
-        ));
-    }
-
-    append_job_event(
-        execution.job_id.as_str(),
-        "execute_mode_selected",
-        Some(json!({
-            "mode": "ai",
-        })),
-        execution.session_id.as_str(),
-        execution.run_id.as_str(),
-    );
-
     let selected_system_context_prompt = block_on_result(resolve_selected_system_context_prompt(
         execution.ctx.user_id.clone(),
     ))?;
@@ -230,7 +21,7 @@ pub(crate) fn execute_job(
             &execution.resolved.used_skills,
             execution.resolved.command.as_ref(),
             &mut guard,
-            &allow_policy,
+            allow_policy,
             execution.ctx.workspace_root.as_path(),
         )
     };
@@ -378,126 +169,8 @@ pub(crate) fn execute_job(
                 run_id.as_str(),
             );
 
-            let chunk_buffer = Arc::new(Mutex::new(String::new()));
-            let thinking_buffer = Arc::new(Mutex::new(String::new()));
-
-            let on_chunk = {
-                let chunk_buffer = chunk_buffer.clone();
-                let job_id = job_id.clone();
-                let session_id = session_id.clone();
-                let run_id = run_id.clone();
-                Arc::new(move |chunk: String| {
-                    if chunk.trim().is_empty() {
-                        return;
-                    }
-                    if let Ok(mut guard) = chunk_buffer.lock() {
-                        guard.push_str(chunk.as_str());
-                        if guard.chars().count() > 24_000 {
-                            let trimmed = guard
-                                .chars()
-                                .rev()
-                                .take(24_000)
-                                .collect::<String>()
-                                .chars()
-                                .rev()
-                                .collect::<String>();
-                            *guard = trimmed;
-                        }
-                    }
-                    emit_job_progress_update(
-                        job_id.as_str(),
-                        "ai_content_stream",
-                        Some(json!({ "chunk": chunk })),
-                        session_id.as_str(),
-                        run_id.as_str(),
-                    );
-                })
-            };
-
-            let on_thinking = {
-                let thinking_buffer = thinking_buffer.clone();
-                let job_id = job_id.clone();
-                let session_id = session_id.clone();
-                let run_id = run_id.clone();
-                Arc::new(move |chunk: String| {
-                    if chunk.trim().is_empty() {
-                        return;
-                    }
-                    if let Ok(mut guard) = thinking_buffer.lock() {
-                        guard.push_str(chunk.as_str());
-                        if guard.chars().count() > 24_000 {
-                            let trimmed = guard
-                                .chars()
-                                .rev()
-                                .take(24_000)
-                                .collect::<String>()
-                                .chars()
-                                .rev()
-                                .collect::<String>();
-                            *guard = trimmed;
-                        }
-                    }
-                    emit_job_progress_update(
-                        job_id.as_str(),
-                        "ai_reasoning_stream",
-                        Some(json!({ "chunk": chunk })),
-                        session_id.as_str(),
-                        run_id.as_str(),
-                    );
-                })
-            };
-
-            let on_tools_start = {
-                let job_id = job_id.clone();
-                let session_id = session_id.clone();
-                let run_id = run_id.clone();
-                Arc::new(move |tool_calls: Value| {
-                    append_job_event(
-                        job_id.as_str(),
-                        "ai_tools_start",
-                        Some(json!({
-                            "tool_calls": summarize_tool_calls_for_event(&tool_calls),
-                        })),
-                        session_id.as_str(),
-                        run_id.as_str(),
-                    );
-                })
-            };
-
-            let on_tools_stream = {
-                let job_id = job_id.clone();
-                let session_id = session_id.clone();
-                let run_id = run_id.clone();
-                Arc::new(move |result: Value| {
-                    append_job_event(
-                        job_id.as_str(),
-                        "ai_tools_stream",
-                        Some(summarize_single_tool_result_for_event(&result)),
-                        session_id.as_str(),
-                        run_id.as_str(),
-                    );
-
-                    if let Some(raw_chunk) = extract_task_review_event_stream_chunk(&result) {
-                        // Re-emit task review events as raw tool chunks so the top-level chat UI can open the review panel.
-                        emit_job_raw_stream_chunk(job_id.as_str(), raw_chunk.as_str());
-                    }
-                })
-            };
-
-            let on_tools_end = {
-                let job_id = job_id.clone();
-                let session_id = session_id.clone();
-                let run_id = run_id.clone();
-                Arc::new(move |result: Value| {
-                    append_job_event(
-                        job_id.as_str(),
-                        "ai_tools_end",
-                        Some(summarize_tool_results_for_event(&result)),
-                        session_id.as_str(),
-                        run_id.as_str(),
-                    );
-                })
-            };
+            let callbacks =
+                create_ai_stream_callbacks(job_id.as_str(), session_id.as_str(), run_id.as_str());
 
             let api_mode = if model.supports_responses {
                 "responses"
@@ -597,11 +270,11 @@ pub(crate) fn execute_job(
                         purpose: Some("sub_agent_router".to_string()),
                         conversation_turn_id: Some(conversation_turn_id.clone()),
                         callbacks: Some(AiClientCallbacks {
-                            on_chunk: Some(on_chunk.clone()),
-                            on_thinking: Some(on_thinking.clone()),
-                            on_tools_start: Some(on_tools_start.clone()),
-                            on_tools_stream: Some(on_tools_stream.clone()),
-                            on_tools_end: Some(on_tools_end.clone()),
+                            on_chunk: Some(callbacks.on_chunk.clone()),
+                            on_thinking: Some(callbacks.on_thinking.clone()),
+                            on_tools_start: Some(callbacks.on_tools_start.clone()),
+                            on_tools_stream: Some(callbacks.on_tools_stream.clone()),
+                            on_tools_end: Some(callbacks.on_tools_end.clone()),
                         }),
                     },
                 );
@@ -709,11 +382,11 @@ pub(crate) fn execute_job(
                     max_tokens,
                     use_tools,
                     LegacyAiClientCallbacks {
-                        on_chunk: Some(on_chunk.clone()),
-                        on_thinking: Some(on_thinking.clone()),
-                        on_tools_start: Some(on_tools_start.clone()),
-                        on_tools_stream: Some(on_tools_stream.clone()),
-                        on_tools_end: Some(on_tools_end.clone()),
+                        on_chunk: Some(callbacks.on_chunk.clone()),
+                        on_thinking: Some(callbacks.on_thinking.clone()),
+                        on_tools_start: Some(callbacks.on_tools_start.clone()),
+                        on_tools_stream: Some(callbacks.on_tools_stream.clone()),
+                        on_tools_end: Some(callbacks.on_tools_end.clone()),
                         on_context_summarized_start: None,
                         on_context_summarized_stream: None,
                         on_context_summarized_end: None,
@@ -790,7 +463,7 @@ pub(crate) fn execute_job(
             let mut content_source = "response".to_string();
 
             if content.is_empty() {
-                if let Ok(guard) = chunk_buffer.lock() {
+                if let Ok(guard) = callbacks.chunk_buffer.lock() {
                     let fallback = guard.trim();
                     if !fallback.is_empty() {
                         content = fallback.to_string();
@@ -823,7 +496,7 @@ pub(crate) fn execute_job(
             let mut reasoning_source = "response".to_string();
 
             if reasoning.is_none() {
-                if let Ok(guard) = thinking_buffer.lock() {
+                if let Ok(guard) = callbacks.thinking_buffer.lock() {
                     let fallback = guard.trim();
                     if !fallback.is_empty() {
                         reasoning = Some(fallback.to_string());

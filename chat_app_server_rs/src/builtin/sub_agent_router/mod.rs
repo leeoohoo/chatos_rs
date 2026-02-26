@@ -12,7 +12,6 @@ mod utils;
 
 use std::collections::{HashMap, HashSet};
 use std::fs::OpenOptions;
-use std::future::Future;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};

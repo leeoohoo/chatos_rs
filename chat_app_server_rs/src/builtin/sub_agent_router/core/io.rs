@@ -1,5 +1,7 @@
 use super::super::*;
 
+pub(crate) use crate::core::tool_io::text_result;
+
 pub(crate) fn parse_string_array(value: Option<&Value>) -> Option<Vec<String>> {
     let arr = value.and_then(|v| v.as_array())?;
     let items = arr
@@ -88,13 +90,4 @@ pub(crate) fn with_chatos(server_name: &str, tool: &str, payload: Value, status:
         json!({ "status": status, "server": server_name, "tool": tool }),
     );
     Value::Object(object)
-}
-
-pub(crate) fn text_result(payload: Value) -> Value {
-    let text = serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".to_string());
-    json!({
-        "content": [
-            { "type": "text", "text": text }
-        ]
-    })
 }

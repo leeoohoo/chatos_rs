@@ -1,11 +1,12 @@
 use std::collections::HashMap;
-use std::future::Future;
 use std::sync::Arc;
 
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
+use crate::core::async_bridge::block_on_result;
 use crate::core::mcp_tools::ToolStreamChunkCallback;
+use crate::core::tool_io::text_result;
 use crate::services::task_manager::{
     complete_task_by_id, create_task_review, create_tasks_for_turn, delete_task_by_id,
     list_tasks_for_context, update_task_by_id, wait_for_task_review_decision,
@@ -544,32 +545,6 @@ fn cancelled_result(reason: &str) -> Value {
         "cancelled": true,
         "reason": reason,
     }))
-}
-
-fn text_result(data: Value) -> Value {
-    let text = if data.is_string() {
-        data.as_str().unwrap_or("").to_string()
-    } else {
-        serde_json::to_string_pretty(&data).unwrap_or_else(|_| "{}".to_string())
-    };
-
-    json!({
-        "content": [
-            { "type": "text", "text": text }
-        ]
-    })
-}
-
-fn block_on_result<F, T>(future: F) -> Result<T, String>
-where
-    F: Future<Output = Result<T, String>>,
-{
-    if let Ok(handle) = tokio::runtime::Handle::try_current() {
-        tokio::task::block_in_place(|| handle.block_on(future))
-    } else {
-        let runtime = tokio::runtime::Runtime::new().map_err(|err| err.to_string())?;
-        runtime.block_on(future)
-    }
 }
 
 fn trimmed_non_empty(value: &str) -> Option<&str> {

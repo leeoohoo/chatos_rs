@@ -15,6 +15,8 @@ use patch::apply_patch;
 use storage::ChangeLogStore;
 use utils::{ensure_dir, format_bytes, generate_id, normalize_name, sha256_bytes};
 
+use crate::core::tool_io::text_result;
+
 pub struct CodeMaintainerOptions {
     pub server_name: String,
     pub root: PathBuf,
@@ -537,17 +539,4 @@ impl CodeMaintainerService {
             },
         );
     }
-}
-
-fn text_result(data: serde_json::Value) -> serde_json::Value {
-    let text = if data.is_string() {
-        data.as_str().unwrap_or("").to_string()
-    } else {
-        serde_json::to_string_pretty(&data).unwrap_or_else(|_| "{}".to_string())
-    };
-    json!({
-        "content": [
-            { "type": "text", "text": text }
-        ]
-    })
 }

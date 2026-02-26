@@ -1,4 +1,5 @@
 use super::super::*;
+pub(crate) use crate::core::async_bridge::block_on_result;
 use crate::core::mcp_tools::ToolStreamChunkCallback;
 
 static JOBS: Lazy<Mutex<HashMap<String, JobRecord>>> = Lazy::new(|| Mutex::new(HashMap::new()));
@@ -290,16 +291,4 @@ pub(crate) fn get_cancel_flag(job_id: &str) -> Option<Arc<AtomicBool>> {
         .lock()
         .ok()
         .and_then(|flags| flags.get(job_id).cloned())
-}
-
-pub(crate) fn block_on_result<F, T>(future: F) -> Result<T, String>
-where
-    F: Future<Output = Result<T, String>>,
-{
-    if let Ok(handle) = tokio::runtime::Handle::try_current() {
-        tokio::task::block_in_place(|| handle.block_on(future))
-    } else {
-        let rt = tokio::runtime::Runtime::new().map_err(|err| err.to_string())?;
-        rt.block_on(future)
-    }
 }

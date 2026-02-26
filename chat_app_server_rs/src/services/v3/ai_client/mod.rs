@@ -1,15 +1,32 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use serde_json::{json, Value};
 use tracing::info;
 use tracing::warn;
 
+use crate::services::ai_common::build_aborted_tool_results;
 use crate::services::user_settings::AiClientSettings;
 use crate::services::v3::ai_request_handler::{AiRequestHandler, StreamCallbacks};
 use crate::services::v3::mcp_tool_execute::{McpToolExecute, ToolResult};
 use crate::services::v3::message_manager::MessageManager;
 use crate::utils::abort_registry;
+
+mod input_transform;
+mod prev_context;
+mod tool_plan;
+
+use self::input_transform::{
+    build_current_input_items, extract_raw_input, normalize_input_for_provider,
+    normalize_input_to_text_value, to_message_item,
+};
+use self::prev_context::{
+    base_url_allows_prev, is_invalid_input_text_error, is_missing_tool_call_error,
+    is_unsupported_previous_response_id_error, should_use_prev_id_for_next_turn,
+};
+use self::tool_plan::{
+    build_tool_call_execution_plan, build_tool_call_items, expand_tool_results_with_aliases,
+};
 
 #[derive(Clone)]
 pub struct AiClientCallbacks {
@@ -462,59 +479,13 @@ impl AiClient {
             }
             let tool_call_items = build_tool_call_items(&tool_calls_arr);
 
-            let build_aborted_results = |existing: Option<&Vec<ToolResult>>| -> Vec<ToolResult> {
-                let mut results = existing.cloned().unwrap_or_default();
-                let mut present: HashSet<String> =
-                    results.iter().map(|r| r.tool_call_id.clone()).collect();
-                for tc in &tool_calls_arr {
-                    let id = tc
-                        .get("id")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    if id.is_empty() || present.contains(&id) {
-                        continue;
-                    }
-                    let name = tc
-                        .get("function")
-                        .and_then(|f| f.get("name"))
-                        .and_then(|v| v.as_str())
-                        .or_else(|| tc.get("name").and_then(|v| v.as_str()))
-                        .unwrap_or("tool")
-                        .to_string();
-                    present.insert(id.clone());
-                    results.push(ToolResult {
-                        tool_call_id: id,
-                        name,
-                        success: false,
-                        is_error: true,
-                        is_stream: false,
-                        content: "aborted".to_string(),
-                    });
-                }
-                results
-            };
-
             if let Some(sid) = session_id.as_ref() {
                 if abort_registry::is_aborted(sid) {
                     if persist_tool_messages {
-                        let aborted_results = build_aborted_results(None);
-                        for result in &aborted_results {
-                            let meta = json!({
-                                "toolName": result.name,
-                                "success": result.success,
-                                "isError": result.is_error
-                            });
-                            let _ = self
-                                .message_manager
-                                .save_tool_message(
-                                    sid,
-                                    &result.content,
-                                    &result.tool_call_id,
-                                    Some(meta),
-                                )
-                                .await;
-                        }
+                        let aborted_results = build_aborted_tool_results(&tool_calls_arr, None);
+                        self.message_manager
+                            .save_tool_results(sid, aborted_results.as_slice())
+                            .await;
                     }
                     return Err("aborted".to_string());
                 }
@@ -550,23 +521,13 @@ impl AiClient {
             if let Some(sid) = session_id.as_ref() {
                 if abort_registry::is_aborted(sid) {
                     if persist_tool_messages {
-                        let aborted_results = build_aborted_results(Some(&expanded_tool_results));
-                        for result in &aborted_results {
-                            let meta = json!({
-                                "toolName": result.name,
-                                "success": result.success,
-                                "isError": result.is_error
-                            });
-                            let _ = self
-                                .message_manager
-                                .save_tool_message(
-                                    sid,
-                                    &result.content,
-                                    &result.tool_call_id,
-                                    Some(meta),
-                                )
-                                .await;
-                        }
+                        let aborted_results = build_aborted_tool_results(
+                            &tool_calls_arr,
+                            Some(expanded_tool_results.as_slice()),
+                        );
+                        self.message_manager
+                            .save_tool_results(sid, aborted_results.as_slice())
+                            .await;
                     }
                     return Err("aborted".to_string());
                 }
@@ -578,22 +539,9 @@ impl AiClient {
 
             if persist_tool_messages {
                 if let Some(sid) = session_id.as_ref() {
-                    for result in &expanded_tool_results {
-                        let meta = json!({
-                            "toolName": result.name,
-                            "success": result.success,
-                            "isError": result.is_error
-                        });
-                        let _ = self
-                            .message_manager
-                            .save_tool_message(
-                                sid,
-                                &result.content,
-                                &result.tool_call_id,
-                                Some(meta),
-                            )
-                            .await;
-                    }
+                    self.message_manager
+                        .save_tool_results(sid, expanded_tool_results.as_slice())
+                        .await;
                 }
             }
 
@@ -863,391 +811,6 @@ impl AiClient {
     }
 }
 
-fn extract_raw_input(messages: &[Value]) -> Value {
-    if let Some(last_user) = messages
-        .iter()
-        .rev()
-        .find(|m| m.get("role").and_then(|v| v.as_str()) == Some("user"))
-    {
-        if let Some(content) = last_user.get("content") {
-            return convert_parts_to_response_input(content);
-        }
-    }
-    if let Some(last) = messages.last() {
-        if let Some(content) = last.get("content") {
-            return convert_parts_to_response_input(content);
-        }
-    }
-    Value::String(String::new())
-}
-
-fn convert_parts_to_response_input(content: &Value) -> Value {
-    if let Some(s) = content.as_str() {
-        return Value::String(s.to_string());
-    }
-    if let Some(arr) = content.as_array() {
-        let mut content_list = Vec::new();
-        for part in arr {
-            if let Some(ptype) = part.get("type").and_then(|v| v.as_str()) {
-                if ptype == "input_text" {
-                    if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
-                        content_list.push(json!({"type": "input_text", "text": text}));
-                        continue;
-                    }
-                }
-                if ptype == "input_image" {
-                    let image_url = part.get("image_url").cloned().unwrap_or(Value::Null);
-                    let file_id = part.get("file_id").cloned().unwrap_or(Value::Null);
-                    let detail = part
-                        .get("detail")
-                        .cloned()
-                        .unwrap_or(Value::String("auto".to_string()));
-                    content_list.push(json!({"type": "input_image", "image_url": image_url, "file_id": file_id, "detail": detail}));
-                    continue;
-                }
-                if ptype == "text" {
-                    if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
-                        content_list.push(json!({"type": "input_text", "text": text}));
-                        continue;
-                    }
-                }
-                if ptype == "image_url" {
-                    let url = part
-                        .get("image_url")
-                        .and_then(|v| v.get("url"))
-                        .and_then(|v| v.as_str())
-                        .or_else(|| part.get("image_url").and_then(|v| v.as_str()))
-                        .unwrap_or("");
-                    content_list.push(json!({"type": "input_image", "image_url": url, "detail": part.get("detail").cloned().unwrap_or(Value::String("auto".to_string()))}));
-                    continue;
-                }
-            }
-            if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
-                content_list.push(json!({"type": "input_text", "text": text}));
-                continue;
-            }
-            content_list.push(json!({"type": "input_text", "text": part.to_string()}));
-        }
-        return Value::Array(vec![
-            json!({"role": "user", "content": content_list, "type": "message"}),
-        ]);
-    }
-    Value::String(content.to_string())
-}
-
-fn to_message_item(role: &str, content: &Value, force_text_content: bool) -> Value {
-    if force_text_content {
-        return json!({"role": role, "content": content_parts_to_text(content), "type": "message"});
-    }
-    if role == "assistant" {
-        return json!({"role": role, "content": [ {"type": "output_text", "text": content_parts_to_text(content)} ], "type": "message"});
-    }
-    if content.is_array() {
-        return json!({"role": role, "content": content.clone(), "type": "message"});
-    }
-    json!({"role": role, "content": to_input_text_content(content_parts_to_text(content)), "type": "message"})
-}
-
-fn to_input_text_content(text: String) -> Value {
-    Value::Array(vec![json!({"type": "input_text", "text": text})])
-}
-
-fn content_parts_to_text(content: &Value) -> String {
-    if let Some(s) = content.as_str() {
-        return s.to_string();
-    }
-    if let Some(arr) = content.as_array() {
-        let mut parts = Vec::new();
-        for part in arr {
-            if let Some(s) = part.as_str() {
-                parts.push(s.to_string());
-                continue;
-            }
-            if let Some(ptype) = part.get("type").and_then(|v| v.as_str()) {
-                if (ptype == "input_text" || ptype == "output_text" || ptype == "text")
-                    && part.get("text").and_then(|v| v.as_str()).is_some()
-                {
-                    parts.push(
-                        part.get("text")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string(),
-                    );
-                    continue;
-                }
-                if ptype == "input_image" || ptype == "image_url" {
-                    let url = part
-                        .get("image_url")
-                        .and_then(|v| v.get("url"))
-                        .and_then(|v| v.as_str())
-                        .or_else(|| part.get("image_url").and_then(|v| v.as_str()))
-                        .or_else(|| part.get("file_id").and_then(|v| v.as_str()))
-                        .unwrap_or("");
-                    parts.push(if url.is_empty() {
-                        "[image]".to_string()
-                    } else {
-                        format!("[image:{}]", url)
-                    });
-                    continue;
-                }
-            }
-            if let Some(t) = part.get("text").and_then(|v| v.as_str()) {
-                parts.push(t.to_string());
-                continue;
-            }
-            parts.push(part.to_string());
-        }
-        return parts.join("\n");
-    }
-    content.to_string()
-}
-
-fn normalize_input_to_text_value(input: &Value) -> Value {
-    if let Some(arr) = input.as_array() {
-        let mapped: Vec<Value> = arr
-            .iter()
-            .map(|item| {
-                if item.get("type").and_then(|v| v.as_str()) == Some("message") {
-                    let content = item.get("content").cloned().unwrap_or(Value::Null);
-                    let mut obj = item.clone();
-                    if let Some(map) = obj.as_object_mut() {
-                        map.insert(
-                            "content".to_string(),
-                            Value::String(content_parts_to_text(&content)),
-                        );
-                    }
-                    return obj;
-                }
-                item.clone()
-            })
-            .collect();
-        return Value::Array(mapped);
-    }
-    input.clone()
-}
-
-fn normalize_input_for_provider(input: &Value, force_text: bool) -> Value {
-    if force_text {
-        normalize_input_to_text_value(input)
-    } else {
-        input.clone()
-    }
-}
-
-fn build_current_input_items(raw_input: &Value, force_text: bool) -> Vec<Value> {
-    let normalized = normalize_input_for_provider(raw_input, force_text);
-    if let Some(arr) = normalized.as_array() {
-        return arr.clone();
-    }
-    vec![to_message_item("user", &normalized, force_text)]
-}
-
-#[derive(Default)]
-struct ToolCallExecutionPlan {
-    display_calls: Vec<Value>,
-    execute_calls: Vec<Value>,
-    alias_map: HashMap<String, Vec<String>>,
-}
-
-fn build_tool_call_execution_plan(tool_calls_arr: &[Value]) -> ToolCallExecutionPlan {
-    let mut plan = ToolCallExecutionPlan::default();
-    let mut exact_key_to_call_id: HashMap<String, String> = HashMap::new();
-    let mut first_suggest_call_id: Option<String> = None;
-
-    for tc in tool_calls_arr {
-        let call_id = tool_call_id(tc);
-        let tool_name = tool_call_name(tc);
-        let mut canonical_call_id: Option<String> = None;
-
-        if is_suggest_sub_agent_tool(tool_name.as_str()) {
-            if let Some(existing) = first_suggest_call_id.as_ref() {
-                canonical_call_id = Some(existing.clone());
-            }
-        }
-
-        if canonical_call_id.is_none() && !call_id.is_empty() {
-            let dedupe_key = format!(
-                "{}::{}",
-                tool_name.to_lowercase(),
-                tool_call_arguments_text(tc)
-            );
-            if let Some(existing) = exact_key_to_call_id.get(&dedupe_key) {
-                canonical_call_id = Some(existing.clone());
-            } else {
-                exact_key_to_call_id.insert(dedupe_key, call_id.clone());
-            }
-        }
-
-        if let Some(existing) = canonical_call_id {
-            if !call_id.is_empty() && call_id != existing {
-                let entry = plan.alias_map.entry(existing).or_default();
-                if !entry.iter().any(|id| id == &call_id) {
-                    entry.push(call_id);
-                }
-            }
-            continue;
-        }
-
-        if is_suggest_sub_agent_tool(tool_name.as_str())
-            && !call_id.is_empty()
-            && first_suggest_call_id.is_none()
-        {
-            first_suggest_call_id = Some(call_id);
-        }
-
-        plan.display_calls.push(tc.clone());
-        plan.execute_calls.push(tc.clone());
-    }
-
-    plan
-}
-
-fn expand_tool_results_with_aliases(
-    tool_results: &[ToolResult],
-    alias_map: &HashMap<String, Vec<String>>,
-) -> Vec<ToolResult> {
-    let mut expanded = Vec::new();
-
-    for result in tool_results {
-        expanded.push(result.clone());
-
-        if let Some(alias_ids) = alias_map.get(result.tool_call_id.as_str()) {
-            for alias_id in alias_ids {
-                if alias_id.trim().is_empty() || alias_id == &result.tool_call_id {
-                    continue;
-                }
-                let mut clone = result.clone();
-                clone.tool_call_id = alias_id.clone();
-                expanded.push(clone);
-            }
-        }
-    }
-
-    expanded
-}
-
-fn tool_call_id(tc: &Value) -> String {
-    tc.get("id")
-        .and_then(|v| v.as_str())
-        .or_else(|| tc.get("call_id").and_then(|v| v.as_str()))
-        .unwrap_or("")
-        .to_string()
-}
-
-fn tool_call_name(tc: &Value) -> String {
-    tc.get("function")
-        .and_then(|f| f.get("name"))
-        .and_then(|v| v.as_str())
-        .or_else(|| tc.get("name").and_then(|v| v.as_str()))
-        .unwrap_or("")
-        .to_string()
-}
-
-fn tool_call_arguments_text(tc: &Value) -> String {
-    let args = tc
-        .get("function")
-        .and_then(|f| f.get("arguments"))
-        .cloned()
-        .or_else(|| tc.get("arguments").cloned())
-        .unwrap_or(Value::String("{}".to_string()));
-
-    if let Some(raw) = args.as_str() {
-        return raw.trim().to_string();
-    }
-
-    args.to_string()
-}
-
-fn is_suggest_sub_agent_tool(tool_name: &str) -> bool {
-    let normalized = tool_name.trim().to_lowercase();
-    if normalized.is_empty() {
-        return false;
-    }
-
-    normalized.ends_with("_suggest_sub_agent") || normalized.contains("__suggest_sub_agent")
-}
-
-fn build_tool_call_items(tool_calls_arr: &[Value]) -> Vec<Value> {
-    let mut items = Vec::new();
-    for tc in tool_calls_arr {
-        let call_id = tc
-            .get("id")
-            .and_then(|v| v.as_str())
-            .or_else(|| tc.get("call_id").and_then(|v| v.as_str()))
-            .unwrap_or("")
-            .to_string();
-        if call_id.is_empty() {
-            continue;
-        }
-        let func = tc.get("function").cloned().unwrap_or(json!({}));
-        let name = func
-            .get("name")
-            .and_then(|v| v.as_str())
-            .or_else(|| tc.get("name").and_then(|v| v.as_str()))
-            .unwrap_or("")
-            .to_string();
-        let args = func
-            .get("arguments")
-            .cloned()
-            .or_else(|| tc.get("arguments").cloned())
-            .unwrap_or(Value::String("{}".to_string()));
-        let args_str = if let Some(s) = args.as_str() {
-            s.to_string()
-        } else {
-            args.to_string()
-        };
-        items.push(json!({
-            "type": "function_call",
-            "call_id": call_id,
-            "name": name,
-            "arguments": args_str
-        }));
-    }
-    items
-}
-
-fn should_use_prev_id_for_next_turn(
-    prefer_stateless: bool,
-    can_use_prev_id: bool,
-    has_next_response_id: bool,
-) -> bool {
-    !prefer_stateless && can_use_prev_id && has_next_response_id
-}
-
-fn is_unsupported_previous_response_id_error(err: &str) -> bool {
-    let msg = err.to_lowercase();
-    msg.contains("previous_response_id")
-        && (msg.contains("unsupported parameter") || msg.contains("invalid parameter"))
-}
-
-fn base_url_allows_prev(base_url: &str) -> bool {
-    let url = base_url.trim().to_lowercase();
-    if url.contains("api.openai.com") {
-        return true;
-    }
-    if url.contains("relay.nf.video") || url.contains("nf.video") {
-        return true;
-    }
-    if let Ok(val) = std::env::var("ALLOW_PREV_ID_FOR_PROXY") {
-        let v = val.trim().to_lowercase();
-        if v == "1" || v == "true" || v == "yes" || v == "on" {
-            return true;
-        }
-    }
-    false
-}
-
-fn is_invalid_input_text_error(err: &str) -> bool {
-    let msg = err.to_lowercase();
-    msg.contains("input_text") && (msg.contains("invalid value") || msg.contains("invalid_value"))
-}
-
-fn is_missing_tool_call_error(err: &str) -> bool {
-    let msg = err.to_lowercase();
-    msg.contains("no tool call found")
-        && (msg.contains("function call output") || msg.contains("function_call_output"))
-}
-
 impl AiClientSettings for AiClient {
     fn apply_settings(&mut self, effective: &Value) {
         if let Some(v) = effective.get("MAX_ITERATIONS").and_then(|v| v.as_i64()) {
@@ -1286,23 +849,5 @@ impl AiClientSettings for AiClient {
         {
             self.dynamic_summary_enabled = v;
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::should_use_prev_id_for_next_turn;
-
-    #[test]
-    fn keeps_stateless_mode_when_prefer_stateless_enabled() {
-        assert!(!should_use_prev_id_for_next_turn(true, true, true));
-        assert!(!should_use_prev_id_for_next_turn(true, true, false));
-    }
-
-    #[test]
-    fn allows_prev_id_when_stateful_and_response_id_exists() {
-        assert!(should_use_prev_id_for_next_turn(false, true, true));
-        assert!(!should_use_prev_id_for_next_turn(false, true, false));
-        assert!(!should_use_prev_id_for_next_turn(false, false, true));
     }
 }

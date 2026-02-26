@@ -1,5 +1,4 @@
-use serde_json::Value;
-
+use crate::core::mcp_args::{parse_args_json_array_or_whitespace, parse_env};
 use crate::models::mcp_config::McpConfig;
 use crate::repositories::mcp_configs;
 use crate::services::builtin_mcp::{
@@ -34,63 +33,6 @@ pub struct McpBuiltinServer {
     pub max_file_bytes: i64,
     pub max_write_bytes: i64,
     pub search_limit: usize,
-}
-
-fn parse_args(args: &Option<Value>) -> Vec<String> {
-    match args {
-        Some(Value::String(s)) => {
-            if let Ok(v) = serde_json::from_str::<Vec<Value>>(s) {
-                return v
-                    .iter()
-                    .filter_map(|v| v.as_str().map(|s| s.trim().to_string()))
-                    .filter(|s| !s.is_empty())
-                    .collect();
-            }
-            return s.split_whitespace().map(|s| s.to_string()).collect();
-        }
-        Some(Value::Array(arr)) => arr
-            .iter()
-            .filter_map(|v| v.as_str().map(|s| s.trim().to_string()))
-            .filter(|s| !s.is_empty())
-            .collect(),
-        _ => Vec::new(),
-    }
-}
-
-fn value_to_env_string(v: &Value) -> Option<String> {
-    if v.is_null() {
-        return None;
-    }
-    if let Some(s) = v.as_str() {
-        return Some(s.to_string());
-    }
-    Some(v.to_string())
-}
-
-fn parse_env(env: &Option<Value>) -> std::collections::HashMap<String, String> {
-    let mut map = std::collections::HashMap::new();
-    match env {
-        Some(Value::String(s)) => {
-            if let Ok(v) = serde_json::from_str::<Value>(s) {
-                if let Value::Object(obj) = v {
-                    for (k, v) in obj {
-                        if let Some(val) = value_to_env_string(&v) {
-                            map.insert(k, val);
-                        }
-                    }
-                }
-            }
-        }
-        Some(Value::Object(obj)) => {
-            for (k, v) in obj {
-                if let Some(val) = value_to_env_string(v) {
-                    map.insert(k.clone(), val);
-                }
-            }
-        }
-        _ => {}
-    }
-    map
 }
 
 fn build_servers_from_configs(
@@ -141,7 +83,7 @@ fn build_servers_from_configs(
                 url: cfg.command,
             });
         } else if cfg.r#type == "stdio" {
-            let args = parse_args(&cfg.args);
+            let args = parse_args_json_array_or_whitespace(&cfg.args);
             let env = parse_env(&cfg.env);
             let cwd = cfg
                 .cwd

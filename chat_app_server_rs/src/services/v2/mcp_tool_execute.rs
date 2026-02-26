@@ -4,9 +4,11 @@ use serde_json::{json, Value};
 use tracing::{info, warn};
 
 use crate::core::mcp_tools::{
-    build_builtin_tool_service, execute_tools_stream as execute_tools_stream_common,
-    inject_sub_agent_router_args, jsonrpc_http_call, jsonrpc_stdio_call, list_tools_http,
-    list_tools_stdio, to_text, BuiltinToolService, ToolResultCallback, ToolStreamChunkCallback,
+    build_builtin_tool_service, build_function_tool_schema,
+    execute_tools_stream as execute_tools_stream_common, inject_sub_agent_router_args,
+    jsonrpc_http_call, jsonrpc_stdio_call, list_tools_http, list_tools_stdio,
+    parse_tool_definition, to_text, BuiltinToolService, ToolResultCallback, ToolSchemaFormat,
+    ToolStreamChunkCallback,
 };
 use crate::services::mcp_loader::{McpBuiltinServer, McpHttpServer, McpStdioServer};
 
@@ -78,45 +80,13 @@ impl McpToolExecute {
     async fn build_tools_from_http(&mut self, server: &McpHttpServer) -> Result<(), String> {
         let tools = list_tools_http(&server.url).await?;
         for tool in tools {
-            let tool_name = tool
-                .get("name")
-                .and_then(|value| value.as_str())
-                .unwrap_or("")
-                .to_string();
-            if tool_name.is_empty() {
-                continue;
-            }
-
-            let prefixed = format!("{}_{}", server.name, tool_name);
-            let parameters = tool
-                .get("inputSchema")
-                .cloned()
-                .unwrap_or(json!({"type":"object","properties":{},"required":[]}));
-            let description = tool
-                .get("description")
-                .and_then(|value| value.as_str())
-                .unwrap_or("")
-                .to_string();
-
-            self.tools.push(json!({
-                "type": "function",
-                "function": {
-                    "name": prefixed,
-                    "description": description,
-                    "parameters": parameters
-                }
-            }));
-
-            self.tool_metadata.insert(
-                prefixed,
-                ToolInfo {
-                    original_name: tool_name,
-                    server_name: server.name.clone(),
-                    server_type: "http".to_string(),
-                    server_url: Some(server.url.clone()),
-                    server_config: None,
-                    tool_info: tool,
-                },
+            self.register_tool(
+                &server.name,
+                "http",
+                Some(server.url.clone()),
+                None,
+                tool,
+                ToolSchemaFormat::LegacyChatCompletions,
             );
         }
 
@@ -126,45 +96,13 @@ impl McpToolExecute {
     async fn build_tools_from_stdio(&mut self, server: &McpStdioServer) -> Result<(), String> {
         let tools = list_tools_stdio(server).await?;
         for tool in tools {
-            let tool_name = tool
-                .get("name")
-                .and_then(|value| value.as_str())
-                .unwrap_or("")
-                .to_string();
-            if tool_name.is_empty() {
-                continue;
-            }
-
-            let prefixed = format!("{}_{}", server.name, tool_name);
-            let parameters = tool
-                .get("inputSchema")
-                .cloned()
-                .unwrap_or(json!({"type":"object","properties":{},"required":[]}));
-            let description = tool
-                .get("description")
-                .and_then(|value| value.as_str())
-                .unwrap_or("")
-                .to_string();
-
-            self.tools.push(json!({
-                "type": "function",
-                "function": {
-                    "name": prefixed,
-                    "description": description,
-                    "parameters": parameters
-                }
-            }));
-
-            self.tool_metadata.insert(
-                prefixed,
-                ToolInfo {
-                    original_name: tool_name,
-                    server_name: server.name.clone(),
-                    server_type: "stdio".to_string(),
-                    server_url: None,
-                    server_config: Some(server.clone()),
-                    tool_info: tool,
-                },
+            self.register_tool(
+                &server.name,
+                "stdio",
+                None,
+                Some(server.clone()),
+                tool,
+                ToolSchemaFormat::LegacyChatCompletions,
             );
         }
 
@@ -178,49 +116,51 @@ impl McpToolExecute {
         self.builtin_services.insert(server.name.clone(), service);
 
         for tool in tools {
-            let tool_name = tool
-                .get("name")
-                .and_then(|value| value.as_str())
-                .unwrap_or("")
-                .to_string();
-            if tool_name.is_empty() {
-                continue;
-            }
-
-            let prefixed = format!("{}_{}", server.name, tool_name);
-            let parameters = tool
-                .get("inputSchema")
-                .cloned()
-                .unwrap_or(json!({"type":"object","properties":{},"required":[]}));
-            let description = tool
-                .get("description")
-                .and_then(|value| value.as_str())
-                .unwrap_or("")
-                .to_string();
-
-            self.tools.push(json!({
-                "type": "function",
-                "function": {
-                    "name": prefixed,
-                    "description": description,
-                    "parameters": parameters
-                }
-            }));
-
-            self.tool_metadata.insert(
-                prefixed,
-                ToolInfo {
-                    original_name: tool_name,
-                    server_name: server.name.clone(),
-                    server_type: "builtin".to_string(),
-                    server_url: None,
-                    server_config: None,
-                    tool_info: tool,
-                },
+            self.register_tool(
+                &server.name,
+                "builtin",
+                None,
+                None,
+                tool,
+                ToolSchemaFormat::LegacyChatCompletions,
             );
         }
 
         Ok(())
+    }
+
+    fn register_tool(
+        &mut self,
+        server_name: &str,
+        server_type: &str,
+        server_url: Option<String>,
+        server_config: Option<McpStdioServer>,
+        tool: Value,
+        schema_format: ToolSchemaFormat,
+    ) {
+        let Some(definition) = parse_tool_definition(&tool) else {
+            return;
+        };
+
+        let prefixed_name = format!("{}_{}", server_name, definition.name);
+        self.tools.push(build_function_tool_schema(
+            &prefixed_name,
+            &definition.description,
+            &definition.parameters,
+            schema_format,
+        ));
+
+        self.tool_metadata.insert(
+            prefixed_name,
+            ToolInfo {
+                original_name: definition.name,
+                server_name: server_name.to_string(),
+                server_type: server_type.to_string(),
+                server_url,
+                server_config,
+                tool_info: tool,
+            },
+        );
     }
 
     pub fn get_available_tools(&self) -> Vec<Value> {

@@ -40,6 +40,72 @@ pub struct ToolResult {
 pub type ToolResultCallback = Arc<dyn Fn(&ToolResult) + Send + Sync>;
 pub type ToolStreamChunkCallback = Arc<dyn Fn(String) + Send + Sync>;
 
+#[derive(Debug, Clone)]
+pub struct ParsedToolDefinition {
+    pub name: String,
+    pub description: String,
+    pub parameters: Value,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolSchemaFormat {
+    LegacyChatCompletions,
+    ResponsesStrict,
+}
+
+pub fn parse_tool_definition(tool: &Value) -> Option<ParsedToolDefinition> {
+    let name = tool
+        .get("name")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?
+        .to_string();
+    let description = tool
+        .get("description")
+        .and_then(|value| value.as_str())
+        .unwrap_or("")
+        .to_string();
+    let parameters = tool
+        .get("inputSchema")
+        .cloned()
+        .unwrap_or_else(default_tool_parameters);
+
+    Some(ParsedToolDefinition {
+        name,
+        description,
+        parameters,
+    })
+}
+
+pub fn build_function_tool_schema(
+    name: &str,
+    description: &str,
+    parameters: &Value,
+    format: ToolSchemaFormat,
+) -> Value {
+    match format {
+        ToolSchemaFormat::LegacyChatCompletions => json!({
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": description,
+                "parameters": parameters
+            }
+        }),
+        ToolSchemaFormat::ResponsesStrict => json!({
+            "type": "function",
+            "name": name,
+            "description": description,
+            "parameters": normalize_json_schema(parameters),
+            "strict": true
+        }),
+    }
+}
+
+fn default_tool_parameters() -> Value {
+    json!({"type":"object","properties":{},"required":[]})
+}
+
 #[derive(Clone)]
 pub enum BuiltinToolService {
     CodeMaintainer(CodeMaintainerService),
@@ -357,6 +423,138 @@ pub fn extract_tools(response: &Value) -> Result<Vec<Value>, String> {
     Err("tools not found in response".to_string())
 }
 
+pub fn normalize_json_schema(schema: &Value) -> Value {
+    let mut root = schema.clone();
+
+    fn visit(node: &mut Value) {
+        if node.is_null() {
+            return;
+        }
+
+        if let Some(array) = node.as_array_mut() {
+            for item in array {
+                visit(item);
+            }
+            return;
+        }
+
+        let object = match node.as_object_mut() {
+            Some(object) => object,
+            None => return,
+        };
+
+        let mut property_keys = Vec::new();
+        if let Some(properties_value) = object.get_mut("properties") {
+            if let Some(properties) = properties_value.as_object_mut() {
+                property_keys = properties.keys().cloned().collect();
+                for value in properties.values_mut() {
+                    visit(value);
+                }
+            }
+        }
+
+        if !property_keys.is_empty() {
+            if !object.contains_key("type") {
+                object.insert("type".to_string(), Value::String("object".to_string()));
+            }
+
+            let mut required: Vec<String> = object
+                .get("required")
+                .and_then(|value| value.as_array())
+                .map(|array| {
+                    array
+                        .iter()
+                        .filter_map(|value| value.as_str().map(|raw| raw.to_string()))
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            for key in property_keys {
+                if !required.iter().any(|current| current == &key) {
+                    required.push(key);
+                }
+            }
+
+            object.insert(
+                "required".to_string(),
+                Value::Array(required.into_iter().map(Value::String).collect()),
+            );
+        }
+
+        let is_object_schema = object
+            .get("type")
+            .and_then(|value| value.as_str())
+            .map(|value| value == "object")
+            .unwrap_or(false)
+            || object.contains_key("properties");
+        if is_object_schema {
+            object.insert("additionalProperties".to_string(), Value::Bool(false));
+        }
+
+        if let Some(items) = object.get_mut("items") {
+            visit(items);
+        }
+        if let Some(any_of) = object
+            .get_mut("anyOf")
+            .and_then(|value| value.as_array_mut())
+        {
+            for value in any_of {
+                visit(value);
+            }
+        }
+        if let Some(one_of) = object
+            .get_mut("oneOf")
+            .and_then(|value| value.as_array_mut())
+        {
+            for value in one_of {
+                visit(value);
+            }
+        }
+        if let Some(all_of) = object
+            .get_mut("allOf")
+            .and_then(|value| value.as_array_mut())
+        {
+            for value in all_of {
+                visit(value);
+            }
+        }
+        if let Some(not) = object.get_mut("not") {
+            visit(not);
+        }
+        if let Some(additional) = object.get_mut("additionalProperties") {
+            visit(additional);
+        }
+        if let Some(definitions) = object
+            .get_mut("definitions")
+            .and_then(|value| value.as_object_mut())
+        {
+            for value in definitions.values_mut() {
+                visit(value);
+            }
+        }
+        if let Some(definitions) = object
+            .get_mut("$defs")
+            .and_then(|value| value.as_object_mut())
+        {
+            for value in definitions.values_mut() {
+                visit(value);
+            }
+        }
+        if let Some(value) = object.get_mut("if") {
+            visit(value);
+        }
+        if let Some(value) = object.get_mut("then") {
+            visit(value);
+        }
+        if let Some(value) = object.get_mut("else") {
+            visit(value);
+        }
+    }
+
+    visit(&mut root);
+    root
+}
+
 pub fn to_text(result: &Value) -> String {
     if let Some(text) = result.as_str() {
         return text.to_string();
@@ -487,4 +685,101 @@ pub async fn jsonrpc_stdio_call(
     }
 
     Err("no response from stdio server".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{
+        build_function_tool_schema, normalize_json_schema, parse_tool_definition, ToolSchemaFormat,
+    };
+
+    #[test]
+    fn parse_tool_definition_rejects_blank_name() {
+        let tool = json!({
+            "name": "   ",
+            "description": "desc",
+            "inputSchema": {"type": "object"}
+        });
+
+        assert!(parse_tool_definition(&tool).is_none());
+    }
+
+    #[test]
+    fn build_legacy_function_tool_schema_matches_expected_shape() {
+        let parameters = json!({"type": "object", "properties": {"q": {"type": "string"}}});
+        let schema = build_function_tool_schema(
+            "search",
+            "search docs",
+            &parameters,
+            ToolSchemaFormat::LegacyChatCompletions,
+        );
+
+        assert_eq!(
+            schema.get("type").and_then(|v| v.as_str()),
+            Some("function")
+        );
+        assert_eq!(
+            schema
+                .get("function")
+                .and_then(|v| v.get("name"))
+                .and_then(|v| v.as_str()),
+            Some("search")
+        );
+        assert_eq!(
+            schema
+                .get("function")
+                .and_then(|v| v.get("parameters"))
+                .cloned(),
+            Some(parameters)
+        );
+    }
+
+    #[test]
+    fn normalize_json_schema_enforces_required_and_no_additional_properties() {
+        let raw = json!({
+            "properties": {
+                "query": {"type": "string"},
+                "nested": {
+                    "type": "object",
+                    "properties": {
+                        "limit": {"type": "integer"}
+                    }
+                }
+            }
+        });
+
+        let normalized = normalize_json_schema(&raw);
+        let required = normalized
+            .get("required")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+
+        assert!(required.contains(&json!("query")));
+        assert!(required.contains(&json!("nested")));
+        assert_eq!(
+            normalized
+                .get("additionalProperties")
+                .and_then(|v| v.as_bool()),
+            Some(false)
+        );
+
+        let nested = normalized
+            .get("properties")
+            .and_then(|v| v.get("nested"))
+            .cloned()
+            .unwrap_or_default();
+        assert_eq!(
+            nested.get("additionalProperties").and_then(|v| v.as_bool()),
+            Some(false)
+        );
+        let nested_required = nested
+            .get("required")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        assert!(nested_required.contains(&json!("limit")));
+    }
 }

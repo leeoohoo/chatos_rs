@@ -1,12 +1,13 @@
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use tokio::sync::broadcast;
 use tokio::time::{Duration, Instant};
 
+use crate::core::async_bridge::block_on_result;
+use crate::core::tool_io::text_result;
 use crate::models::project::ProjectService;
 use crate::models::terminal::{Terminal, TerminalService};
 use crate::models::terminal_log::{TerminalLog, TerminalLogService};
@@ -622,31 +623,6 @@ fn required_trimmed_string(args: &Value, field: &str) -> Result<String, String> 
         return Err(format!("{field} is required"));
     }
     Ok(trimmed.to_string())
-}
-
-fn block_on_result<F, T>(future: F) -> Result<T, String>
-where
-    F: Future<Output = Result<T, String>>,
-{
-    if let Ok(handle) = tokio::runtime::Handle::try_current() {
-        tokio::task::block_in_place(|| handle.block_on(future))
-    } else {
-        let rt = tokio::runtime::Runtime::new().map_err(|err| err.to_string())?;
-        rt.block_on(future)
-    }
-}
-
-fn text_result(data: serde_json::Value) -> serde_json::Value {
-    let text = if data.is_string() {
-        data.as_str().unwrap_or("").to_string()
-    } else {
-        serde_json::to_string_pretty(&data).unwrap_or_else(|_| "{}".to_string())
-    };
-    json!({
-        "content": [
-            { "type": "text", "text": text }
-        ]
-    })
 }
 
 #[cfg(test)]

@@ -1,6 +1,9 @@
 use serde_json::{json, Value};
 use tracing::warn;
 
+use crate::services::ai_common::{
+    build_user_content_parts, build_user_message_metadata, normalize_turn_id,
+};
 use crate::services::v2::ai_client::{AiClient, AiClientCallbacks};
 use crate::services::v2::ai_request_handler::AiRequestHandler;
 use crate::services::v2::mcp_tool_execute::McpToolExecute;
@@ -64,27 +67,10 @@ impl AiServer {
         let use_tools = options.use_tools.unwrap_or(true);
         let max_tokens = options.max_tokens;
         let reasoning_enabled = options.reasoning_enabled.unwrap_or(true);
-        let turn_id = options
-            .turn_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(|value| value.to_string());
+        let turn_id = normalize_turn_id(options.turn_id.as_deref());
 
         let attachments_list = options.attachments.unwrap_or_default();
-        let sanitized = attachments::sanitize_attachments_for_db(&attachments_list);
-        let meta = if sanitized.is_empty() && turn_id.is_none() {
-            None
-        } else {
-            let mut map = serde_json::Map::new();
-            if !sanitized.is_empty() {
-                map.insert("attachments".to_string(), json!(sanitized));
-            }
-            if let Some(turn) = turn_id.clone() {
-                map.insert("conversation_turn_id".to_string(), Value::String(turn));
-            }
-            Some(Value::Object(map))
-        };
+        let meta = build_user_message_metadata(&attachments_list, turn_id.as_deref());
         if let Err(err) = self
             .message_manager
             .save_user_message(session_id, user_message, None, meta)
@@ -93,10 +79,13 @@ impl AiServer {
             warn!("save user message failed: {}", err);
         }
 
-        let mut content_parts =
-            attachments::build_content_parts_async(user_message, &attachments_list).await;
-        content_parts =
-            attachments::adapt_parts_for_model(&model, &content_parts, options.supports_images);
+        let content_parts = build_user_content_parts(
+            &model,
+            user_message,
+            &attachments_list,
+            options.supports_images,
+        )
+        .await;
 
         let messages = vec![json!({"role": "user", "content": content_parts})];
 

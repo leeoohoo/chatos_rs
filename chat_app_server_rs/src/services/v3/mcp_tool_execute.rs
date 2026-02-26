@@ -4,9 +4,11 @@ use serde_json::{json, Value};
 use tracing::{info, warn};
 
 use crate::core::mcp_tools::{
-    build_builtin_tool_service, execute_tools_stream as execute_tools_stream_common,
-    inject_sub_agent_router_args, jsonrpc_http_call, jsonrpc_stdio_call, list_tools_http,
-    list_tools_stdio, to_text, BuiltinToolService, ToolResultCallback, ToolStreamChunkCallback,
+    build_builtin_tool_service, build_function_tool_schema,
+    execute_tools_stream as execute_tools_stream_common, inject_sub_agent_router_args,
+    jsonrpc_http_call, jsonrpc_stdio_call, list_tools_http, list_tools_stdio,
+    parse_tool_definition, to_text, BuiltinToolService, ToolResultCallback, ToolSchemaFormat,
+    ToolStreamChunkCallback,
 };
 use crate::services::mcp_loader::{McpBuiltinServer, McpHttpServer, McpStdioServer};
 
@@ -78,44 +80,13 @@ impl McpToolExecute {
     async fn build_tools_from_http(&mut self, server: &McpHttpServer) -> Result<(), String> {
         let tools = list_tools_http(&server.url).await?;
         for tool in tools {
-            let tool_name = tool
-                .get("name")
-                .and_then(|value| value.as_str())
-                .unwrap_or("")
-                .to_string();
-            if tool_name.is_empty() {
-                continue;
-            }
-
-            let prefixed = format!("{}_{}", server.name, tool_name);
-            let parameters = tool
-                .get("inputSchema")
-                .cloned()
-                .unwrap_or(json!({"type":"object","properties":{},"required":[]}));
-            let description = tool
-                .get("description")
-                .and_then(|value| value.as_str())
-                .unwrap_or("")
-                .to_string();
-
-            self.tools.push(json!({
-                "type": "function",
-                "name": prefixed,
-                "description": description,
-                "parameters": normalize_json_schema(&parameters),
-                "strict": true
-            }));
-
-            self.tool_metadata.insert(
-                prefixed,
-                ToolInfo {
-                    original_name: tool_name,
-                    server_name: server.name.clone(),
-                    server_type: "http".to_string(),
-                    server_url: Some(server.url.clone()),
-                    server_config: None,
-                    tool_info: tool,
-                },
+            self.register_tool(
+                &server.name,
+                "http",
+                Some(server.url.clone()),
+                None,
+                tool,
+                ToolSchemaFormat::ResponsesStrict,
             );
         }
 
@@ -125,44 +96,13 @@ impl McpToolExecute {
     async fn build_tools_from_stdio(&mut self, server: &McpStdioServer) -> Result<(), String> {
         let tools = list_tools_stdio(server).await?;
         for tool in tools {
-            let tool_name = tool
-                .get("name")
-                .and_then(|value| value.as_str())
-                .unwrap_or("")
-                .to_string();
-            if tool_name.is_empty() {
-                continue;
-            }
-
-            let prefixed = format!("{}_{}", server.name, tool_name);
-            let parameters = tool
-                .get("inputSchema")
-                .cloned()
-                .unwrap_or(json!({"type":"object","properties":{},"required":[]}));
-            let description = tool
-                .get("description")
-                .and_then(|value| value.as_str())
-                .unwrap_or("")
-                .to_string();
-
-            self.tools.push(json!({
-                "type": "function",
-                "name": prefixed,
-                "description": description,
-                "parameters": normalize_json_schema(&parameters),
-                "strict": true
-            }));
-
-            self.tool_metadata.insert(
-                prefixed,
-                ToolInfo {
-                    original_name: tool_name,
-                    server_name: server.name.clone(),
-                    server_type: "stdio".to_string(),
-                    server_url: None,
-                    server_config: Some(server.clone()),
-                    tool_info: tool,
-                },
+            self.register_tool(
+                &server.name,
+                "stdio",
+                None,
+                Some(server.clone()),
+                tool,
+                ToolSchemaFormat::ResponsesStrict,
             );
         }
 
@@ -176,48 +116,51 @@ impl McpToolExecute {
         self.builtin_services.insert(server.name.clone(), service);
 
         for tool in tools {
-            let tool_name = tool
-                .get("name")
-                .and_then(|value| value.as_str())
-                .unwrap_or("")
-                .to_string();
-            if tool_name.is_empty() {
-                continue;
-            }
-
-            let prefixed = format!("{}_{}", server.name, tool_name);
-            let parameters = tool
-                .get("inputSchema")
-                .cloned()
-                .unwrap_or(json!({"type":"object","properties":{},"required":[]}));
-            let description = tool
-                .get("description")
-                .and_then(|value| value.as_str())
-                .unwrap_or("")
-                .to_string();
-
-            self.tools.push(json!({
-                "type": "function",
-                "name": prefixed,
-                "description": description,
-                "parameters": normalize_json_schema(&parameters),
-                "strict": true
-            }));
-
-            self.tool_metadata.insert(
-                prefixed,
-                ToolInfo {
-                    original_name: tool_name,
-                    server_name: server.name.clone(),
-                    server_type: "builtin".to_string(),
-                    server_url: None,
-                    server_config: None,
-                    tool_info: tool,
-                },
+            self.register_tool(
+                &server.name,
+                "builtin",
+                None,
+                None,
+                tool,
+                ToolSchemaFormat::ResponsesStrict,
             );
         }
 
         Ok(())
+    }
+
+    fn register_tool(
+        &mut self,
+        server_name: &str,
+        server_type: &str,
+        server_url: Option<String>,
+        server_config: Option<McpStdioServer>,
+        tool: Value,
+        schema_format: ToolSchemaFormat,
+    ) {
+        let Some(definition) = parse_tool_definition(&tool) else {
+            return;
+        };
+
+        let prefixed_name = format!("{}_{}", server_name, definition.name);
+        self.tools.push(build_function_tool_schema(
+            &prefixed_name,
+            &definition.description,
+            &definition.parameters,
+            schema_format,
+        ));
+
+        self.tool_metadata.insert(
+            prefixed_name,
+            ToolInfo {
+                original_name: definition.name,
+                server_name: server_name.to_string(),
+                server_type: server_type.to_string(),
+                server_url,
+                server_config,
+                tool_info: tool,
+            },
+        );
     }
 
     pub fn get_available_tools(&self) -> Vec<Value> {
@@ -310,123 +253,4 @@ impl McpToolExecute {
             Ok(to_text(&result))
         }
     }
-}
-
-fn normalize_json_schema(schema: &Value) -> Value {
-    let mut root = schema.clone();
-
-    fn visit(node: &mut Value) {
-        if node.is_null() {
-            return;
-        }
-
-        if let Some(arr) = node.as_array_mut() {
-            for item in arr {
-                visit(item);
-            }
-            return;
-        }
-
-        let obj = match node.as_object_mut() {
-            Some(obj) => obj,
-            None => return,
-        };
-
-        let mut prop_keys = Vec::new();
-        if let Some(props_val) = obj.get_mut("properties") {
-            if let Some(props) = props_val.as_object_mut() {
-                prop_keys = props.keys().cloned().collect();
-                for (_, value) in props.iter_mut() {
-                    visit(value);
-                }
-            }
-        }
-
-        if !prop_keys.is_empty() {
-            if !obj.contains_key("type") {
-                obj.insert("type".to_string(), Value::String("object".to_string()));
-            }
-
-            let mut required: Vec<String> = obj
-                .get("required")
-                .and_then(|value| value.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|value| value.as_str().map(|s| s.to_string()))
-                        .collect()
-                })
-                .unwrap_or_default();
-
-            for key in prop_keys {
-                if !required.iter().any(|item| item == &key) {
-                    required.push(key);
-                }
-            }
-
-            obj.insert(
-                "required".to_string(),
-                Value::Array(required.into_iter().map(Value::String).collect()),
-            );
-        }
-
-        let is_object_schema = obj
-            .get("type")
-            .and_then(|value| value.as_str())
-            .map(|value| value == "object")
-            .unwrap_or(false)
-            || obj.contains_key("properties");
-        if is_object_schema {
-            obj.insert("additionalProperties".to_string(), Value::Bool(false));
-        }
-
-        if let Some(items) = obj.get_mut("items") {
-            visit(items);
-        }
-        if let Some(any_of) = obj.get_mut("anyOf").and_then(|value| value.as_array_mut()) {
-            for value in any_of {
-                visit(value);
-            }
-        }
-        if let Some(one_of) = obj.get_mut("oneOf").and_then(|value| value.as_array_mut()) {
-            for value in one_of {
-                visit(value);
-            }
-        }
-        if let Some(all_of) = obj.get_mut("allOf").and_then(|value| value.as_array_mut()) {
-            for value in all_of {
-                visit(value);
-            }
-        }
-        if let Some(not) = obj.get_mut("not") {
-            visit(not);
-        }
-        if let Some(additional) = obj.get_mut("additionalProperties") {
-            visit(additional);
-        }
-        if let Some(defs) = obj
-            .get_mut("definitions")
-            .and_then(|value| value.as_object_mut())
-        {
-            for (_, value) in defs.iter_mut() {
-                visit(value);
-            }
-        }
-        if let Some(defs) = obj.get_mut("$defs").and_then(|value| value.as_object_mut()) {
-            for (_, value) in defs.iter_mut() {
-                visit(value);
-            }
-        }
-        if let Some(value) = obj.get_mut("if") {
-            visit(value);
-        }
-        if let Some(value) = obj.get_mut("then") {
-            visit(value);
-        }
-        if let Some(value) = obj.get_mut("else") {
-            visit(value);
-        }
-    }
-
-    visit(&mut root);
-    root
 }

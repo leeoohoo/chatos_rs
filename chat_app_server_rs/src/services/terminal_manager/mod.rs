@@ -1,3 +1,9 @@
+mod directory_guard;
+mod io_runtime;
+mod path_utils;
+mod prompt_parser;
+mod shell_path;
+
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -5,12 +11,21 @@ use std::sync::{Arc, Mutex};
 
 use dashmap::DashMap;
 use once_cell::sync::OnceCell;
-use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize, SlavePty};
+use portable_pty::{native_pty_system, MasterPty, PtySize};
 use tokio::sync::broadcast;
 
 use crate::models::terminal::Terminal;
-use crate::models::terminal_log::TerminalLog;
-use crate::repositories::{terminal_logs, terminals};
+use crate::repositories::terminals;
+
+use self::directory_guard::{
+    build_return_to_root_command, clear_input_line_sequence, normalize_shell_input,
+    sanitize_command_line_for_guard, validate_directory_change_command,
+};
+use self::io_runtime::{spawn_shell, spawn_terminal_output_persist, spawn_terminal_touch};
+use self::path_utils::{canonicalize_path, path_is_within_root};
+use self::prompt_parser::{
+    extract_prompt_cwd, infer_prompt_cwd_from_context, is_prompt_line, strip_ansi,
+};
 
 #[derive(Debug, Clone)]
 pub enum TerminalEvent {
@@ -450,531 +465,6 @@ pub fn get_terminal_manager() -> Arc<TerminalsManager> {
         .clone()
 }
 
-fn spawn_terminal_touch(handle: tokio::runtime::Handle, terminal_id: String) {
-    handle.spawn(async move {
-        let _ = terminals::touch_terminal(terminal_id.as_str()).await;
-    });
-}
-
-fn spawn_terminal_output_persist(
-    handle: tokio::runtime::Handle,
-    terminal_id: String,
-    output: String,
-) {
-    handle.spawn(async move {
-        let _ = terminals::touch_terminal(terminal_id.as_str()).await;
-        let log = TerminalLog::new(terminal_id, "output".to_string(), output);
-        let _ = terminal_logs::create_terminal_log(&log).await;
-    });
-}
-
-fn spawn_shell(
-    cwd: &Path,
-    slave: Box<dyn SlavePty + Send>,
-) -> Result<Box<dyn portable_pty::Child + Send + Sync>, String> {
-    let shell = select_shell();
-    let mut cmd = CommandBuilder::new(shell.clone());
-    cmd.cwd(cwd);
-    cmd.env("TERM", "xterm-256color");
-    cmd.env("COLORTERM", "truecolor");
-    slave
-        .spawn_command(cmd)
-        .map_err(|e| format!("{shell}: {e}"))
-}
-
-fn select_shell() -> String {
-    if cfg!(windows) {
-        if let Ok(comspec) = std::env::var("COMSPEC") {
-            let trimmed = comspec.trim();
-            if !trimmed.is_empty() && Path::new(trimmed).exists() {
-                return trimmed.to_string();
-            }
-        }
-        if let Some(path) = find_in_path(&["cmd.exe", "cmd"]) {
-            return path;
-        }
-        if let Some(path) = find_in_path(&["pwsh.exe", "pwsh"]) {
-            return path;
-        }
-        if let Some(path) = find_in_path(&["powershell.exe", "powershell"]) {
-            return path;
-        }
-        return "cmd.exe".to_string();
-    }
-
-    if let Ok(shell) = std::env::var("SHELL") {
-        if !shell.trim().is_empty() {
-            return shell;
-        }
-    }
-    if Path::new("/bin/bash").exists() {
-        return "/bin/bash".to_string();
-    }
-    if Path::new("/bin/zsh").exists() {
-        return "/bin/zsh".to_string();
-    }
-    "/bin/sh".to_string()
-}
-
-fn find_in_path(candidates: &[&str]) -> Option<String> {
-    let path_var = std::env::var("PATH").ok()?;
-    for dir in std::env::split_paths(&path_var) {
-        for name in candidates {
-            let full = dir.join(name);
-            if full.exists() {
-                return Some(full.to_string_lossy().to_string());
-            }
-        }
-    }
-    None
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DirChangeKind {
-    Cd,
-    SetLocation,
-    Pushd,
-    Popd,
-}
-
-#[derive(Debug, Clone)]
-struct DirChangeCommand {
-    kind: DirChangeKind,
-    target: Option<String>,
-    has_extra_args: bool,
-}
-
-fn validate_directory_change_command(
-    line: &str,
-    root_cwd: &Path,
-    current_cwd: &mut PathBuf,
-) -> Option<String> {
-    let command = parse_directory_change_command(line)?;
-
-    let target_is_absolute = command
-        .target
-        .as_deref()
-        .map(|t| Path::new(t.trim()).is_absolute())
-        .unwrap_or(false);
-
-    if command.has_extra_args {
-        return Some(
-            "Blocked: run directory-change commands alone (no chained arguments).".to_string(),
-        );
-    }
-
-    if matches!(command.kind, DirChangeKind::Pushd | DirChangeKind::Popd) {
-        return Some("Blocked: pushd/popd are disabled for this restricted terminal.".to_string());
-    }
-
-    if let Some(target) = command.target.as_deref() {
-        let target = target.trim();
-        if target == "-" {
-            return Some("Blocked: cd - is disabled in this restricted terminal.".to_string());
-        }
-        if has_dynamic_cd_syntax(target) {
-            return Some(
-                "Blocked: cd path cannot contain shell expansions or control operators."
-                    .to_string(),
-            );
-        }
-    }
-
-    let resolved =
-        match resolve_cd_target(root_cwd, current_cwd.as_path(), command.target.as_deref()) {
-            Some(path) => path,
-            None => {
-                if target_is_absolute {
-                    return Some(
-                        "Blocked: cannot verify absolute cd target (path does not resolve)."
-                            .to_string(),
-                    );
-                }
-                return None;
-            }
-        };
-
-    if !path_is_within_root(resolved.as_path(), root_cwd) {
-        let root = root_cwd.display();
-        return Some(format!(
-            "Blocked: cannot leave terminal root directory: {root}"
-        ));
-    }
-
-    *current_cwd = resolved;
-    None
-}
-
-fn parse_directory_change_command(line: &str) -> Option<DirChangeCommand> {
-    let words = split_shell_words(line.trim())?;
-    if words.is_empty() {
-        return None;
-    }
-
-    let command = words[0].to_ascii_lowercase();
-    match command.as_str() {
-        "cd" | "chdir" => parse_cd_command(words),
-        "set-location" | "sl" => parse_set_location_command(words),
-        "pushd" => Some(DirChangeCommand {
-            kind: DirChangeKind::Pushd,
-            target: words.get(1).cloned(),
-            has_extra_args: words.len() > 2,
-        }),
-        "popd" => Some(DirChangeCommand {
-            kind: DirChangeKind::Popd,
-            target: None,
-            has_extra_args: words.len() > 1,
-        }),
-        _ => None,
-    }
-}
-
-fn parse_cd_command(words: Vec<String>) -> Option<DirChangeCommand> {
-    let mut idx = 1;
-    if idx < words.len() && words[idx].eq_ignore_ascii_case("/d") {
-        idx += 1;
-    }
-
-    let target = if idx < words.len() {
-        Some(words[idx].clone())
-    } else {
-        None
-    };
-    let has_extra_args = if target.is_some() {
-        idx + 1 < words.len()
-    } else {
-        idx < words.len()
-    };
-
-    Some(DirChangeCommand {
-        kind: DirChangeKind::Cd,
-        target,
-        has_extra_args,
-    })
-}
-
-fn parse_set_location_command(words: Vec<String>) -> Option<DirChangeCommand> {
-    let mut idx = 1;
-    if idx < words.len()
-        && (words[idx].eq_ignore_ascii_case("-path")
-            || words[idx].eq_ignore_ascii_case("-literalpath"))
-    {
-        idx += 1;
-    }
-
-    let target = if idx < words.len() {
-        Some(words[idx].clone())
-    } else {
-        None
-    };
-    let has_extra_args = if target.is_some() {
-        idx + 1 < words.len()
-    } else {
-        idx < words.len()
-    };
-
-    Some(DirChangeCommand {
-        kind: DirChangeKind::SetLocation,
-        target,
-        has_extra_args,
-    })
-}
-
-fn split_shell_words(input: &str) -> Option<Vec<String>> {
-    let mut words = Vec::new();
-    let mut current = String::new();
-    let mut quote: Option<char> = None;
-
-    for ch in input.chars() {
-        match quote {
-            Some(marker) => {
-                if ch == marker {
-                    quote = None;
-                } else {
-                    current.push(ch);
-                }
-            }
-            None => {
-                if ch.is_whitespace() {
-                    if !current.is_empty() {
-                        words.push(std::mem::take(&mut current));
-                    }
-                } else if ch == '\'' || ch == '"' {
-                    quote = Some(ch);
-                } else {
-                    current.push(ch);
-                }
-            }
-        }
-    }
-
-    if quote.is_some() {
-        return None;
-    }
-    if !current.is_empty() {
-        words.push(current);
-    }
-    Some(words)
-}
-
-fn extract_prompt_cwd(line: &str) -> Option<PathBuf> {
-    let trimmed = line.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-
-    static POWERSHELL_PROMPT_RE: once_cell::sync::Lazy<regex::Regex> =
-        once_cell::sync::Lazy::new(|| {
-            regex::Regex::new(r"(?:^|[\s\]])PS (?:[^:>\r\n]+::)?([A-Za-z]:\\[^>\r\n]*)> ?$")
-                .unwrap()
-        });
-    static CMD_PROMPT_RE: once_cell::sync::Lazy<regex::Regex> =
-        once_cell::sync::Lazy::new(|| regex::Regex::new(r"([A-Za-z]:\\[^>\r\n]*)> ?$").unwrap());
-    static UNIX_PROMPT_RE: once_cell::sync::Lazy<regex::Regex> =
-        once_cell::sync::Lazy::new(|| regex::Regex::new(r"(/[^#$%>\r\n]*)[#$%>] ?$").unwrap());
-
-    if let Some(caps) = POWERSHELL_PROMPT_RE.captures(trimmed) {
-        return canonicalize_prompt_path(caps.get(1).map(|m| m.as_str())?);
-    }
-    if let Some(caps) = CMD_PROMPT_RE.captures(trimmed) {
-        return canonicalize_prompt_path(caps.get(1).map(|m| m.as_str())?);
-    }
-    if let Some(caps) = UNIX_PROMPT_RE.captures(trimmed) {
-        return canonicalize_prompt_path(caps.get(1).map(|m| m.as_str())?);
-    }
-
-    None
-}
-
-fn canonicalize_prompt_path(raw_path: &str) -> Option<PathBuf> {
-    let candidate = raw_path.trim();
-    if candidate.is_empty() {
-        return None;
-    }
-
-    let path = Path::new(candidate);
-    if !path.is_absolute() {
-        return None;
-    }
-
-    canonicalize_path(path).ok()
-}
-
-fn infer_prompt_cwd_from_context(
-    line: &str,
-    current_cwd: &Path,
-    _root_cwd: &Path,
-) -> Option<PathBuf> {
-    let hint = extract_prompt_dir_hint(line)?;
-    let normalized_hint = hint.trim_end_matches(|c| c == '/' || c as u32 == 92);
-    if normalized_hint.is_empty() {
-        return None;
-    }
-
-    if normalized_hint == "~" || normalized_hint.starts_with("~/") {
-        let home = std::env::var("HOME").ok()?;
-        let base = PathBuf::from(home);
-        let candidate = if normalized_hint == "~" {
-            base
-        } else {
-            let rel = normalized_hint.trim_start_matches("~/");
-            base.join(rel)
-        };
-        return canonicalize_path(candidate.as_path()).ok();
-    }
-
-    if Path::new(normalized_hint).is_absolute() {
-        return canonicalize_path(Path::new(normalized_hint)).ok();
-    }
-
-    if normalized_hint == "." {
-        return Some(current_cwd.to_path_buf());
-    }
-
-    if normalized_hint == ".." {
-        return canonicalize_path(current_cwd.parent()?).ok();
-    }
-
-    if current_cwd
-        .file_name()
-        .and_then(|n| n.to_str())
-        .map(|name| name == normalized_hint)
-        .unwrap_or(false)
-    {
-        return Some(current_cwd.to_path_buf());
-    }
-
-    if let Some(parent_raw) = current_cwd.parent() {
-        if parent_raw
-            .file_name()
-            .and_then(|n| n.to_str())
-            .map(|name| name == normalized_hint)
-            .unwrap_or(false)
-        {
-            return canonicalize_path(parent_raw).ok();
-        }
-    }
-
-    canonicalize_path(current_cwd.join(normalized_hint).as_path()).ok()
-}
-
-fn extract_prompt_dir_hint(line: &str) -> Option<String> {
-    let trimmed = line.trim_end();
-    let marker = trimmed.chars().last()?;
-    if !matches!(marker, '$' | '#' | '%' | '>') {
-        return None;
-    }
-
-    let without_marker = trimmed
-        .get(..trimmed.len().saturating_sub(marker.len_utf8()))?
-        .trim_end();
-    let token = without_marker.split_whitespace().last()?.trim();
-    if token.is_empty() {
-        return None;
-    }
-
-    // Avoid guessing from tokens that are probably user/host prefixes.
-    if token.contains('@') || token.contains(':') {
-        return None;
-    }
-
-    Some(token.to_string())
-}
-
-fn clear_input_line_sequence(command_line: &str) -> String {
-    let mut seq = String::new();
-    for _ in 0..command_line.chars().count() {
-        // Backspace + overwrite + backspace clears one character in most terminals.
-        seq.push('\u{8}');
-        seq.push(' ');
-        seq.push('\u{8}');
-    }
-    seq
-}
-
-fn sanitize_command_line_for_guard(command_line: &str) -> String {
-    if command_line.is_empty() {
-        return String::new();
-    }
-
-    let stripped = strip_ansi(command_line);
-    stripped.chars().filter(|ch| !ch.is_control()).collect()
-}
-
-fn has_dynamic_cd_syntax(target: &str) -> bool {
-    let trimmed = target.trim();
-    trimmed.starts_with('~')
-        || trimmed
-            .chars()
-            .any(|ch| matches!(ch, '$' | '%' | '`' | ';' | '|' | '&' | '>' | '<'))
-}
-
-fn resolve_cd_target(root_cwd: &Path, current_cwd: &Path, target: Option<&str>) -> Option<PathBuf> {
-    let raw_target = target.unwrap_or("").trim();
-
-    if raw_target.is_empty() {
-        return Some(root_cwd.to_path_buf());
-    }
-
-    let candidate = if Path::new(raw_target).is_absolute() {
-        PathBuf::from(raw_target)
-    } else {
-        current_cwd.join(raw_target)
-    };
-
-    canonicalize_path(candidate.as_path()).ok()
-}
-
-fn path_is_within_root(candidate: &Path, root: &Path) -> bool {
-    let candidate_norm = normalize_path_for_compare(candidate);
-    let root_norm = normalize_path_for_compare(root);
-
-    if candidate_norm == root_norm {
-        return true;
-    }
-
-    let prefix = format!("{root_norm}/");
-    candidate_norm.starts_with(&prefix)
-}
-
-fn normalize_path_for_compare(path: &Path) -> String {
-    let mut normalized = path.to_string_lossy().replace('\\', "/");
-
-    if let Some(stripped) = normalized.strip_prefix("//?/UNC/") {
-        normalized = format!("//{}", stripped);
-    } else if let Some(stripped) = normalized.strip_prefix("//?/") {
-        normalized = stripped.to_string();
-    }
-
-    while normalized.ends_with('/') && normalized.len() > 1 {
-        normalized.pop();
-    }
-
-    if cfg!(windows) {
-        normalized = normalized.to_ascii_lowercase();
-    }
-
-    normalized
-}
-
-fn build_return_to_root_command(root: &Path) -> String {
-    if cfg!(windows) {
-        return format!(
-            "cd /d {}{}",
-            shell_quote_path_for_shell(root),
-            shell_input_newline()
-        );
-    }
-    format!(
-        "cd {}{}",
-        shell_quote_path_for_shell(root),
-        shell_input_newline()
-    )
-}
-
-fn shell_input_newline() -> &'static str {
-    if cfg!(windows) {
-        "\r"
-    } else {
-        "\n"
-    }
-}
-
-fn normalize_shell_input(data: &str) -> String {
-    if !cfg!(windows) {
-        return data.to_string();
-    }
-
-    data.replace("\r\n", "\r").replace('\n', "\r")
-}
-
-fn canonicalize_path(path: &Path) -> Result<PathBuf, std::io::Error> {
-    std::fs::canonicalize(path).map(normalize_canonical_path)
-}
-
-fn normalize_canonical_path(path: PathBuf) -> PathBuf {
-    if !cfg!(windows) {
-        return path;
-    }
-
-    let raw = path.to_string_lossy().to_string();
-    if let Some(stripped) = raw.strip_prefix(r"\\?\UNC\") {
-        return PathBuf::from(format!(r"\\{}", stripped));
-    }
-    if let Some(stripped) = raw.strip_prefix(r"\\?\") {
-        return PathBuf::from(stripped);
-    }
-    path
-}
-
-fn shell_quote_path_for_shell(path: &Path) -> String {
-    let raw = path.to_string_lossy().to_string();
-    if cfg!(windows) {
-        return format!("\"{}\"", raw.replace('"', "\"\""));
-    }
-    format!("'{}'", raw.replace('"', "\\\"").replace('\'', "'\"'\"'"))
-}
-
 fn now_millis() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
@@ -997,51 +487,19 @@ fn input_triggers_busy(data: &str) -> bool {
         .any(|b| matches!(*b, 0x03 | 0x04 | 0x1A))
 }
 
-fn strip_ansi(input: &str) -> String {
-    if input.is_empty() {
-        return String::new();
-    }
-    static ANSI_CSI_RE: once_cell::sync::Lazy<regex::Regex> =
-        once_cell::sync::Lazy::new(|| regex::Regex::new(r"\x1B\[[0-?]*[ -/]*[@-~]").unwrap());
-    static ANSI_OSC_RE: once_cell::sync::Lazy<regex::Regex> = once_cell::sync::Lazy::new(|| {
-        regex::Regex::new(r"\x1B\][^\x07\x1B]*(?:\x07|\x1B\\)").unwrap()
-    });
-    static ANSI_ESC_RE: once_cell::sync::Lazy<regex::Regex> =
-        once_cell::sync::Lazy::new(|| regex::Regex::new(r"\x1B[@-_]").unwrap());
-
-    let without_osc = ANSI_OSC_RE.replace_all(input, "");
-    let without_csi = ANSI_CSI_RE.replace_all(&without_osc, "");
-    ANSI_ESC_RE.replace_all(&without_csi, "").to_string()
-}
-
-fn is_prompt_line(line: &str) -> bool {
-    let trimmed = line.trim();
-    if trimmed.is_empty() {
-        return false;
-    }
-    static PROMPT_PATTERNS: once_cell::sync::Lazy<Vec<regex::Regex>> =
-        once_cell::sync::Lazy::new(|| {
-            vec![
-                regex::Regex::new(r"^\([^)]+\)\s?.*[#$%>] ?$").unwrap(),
-                regex::Regex::new(r"^[^\n\r]*@[^\n\r]*[#$%>] ?$").unwrap(),
-                regex::Regex::new(r"^PS [A-Za-z]:\\.*> ?$").unwrap(),
-                regex::Regex::new(r"^[A-Za-z]:\\.*> ?$").unwrap(),
-                regex::Regex::new(r"^.*\$\s?$").unwrap(),
-                regex::Regex::new(r"^.*%\s?$").unwrap(),
-                regex::Regex::new(r"^.*>\s?$").unwrap(),
-            ]
-        });
-    PROMPT_PATTERNS.iter().any(|re| re.is_match(trimmed))
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{
-        build_return_to_root_command, extract_prompt_cwd, infer_prompt_cwd_from_context,
-        input_triggers_busy, is_prompt_line, normalize_path_for_compare, path_is_within_root,
-        sanitize_command_line_for_guard, validate_directory_change_command,
-    };
     use std::path::Path;
+
+    use super::directory_guard::{
+        build_return_to_root_command, normalize_shell_input, sanitize_command_line_for_guard,
+        validate_directory_change_command,
+    };
+    use super::input_triggers_busy;
+    use super::path_utils::{normalize_path_for_compare, path_is_within_root};
+    use super::prompt_parser::{
+        extract_prompt_cwd, infer_prompt_cwd_from_context, is_prompt_line, strip_ansi,
+    };
 
     #[test]
     fn input_only_marks_busy_when_it_can_change_foreground_command() {
@@ -1075,7 +533,7 @@ mod tests {
             format!("{}$", cwd.display())
         };
         let wrapped = format!("\u{1b}]633;A\u{7}\u{1b}[32m{plain_prompt}\u{1b}[0m");
-        let cleaned = super::strip_ansi(wrapped.as_str());
+        let cleaned = strip_ansi(wrapped.as_str());
 
         let parsed = extract_prompt_cwd(cleaned.as_str()).unwrap();
         assert_eq!(
@@ -1285,14 +743,14 @@ mod tests {
         if cfg!(windows) {
             assert_eq!(command, "cd /d \"C:\\repo\\sandbox\"\r");
         } else {
-            assert_eq!(command, "cd /tmp/repo/sandbox\n");
+            assert_eq!(command, "cd '/tmp/repo/sandbox'\n");
         }
     }
 
     #[test]
     fn normalize_shell_input_uses_windows_return_key() {
         let raw = "echo one\necho two\r\necho three\r";
-        let normalized = super::normalize_shell_input(raw);
+        let normalized = normalize_shell_input(raw);
 
         if cfg!(windows) {
             assert_eq!(normalized, "echo one\recho two\recho three\r");

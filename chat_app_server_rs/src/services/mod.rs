@@ -1,6 +1,8 @@
+pub(crate) mod ai_common;
 pub mod ai_prompt_tool;
 pub mod builtin_mcp;
 pub mod mcp_loader;
+pub(crate) mod message_manager_common;
 pub mod session_title;
 pub mod system_context_ai;
 pub mod task_manager;
