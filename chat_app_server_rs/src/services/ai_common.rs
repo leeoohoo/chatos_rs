@@ -249,7 +249,55 @@ where
         }
     }
 
+    flush_stream_tail_events(&mut buffer, &mut on_event);
+
     Ok(())
+}
+
+fn flush_stream_tail_events<F>(buffer: &mut String, on_event: &mut F)
+where
+    F: FnMut(Value),
+{
+    if buffer.trim().is_empty() {
+        return;
+    }
+
+    if buffer.contains("data:") {
+        if !buffer.ends_with("\n\n") {
+            buffer.push_str("\n\n");
+        }
+        for event in drain_sse_json_events(buffer) {
+            on_event(event);
+        }
+    }
+
+    let tail = buffer.trim();
+    if tail.is_empty() {
+        return;
+    }
+
+    if let Ok(value) = serde_json::from_str::<Value>(tail) {
+        emit_json_value(value, on_event);
+        buffer.clear();
+    }
+}
+
+fn emit_json_value<F>(value: Value, on_event: &mut F)
+where
+    F: FnMut(Value),
+{
+    if let Some(array) = value.as_array() {
+        for item in array {
+            if item.is_object() {
+                on_event(item.clone());
+            }
+        }
+        return;
+    }
+
+    if value.is_object() {
+        on_event(value);
+    }
 }
 
 pub(crate) fn build_tool_result_metadata(result: &ToolResult) -> Value {
@@ -569,6 +617,31 @@ mod tests {
         assert_eq!(
             events[1].get("type").and_then(|value| value.as_str()),
             Some("usage")
+        );
+    }
+
+    #[tokio::test]
+    async fn consume_sse_stream_parses_trailing_plain_json_response() {
+        use bytes::Bytes;
+        use futures::stream;
+
+        let chunks = vec![Ok::<Bytes, String>(Bytes::from(
+            "{\"output_text\":\"summary text\",\"status\":\"completed\"}",
+        ))];
+
+        let mut events = Vec::new();
+        consume_sse_stream(stream::iter(chunks), None, |event| {
+            events.push(event);
+        })
+        .await
+        .expect("stream parsing should succeed");
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0]
+                .get("output_text")
+                .and_then(|value| value.as_str()),
+            Some("summary text")
         );
     }
 

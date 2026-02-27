@@ -12,20 +12,41 @@ export interface TaskWorkbarItem {
   tags: string[];
 }
 
+export interface SessionSummaryWorkbarItem {
+  id: string;
+  summaryText: string;
+  summaryModel: string;
+  triggerType: string;
+  sourceMessageCount: number;
+  sourceEstimatedTokens: number;
+  createdAt: string;
+  status?: string;
+  errorMessage?: string | null;
+}
+
 interface TaskWorkbarProps {
   tasks: TaskWorkbarItem[];
   historyTasks?: TaskWorkbarItem[];
+  summaries?: SessionSummaryWorkbarItem[];
+  hasSummaries?: boolean;
   currentTurnId?: string | null;
   isLoading?: boolean;
   historyLoading?: boolean;
+  summariesLoading?: boolean;
   error?: string | null;
   historyError?: string | null;
+  summariesError?: string | null;
   onRefresh?: () => void;
+  onRefreshSummaries?: () => void;
   onOpenHistory?: () => void;
   onCompleteTask?: (task: TaskWorkbarItem) => void;
   onDeleteTask?: (task: TaskWorkbarItem) => void;
   onEditTask?: (task: TaskWorkbarItem) => void;
   actionLoadingTaskId?: string | null;
+  onDeleteSummary?: (summary: SessionSummaryWorkbarItem) => void;
+  onClearAllSummaries?: () => void;
+  summaryActionLoadingId?: string | null;
+  summaryBulkClearing?: boolean;
 }
 
 const statusStyles: Record<TaskWorkbarItem['status'], string> = {
@@ -148,23 +169,92 @@ const TaskCard: React.FC<{
   );
 };
 
+const SummaryCard: React.FC<{
+  summary: SessionSummaryWorkbarItem;
+  compact?: boolean;
+  onDeleteSummary?: (summary: SessionSummaryWorkbarItem) => void;
+  isMutating?: boolean;
+}> = ({ summary, compact = false, onDeleteSummary, isMutating = false }) => {
+  const cardClass = compact
+    ? 'min-w-[200px] max-w-[240px] min-w-0 overflow-hidden rounded-md border border-border bg-background p-2'
+    : 'min-w-0 overflow-hidden rounded-lg border border-border bg-background p-2.5';
+  const titleClass = compact
+    ? 'line-clamp-3 break-words text-[11px] text-foreground'
+    : 'line-clamp-6 break-words text-xs text-foreground';
+
+  return (
+    <div className={cardClass}>
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <div className="truncate text-[10px] text-muted-foreground" title={summary.summaryModel}>
+          {summary.summaryModel || 'unknown-model'}
+        </div>
+        <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-200">
+          {summary.triggerType || '-'}
+        </span>
+      </div>
+
+      <div className={titleClass} title={summary.summaryText}>
+        {summary.summaryText || '(空总结)'}
+      </div>
+
+      <div className="mt-1 text-[10px] text-muted-foreground">
+        <div>{`消息 ${summary.sourceMessageCount} · 估算 ${summary.sourceEstimatedTokens} tok`}</div>
+        <div className="truncate" title={summary.createdAt}>{summary.createdAt}</div>
+      </div>
+
+      {summary.status && summary.status !== 'done' ? (
+        <div className="mt-1 text-[10px] text-rose-600 dark:text-rose-300">
+          {summary.errorMessage || summary.status}
+        </div>
+      ) : null}
+
+      {onDeleteSummary ? (
+        <div className={compact ? 'mt-1' : 'mt-2'}>
+          <button
+            type="button"
+            className={compact
+              ? 'rounded border border-border bg-background px-1.5 py-0.5 text-[10px] text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50'
+              : 'rounded border border-border bg-background px-2 py-0.5 text-[11px] text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50'}
+            onClick={() => onDeleteSummary(summary)}
+            disabled={isMutating}
+          >
+            {isMutating ? '删除中...' : '删除总结'}
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
 export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
   tasks,
   historyTasks = [],
+  summaries = [],
+  hasSummaries = false,
   currentTurnId,
   isLoading = false,
   historyLoading = false,
+  summariesLoading = false,
   error = null,
   historyError = null,
+  summariesError = null,
   onRefresh,
+  onRefreshSummaries,
   onOpenHistory,
   onCompleteTask,
   onDeleteTask,
   onEditTask,
   actionLoadingTaskId = null,
+  onDeleteSummary,
+  onClearAllSummaries,
+  summaryActionLoadingId = null,
+  summaryBulkClearing = false,
 }) => {
   const [expanded, setExpanded] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<'tasks' | 'summaries'>('tasks');
+
+  const showSummaryTab = hasSummaries || summaries.length > 0;
 
   const sortedTasks = useMemo(() => sortTasks(tasks), [tasks]);
   const sortedHistoryTasks = useMemo(
@@ -190,6 +280,12 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
 
     return fallbackSource.filter((task) => task.conversationTurnId.trim() === latestTurnId);
   }, [currentTurnId, sortedHistoryTasks, sortedTasks]);
+
+  React.useEffect(() => {
+    if (!showSummaryTab && activeTab === 'summaries') {
+      setActiveTab('tasks');
+    }
+  }, [activeTab, showSummaryTab]);
 
   const handleOpenHistory = () => {
     setHistoryOpen(true);
@@ -228,14 +324,24 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
                 {'\u5c55\u793a\u66f4\u591a'}
               </button>
             ) : null}
-            {onRefresh ? (
+            {(onRefresh || onRefreshSummaries) ? (
               <button
                 type="button"
                 className="rounded-md border border-border bg-background px-2 py-1 text-[11px] text-foreground hover:bg-accent"
-                onClick={onRefresh}
-                disabled={isLoading}
+                onClick={activeTab === 'summaries' ? onRefreshSummaries : onRefresh}
+                disabled={activeTab === 'summaries' ? summariesLoading : isLoading}
               >
-                {isLoading ? '\u5237\u65b0\u4e2d...' : '\u5237\u65b0'}
+                {(activeTab === 'summaries' ? summariesLoading : isLoading) ? '\u5237\u65b0\u4e2d...' : '\u5237\u65b0'}
+              </button>
+            ) : null}
+            {activeTab === 'summaries' && onClearAllSummaries && summaries.length > 0 ? (
+              <button
+                type="button"
+                className="rounded-md border border-border bg-background px-2 py-1 text-[11px] text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+                onClick={onClearAllSummaries}
+                disabled={summariesLoading || summaryBulkClearing}
+              >
+                {summaryBulkClearing ? '清空中...' : '清空总结'}
               </button>
             ) : null}
           </div>
@@ -243,39 +349,89 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
 
         {expanded ? (
           <div className="mt-2 border-t border-border pt-2">
-            {error ? (
-              <div className="mb-2 rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] text-rose-700 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200">
-                {error}
+            {showSummaryTab ? (
+              <div className="mb-2 flex items-center gap-1">
+                <button
+                  type="button"
+                  className={`rounded px-2 py-1 text-[11px] ${activeTab === 'tasks' ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-accent/60'}`}
+                  onClick={() => setActiveTab('tasks')}
+                >
+                  {'任务'}
+                </button>
+                <button
+                  type="button"
+                  className={`rounded px-2 py-1 text-[11px] ${activeTab === 'summaries' ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-accent/60'}`}
+                  onClick={() => setActiveTab('summaries')}
+                >
+                  {'会话总结'}
+                </button>
               </div>
             ) : null}
 
-            {isLoading && currentTurnTasks.length === 0 ? (
-              <div className="text-[11px] text-muted-foreground">{'\u4efb\u52a1\u52a0\u8f7d\u4e2d...'}</div>
-            ) : null}
+            {activeTab === 'tasks' ? (
+              <>
+                {error ? (
+                  <div className="mb-2 rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] text-rose-700 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200">
+                    {error}
+                  </div>
+                ) : null}
 
-            {!isLoading && !currentTurnId && currentTurnTasks.length === 0 ? (
-              <div className="text-[11px] text-muted-foreground">{'\u5f53\u524d\u6682\u65e0\u8f6e\u6b21\u3002'}</div>
-            ) : null}
+                {isLoading && currentTurnTasks.length === 0 ? (
+                  <div className="text-[11px] text-muted-foreground">{'\u4efb\u52a1\u52a0\u8f7d\u4e2d...'}</div>
+                ) : null}
 
-            {!isLoading && currentTurnId && currentTurnTasks.length === 0 ? (
-              <div className="text-[11px] text-muted-foreground">{'\u672c\u8f6e\u6682\u65e0\u4efb\u52a1\u3002'}</div>
-            ) : null}
+                {!isLoading && !currentTurnId && currentTurnTasks.length === 0 ? (
+                  <div className="text-[11px] text-muted-foreground">{'\u5f53\u524d\u6682\u65e0\u8f6e\u6b21\u3002'}</div>
+                ) : null}
 
-            {currentTurnTasks.length > 0 ? (
-              <div className="flex gap-1.5 overflow-x-auto pb-1">
-                {currentTurnTasks.map((task) => (
-                  <TaskCard
-                    key={task.id}
-                    task={task}
-                    compact
-                    onCompleteTask={onCompleteTask}
-                    onDeleteTask={onDeleteTask}
-                    onEditTask={onEditTask}
-                    isMutating={actionLoadingTaskId === task.id}
-                  />
-                ))}
-              </div>
-            ) : null}
+                {!isLoading && currentTurnId && currentTurnTasks.length === 0 ? (
+                  <div className="text-[11px] text-muted-foreground">{'\u672c\u8f6e\u6682\u65e0\u4efb\u52a1\u3002'}</div>
+                ) : null}
+
+                {currentTurnTasks.length > 0 ? (
+                  <div className="flex gap-1.5 overflow-x-auto pb-1">
+                    {currentTurnTasks.map((task) => (
+                      <TaskCard
+                        key={task.id}
+                        task={task}
+                        compact
+                        onCompleteTask={onCompleteTask}
+                        onDeleteTask={onDeleteTask}
+                        onEditTask={onEditTask}
+                        isMutating={actionLoadingTaskId === task.id}
+                      />
+                    ))}
+                  </div>
+                ) : null}
+              </>
+            ) : (
+              <>
+                {summariesError ? (
+                  <div className="mb-2 rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] text-rose-700 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200">
+                    {summariesError}
+                  </div>
+                ) : null}
+                {summariesLoading && summaries.length === 0 ? (
+                  <div className="text-[11px] text-muted-foreground">{'总结加载中...'}</div>
+                ) : null}
+                {!summariesLoading && summaries.length === 0 ? (
+                  <div className="text-[11px] text-muted-foreground">{'当前会话暂无总结。'}</div>
+                ) : null}
+                {summaries.length > 0 ? (
+                  <div className="flex gap-1.5 overflow-x-auto pb-1">
+                    {summaries.map((summary) => (
+                      <SummaryCard
+                        key={summary.id}
+                        summary={summary}
+                        compact
+                        onDeleteSummary={onDeleteSummary}
+                        isMutating={summaryActionLoadingId === summary.id}
+                      />
+                    ))}
+                  </div>
+                ) : null}
+              </>
+            )}
           </div>
         ) : null}
       </div>
@@ -292,18 +448,36 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
             <div className="flex h-full flex-col">
               <div className="flex items-center justify-between border-b border-border px-4 py-3">
                 <div>
-                  <div className="text-sm font-semibold text-foreground">{'\u5386\u53f2\u4efb\u52a1'}</div>
-                  <div className="text-xs text-muted-foreground">{`\u5f53\u524d\u4f1a\u8bdd\uff1a${sortedHistoryTasks.length}`}</div>
+                  <div className="text-sm font-semibold text-foreground">
+                    {activeTab === 'summaries' ? '会话总结' : '\u5386\u53f2\u4efb\u52a1'}
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {activeTab === 'summaries'
+                      ? `\u5f53\u524d\u4f1a\u8bdd\uff1a${summaries.length}`
+                      : `\u5f53\u524d\u4f1a\u8bdd\uff1a${sortedHistoryTasks.length}`}
+                  </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  {onRefresh ? (
+                  {(onRefresh || onRefreshSummaries) ? (
                     <button
                       type="button"
                       className="rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground hover:bg-accent"
-                      onClick={onRefresh}
-                      disabled={isLoading || historyLoading}
+                      onClick={activeTab === 'summaries' ? onRefreshSummaries : onRefresh}
+                      disabled={activeTab === 'summaries' ? summariesLoading : (isLoading || historyLoading)}
                     >
-                      {isLoading || historyLoading ? '\u5237\u65b0\u4e2d...' : '\u5237\u65b0'}
+                      {(activeTab === 'summaries' ? summariesLoading : (isLoading || historyLoading))
+                        ? '\u5237\u65b0\u4e2d...'
+                        : '\u5237\u65b0'}
+                    </button>
+                  ) : null}
+                  {activeTab === 'summaries' && onClearAllSummaries && summaries.length > 0 ? (
+                    <button
+                      type="button"
+                      className="rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+                      onClick={onClearAllSummaries}
+                      disabled={summariesLoading || summaryBulkClearing}
+                    >
+                      {summaryBulkClearing ? '清空中...' : '清空总结'}
                     </button>
                   ) : null}
                   <button
@@ -316,35 +490,89 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
                 </div>
               </div>
 
+              {showSummaryTab ? (
+                <div className="border-b border-border px-4 py-2">
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      className={`rounded px-2 py-1 text-[11px] ${activeTab === 'tasks' ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-accent/60'}`}
+                      onClick={() => setActiveTab('tasks')}
+                    >
+                      {'任务'}
+                    </button>
+                    <button
+                      type="button"
+                      className={`rounded px-2 py-1 text-[11px] ${activeTab === 'summaries' ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-accent/60'}`}
+                      onClick={() => setActiveTab('summaries')}
+                    >
+                      {'会话总结'}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
               <div className="flex-1 overflow-y-auto px-3 py-3">
-                {historyError ? (
-                  <div className="mb-2 rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-xs text-rose-700 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200">
-                    {historyError}
-                  </div>
-                ) : null}
+                {activeTab === 'tasks' ? (
+                  <>
+                    {historyError ? (
+                      <div className="mb-2 rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-xs text-rose-700 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200">
+                        {historyError}
+                      </div>
+                    ) : null}
 
-                {historyLoading || (isLoading && sortedHistoryTasks.length === 0) ? (
-                  <div className="text-xs text-muted-foreground">{'\u5386\u53f2\u4efb\u52a1\u52a0\u8f7d\u4e2d...'}</div>
-                ) : null}
+                    {historyLoading || (isLoading && sortedHistoryTasks.length === 0) ? (
+                      <div className="text-xs text-muted-foreground">{'\u5386\u53f2\u4efb\u52a1\u52a0\u8f7d\u4e2d...'}</div>
+                    ) : null}
 
-                {!historyLoading && sortedHistoryTasks.length === 0 ? (
-                  <div className="text-xs text-muted-foreground">{'\u6682\u65e0\u5386\u53f2\u4efb\u52a1\u3002'}</div>
-                ) : null}
+                    {!historyLoading && sortedHistoryTasks.length === 0 ? (
+                      <div className="text-xs text-muted-foreground">{'\u6682\u65e0\u5386\u53f2\u4efb\u52a1\u3002'}</div>
+                    ) : null}
 
-                {sortedHistoryTasks.length > 0 ? (
-                  <div className="space-y-2">
-                    {sortedHistoryTasks.map((task) => (
-                      <TaskCard
-                        key={task.id}
-                        task={task}
-                        onCompleteTask={onCompleteTask}
-                        onDeleteTask={onDeleteTask}
-                        onEditTask={onEditTask}
-                        isMutating={actionLoadingTaskId === task.id}
-                      />
-                    ))}
-                  </div>
-                ) : null}
+                    {sortedHistoryTasks.length > 0 ? (
+                      <div className="space-y-2">
+                        {sortedHistoryTasks.map((task) => (
+                          <TaskCard
+                            key={task.id}
+                            task={task}
+                            onCompleteTask={onCompleteTask}
+                            onDeleteTask={onDeleteTask}
+                            onEditTask={onEditTask}
+                            isMutating={actionLoadingTaskId === task.id}
+                          />
+                        ))}
+                      </div>
+                    ) : null}
+                  </>
+                ) : (
+                  <>
+                    {summariesError ? (
+                      <div className="mb-2 rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-xs text-rose-700 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200">
+                        {summariesError}
+                      </div>
+                    ) : null}
+
+                    {summariesLoading && summaries.length === 0 ? (
+                      <div className="text-xs text-muted-foreground">{'总结加载中...'}</div>
+                    ) : null}
+
+                    {!summariesLoading && summaries.length === 0 ? (
+                      <div className="text-xs text-muted-foreground">{'暂无会话总结。'}</div>
+                    ) : null}
+
+                    {summaries.length > 0 ? (
+                      <div className="space-y-2">
+                        {summaries.map((summary) => (
+                          <SummaryCard
+                            key={summary.id}
+                            summary={summary}
+                            onDeleteSummary={onDeleteSummary}
+                            isMutating={summaryActionLoadingId === summary.id}
+                          />
+                        ))}
+                      </div>
+                    ) : null}
+                  </>
+                )}
               </div>
             </div>
           </div>

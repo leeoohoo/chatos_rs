@@ -46,6 +46,8 @@ impl MessageManagerCore {
         session_id: &str,
         content: &str,
         message_id: Option<String>,
+        message_mode: Option<String>,
+        message_source: Option<String>,
         metadata: Option<Value>,
     ) -> Result<Message, String> {
         let mut message = Message::new(
@@ -56,6 +58,8 @@ impl MessageManagerCore {
         if let Some(id) = message_id {
             message.id = id;
         }
+        message.message_mode = message_mode;
+        message.message_source = message_source;
         message.metadata = metadata;
 
         let saved = MessageService::create(message).await?;
@@ -69,6 +73,8 @@ impl MessageManagerCore {
         content: &str,
         summary: Option<String>,
         reasoning: Option<String>,
+        message_mode: Option<String>,
+        message_source: Option<String>,
         metadata: Option<Value>,
         tool_calls: Option<Value>,
     ) -> Result<Message, String> {
@@ -79,6 +85,8 @@ impl MessageManagerCore {
         );
         message.summary = summary;
         message.reasoning = reasoning;
+        message.message_mode = message_mode;
+        message.message_source = message_source;
         message.metadata = metadata;
         message.tool_calls = tool_calls;
 
@@ -92,6 +100,8 @@ impl MessageManagerCore {
         session_id: &str,
         content: &str,
         tool_call_id: &str,
+        message_mode: Option<String>,
+        message_source: Option<String>,
         metadata: Option<Value>,
     ) -> Result<Message, String> {
         let mut message = Message::new(
@@ -100,6 +110,8 @@ impl MessageManagerCore {
             content.to_string(),
         );
         message.tool_call_id = Some(tool_call_id.to_string());
+        message.message_mode = message_mode;
+        message.message_source = message_source;
         message.metadata = metadata;
 
         let saved = MessageService::create(message).await?;
@@ -115,6 +127,8 @@ impl MessageManagerCore {
                     session_id,
                     &result.content,
                     &result.tool_call_id,
+                    None,
+                    None,
                     Some(metadata),
                 )
                 .await;

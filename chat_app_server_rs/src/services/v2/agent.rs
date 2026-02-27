@@ -67,6 +67,7 @@ pub async fn load_model_config_for_agent(agent_id: &str) -> Result<ModelConfig, 
 pub async fn run_chat(
     session_id: &str,
     content: &str,
+    agent_id: Option<String>,
     model_config: &ModelConfig,
     user_id: Option<String>,
     attachments: Vec<Attachment>,
@@ -159,6 +160,8 @@ pub async fn run_chat(
         reasoning_enabled: Some(effective_reasoning),
         callbacks: Some(callbacks),
         turn_id,
+        message_mode: Some("agent".to_string()),
+        message_source: agent_id.or_else(|| Some(model_config.model_name.clone())),
     };
 
     ai_server.chat(session_id, content, options).await

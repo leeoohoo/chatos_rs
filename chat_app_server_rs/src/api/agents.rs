@@ -393,6 +393,7 @@ async fn stream_agent_chat(sender: SseSender, req: AgentChatRequest) {
     let result = run_chat(
         &session_id,
         &content,
+        Some(agent_id.clone()),
         &model_cfg,
         req.user_id.clone(),
         att,

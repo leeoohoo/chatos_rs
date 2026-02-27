@@ -269,6 +269,8 @@ pub(super) fn execute_ai_mode(
                         history_limit: None,
                         purpose: Some("sub_agent_router".to_string()),
                         conversation_turn_id: Some(conversation_turn_id.clone()),
+                        message_mode: None,
+                        message_source: None,
                         callbacks: Some(AiClientCallbacks {
                             on_chunk: Some(callbacks.on_chunk.clone()),
                             on_thinking: Some(callbacks.on_thinking.clone()),
@@ -398,6 +400,8 @@ pub(super) fn execute_ai_mode(
                     Some(model.provider.clone()),
                     model.thinking_level.clone(),
                     Some("sub_agent_router".to_string()),
+                    None,
+                    None,
                 );
                 append_job_event(
                     job_id.as_str(),

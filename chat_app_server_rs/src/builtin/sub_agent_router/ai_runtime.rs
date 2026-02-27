@@ -95,6 +95,8 @@ pub(super) fn run_ai_task_with_system_messages(
                 model.thinking_level.clone(),
                 None,
                 true,
+                None,
+                None,
                 "sub_agent_router",
             );
 
@@ -140,6 +142,8 @@ pub(super) fn run_ai_task_with_system_messages(
                 model.thinking_level.clone(),
                 None,
                 true,
+                None,
+                None,
                 "sub_agent_router",
             );
 

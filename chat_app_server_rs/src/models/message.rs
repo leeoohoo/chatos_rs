@@ -11,6 +11,8 @@ pub struct Message {
     pub session_id: String,
     pub role: String,
     pub content: String,
+    pub message_mode: Option<String>,
+    pub message_source: Option<String>,
     pub summary: Option<String>,
     pub tool_calls: Option<Value>,
     pub tool_call_id: Option<String>,
@@ -25,6 +27,8 @@ pub struct MessageRow {
     pub session_id: String,
     pub role: String,
     pub content: String,
+    pub message_mode: Option<String>,
+    pub message_source: Option<String>,
     pub summary: Option<String>,
     pub tool_calls: Option<String>,
     pub tool_call_id: Option<String>,
@@ -40,6 +44,8 @@ impl MessageRow {
             session_id: self.session_id,
             role: self.role,
             content: self.content,
+            message_mode: self.message_mode,
+            message_source: self.message_source,
             summary: self.summary,
             tool_calls: self
                 .tool_calls
@@ -61,6 +67,8 @@ impl Message {
             session_id,
             role,
             content,
+            message_mode: None,
+            message_source: None,
             summary: None,
             tool_calls: None,
             tool_call_id: None,
@@ -120,5 +128,38 @@ impl MessageService {
 
     pub async fn count_by_session(session_id: &str) -> Result<i64, String> {
         repo::count_messages_by_session(session_id).await
+    }
+
+    pub async fn list_sessions_with_pending_summary(
+        limit: Option<i64>,
+    ) -> Result<Vec<String>, String> {
+        repo::list_sessions_with_pending_summary(limit).await
+    }
+
+    pub async fn get_pending_for_summary(
+        session_id: &str,
+        limit: Option<i64>,
+    ) -> Result<Vec<Message>, String> {
+        repo::get_pending_messages_for_summary(session_id, limit).await
+    }
+
+    pub async fn mark_summarized(
+        session_id: &str,
+        message_ids: &[String],
+        summary_id: &str,
+        summarized_at: &str,
+    ) -> Result<usize, String> {
+        repo::mark_messages_summarized(session_id, message_ids, summary_id, summarized_at).await
+    }
+
+    pub async fn reset_summary_by_summary_id(
+        session_id: &str,
+        summary_id: &str,
+    ) -> Result<usize, String> {
+        repo::reset_messages_summary_by_summary_id(session_id, summary_id).await
+    }
+
+    pub async fn reset_summary_by_session(session_id: &str) -> Result<usize, String> {
+        repo::reset_messages_summary_by_session(session_id).await
     }
 }

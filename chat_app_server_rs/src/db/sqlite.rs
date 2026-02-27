@@ -75,6 +75,8 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
             session_id TEXT NOT NULL,
             role TEXT NOT NULL,
             content TEXT NOT NULL,
+            message_mode TEXT,
+            message_source TEXT,
             summary TEXT,
             tool_calls TEXT,
             tool_call_id TEXT,
@@ -99,6 +101,22 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
             first_message_created_at TEXT,
             last_message_created_at TEXT,
             metadata TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+        )"#,
+        r#"CREATE TABLE IF NOT EXISTS session_summaries_v2 (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            summary_text TEXT NOT NULL,
+            summary_model TEXT NOT NULL,
+            trigger_type TEXT NOT NULL,
+            source_start_message_id TEXT,
+            source_end_message_id TEXT,
+            source_message_count INTEGER NOT NULL DEFAULT 0,
+            source_estimated_tokens INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'done',
+            error_message TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
@@ -281,6 +299,16 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
             settings TEXT,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )"#,
+        r#"CREATE TABLE IF NOT EXISTS session_summary_job_configs (
+            user_id TEXT PRIMARY KEY,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            summary_model_config_id TEXT,
+            token_limit INTEGER NOT NULL DEFAULT 6000,
+            round_limit INTEGER NOT NULL DEFAULT 8,
+            target_summary_tokens INTEGER NOT NULL DEFAULT 700,
+            job_interval_seconds INTEGER NOT NULL DEFAULT 30,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )"#,
     ];
 
     for sql in statements {
@@ -331,15 +359,44 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
     ensure_column(pool, "terminals", "project_id", "TEXT")
         .await
         .ok();
+    ensure_column(pool, "messages", "message_mode", "TEXT")
+        .await
+        .ok();
+    ensure_column(pool, "messages", "message_source", "TEXT")
+        .await
+        .ok();
+    ensure_column(
+        pool,
+        "messages",
+        "summary_status",
+        "TEXT NOT NULL DEFAULT 'pending'",
+    )
+    .await
+    .ok();
+    ensure_column(pool, "messages", "summary_id", "TEXT")
+        .await
+        .ok();
+    ensure_column(pool, "messages", "summarized_at", "TEXT")
+        .await
+        .ok();
 
     let indexes = vec![
         "CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id)",
         "CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_messages_message_mode ON messages(message_mode)",
+        "CREATE INDEX IF NOT EXISTS idx_messages_message_source ON messages(message_source)",
+        "CREATE INDEX IF NOT EXISTS idx_messages_summary_status ON messages(summary_status)",
+        "CREATE INDEX IF NOT EXISTS idx_messages_session_summary_status_created_at ON messages(session_id, summary_status, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_messages_summary_id ON messages(summary_id)",
         "CREATE INDEX IF NOT EXISTS idx_session_summaries_session_id ON session_summaries(session_id)",
         "CREATE INDEX IF NOT EXISTS idx_session_summaries_last_created_at ON session_summaries(session_id, last_message_created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_session_summaries_v2_session_id ON session_summaries_v2(session_id)",
+        "CREATE INDEX IF NOT EXISTS idx_session_summaries_v2_session_created_at ON session_summaries_v2(session_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_session_summaries_v2_session_status_created_at ON session_summaries_v2(session_id, status, created_at)",
         "CREATE INDEX IF NOT EXISTS idx_session_summary_messages_session_id ON session_summary_messages(session_id)",
         "CREATE INDEX IF NOT EXISTS idx_session_summary_messages_summary_id ON session_summary_messages(summary_id)",
         "CREATE INDEX IF NOT EXISTS idx_session_summary_messages_message_id ON session_summary_messages(message_id)",
+        "CREATE INDEX IF NOT EXISTS idx_session_summary_job_configs_user_id ON session_summary_job_configs(user_id)",
         "CREATE INDEX IF NOT EXISTS idx_mcp_change_logs_server_name ON mcp_change_logs(server_name)",
         "CREATE INDEX IF NOT EXISTS idx_mcp_change_logs_session_id ON mcp_change_logs(session_id)",
         "CREATE INDEX IF NOT EXISTS idx_mcp_change_logs_created_at ON mcp_change_logs(created_at)",

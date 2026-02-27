@@ -249,6 +249,8 @@ async fn stream_chat_v3(sender: SseSender, req: ChatRequest) {
                 reasoning_enabled: Some(model_runtime.effective_reasoning),
                 callbacks: Some(callback_bundle.callbacks),
                 turn_id: req.turn_id.clone(),
+                message_mode: Some("model".to_string()),
+                message_source: Some(model_runtime.model.clone()),
             },
         )
         .await;

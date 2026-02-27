@@ -15,7 +15,11 @@ import TerminalView from './TerminalView';
 // 搴旂敤寮圭獥绠＄悊鍣ㄧ敱 ApplicationsPanel 鐩存帴鎵挎媴
 import ApplicationsPanel from './ApplicationsPanel';
 import TaskDraftPanel from './TaskDraftPanel';
-import TaskWorkbar, { type TaskWorkbarItem } from './TaskWorkbar';
+import TaskWorkbar, {
+  type SessionSummaryWorkbarItem,
+  type TaskWorkbarItem,
+} from './TaskWorkbar';
+import SessionSummaryJobConfigPanel from './SessionSummaryJobConfigPanel';
 import ApiClient from '../lib/api/client';
 import { cn } from '../lib/utils';
 import type { ChatInterfaceProps } from '../types';
@@ -105,6 +109,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [showAgentManager, setShowAgentManager] = useState(false);
   const [showApplicationsPanel, setShowApplicationsPanel] = useState(false);
   const [showUserSettings, setShowUserSettings] = useState(false);
+  const [showSessionSummaryJobConfig, setShowSessionSummaryJobConfig] = useState(false);
   const [activeTurnProcessUserMessageId, setActiveTurnProcessUserMessageId] = useState<string | null>(null);
   const [loadingTurnProcessUserMessageId, setLoadingTurnProcessUserMessageId] = useState<string | null>(null);
   const didInitRef = useRef(false);
@@ -113,9 +118,16 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [workbarHistoryLoadedSessionId, setWorkbarHistoryLoadedSessionId] = useState<string | null>(null);
   const [workbarLoading, setWorkbarLoading] = useState(false);
   const [workbarHistoryLoading, setWorkbarHistoryLoading] = useState(false);
+  const [workbarSummaries, setWorkbarSummaries] = useState<SessionSummaryWorkbarItem[]>([]);
+  const [workbarHasSummaries, setWorkbarHasSummaries] = useState(false);
+  const [workbarSummariesLoadedSessionId, setWorkbarSummariesLoadedSessionId] = useState<string | null>(null);
+  const [workbarSummariesLoading, setWorkbarSummariesLoading] = useState(false);
   const [workbarError, setWorkbarError] = useState<string | null>(null);
   const [workbarHistoryError, setWorkbarHistoryError] = useState<string | null>(null);
+  const [workbarSummariesError, setWorkbarSummariesError] = useState<string | null>(null);
   const [workbarActionLoadingTaskId, setWorkbarActionLoadingTaskId] = useState<string | null>(null);
+  const [workbarSummaryActionLoadingId, setWorkbarSummaryActionLoadingId] = useState<string | null>(null);
+  const [workbarSummaryBulkClearing, setWorkbarSummaryBulkClearing] = useState(false);
 
   const activeTaskReviewPanel = useMemo(() => {
     if (!currentSession) {
@@ -348,6 +360,20 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     };
   }, []);
 
+  const normalizeWorkbarSummary = useCallback((raw: any): SessionSummaryWorkbarItem => ({
+    id: String(raw?.id || '').trim(),
+    summaryText: String(raw?.summary_text ?? raw?.summaryText ?? ''),
+    summaryModel: String(raw?.summary_model ?? raw?.summaryModel ?? ''),
+    triggerType: String(raw?.trigger_type ?? raw?.triggerType ?? ''),
+    sourceMessageCount: Number(raw?.source_message_count ?? raw?.sourceMessageCount ?? 0),
+    sourceEstimatedTokens: Number(raw?.source_estimated_tokens ?? raw?.sourceEstimatedTokens ?? 0),
+    createdAt: String(raw?.created_at ?? raw?.createdAt ?? ''),
+    status: typeof raw?.status === 'string' ? raw.status : undefined,
+    errorMessage: typeof raw?.error_message === 'string'
+      ? raw.error_message
+      : (typeof raw?.errorMessage === 'string' ? raw.errorMessage : null),
+  }), []);
+
   const selectLatestTurnTasks = useCallback((tasks: TaskWorkbarItem[]) => {
     if (tasks.length === 0) {
       return [];
@@ -499,6 +525,36 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     }
   }, [apiClient, normalizeWorkbarTask, workbarHistoryLoadedSessionId, workbarHistoryTasks.length]);
 
+  const loadWorkbarSummaries = useCallback(async (sessionId: string, force = false) => {
+    if (!sessionId) {
+      setWorkbarSummaries([]);
+      setWorkbarHasSummaries(false);
+      setWorkbarSummariesLoadedSessionId(null);
+      setWorkbarSummariesError(null);
+      return;
+    }
+
+    if (!force && workbarSummariesLoadedSessionId === sessionId) {
+      return;
+    }
+
+    setWorkbarSummariesLoading(true);
+    setWorkbarSummariesError(null);
+    try {
+      const payload = await apiClient.getSessionSummaries(sessionId, { limit: 50, offset: 0 });
+      const items = Array.isArray(payload?.items)
+        ? payload.items.map(normalizeWorkbarSummary)
+        : [];
+      setWorkbarSummaries(items);
+      setWorkbarHasSummaries(payload?.has_summary === true || items.length > 0);
+      setWorkbarSummariesLoadedSessionId(sessionId);
+    } catch (error) {
+      setWorkbarSummariesError(error instanceof Error ? error.message : '会话总结加载失败');
+    } finally {
+      setWorkbarSummariesLoading(false);
+    }
+  }, [apiClient, normalizeWorkbarSummary, workbarSummariesLoadedSessionId]);
+
   const refreshWorkbarTasks = useCallback(async () => {
     if (!currentSession) {
       return;
@@ -506,8 +562,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     await Promise.all([
       loadCurrentTurnWorkbarTasks(currentSession.id, activeConversationTurnId),
       loadHistoryWorkbarTasks(currentSession.id, true),
+      loadWorkbarSummaries(currentSession.id, true),
     ]);
-  }, [activeConversationTurnId, currentSession, loadCurrentTurnWorkbarTasks, loadHistoryWorkbarTasks]);
+  }, [activeConversationTurnId, currentSession, loadCurrentTurnWorkbarTasks, loadHistoryWorkbarTasks, loadWorkbarSummaries]);
 
   useEffect(() => {
     handledTaskMutationKeysRef.current.clear();
@@ -680,6 +737,54 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     });
   }, [apiClient, currentSession, withWorkbarTaskMutation]);
 
+  const handleWorkbarDeleteSummary = useCallback(async (summary: SessionSummaryWorkbarItem) => {
+    if (!currentSession) {
+      return;
+    }
+
+    if (typeof window !== 'undefined') {
+      const confirmed = window.confirm('确认删除这条会话总结？');
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    setWorkbarSummaryActionLoadingId(summary.id);
+    setWorkbarSummariesError(null);
+    try {
+      await apiClient.deleteSessionSummary(currentSession.id, summary.id);
+      await loadWorkbarSummaries(currentSession.id, true);
+    } catch (error) {
+      setWorkbarSummariesError(error instanceof Error ? error.message : '删除会话总结失败');
+    } finally {
+      setWorkbarSummaryActionLoadingId(null);
+    }
+  }, [apiClient, currentSession, loadWorkbarSummaries]);
+
+  const handleWorkbarClearAllSummaries = useCallback(async () => {
+    if (!currentSession) {
+      return;
+    }
+
+    if (typeof window !== 'undefined') {
+      const confirmed = window.confirm('确认清空当前会话的全部总结？');
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    setWorkbarSummaryBulkClearing(true);
+    setWorkbarSummariesError(null);
+    try {
+      await apiClient.clearSessionSummaries(currentSession.id);
+      await loadWorkbarSummaries(currentSession.id, true);
+    } catch (error) {
+      setWorkbarSummariesError(error instanceof Error ? error.message : '清空会话总结失败');
+    } finally {
+      setWorkbarSummaryBulkClearing(false);
+    }
+  }, [apiClient, currentSession, loadWorkbarSummaries]);
+
   // 鍒濆鍖栧姞杞戒細璇濄€丄I妯″瀷鍜屾櫤鑳戒綋閰嶇疆
   useEffect(() => {
     // React 18 鍦ㄥ紑鍙戞ā寮忎笅浼氬弻璋冪敤鍓綔鐢紝杩欓噷鍔犱竴娆℃€т繚鎶わ紙缁勪欢鍐咃級
@@ -696,15 +801,29 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     if (!currentSession || activePanel !== 'chat') {
       setWorkbarCurrentTurnTasks([]);
       setWorkbarHistoryTasks([]);
+      setWorkbarSummaries([]);
+      setWorkbarHasSummaries(false);
       setWorkbarError(null);
       setWorkbarHistoryError(null);
+      setWorkbarSummariesError(null);
       setWorkbarHistoryLoadedSessionId(null);
+      setWorkbarSummariesLoadedSessionId(null);
+      setWorkbarSummaryActionLoadingId(null);
+      setWorkbarSummaryBulkClearing(false);
       return;
     }
 
     void loadCurrentTurnWorkbarTasks(currentSession.id, activeConversationTurnId);
     void loadHistoryWorkbarTasks(currentSession.id);
-  }, [activeConversationTurnId, activePanel, currentSession, loadCurrentTurnWorkbarTasks, loadHistoryWorkbarTasks]);
+    void loadWorkbarSummaries(currentSession.id);
+  }, [
+    activeConversationTurnId,
+    activePanel,
+    currentSession,
+    loadCurrentTurnWorkbarTasks,
+    loadHistoryWorkbarTasks,
+    loadWorkbarSummaries,
+  ]);
 
 
   useEffect(() => {
@@ -813,6 +932,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       await Promise.all([
         loadCurrentTurnWorkbarTasks(activeTaskReviewPanel.sessionId, activeTaskReviewPanel.conversationTurnId),
         loadHistoryWorkbarTasks(activeTaskReviewPanel.sessionId, true),
+        loadWorkbarSummaries(activeTaskReviewPanel.sessionId, true),
       ]);
     } catch (error) {
       const message = error instanceof Error ? error.message : '任务确认提交失败';
@@ -822,7 +942,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         error: message,
       });
     }
-  }, [activeTaskReviewPanel, apiClient, loadCurrentTurnWorkbarTasks, loadHistoryWorkbarTasks, removeTaskReviewPanel, upsertTaskReviewPanel]);
+  }, [activeTaskReviewPanel, apiClient, loadCurrentTurnWorkbarTasks, loadHistoryWorkbarTasks, loadWorkbarSummaries, removeTaskReviewPanel, upsertTaskReviewPanel]);
 
   const handleTaskReviewCancel = useCallback(async () => {
     if (!activeTaskReviewPanel) {
@@ -845,6 +965,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       await Promise.all([
         loadCurrentTurnWorkbarTasks(activeTaskReviewPanel.sessionId, activeTaskReviewPanel.conversationTurnId),
         loadHistoryWorkbarTasks(activeTaskReviewPanel.sessionId, true),
+        loadWorkbarSummaries(activeTaskReviewPanel.sessionId, true),
       ]);
     } catch (error) {
       const message = error instanceof Error ? error.message : '任务取消提交失败';
@@ -854,7 +975,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         error: message,
       });
     }
-  }, [activeTaskReviewPanel, apiClient, loadCurrentTurnWorkbarTasks, loadHistoryWorkbarTasks, removeTaskReviewPanel, upsertTaskReviewPanel]);
+  }, [activeTaskReviewPanel, apiClient, loadCurrentTurnWorkbarTasks, loadHistoryWorkbarTasks, loadWorkbarSummaries, removeTaskReviewPanel, upsertTaskReviewPanel]);
 
 
   if (showSystemContextEditor) {
@@ -935,6 +1056,15 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+          </button>
+          <button
+            onClick={() => setShowSessionSummaryJobConfig(true)}
+            className="p-2 text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg transition-colors"
+            title="会话总结任务配置"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7h16M4 12h10M4 17h7m11-8v8m0 0-3-3m3 3 3-3" />
             </svg>
           </button>
           <ThemeToggle />
@@ -1027,17 +1157,27 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                       <TaskWorkbar
                         tasks={mergedCurrentTurnTasks}
                         historyTasks={workbarHistoryTasks}
+                        summaries={workbarSummaries}
+                        hasSummaries={workbarHasSummaries}
                         currentTurnId={activeConversationTurnId}
                         isLoading={workbarLoading}
                         historyLoading={workbarHistoryLoading}
+                        summariesLoading={workbarSummariesLoading}
                         error={workbarError}
                         historyError={workbarHistoryError}
+                        summariesError={workbarSummariesError}
                         actionLoadingTaskId={workbarActionLoadingTaskId}
                         onRefresh={() => {
                           void refreshWorkbarTasks();
                         }}
+                        onRefreshSummaries={() => {
+                          if (currentSession) {
+                            void loadWorkbarSummaries(currentSession.id, true);
+                          }
+                        }}
                         onOpenHistory={() => {
                           void loadHistoryWorkbarTasks(currentSession.id);
+                          void loadWorkbarSummaries(currentSession.id);
                         }}
                         onCompleteTask={(task) => {
                           void handleWorkbarCompleteTask(task);
@@ -1048,6 +1188,14 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                         onEditTask={(task) => {
                           void handleWorkbarEditTask(task);
                         }}
+                        onDeleteSummary={(summary) => {
+                          void handleWorkbarDeleteSummary(summary);
+                        }}
+                        onClearAllSummaries={() => {
+                          void handleWorkbarClearAllSummaries();
+                        }}
+                        summaryActionLoadingId={workbarSummaryActionLoadingId}
+                        summaryBulkClearing={workbarSummaryBulkClearing}
                       />
                       {activeTaskReviewPanel ? (
                         <TaskDraftPanel
@@ -1112,6 +1260,10 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
         {showUserSettings && (
           <UserSettingsPanel onClose={() => setShowUserSettings(false)} />
+        )}
+
+        {showSessionSummaryJobConfig && (
+          <SessionSummaryJobConfigPanel onClose={() => setShowSessionSummaryJobConfig(false)} />
         )}
 
         {/* 搴旂敤鍒楄〃锛堝脊绐楋級 */}

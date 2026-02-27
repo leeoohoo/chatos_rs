@@ -9,6 +9,8 @@ pub mod messages;
 pub mod projects;
 pub mod session_mcp_servers;
 pub mod session_summaries;
+pub mod session_summaries_v2;
+pub mod session_summary_job_configs;
 pub mod session_summary_messages;
 pub mod sessions;
 pub mod system_contexts;

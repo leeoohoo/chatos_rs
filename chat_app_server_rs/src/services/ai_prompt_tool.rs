@@ -1,9 +1,6 @@
 use serde_json::{json, Value};
 
-use crate::config::Config;
-use crate::core::ai_model_config::resolve_chat_model_config;
-use crate::services::v2::ai_request_handler::{AiRequestHandler, StreamCallbacks};
-use crate::services::v2::message_manager::MessageManager;
+use crate::services::llm_prompt_runner::run_text_prompt_with_model_config;
 
 pub async fn run_text_prompt(
     ai_model_config: Option<Value>,
@@ -13,61 +10,16 @@ pub async fn run_text_prompt(
     default_model: &str,
     purpose: &str,
 ) -> Result<String, String> {
-    let cfg = Config::get();
     let model_cfg = ai_model_config.unwrap_or_else(|| json!({}));
-    let resolved = resolve_chat_model_config(
-        &model_cfg,
+    run_text_prompt_with_model_config(
+        Some(model_cfg),
+        system_prompt,
+        user_prompt,
+        max_tokens,
         default_model,
-        &cfg.openai_api_key,
-        &cfg.openai_base_url,
-        Some(false),
-        true,
-    );
-
-    if resolved.api_key.trim().is_empty() {
-        return Err("未配置可用的 API Key".to_string());
-    }
-    if resolved.base_url.trim().is_empty() {
-        return Err("未配置可用的 Base URL".to_string());
-    }
-
-    let handler = AiRequestHandler::new(
-        resolved.api_key.clone(),
-        resolved.base_url.clone(),
-        MessageManager::new(),
-    );
-
-    let messages = vec![
-        json!({"role": "system", "content": system_prompt}),
-        json!({"role": "user", "content": user_prompt}),
-    ];
-
-    let response = handler
-        .handle_request(
-            messages,
-            None,
-            resolved.model.clone(),
-            Some(resolved.temperature),
-            max_tokens,
-            StreamCallbacks {
-                on_chunk: None,
-                on_thinking: None,
-            },
-            false,
-            Some(resolved.provider.clone()),
-            resolved.thinking_level.clone(),
-            None,
-            false,
-            purpose,
-        )
-        .await?;
-
-    let content = response.content.trim().to_string();
-    if content.is_empty() {
-        return Err("AI 未返回文本内容".to_string());
-    }
-
-    Ok(content)
+        purpose,
+    )
+    .await
 }
 
 pub fn parse_json_loose(raw: &str) -> Option<Value> {

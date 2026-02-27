@@ -22,10 +22,19 @@ impl MessageManager {
         session_id: &str,
         content: &str,
         message_id: Option<String>,
+        message_mode: Option<String>,
+        message_source: Option<String>,
         metadata: Option<Value>,
     ) -> Result<Message, String> {
         self.core
-            .save_user_message(session_id, content, message_id, metadata)
+            .save_user_message(
+                session_id,
+                content,
+                message_id,
+                message_mode,
+                message_source,
+                metadata,
+            )
             .await
     }
 
@@ -35,12 +44,21 @@ impl MessageManager {
         content: &str,
         summary: Option<String>,
         reasoning: Option<String>,
+        message_mode: Option<String>,
+        message_source: Option<String>,
         metadata: Option<Value>,
         tool_calls: Option<Value>,
     ) -> Result<Message, String> {
         self.core
             .save_assistant_message(
-                session_id, content, summary, reasoning, metadata, tool_calls,
+                session_id,
+                content,
+                summary,
+                reasoning,
+                message_mode,
+                message_source,
+                metadata,
+                tool_calls,
             )
             .await
     }
@@ -50,10 +68,19 @@ impl MessageManager {
         session_id: &str,
         content: &str,
         tool_call_id: &str,
+        message_mode: Option<String>,
+        message_source: Option<String>,
         metadata: Option<Value>,
     ) -> Result<Message, String> {
         self.core
-            .save_tool_message(session_id, content, tool_call_id, metadata)
+            .save_tool_message(
+                session_id,
+                content,
+                tool_call_id,
+                message_mode,
+                message_source,
+                metadata,
+            )
             .await
     }
 

@@ -16,6 +16,7 @@ use crate::core::validation::normalize_non_empty;
 use crate::models::message::{Message, MessageService};
 use crate::models::session::{Session, SessionService};
 use crate::models::session_mcp_server::SessionMcpServer;
+use crate::models::session_summary_v2::SessionSummaryV2Service;
 use crate::repositories::session_mcp_servers as session_mcp_repo;
 
 #[derive(Debug, Deserialize)]
@@ -46,6 +47,10 @@ struct UpdateSessionRequest {
 struct CreateMessageRequest {
     role: Option<String>,
     content: Option<String>,
+    #[serde(alias = "messageMode")]
+    message_mode: Option<String>,
+    #[serde(alias = "messageSource")]
+    message_source: Option<String>,
     tool_calls: Option<Value>,
     tool_call_id: Option<String>,
     reasoning: Option<String>,
@@ -81,6 +86,14 @@ pub fn router() -> Router {
         .route(
             "/api/sessions/:session_id/turns/:user_message_id/process",
             get(get_session_turn_process_messages),
+        )
+        .route(
+            "/api/sessions/:session_id/summaries",
+            get(get_session_summaries).delete(clear_session_summaries),
+        )
+        .route(
+            "/api/sessions/:session_id/summaries/:summary_id",
+            delete(delete_session_summary),
         )
 }
 
@@ -753,6 +766,123 @@ async fn get_session_turn_process_messages(
     }
 }
 
+async fn get_session_summaries(
+    Path(session_id): Path<String>,
+    Query(query): Query<PageQuery>,
+) -> (StatusCode, Json<Value>) {
+    let limit = parse_positive_limit(query.limit).or(Some(20));
+    let offset = parse_non_negative_offset(query.offset);
+
+    let items = match SessionSummaryV2Service::list_by_session(&session_id, limit, offset).await {
+        Ok(list) => list,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "获取会话总结失败", "detail": err})),
+            )
+        }
+    };
+
+    let total = match SessionSummaryV2Service::count_by_session(&session_id).await {
+        Ok(value) => value,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "获取会话总结失败", "detail": err})),
+            )
+        }
+    };
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "items": items,
+            "total": total,
+            "has_summary": total > 0
+        })),
+    )
+}
+
+async fn delete_session_summary(
+    Path((session_id, summary_id)): Path<(String, String)>,
+) -> (StatusCode, Json<Value>) {
+    let deleted = match SessionSummaryV2Service::delete_by_id(&session_id, &summary_id).await {
+        Ok(value) => value,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "删除会话总结失败", "detail": err})),
+            )
+        }
+    };
+
+    if !deleted {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "会话总结不存在"})),
+        );
+    }
+
+    let reset_messages = match MessageService::reset_summary_by_summary_id(&session_id, &summary_id)
+        .await
+    {
+        Ok(value) => value,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(
+                    serde_json::json!({"error": "删除会话总结成功，但重置消息总结状态失败", "detail": err}),
+                ),
+            )
+        }
+    };
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "success": true,
+            "session_id": session_id,
+            "summary_id": summary_id,
+            "deleted_summaries": 1,
+            "reset_messages": reset_messages
+        })),
+    )
+}
+
+async fn clear_session_summaries(Path(session_id): Path<String>) -> (StatusCode, Json<Value>) {
+    let deleted_count = match SessionSummaryV2Service::delete_by_session(&session_id).await {
+        Ok(value) => value,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "清空会话总结失败", "detail": err})),
+            )
+        }
+    };
+
+    let reset_messages = match MessageService::reset_summary_by_session(&session_id).await {
+        Ok(value) => value,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(
+                    serde_json::json!({"error": "清空会话总结成功，但重置消息总结状态失败", "detail": err}),
+                ),
+            )
+        }
+    };
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "success": true,
+            "session_id": session_id,
+            "deleted_summaries": deleted_count,
+            "reset_messages": reset_messages
+        })),
+    )
+}
+
 async fn create_session_message(
     Path(session_id): Path<String>,
     Json(req): Json<CreateMessageRequest>,
@@ -762,6 +892,8 @@ async fn create_session_message(
         NewMessageFields {
             role: req.role,
             content: req.content,
+            message_mode: req.message_mode,
+            message_source: req.message_source,
             tool_calls: req.tool_calls,
             tool_call_id: req.tool_call_id,
             reasoning: req.reasoning,

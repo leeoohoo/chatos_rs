@@ -62,6 +62,8 @@ impl SummaryLlmClient for V3SummaryAdapter {
                     None,
                     request.session_id,
                     request.stream,
+                    None,
+                    None,
                     "summary",
                 )
                 .await?;
@@ -137,6 +139,8 @@ impl SummaryStore for V3SummaryAdapter {
                     &payload.session_id,
                     "【上下文已压缩为摘要】",
                     Some(payload.summary_text.clone()),
+                    None,
+                    None,
                     None,
                     Some(message_meta),
                     None,

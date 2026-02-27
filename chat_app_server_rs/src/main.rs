@@ -5,6 +5,7 @@ mod core;
 mod db;
 mod logger;
 mod models;
+mod modules;
 mod repositories;
 mod services;
 mod utils;
@@ -36,6 +37,8 @@ async fn main() {
         error!("Failed to init database: {err}");
         std::process::exit(1);
     }
+
+    modules::session_summary_job::start_background();
 
     cfg.print();
 

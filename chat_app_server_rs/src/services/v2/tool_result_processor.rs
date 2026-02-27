@@ -26,7 +26,7 @@ impl ToolResultProcessor {
             if !tool_call_id.is_empty() {
                 let _ = self
                     .message_manager
-                    .save_tool_message(session_id, content, tool_call_id, metadata)
+                    .save_tool_message(session_id, content, tool_call_id, None, None, metadata)
                     .await;
             }
         }

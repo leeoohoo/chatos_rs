@@ -105,6 +105,8 @@ impl AiClient {
         provider: Option<String>,
         thinking_level: Option<String>,
         purpose: Option<String>,
+        message_mode: Option<String>,
+        message_source: Option<String>,
     ) -> Result<Value, String> {
         let mut all_messages: Vec<Value> = Vec::new();
 
@@ -211,6 +213,8 @@ impl AiClient {
             provider,
             thinking_level,
             purpose,
+            message_mode,
+            message_source,
             0,
         )
         .await
@@ -230,6 +234,8 @@ impl AiClient {
         provider: Option<String>,
         thinking_level: Option<String>,
         purpose: Option<String>,
+        message_mode: Option<String>,
+        message_source: Option<String>,
         iteration: i64,
     ) -> Result<Value, String> {
         let mut messages = messages;
@@ -380,6 +386,8 @@ impl AiClient {
                         thinking_level.clone(),
                         session_id.clone(),
                         callbacks.on_chunk.is_some() || callbacks.on_thinking.is_some(),
+                        message_mode.clone(),
+                        message_source.clone(),
                         purpose.as_str(),
                     )
                     .await;

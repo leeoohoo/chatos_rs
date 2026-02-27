@@ -93,6 +93,7 @@ async fn stream_chat_v2_agent(sender: SseSender, req: ChatRequest) {
     let result = run_chat(
         &session_id,
         &content,
+        Some(agent_id.clone()),
         &model_cfg,
         req.user_id.clone(),
         att,
@@ -192,6 +193,8 @@ async fn stream_chat_v2(sender: SseSender, req: ChatRequest) {
                 reasoning_enabled: Some(model_runtime.effective_reasoning),
                 callbacks: Some(callback_bundle.callbacks),
                 turn_id: req.turn_id.clone(),
+                message_mode: Some("model".to_string()),
+                message_source: Some(model_runtime.model.clone()),
             },
         )
         .await;

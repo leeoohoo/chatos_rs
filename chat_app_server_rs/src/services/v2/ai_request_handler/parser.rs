@@ -96,34 +96,117 @@ pub(super) fn apply_stream_event(
         state.finish_reason = Some(finish_reason.to_string());
     }
 
-    let Some(delta) = choice.get("delta") else {
-        return payload;
-    };
-
-    if let Some(content) = delta.get("content").and_then(|value| value.as_str()) {
-        state.full_content.push_str(content);
-        payload.chunk = Some(content.to_string());
-    }
-
-    if reasoning_enabled {
-        let reasoning_piece = normalize_reasoning_value(
-            delta
-                .get("reasoning_content")
-                .or_else(|| delta.get("reasoning")),
-        );
-        if !reasoning_piece.is_empty() {
-            state.reasoning.push_str(&reasoning_piece);
-            payload.thinking = Some(reasoning_piece);
+    if let Some(delta) = choice.get("delta") {
+        if let Some(content) = delta
+            .get("content")
+            .and_then(extract_text_from_value)
+            .filter(|value| !value.is_empty())
+        {
+            state.full_content.push_str(content.as_str());
+            payload.chunk = Some(content);
         }
+
+        if reasoning_enabled {
+            let reasoning_piece = normalize_reasoning_value(
+                delta
+                    .get("reasoning_content")
+                    .or_else(|| delta.get("reasoning")),
+            );
+            if !reasoning_piece.is_empty() {
+                state.reasoning.push_str(&reasoning_piece);
+                payload.thinking = Some(reasoning_piece);
+            }
+        }
+
+        if let Some(tool_calls) = delta.get("tool_calls").and_then(|value| value.as_array()) {
+            for tool_call in tool_calls {
+                merge_tool_call_delta(&mut state.tool_calls_map, tool_call);
+            }
+        }
+
+        return payload;
     }
 
-    if let Some(tool_calls) = delta.get("tool_calls").and_then(|value| value.as_array()) {
-        for tool_call in tool_calls {
-            merge_tool_call_delta(&mut state.tool_calls_map, tool_call);
+    if let Some(message) = choice.get("message") {
+        if let Some(content) = extract_message_text(message) {
+            if !content.is_empty() {
+                state.full_content.push_str(content.as_str());
+                payload.chunk = Some(content);
+            }
+        }
+
+        if reasoning_enabled {
+            let reasoning_piece = normalize_reasoning_value(
+                message
+                    .get("reasoning_content")
+                    .or_else(|| message.get("reasoning")),
+            );
+            if !reasoning_piece.is_empty() {
+                state.reasoning.push_str(&reasoning_piece);
+                payload.thinking = Some(reasoning_piece);
+            }
+        }
+
+        if let Some(tool_calls) = message.get("tool_calls").and_then(|value| value.as_array()) {
+            for (index, tool_call) in tool_calls.iter().enumerate() {
+                let mut call = tool_call.clone();
+                if call.get("index").is_none() {
+                    call["index"] = json!(index as i64);
+                }
+                merge_tool_call_delta(&mut state.tool_calls_map, &call);
+            }
         }
     }
 
     payload
+}
+
+fn extract_message_text(message: &Value) -> Option<String> {
+    message
+        .get("content")
+        .and_then(extract_text_from_value)
+        .filter(|value| !value.is_empty())
+}
+
+fn extract_text_from_value(value: &Value) -> Option<String> {
+    let text = flatten_text(value);
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+fn flatten_text(value: &Value) -> String {
+    if let Some(text) = value.as_str() {
+        return text.to_string();
+    }
+
+    if let Some(array) = value.as_array() {
+        let mut out = Vec::new();
+        for item in array {
+            let text = flatten_text(item);
+            if !text.is_empty() {
+                out.push(text);
+            }
+        }
+        return out.join("");
+    }
+
+    let Some(object) = value.as_object() else {
+        return String::new();
+    };
+
+    for key in ["text", "value", "content", "delta"] {
+        if let Some(inner) = object.get(key) {
+            let text = flatten_text(inner);
+            if !text.is_empty() {
+                return text;
+            }
+        }
+    }
+
+    String::new()
 }
 
 #[cfg(test)]
@@ -239,5 +322,49 @@ mod tests {
         assert_eq!(state.finish_reason.as_deref(), Some("stop"));
         assert!(state.usage.is_some());
         assert_eq!(state.tool_calls_map.len(), 1);
+    }
+
+    #[test]
+    fn apply_stream_event_handles_non_delta_message_payload() {
+        let mut state = StreamState::default();
+        let event = json!({
+            "choices": [{
+                "finish_reason": "stop",
+                "message": {
+                    "content": [{"type": "text", "text": {"value": "final answer"}}],
+                    "reasoning": "thought",
+                    "tool_calls": [{
+                        "id": "call_2",
+                        "type": "function",
+                        "function": {"name": "ping", "arguments": "{}"}
+                    }]
+                }
+            }]
+        });
+
+        let payload = apply_stream_event(&mut state, &event, true);
+
+        assert_eq!(payload.chunk.as_deref(), Some("final answer"));
+        assert_eq!(payload.thinking.as_deref(), Some("thought"));
+        assert_eq!(state.full_content, "final answer");
+        assert_eq!(state.reasoning, "thought");
+        assert_eq!(state.tool_calls_map.len(), 1);
+    }
+
+    #[test]
+    fn apply_stream_event_handles_nested_delta_content_text() {
+        let mut state = StreamState::default();
+        let event = json!({
+            "choices": [{
+                "delta": {
+                    "content": {"text": {"value": "hello"}}
+                }
+            }]
+        });
+
+        let payload = apply_stream_event(&mut state, &event, false);
+
+        assert_eq!(payload.chunk.as_deref(), Some("hello"));
+        assert_eq!(state.full_content, "hello");
     }
 }

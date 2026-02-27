@@ -8,6 +8,8 @@ use crate::services::session_title::maybe_rename_session_title;
 pub struct NewMessageFields {
     pub role: Option<String>,
     pub content: Option<String>,
+    pub message_mode: Option<String>,
+    pub message_source: Option<String>,
     pub tool_calls: Option<Value>,
     pub tool_call_id: Option<String>,
     pub reasoning: Option<String>,
@@ -21,6 +23,8 @@ pub struct MessageOut {
     pub session_id: String,
     pub role: String,
     pub content: String,
+    pub message_mode: Option<String>,
+    pub message_source: Option<String>,
     pub summary: Option<String>,
     #[serde(rename = "toolCalls")]
     pub tool_calls: Option<Value>,
@@ -37,6 +41,8 @@ impl From<Message> for MessageOut {
             session_id: msg.session_id,
             role: msg.role,
             content: msg.content,
+            message_mode: msg.message_mode,
+            message_source: msg.message_source,
             summary: msg.summary,
             tool_calls: msg.tool_calls,
             tool_call_id: msg.tool_call_id,
@@ -52,6 +58,8 @@ pub fn build_message(session_id: String, fields: NewMessageFields, default_role:
     let content = fields.content.unwrap_or_default();
 
     let mut message = Message::new(session_id, role, content);
+    message.message_mode = fields.message_mode;
+    message.message_source = fields.message_source;
     message.tool_calls = fields.tool_calls;
     message.tool_call_id = fields.tool_call_id;
     message.reasoning = fields.reasoning;

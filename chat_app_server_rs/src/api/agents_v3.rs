@@ -183,6 +183,8 @@ async fn stream_agent_v3(sender: SseSender, req: AgentChatRequest) {
                 reasoning_enabled: Some(effective_reasoning),
                 callbacks: Some(callback_bundle.callbacks),
                 turn_id: req.turn_id.clone(),
+                message_mode: Some("agent".to_string()),
+                message_source: Some(agent_id.clone()),
             },
         )
         .await;

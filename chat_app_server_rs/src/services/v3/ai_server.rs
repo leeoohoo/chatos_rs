@@ -73,7 +73,14 @@ impl AiServer {
         let meta = build_user_message_metadata(&attachments_list, turn_id.as_deref());
         if let Err(err) = self
             .message_manager
-            .save_user_message(session_id, user_message, None, meta)
+            .save_user_message(
+                session_id,
+                user_message,
+                None,
+                options.message_mode.clone(),
+                options.message_source.clone(),
+                meta,
+            )
             .await
         {
             warn!("save user message failed: {}", err);
@@ -116,6 +123,8 @@ impl AiServer {
                     history_limit: None,
                     purpose: Some("chat".to_string()),
                     conversation_turn_id: turn_id.clone(),
+                    message_mode: options.message_mode.clone(),
+                    message_source: options.message_source.clone(),
                     callbacks: Some(if use_tools {
                         callbacks
                     } else {
@@ -151,4 +160,6 @@ pub struct ChatOptions {
     pub reasoning_enabled: Option<bool>,
     pub callbacks: Option<AiClientCallbacks>,
     pub turn_id: Option<String>,
+    pub message_mode: Option<String>,
+    pub message_source: Option<String>,
 }

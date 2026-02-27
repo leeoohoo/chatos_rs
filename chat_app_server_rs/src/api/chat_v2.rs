@@ -285,6 +285,8 @@ async fn stream_chat_v2(
                 reasoning_enabled: Some(model_runtime.effective_reasoning),
                 callbacks: Some(callback_bundle.callbacks),
                 turn_id: req.turn_id.clone(),
+                message_mode: Some("model".to_string()),
+                message_source: Some(model_runtime.model.clone()),
             },
         )
         .await;
@@ -334,6 +336,7 @@ async fn stream_chat_v2_agent(sender: SseSender, req: ChatRequest, rename_sessio
     let result = crate::services::v2::agent::run_chat(
         &session_id,
         &content,
+        Some(agent_id.clone()),
         &model_config,
         req.user_id.clone(),
         att,

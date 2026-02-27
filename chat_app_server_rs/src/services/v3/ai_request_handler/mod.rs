@@ -72,6 +72,8 @@ impl AiRequestHandler {
         thinking_level: Option<String>,
         session_id: Option<String>,
         stream: bool,
+        message_mode: Option<String>,
+        message_source: Option<String>,
         purpose: &str,
     ) -> Result<AiResponse, String> {
         let mut payload = json!({
@@ -130,11 +132,28 @@ impl AiRequestHandler {
         let persist_messages = purpose != "sub_agent_router";
 
         if stream {
-            self.handle_stream_request(url, payload, callbacks, session_id, token, persist_messages)
-                .await
+            self.handle_stream_request(
+                url,
+                payload,
+                callbacks,
+                session_id,
+                token,
+                persist_messages,
+                message_mode,
+                message_source,
+            )
+            .await
         } else {
-            self.handle_normal_request(url, payload, session_id, token, persist_messages)
-                .await
+            self.handle_normal_request(
+                url,
+                payload,
+                session_id,
+                token,
+                persist_messages,
+                message_mode,
+                message_source,
+            )
+            .await
         }
     }
 
@@ -145,6 +164,8 @@ impl AiRequestHandler {
         session_id: Option<String>,
         token: Option<CancellationToken>,
         persist_messages: bool,
+        message_mode: Option<String>,
+        message_source: Option<String>,
     ) -> Result<AiResponse, String> {
         let resp = await_with_optional_abort(
             self.client
@@ -201,6 +222,8 @@ impl AiRequestHandler {
                         &content,
                         None,
                         reasoning,
+                        message_mode,
+                        message_source,
                         meta_val,
                         tool_calls.clone(),
                     )
@@ -227,6 +250,8 @@ impl AiRequestHandler {
         session_id: Option<String>,
         token: Option<CancellationToken>,
         persist_messages: bool,
+        message_mode: Option<String>,
+        message_source: Option<String>,
     ) -> Result<AiResponse, String> {
         let resp = await_with_optional_abort(
             self.client
@@ -327,6 +352,8 @@ impl AiRequestHandler {
                         &content,
                         None,
                         reasoning_opt.clone(),
+                        message_mode,
+                        message_source,
                         meta_val,
                         tool_calls.clone(),
                     )

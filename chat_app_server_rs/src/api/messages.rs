@@ -26,6 +26,10 @@ struct CreateMessageRequest {
     session_id: Option<String>,
     role: Option<String>,
     content: Option<String>,
+    #[serde(alias = "messageMode")]
+    message_mode: Option<String>,
+    #[serde(alias = "messageSource")]
+    message_source: Option<String>,
     #[serde(rename = "toolCalls")]
     tool_calls: Option<Value>,
     tool_call_id: Option<String>,
@@ -78,6 +82,8 @@ async fn create_message(Json(req): Json<CreateMessageRequest>) -> (StatusCode, J
         NewMessageFields {
             role: Some(role),
             content: Some(content),
+            message_mode: req.message_mode,
+            message_source: req.message_source,
             tool_calls: req.tool_calls,
             tool_call_id: req.tool_call_id,
             reasoning: req.reasoning,

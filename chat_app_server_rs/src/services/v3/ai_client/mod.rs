@@ -67,6 +67,8 @@ pub struct ProcessOptions {
     pub history_limit: Option<i64>,
     pub purpose: Option<String>,
     pub conversation_turn_id: Option<String>,
+    pub message_mode: Option<String>,
+    pub message_source: Option<String>,
     pub callbacks: Option<AiClientCallbacks>,
 }
 
@@ -141,6 +143,8 @@ impl AiClient {
         let system_prompt = options.system_prompt.or_else(|| self.system_prompt.clone());
         let history_limit = options.history_limit.unwrap_or(self.history_limit);
         let purpose = options.purpose.unwrap_or_else(|| "chat".to_string());
+        let message_mode = options.message_mode;
+        let message_source = options.message_source;
         let turn_id = options
             .conversation_turn_id
             .as_deref()
@@ -242,6 +246,8 @@ impl AiClient {
             stateless_history_limit,
             force_text_content,
             prefer_stateless,
+            message_mode,
+            message_source,
         )
         .await
     }
@@ -269,6 +275,8 @@ impl AiClient {
         history_limit: i64,
         force_text_content: bool,
         prefer_stateless: bool,
+        message_mode: Option<String>,
+        message_source: Option<String>,
     ) -> Result<Value, String> {
         let include_tool_items = !tools.is_empty();
         let persist_tool_messages = purpose != "sub_agent_router";
@@ -360,6 +368,8 @@ impl AiClient {
                         thinking_level.clone(),
                         session_id.clone(),
                         callbacks.on_chunk.is_some() || callbacks.on_thinking.is_some(),
+                        message_mode.clone(),
+                        message_source.clone(),
                         purpose,
                     )
                     .await;

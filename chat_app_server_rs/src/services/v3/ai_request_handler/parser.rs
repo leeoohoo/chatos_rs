@@ -70,56 +70,71 @@ pub(super) fn extract_tool_calls(response: &Value) -> Option<Value> {
 }
 
 pub(super) fn extract_output_text(response: &Value) -> String {
-    if let Some(text) = response.get("output_text").and_then(|value| value.as_str()) {
-        return text.to_string();
+    if let Some(text) = response
+        .get("output_text")
+        .and_then(extract_text_delta)
+        .filter(|value| !value.is_empty())
+    {
+        return text;
     }
-    if let Some(text) = response.get("text").and_then(|value| value.as_str()) {
-        return text.to_string();
+    if let Some(text) = response
+        .get("text")
+        .and_then(extract_text_delta)
+        .filter(|value| !value.is_empty())
+    {
+        return text;
     }
 
     if let Some(items) = response.get("output").and_then(|value| value.as_array()) {
-        let mut text = String::new();
+        let mut output = Vec::new();
 
         for item in items {
-            if item.get("type").and_then(|value| value.as_str()) != Some("message") {
-                continue;
-            }
+            let item_type = item
+                .get("type")
+                .and_then(|value| value.as_str())
+                .unwrap_or("");
 
-            if let Some(content) = item.get("content").and_then(|value| value.as_str()) {
-                text.push_str(content);
-                continue;
-            }
-
-            if let Some(parts) = item.get("content").and_then(|value| value.as_array()) {
-                for part in parts {
-                    let part_type = part.get("type").and_then(|value| value.as_str());
-                    if part_type == Some("output_text") || part_type == Some("text") {
-                        if let Some(part_text) = part.get("text").and_then(|value| value.as_str()) {
-                            text.push_str(part_text);
-                        }
-                    }
+            if item_type == "message" {
+                if let Some(text) = item
+                    .get("content")
+                    .and_then(extract_text_delta)
+                    .filter(|value| !value.is_empty())
+                {
+                    output.push(text);
                 }
+                continue;
+            }
+
+            if (item_type == "output_text" || item_type == "text")
+                && item
+                    .get("text")
+                    .and_then(extract_text_delta)
+                    .filter(|value| !value.is_empty())
+                    .is_some()
+            {
+                output.push(
+                    item.get("text")
+                        .and_then(extract_text_delta)
+                        .unwrap_or_default(),
+                );
             }
         }
 
-        return text;
+        if !output.is_empty() {
+            return output.join("");
+        }
     }
 
     String::new()
 }
 
 pub(super) fn extract_text_delta(delta: &Value) -> Option<String> {
-    if let Some(text) = delta.as_str() {
-        return Some(text.to_string());
+    let text = flatten_text(delta);
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
     }
-    if let Some(text) = delta.get("text").and_then(|value| value.as_str()) {
-        return Some(text.to_string());
-    }
-    if let Some(text) = delta.get("content").and_then(|value| value.as_str()) {
-        return Some(text.to_string());
-    }
-
-    None
 }
 
 pub(super) fn extract_text_from_fields(value: &Value, fields: &[&str]) -> Option<String> {
@@ -290,6 +305,38 @@ fn normalize_reasoning_delta(delta: Option<&Value>) -> String {
     delta.map(extract_reasoning_text).unwrap_or_default()
 }
 
+fn flatten_text(value: &Value) -> String {
+    if let Some(text) = value.as_str() {
+        return text.to_string();
+    }
+
+    if let Some(array) = value.as_array() {
+        let mut out = Vec::new();
+        for item in array {
+            let text = flatten_text(item);
+            if !text.is_empty() {
+                out.push(text);
+            }
+        }
+        return out.join("");
+    }
+
+    let Some(object) = value.as_object() else {
+        return String::new();
+    };
+
+    for key in ["text", "value", "content", "output_text", "delta"] {
+        if let Some(inner) = object.get(key) {
+            let text = flatten_text(inner);
+            if !text.is_empty() {
+                return text;
+            }
+        }
+    }
+
+    String::new()
+}
+
 pub(super) fn looks_like_response_id(id: &str) -> bool {
     let normalized = id.trim().to_lowercase();
     if normalized.is_empty() {
@@ -397,6 +444,23 @@ pub(super) fn apply_stream_event(state: &mut StreamState, event: &Value) -> Stre
                 state.response_obj = Some(event.clone());
             }
         }
+    } else {
+        if state.response_obj.is_none()
+            && (event.get("output").is_some()
+                || event.get("output_text").is_some()
+                || event.get("text").is_some())
+        {
+            state.response_obj = Some(event.clone());
+        }
+
+        if state.full_content.is_empty() {
+            let extracted = extract_output_text(event);
+            if !extracted.is_empty() {
+                state.full_content.push_str(&extracted);
+                state.sent_any_chunk = true;
+                payload.chunk = Some(extracted);
+            }
+        }
     }
 
     if let Some(id) = event
@@ -501,6 +565,15 @@ mod tests {
     }
 
     #[test]
+    fn extract_output_text_handles_nested_text_value_objects() {
+        let response = json!({
+            "output_text": { "value": "Nested text" }
+        });
+
+        assert_eq!(extract_output_text(&response), "Nested text");
+    }
+
+    #[test]
     fn extract_reasoning_from_response_collects_reasoning_summary_items() {
         let response = json!({
             "output": [
@@ -575,5 +648,22 @@ mod tests {
                 .and_then(|value| value.as_str()),
             Some("context_length_exceeded")
         );
+    }
+
+    #[test]
+    fn apply_stream_event_handles_plain_response_object_without_type() {
+        let mut state = StreamState::default();
+        let event = json!({
+            "id": "resp_plain",
+            "output_text": "plain summary text",
+            "status": "completed"
+        });
+
+        let payload = apply_stream_event(&mut state, &event);
+
+        assert_eq!(payload.chunk.as_deref(), Some("plain summary text"));
+        assert_eq!(state.response_id.as_deref(), Some("resp_plain"));
+        assert_eq!(state.full_content, "plain summary text");
+        assert!(state.response_obj.is_some());
     }
 }
