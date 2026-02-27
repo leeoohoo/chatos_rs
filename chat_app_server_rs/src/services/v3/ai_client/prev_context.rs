@@ -32,6 +32,23 @@ pub(super) fn base_url_allows_prev(base_url: &str) -> bool {
     false
 }
 
+pub(super) fn base_url_disallows_system_messages(base_url: &str) -> bool {
+    let url = base_url.trim().to_lowercase();
+
+    if url.contains("relay.nf.video") || url.contains("nf.video") {
+        return true;
+    }
+
+    if let Ok(value) = std::env::var("DISABLE_SYSTEM_MESSAGES_FOR_PROXY") {
+        let normalized = value.trim().to_lowercase();
+        if normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on" {
+            return true;
+        }
+    }
+
+    false
+}
+
 pub(super) fn is_invalid_input_text_error(err: &str) -> bool {
     let message = err.to_lowercase();
     message.contains("input_text")
@@ -42,6 +59,11 @@ pub(super) fn is_missing_tool_call_error(err: &str) -> bool {
     let message = err.to_lowercase();
     message.contains("no tool call found")
         && (message.contains("function call output") || message.contains("function_call_output"))
+}
+
+pub(super) fn is_system_messages_not_allowed_error(err: &str) -> bool {
+    let message = err.to_lowercase();
+    message.contains("system messages are not allowed")
 }
 
 pub(super) fn is_context_length_exceeded_error(err: &str) -> bool {
@@ -63,7 +85,9 @@ pub(super) fn reduce_history_limit(limit: i64) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_context_length_exceeded_error, reduce_history_limit, should_use_prev_id_for_next_turn,
+        base_url_disallows_system_messages, is_context_length_exceeded_error,
+        is_system_messages_not_allowed_error, reduce_history_limit,
+        should_use_prev_id_for_next_turn,
     };
 
     #[test]
@@ -96,5 +120,23 @@ mod tests {
         assert_eq!(reduce_history_limit(3), Some(1));
         assert_eq!(reduce_history_limit(1), None);
         assert_eq!(reduce_history_limit(0), None);
+    }
+
+    #[test]
+    fn detects_relay_domain_system_message_restriction() {
+        assert!(base_url_disallows_system_messages(
+            "https://relay.nf.video/v1"
+        ));
+        assert!(!base_url_disallows_system_messages(
+            "https://api.openai.com/v1"
+        ));
+    }
+
+    #[test]
+    fn detects_system_message_not_allowed_errors() {
+        assert!(is_system_messages_not_allowed_error(
+            "{\"detail\":\"System messages are not allowed\"}"
+        ));
+        assert!(!is_system_messages_not_allowed_error("rate_limit_exceeded"));
     }
 }

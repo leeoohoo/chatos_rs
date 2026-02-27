@@ -34,8 +34,9 @@ use self::input_transform::{
     normalize_input_to_text_value, to_message_item,
 };
 use self::prev_context::{
-    base_url_allows_prev, is_context_length_exceeded_error, is_invalid_input_text_error,
-    is_missing_tool_call_error, is_unsupported_previous_response_id_error, reduce_history_limit,
+    base_url_allows_prev, base_url_disallows_system_messages, is_context_length_exceeded_error,
+    is_invalid_input_text_error, is_missing_tool_call_error, is_system_messages_not_allowed_error,
+    is_unsupported_previous_response_id_error, reduce_history_limit,
     should_use_prev_id_for_next_turn,
 };
 use self::tool_plan::{
@@ -88,6 +89,7 @@ pub struct AiClient {
     summary_retry_on_context_overflow: bool,
     prev_response_id_disabled_sessions: HashSet<String>,
     force_text_content_sessions: HashSet<String>,
+    no_system_message_sessions: HashSet<String>,
 }
 
 impl AiClient {
@@ -116,6 +118,7 @@ impl AiClient {
             summary_retry_on_context_overflow: cfg.summary_retry_on_context_overflow,
             prev_response_id_disabled_sessions: HashSet::new(),
             force_text_content_sessions: HashSet::new(),
+            no_system_message_sessions: HashSet::new(),
         }
     }
 
@@ -278,6 +281,12 @@ impl AiClient {
         let mut iteration = iteration;
         let mut pending_tool_outputs: Option<Vec<Value>> = None;
         let mut pending_tool_calls: Option<Vec<Value>> = None;
+        let mut no_system_messages =
+            base_url_disallows_system_messages(self.ai_request_handler.base_url())
+                || session_id
+                    .as_ref()
+                    .map(|sid| self.no_system_message_sessions.contains(sid))
+                    .unwrap_or(false);
         let mut stateless_context_items = if !use_prev_id {
             input.as_array().cloned()
         } else {
@@ -316,10 +325,15 @@ impl AiClient {
             let mut last_error: Option<String> = None;
 
             for _attempt in 0..3 {
+                let request_input = if no_system_messages {
+                    rewrite_system_messages_to_user(&input, force_text_content)
+                } else {
+                    input.clone()
+                };
                 let req = self
                     .ai_request_handler
                     .handle_request(
-                        input.clone(),
+                        request_input,
                         model.clone(),
                         system_prompt.clone(),
                         if use_prev_id {
@@ -359,6 +373,16 @@ impl AiClient {
                     Err(err) => {
                         let err_msg = err.clone();
                         last_error = Some(err_msg.clone());
+                        if !no_system_messages && is_system_messages_not_allowed_error(&err_msg) {
+                            warn!(
+                                "[AI_V3] provider rejected system-role input; retry with user-role compatibility mode"
+                            );
+                            no_system_messages = true;
+                            if let Some(sid) = session_id.as_ref() {
+                                self.no_system_message_sessions.insert(sid.clone());
+                            }
+                            continue;
+                        }
                         if use_prev_id && is_unsupported_previous_response_id_error(&err_msg) {
                             if let Some(sid) = session_id.as_ref() {
                                 self.prev_response_id_disabled_sessions.insert(sid.clone());
@@ -1261,6 +1285,55 @@ fn response_input_to_chat_messages(input: &Value) -> Vec<Value> {
     messages
 }
 
+fn rewrite_system_messages_to_user(input: &Value, force_text_content: bool) -> Value {
+    let Some(items) = input.as_array() else {
+        return input.clone();
+    };
+
+    let mut changed = false;
+    let mut mapped = Vec::with_capacity(items.len());
+
+    for item in items {
+        let item_type = item
+            .get("type")
+            .and_then(|value| value.as_str())
+            .unwrap_or("");
+        let role = item
+            .get("role")
+            .and_then(|value| value.as_str())
+            .unwrap_or("");
+
+        if item_type == "message" && (role == "system" || role == "developer") {
+            let content = response_content_to_text(item.get("content").unwrap_or(&Value::Null));
+            let label = if role == "developer" {
+                "开发者上下文"
+            } else {
+                "系统上下文"
+            };
+            let wrapped = if content.trim().is_empty() {
+                format!("【{}】", label)
+            } else {
+                format!("【{}】\n{}", label, content)
+            };
+            mapped.push(to_message_item(
+                "user",
+                &Value::String(wrapped),
+                force_text_content,
+            ));
+            changed = true;
+            continue;
+        }
+
+        mapped.push(item.clone());
+    }
+
+    if changed {
+        Value::Array(mapped)
+    } else {
+        input.clone()
+    }
+}
+
 fn build_input_from_summary_result(
     result: &crate::services::summary::types::SummaryResult,
     force_text_content: bool,
@@ -1426,5 +1499,70 @@ impl AiClientSettings for AiClient {
         {
             self.dynamic_summary_enabled = v;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::{json, Value};
+
+    use super::{response_content_to_text, rewrite_system_messages_to_user};
+
+    #[test]
+    fn rewrites_system_and_developer_messages_to_user_role() {
+        let input = json!([
+            {
+                "type": "message",
+                "role": "system",
+                "content": [{"type":"input_text","text":"system prompt"}]
+            },
+            {
+                "type": "message",
+                "role": "developer",
+                "content": [{"type":"input_text","text":"developer notes"}]
+            },
+            {
+                "type": "message",
+                "role": "user",
+                "content": [{"type":"input_text","text":"hello"}]
+            }
+        ]);
+
+        let output = rewrite_system_messages_to_user(&input, false);
+        let arr = output.as_array().expect("array output");
+        assert_eq!(arr.len(), 3);
+        assert_eq!(
+            arr[0].get("role").and_then(|value| value.as_str()),
+            Some("user")
+        );
+        assert_eq!(
+            arr[1].get("role").and_then(|value| value.as_str()),
+            Some("user")
+        );
+        assert_eq!(
+            arr[2].get("role").and_then(|value| value.as_str()),
+            Some("user")
+        );
+
+        let first_text = response_content_to_text(arr[0].get("content").unwrap_or(&Value::Null));
+        let second_text = response_content_to_text(arr[1].get("content").unwrap_or(&Value::Null));
+        assert!(first_text.contains("系统上下文"));
+        assert!(first_text.contains("system prompt"));
+        assert!(second_text.contains("开发者上下文"));
+        assert!(second_text.contains("developer notes"));
+    }
+
+    #[test]
+    fn keeps_input_unchanged_when_no_system_messages_exist() {
+        let input = json!([
+            {
+                "type": "message",
+                "role": "user",
+                "content": [{"type":"input_text","text":"hello"}]
+            }
+        ]);
+
+        let output = rewrite_system_messages_to_user(&input, false);
+        assert_eq!(input, output);
     }
 }
