@@ -1,0 +1,37 @@
+# syntax=docker/dockerfile:1.7
+
+FROM rust:1.86-bookworm AS builder
+
+WORKDIR /workspace/chat_app_server_rs
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends pkg-config libssl-dev clang \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY chat_app_server_rs/Cargo.toml chat_app_server_rs/Cargo.lock ./
+COPY chat_app_server_rs/src ./src
+COPY chat_app_server_rs/config ./config
+
+RUN cargo build --release
+
+FROM debian:bookworm-slim AS runtime
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates libsqlite3-0 libssl3 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /workspace/chat_app_server_rs/target/release/chat_app_server_rs /app/chat_app_server_rs
+COPY chat_app_server_rs/config /app/config
+
+RUN mkdir -p /app/data /app/logs
+
+ENV NODE_ENV=production \
+    HOST=0.0.0.0 \
+    PORT=3001 \
+    OPENAI_BASE_URL=https://api.openai.com/v1
+
+EXPOSE 3001
+
+CMD ["/app/chat_app_server_rs"]

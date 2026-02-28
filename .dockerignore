@@ -1,0 +1,14 @@
+.git
+.gitignore
+**/.DS_Store
+
+chat_app/node_modules
+chat_app/dist
+chat_app/.vite
+
+chat_app_server_rs/target
+chat_app_server_rs/data
+chat_app_server_rs/logs
+
+release
+rustup-init.exe
