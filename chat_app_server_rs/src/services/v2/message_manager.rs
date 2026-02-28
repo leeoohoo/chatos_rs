@@ -103,6 +103,22 @@ impl MessageManager {
             .await
     }
 
+    pub async fn get_chat_history_context(
+        &self,
+        session_id: &str,
+        summary_limit: usize,
+    ) -> (Option<String>, usize, Vec<Message>) {
+        let context = self
+            .core
+            .get_chat_history_context(session_id, summary_limit)
+            .await;
+        (
+            context.merged_summary,
+            context.summary_count,
+            context.messages,
+        )
+    }
+
     pub fn get_session_messages_sync(&self, session_id: &str, limit: Option<i64>) -> Vec<Message> {
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             return tokio::task::block_in_place(|| {

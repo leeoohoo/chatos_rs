@@ -103,6 +103,22 @@ impl MessageManager {
             .await
     }
 
+    pub async fn get_chat_history_context(
+        &self,
+        session_id: &str,
+        summary_limit: usize,
+    ) -> (Option<String>, usize, Vec<Message>) {
+        let context = self
+            .core
+            .get_chat_history_context(session_id, summary_limit)
+            .await;
+        (
+            context.merged_summary,
+            context.summary_count,
+            context.messages,
+        )
+    }
+
     pub async fn get_last_response_id(&self, session_id: &str, limit: i64) -> Option<String> {
         let summary_limit = Some(2);
         let (_summaries, messages) = self

@@ -108,80 +108,73 @@ impl AiClient {
         message_mode: Option<String>,
         message_source: Option<String>,
     ) -> Result<Value, String> {
+        let resolved_purpose = purpose.unwrap_or_else(|| "chat".to_string());
+        let dynamic_summary_enabled_before = self.dynamic_summary_enabled;
+        self.dynamic_summary_enabled =
+            dynamic_summary_enabled_before && resolved_purpose == "sub_agent_router";
+        if !self.dynamic_summary_enabled {
+            // Avoid carrying in-memory dynamic summary into normal chat requests.
+            self.summary_system_prompt = None;
+        }
         let mut all_messages: Vec<Value> = Vec::new();
 
         if let Some(prompt) = self.system_prompt.clone() {
             all_messages.push(json!({"role": "system", "content": prompt}));
         }
         if let Some(summary) = self.summary_system_prompt.clone() {
-            all_messages.push(json!({"role": "system", "content": summary}));
+            if self.dynamic_summary_enabled {
+                all_messages.push(json!({"role": "system", "content": summary}));
+            }
         }
 
         let mut history_messages: Vec<Value> = Vec::new();
         if let Some(session_id) = session_id.clone() {
-            if self.history_limit != 0 {
-                let limit = if self.history_limit > 0 {
-                    Some(self.history_limit)
-                } else {
-                    None
-                };
-                let mut mapped = Vec::new();
-                let summary_limit = Some(2);
-                let (summaries, history) = self
-                    .message_manager
-                    .get_session_history_with_summaries(&session_id, limit, summary_limit)
-                    .await;
-                let has_summary_table = !summaries.is_empty();
-                if has_summary_table {
-                    for summary in summaries {
-                        if !summary.summary_text.is_empty() {
-                            mapped.push(json!({"role": "system", "content": format!("以下是之前对话与工具调用的摘要（可视为“压缩记忆”）：\n\n{}", summary.summary_text)}));
-                        }
-                    }
+            let mut mapped = Vec::new();
+            let (merged_summary, _summary_count, history) = self
+                .message_manager
+                .get_chat_history_context(&session_id, 2)
+                .await;
+            if let Some(summary_text) = merged_summary {
+                mapped.push(json!({"role": "system", "content": summary_text}));
+            }
+
+            for msg in history {
+                if msg
+                    .metadata
+                    .as_ref()
+                    .and_then(|m| m.get("type"))
+                    .and_then(|v| v.as_str())
+                    == Some("session_summary")
+                {
+                    continue;
                 }
-                for msg in history {
-                    if msg
-                        .metadata
-                        .as_ref()
-                        .and_then(|m| m.get("type"))
-                        .and_then(|v| v.as_str())
-                        == Some("session_summary")
-                    {
-                        if has_summary_table {
-                            continue;
-                        }
-                        if let Some(summary) = msg.summary.clone() {
-                            mapped.push(json!({"role": "system", "content": format!("以下是之前对话与工具调用的摘要（可视为“压缩记忆”）：\n\n{}", summary)}));
-                        }
-                        continue;
-                    }
-                    if msg.role == "tool" {
-                        let mut content = msg.content;
-                        if content.is_empty() && msg.metadata.is_some() {
-                            content = msg
-                                .metadata
-                                .clone()
-                                .map(|v| v.to_string())
-                                .unwrap_or_default();
-                        }
-                        mapped.push(json!({"role": "tool", "tool_call_id": msg.tool_call_id.clone().unwrap_or_default(), "content": content}));
-                    } else {
-                        let mut item = json!({"role": msg.role, "content": msg.content});
-                        if let Some(tc) = msg.tool_calls {
-                            item["tool_calls"] = tc;
-                        }
-                        if let Some(tc) = msg
+                if msg.role == "tool" {
+                    let mut content = msg.content;
+                    if content.is_empty() && msg.metadata.is_some() {
+                        content = msg
                             .metadata
                             .clone()
-                            .and_then(|m| m.get("toolCalls").cloned())
-                        {
-                            item["tool_calls"] = tc;
-                        }
-                        mapped.push(item);
+                            .map(|v| v.to_string())
+                            .unwrap_or_default();
                     }
+                    mapped.push(json!({"role": "tool", "tool_call_id": msg.tool_call_id.clone().unwrap_or_default(), "content": content}));
+                } else {
+                    let mut item = json!({"role": msg.role, "content": msg.content});
+                    if let Some(tc) = msg.tool_calls {
+                        item["tool_calls"] = tc;
+                    }
+                    if let Some(tc) = msg
+                        .metadata
+                        .clone()
+                        .and_then(|m| m.get("toolCalls").cloned())
+                    {
+                        item["tool_calls"] = tc;
+                    }
+                    mapped.push(item);
                 }
-                history_messages = ensure_tool_responses(drop_duplicate_tail(mapped, &messages));
             }
+
+            history_messages = ensure_tool_responses(drop_duplicate_tail(mapped, &messages));
         }
 
         all_messages.extend(history_messages);
@@ -200,24 +193,28 @@ impl AiClient {
             None
         };
 
-        self.process_with_tools(
-            all_messages,
-            tools,
-            session_id,
-            turn_id,
-            model,
-            temperature,
-            max_tokens,
-            callbacks,
-            reasoning_enabled,
-            provider,
-            thinking_level,
-            purpose,
-            message_mode,
-            message_source,
-            0,
-        )
-        .await
+        let result = self
+            .process_with_tools(
+                all_messages,
+                tools,
+                session_id,
+                turn_id,
+                model,
+                temperature,
+                max_tokens,
+                callbacks,
+                reasoning_enabled,
+                provider,
+                thinking_level,
+                Some(resolved_purpose),
+                message_mode,
+                message_source,
+                0,
+            )
+            .await;
+
+        self.dynamic_summary_enabled = dynamic_summary_enabled_before;
+        result
     }
 
     async fn process_with_tools(

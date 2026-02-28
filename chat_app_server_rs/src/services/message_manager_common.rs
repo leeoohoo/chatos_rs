@@ -8,6 +8,7 @@ use tracing::error;
 use crate::core::mcp_tools::ToolResult;
 use crate::models::message::{Message, MessageService};
 use crate::models::session_summary::{SessionSummary, SessionSummaryService};
+use crate::models::session_summary_v2::SessionSummaryV2Service;
 use crate::services::ai_common::build_tool_result_metadata;
 
 #[derive(Debug, Default, Clone)]
@@ -28,6 +29,13 @@ struct State {
 #[derive(Clone)]
 pub(crate) struct MessageManagerCore {
     state: Arc<Mutex<State>>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ChatHistoryContext {
+    pub merged_summary: Option<String>,
+    pub summary_count: usize,
+    pub messages: Vec<Message>,
 }
 
 impl MessageManagerCore {
@@ -205,6 +213,88 @@ impl MessageManagerCore {
                 error!("get_session_history_with_summaries failed: {}", err);
                 (summaries, Vec::new())
             }
+        }
+    }
+
+    pub(crate) async fn get_chat_history_context(
+        &self,
+        session_id: &str,
+        summary_limit: usize,
+    ) -> ChatHistoryContext {
+        let target_summary_limit = summary_limit.max(1);
+        let fetch_summary_limit = (target_summary_limit as i64).saturating_mul(10).max(10);
+        let mut recent_summary_texts: Vec<String> = Vec::new();
+
+        match SessionSummaryV2Service::list_by_session(session_id, Some(fetch_summary_limit), 0)
+            .await
+        {
+            Ok(records) => {
+                for record in records {
+                    if record.status != "done" {
+                        continue;
+                    }
+                    let text = record.summary_text.trim();
+                    if text.is_empty() {
+                        continue;
+                    }
+                    recent_summary_texts.push(text.to_string());
+                    if recent_summary_texts.len() >= target_summary_limit {
+                        break;
+                    }
+                }
+            }
+            Err(err) => {
+                error!(
+                    "get_chat_history_context summaries_v2 failed: session_id={} error={}",
+                    session_id, err
+                );
+            }
+        }
+
+        if recent_summary_texts.is_empty() {
+            return ChatHistoryContext {
+                merged_summary: None,
+                summary_count: 0,
+                messages: self.get_session_messages(session_id, None).await,
+            };
+        }
+
+        recent_summary_texts.reverse();
+        let merged_summary = Some(format!(
+            "以下是最近历史会话总结（按时间从旧到新）：\n\n{}",
+            recent_summary_texts.join("\n\n---\n\n")
+        ));
+
+        let messages = match MessageService::get_pending_for_summary(session_id, None).await {
+            Ok(items) => {
+                let filtered: Vec<Message> = items
+                    .into_iter()
+                    .filter(|message| {
+                        message
+                            .metadata
+                            .as_ref()
+                            .and_then(|value| value.get("type"))
+                            .and_then(|value| value.as_str())
+                            != Some("session_summary")
+                    })
+                    .collect();
+                let mut state = self.state.lock();
+                state.stats.messages_retrieved += filtered.len();
+                filtered
+            }
+            Err(err) => {
+                error!(
+                    "get_chat_history_context pending messages failed: session_id={} error={}",
+                    session_id, err
+                );
+                Vec::new()
+            }
+        };
+
+        ChatHistoryContext {
+            merged_summary,
+            summary_count: recent_summary_texts.len(),
+            messages,
         }
     }
 

@@ -161,8 +161,17 @@ impl AiClient {
             on_context_summarized_stream: None,
             on_context_summarized_end: None,
         });
+        let dynamic_summary_enabled_before = self.dynamic_summary_enabled;
+        self.dynamic_summary_enabled =
+            dynamic_summary_enabled_before && purpose == "sub_agent_router";
 
-        let prefer_stateless = history_limit != 0;
+        // Keep normal chat history loading aligned with V2:
+        // summaries(2) + all unsummarized messages from current session.
+        let prefer_stateless = if purpose == "chat" {
+            true
+        } else {
+            history_limit != 0
+        };
         let mut previous_response_id: Option<String> = None;
         if !prefer_stateless {
             if let Some(sid) = session_id.as_ref() {
@@ -224,32 +233,36 @@ impl AiClient {
             )
         };
 
-        self.process_with_tools(
-            initial_input,
-            previous_response_id,
-            available_tools,
-            session_id,
-            turn_id,
-            model,
-            provider,
-            thinking_level,
-            temperature,
-            max_tokens,
-            callbacks,
-            reasoning_enabled,
-            system_prompt,
-            &purpose,
-            0,
-            use_prev_id,
-            can_use_prev_id,
-            raw_input,
-            stateless_history_limit,
-            force_text_content,
-            prefer_stateless,
-            message_mode,
-            message_source,
-        )
-        .await
+        let result = self
+            .process_with_tools(
+                initial_input,
+                previous_response_id,
+                available_tools,
+                session_id,
+                turn_id,
+                model,
+                provider,
+                thinking_level,
+                temperature,
+                max_tokens,
+                callbacks,
+                reasoning_enabled,
+                system_prompt,
+                &purpose,
+                0,
+                use_prev_id,
+                can_use_prev_id,
+                raw_input,
+                stateless_history_limit,
+                force_text_content,
+                prefer_stateless,
+                message_mode,
+                message_source,
+            )
+            .await;
+
+        self.dynamic_summary_enabled = dynamic_summary_enabled_before;
+        result
     }
 
     async fn process_with_tools(
@@ -1030,7 +1043,7 @@ impl AiClient {
     async fn build_stateless_items(
         &self,
         session_id: Option<String>,
-        history_limit: i64,
+        _history_limit: i64,
         force_text: bool,
         current_input_items: &[Value],
         include_tool_items: bool,
@@ -1041,147 +1054,118 @@ impl AiClient {
         let mut tool_call_ids: HashSet<String> = HashSet::new();
         let mut tool_output_ids: HashSet<String> = HashSet::new();
         if let Some(sid) = session_id.as_ref() {
-            if history_limit != 0 {
-                let limit = if history_limit > 0 {
-                    Some(history_limit)
-                } else {
-                    None
-                };
-                let summary_limit = Some(2);
-                let (summaries, history) = self
-                    .message_manager
-                    .get_session_history_with_summaries(sid, limit, summary_limit)
-                    .await;
-                let has_summary_table = !summaries.is_empty();
-                summary_count = summaries.len();
-                history_count = history.len();
-                if has_summary_table {
-                    for summary in summaries {
-                        if !summary.summary_text.is_empty() {
-                            let content = format!(
-                                "以下是之前对话与工具调用的摘要（可视为“压缩记忆”）：\n\n{}",
-                                summary.summary_text
-                            );
-                            items.push(to_message_item(
-                                "system",
-                                &Value::String(content),
-                                force_text,
-                            ));
-                        }
-                    }
-                }
-                if include_tool_items {
-                    for msg in &history {
-                        if msg.role == "tool" {
-                            if let Some(call_id) = msg.tool_call_id.clone() {
-                                if !call_id.is_empty() {
-                                    tool_output_ids.insert(call_id);
-                                }
-                            }
-                        }
-                    }
-                }
-                for msg in history {
-                    if msg
-                        .metadata
-                        .as_ref()
-                        .and_then(|m| m.get("type"))
-                        .and_then(|v| v.as_str())
-                        == Some("session_summary")
-                    {
-                        if has_summary_table {
-                            continue;
-                        }
-                        if let Some(summary) = msg.summary.clone() {
-                            let content = format!(
-                                "以下是之前对话与工具调用的摘要（可视为“压缩记忆”）：\n\n{}",
-                                summary
-                            );
-                            items.push(to_message_item(
-                                "system",
-                                &Value::String(content),
-                                force_text,
-                            ));
-                        }
-                        continue;
-                    }
-                    if msg.role == "user"
-                        || msg.role == "assistant"
-                        || msg.role == "system"
-                        || msg.role == "developer"
-                    {
-                        items.push(to_message_item(
-                            &msg.role,
-                            &Value::String(msg.content.clone()),
-                            force_text,
-                        ));
-                        if include_tool_items {
-                            let mut tool_calls = msg.tool_calls.clone().or_else(|| {
-                                msg.metadata
-                                    .as_ref()
-                                    .and_then(|m| m.get("toolCalls").cloned())
-                            });
-                            if let Some(Value::String(s)) = tool_calls.clone() {
-                                if let Ok(v) = serde_json::from_str::<Value>(&s) {
-                                    tool_calls = Some(v);
-                                }
-                            }
-                            if msg.role == "assistant" {
-                                if let Some(arr) = tool_calls.and_then(|v| v.as_array().cloned()) {
-                                    for tc in arr {
-                                        let call_id = tc
-                                            .get("id")
-                                            .and_then(|v| v.as_str())
-                                            .or_else(|| tc.get("call_id").and_then(|v| v.as_str()))
-                                            .unwrap_or("")
-                                            .to_string();
-                                        if call_id.is_empty() {
-                                            continue;
-                                        }
-                                        if !tool_output_ids.contains(&call_id) {
-                                            continue;
-                                        }
-                                        let func = tc.get("function").cloned().unwrap_or(json!({}));
-                                        let name = func
-                                            .get("name")
-                                            .and_then(|v| v.as_str())
-                                            .or_else(|| tc.get("name").and_then(|v| v.as_str()))
-                                            .unwrap_or("")
-                                            .to_string();
-                                        let args = func
-                                            .get("arguments")
-                                            .cloned()
-                                            .or_else(|| tc.get("arguments").cloned())
-                                            .unwrap_or(Value::String("{}".to_string()));
-                                        let args_str = if let Some(s) = args.as_str() {
-                                            s.to_string()
-                                        } else {
-                                            args.to_string()
-                                        };
-                                        tool_call_ids.insert(call_id.clone());
-                                        items.push(json!({
-                                            "type": "function_call",
-                                            "call_id": call_id,
-                                            "name": name,
-                                            "arguments": args_str
-                                        }));
-                                    }
-                                }
-                            }
-                        }
-                        continue;
-                    }
+            let (merged_summary, merged_summary_count, history) =
+                self.message_manager.get_chat_history_context(sid, 2).await;
+            summary_count = merged_summary_count;
+            if let Some(summary_text) = merged_summary {
+                items.push(to_message_item(
+                    "system",
+                    &Value::String(summary_text),
+                    force_text,
+                ));
+            }
+
+            history_count = history.len();
+
+            if include_tool_items {
+                for msg in &history {
                     if msg.role == "tool" {
-                        if include_tool_items {
-                            if let Some(call_id) = msg.tool_call_id.clone() {
-                                if tool_call_ids.contains(&call_id) {
-                                    let output = msg.content.clone();
+                        if let Some(call_id) = msg.tool_call_id.clone() {
+                            if !call_id.is_empty() {
+                                tool_output_ids.insert(call_id);
+                            }
+                        }
+                    }
+                }
+            }
+
+            for msg in history {
+                if msg
+                    .metadata
+                    .as_ref()
+                    .and_then(|m| m.get("type"))
+                    .and_then(|v| v.as_str())
+                    == Some("session_summary")
+                {
+                    continue;
+                }
+
+                if msg.role == "user"
+                    || msg.role == "assistant"
+                    || msg.role == "system"
+                    || msg.role == "developer"
+                {
+                    items.push(to_message_item(
+                        &msg.role,
+                        &Value::String(msg.content.clone()),
+                        force_text,
+                    ));
+                    if include_tool_items {
+                        let mut tool_calls = msg.tool_calls.clone().or_else(|| {
+                            msg.metadata
+                                .as_ref()
+                                .and_then(|m| m.get("toolCalls").cloned())
+                        });
+                        if let Some(Value::String(s)) = tool_calls.clone() {
+                            if let Ok(v) = serde_json::from_str::<Value>(&s) {
+                                tool_calls = Some(v);
+                            }
+                        }
+                        if msg.role == "assistant" {
+                            if let Some(arr) = tool_calls.and_then(|v| v.as_array().cloned()) {
+                                for tc in arr {
+                                    let call_id = tc
+                                        .get("id")
+                                        .and_then(|v| v.as_str())
+                                        .or_else(|| tc.get("call_id").and_then(|v| v.as_str()))
+                                        .unwrap_or("")
+                                        .to_string();
+                                    if call_id.is_empty() {
+                                        continue;
+                                    }
+                                    if !tool_output_ids.contains(&call_id) {
+                                        continue;
+                                    }
+                                    let func = tc.get("function").cloned().unwrap_or(json!({}));
+                                    let name = func
+                                        .get("name")
+                                        .and_then(|v| v.as_str())
+                                        .or_else(|| tc.get("name").and_then(|v| v.as_str()))
+                                        .unwrap_or("")
+                                        .to_string();
+                                    let args = func
+                                        .get("arguments")
+                                        .cloned()
+                                        .or_else(|| tc.get("arguments").cloned())
+                                        .unwrap_or(Value::String("{}".to_string()));
+                                    let args_str = if let Some(s) = args.as_str() {
+                                        s.to_string()
+                                    } else {
+                                        args.to_string()
+                                    };
+                                    tool_call_ids.insert(call_id.clone());
                                     items.push(json!({
-                                        "type": "function_call_output",
+                                        "type": "function_call",
                                         "call_id": call_id,
-                                        "output": output
+                                        "name": name,
+                                        "arguments": args_str
                                     }));
                                 }
+                            }
+                        }
+                    }
+                    continue;
+                }
+                if msg.role == "tool" {
+                    if include_tool_items {
+                        if let Some(call_id) = msg.tool_call_id.clone() {
+                            if tool_call_ids.contains(&call_id) {
+                                let output = msg.content.clone();
+                                items.push(json!({
+                                    "type": "function_call_output",
+                                    "call_id": call_id,
+                                    "output": output
+                                }));
                             }
                         }
                     }
