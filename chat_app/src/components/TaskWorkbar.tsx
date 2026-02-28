@@ -175,12 +175,16 @@ const SummaryCard: React.FC<{
   onDeleteSummary?: (summary: SessionSummaryWorkbarItem) => void;
   isMutating?: boolean;
 }> = ({ summary, compact = false, onDeleteSummary, isMutating = false }) => {
+  const [expandedText, setExpandedText] = useState(false);
   const cardClass = compact
     ? 'min-w-[200px] max-w-[240px] min-w-0 overflow-hidden rounded-md border border-border bg-background p-2'
     : 'min-w-0 overflow-hidden rounded-lg border border-border bg-background p-2.5';
+  const canExpand = !compact && summary.summaryText.length > 280;
   const titleClass = compact
     ? 'line-clamp-3 break-words text-[11px] text-foreground'
-    : 'line-clamp-6 break-words text-xs text-foreground';
+    : expandedText
+      ? 'max-h-[40vh] overflow-y-auto whitespace-pre-wrap break-words text-xs text-foreground'
+      : 'line-clamp-6 break-words text-xs text-foreground';
 
   return (
     <div className={cardClass}>
@@ -196,6 +200,15 @@ const SummaryCard: React.FC<{
       <div className={titleClass} title={summary.summaryText}>
         {summary.summaryText || '(空总结)'}
       </div>
+      {canExpand ? (
+        <button
+          type="button"
+          className="mt-1 text-[10px] text-primary hover:underline"
+          onClick={() => setExpandedText((prev) => !prev)}
+        >
+          {expandedText ? '收起' : '展开全文'}
+        </button>
+      ) : null}
 
       <div className="mt-1 text-[10px] text-muted-foreground">
         <div>{`消息 ${summary.sourceMessageCount} · 估算 ${summary.sourceEstimatedTokens} tok`}</div>

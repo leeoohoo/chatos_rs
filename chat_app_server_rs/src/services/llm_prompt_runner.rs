@@ -156,7 +156,7 @@ async fn run_with_responses(
     );
 
     let mut no_system_messages = base_url_disallows_system_messages(&runtime.base_url);
-    let mut input_as_list = false;
+    let mut input_as_list = base_url_requires_responses_input_list(&runtime.base_url);
     for _ in 0..4 {
         let wrapped_user_prompt = if no_system_messages && !system_prompt.trim().is_empty() {
             format!(
@@ -270,8 +270,14 @@ fn build_responses_input(user_prompt: &str, input_as_list: bool) -> Value {
 
     json!([
         {
+            "type": "message",
             "role": "user",
-            "content": user_prompt
+            "content": [
+                {
+                    "type": "input_text",
+                    "text": user_prompt
+                }
+            ]
         }
     ])
 }
@@ -279,6 +285,23 @@ fn build_responses_input(user_prompt: &str, input_as_list: bool) -> Value {
 fn is_input_must_be_list_error(err: &str) -> bool {
     let normalized = err.to_lowercase();
     normalized.contains("input must be a list")
+}
+
+fn base_url_requires_responses_input_list(base_url: &str) -> bool {
+    let url = base_url.trim().to_lowercase();
+    if url.contains("relay.nf.video") || url.contains("nf.video") {
+        return true;
+    }
+
+    if let Ok(value) = std::env::var("FORCE_RESPONSES_INPUT_LIST") {
+        let normalized = value.trim().to_lowercase();
+        return normalized == "1"
+            || normalized == "true"
+            || normalized == "yes"
+            || normalized == "on";
+    }
+
+    false
 }
 
 fn select_response_text(content: String, reasoning: Option<String>) -> String {

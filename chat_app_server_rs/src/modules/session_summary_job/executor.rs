@@ -1,4 +1,4 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::VecDeque;
 
 use serde_json::{json, Value};
 use tracing::{info, warn};
@@ -17,6 +17,8 @@ use crate::services::summary::types::{
 
 use super::config;
 use super::types::{EffectiveSummaryJobConfig, SummaryJobDefaults};
+
+const PREVIOUS_SUMMARY_CONTEXT_LIMIT: i64 = 2;
 
 #[derive(Debug, Clone)]
 pub struct SessionProcessOutcome {
@@ -92,64 +94,131 @@ pub async fn process_session(
         "message_count_limit".to_string()
     };
 
-    let mut total_marked = 0usize;
-    let mut last_summary_id: Option<String> = None;
-    let mut failed_chunks = 0usize;
+    let previous_summary_context =
+        load_recent_summary_context(session_id, PREVIOUS_SUMMARY_CONTEXT_LIMIT).await;
 
-    for chunk in chunks {
-        match summarize_and_persist_chunk(
+    let mut chunk_summaries: Vec<String> = Vec::new();
+    for (index, chunk) in chunks.iter().enumerate() {
+        match summarize_chunk_text(
             session_id,
             chunk.as_slice(),
+            previous_summary_context.as_slice(),
             &client,
             &options,
-            &model_name,
-            &trigger_type,
         )
         .await
         {
-            Ok(Some(outcome)) => {
-                total_marked += outcome.marked_messages;
-                last_summary_id = Some(outcome.summary_id);
-            }
-            Ok(None) => {}
+            Ok(summary_text) => chunk_summaries.push(summary_text),
             Err(err) => {
-                failed_chunks += 1;
+                let error = format!("chunk {} summarize failed: {}", index + 1, err);
+                persist_failed_summary(
+                    session_id,
+                    selected_messages.as_slice(),
+                    selected_tokens,
+                    trigger_type.as_str(),
+                    model_name.as_str(),
+                    error.as_str(),
+                )
+                .await;
                 warn!(
-                    "[SESSION-SUMMARY-JOB] summarize chunk failed: session_id={} error={}",
-                    session_id, err
+                    "[SESSION-SUMMARY-JOB] summarize failed: session_id={} trigger={} selected_messages={} split_chunks={} error={}",
+                    session_id,
+                    trigger_type,
+                    selected_messages.len(),
+                    split_chunk_count,
+                    error
                 );
+                return Ok(SessionProcessOutcome::failed(trigger_type));
             }
         }
     }
 
-    if total_marked == 0 {
-        if failed_chunks > 0 {
-            return Ok(SessionProcessOutcome::failed(trigger_type));
-        }
+    if chunk_summaries.is_empty() {
         return Ok(SessionProcessOutcome::skipped("no_source_messages"));
     }
 
+    let final_summary_text = match merge_chunk_summaries(
+        session_id,
+        chunk_summaries.as_slice(),
+        previous_summary_context.as_slice(),
+        &client,
+        &options,
+    )
+    .await
+    {
+        Ok(text) => text,
+        Err(err) => {
+            persist_failed_summary(
+                session_id,
+                selected_messages.as_slice(),
+                selected_tokens,
+                trigger_type.as_str(),
+                model_name.as_str(),
+                err.as_str(),
+            )
+            .await;
+            warn!(
+                "[SESSION-SUMMARY-JOB] merge chunk summaries failed: session_id={} trigger={} selected_messages={} split_chunks={} error={}",
+                session_id,
+                trigger_type,
+                selected_messages.len(),
+                split_chunk_count,
+                err
+            );
+            return Ok(SessionProcessOutcome::failed(trigger_type));
+        }
+    };
+
+    let source_ids: Vec<String> = selected_messages
+        .iter()
+        .map(|item| item.id.clone())
+        .collect();
+    if source_ids.is_empty() {
+        return Ok(SessionProcessOutcome::skipped("no_source_messages"));
+    }
+    let source_start_message_id = source_ids.first().cloned();
+    let source_end_message_id = source_ids.last().cloned();
+
+    let summary_record = SessionSummaryV2::new(
+        session_id.to_string(),
+        final_summary_text,
+        model_name.clone(),
+        trigger_type.clone(),
+        source_start_message_id,
+        source_end_message_id,
+        source_ids.len() as i64,
+        selected_tokens,
+        "done".to_string(),
+        None,
+    );
+    let summary_id = summary_record.id.clone();
+    SessionSummaryV2Service::create(summary_record).await?;
+
+    let summarized_at = crate::core::time::now_rfc3339();
+    let marked = MessageService::mark_summarized(
+        session_id,
+        source_ids.as_slice(),
+        summary_id.as_str(),
+        summarized_at.as_str(),
+    )
+    .await?;
+
     info!(
-        "[SESSION-SUMMARY-JOB] summarized session_id={} trigger={} selected_messages={} selected_tokens={} split_chunks={} marked={} failed_chunks={} summary_id={}",
+        "[SESSION-SUMMARY-JOB] summarized session_id={} trigger={} selected_messages={} selected_tokens={} split_chunks={} marked={} summary_id={}",
         session_id,
         trigger_type,
         selected_messages.len(),
         selected_tokens,
         split_chunk_count,
-        total_marked,
-        failed_chunks,
-        last_summary_id.clone().unwrap_or_default()
+        marked,
+        summary_id
     );
 
     Ok(SessionProcessOutcome {
-        status: if failed_chunks > 0 {
-            "summarized_partial_failed".to_string()
-        } else {
-            "summarized".to_string()
-        },
+        status: "summarized".to_string(),
         trigger_type: Some(trigger_type),
-        summary_id: last_summary_id,
-        marked_messages: total_marked,
+        summary_id: Some(summary_id),
+        marked_messages: marked,
     })
 }
 
@@ -234,47 +303,19 @@ fn pending_to_summary_messages(messages: &[Message]) -> Vec<Value> {
         .collect()
 }
 
-fn collect_message_ids(messages: &[Value]) -> Vec<String> {
-    let mut seen = HashSet::new();
-    let mut out = Vec::new();
-
-    for message in messages {
-        let id = message
-            .get("id")
-            .and_then(|value| value.as_str())
-            .unwrap_or("")
-            .trim();
-        if id.is_empty() {
-            continue;
-        }
-        if seen.insert(id.to_string()) {
-            out.push(id.to_string());
-        }
-    }
-
-    out
-}
-
-#[derive(Debug, Clone)]
-struct ChunkPersistOutcome {
-    summary_id: String,
-    marked_messages: usize,
-}
-
-async fn summarize_and_persist_chunk(
+async fn summarize_chunk_text(
     session_id: &str,
     messages: &[Message],
+    previous_summary_context: &[String],
     client: &JobSummaryLlmClient,
     options: &SummaryOptions,
-    model_name: &str,
-    trigger_type: &str,
-) -> Result<Option<ChunkPersistOutcome>, String> {
+) -> Result<String, String> {
     if messages.is_empty() {
-        return Ok(None);
+        return Err("empty chunk".to_string());
     }
 
-    let context_messages = pending_to_summary_messages(messages);
-    let chunk_tokens = estimate_messages_tokens(context_messages.as_slice());
+    let mut context_messages = build_previous_summary_context_messages(previous_summary_context);
+    context_messages.extend(pending_to_summary_messages(messages));
     let summary_result = maybe_summarize(
         client,
         context_messages.as_slice(),
@@ -287,67 +328,109 @@ async fn summarize_and_persist_chunk(
 
     let result = match summary_result {
         Ok(value) => value,
-        Err(err) => {
-            persist_failed_summary(
-                session_id,
-                messages,
-                chunk_tokens,
-                trigger_type,
-                model_name,
-                err.as_str(),
-            )
-            .await;
-            return Err(err);
-        }
+        Err(err) => return Err(err),
     };
 
     if !result.summarized {
-        return Ok(None);
+        return Err("summary not generated".to_string());
     }
 
     let summary_text = result.summary_text.unwrap_or_default().trim().to_string();
     if summary_text.is_empty() {
-        return Ok(None);
+        return Err("AI 未返回总结文本".to_string());
     }
 
-    let source_ids = collect_message_ids(result.summarized_messages.as_slice());
-    if source_ids.is_empty() {
-        return Ok(None);
+    Ok(summary_text)
+}
+
+async fn merge_chunk_summaries(
+    session_id: &str,
+    chunk_summaries: &[String],
+    previous_summary_context: &[String],
+    client: &JobSummaryLlmClient,
+    options: &SummaryOptions,
+) -> Result<String, String> {
+    if chunk_summaries.is_empty() {
+        return Err("no chunk summaries".to_string());
+    }
+    if chunk_summaries.len() == 1 {
+        return Ok(chunk_summaries[0].clone());
     }
 
-    let source_tokens = estimate_messages_tokens(result.summarized_messages.as_slice());
-    let source_start_message_id = source_ids.first().cloned();
-    let source_end_message_id = source_ids.last().cloned();
+    let mut merge_messages = build_previous_summary_context_messages(previous_summary_context);
+    for (index, chunk_summary) in chunk_summaries.iter().enumerate() {
+        merge_messages.push(json!({
+            "role": "assistant",
+            "content": format!("分片总结 {}:\n{}", index + 1, chunk_summary),
+        }));
+    }
 
-    let summary_record = SessionSummaryV2::new(
-        session_id.to_string(),
-        summary_text,
-        model_name.to_string(),
-        trigger_type.to_string(),
-        source_start_message_id,
-        source_end_message_id,
-        source_ids.len() as i64,
-        source_tokens,
-        "done".to_string(),
+    let mut merge_options = options.clone();
+    merge_options.keep_last_n = 0;
+    merge_options.target_summary_tokens = options.target_summary_tokens.max(256);
+    let result = maybe_summarize(
+        client,
+        merge_messages.as_slice(),
+        &merge_options,
+        Some(session_id.to_string()),
         None,
-    );
-
-    let summary_id = summary_record.id.clone();
-    SessionSummaryV2Service::create(summary_record).await?;
-
-    let summarized_at = crate::core::time::now_rfc3339();
-    let marked = MessageService::mark_summarized(
-        session_id,
-        source_ids.as_slice(),
-        summary_id.as_str(),
-        summarized_at.as_str(),
+        SummaryTrigger::OverflowRetry,
     )
     .await?;
+    if !result.summarized {
+        return Err("merge summaries not generated".to_string());
+    }
 
-    Ok(Some(ChunkPersistOutcome {
-        summary_id,
-        marked_messages: marked,
-    }))
+    let merged_summary = result.summary_text.unwrap_or_default().trim().to_string();
+    if merged_summary.is_empty() {
+        return Err("AI 未返回合并后的总结文本".to_string());
+    }
+    Ok(merged_summary)
+}
+
+async fn load_recent_summary_context(session_id: &str, limit: i64) -> Vec<String> {
+    let target_limit = limit.max(1) as usize;
+    let fetch_limit = (target_limit as i64 * 10).max(target_limit as i64);
+    let mut out = Vec::new();
+    match SessionSummaryV2Service::list_by_session(session_id, Some(fetch_limit), 0).await {
+        Ok(records) => {
+            for record in records {
+                if record.status != "done" {
+                    continue;
+                }
+                let text = record.summary_text.trim();
+                if text.is_empty() {
+                    continue;
+                }
+                out.push(text.to_string());
+                if out.len() >= target_limit {
+                    break;
+                }
+            }
+        }
+        Err(err) => {
+            warn!(
+                "[SESSION-SUMMARY-JOB] load previous summaries failed: session_id={} error={}",
+                session_id, err
+            );
+        }
+    }
+
+    out.reverse();
+    out
+}
+
+fn build_previous_summary_context_messages(previous_summary_context: &[String]) -> Vec<Value> {
+    previous_summary_context
+        .iter()
+        .enumerate()
+        .map(|(index, text)| {
+            json!({
+                "role": "system",
+                "content": format!("历史会话总结 {}:\n{}", index + 1, text),
+            })
+        })
+        .collect()
 }
 
 async fn persist_failed_summary(

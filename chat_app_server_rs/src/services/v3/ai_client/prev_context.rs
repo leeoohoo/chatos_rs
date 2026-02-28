@@ -66,6 +66,10 @@ pub(super) fn is_system_messages_not_allowed_error(err: &str) -> bool {
     message.contains("system messages are not allowed")
 }
 
+pub(super) fn is_input_must_be_list_error(err: &str) -> bool {
+    err.to_lowercase().contains("input must be a list")
+}
+
 pub(super) fn is_context_length_exceeded_error(err: &str) -> bool {
     let message = err.to_lowercase();
     message.contains("context_length_exceeded")

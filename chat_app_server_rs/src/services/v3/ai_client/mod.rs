@@ -35,9 +35,9 @@ use self::input_transform::{
 };
 use self::prev_context::{
     base_url_allows_prev, base_url_disallows_system_messages, is_context_length_exceeded_error,
-    is_invalid_input_text_error, is_missing_tool_call_error, is_system_messages_not_allowed_error,
-    is_unsupported_previous_response_id_error, reduce_history_limit,
-    should_use_prev_id_for_next_turn,
+    is_input_must_be_list_error, is_invalid_input_text_error, is_missing_tool_call_error,
+    is_system_messages_not_allowed_error, is_unsupported_previous_response_id_error,
+    reduce_history_limit, should_use_prev_id_for_next_turn,
 };
 use self::tool_plan::{
     build_tool_call_execution_plan, build_tool_call_items, expand_tool_results_with_aliases,
@@ -516,6 +516,17 @@ impl AiClient {
                                 self.force_text_content_sessions.insert(sid.clone());
                             }
                             input = normalize_input_to_text_value(&input);
+                            continue;
+                        }
+                        if is_input_must_be_list_error(&err_msg) {
+                            warn!("[AI_V3] provider requires list input; retry with message-list payload");
+                            let normalized_items = if let Some(items) = input.as_array() {
+                                items.clone()
+                            } else {
+                                build_current_input_items(&input, force_text_content)
+                            };
+                            input = Value::Array(normalized_items.clone());
+                            stateless_context_items = Some(normalized_items);
                             continue;
                         }
                         if is_context_length_exceeded_error(&err_msg) {
