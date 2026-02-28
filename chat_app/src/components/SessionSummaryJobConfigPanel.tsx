@@ -19,6 +19,18 @@ interface SummaryJobConfigForm {
   job_interval_seconds: number;
 }
 
+interface RangeLimit {
+  min: number;
+  max?: number;
+}
+
+interface SummaryJobLimits {
+  token_limit: RangeLimit;
+  message_count_limit: RangeLimit;
+  target_summary_tokens: RangeLimit;
+  job_interval_seconds: RangeLimit;
+}
+
 const DEFAULT_FORM: SummaryJobConfigForm = {
   enabled: true,
   summary_model_config_id: "",
@@ -27,6 +39,61 @@ const DEFAULT_FORM: SummaryJobConfigForm = {
   target_summary_tokens: 700,
   job_interval_seconds: 30,
 };
+
+const DEFAULT_LIMITS: SummaryJobLimits = {
+  token_limit: { min: 500 },
+  message_count_limit: { min: 1 },
+  target_summary_tokens: { min: 200 },
+  job_interval_seconds: { min: 10 },
+};
+
+function clampNumber(value: number, range: RangeLimit): number {
+  if (!Number.isFinite(value)) {
+    return range.min;
+  }
+  if (Number.isFinite(range.max)) {
+    return Math.max(range.min, Math.min(range.max as number, value));
+  }
+  return Math.max(range.min, value);
+}
+
+function rangeText(range: RangeLimit): string {
+  if (Number.isFinite(range.max)) {
+    return `${range.min}-${range.max}`;
+  }
+  return `>=${range.min}`;
+}
+
+function parseRangeLimit(input: any, fallback: RangeLimit): RangeLimit {
+  const min = Number(input?.min);
+  const max = Number(input?.max);
+  if (Number.isFinite(min) && Number.isFinite(max) && max >= min) {
+    return { min, max };
+  }
+  if (Number.isFinite(min)) {
+    return { min };
+  }
+  return fallback;
+}
+
+function parseLimits(config: any): SummaryJobLimits {
+  const limits = config?.limits || {};
+  return {
+    token_limit: parseRangeLimit(limits?.token_limit, DEFAULT_LIMITS.token_limit),
+    message_count_limit: parseRangeLimit(
+      limits?.message_count_limit || limits?.round_limit,
+      DEFAULT_LIMITS.message_count_limit
+    ),
+    target_summary_tokens: parseRangeLimit(
+      limits?.target_summary_tokens,
+      DEFAULT_LIMITS.target_summary_tokens
+    ),
+    job_interval_seconds: parseRangeLimit(
+      limits?.job_interval_seconds,
+      DEFAULT_LIMITS.job_interval_seconds
+    ),
+  };
+}
 
 const SessionSummaryJobConfigPanel: React.FC<Props> = ({ onClose }) => {
   const clientFromContext = useChatApiClientFromContext();
@@ -38,7 +105,9 @@ const SessionSummaryJobConfigPanel: React.FC<Props> = ({ onClose }) => {
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [notice, setNotice] = React.useState<string | null>(null);
   const [form, setForm] = React.useState<SummaryJobConfigForm>(DEFAULT_FORM);
+  const [limits, setLimits] = React.useState<SummaryJobLimits>(DEFAULT_LIMITS);
 
   const modelOptions = React.useMemo(
     () =>
@@ -61,23 +130,35 @@ const SessionSummaryJobConfigPanel: React.FC<Props> = ({ onClose }) => {
       try {
         setLoading(true);
         const config = await client.getSessionSummaryJobConfig(effectiveUserId);
+        const loadedLimits = parseLimits(config);
 
         if (!mounted) {
           return;
         }
 
+        setLimits(loadedLimits);
         setForm({
           enabled: config?.enabled !== false,
           summary_model_config_id: String(config?.summary_model_config_id || ""),
-          token_limit: Number(config?.token_limit || DEFAULT_FORM.token_limit),
-          message_count_limit: Number(
-            config?.message_count_limit || config?.round_limit || DEFAULT_FORM.message_count_limit
+          token_limit: clampNumber(
+            Number(config?.token_limit || DEFAULT_FORM.token_limit),
+            loadedLimits.token_limit
           ),
-          target_summary_tokens: Number(
-            config?.target_summary_tokens || DEFAULT_FORM.target_summary_tokens
+          message_count_limit: clampNumber(
+            Number(
+              config?.message_count_limit ||
+                config?.round_limit ||
+                DEFAULT_FORM.message_count_limit
+            ),
+            loadedLimits.message_count_limit
           ),
-          job_interval_seconds: Number(
-            config?.job_interval_seconds || DEFAULT_FORM.job_interval_seconds
+          target_summary_tokens: clampNumber(
+            Number(config?.target_summary_tokens || DEFAULT_FORM.target_summary_tokens),
+            loadedLimits.target_summary_tokens
+          ),
+          job_interval_seconds: clampNumber(
+            Number(config?.job_interval_seconds || DEFAULT_FORM.job_interval_seconds),
+            loadedLimits.job_interval_seconds
           ),
         });
       } catch (e: any) {
@@ -106,29 +187,75 @@ const SessionSummaryJobConfigPanel: React.FC<Props> = ({ onClose }) => {
   const onSave = async () => {
     setSaving(true);
     setError(null);
+    setNotice(null);
 
     try {
+      const rawTokenLimit = Number(form.token_limit || 0);
+      const rawMessageCountLimit = Number(form.message_count_limit || 0);
+      const rawTargetSummaryTokens = Number(form.target_summary_tokens || 0);
+      const rawJobIntervalSeconds = Number(form.job_interval_seconds || 0);
+
+      const tokenLimit = clampNumber(rawTokenLimit, limits.token_limit);
+      const messageCountLimit = clampNumber(rawMessageCountLimit, limits.message_count_limit);
+      const targetSummaryTokens = clampNumber(
+        rawTargetSummaryTokens,
+        limits.target_summary_tokens
+      );
+      const jobIntervalSeconds = clampNumber(rawJobIntervalSeconds, limits.job_interval_seconds);
+
+      const clampedFields: string[] = [];
+      if (tokenLimit !== rawTokenLimit) {
+        clampedFields.push(`长度阈值(${rangeText(limits.token_limit)})`);
+      }
+      if (messageCountLimit !== rawMessageCountLimit) {
+        clampedFields.push(`消息条数阈值(${rangeText(limits.message_count_limit)})`);
+      }
+      if (targetSummaryTokens !== rawTargetSummaryTokens) {
+        clampedFields.push(`目标摘要长度(${rangeText(limits.target_summary_tokens)})`);
+      }
+      if (jobIntervalSeconds !== rawJobIntervalSeconds) {
+        clampedFields.push(`任务间隔(${rangeText(limits.job_interval_seconds)})`);
+      }
+
       const saved = await client.updateSessionSummaryJobConfig({
         user_id: effectiveUserId,
         enabled: form.enabled,
         summary_model_config_id: form.summary_model_config_id || null,
-        token_limit: Math.max(500, Number(form.token_limit || 0)),
-        message_count_limit: Math.max(1, Number(form.message_count_limit || 0)),
-        round_limit: Math.max(1, Number(form.message_count_limit || 0)),
-        target_summary_tokens: Math.max(200, Number(form.target_summary_tokens || 0)),
-        job_interval_seconds: Math.max(10, Number(form.job_interval_seconds || 0)),
+        token_limit: tokenLimit,
+        message_count_limit: messageCountLimit,
+        round_limit: messageCountLimit,
+        target_summary_tokens: targetSummaryTokens,
+        job_interval_seconds: jobIntervalSeconds,
       });
 
+      const savedLimits = parseLimits(saved);
+      setLimits(savedLimits);
       setForm({
         enabled: saved?.enabled !== false,
         summary_model_config_id: String(saved?.summary_model_config_id || ""),
-        token_limit: Number(saved?.token_limit || form.token_limit),
-        message_count_limit: Number(
-          saved?.message_count_limit || saved?.round_limit || form.message_count_limit
+        token_limit: clampNumber(
+          Number(saved?.token_limit || tokenLimit),
+          savedLimits.token_limit
         ),
-        target_summary_tokens: Number(saved?.target_summary_tokens || form.target_summary_tokens),
-        job_interval_seconds: Number(saved?.job_interval_seconds || form.job_interval_seconds),
+        message_count_limit: clampNumber(
+          Number(saved?.message_count_limit || saved?.round_limit || messageCountLimit),
+          savedLimits.message_count_limit
+        ),
+        target_summary_tokens: clampNumber(
+          Number(saved?.target_summary_tokens || targetSummaryTokens),
+          savedLimits.target_summary_tokens
+        ),
+        job_interval_seconds: clampNumber(
+          Number(saved?.job_interval_seconds || jobIntervalSeconds),
+          savedLimits.job_interval_seconds
+        ),
       });
+
+      if (clampedFields.length > 0) {
+        setNotice(`已按安全范围自动调整：${clampedFields.join("、")}`);
+      } else {
+        setNotice("保存成功");
+      }
     } catch (e: any) {
       setError(String(e?.message || e));
     } finally {
@@ -160,6 +287,12 @@ const SessionSummaryJobConfigPanel: React.FC<Props> = ({ onClose }) => {
           {error ? (
             <div className="p-2 text-sm rounded-lg bg-destructive/10 text-destructive border border-destructive/20">
               {error}
+            </div>
+          ) : null}
+
+          {notice ? (
+            <div className="p-2 text-sm rounded-lg bg-primary/10 text-primary border border-primary/20">
+              {notice}
             </div>
           ) : null}
 
@@ -198,42 +331,58 @@ const SessionSummaryJobConfigPanel: React.FC<Props> = ({ onClose }) => {
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 rounded-xl border border-border/60 p-4">
                 <div>
-                  <label className="text-xs text-muted-foreground">长度阈值（Token）</label>
+                  <label className="text-xs text-muted-foreground">
+                    长度阈值（Token，{rangeText(limits.token_limit)}）
+                  </label>
                   <input
                     type="number"
                     className="w-full mt-1 p-2 border rounded-lg bg-background"
                     value={form.token_limit}
+                    min={limits.token_limit.min}
+                    max={limits.token_limit.max}
                     onChange={(event) => setField("token_limit", Number(event.target.value || 0))}
                   />
                 </div>
                 <div>
-                  <label className="text-xs text-muted-foreground">消息条数阈值</label>
+                  <label className="text-xs text-muted-foreground">
+                    消息条数阈值（{rangeText(limits.message_count_limit)}）
+                  </label>
                   <input
                     type="number"
                     className="w-full mt-1 p-2 border rounded-lg bg-background"
                     value={form.message_count_limit}
+                    min={limits.message_count_limit.min}
+                    max={limits.message_count_limit.max}
                     onChange={(event) =>
                       setField("message_count_limit", Number(event.target.value || 0))
                     }
                   />
                 </div>
                 <div>
-                  <label className="text-xs text-muted-foreground">目标摘要长度（Token）</label>
+                  <label className="text-xs text-muted-foreground">
+                    目标摘要长度（Token，{rangeText(limits.target_summary_tokens)}）
+                  </label>
                   <input
                     type="number"
                     className="w-full mt-1 p-2 border rounded-lg bg-background"
                     value={form.target_summary_tokens}
+                    min={limits.target_summary_tokens.min}
+                    max={limits.target_summary_tokens.max}
                     onChange={(event) =>
                       setField("target_summary_tokens", Number(event.target.value || 0))
                     }
                   />
                 </div>
                 <div>
-                  <label className="text-xs text-muted-foreground">任务间隔（秒）</label>
+                  <label className="text-xs text-muted-foreground">
+                    任务间隔（秒，{rangeText(limits.job_interval_seconds)}）
+                  </label>
                   <input
                     type="number"
                     className="w-full mt-1 p-2 border rounded-lg bg-background"
                     value={form.job_interval_seconds}
+                    min={limits.job_interval_seconds.min}
+                    max={limits.job_interval_seconds.max}
                     onChange={(event) =>
                       setField("job_interval_seconds", Number(event.target.value || 0))
                     }

@@ -1,4 +1,5 @@
 use serde_json::{json, Value};
+use tracing::warn;
 
 use crate::config::Config;
 use crate::core::ai_model_config::resolve_chat_model_config;
@@ -101,42 +102,74 @@ async fn run_with_chat_completions(
     );
 
     let mut no_system_messages = base_url_disallows_system_messages(&runtime.base_url);
-    for _ in 0..2 {
-        let messages = build_chat_prompt_messages(system_prompt, user_prompt, no_system_messages);
+    let stream_modes: &[bool] = if purpose == "session_summary_job" {
+        &[true, false]
+    } else {
+        &[true]
+    };
+    let max_attempts = if purpose == "session_summary_job" {
+        5
+    } else {
+        4
+    };
+    let mut last_transport_error: Option<String> = None;
 
-        match handler
-            .handle_request(
-                messages,
-                None,
-                runtime.model.clone(),
-                Some(runtime.temperature),
-                max_tokens,
-                v2_handler::StreamCallbacks {
-                    on_chunk: None,
-                    on_thinking: None,
-                },
-                false,
-                Some(runtime.provider.clone()),
-                runtime.thinking_level.clone(),
-                None,
-                true,
-                None,
-                None,
-                purpose,
-            )
-            .await
-        {
-            Ok(response) => {
-                return Ok(select_response_text(response.content, response.reasoning));
-            }
-            Err(err) => {
-                if !no_system_messages && is_system_messages_not_allowed_error(&err) {
-                    no_system_messages = true;
-                    continue;
+    for (mode_index, stream_mode) in stream_modes.iter().enumerate() {
+        for attempt in 0..max_attempts {
+            let messages =
+                build_chat_prompt_messages(system_prompt, user_prompt, no_system_messages);
+
+            match handler
+                .handle_request(
+                    messages,
+                    None,
+                    runtime.model.clone(),
+                    Some(runtime.temperature),
+                    max_tokens,
+                    v2_handler::StreamCallbacks {
+                        on_chunk: None,
+                        on_thinking: None,
+                    },
+                    false,
+                    Some(runtime.provider.clone()),
+                    runtime.thinking_level.clone(),
+                    None,
+                    *stream_mode,
+                    None,
+                    None,
+                    purpose,
+                )
+                .await
+            {
+                Ok(response) => {
+                    return Ok(select_response_text(response.content, response.reasoning));
                 }
-                return Err(err);
+                Err(err) => {
+                    let transport_retryable = should_retry_transport_error(&err);
+                    if !no_system_messages && is_system_messages_not_allowed_error(&err) {
+                        no_system_messages = true;
+                        continue;
+                    }
+                    if attempt + 1 < max_attempts && transport_retryable {
+                        last_transport_error = Some(err.clone());
+                        continue;
+                    }
+                    if *stream_mode && mode_index + 1 < stream_modes.len() && transport_retryable {
+                        warn!(
+                            "[PROMPT-RUNNER] fallback to non-stream for purpose={} after stream transport error: {}",
+                            purpose, err
+                        );
+                        last_transport_error = Some(err);
+                        break;
+                    }
+                    return Err(err);
+                }
             }
         }
+    }
+
+    if let Some(err) = last_transport_error {
+        return Err(err);
     }
 
     Err("AI 请求失败：系统消息兼容重试后仍失败".to_string())
@@ -157,61 +190,92 @@ async fn run_with_responses(
 
     let mut no_system_messages = base_url_disallows_system_messages(&runtime.base_url);
     let mut input_as_list = base_url_requires_responses_input_list(&runtime.base_url);
-    for _ in 0..4 {
-        let wrapped_user_prompt = if no_system_messages && !system_prompt.trim().is_empty() {
-            format!(
-                "【系统上下文】\n{}\n\n{}",
-                system_prompt.trim(),
-                user_prompt
-            )
-        } else {
-            user_prompt.to_string()
-        };
-        let instructions = if no_system_messages {
-            None
-        } else {
-            Some(system_prompt.to_string())
-        };
-        let input = build_responses_input(wrapped_user_prompt.as_str(), input_as_list);
+    let stream_modes: &[bool] = if purpose == "session_summary_job" {
+        &[true, false]
+    } else {
+        &[true]
+    };
+    let max_attempts = if purpose == "session_summary_job" {
+        5
+    } else {
+        4
+    };
+    let mut last_transport_error: Option<String> = None;
 
-        match handler
-            .handle_request(
-                input,
-                runtime.model.clone(),
-                instructions,
-                None,
-                None,
-                Some(runtime.temperature),
-                max_tokens,
-                v3_handler::StreamCallbacks {
-                    on_chunk: None,
-                    on_thinking: None,
-                },
-                Some(runtime.provider.clone()),
-                runtime.thinking_level.clone(),
-                None,
-                true,
-                None,
-                None,
-                purpose,
-            )
-            .await
-        {
-            Ok(response) => {
-                return Ok(select_response_text(response.content, response.reasoning));
-            }
-            Err(err) => {
-                if !input_as_list && is_input_must_be_list_error(&err) {
-                    input_as_list = true;
-                    continue;
+    for (mode_index, stream_mode) in stream_modes.iter().enumerate() {
+        for attempt in 0..max_attempts {
+            let wrapped_user_prompt = if no_system_messages && !system_prompt.trim().is_empty() {
+                format!(
+                    "【系统上下文】\n{}\n\n{}",
+                    system_prompt.trim(),
+                    user_prompt
+                )
+            } else {
+                user_prompt.to_string()
+            };
+            let instructions = if no_system_messages {
+                None
+            } else {
+                Some(system_prompt.to_string())
+            };
+            let input = build_responses_input(wrapped_user_prompt.as_str(), input_as_list);
+
+            match handler
+                .handle_request(
+                    input,
+                    runtime.model.clone(),
+                    instructions,
+                    None,
+                    None,
+                    Some(runtime.temperature),
+                    max_tokens,
+                    v3_handler::StreamCallbacks {
+                        on_chunk: None,
+                        on_thinking: None,
+                    },
+                    Some(runtime.provider.clone()),
+                    runtime.thinking_level.clone(),
+                    None,
+                    *stream_mode,
+                    None,
+                    None,
+                    purpose,
+                )
+                .await
+            {
+                Ok(response) => {
+                    return Ok(select_response_text(response.content, response.reasoning));
                 }
-                if !no_system_messages && is_system_messages_not_allowed_error(&err) {
-                    no_system_messages = true;
-                    continue;
+                Err(err) => {
+                    let transport_retryable = should_retry_transport_error(&err);
+                    if !input_as_list && is_input_must_be_list_error(&err) {
+                        input_as_list = true;
+                        continue;
+                    }
+                    if !no_system_messages && is_system_messages_not_allowed_error(&err) {
+                        no_system_messages = true;
+                        continue;
+                    }
+                    if attempt + 1 < max_attempts && transport_retryable {
+                        last_transport_error = Some(err.clone());
+                        continue;
+                    }
+                    if *stream_mode && mode_index + 1 < stream_modes.len() && transport_retryable {
+                        warn!(
+                            "[PROMPT-RUNNER] fallback to non-stream for purpose={} after stream transport error: {}",
+                            purpose, err
+                        );
+                        last_transport_error = Some(err);
+                        break;
+                    }
+                    return Err(err);
                 }
-                return Err(err);
             }
         }
+    }
+
+    if let Some(err) = last_transport_error {
+        return Err(err);
     }
 
     Err("AI 请求失败：responses 兼容重试后仍失败".to_string())
@@ -285,6 +349,21 @@ fn build_responses_input(user_prompt: &str, input_as_list: bool) -> Value {
 fn is_input_must_be_list_error(err: &str) -> bool {
     let normalized = err.to_lowercase();
     normalized.contains("input must be a list")
+}
+
+fn should_retry_transport_error(err: &str) -> bool {
+    let normalized = err.to_lowercase();
+    normalized.contains("error sending request for url")
+        || normalized.contains("error decoding response body")
+        || normalized.contains("connection closed before message completed")
+        || normalized.contains("unexpected eof")
+        || normalized.contains("timed out")
+        || normalized.contains("status 522")
+        || normalized.contains("status 523")
+        || normalized.contains("status 524")
+        || normalized.contains("error code: 522")
+        || normalized.contains("error code: 523")
+        || normalized.contains("error code: 524")
 }
 
 fn base_url_requires_responses_input_list(base_url: &str) -> bool {

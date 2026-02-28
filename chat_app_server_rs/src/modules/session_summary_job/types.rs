@@ -1,5 +1,10 @@
 use serde::{Deserialize, Serialize};
 
+pub const MIN_TOKEN_LIMIT: i64 = 500;
+pub const MIN_ROUND_LIMIT: i64 = 1;
+pub const MIN_TARGET_SUMMARY_TOKENS: i64 = 200;
+pub const MIN_JOB_INTERVAL_SECONDS: i64 = 10;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SummaryJobDefaults {
     pub enabled: bool,
@@ -22,22 +27,22 @@ impl SummaryJobDefaults {
             .ok()
             .and_then(|value| value.parse::<i64>().ok())
             .unwrap_or(6000)
-            .max(500);
+            .max(MIN_TOKEN_LIMIT);
         let round_limit = std::env::var("SESSION_SUMMARY_JOB_ROUND_LIMIT")
             .ok()
             .and_then(|value| value.parse::<i64>().ok())
             .unwrap_or(8)
-            .max(1);
+            .max(MIN_ROUND_LIMIT);
         let target_summary_tokens = std::env::var("SESSION_SUMMARY_JOB_TARGET_TOKENS")
             .ok()
             .and_then(|value| value.parse::<i64>().ok())
             .unwrap_or(700)
-            .max(200);
+            .max(MIN_TARGET_SUMMARY_TOKENS);
         let job_interval_seconds = std::env::var("SESSION_SUMMARY_JOB_INTERVAL_SECONDS")
             .ok()
             .and_then(|value| value.parse::<i64>().ok())
             .unwrap_or(30)
-            .max(10);
+            .max(MIN_JOB_INTERVAL_SECONDS);
         let keep_last_n_messages = std::env::var("SESSION_SUMMARY_JOB_KEEP_LAST_N_MESSAGES")
             .ok()
             .and_then(|value| value.parse::<usize>().ok())

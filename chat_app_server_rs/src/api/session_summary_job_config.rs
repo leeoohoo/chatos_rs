@@ -1,3 +1,6 @@
+use crate::modules::session_summary_job::types::{
+    MIN_JOB_INTERVAL_SECONDS, MIN_ROUND_LIMIT, MIN_TARGET_SUMMARY_TOKENS, MIN_TOKEN_LIMIT,
+};
 use axum::http::StatusCode;
 use axum::{extract::Query, routing::get, Json, Router};
 use serde::Deserialize;
@@ -45,7 +48,8 @@ async fn get_config(Query(query): Query<UserQuery>) -> (StatusCode, Json<Value>)
             (StatusCode::OK, Json(to_json(normalized)))
         }
         Ok(None) => {
-            let fallback = default_config_for_user(&user_id, &defaults);
+            let fallback =
+                normalize_config(default_config_for_user(&user_id, &defaults), &defaults);
             (StatusCode::OK, Json(to_json(fallback)))
         }
         Err(err) => (
@@ -87,20 +91,21 @@ async fn upsert_config(req: SummaryJobConfigRequest) -> (StatusCode, Json<Value>
             .filter(|value| !value.is_empty());
     }
     if let Some(token_limit) = req.token_limit {
-        config.token_limit = token_limit.max(500);
+        config.token_limit = token_limit;
     }
     let message_count_limit = req.message_count_limit.or(req.round_limit);
     if let Some(round_limit) = message_count_limit {
-        config.round_limit = round_limit.max(1);
+        config.round_limit = round_limit;
     }
     if let Some(target_summary_tokens) = req.target_summary_tokens {
-        config.target_summary_tokens = target_summary_tokens.max(200);
+        config.target_summary_tokens = target_summary_tokens;
     }
     if let Some(job_interval_seconds) = req.job_interval_seconds {
-        config.job_interval_seconds = job_interval_seconds.max(10);
+        config.job_interval_seconds = job_interval_seconds;
     }
 
-    match SessionSummaryJobConfigService::upsert(&config).await {
+    let normalized = normalize_config(config, &defaults);
+    match SessionSummaryJobConfigService::upsert(&normalized).await {
         Ok(saved) => (
             StatusCode::OK,
             Json(to_json(normalize_config(saved, &defaults))),
@@ -145,7 +150,33 @@ fn to_json(config: SessionSummaryJobConfig) -> Value {
         "round_limit": config.round_limit,
         "target_summary_tokens": config.target_summary_tokens,
         "job_interval_seconds": config.job_interval_seconds,
+        "limits": build_limits_json(),
         "updated_at": config.updated_at,
+    })
+}
+
+fn clamp_with_fallback(value: i64, fallback: i64, min_value: i64) -> i64 {
+    let candidate = if value > 0 { value } else { fallback };
+    candidate.max(min_value)
+}
+
+fn build_limits_json() -> Value {
+    json!({
+        "token_limit": {
+            "min": MIN_TOKEN_LIMIT,
+        },
+        "message_count_limit": {
+            "min": MIN_ROUND_LIMIT,
+        },
+        "round_limit": {
+            "min": MIN_ROUND_LIMIT,
+        },
+        "target_summary_tokens": {
+            "min": MIN_TARGET_SUMMARY_TOKENS,
+        },
+        "job_interval_seconds": {
+            "min": MIN_JOB_INTERVAL_SECONDS,
+        }
     })
 }
 
@@ -153,29 +184,19 @@ fn normalize_config(
     mut config: SessionSummaryJobConfig,
     defaults: &crate::modules::session_summary_job::types::SummaryJobDefaults,
 ) -> SessionSummaryJobConfig {
-    config.token_limit = if config.token_limit > 0 {
-        config.token_limit
-    } else {
-        defaults.token_limit
-    }
-    .max(500);
-    config.round_limit = if config.round_limit > 0 {
-        config.round_limit
-    } else {
-        defaults.round_limit
-    }
-    .max(1);
-    config.target_summary_tokens = if config.target_summary_tokens > 0 {
-        config.target_summary_tokens
-    } else {
-        defaults.target_summary_tokens
-    }
-    .max(200);
-    config.job_interval_seconds = if config.job_interval_seconds > 0 {
-        config.job_interval_seconds
-    } else {
-        defaults.job_interval_seconds
-    }
-    .max(10);
+    config.token_limit =
+        clamp_with_fallback(config.token_limit, defaults.token_limit, MIN_TOKEN_LIMIT);
+    config.round_limit =
+        clamp_with_fallback(config.round_limit, defaults.round_limit, MIN_ROUND_LIMIT);
+    config.target_summary_tokens = clamp_with_fallback(
+        config.target_summary_tokens,
+        defaults.target_summary_tokens,
+        MIN_TARGET_SUMMARY_TOKENS,
+    );
+    config.job_interval_seconds = clamp_with_fallback(
+        config.job_interval_seconds,
+        defaults.job_interval_seconds,
+        MIN_JOB_INTERVAL_SECONDS,
+    );
     config
 }

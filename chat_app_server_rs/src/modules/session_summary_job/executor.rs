@@ -16,7 +16,7 @@ use crate::services::summary::types::{
 };
 
 use super::config;
-use super::types::{EffectiveSummaryJobConfig, SummaryJobDefaults};
+use super::types::{EffectiveSummaryJobConfig, SummaryJobDefaults, MIN_TARGET_SUMMARY_TOKENS};
 
 const PREVIOUS_SUMMARY_CONTEXT_LIMIT: i64 = 2;
 
@@ -121,10 +121,11 @@ pub async fn process_session(
                 )
                 .await;
                 warn!(
-                    "[SESSION-SUMMARY-JOB] summarize failed: session_id={} trigger={} selected_messages={} split_chunks={} error={}",
+                    "[SESSION-SUMMARY-JOB] summarize failed: session_id={} trigger={} selected_messages={} selected_tokens={} split_chunks={} error={}",
                     session_id,
                     trigger_type,
                     selected_messages.len(),
+                    selected_tokens,
                     split_chunk_count,
                     error
                 );
@@ -158,10 +159,11 @@ pub async fn process_session(
             )
             .await;
             warn!(
-                "[SESSION-SUMMARY-JOB] merge chunk summaries failed: session_id={} trigger={} selected_messages={} split_chunks={} error={}",
+                "[SESSION-SUMMARY-JOB] merge chunk summaries failed: session_id={} trigger={} selected_messages={} selected_tokens={} split_chunks={} error={}",
                 session_id,
                 trigger_type,
                 selected_messages.len(),
+                selected_tokens,
                 split_chunk_count,
                 err
             );
@@ -223,12 +225,14 @@ pub async fn process_session(
 }
 
 fn build_summary_options(config: &EffectiveSummaryJobConfig, model_name: &str) -> SummaryOptions {
+    let target_summary_tokens = config.target_summary_tokens.max(MIN_TARGET_SUMMARY_TOKENS);
+
     SummaryOptions {
         message_limit: 1,
         max_context_tokens: 0,
         keep_last_n: config.keep_last_n_messages,
-        target_summary_tokens: config.target_summary_tokens,
-        merge_target_tokens: (config.target_summary_tokens * 85 / 100).max(200),
+        target_summary_tokens,
+        merge_target_tokens: (target_summary_tokens * 85 / 100).max(200),
         model: model_name.to_string(),
         temperature: 0.2,
         bisect_enabled: true,
@@ -481,7 +485,8 @@ impl SummaryLlmClient for JobSummaryLlmClient {
         request: SummaryLlmRequest,
     ) -> SummaryBoxFuture<'a, Result<String, String>> {
         Box::pin(async move {
-            let system_prompt = build_summarizer_system_prompt(request.target_tokens.max(200));
+            let target_tokens = request.target_tokens.max(MIN_TARGET_SUMMARY_TOKENS);
+            let system_prompt = build_summarizer_system_prompt(target_tokens);
             let conversation_text = serialize_context_messages(request.context_messages.as_slice());
             let user_prompt = format!("{}\n\n{}", conversation_text, build_summary_user_prompt());
 
@@ -489,7 +494,7 @@ impl SummaryLlmClient for JobSummaryLlmClient {
                 &self.runtime,
                 system_prompt.as_str(),
                 user_prompt.as_str(),
-                Some(request.target_tokens.max(256)),
+                Some(target_tokens.max(256)),
                 "session_summary_job",
             )
             .await

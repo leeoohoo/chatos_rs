@@ -130,6 +130,7 @@ impl AiRequestHandler {
         );
 
         let persist_messages = purpose != "sub_agent_router";
+        let force_identity_encoding = purpose == "session_summary_job";
 
         if stream {
             self.handle_stream_request(
@@ -138,6 +139,7 @@ impl AiRequestHandler {
                 callbacks,
                 session_id,
                 token,
+                force_identity_encoding,
                 persist_messages,
                 message_mode,
                 message_source,
@@ -149,6 +151,7 @@ impl AiRequestHandler {
                 payload,
                 session_id,
                 token,
+                force_identity_encoding,
                 persist_messages,
                 message_mode,
                 message_source,
@@ -163,19 +166,19 @@ impl AiRequestHandler {
         payload: Value,
         session_id: Option<String>,
         token: Option<CancellationToken>,
+        force_identity_encoding: bool,
         persist_messages: bool,
         message_mode: Option<String>,
         message_source: Option<String>,
     ) -> Result<AiResponse, String> {
-        let resp = await_with_optional_abort(
-            self.client
-                .post(&url)
-                .bearer_auth(&self.api_key)
-                .json(&payload)
-                .send(),
-            token,
-        )
-        .await?;
+        let mut req = self.client.post(&url).bearer_auth(&self.api_key);
+        if force_identity_encoding {
+            req = req
+                .header(reqwest::header::ACCEPT_ENCODING, "identity")
+                .header(reqwest::header::CONNECTION, "close")
+                .version(reqwest::Version::HTTP_11);
+        }
+        let resp = await_with_optional_abort(req.json(&payload).send(), token).await?;
 
         let status = resp.status();
         let raw = resp.text().await.map_err(|e| e.to_string())?;
@@ -249,19 +252,19 @@ impl AiRequestHandler {
         callbacks: StreamCallbacks,
         session_id: Option<String>,
         token: Option<CancellationToken>,
+        force_identity_encoding: bool,
         persist_messages: bool,
         message_mode: Option<String>,
         message_source: Option<String>,
     ) -> Result<AiResponse, String> {
-        let resp = await_with_optional_abort(
-            self.client
-                .post(&url)
-                .bearer_auth(&self.api_key)
-                .json(&payload)
-                .send(),
-            token.clone(),
-        )
-        .await?;
+        let mut req = self.client.post(&url).bearer_auth(&self.api_key);
+        if force_identity_encoding {
+            req = req
+                .header(reqwest::header::ACCEPT_ENCODING, "identity")
+                .header(reqwest::header::CONNECTION, "close")
+                .version(reqwest::Version::HTTP_11);
+        }
+        let resp = await_with_optional_abort(req.json(&payload).send(), token.clone()).await?;
 
         let status = resp.status();
         if !status.is_success() {

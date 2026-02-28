@@ -8,7 +8,10 @@ use crate::models::session_summary_job_config::{
 use crate::repositories::ai_model_configs;
 use crate::services::llm_prompt_runner::PromptRunnerRuntime;
 
-use super::types::{EffectiveSummaryJobConfig, SummaryJobDefaults};
+use super::types::{
+    EffectiveSummaryJobConfig, SummaryJobDefaults, MIN_JOB_INTERVAL_SECONDS, MIN_ROUND_LIMIT,
+    MIN_TARGET_SUMMARY_TOKENS, MIN_TOKEN_LIMIT,
+};
 
 const DEFAULT_USER_ID: &str = "default-user";
 
@@ -63,12 +66,12 @@ fn to_effective_config(
     let token_limit = clamp_positive(
         config.as_ref().map(|value| value.token_limit).unwrap_or(0),
         fallback_token_limit,
-        500,
+        MIN_TOKEN_LIMIT,
     );
     let round_limit = clamp_positive(
         config.as_ref().map(|value| value.round_limit).unwrap_or(0),
         fallback_round_limit,
-        1,
+        MIN_ROUND_LIMIT,
     );
     let target_summary_tokens = clamp_positive(
         config
@@ -76,7 +79,7 @@ fn to_effective_config(
             .map(|value| value.target_summary_tokens)
             .unwrap_or(0),
         fallback_target_tokens,
-        200,
+        MIN_TARGET_SUMMARY_TOKENS,
     );
     let job_interval_seconds = clamp_positive(
         config
@@ -84,7 +87,7 @@ fn to_effective_config(
             .map(|value| value.job_interval_seconds)
             .unwrap_or(0),
         fallback_job_interval_seconds,
-        10,
+        MIN_JOB_INTERVAL_SECONDS,
     );
 
     EffectiveSummaryJobConfig {

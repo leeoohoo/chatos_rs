@@ -164,9 +164,10 @@ impl AiClient {
         let dynamic_summary_enabled_before = self.dynamic_summary_enabled;
         self.dynamic_summary_enabled =
             dynamic_summary_enabled_before && purpose == "sub_agent_router";
+        let stable_prefix_mode = purpose == "chat";
 
-        // Keep normal chat history loading aligned with V2:
-        // summaries(2) + all unsummarized messages from current session.
+        // Chat mode favors a stable stateless prefix so provider-side prompt caching can reuse
+        // a bounded recent window even when async summary jobs are updating session summaries.
         let prefer_stateless = if purpose == "chat" {
             true
         } else {
@@ -210,12 +211,13 @@ impl AiClient {
             history_limit
         };
         info!(
-            "[AI_V3] context mode: use_prev_id={}, can_use_prev_id={}, provider={}, history_limit={}, has_prev_id={}",
+            "[AI_V3] context mode: use_prev_id={}, can_use_prev_id={}, provider={}, history_limit={}, has_prev_id={}, stable_prefix_mode={}",
             use_prev_id,
             can_use_prev_id,
             provider,
             stateless_history_limit,
-            previous_response_id.is_some()
+            previous_response_id.is_some(),
+            stable_prefix_mode
         );
         let initial_input = if use_prev_id {
             normalize_input_for_provider(&raw_input, force_text_content)
@@ -225,6 +227,7 @@ impl AiClient {
                 self.build_stateless_items(
                     session_id.clone(),
                     stateless_history_limit,
+                    stable_prefix_mode,
                     force_text_content,
                     &current_items,
                     include_tool_items,
@@ -254,6 +257,7 @@ impl AiClient {
                 can_use_prev_id,
                 raw_input,
                 stateless_history_limit,
+                stable_prefix_mode,
                 force_text_content,
                 prefer_stateless,
                 message_mode,
@@ -286,6 +290,7 @@ impl AiClient {
         can_use_prev_id: bool,
         raw_input: Value,
         history_limit: i64,
+        stable_prefix_mode: bool,
         force_text_content: bool,
         prefer_stateless: bool,
         message_mode: Option<String>,
@@ -418,6 +423,7 @@ impl AiClient {
                                 .build_stateless_items(
                                     session_id.clone(),
                                     adaptive_history_limit,
+                                    stable_prefix_mode,
                                     force_text_content,
                                     &current_items,
                                     include_tool_items,
@@ -448,6 +454,7 @@ impl AiClient {
                                 self.build_stateless_items(
                                     session_id.clone(),
                                     adaptive_history_limit,
+                                    stable_prefix_mode,
                                     force_text_content,
                                     &current_items,
                                     include_tool_items,
@@ -575,6 +582,7 @@ impl AiClient {
                                     .build_stateless_items(
                                         session_id.clone(),
                                         adaptive_history_limit,
+                                        stable_prefix_mode,
                                         force_text_content,
                                         &current_items,
                                         include_tool_items,
@@ -598,6 +606,7 @@ impl AiClient {
                 Some(resp) => resp,
                 None => return Err(last_error.unwrap_or_else(|| "request failed".to_string())),
             };
+            log_usage_snapshot(purpose, ai_response.usage.as_ref());
 
             if let Some(err) = completion_failed_error(
                 ai_response.finish_reason.as_deref(),
@@ -640,6 +649,7 @@ impl AiClient {
                             .build_stateless_items(
                                 session_id.clone(),
                                 adaptive_history_limit,
+                                stable_prefix_mode,
                                 force_text_content,
                                 &current_items,
                                 include_tool_items,
@@ -802,6 +812,7 @@ impl AiClient {
                     self.build_stateless_items(
                         session_id.clone(),
                         adaptive_history_limit,
+                        stable_prefix_mode,
                         force_text_content,
                         &current_items,
                         include_tool_items,
@@ -1043,7 +1054,8 @@ impl AiClient {
     async fn build_stateless_items(
         &self,
         session_id: Option<String>,
-        _history_limit: i64,
+        history_limit: i64,
+        stable_prefix_mode: bool,
         force_text: bool,
         current_input_items: &[Value],
         include_tool_items: bool,
@@ -1051,19 +1063,32 @@ impl AiClient {
         let mut items = Vec::new();
         let mut summary_count = 0usize;
         let mut history_count = 0usize;
+        let mut summary_context_used = false;
         let mut tool_call_ids: HashSet<String> = HashSet::new();
         let mut tool_output_ids: HashSet<String> = HashSet::new();
         if let Some(sid) = session_id.as_ref() {
-            let (merged_summary, merged_summary_count, history) =
-                self.message_manager.get_chat_history_context(sid, 2).await;
-            summary_count = merged_summary_count;
-            if let Some(summary_text) = merged_summary {
-                items.push(to_message_item(
-                    "system",
-                    &Value::String(summary_text),
-                    force_text,
-                ));
-            }
+            let history = if stable_prefix_mode && history_limit > 0 {
+                self.message_manager
+                    .get_session_messages(sid, Some(history_limit))
+                    .await
+            } else {
+                let (merged_summary, merged_summary_count, mut pending_history) =
+                    self.message_manager.get_chat_history_context(sid, 2).await;
+                summary_count = merged_summary_count;
+                if let Some(summary_text) = merged_summary {
+                    summary_context_used = true;
+                    items.push(to_message_item(
+                        "system",
+                        &Value::String(summary_text),
+                        force_text,
+                    ));
+                }
+                if history_limit > 0 && pending_history.len() > history_limit as usize {
+                    let keep_from = pending_history.len() - history_limit as usize;
+                    pending_history = pending_history.split_off(keep_from);
+                }
+                pending_history
+            };
 
             history_count = history.len();
 
@@ -1182,7 +1207,9 @@ impl AiClient {
         }
         items.extend_from_slice(current_input_items);
         info!(
-            "[AI_V3] stateless items built: summaries={}, history_messages={}, total_items={}",
+            "[AI_V3] stateless items built: stable_prefix_mode={}, summary_context_used={}, summaries={}, history_messages={}, total_items={}",
+            stable_prefix_mode,
+            summary_context_used,
             summary_count,
             history_count,
             items.len()
@@ -1217,6 +1244,39 @@ fn build_source_info(
         first_message_created_at: slice.first().map(|item| item.created_at.clone()),
         last_message_created_at: slice.last().map(|item| item.created_at.clone()),
     }
+}
+
+fn usage_value_i64(value: &Value, key: &str) -> Option<i64> {
+    value
+        .get(key)
+        .and_then(|item| item.as_i64().or_else(|| item.as_u64().map(|v| v as i64)))
+}
+
+fn usage_nested_i64(value: &Value, parent: &str, key: &str) -> Option<i64> {
+    value
+        .get(parent)
+        .and_then(|item| item.get(key))
+        .and_then(|item| item.as_i64().or_else(|| item.as_u64().map(|v| v as i64)))
+}
+
+fn log_usage_snapshot(purpose: &str, usage: Option<&Value>) {
+    let Some(usage) = usage else {
+        return;
+    };
+    let input_tokens = usage_value_i64(usage, "input_tokens")
+        .or_else(|| usage_value_i64(usage, "prompt_tokens"))
+        .unwrap_or(-1);
+    let output_tokens = usage_value_i64(usage, "output_tokens")
+        .or_else(|| usage_value_i64(usage, "completion_tokens"))
+        .unwrap_or(-1);
+    let cached_tokens = usage_nested_i64(usage, "input_tokens_details", "cached_tokens")
+        .or_else(|| usage_nested_i64(usage, "prompt_tokens_details", "cached_tokens"))
+        .unwrap_or(0);
+
+    info!(
+        "[AI_V3] usage snapshot: purpose={}, input_tokens={}, cached_tokens={}, output_tokens={}",
+        purpose, input_tokens, cached_tokens, output_tokens
+    );
 }
 
 fn response_input_to_chat_messages(input: &Value) -> Vec<Value> {
