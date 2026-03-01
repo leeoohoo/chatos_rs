@@ -61,6 +61,9 @@ pub async fn process_session(
     if !effective.enabled {
         return Ok(SessionProcessOutcome::skipped("disabled"));
     }
+    if effective.model_config_id.is_none() {
+        return Ok(SessionProcessOutcome::skipped("no_model_config"));
+    }
 
     let message_limit = effective.round_limit.max(1) as usize;
     let pending =
