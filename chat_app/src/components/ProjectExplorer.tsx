@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import hljs from 'highlight.js';
-import ApiClient from '../lib/api/client';
+import { apiClient as globalApiClient } from '../lib/api/client';
 import { useChatApiClientFromContext } from '../lib/store/ChatStoreContext';
 import type { Project, FsEntry, FsReadResult, ChangeLogItem } from '../types';
 import { cn, formatFileSize } from '../lib/utils';
@@ -129,7 +129,7 @@ const escapeHtml = (value: string) => (
 
 export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, className }) => {
   const apiClientFromContext = useChatApiClientFromContext();
-  const client = useMemo(() => apiClientFromContext || new ApiClient(), [apiClientFromContext]);
+  const client = useMemo(() => apiClientFromContext || globalApiClient, [apiClientFromContext]);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const resizeStartX = useRef(0);

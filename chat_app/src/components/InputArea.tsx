@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
-import ApiClient from '../lib/api/client';
+import { apiClient as globalApiClient } from '../lib/api/client';
 import { useChatApiClientFromContext } from '../lib/store/ChatStoreContext';
 import { cn } from '../lib/utils';
 import type { FsEntry, InputAreaProps } from '../types';
@@ -108,7 +108,7 @@ export const InputArea: React.FC<InputAreaProps> = ({
   const globalDragCounter = useRef(0);
 
   const apiClientFromContext = useChatApiClientFromContext();
-  const client = useMemo(() => apiClientFromContext || new ApiClient(), [apiClientFromContext]);
+  const client = useMemo(() => apiClientFromContext || globalApiClient, [apiClientFromContext]);
   const projectFilePickerRef = useRef<HTMLDivElement>(null);
   const [projectFilePickerOpen, setProjectFilePickerOpen] = useState(false);
   const [projectFileEntries, setProjectFileEntries] = useState<FsEntry[]>([]);

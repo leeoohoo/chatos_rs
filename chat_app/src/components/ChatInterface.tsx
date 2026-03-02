@@ -20,7 +20,7 @@ import TaskWorkbar, {
   type TaskWorkbarItem,
 } from './TaskWorkbar';
 import SessionSummaryJobConfigPanel from './SessionSummaryJobConfigPanel';
-import ApiClient from '../lib/api/client';
+import { apiClient as globalApiClient } from '../lib/api/client';
 import { cn } from '../lib/utils';
 import type { ChatInterfaceProps } from '../types';
 import type { TaskReviewDraft } from '../lib/store/types';
@@ -72,7 +72,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   } = useChatStoreFromContext();
 
   const apiClientFromContext = useChatApiClientFromContext();
-  const apiClient = useMemo(() => apiClientFromContext || new ApiClient(), [apiClientFromContext]);
+  const apiClient = useMemo(() => apiClientFromContext || globalApiClient, [apiClientFromContext]);
   const { user, logout } = useAuthStore();
 
   const selectedAgent = useMemo(

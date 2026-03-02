@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useChatStoreFromContext, useChatRuntimeEnv, useChatApiClientFromContext } from '../lib/store/ChatStoreContext';
 import { useChatStore } from '../lib/store';
 import { apiClient as globalApiClient } from '../lib/api/client';
@@ -74,8 +74,6 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
     loadMcpConfigs,
     systemContexts,
     loadSystemContexts,
-    applications,
-    loadApplications,
     projects,
     loadProjects,
     createProject,
@@ -110,9 +108,6 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
     project_id: '',
   });
   const defaultWorkspaceDir = getOS() === 'Windows' ? '%USERPROFILE%\\.chatos_workspace' : '~/.chatos_workspace';
-  const [selectedAppIds, setSelectedAppIds] = useState<string[]>([]);
-  // 跳过首次编辑回显时的联动重置，避免清空 MCP/系统上下文
-  const skipResetOnHydration = useRef(false);
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const [projectPickerPath, setProjectPickerPath] = useState<string | null>(null);
   const [projectPickerParent, setProjectPickerParent] = useState<string | null>(null);
@@ -120,6 +115,7 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
   const [projectPickerRoots, setProjectPickerRoots] = useState<FsEntry[]>([]);
   const [projectPickerLoading, setProjectPickerLoading] = useState(false);
   const [projectPickerError, setProjectPickerError] = useState<string | null>(null);
+  const [projectPickerShowHiddenDirs, setProjectPickerShowHiddenDirs] = useState(false);
   const [projectPickerNewFolderName, setProjectPickerNewFolderName] = useState('');
   const [projectPickerCreatingFolder, setProjectPickerCreatingFolder] = useState(false);
   const [projectPickerCreateModalOpen, setProjectPickerCreateModalOpen] = useState(false);
@@ -131,7 +127,6 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
         loadAiModelConfigs(),
         loadMcpConfigs(),
         loadSystemContexts(),
-        (loadApplications ? loadApplications() : Promise.resolve()),
         (loadProjects ? loadProjects() : Promise.resolve()),
         // 刷新全局store中的智能体列表，供输入区选择
         (storeData.loadAgents ? storeData.loadAgents() : Promise.resolve()),
@@ -214,20 +209,13 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
     });
     setShowAddForm(false);
     setEditingAgent(null);
-    setSelectedAppIds([]);
   };
 
   const loadProjectEntries = async (path?: string | null) => {
     setProjectPickerLoading(true);
     setProjectPickerError(null);
     try {
-      const baseUrl = client.getBaseUrl ? client.getBaseUrl() : '/api';
-      const url = `${baseUrl}/fs/list${path ? `?path=${encodeURIComponent(path)}` : ''}`;
-      const resp = await fetch(url);
-      if (!resp.ok) {
-        throw new Error(`HTTP ${resp.status}`);
-      }
-      const data = await resp.json();
+      const data = await client.listFsDirectories(path || undefined);
       setProjectPickerPath(data?.path ?? null);
       setProjectPickerParent(data?.parent ?? null);
       setProjectPickerEntries(Array.isArray(data?.entries) ? data.entries : []);
@@ -236,16 +224,11 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
       setProjectPickerError(err?.message || '加载目录失败');
       if (path) {
         try {
-          const baseUrl = client.getBaseUrl ? client.getBaseUrl() : '/api';
-          const url = `${baseUrl}/fs/list`;
-          const resp = await fetch(url);
-          if (resp.ok) {
-            const data = await resp.json();
-            setProjectPickerPath(data?.path ?? null);
-            setProjectPickerParent(data?.parent ?? null);
-            setProjectPickerEntries(Array.isArray(data?.entries) ? data.entries : []);
-            setProjectPickerRoots(Array.isArray(data?.roots) ? data.roots : []);
-          }
+          const data = await client.listFsDirectories();
+          setProjectPickerPath(data?.path ?? null);
+          setProjectPickerParent(data?.parent ?? null);
+          setProjectPickerEntries(Array.isArray(data?.entries) ? data.entries : []);
+          setProjectPickerRoots(Array.isArray(data?.roots) ? data.roots : []);
         } catch {
           // ignore fallback errors
         }
@@ -265,6 +248,7 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
   const openProjectPicker = async () => {
     setProjectPickerOpen(true);
     setProjectPickerError(null);
+    setProjectPickerShowHiddenDirs(false);
     setProjectPickerNewFolderName('');
     setProjectPickerCreateModalOpen(false);
     await loadProjectEntries(null);
@@ -334,21 +318,6 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
     }
   };
 
-  // 联动：仅在用户变更应用时重置 MCP 与系统上下文，编辑回显不触发
-  useEffect(() => {
-    if (skipResetOnHydration.current) {
-      // 跳过首次（编辑态）设置应用ID导致的联动重置
-      skipResetOnHydration.current = false;
-      return;
-    }
-    setFormData(prev => {
-      const next = { ...prev } as typeof prev;
-      next.mcp_config_ids = [];
-      next.system_context_id = undefined;
-      return next;
-    });
-  }, [selectedAppIds]);
-
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.name.trim() || !formData.ai_model_config_id) return;
@@ -374,7 +343,6 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
         workspace_dir: workspaceDir,
         user_id: effectiveUserId,
         enabled: true,
-        app_ids: selectedAppIds,
       });
       // 乐观更新本地列表，避免等待后端读写一致性
       if (created && created.id) {
@@ -382,7 +350,6 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
           const exists = prev.some(a => a.id === created.id);
           return exists ? prev.map(a => (a.id === created.id ? { ...a, ...created } : a)) : [created, ...prev];
         });
-        // 应用关联已通过 createAgent 的 app_ids 提交，无需重复提交
       }
       await refreshAgentsWithRetry(created?.id);
       resetForm();
@@ -408,13 +375,11 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
         project_id: projectId || null,
         workspace_dir: workspaceDir,
         enabled: true,
-        app_ids: selectedAppIds,
       });
       // 乐观更新本地列表
       setAgents(prev => prev.map(a => (
         a.id === editingAgent.id ? { ...a, ...updated, name: formData.name, description: formData.description, ai_model_config_id: formData.ai_model_config_id, mcp_config_ids: formData.mcp_config_ids, system_context_id: formData.system_context_id, enabled: true } : a
       )));
-      // 应用关联已通过 updateAgent 的 app_ids 提交，无需重复提交
       await refreshAgentsWithRetry(editingAgent.id);
       resetForm();
     } catch (e) {
@@ -447,9 +412,6 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
       system_context_id: agent.system_context_id,
       project_id: (agent as any).project_id || '',
     });
-    // 初始化应用多选，统一使用后端字段 app_ids
-    skipResetOnHydration.current = true;
-    setSelectedAppIds(Array.isArray((agent as any).app_ids) ? (agent as any).app_ids : []);
   };
 
   const getModelName = (id: string) => {
@@ -485,7 +447,8 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
     if (raw && String(raw).trim()) return String(raw);
     return defaultWorkspaceDir;
   };
-  const projectList = projectPickerPath ? projectPickerEntries : projectPickerRoots;
+  const projectList = (projectPickerPath ? projectPickerEntries : projectPickerRoots)
+    .filter((entry) => projectPickerShowHiddenDirs || !entry.name.startsWith('.'));
   const selectedProject = getProjectById(formData.project_id);
 
   return (
@@ -522,29 +485,6 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
           {/* 添加/编辑表单 */}
           {showAddForm && (
             <form onSubmit={editingAgent ? handleUpdate : handleCreate} className="p-4 bg-muted rounded-lg space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-foreground mb-2">关联应用（多选）</label>
-                <div className="space-y-2 max-h-32 overflow-y-auto p-2 border rounded-md">
-                  {(applications || []).map((app: any) => (
-                    <label key={app.id} className="flex items-center space-x-2">
-                      <input
-                        type="checkbox"
-                        checked={selectedAppIds.includes(app.id)}
-                        onChange={(e) => {
-                          const checked = e.target.checked;
-                          setSelectedAppIds(prev => (
-                            checked ? [...prev, app.id] : prev.filter(id => id !== app.id)
-                          ));
-                        }}
-                      />
-                      <span>{app.name}</span>
-                    </label>
-                  ))}
-                  {(applications || []).length === 0 && (
-                    <div className="text-xs text-muted-foreground">暂无应用，可在“应用管理”中创建。</div>
-                  )}
-                </div>
-              </div>
               <div>
                 <label className="block text-sm font-medium text-foreground mb-2">名称</label>
                 <input
@@ -644,14 +584,11 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
                   className="w-full px-3 py-2 border border-input bg-background text-foreground rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
                 >
                   <option value="">不使用</option>
-                  {(selectedAppIds.length ? systemContexts.filter((sc: any) => Array.isArray((sc as any).app_ids) && (sc as any).app_ids.some((id: string) => selectedAppIds.includes(id))) : systemContexts).map((sc: any) => (
+                  {systemContexts.map((sc: any) => (
                     <option key={sc.id} value={sc.id}>
                       {sc.name}
                     </option>
                   ))}
-                  {selectedAppIds.length > 0 && systemContexts.filter((sc: any) => Array.isArray((sc as any).app_ids) && (sc as any).app_ids.some((id: string) => selectedAppIds.includes(id))).length === 0 && (
-                    <option value="" disabled>所选应用下暂无系统上下文</option>
-                  )}
                 </select>
               </div>
               <div className="flex items-center justify-end space-x-2">
@@ -813,6 +750,13 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
                   className="px-3 py-1.5 rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {projectPickerCreatingFolder ? '新建中...' : '新建目录'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setProjectPickerShowHiddenDirs((prev) => !prev)}
+                  className="px-3 py-1.5 rounded bg-muted text-muted-foreground hover:bg-accent"
+                >
+                  {projectPickerShowHiddenDirs ? '不显示隐藏目录' : '显示隐藏目录'}
                 </button>
               </div>
               <div className="mt-3 flex-1 overflow-y-auto border border-border rounded">

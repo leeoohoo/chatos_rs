@@ -198,6 +198,11 @@ class ApiClient {
   }
 
   // 文件系统
+  async listFsDirectories(path?: string): Promise<any> {
+    const qs = path ? `?path=${encodeURIComponent(path)}` : '';
+    return this.request<any>(`/fs/list${qs}`);
+  }
+
   async listFsEntries(path?: string): Promise<any> {
     const qs = path ? `?path=${encodeURIComponent(path)}` : '';
     return this.request<any>(`/fs/entries${qs}`);
