@@ -479,7 +479,16 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
             <div className="px-3 py-2 text-xs text-muted-foreground flex items-center justify-between">
             <button
               type="button"
-              onClick={() => setSessionsExpanded((prev) => !prev)}
+              onClick={() => {
+                setSessionsExpanded((prev) => {
+                  const next = !prev;
+                  if (next) {
+                    setProjectsExpanded(false);
+                    setTerminalsExpanded(false);
+                  }
+                  return next;
+                });
+              }}
               className="flex items-center gap-2 uppercase tracking-wide"
             >
               <span>{sessionsExpanded ? '▾' : '▸'}</span>
@@ -644,11 +653,20 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
 
           <div className="my-2 border-t border-border" />
 
-          <div className="flex flex-col">
+          <div className={cn('flex flex-col min-h-0', projectsExpanded ? 'flex-1' : 'shrink-0')}>
             <div className="px-3 py-2 text-xs text-muted-foreground flex items-center justify-between">
             <button
               type="button"
-              onClick={() => setProjectsExpanded((prev) => !prev)}
+              onClick={() => {
+                setProjectsExpanded((prev) => {
+                  const next = !prev;
+                  if (next) {
+                    setSessionsExpanded(false);
+                    setTerminalsExpanded(false);
+                  }
+                  return next;
+                });
+              }}
               className="flex items-center gap-2 uppercase tracking-wide"
             >
               <span>{projectsExpanded ? '▾' : '▸'}</span>
@@ -665,7 +683,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
             </div>
 
             {projectsExpanded && (
-              <div className="max-h-64 overflow-y-auto">
+              <div className="flex-1 min-h-0 overflow-y-auto">
                 {projects.length === 0 ? (
                   <div className="px-3 py-3 text-xs text-muted-foreground">
                     还没有项目，点击右侧 + 新建。
@@ -730,11 +748,20 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
 
           <div className="my-2 border-t border-border" />
 
-          <div className="flex flex-col">
+          <div className={cn('flex flex-col min-h-0', terminalsExpanded ? 'flex-1' : 'shrink-0')}>
             <div className="px-3 py-2 text-xs text-muted-foreground flex items-center justify-between">
               <button
                 type="button"
-                onClick={() => setTerminalsExpanded((prev) => !prev)}
+                onClick={() => {
+                  setTerminalsExpanded((prev) => {
+                    const next = !prev;
+                    if (next) {
+                      setSessionsExpanded(false);
+                      setProjectsExpanded(false);
+                    }
+                    return next;
+                  });
+                }}
                 className="flex items-center gap-2 uppercase tracking-wide"
               >
                 <span>{terminalsExpanded ? '▾' : '▸'}</span>
@@ -762,7 +789,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
             </div>
 
             {terminalsExpanded && (
-              <div className="max-h-64 overflow-y-auto">
+              <div className="flex-1 min-h-0 overflow-y-auto">
                 {terminals.length === 0 ? (
                   <div className="px-3 py-3 text-xs text-muted-foreground">
                     还没有终端，点击右侧 + 新建。
