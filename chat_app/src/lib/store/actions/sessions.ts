@@ -200,6 +200,12 @@ export function createSessionActions({
       const beforeSelect = get();
       const sameSessionState = beforeSelect.sessionChatState?.[sessionId];
       if (beforeSelect.currentSessionId === sessionId && sameSessionState?.isStreaming) {
+        // 同一会话流式过程中仍允许切回聊天面板，避免在项目/终端面板点击会话无响应
+        if (beforeSelect.activePanel !== 'chat') {
+          set((state: any) => {
+            state.activePanel = 'chat';
+          });
+        }
         debugLog('🔍 当前会话正在流式中，忽略重复切换请求:', sessionId);
         return;
       }
