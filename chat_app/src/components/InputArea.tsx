@@ -162,6 +162,23 @@ export const InputArea: React.FC<InputAreaProps> = ({
     if (!projectForAgentFiles?.rootPath) return null;
     return normalizePath(projectForAgentFiles.rootPath);
   }, [projectForAgentFiles?.rootPath, normalizePath]);
+  const isHiddenProjectPath = useCallback((candidatePath: string) => {
+    if (!projectRootForAgentFiles) return false;
+    const normalizedCandidate = normalizePath(candidatePath || '');
+    if (!normalizedCandidate) return false;
+    const normalizedRoot = normalizePath(projectRootForAgentFiles);
+    if (!normalizedRoot) return false;
+
+    let relativePath = normalizedCandidate;
+    if (normalizedCandidate === normalizedRoot) {
+      relativePath = '';
+    } else if (normalizedCandidate.startsWith(`${normalizedRoot}/`)) {
+      relativePath = normalizedCandidate.slice(normalizedRoot.length + 1);
+    }
+
+    if (!relativePath) return false;
+    return relativePath.split('/').some((segment) => segment.startsWith('.'));
+  }, [normalizePath, projectRootForAgentFiles]);
   const showAgentProjectFilePicker = Boolean(selectedAgent && projectRootForAgentFiles);
   const currentAiLabel = useMemo(() => {
     if (selectedAgent) {
@@ -185,10 +202,13 @@ export const InputArea: React.FC<InputAreaProps> = ({
   const filteredProjectFileEntries = useMemo(() => {
     const keywordRaw = projectFileFilter.trim().toLocaleLowerCase();
     const keywordCompact = compactSearchText(keywordRaw);
-    const source = (projectFileEntries || []).slice().sort((a, b) => {
-      if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
-      return a.name.localeCompare(b.name);
-    });
+    const source = (projectFileEntries || [])
+      .filter((entry) => !isHiddenProjectPath(entry.path))
+      .slice()
+      .sort((a, b) => {
+        if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
     if (!keywordRaw) return source;
 
     const matches = (value: string) => {
@@ -213,7 +233,7 @@ export const InputArea: React.FC<InputAreaProps> = ({
       }
       return matches(nameText) || matches(relativePathText);
     });
-  }, [normalizePath, projectFileEntries, projectFileFilter, projectRootForAgentFiles]);
+  }, [isHiddenProjectPath, normalizePath, projectFileEntries, projectFileFilter, projectRootForAgentFiles]);
   const projectFileKeywordActive = projectFileFilter.trim().length > 0;
   const displayedProjectFileEntries = projectFileKeywordActive
     ? projectFileSearchResults
@@ -304,7 +324,12 @@ export const InputArea: React.FC<InputAreaProps> = ({
         const entriesRaw: any[] = Array.isArray(data?.entries) ? data.entries : [];
         const normalizedEntries = entriesRaw
           .map((raw: any) => normalizeFsEntry(raw))
-          .filter((entry: FsEntry) => !entry.isDir && entry.path && isPathWithinRoot(entry.path, projectRootForAgentFiles));
+          .filter((entry: FsEntry) => (
+            !entry.isDir
+            && entry.path
+            && isPathWithinRoot(entry.path, projectRootForAgentFiles)
+            && !isHiddenProjectPath(entry.path)
+          ));
 
         setProjectFileSearchResults(normalizedEntries);
         setProjectFileSearchTruncated(Boolean(data?.truncated));
@@ -324,7 +349,7 @@ export const InputArea: React.FC<InputAreaProps> = ({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [client, isPathWithinRoot, projectFileFilter, projectFilePickerOpen, projectRootForAgentFiles]);
+  }, [client, isHiddenProjectPath, isPathWithinRoot, projectFileFilter, projectFilePickerOpen, projectRootForAgentFiles]);
 
   const isFileTypeAllowed = useCallback((file: File) => {
     if (!supportedFileTypes || supportedFileTypes.length === 0) return true;
@@ -396,7 +421,10 @@ export const InputArea: React.FC<InputAreaProps> = ({
 
     const fallbackRoot = normalizePath(projectRootForAgentFiles);
     const preferredPath = nextPath ? normalizePath(nextPath) : fallbackRoot;
-    const safePath = isPathWithinRoot(preferredPath, fallbackRoot) ? preferredPath : fallbackRoot;
+    let safePath = isPathWithinRoot(preferredPath, fallbackRoot) ? preferredPath : fallbackRoot;
+    if (isHiddenProjectPath(safePath)) {
+      safePath = fallbackRoot;
+    }
 
     setProjectFileLoading(true);
     setProjectFileError(null);
@@ -407,11 +435,15 @@ export const InputArea: React.FC<InputAreaProps> = ({
       const entriesRaw: any[] = Array.isArray(data?.entries) ? data.entries : [];
       const normalizedEntries = entriesRaw
         .map((raw: any) => normalizeFsEntry(raw))
-        .filter((entry: FsEntry) => entry.path && isPathWithinRoot(entry.path, fallbackRoot));
+        .filter((entry: FsEntry) => (
+          entry.path
+          && isPathWithinRoot(entry.path, fallbackRoot)
+          && !isHiddenProjectPath(entry.path)
+        ));
       const parentRaw = typeof data?.parent === 'string' ? normalizePath(data.parent) : null;
 
       setProjectFilePath(isPathWithinRoot(normalizedCurrent, fallbackRoot) ? normalizedCurrent : fallbackRoot);
-      if (parentRaw && isPathWithinRoot(parentRaw, fallbackRoot) && parentRaw !== fallbackRoot) {
+      if (parentRaw && isPathWithinRoot(parentRaw, fallbackRoot) && parentRaw !== fallbackRoot && !isHiddenProjectPath(parentRaw)) {
         setProjectFileParent(parentRaw);
       } else {
         setProjectFileParent(null);
@@ -423,7 +455,7 @@ export const InputArea: React.FC<InputAreaProps> = ({
     } finally {
       setProjectFileLoading(false);
     }
-  }, [client, isPathWithinRoot, normalizePath, projectRootForAgentFiles]);
+  }, [client, isHiddenProjectPath, isPathWithinRoot, normalizePath, projectRootForAgentFiles]);
 
   const handleToggleProjectFilePicker = useCallback(async () => {
     if (!showAgentProjectFilePicker || disabled) return;
@@ -850,7 +882,19 @@ export const InputArea: React.FC<InputAreaProps> = ({
                           disabled={projectFileAttachingPath !== null}
                         >
                           <span className="min-w-0 flex-1 truncate">
-                            {entry.isDir ? `[DIR] ${entry.name}` : `[FILE] ${entry.name}`}
+                            <span className="inline-flex items-center gap-1.5 min-w-0 max-w-full">
+                              {entry.isDir ? (
+                                <svg className="w-4 h-4 text-muted-foreground shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
+                                </svg>
+                              ) : (
+                                <svg className="w-4 h-4 text-muted-foreground shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M7 3h7l5 5v13a1 1 0 01-1 1H7a1 1 0 01-1-1V4a1 1 0 011-1z" />
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M14 3v6h6" />
+                                </svg>
+                              )}
+                              <span className="truncate">{entry.name}</span>
+                            </span>
                             {projectFileKeywordActive && !entry.isDir && (
                               <span className="block truncate text-[11px] text-muted-foreground">
                                 {toRelativeProjectPath(entry.path)}
