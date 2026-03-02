@@ -7,10 +7,12 @@ use axum::{
 use serde::Deserialize;
 use serde_json::Value;
 
+use crate::core::auth::AuthUser;
 use crate::core::messages::{
     build_message, create_message_and_maybe_rename, MessageOut, NewMessageFields,
 };
 use crate::core::pagination::{parse_non_negative_offset, parse_positive_limit};
+use crate::core::session_access::{ensure_owned_session, map_session_access_error};
 use crate::models::message::MessageService;
 
 #[derive(Debug, Deserialize)]
@@ -43,13 +45,19 @@ pub fn router() -> Router {
         .route("/api/messages/:id", get(get_message).delete(delete_message))
 }
 
-async fn list_messages(Query(query): Query<MessagesQuery>) -> (StatusCode, Json<Value>) {
+async fn list_messages(
+    auth: AuthUser,
+    Query(query): Query<MessagesQuery>,
+) -> (StatusCode, Json<Value>) {
     let Some(session_id) = query.session_id else {
         return (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({"error": "必须提供 session_id"})),
         );
     };
+    if let Err(err) = ensure_owned_session(&session_id, &auth).await {
+        return map_session_access_error(err);
+    }
     let limit = parse_positive_limit(query.limit);
     let offset = parse_non_negative_offset(query.offset);
     match MessageService::get_by_session(&session_id, limit, offset).await {
@@ -67,7 +75,10 @@ async fn list_messages(Query(query): Query<MessagesQuery>) -> (StatusCode, Json<
     }
 }
 
-async fn create_message(Json(req): Json<CreateMessageRequest>) -> (StatusCode, Json<Value>) {
+async fn create_message(
+    auth: AuthUser,
+    Json(req): Json<CreateMessageRequest>,
+) -> (StatusCode, Json<Value>) {
     let session_id = req.session_id.unwrap_or_default();
     let role = req.role.unwrap_or_default();
     let content = req.content.unwrap_or_default();
@@ -76,6 +87,9 @@ async fn create_message(Json(req): Json<CreateMessageRequest>) -> (StatusCode, J
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({"error": "sessionId, role 和 content 不能为空"})),
         );
+    }
+    if let Err(err) = ensure_owned_session(&session_id, &auth).await {
+        return map_session_access_error(err);
     }
     let message = build_message(
         session_id,
@@ -108,12 +122,17 @@ async fn create_message(Json(req): Json<CreateMessageRequest>) -> (StatusCode, J
     )
 }
 
-async fn get_message(Path(id): Path<String>) -> (StatusCode, Json<Value>) {
+async fn get_message(auth: AuthUser, Path(id): Path<String>) -> (StatusCode, Json<Value>) {
     match MessageService::get_by_id(&id).await {
-        Ok(Some(msg)) => (
-            StatusCode::OK,
-            Json(serde_json::to_value(MessageOut::from(msg)).unwrap_or(Value::Null)),
-        ),
+        Ok(Some(msg)) => {
+            if let Err(err) = ensure_owned_session(&msg.session_id, &auth).await {
+                return map_session_access_error(err);
+            }
+            (
+                StatusCode::OK,
+                Json(serde_json::to_value(MessageOut::from(msg)).unwrap_or(Value::Null)),
+            )
+        }
         Ok(None) => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": "消息不存在"})),
@@ -125,7 +144,25 @@ async fn get_message(Path(id): Path<String>) -> (StatusCode, Json<Value>) {
     }
 }
 
-async fn delete_message(Path(id): Path<String>) -> (StatusCode, Json<Value>) {
+async fn delete_message(auth: AuthUser, Path(id): Path<String>) -> (StatusCode, Json<Value>) {
+    let message = match MessageService::get_by_id(&id).await {
+        Ok(Some(msg)) => msg,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "消息不存在"})),
+            )
+        }
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": err})),
+            )
+        }
+    };
+    if let Err(err) = ensure_owned_session(&message.session_id, &auth).await {
+        return map_session_access_error(err);
+    }
     match MessageService::delete(&id).await {
         Ok(_) => (
             StatusCode::OK,

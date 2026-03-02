@@ -4,6 +4,7 @@ use axum::http::{
     header::{HeaderName, ACCEPT, AUTHORIZATION, CONTENT_TYPE, ORIGIN},
     Request, StatusCode,
 };
+use axum::middleware;
 use axum::response::IntoResponse;
 use axum::response::Response;
 use axum::{Json, Router};
@@ -16,6 +17,7 @@ use tower_http::trace::TraceLayer;
 use tracing::{info, info_span};
 
 use crate::config::Config;
+use crate::core::auth::auth_user_from_headers;
 
 static START_TIME: Lazy<Instant> = Lazy::new(Instant::now);
 static REQUEST_ID_HEADER: HeaderName = HeaderName::from_static("x-request-id");
@@ -23,6 +25,7 @@ static REQUEST_ID_HEADER: HeaderName = HeaderName::from_static("x-request-id");
 pub mod agents;
 pub mod agents_v3;
 pub mod applications;
+pub mod auth;
 pub mod chat_agent_v2;
 pub mod chat_v2;
 pub mod chat_v3;
@@ -102,7 +105,7 @@ pub fn router() -> Router {
             tracing::error!(error = %err, latency_ms = %latency.as_millis(), "request.failure");
         });
 
-    Router::new()
+    let protected_api = Router::new()
         .merge(sessions::router())
         .merge(messages::router())
         .merge(chat_v2::router())
@@ -119,6 +122,11 @@ pub fn router() -> Router {
         .merge(fs::router())
         .nest("/api/v2", chat_agent_v2::router())
         .merge(user_settings::router())
+        .route_layer(middleware::from_fn(require_auth));
+
+    Router::new()
+        .merge(auth::router())
+        .merge(protected_api)
         .route("/health", axum::routing::get(health))
         .route("/", axum::routing::get(root))
         .fallback(fallback_404)
@@ -172,4 +180,14 @@ fn header_value(req: &Request<Body>, name: &HeaderName) -> String {
         .and_then(|v| v.to_str().ok())
         .unwrap_or("-")
         .to_string()
+}
+
+async fn require_auth(
+    mut req: Request<Body>,
+    next: middleware::Next,
+) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
+    // 在中间件只解析一次 token，并把登录用户注入 request extensions。
+    let auth_user = auth_user_from_headers(req.headers()).map_err(|err| err.into_response())?;
+    req.extensions_mut().insert(auth_user);
+    Ok(next.run(req).await)
 }

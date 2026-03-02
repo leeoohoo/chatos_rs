@@ -8,6 +8,9 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
+use crate::core::auth::AuthUser;
+use crate::core::mcp_config_access::{ensure_owned_mcp_config, map_mcp_config_access_error};
+use crate::core::user_scope::resolve_user_id;
 use crate::models::mcp_config::McpConfig;
 use crate::repositories::mcp_configs as mcp_repo;
 use crate::services::builtin_mcp::{
@@ -139,8 +142,15 @@ pub fn router() -> Router {
         )
 }
 
-async fn list_mcp_configs(Query(query): Query<UserQuery>) -> (StatusCode, Json<Value>) {
-    let configs = match mcp_repo::list_mcp_configs(query.user_id).await {
+async fn list_mcp_configs(
+    auth: AuthUser,
+    Query(query): Query<UserQuery>,
+) -> (StatusCode, Json<Value>) {
+    let user_id = match resolve_user_id(query.user_id, &auth) {
+        Ok(user_id) => user_id,
+        Err(err) => return err,
+    };
+    let configs = match mcp_repo::list_mcp_configs(Some(user_id)).await {
         Ok(list) => list,
         Err(err) => {
             return (
@@ -198,7 +208,14 @@ async fn list_mcp_configs(Query(query): Query<UserQuery>) -> (StatusCode, Json<V
     (StatusCode::OK, Json(Value::Array(out)))
 }
 
-async fn create_mcp_config(Json(req): Json<McpConfigRequest>) -> (StatusCode, Json<Value>) {
+async fn create_mcp_config(
+    auth: AuthUser,
+    Json(req): Json<McpConfigRequest>,
+) -> (StatusCode, Json<Value>) {
+    let user_id = match resolve_user_id(req.user_id.clone(), &auth) {
+        Ok(user_id) => user_id,
+        Err(err) => return err,
+    };
     let Some(name) = req.name else {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -220,7 +237,7 @@ async fn create_mcp_config(Json(req): Json<McpConfigRequest>) -> (StatusCode, Js
         args: req.args,
         env: req.env,
         cwd: req.cwd,
-        user_id: req.user_id,
+        user_id: Some(user_id),
         enabled: req.enabled.unwrap_or(true),
         created_at: crate::core::time::now_rfc3339(),
         updated_at: crate::core::time::now_rfc3339(),
@@ -271,6 +288,7 @@ async fn create_mcp_config(Json(req): Json<McpConfigRequest>) -> (StatusCode, Js
 }
 
 async fn update_mcp_config(
+    auth: AuthUser,
     Path(config_id): Path<String>,
     Json(req): Json<McpConfigRequest>,
 ) -> (StatusCode, Json<Value>) {
@@ -280,22 +298,10 @@ async fn update_mcp_config(
             Json(json!({"error": "内置 MCP 配置不可编辑"})),
         );
     }
-    let existing = match mcp_repo::get_mcp_config_by_id(&config_id).await {
+    let mut cfg = match ensure_owned_mcp_config(&config_id, &auth).await {
         Ok(cfg) => cfg,
-        Err(err) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "更新MCP配置失败", "detail": err})),
-            )
-        }
+        Err(err) => return map_mcp_config_access_error(err),
     };
-    if existing.is_none() {
-        return (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": "MCP配置不存在"})),
-        );
-    }
-    let mut cfg = existing.unwrap();
     let mut update_requested = false;
     if let Some(v) = req.name {
         cfg.name = v;
@@ -372,27 +378,18 @@ async fn update_mcp_config(
     (StatusCode::OK, Json(obj))
 }
 
-async fn delete_mcp_config(Path(config_id): Path<String>) -> (StatusCode, Json<Value>) {
+async fn delete_mcp_config(
+    auth: AuthUser,
+    Path(config_id): Path<String>,
+) -> (StatusCode, Json<Value>) {
     if is_builtin_mcp_id(&config_id) {
         return (
             StatusCode::FORBIDDEN,
             Json(json!({"error": "内置 MCP 配置不可删除"})),
         );
     }
-    let existing = match mcp_repo::get_mcp_config_by_id(&config_id).await {
-        Ok(cfg) => cfg,
-        Err(err) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "删除MCP配置失败", "detail": err})),
-            )
-        }
-    };
-    if existing.is_none() {
-        return (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": "MCP配置不存在"})),
-        );
+    if let Err(err) = ensure_owned_mcp_config(&config_id, &auth).await {
+        return map_mcp_config_access_error(err);
     }
     if let Err(err) = mcp_repo::delete_mcp_config(&config_id).await {
         return (

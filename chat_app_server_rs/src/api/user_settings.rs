@@ -1,17 +1,13 @@
 use axum::http::StatusCode;
-use axum::{extract::Query, routing::get, Json, Router};
+use axum::{routing::get, Json, Router};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use crate::core::auth::AuthUser;
+use crate::core::user_scope::resolve_user_id;
 use crate::services::user_settings::{
-    get_default_user_settings, get_effective_user_settings, patch_user_settings, save_user_settings,
+    get_effective_user_settings, patch_user_settings, save_user_settings,
 };
-
-#[derive(Debug, Deserialize)]
-struct UserQuery {
-    #[serde(alias = "userId")]
-    user_id: Option<String>,
-}
 
 #[derive(Debug, Deserialize)]
 struct UserSettingsRequest {
@@ -26,16 +22,8 @@ pub fn router() -> Router {
     )
 }
 
-async fn get_settings(Query(query): Query<UserQuery>) -> (StatusCode, Json<Value>) {
-    let user_id = query.user_id;
-    if user_id.is_none() {
-        let defaults = get_default_user_settings();
-        return (
-            StatusCode::OK,
-            Json(json!({ "user_id": Value::Null, "settings": defaults, "effective": defaults })),
-        );
-    }
-    let uid = user_id.unwrap();
+async fn get_settings(auth: AuthUser) -> (StatusCode, Json<Value>) {
+    let uid = auth.user_id;
     match get_effective_user_settings(Some(uid.clone())).await {
         Ok(effective) => (
             StatusCode::OK,
@@ -48,14 +36,14 @@ async fn get_settings(Query(query): Query<UserQuery>) -> (StatusCode, Json<Value
     }
 }
 
-async fn put_settings(Json(req): Json<UserSettingsRequest>) -> (StatusCode, Json<Value>) {
-    if req.user_id.is_none() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "user_id 为必填项" })),
-        );
-    }
-    let uid = req.user_id.unwrap();
+async fn put_settings(
+    auth: AuthUser,
+    Json(req): Json<UserSettingsRequest>,
+) -> (StatusCode, Json<Value>) {
+    let uid = match resolve_user_id(req.user_id, &auth) {
+        Ok(uid) => uid,
+        Err(err) => return err,
+    };
     match save_user_settings(&uid, req.settings.as_ref().unwrap_or(&json!({}))).await {
         Ok(effective) => (
             StatusCode::OK,
@@ -70,14 +58,14 @@ async fn put_settings(Json(req): Json<UserSettingsRequest>) -> (StatusCode, Json
     }
 }
 
-async fn patch_settings(Json(req): Json<UserSettingsRequest>) -> (StatusCode, Json<Value>) {
-    if req.user_id.is_none() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "user_id 为必填项" })),
-        );
-    }
-    let uid = req.user_id.unwrap();
+async fn patch_settings(
+    auth: AuthUser,
+    Json(req): Json<UserSettingsRequest>,
+) -> (StatusCode, Json<Value>) {
+    let uid = match resolve_user_id(req.user_id, &auth) {
+        Ok(uid) => uid,
+        Err(err) => return err,
+    };
     match patch_user_settings(&uid, req.settings.as_ref().unwrap_or(&json!({}))).await {
         Ok(effective) => (
             StatusCode::OK,

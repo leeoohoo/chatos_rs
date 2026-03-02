@@ -51,6 +51,7 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
 
     let collections = vec![
         "sessions",
+        "users",
         "messages",
         "session_summaries",
         "session_summary_messages",
@@ -81,6 +82,20 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
         }
     }
 
+    let _ = db
+        .collection::<mongodb::bson::Document>("users")
+        .create_index(
+            IndexModel::builder()
+                .keys(doc! { "email": 1 })
+                .options(
+                    mongodb::options::IndexOptions::builder()
+                        .unique(true)
+                        .build(),
+                )
+                .build(),
+            None,
+        )
+        .await;
     let _ = db
         .collection::<mongodb::bson::Document>("sessions")
         .create_index(

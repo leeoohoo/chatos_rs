@@ -14,4 +14,5 @@ pub mod session_summary_v2;
 pub mod system_context;
 pub mod terminal;
 pub mod terminal_log;
+pub mod user;
 pub mod user_settings;

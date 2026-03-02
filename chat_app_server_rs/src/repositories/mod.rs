@@ -17,3 +17,4 @@ pub mod system_contexts;
 pub mod terminal_logs;
 pub mod terminals;
 pub mod user_settings;
+pub mod users;

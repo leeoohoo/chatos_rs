@@ -1,17 +1,19 @@
 import { useEffect } from 'react';
 import { ChatInterface } from './components/ChatInterface';
+import { AuthPanel } from './components/AuthPanel';
 import { useTheme } from './hooks/useTheme';
 import { ChatStoreProvider } from './lib/store/ChatStoreContext';
+import { useAuthStore } from './lib/auth/authStore';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import './styles/index.css';
 
 interface AppProps {
-  userId?: string;
   projectId?: string;
 }
 
-function App({ userId = 'custom_user_123', projectId }: AppProps = {}) {
+function App({ projectId }: AppProps = {}) {
   const { actualTheme } = useTheme();
+  const { user, initialized, bootstrap } = useAuthStore();
 
   // 确保主题正确应用
   useEffect(() => {
@@ -19,9 +21,25 @@ function App({ userId = 'custom_user_123', projectId }: AppProps = {}) {
     document.documentElement.classList.add(actualTheme);
   }, [actualTheme]);
 
+  useEffect(() => {
+    bootstrap();
+  }, [bootstrap]);
+
+  if (!initialized) {
+    return (
+      <div className="min-h-screen flex items-center justify-center text-gray-500">
+        正在初始化...
+      </div>
+    );
+  }
+
+  if (!user?.id) {
+    return <AuthPanel />;
+  }
+
   return (
     <ErrorBoundary>
-      <ChatStoreProvider userId={userId} projectId={projectId}>
+      <ChatStoreProvider userId={user.id} projectId={projectId}>
         <div className="App">
           <ChatInterface />
         </div>

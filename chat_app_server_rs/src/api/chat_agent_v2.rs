@@ -7,10 +7,12 @@ use tokio::task;
 use crate::config::Config;
 use crate::core::ai_model_config::resolve_chat_model_config;
 use crate::core::ai_settings::chat_max_tokens_from_settings;
+use crate::core::auth::AuthUser;
 use crate::core::chat_context::{resolve_effective_user_id, resolve_system_prompt};
 use crate::core::chat_stream::{
     build_v2_callbacks, handle_chat_result, send_error_event, send_start_event,
 };
+use crate::core::user_scope::ensure_and_set_user_id;
 use crate::services::user_settings::{apply_settings_to_ai_client, get_effective_user_settings};
 use crate::services::v2::agent::{load_model_config_for_agent, run_chat};
 use crate::services::v2::ai_server::{AiServer, ChatOptions};
@@ -37,13 +39,17 @@ pub fn router() -> Router {
 }
 
 async fn chat_stream(
-    Json(req): Json<ChatRequest>,
+    auth: AuthUser,
+    Json(mut req): Json<ChatRequest>,
 ) -> Result<
     axum::response::Sse<
         impl futures::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>,
     >,
     (StatusCode, Json<Value>),
 > {
+    if let Err(err) = ensure_and_set_user_id(&mut req.user_id, &auth) {
+        return Err(err);
+    }
     let session_id = req.session_id.clone().unwrap_or_default();
     let content = req.content.clone().unwrap_or_default();
     if session_id.is_empty() || content.is_empty() {

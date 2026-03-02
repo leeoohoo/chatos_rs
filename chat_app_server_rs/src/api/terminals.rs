@@ -12,6 +12,9 @@ use serde_json::Value;
 use std::path::Path as FsPath;
 use tokio::sync::mpsc;
 
+use crate::core::auth::AuthUser;
+use crate::core::terminal_access::{ensure_owned_terminal, map_terminal_access_error};
+use crate::core::user_scope::resolve_user_id;
 use crate::core::validation::{normalize_non_empty, validate_existing_dir};
 use crate::models::terminal::TerminalService;
 use crate::models::terminal_log::{TerminalLog, TerminalLogService};
@@ -79,9 +82,16 @@ pub fn router() -> Router {
         .route("/api/terminals/:id/ws", get(terminal_ws))
 }
 
-async fn list_terminals(Query(query): Query<TerminalQuery>) -> (StatusCode, Json<Value>) {
+async fn list_terminals(
+    auth: AuthUser,
+    Query(query): Query<TerminalQuery>,
+) -> (StatusCode, Json<Value>) {
+    let user_id = match resolve_user_id(query.user_id, &auth) {
+        Ok(user_id) => user_id,
+        Err(err) => return err,
+    };
     let manager = get_terminal_manager();
-    match TerminalService::list(query.user_id).await {
+    match TerminalService::list(Some(user_id)).await {
         Ok(list) => {
             let items = list
                 .into_iter()
@@ -96,13 +106,20 @@ async fn list_terminals(Query(query): Query<TerminalQuery>) -> (StatusCode, Json
     }
 }
 
-async fn create_terminal(Json(req): Json<CreateTerminalRequest>) -> (StatusCode, Json<Value>) {
+async fn create_terminal(
+    auth: AuthUser,
+    Json(req): Json<CreateTerminalRequest>,
+) -> (StatusCode, Json<Value>) {
     let CreateTerminalRequest {
         name,
         cwd,
         user_id,
         project_id,
     } = req;
+    let user_id = match resolve_user_id(user_id, &auth) {
+        Ok(user_id) => user_id,
+        Err(err) => return err,
+    };
 
     let cwd = match validate_existing_dir(
         cwd.as_deref().unwrap_or(""),
@@ -122,7 +139,7 @@ async fn create_terminal(Json(req): Json<CreateTerminalRequest>) -> (StatusCode,
 
     let manager = get_terminal_manager();
     match manager
-        .create(name, cwd, user_id, normalize_non_empty(project_id))
+        .create(name, cwd, Some(user_id), normalize_non_empty(project_id))
         .await
     {
         Ok(terminal) => (StatusCode::CREATED, Json(attach_busy(&manager, terminal))),
@@ -133,22 +150,18 @@ async fn create_terminal(Json(req): Json<CreateTerminalRequest>) -> (StatusCode,
     }
 }
 
-async fn get_terminal(Path(id): Path<String>) -> (StatusCode, Json<Value>) {
+async fn get_terminal(auth: AuthUser, Path(id): Path<String>) -> (StatusCode, Json<Value>) {
     let manager = get_terminal_manager();
-    match TerminalService::get_by_id(&id).await {
-        Ok(Some(terminal)) => (StatusCode::OK, Json(attach_busy(&manager, terminal))),
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": "终端不存在" })),
-        ),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": err })),
-        ),
+    match ensure_owned_terminal(&id, &auth).await {
+        Ok(terminal) => (StatusCode::OK, Json(attach_busy(&manager, terminal))),
+        Err(err) => map_terminal_access_error(err),
     }
 }
 
-async fn delete_terminal(Path(id): Path<String>) -> (StatusCode, Json<Value>) {
+async fn delete_terminal(auth: AuthUser, Path(id): Path<String>) -> (StatusCode, Json<Value>) {
+    if let Err(err) = ensure_owned_terminal(&id, &auth).await {
+        return map_terminal_access_error(err);
+    }
     let manager = get_terminal_manager();
     let _ = manager.close(&id).await;
     let _ = TerminalLogService::delete_by_terminal(&id).await;
@@ -165,9 +178,13 @@ async fn delete_terminal(Path(id): Path<String>) -> (StatusCode, Json<Value>) {
 }
 
 async fn list_terminal_logs(
+    auth: AuthUser,
     Path(id): Path<String>,
     Query(query): Query<TerminalLogQuery>,
 ) -> (StatusCode, Json<Value>) {
+    if let Err(err) = ensure_owned_terminal(&id, &auth).await {
+        return map_terminal_access_error(err);
+    }
     let limit = normalize_history_limit(query.limit);
     let offset = normalize_history_offset(query.offset);
 
@@ -209,7 +226,14 @@ async fn list_terminal_logs_recent_page(
     Ok(logs)
 }
 
-async fn terminal_ws(Path(id): Path<String>, ws: WebSocketUpgrade) -> impl IntoResponse {
+async fn terminal_ws(
+    auth: AuthUser,
+    Path(id): Path<String>,
+    ws: WebSocketUpgrade,
+) -> impl IntoResponse {
+    if let Err(err) = ensure_owned_terminal(&id, &auth).await {
+        return map_terminal_access_error(err).into_response();
+    }
     ws.on_upgrade(move |socket| handle_terminal_socket(id, socket))
 }
 

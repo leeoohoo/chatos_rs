@@ -5,7 +5,8 @@ mod store;
 mod types;
 
 pub use review_hub::{
-    create_task_review, submit_task_review_decision, wait_for_task_review_decision,
+    create_task_review, get_task_review_payload, submit_task_review_decision,
+    wait_for_task_review_decision,
 };
 pub use store::{
     complete_task_by_id, create_tasks_for_turn, delete_task_by_id, list_tasks_for_context,

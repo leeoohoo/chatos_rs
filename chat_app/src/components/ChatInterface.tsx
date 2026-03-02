@@ -1135,16 +1135,16 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                       <div className="flex items-center justify-center h-full">
                         <div className="text-center">
                           <h2 className="text-xl font-semibold text-muted-foreground mb-2">
-                            娆㈣繋浣跨敤 AI 鑱婂ぉ
+                            欢迎使用 AI 聊天
                           </h2>
                           <p className="text-muted-foreground mb-4">
-                            鐐瑰嚮宸︿笂瑙掓寜閽€夋嫨浼氳瘽锛屾垨鍒涘缓鏂扮殑浼氳瘽寮€濮嬪璇?
+                            点击左上角按钮选择会话，或创建新的会话开始对话
                           </p>
                           <button
                             onClick={toggleSidebar}
                             className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
                           >
-                            灞曞紑浼氳瘽鍒楄〃
+                            展开会话列表
                           </button>
                         </div>
                       </div>

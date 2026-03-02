@@ -8,10 +8,13 @@ use serde::Deserialize;
 use serde_json::{json, Number, Value};
 use uuid::Uuid;
 
+use crate::core::auth::AuthUser;
 use crate::core::messages::{
     build_message, create_message_and_maybe_rename, MessageOut, NewMessageFields,
 };
 use crate::core::pagination::{parse_non_negative_offset, parse_positive_limit};
+use crate::core::session_access::{ensure_owned_session, map_session_access_error};
+use crate::core::user_scope::resolve_user_id;
 use crate::core::validation::normalize_non_empty;
 use crate::models::message::{Message, MessageService};
 use crate::models::session::{Session, SessionService};
@@ -97,14 +100,24 @@ pub fn router() -> Router {
         )
 }
 
-async fn list_sessions(Query(query): Query<SessionQuery>) -> (StatusCode, Json<Value>) {
-    let limit = parse_positive_limit(query.limit);
-    let offset = parse_non_negative_offset(query.offset);
-    let result = if query.user_id.is_some() || query.project_id.is_some() {
-        SessionService::get_by_user_project(query.user_id, query.project_id, limit, offset).await
-    } else {
-        SessionService::get_all(limit, offset).await
+async fn list_sessions(
+    auth: AuthUser,
+    Query(query): Query<SessionQuery>,
+) -> (StatusCode, Json<Value>) {
+    let SessionQuery {
+        user_id,
+        project_id,
+        limit,
+        offset,
+    } = query;
+    let user_id = match resolve_user_id(user_id, &auth) {
+        Ok(user_id) => user_id,
+        Err(err) => return err,
     };
+    let limit = parse_positive_limit(limit);
+    let offset = parse_non_negative_offset(offset);
+    let result =
+        SessionService::get_by_user_project(Some(user_id), project_id, limit, offset).await;
     match result {
         Ok(list) => (
             StatusCode::OK,
@@ -117,7 +130,10 @@ async fn list_sessions(Query(query): Query<SessionQuery>) -> (StatusCode, Json<V
     }
 }
 
-async fn create_session(Json(req): Json<CreateSessionRequest>) -> (StatusCode, Json<Value>) {
+async fn create_session(
+    auth: AuthUser,
+    Json(req): Json<CreateSessionRequest>,
+) -> (StatusCode, Json<Value>) {
     let CreateSessionRequest {
         title,
         description,
@@ -125,6 +141,10 @@ async fn create_session(Json(req): Json<CreateSessionRequest>) -> (StatusCode, J
         user_id,
         project_id,
     } = req;
+    let user_id = match resolve_user_id(user_id, &auth) {
+        Ok(user_id) => user_id,
+        Err(err) => return err,
+    };
 
     let Some(title) = normalize_non_empty(title) else {
         return (
@@ -132,7 +152,7 @@ async fn create_session(Json(req): Json<CreateSessionRequest>) -> (StatusCode, J
             Json(serde_json::json!({"error": "会话标题不能为空"})),
         );
     };
-    let session = Session::new(title, description, metadata, user_id, project_id);
+    let session = Session::new(title, description, metadata, Some(user_id), project_id);
     if let Err(err) = SessionService::create(session.clone()).await {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -150,27 +170,25 @@ async fn create_session(Json(req): Json<CreateSessionRequest>) -> (StatusCode, J
     )
 }
 
-async fn get_session(Path(id): Path<String>) -> (StatusCode, Json<Value>) {
-    match SessionService::get_by_id(&id).await {
-        Ok(Some(session)) => (
+async fn get_session(auth: AuthUser, Path(id): Path<String>) -> (StatusCode, Json<Value>) {
+    match ensure_owned_session(&id, &auth).await {
+        Ok(session) => (
             StatusCode::OK,
             Json(serde_json::to_value(session).unwrap_or(Value::Null)),
         ),
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({"error": "会话不存在"})),
-        ),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": err})),
-        ),
+        Err(err) => map_session_access_error(err),
     }
 }
 
 async fn update_session(
+    auth: AuthUser,
     Path(id): Path<String>,
     Json(req): Json<UpdateSessionRequest>,
 ) -> (StatusCode, Json<Value>) {
+    if let Err(err) = ensure_owned_session(&id, &auth).await {
+        return map_session_access_error(err);
+    }
+
     if let Err(err) = SessionService::update(
         &id,
         req.title.clone(),
@@ -197,7 +215,10 @@ async fn update_session(
     }
 }
 
-async fn delete_session(Path(id): Path<String>) -> (StatusCode, Json<Value>) {
+async fn delete_session(auth: AuthUser, Path(id): Path<String>) -> (StatusCode, Json<Value>) {
+    if let Err(err) = ensure_owned_session(&id, &auth).await {
+        return map_session_access_error(err);
+    }
     match SessionService::delete(&id).await {
         Ok(_) => (
             StatusCode::OK,
@@ -210,7 +231,13 @@ async fn delete_session(Path(id): Path<String>) -> (StatusCode, Json<Value>) {
     }
 }
 
-async fn list_mcp_servers(Path(session_id): Path<String>) -> (StatusCode, Json<Value>) {
+async fn list_mcp_servers(
+    auth: AuthUser,
+    Path(session_id): Path<String>,
+) -> (StatusCode, Json<Value>) {
+    if let Err(err) = ensure_owned_session(&session_id, &auth).await {
+        return map_session_access_error(err);
+    }
     match session_mcp_repo::list_session_mcp_servers(&session_id).await {
         Ok(res) => (
             StatusCode::OK,
@@ -230,9 +257,13 @@ struct AddMcpServerRequest {
 }
 
 async fn add_mcp_server(
+    auth: AuthUser,
     Path(session_id): Path<String>,
     Json(req): Json<AddMcpServerRequest>,
 ) -> (StatusCode, Json<Value>) {
+    if let Err(err) = ensure_owned_session(&session_id, &auth).await {
+        return map_session_access_error(err);
+    }
     let id = Uuid::new_v4().to_string();
     let item = SessionMcpServer {
         id: id.clone(),
@@ -256,8 +287,12 @@ async fn add_mcp_server(
 }
 
 async fn delete_mcp_server(
+    auth: AuthUser,
     Path((session_id, mcp_config_id)): Path<(String, String)>,
 ) -> (StatusCode, Json<Value>) {
+    if let Err(err) = ensure_owned_session(&session_id, &auth).await {
+        return map_session_access_error(err);
+    }
     match session_mcp_repo::delete_session_mcp_server(&session_id, &mcp_config_id).await {
         Ok(_) => (StatusCode::OK, Json(serde_json::json!({"success": true}))),
         Err(err) => (
@@ -678,9 +713,13 @@ async fn fetch_session_messages_for_display(
 }
 
 async fn get_session_messages(
+    auth: AuthUser,
     Path(session_id): Path<String>,
     Query(query): Query<PageQuery>,
 ) -> (StatusCode, Json<Value>) {
+    if let Err(err) = ensure_owned_session(&session_id, &auth).await {
+        return map_session_access_error(err);
+    }
     let limit = parse_positive_limit(query.limit);
     let offset = parse_non_negative_offset(query.offset);
     let compact = parse_bool_query_flag(query.compact);
@@ -704,8 +743,12 @@ async fn get_session_messages(
 }
 
 async fn get_session_turn_process_messages(
+    auth: AuthUser,
     Path((session_id, user_message_id)): Path<(String, String)>,
 ) -> (StatusCode, Json<Value>) {
+    if let Err(err) = ensure_owned_session(&session_id, &auth).await {
+        return map_session_access_error(err);
+    }
     let result = MessageService::get_by_session(&session_id, None, 0).await;
 
     match result {
@@ -767,9 +810,13 @@ async fn get_session_turn_process_messages(
 }
 
 async fn get_session_summaries(
+    auth: AuthUser,
     Path(session_id): Path<String>,
     Query(query): Query<PageQuery>,
 ) -> (StatusCode, Json<Value>) {
+    if let Err(err) = ensure_owned_session(&session_id, &auth).await {
+        return map_session_access_error(err);
+    }
     let limit = parse_positive_limit(query.limit).or(Some(20));
     let offset = parse_non_negative_offset(query.offset);
 
@@ -804,8 +851,12 @@ async fn get_session_summaries(
 }
 
 async fn delete_session_summary(
+    auth: AuthUser,
     Path((session_id, summary_id)): Path<(String, String)>,
 ) -> (StatusCode, Json<Value>) {
+    if let Err(err) = ensure_owned_session(&session_id, &auth).await {
+        return map_session_access_error(err);
+    }
     let deleted = match SessionSummaryV2Service::delete_by_id(&session_id, &summary_id).await {
         Ok(value) => value,
         Err(err) => {
@@ -849,7 +900,13 @@ async fn delete_session_summary(
     )
 }
 
-async fn clear_session_summaries(Path(session_id): Path<String>) -> (StatusCode, Json<Value>) {
+async fn clear_session_summaries(
+    auth: AuthUser,
+    Path(session_id): Path<String>,
+) -> (StatusCode, Json<Value>) {
+    if let Err(err) = ensure_owned_session(&session_id, &auth).await {
+        return map_session_access_error(err);
+    }
     let deleted_count = match SessionSummaryV2Service::delete_by_session(&session_id).await {
         Ok(value) => value,
         Err(err) => {
@@ -884,9 +941,13 @@ async fn clear_session_summaries(Path(session_id): Path<String>) -> (StatusCode,
 }
 
 async fn create_session_message(
+    auth: AuthUser,
     Path(session_id): Path<String>,
     Json(req): Json<CreateMessageRequest>,
 ) -> (StatusCode, Json<Value>) {
+    if let Err(err) = ensure_owned_session(&session_id, &auth).await {
+        return map_session_access_error(err);
+    }
     let message = build_message(
         session_id,
         NewMessageFields {

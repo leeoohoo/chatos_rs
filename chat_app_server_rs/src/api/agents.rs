@@ -8,10 +8,13 @@ use serde_json::{json, Value};
 use tokio::task;
 use uuid::Uuid;
 
+use crate::core::agent_access::{ensure_owned_agent, map_agent_access_error};
+use crate::core::auth::AuthUser;
 use crate::core::chat_context::maybe_spawn_session_title_rename;
 use crate::core::chat_stream::{
     build_v2_callbacks, handle_chat_result, send_error_event, send_start_event,
 };
+use crate::core::user_scope::{ensure_and_set_user_id, resolve_user_id};
 use crate::models::agent::Agent;
 use crate::repositories::agents as agents_repo;
 use crate::services::v2::agent::{load_model_config_for_agent, run_chat};
@@ -62,9 +65,14 @@ pub fn router() -> Router {
 }
 
 async fn list_agents(
+    auth: AuthUser,
     axum::extract::Query(query): axum::extract::Query<UserQuery>,
 ) -> (StatusCode, Json<Value>) {
-    let agents = match agents_repo::list_agents(query.user_id).await {
+    let user_id = match resolve_user_id(query.user_id, &auth) {
+        Ok(user_id) => user_id,
+        Err(err) => return err,
+    };
+    let agents = match agents_repo::list_agents(Some(user_id)).await {
         Ok(list) => list,
         Err(err) => {
             return (
@@ -104,13 +112,17 @@ async fn list_agents(
     (StatusCode::OK, Json(Value::Array(out)))
 }
 
-async fn create_agent(Json(req): Json<AgentRequest>) -> (StatusCode, Json<Value>) {
+async fn create_agent(auth: AuthUser, Json(req): Json<AgentRequest>) -> (StatusCode, Json<Value>) {
     if req.name.is_none() || req.ai_model_config_id.is_none() {
         return (
             StatusCode::BAD_REQUEST,
             Json(json!({"error": "name 和 ai_model_config_id 为必填项"})),
         );
     }
+    let user_id = match resolve_user_id(req.user_id.clone(), &auth) {
+        Ok(user_id) => user_id,
+        Err(err) => return err,
+    };
     let id = Uuid::new_v4().to_string();
     let agent = Agent {
         id: id.clone(),
@@ -118,7 +130,7 @@ async fn create_agent(Json(req): Json<AgentRequest>) -> (StatusCode, Json<Value>
         ai_model_config_id: req.ai_model_config_id.unwrap(),
         system_context_id: req.system_context_id,
         description: req.description,
-        user_id: req.user_id,
+        user_id: Some(user_id),
         mcp_config_ids: parse_id_list(&req.mcp_config_ids).unwrap_or_default(),
         callable_agent_ids: parse_id_list(&req.callable_agent_ids).unwrap_or_default(),
         project_id: req.project_id.and_then(|s| {
@@ -179,10 +191,15 @@ async fn create_agent(Json(req): Json<AgentRequest>) -> (StatusCode, Json<Value>
 }
 
 async fn get_agent(
+    auth: AuthUser,
     axum::extract::Path(agent_id): axum::extract::Path<String>,
 ) -> (StatusCode, Json<Value>) {
-    let agent = match agents_repo::get_agent_by_id(&agent_id).await {
+    let a = match ensure_owned_agent(&agent_id, &auth).await {
         Ok(agent) => agent,
+        Err(err) => return map_agent_access_error(err),
+    };
+    let app_ids = match agents_repo::get_app_ids_for_agent(&agent_id).await {
+        Ok(ids) => ids,
         Err(err) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -190,60 +207,35 @@ async fn get_agent(
             )
         }
     };
-    if let Some(a) = agent {
-        let app_ids = match agents_repo::get_app_ids_for_agent(&agent_id).await {
-            Ok(ids) => ids,
-            Err(err) => {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({"error": "获取智能体失败", "detail": err})),
-                )
-            }
-        };
-        return (
-            StatusCode::OK,
-            Json(json!({
-                "id": a.id,
-                "name": a.name,
-                "ai_model_config_id": a.ai_model_config_id,
-                "system_context_id": a.system_context_id,
-                "description": a.description,
-                "user_id": a.user_id,
-                "mcp_config_ids": a.mcp_config_ids,
-                "callable_agent_ids": a.callable_agent_ids,
-                "project_id": a.project_id,
-                "workspace_dir": normalize_workspace_dir(a.workspace_dir.as_deref()),
-                "enabled": a.enabled,
-                "created_at": a.created_at,
-                "updated_at": a.updated_at,
-                "app_ids": app_ids
-            })),
-        );
-    }
     (
-        StatusCode::NOT_FOUND,
-        Json(json!({"error": "Agent 不存在"})),
+        StatusCode::OK,
+        Json(json!({
+            "id": a.id,
+            "name": a.name,
+            "ai_model_config_id": a.ai_model_config_id,
+            "system_context_id": a.system_context_id,
+            "description": a.description,
+            "user_id": a.user_id,
+            "mcp_config_ids": a.mcp_config_ids,
+            "callable_agent_ids": a.callable_agent_ids,
+            "project_id": a.project_id,
+            "workspace_dir": normalize_workspace_dir(a.workspace_dir.as_deref()),
+            "enabled": a.enabled,
+            "created_at": a.created_at,
+            "updated_at": a.updated_at,
+            "app_ids": app_ids
+        })),
     )
 }
 
 async fn update_agent(
+    auth: AuthUser,
     axum::extract::Path(agent_id): axum::extract::Path<String>,
     Json(req): Json<AgentRequest>,
 ) -> (StatusCode, Json<Value>) {
-    let existing = match agents_repo::get_agent_by_id(&agent_id).await {
+    let mut agent = match ensure_owned_agent(&agent_id, &auth).await {
         Ok(agent) => agent,
-        Err(err) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "更新智能体失败", "detail": err})),
-            )
-        }
-    };
-    let Some(mut agent) = existing else {
-        return (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": "Agent 不存在"})),
-        );
+        Err(err) => return map_agent_access_error(err),
     };
     if let Some(v) = req.name {
         agent.name = v;
@@ -319,22 +311,11 @@ async fn update_agent(
 }
 
 async fn delete_agent(
+    auth: AuthUser,
     axum::extract::Path(agent_id): axum::extract::Path<String>,
 ) -> (StatusCode, Json<Value>) {
-    let existing = match agents_repo::get_agent_by_id(&agent_id).await {
-        Ok(agent) => agent,
-        Err(err) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "删除智能体失败", "detail": err})),
-            )
-        }
-    };
-    if existing.is_none() {
-        return (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": "Agent 不存在"})),
-        );
+    if let Err(err) = ensure_owned_agent(&agent_id, &auth).await {
+        return map_agent_access_error(err);
     }
     if let Err(err) = agents_repo::delete_agent(&agent_id).await {
         return (
@@ -346,13 +327,17 @@ async fn delete_agent(
 }
 
 async fn chat_stream(
-    Json(req): Json<AgentChatRequest>,
+    auth: AuthUser,
+    Json(mut req): Json<AgentChatRequest>,
 ) -> Result<
     axum::response::Sse<
         impl futures::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>,
     >,
     (StatusCode, Json<Value>),
 > {
+    if let Err(err) = ensure_and_set_user_id(&mut req.user_id, &auth) {
+        return Err(err);
+    }
     let session_id = req.session_id.clone().unwrap_or_default();
     let content = req.content.clone().unwrap_or_default();
     let agent_id = req.agent_id.clone().unwrap_or_default();

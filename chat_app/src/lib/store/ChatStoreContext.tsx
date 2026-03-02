@@ -39,8 +39,8 @@ export const ChatStoreProvider: React.FC<ChatStoreProviderProps> = ({
     if (userId || projectId || customApiClient) {
       debugLog('🏪 创建自定义store:', { userId, projectId, hasCustomApiClient: !!customApiClient });
       return createChatStoreWithBackend(customApiClient, {
-        userId: userId || 'default-user',
-        projectId: projectId || 'default-project',
+        userId: userId || undefined,
+        projectId: projectId || undefined,
       });
     } else {
       debugLog('🏪 使用默认store');

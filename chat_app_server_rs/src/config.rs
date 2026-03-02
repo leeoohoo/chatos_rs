@@ -25,6 +25,8 @@ pub struct Config {
     pub summary_bisect_max_depth: i64,
     pub summary_bisect_min_messages: i64,
     pub summary_retry_on_context_overflow: bool,
+    pub auth_jwt_secret: String,
+    pub auth_access_token_ttl_seconds: i64,
 }
 
 static CONFIG: OnceCell<Config> = OnceCell::new();
@@ -106,6 +108,9 @@ impl Config {
             .unwrap_or_else(|_| "true".to_string())
             .to_lowercase()
             != "false";
+        let auth_jwt_secret = std::env::var("AUTH_JWT_SECRET")
+            .unwrap_or_else(|_| "dev-only-change-me-please".to_string());
+        let auth_access_token_ttl_seconds = read_int("AUTH_ACCESS_TOKEN_TTL_SECONDS", 7200).max(60);
 
         Ok(Config {
             openai_api_key,
@@ -130,6 +135,8 @@ impl Config {
             summary_bisect_max_depth,
             summary_bisect_min_messages,
             summary_retry_on_context_overflow,
+            auth_jwt_secret,
+            auth_access_token_ttl_seconds,
         })
     }
 
@@ -191,6 +198,19 @@ impl Config {
         println!(
             "    • SUMMARY_RETRY_ON_CONTEXT_OVERFLOW: {}",
             self.summary_retry_on_context_overflow
+        );
+        println!("  - 认证配置:");
+        println!(
+            "    • AUTH_JWT_SECRET: {}",
+            if self.auth_jwt_secret.is_empty() {
+                "未设置"
+            } else {
+                "已设置"
+            }
+        );
+        println!(
+            "    • AUTH_ACCESS_TOKEN_TTL_SECONDS: {}",
+            self.auth_access_token_ttl_seconds
         );
     }
 }

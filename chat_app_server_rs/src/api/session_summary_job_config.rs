@@ -6,11 +6,11 @@ use axum::{extract::Query, routing::get, Json, Router};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use crate::core::auth::AuthUser;
+use crate::core::user_scope::resolve_user_id;
 use crate::models::session_summary_job_config::{
     SessionSummaryJobConfig, SessionSummaryJobConfigService,
 };
-
-const DEFAULT_USER_ID: &str = "default-user";
 
 #[derive(Debug, Deserialize)]
 struct UserQuery {
@@ -38,8 +38,17 @@ pub fn router() -> Router {
     )
 }
 
-async fn get_config(Query(query): Query<UserQuery>) -> (StatusCode, Json<Value>) {
-    let user_id = resolve_user_id(query.user_id);
+async fn get_config(auth: AuthUser, Query(query): Query<UserQuery>) -> (StatusCode, Json<Value>) {
+    let user_id = match resolve_user_id(
+        query
+            .user_id
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+        &auth,
+    ) {
+        Ok(user_id) => user_id,
+        Err(err) => return err,
+    };
     let defaults = crate::modules::session_summary_job::types::SummaryJobDefaults::from_env();
 
     match SessionSummaryJobConfigService::get_by_user(&user_id).await {
@@ -59,16 +68,41 @@ async fn get_config(Query(query): Query<UserQuery>) -> (StatusCode, Json<Value>)
     }
 }
 
-async fn put_config(Json(req): Json<SummaryJobConfigRequest>) -> (StatusCode, Json<Value>) {
-    upsert_config(req).await
+async fn put_config(
+    auth: AuthUser,
+    Json(req): Json<SummaryJobConfigRequest>,
+) -> (StatusCode, Json<Value>) {
+    upsert_config(auth, req).await
 }
 
-async fn patch_config(Json(req): Json<SummaryJobConfigRequest>) -> (StatusCode, Json<Value>) {
-    upsert_config(req).await
+async fn patch_config(
+    auth: AuthUser,
+    Json(req): Json<SummaryJobConfigRequest>,
+) -> (StatusCode, Json<Value>) {
+    upsert_config(auth, req).await
 }
 
-async fn upsert_config(req: SummaryJobConfigRequest) -> (StatusCode, Json<Value>) {
-    let user_id = resolve_user_id(req.user_id);
+async fn upsert_config(auth: AuthUser, req: SummaryJobConfigRequest) -> (StatusCode, Json<Value>) {
+    let SummaryJobConfigRequest {
+        user_id,
+        enabled,
+        summary_model_config_id,
+        token_limit,
+        message_count_limit,
+        round_limit,
+        target_summary_tokens,
+        job_interval_seconds,
+    } = req;
+
+    let user_id = match resolve_user_id(
+        user_id
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+        &auth,
+    ) {
+        Ok(user_id) => user_id,
+        Err(err) => return err,
+    };
     let defaults = crate::modules::session_summary_job::types::SummaryJobDefaults::from_env();
 
     let mut config = match SessionSummaryJobConfigService::get_by_user(&user_id).await {
@@ -82,25 +116,25 @@ async fn upsert_config(req: SummaryJobConfigRequest) -> (StatusCode, Json<Value>
         }
     };
 
-    if let Some(enabled) = req.enabled {
+    if let Some(enabled) = enabled {
         config.enabled = enabled;
     }
-    if let Some(model_id) = req.summary_model_config_id {
+    if let Some(model_id) = summary_model_config_id {
         config.summary_model_config_id = model_id
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty());
     }
-    if let Some(token_limit) = req.token_limit {
+    if let Some(token_limit) = token_limit {
         config.token_limit = token_limit;
     }
-    let message_count_limit = req.message_count_limit.or(req.round_limit);
+    let message_count_limit = message_count_limit.or(round_limit);
     if let Some(round_limit) = message_count_limit {
         config.round_limit = round_limit;
     }
-    if let Some(target_summary_tokens) = req.target_summary_tokens {
+    if let Some(target_summary_tokens) = target_summary_tokens {
         config.target_summary_tokens = target_summary_tokens;
     }
-    if let Some(job_interval_seconds) = req.job_interval_seconds {
+    if let Some(job_interval_seconds) = job_interval_seconds {
         config.job_interval_seconds = job_interval_seconds;
     }
 
@@ -115,13 +149,6 @@ async fn upsert_config(req: SummaryJobConfigRequest) -> (StatusCode, Json<Value>
             Json(json!({"error": "保存会话总结配置失败", "detail": err})),
         ),
     }
-}
-
-fn resolve_user_id(input: Option<String>) -> String {
-    input
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| DEFAULT_USER_ID.to_string())
 }
 
 fn default_config_for_user(

@@ -31,8 +31,8 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
     const customUserId = config?.userId;
     const customProjectId = config?.projectId;
     
-    // 使用传入的参数或默认值
-    const userId = customUserId || 'default-user';
+    // 用户 ID 由登录态注入；缺失时不再回退到硬编码默认值
+    const userId = customUserId || '';
     
     // 获取userId的统一函数
     const getUserIdParam = () => userId;

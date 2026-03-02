@@ -7,6 +7,9 @@ use axum::{
 use serde::Deserialize;
 use uuid::Uuid;
 
+use crate::core::application_access::{ensure_owned_application, map_application_access_error};
+use crate::core::auth::AuthUser;
+use crate::core::user_scope::resolve_user_id;
 use crate::core::validation::normalize_non_empty;
 use crate::models::application::Application;
 use crate::repositories::applications as repo;
@@ -42,8 +45,15 @@ pub fn router() -> Router {
         )
 }
 
-async fn list_apps(Query(query): Query<AppQuery>) -> (StatusCode, Json<serde_json::Value>) {
-    match repo::list_applications(query.user_id).await {
+async fn list_apps(
+    auth: AuthUser,
+    Query(query): Query<AppQuery>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let user_id = match resolve_user_id(query.user_id, &auth) {
+        Ok(user_id) => user_id,
+        Err(err) => return err,
+    };
+    match repo::list_applications(Some(user_id)).await {
         Ok(apps) => (
             StatusCode::OK,
             Json(serde_json::to_value(apps).unwrap_or(serde_json::Value::Null)),
@@ -55,7 +65,10 @@ async fn list_apps(Query(query): Query<AppQuery>) -> (StatusCode, Json<serde_jso
     }
 }
 
-async fn create_app(Json(req): Json<CreateAppRequest>) -> (StatusCode, Json<serde_json::Value>) {
+async fn create_app(
+    auth: AuthUser,
+    Json(req): Json<CreateAppRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
     let CreateAppRequest {
         name,
         url,
@@ -63,6 +76,10 @@ async fn create_app(Json(req): Json<CreateAppRequest>) -> (StatusCode, Json<serd
         user_id,
         enabled,
     } = req;
+    let user_id = match resolve_user_id(user_id, &auth) {
+        Ok(user_id) => user_id,
+        Err(err) => return err,
+    };
     let Some(name) = normalize_non_empty(name) else {
         return (
             StatusCode::BAD_REQUEST,
@@ -82,7 +99,7 @@ async fn create_app(Json(req): Json<CreateAppRequest>) -> (StatusCode, Json<serd
         name,
         url,
         description,
-        user_id,
+        user_id: Some(user_id),
         enabled: enabled.unwrap_or(true),
         created_at: crate::core::time::now_rfc3339(),
         updated_at: crate::core::time::now_rfc3339(),
@@ -99,29 +116,26 @@ async fn create_app(Json(req): Json<CreateAppRequest>) -> (StatusCode, Json<serd
     )
 }
 
-async fn get_app(Path(application_id): Path<String>) -> (StatusCode, Json<serde_json::Value>) {
-    match repo::get_application_by_id(&application_id).await {
-        Ok(Some(app)) => (
+async fn get_app(
+    auth: AuthUser,
+    Path(application_id): Path<String>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    match ensure_owned_application(&application_id, &auth).await {
+        Ok(app) => (
             StatusCode::OK,
             Json(serde_json::to_value(app).unwrap_or(serde_json::Value::Null)),
         ),
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({"error": "Application 不存在"})),
-        ),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": "获取应用失败", "detail": err})),
-        ),
+        Err(err) => map_application_access_error(err),
     }
 }
 
 async fn update_app(
+    auth: AuthUser,
     Path(application_id): Path<String>,
     Json(req): Json<UpdateAppRequest>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    match repo::get_application_by_id(&application_id).await {
-        Ok(Some(mut existing)) => {
+    match ensure_owned_application(&application_id, &auth).await {
+        Ok(mut existing) => {
             let mut update_requested = false;
             if let Some(name) = req.name {
                 existing.name = name;
@@ -160,35 +174,22 @@ async fn update_app(
                 ),
             }
         }
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({"error": "Application 不存在"})),
-        ),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": "更新应用失败", "detail": err})),
-        ),
+        Err(err) => map_application_access_error(err),
     }
 }
 
-async fn delete_app(Path(application_id): Path<String>) -> (StatusCode, Json<serde_json::Value>) {
-    match repo::get_application_by_id(&application_id).await {
-        Ok(Some(_)) => {
-            if let Err(err) = repo::delete_application(&application_id).await {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({"error": "删除应用失败", "detail": err})),
-                );
-            }
-            (StatusCode::OK, Json(serde_json::json!({"ok": true})))
-        }
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({"error": "Application 不存在"})),
-        ),
-        Err(err) => (
+async fn delete_app(
+    auth: AuthUser,
+    Path(application_id): Path<String>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    if let Err(err) = ensure_owned_application(&application_id, &auth).await {
+        return map_application_access_error(err);
+    }
+    if let Err(err) = repo::delete_application(&application_id).await {
+        return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": "删除应用失败", "detail": err})),
-        ),
+        );
     }
+    (StatusCode::OK, Json(serde_json::json!({"ok": true})))
 }

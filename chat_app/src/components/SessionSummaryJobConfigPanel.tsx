@@ -100,7 +100,7 @@ const SessionSummaryJobConfigPanel: React.FC<Props> = ({ onClose }) => {
   const client = clientFromContext || globalApiClient;
   const { userId } = useChatRuntimeEnv();
   const { aiModelConfigs, loadAiModelConfigs } = useChatStoreFromContext();
-  const effectiveUserId = userId || "default-user";
+  const effectiveUserId = userId;
 
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);

@@ -4,15 +4,23 @@ use axum::Json;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
+use crate::core::ai_model_access::{ensure_owned_ai_model, map_ai_model_access_error};
+use crate::core::auth::AuthUser;
+use crate::core::user_scope::resolve_user_id;
 use crate::models::ai_model_config::AiModelConfig;
 use crate::repositories::ai_model_configs as ai_repo;
 
 use super::{AiModelConfigRequest, UserQuery};
 
 pub(super) async fn list_ai_model_configs(
+    auth: AuthUser,
     Query(query): Query<UserQuery>,
 ) -> (StatusCode, Json<Value>) {
-    let configs = match ai_repo::list_ai_model_configs(query.user_id).await {
+    let user_id = match resolve_user_id(query.user_id, &auth) {
+        Ok(user_id) => user_id,
+        Err(err) => return err,
+    };
+    let configs = match ai_repo::list_ai_model_configs(Some(user_id)).await {
         Ok(list) => list,
         Err(err) => {
             return (
@@ -46,8 +54,13 @@ pub(super) async fn list_ai_model_configs(
 }
 
 pub(super) async fn create_ai_model_config(
+    auth: AuthUser,
     Json(req): Json<AiModelConfigRequest>,
 ) -> (StatusCode, Json<Value>) {
+    let user_id = match resolve_user_id(req.user_id.clone(), &auth) {
+        Ok(user_id) => user_id,
+        Err(err) => return err,
+    };
     let Some(name) = req.name else {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -78,7 +91,7 @@ pub(super) async fn create_ai_model_config(
         thinking_level,
         api_key: req.api_key,
         base_url: req.base_url,
-        user_id: req.user_id,
+        user_id: Some(user_id),
         enabled: req.enabled.unwrap_or(true),
         supports_images: req.supports_images.unwrap_or(false),
         supports_reasoning: req.supports_reasoning.unwrap_or(false),
@@ -96,25 +109,14 @@ pub(super) async fn create_ai_model_config(
 }
 
 pub(super) async fn update_ai_model_config(
+    auth: AuthUser,
     Path(config_id): Path<String>,
     Json(req): Json<AiModelConfigRequest>,
 ) -> (StatusCode, Json<Value>) {
-    let existing = match ai_repo::get_ai_model_config_by_id(&config_id).await {
+    let mut cfg = match ensure_owned_ai_model(&config_id, &auth).await {
         Ok(cfg) => cfg,
-        Err(err) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "更新AI模型配置失败", "detail": err})),
-            )
-        }
+        Err(err) => return map_ai_model_access_error(err),
     };
-    if existing.is_none() {
-        return (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": "AI模型配置不存在"})),
-        );
-    }
-    let mut cfg = existing.unwrap();
     if let Some(v) = req.name {
         cfg.name = v;
     }
@@ -177,22 +179,11 @@ pub(super) async fn update_ai_model_config(
 }
 
 pub(super) async fn delete_ai_model_config(
+    auth: AuthUser,
     Path(config_id): Path<String>,
 ) -> (StatusCode, Json<Value>) {
-    let existing = match ai_repo::get_ai_model_config_by_id(&config_id).await {
-        Ok(cfg) => cfg,
-        Err(err) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "删除AI模型配置失败", "detail": err})),
-            )
-        }
-    };
-    if existing.is_none() {
-        return (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": "AI模型配置不存在"})),
-        );
+    if let Err(err) = ensure_owned_ai_model(&config_id, &auth).await {
+        return map_ai_model_access_error(err);
     }
     if let Err(err) = ai_repo::delete_ai_model_config(&config_id).await {
         return (

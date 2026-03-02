@@ -7,10 +7,12 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use crate::core::auth::AuthUser;
+use crate::core::session_access::{ensure_owned_session, map_session_access_error_with_success};
 use crate::services::task_manager::{
-    complete_task_by_id, delete_task_by_id, list_tasks_for_context, submit_task_review_decision,
-    update_task_by_id, TaskDraft, TaskReviewAction, TaskUpdatePatch, REVIEW_NOT_FOUND_ERR,
-    TASK_NOT_FOUND_ERR,
+    complete_task_by_id, delete_task_by_id, get_task_review_payload, list_tasks_for_context,
+    submit_task_review_decision, update_task_by_id, TaskDraft, TaskReviewAction, TaskUpdatePatch,
+    REVIEW_NOT_FOUND_ERR, TASK_NOT_FOUND_ERR,
 };
 
 #[derive(Debug, Deserialize)]
@@ -63,12 +65,18 @@ pub fn router() -> Router {
         )
 }
 
-async fn list_tasks(Query(query): Query<TaskListQuery>) -> (StatusCode, Json<Value>) {
+async fn list_tasks(
+    auth: AuthUser,
+    Query(query): Query<TaskListQuery>,
+) -> (StatusCode, Json<Value>) {
     if query.session_id.trim().is_empty() {
         return (
             StatusCode::BAD_REQUEST,
             Json(json!({ "success": false, "error": "session_id is required" })),
         );
+    }
+    if let Err(err) = ensure_owned_session(query.session_id.as_str(), &auth).await {
+        return map_session_access_error_with_success(err);
     }
 
     let include_done = query.include_done.unwrap_or(false);
@@ -98,6 +106,7 @@ async fn list_tasks(Query(query): Query<TaskListQuery>) -> (StatusCode, Json<Val
 }
 
 async fn update_task(
+    auth: AuthUser,
     Path(task_id): Path<String>,
     Query(scope): Query<SessionScopeQuery>,
     Json(req): Json<UpdateTaskRequest>,
@@ -113,6 +122,9 @@ async fn update_task(
             StatusCode::BAD_REQUEST,
             Json(json!({ "success": false, "error": "task_id is required" })),
         );
+    }
+    if let Err(err) = ensure_owned_session(scope.session_id.as_str(), &auth).await {
+        return map_session_access_error_with_success(err);
     }
 
     let patch = TaskUpdatePatch {
@@ -157,6 +169,7 @@ async fn update_task(
 }
 
 async fn complete_task(
+    auth: AuthUser,
     Path(task_id): Path<String>,
     Query(scope): Query<SessionScopeQuery>,
 ) -> (StatusCode, Json<Value>) {
@@ -171,6 +184,9 @@ async fn complete_task(
             StatusCode::BAD_REQUEST,
             Json(json!({ "success": false, "error": "task_id is required" })),
         );
+    }
+    if let Err(err) = ensure_owned_session(scope.session_id.as_str(), &auth).await {
+        return map_session_access_error_with_success(err);
     }
 
     match complete_task_by_id(scope.session_id.as_str(), task_id.as_str()).await {
@@ -193,6 +209,7 @@ async fn complete_task(
 }
 
 async fn delete_task(
+    auth: AuthUser,
     Path(task_id): Path<String>,
     Query(scope): Query<SessionScopeQuery>,
 ) -> (StatusCode, Json<Value>) {
@@ -207,6 +224,9 @@ async fn delete_task(
             StatusCode::BAD_REQUEST,
             Json(json!({ "success": false, "error": "task_id is required" })),
         );
+    }
+    if let Err(err) = ensure_owned_session(scope.session_id.as_str(), &auth).await {
+        return map_session_access_error_with_success(err);
     }
 
     match delete_task_by_id(scope.session_id.as_str(), task_id.as_str()).await {
@@ -226,6 +246,7 @@ async fn delete_task(
 }
 
 async fn submit_review_decision(
+    auth: AuthUser,
     Path(review_id): Path<String>,
     Json(req): Json<ReviewDecisionRequest>,
 ) -> (StatusCode, Json<Value>) {
@@ -234,6 +255,19 @@ async fn submit_review_decision(
             StatusCode::BAD_REQUEST,
             Json(json!({ "error": "review_id is required" })),
         );
+    }
+
+    let review_payload = match get_task_review_payload(review_id.as_str()).await {
+        Some(payload) => payload,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "success": false, "error": REVIEW_NOT_FOUND_ERR })),
+            )
+        }
+    };
+    if let Err(err) = ensure_owned_session(review_payload.session_id.as_str(), &auth).await {
+        return map_session_access_error_with_success(err);
     }
 
     if matches!(req.action, TaskReviewAction::Confirm) {

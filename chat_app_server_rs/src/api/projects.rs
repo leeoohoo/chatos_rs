@@ -9,6 +9,9 @@ use serde_json::Value;
 use std::collections::HashSet;
 use std::path::Path as StdPath;
 
+use crate::core::auth::AuthUser;
+use crate::core::project_access::{ensure_owned_project, map_project_access_error};
+use crate::core::user_scope::resolve_user_id;
 use crate::core::validation::{
     normalize_non_empty, validate_existing_dir, validate_existing_dir_if_present,
 };
@@ -52,8 +55,15 @@ struct ProjectChangeQuery {
     offset: Option<i64>,
 }
 
-async fn list_projects(Query(query): Query<ProjectQuery>) -> (StatusCode, Json<Value>) {
-    match ProjectService::list(query.user_id).await {
+async fn list_projects(
+    auth: AuthUser,
+    Query(query): Query<ProjectQuery>,
+) -> (StatusCode, Json<Value>) {
+    let user_id = match resolve_user_id(query.user_id, &auth) {
+        Ok(user_id) => user_id,
+        Err(err) => return err,
+    };
+    match ProjectService::list(Some(user_id)).await {
         Ok(list) => (
             StatusCode::OK,
             Json(serde_json::to_value(list).unwrap_or(Value::Null)),
@@ -65,13 +75,20 @@ async fn list_projects(Query(query): Query<ProjectQuery>) -> (StatusCode, Json<V
     }
 }
 
-async fn create_project(Json(req): Json<CreateProjectRequest>) -> (StatusCode, Json<Value>) {
+async fn create_project(
+    auth: AuthUser,
+    Json(req): Json<CreateProjectRequest>,
+) -> (StatusCode, Json<Value>) {
     let CreateProjectRequest {
         name,
         root_path,
         description,
         user_id,
     } = req;
+    let user_id = match resolve_user_id(user_id, &auth) {
+        Ok(user_id) => user_id,
+        Err(err) => return err,
+    };
 
     let Some(name) = normalize_non_empty(name) else {
         return (
@@ -93,7 +110,7 @@ async fn create_project(Json(req): Json<CreateProjectRequest>) -> (StatusCode, J
         }
     };
 
-    let project = Project::new(name, root_path, description, user_id);
+    let project = Project::new(name, root_path, description, Some(user_id));
     if let Err(err) = ProjectService::create(project.clone()).await {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -111,27 +128,25 @@ async fn create_project(Json(req): Json<CreateProjectRequest>) -> (StatusCode, J
     )
 }
 
-async fn get_project(Path(id): Path<String>) -> (StatusCode, Json<Value>) {
-    match ProjectService::get_by_id(&id).await {
-        Ok(Some(project)) => (
+async fn get_project(auth: AuthUser, Path(id): Path<String>) -> (StatusCode, Json<Value>) {
+    match ensure_owned_project(&id, &auth).await {
+        Ok(project) => (
             StatusCode::OK,
             Json(serde_json::to_value(project).unwrap_or(Value::Null)),
         ),
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({"error": "项目不存在"})),
-        ),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": err})),
-        ),
+        Err(err) => map_project_access_error(err),
     }
 }
 
 async fn update_project(
+    auth: AuthUser,
     Path(id): Path<String>,
     Json(req): Json<UpdateProjectRequest>,
 ) -> (StatusCode, Json<Value>) {
+    if let Err(err) = ensure_owned_project(&id, &auth).await {
+        return map_project_access_error(err);
+    }
+
     let UpdateProjectRequest {
         name,
         root_path,
@@ -168,7 +183,10 @@ async fn update_project(
     }
 }
 
-async fn delete_project(Path(id): Path<String>) -> (StatusCode, Json<Value>) {
+async fn delete_project(auth: AuthUser, Path(id): Path<String>) -> (StatusCode, Json<Value>) {
+    if let Err(err) = ensure_owned_project(&id, &auth).await {
+        return map_project_access_error(err);
+    }
     match ProjectService::delete(&id).await {
         Ok(_) => (
             StatusCode::OK,
@@ -182,23 +200,13 @@ async fn delete_project(Path(id): Path<String>) -> (StatusCode, Json<Value>) {
 }
 
 async fn list_project_changes(
+    auth: AuthUser,
     Path(id): Path<String>,
     Query(query): Query<ProjectChangeQuery>,
 ) -> (StatusCode, Json<Value>) {
-    let project = match ProjectService::get_by_id(&id).await {
-        Ok(Some(p)) => p,
-        Ok(None) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({"error": "项目不存在"})),
-            )
-        }
-        Err(err) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": err})),
-            )
-        }
+    let project = match ensure_owned_project(&id, &auth).await {
+        Ok(project) => project,
+        Err(err) => return map_project_access_error(err),
     };
 
     let paths = build_change_paths(&project, query.path);

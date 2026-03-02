@@ -71,6 +71,11 @@ impl TaskReviewHub {
         Ok(entry.payload)
     }
 
+    async fn payload(&self, review_id: &str) -> Option<TaskCreateReviewPayload> {
+        let pending = self.pending.lock().await;
+        pending.get(review_id).map(|entry| entry.payload.clone())
+    }
+
     async fn remove(&self, review_id: &str) {
         let mut pending = self.pending.lock().await;
         pending.remove(review_id);
@@ -142,4 +147,9 @@ pub async fn submit_task_review_decision(
     TASK_REVIEW_HUB
         .resolve(review_id, action, tasks, reason)
         .await
+}
+
+pub async fn get_task_review_payload(review_id: &str) -> Option<TaskCreateReviewPayload> {
+    let review_id = trimmed_non_empty(review_id)?;
+    TASK_REVIEW_HUB.payload(review_id).await
 }

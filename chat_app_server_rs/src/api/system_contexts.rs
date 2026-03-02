@@ -8,6 +8,11 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
+use crate::core::auth::AuthUser;
+use crate::core::system_context_access::{
+    ensure_owned_system_context, map_system_context_access_error,
+};
+use crate::core::user_scope::{ensure_and_set_user_id, resolve_user_id};
 use crate::models::system_context::SystemContext;
 use crate::repositories::system_contexts as ctx_repo;
 use crate::services::system_context_ai::{
@@ -90,15 +95,13 @@ pub fn router() -> Router {
         .route("/api/system-context/active", get(get_active_system_context))
 }
 
-async fn list_system_contexts(Query(query): Query<UserQuery>) -> (StatusCode, Json<Value>) {
-    let user_id = match query.user_id {
-        Some(u) => u,
-        None => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({"error": "user_id 为必填参数"})),
-            )
-        }
+async fn list_system_contexts(
+    auth: AuthUser,
+    Query(query): Query<UserQuery>,
+) -> (StatusCode, Json<Value>) {
+    let user_id = match resolve_user_id(query.user_id, &auth) {
+        Ok(user_id) => user_id,
+        Err(err) => return err,
     };
     let contexts = match ctx_repo::list_system_contexts(&user_id).await {
         Ok(list) => list,
@@ -134,15 +137,13 @@ async fn list_system_contexts(Query(query): Query<UserQuery>) -> (StatusCode, Js
     (StatusCode::OK, Json(Value::Array(out)))
 }
 
-async fn get_active_system_context(Query(query): Query<UserQuery>) -> (StatusCode, Json<Value>) {
-    let user_id = match query.user_id {
-        Some(u) => u,
-        None => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({"error": "user_id 为必填参数"})),
-            )
-        }
+async fn get_active_system_context(
+    auth: AuthUser,
+    Query(query): Query<UserQuery>,
+) -> (StatusCode, Json<Value>) {
+    let user_id = match resolve_user_id(query.user_id, &auth) {
+        Ok(user_id) => user_id,
+        Err(err) => return err,
     };
     let ctx = match ctx_repo::get_active_system_context(&user_id).await {
         Ok(ctx) => ctx,
@@ -186,18 +187,19 @@ async fn get_active_system_context(Query(query): Query<UserQuery>) -> (StatusCod
     )
 }
 
-async fn create_system_context(Json(req): Json<SystemContextRequest>) -> (StatusCode, Json<Value>) {
+async fn create_system_context(
+    auth: AuthUser,
+    Json(req): Json<SystemContextRequest>,
+) -> (StatusCode, Json<Value>) {
     let Some(name) = req.name else {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": "创建系统上下文失败"})),
         );
     };
-    let Some(user_id) = req.user_id else {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": "创建系统上下文失败"})),
-        );
+    let user_id = match resolve_user_id(req.user_id.clone(), &auth) {
+        Ok(user_id) => user_id,
+        Err(err) => return err,
     };
     let id = Uuid::new_v4().to_string();
     let ctx = SystemContext {
@@ -252,23 +254,13 @@ async fn create_system_context(Json(req): Json<SystemContextRequest>) -> (Status
 }
 
 async fn update_system_context(
+    auth: AuthUser,
     Path(context_id): Path<String>,
     Json(req): Json<SystemContextRequest>,
 ) -> (StatusCode, Json<Value>) {
-    let existing = match ctx_repo::get_system_context_by_id(&context_id).await {
+    let mut ctx = match ensure_owned_system_context(&context_id, &auth).await {
         Ok(ctx) => ctx,
-        Err(err) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "更新系统上下文失败", "detail": err})),
-            )
-        }
-    };
-    let Some(mut ctx) = existing else {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": "更新系统上下文失败"})),
-        );
+        Err(err) => return map_system_context_access_error(err),
     };
     if let Some(v) = req.name {
         ctx.name = v;
@@ -321,7 +313,13 @@ async fn update_system_context(
     (StatusCode::OK, Json(obj))
 }
 
-async fn delete_system_context(Path(context_id): Path<String>) -> (StatusCode, Json<Value>) {
+async fn delete_system_context(
+    auth: AuthUser,
+    Path(context_id): Path<String>,
+) -> (StatusCode, Json<Value>) {
+    if let Err(err) = ensure_owned_system_context(&context_id, &auth).await {
+        return map_system_context_access_error(err);
+    }
     if let Err(err) = ctx_repo::delete_system_context(&context_id).await {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -335,18 +333,17 @@ async fn delete_system_context(Path(context_id): Path<String>) -> (StatusCode, J
 }
 
 async fn activate_system_context(
+    auth: AuthUser,
     Path(context_id): Path<String>,
     Json(req): Json<ActivateContextRequest>,
 ) -> (StatusCode, Json<Value>) {
-    let user_id = match req.user_id {
-        Some(u) => u,
-        None => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "激活系统上下文失败"})),
-            )
-        }
+    let user_id = match resolve_user_id(req.user_id, &auth) {
+        Ok(user_id) => user_id,
+        Err(err) => return err,
     };
+    if let Err(err) = ensure_owned_system_context(&context_id, &auth).await {
+        return map_system_context_access_error(err);
+    }
     if let Err(err) = ctx_repo::activate_system_context(&context_id, &user_id).await {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -370,8 +367,12 @@ async fn activate_system_context(
 }
 
 async fn generate_system_context_draft(
-    Json(req): Json<SystemContextAiGenerateRequest>,
+    auth: AuthUser,
+    Json(mut req): Json<SystemContextAiGenerateRequest>,
 ) -> (StatusCode, Json<Value>) {
+    if let Err(err) = ensure_and_set_user_id(&mut req.user_id, &auth) {
+        return err;
+    }
     match crate::services::system_context_ai::generate_draft(GenerateDraftInput {
         user_id: req.user_id,
         scene: req.scene,
@@ -391,8 +392,12 @@ async fn generate_system_context_draft(
 }
 
 async fn optimize_system_context_draft(
-    Json(req): Json<SystemContextAiOptimizeRequest>,
+    auth: AuthUser,
+    Json(mut req): Json<SystemContextAiOptimizeRequest>,
 ) -> (StatusCode, Json<Value>) {
+    if let Err(err) = ensure_and_set_user_id(&mut req.user_id, &auth) {
+        return err;
+    }
     match crate::services::system_context_ai::optimize_draft(OptimizeDraftInput {
         user_id: req.user_id,
         content: req.content,

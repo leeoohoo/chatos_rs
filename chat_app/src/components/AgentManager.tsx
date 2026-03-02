@@ -84,7 +84,7 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
 
   // 从上下文获取当前用户环境
   const { userId: contextUserId } = useChatRuntimeEnv();
-  const effectiveUserId = contextUserId || 'custom_user_123';
+  const effectiveUserId = contextUserId;
   const clientFromContext = useChatApiClientFromContext();
   const client: ApiClient = clientFromContext || globalApiClient;
 

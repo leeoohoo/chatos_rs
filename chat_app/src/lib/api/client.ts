@@ -1,26 +1,11 @@
 // API客户端，用于连接后端服务
-import {
-  ipcAvailable,
-  streamChatIPC,
-  streamAgentChatIPC,
-  stopChatIPC,
-  listSessionsIPC,
-  createSessionIPC,
-  getSessionIPC,
-  deleteSessionIPC,
-  getSessionMessagesIPC,
-  getSessionTurnProcessMessagesIPC,
-  createMessageIPC,
-  getUserSettingsIPC,
-  updateUserSettingsIPC,
-  submitTaskReviewDecisionIPC
-} from '../ipc/transport';
 import { debugLog } from '@/lib/utils';
 // 使用相对路径，让浏览器自动处理协议和域名
 const API_BASE_URL = '/api';
 
 class ApiClient {
   private baseUrl: string;
+  private accessToken: string | null = null;
 
   constructor(baseUrl: string = API_BASE_URL) {
     this.baseUrl = baseUrl;
@@ -30,14 +15,27 @@ class ApiClient {
     return this.baseUrl;
   }
 
+  setAccessToken(token?: string | null): void {
+    const trimmed = (token || '').trim();
+    this.accessToken = trimmed.length > 0 ? trimmed : null;
+  }
+
+  getAccessToken(): string | null {
+    return this.accessToken;
+  }
+
   private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`;
+    const headers = new Headers(options.headers || {});
+    if (!headers.has('Content-Type')) {
+      headers.set('Content-Type', 'application/json');
+    }
+    if (this.accessToken && !headers.has('Authorization')) {
+      headers.set('Authorization', `Bearer ${this.accessToken}`);
+    }
     const config: RequestInit = {
-      headers: {
-        'Content-Type': 'application/json',
-        ...options.headers,
-      },
       ...options,
+      headers,
     };
 
     try {
@@ -81,15 +79,6 @@ class ApiClient {
     projectId?: string,
     paging?: { limit?: number; offset?: number }
   ): Promise<any[]> {
-    if (ipcAvailable()) {
-      const all = await listSessionsIPC(userId, projectId);
-      if (paging?.limit !== undefined) {
-        const offset = paging?.offset || 0;
-        const end = offset + paging.limit;
-        return all.slice(offset, end);
-      }
-      return all;
-    }
     const params = new URLSearchParams();
     if (userId) params.append('user_id', userId);  // 修复：使用user_id匹配后端参数名
     if (projectId) params.append('project_id', projectId);  // 修复：使用project_id匹配后端参数名
@@ -102,9 +91,6 @@ class ApiClient {
 
   async createSession(data: { id: string; title: string; user_id: string; project_id?: string }): Promise<any> {
     debugLog('🔍 createSession API调用:', data);
-    if (ipcAvailable()) {
-      return createSessionIPC(data);
-    }
     return this.request<any>('/sessions', {
       method: 'POST',
       body: JSON.stringify(data),
@@ -112,23 +98,16 @@ class ApiClient {
   }
 
   async getSession(id: string): Promise<any> {
-    if (ipcAvailable()) return getSessionIPC(id);
     return this.request<any>(`/sessions/${id}`);
   }
 
   async deleteSession(id: string): Promise<any> {
-    if (ipcAvailable()) {
-      return deleteSessionIPC(id);
-    }
     return this.request<any>(`/sessions/${id}`, {
       method: 'DELETE',
     });
   }
 
   async getSessionMessages(sessionId: string, params?: { limit?: number; offset?: number; compact?: boolean }): Promise<any[]> {
-    if (ipcAvailable()) {
-      return getSessionMessagesIPC(sessionId, params);
-    }
     const qs: string[] = [];
     if (params?.limit !== undefined) qs.push(`limit=${encodeURIComponent(String(params.limit))}`);
     if (params?.offset !== undefined) qs.push(`offset=${encodeURIComponent(String(params.offset))}`);
@@ -138,13 +117,6 @@ class ApiClient {
   }
 
   async getSessionTurnProcessMessages(sessionId: string, userMessageId: string): Promise<any[]> {
-    if (ipcAvailable()) {
-      try {
-        return await getSessionTurnProcessMessagesIPC(sessionId, userMessageId);
-      } catch (_) {
-        // Fallback to HTTP when IPC bridge has not implemented this API yet.
-      }
-    }
 
     return this.request<any[]>(`/sessions/${sessionId}/turns/${encodeURIComponent(userMessageId)}/process`);
   }
@@ -272,18 +244,6 @@ class ApiClient {
       ...data,
       createdAt: data.createdAt ? data.createdAt.toISOString() : undefined
     };
-    if (ipcAvailable()) {
-      const payload = {
-        sessionId: data.sessionId,
-        role: data.role,
-        content: data.content,
-        toolCalls: data.toolCalls,
-        toolCallId: (data as any).toolCallId,
-        reasoning: (data as any).reasoning,
-        metadata: data.metadata
-      };
-      return createMessageIPC(payload);
-    }
     return this.request<any>(`/sessions/${data.sessionId}/messages`, {
       method: 'POST',
       body: JSON.stringify(requestData),
@@ -292,10 +252,6 @@ class ApiClient {
 
   // MCP配置相关API
   async getMcpConfigs(userId?: string) {
-    if (ipcAvailable()) {
-      const { getMcpConfigsIPC } = await import('../ipc/transport');
-      return getMcpConfigsIPC(userId);
-    }
     const params = userId ? `?user_id=${encodeURIComponent(userId)}` : '';
     debugLog('🔍 getMcpConfigs API调用:', { userId, params });
     return this.request(`/mcp-configs${params}`);
@@ -313,10 +269,6 @@ class ApiClient {
     user_id?: string;
   }) {
     debugLog('🔍 API client createMcpConfig 调用:', data);
-    if (ipcAvailable()) {
-      const { createMcpConfigIPC } = await import('../ipc/transport');
-      return createMcpConfigIPC(data as any);
-    }
     return this.request('/mcp-configs', {
       method: 'POST',
       body: JSON.stringify(data),
@@ -335,10 +287,6 @@ class ApiClient {
     userId?: string;
   }) {
     debugLog('🔍 API client updateMcpConfig 调用:', { id, data });
-    if (ipcAvailable()) {
-      const { updateMcpConfigIPC } = await import('../ipc/transport');
-      return updateMcpConfigIPC(id, data);
-    }
     return this.request(`/mcp-configs/${id}`, {
       method: 'PUT',
       body: JSON.stringify(data),
@@ -346,10 +294,6 @@ class ApiClient {
   }
 
   async deleteMcpConfig(id: string) {
-    if (ipcAvailable()) {
-      const { deleteMcpConfigIPC } = await import('../ipc/transport');
-      return deleteMcpConfigIPC(id);
-    }
     return this.request(`/mcp-configs/${id}`, {
       method: 'DELETE',
     });
@@ -407,13 +351,8 @@ class ApiClient {
     });
   }
 
-
   // AI模型配置相关API
   async getAiModelConfigs(userId?: string) {
-    if (ipcAvailable()) {
-      const { getAiModelConfigsIPC } = await import('../ipc/transport');
-      return getAiModelConfigsIPC(userId);
-    }
     const params = userId ? `?user_id=${encodeURIComponent(userId)}` : '';
     debugLog('🔍 getAiModelConfigs API调用:', { userId, params });
     return this.request(`/ai-model-configs${params}`);
@@ -433,10 +372,6 @@ class ApiClient {
     supports_reasoning?: boolean;
     supports_responses?: boolean;
   }) {
-    if (ipcAvailable()) {
-      const { createAiModelConfigIPC } = await import('../ipc/transport');
-      return createAiModelConfigIPC(data);
-    }
     return this.request('/ai-model-configs', {
       method: 'POST',
       body: JSON.stringify(data),
@@ -444,10 +379,6 @@ class ApiClient {
   }
 
   async updateAiModelConfig(id: string, data: any) {
-    if (ipcAvailable()) {
-      const { updateAiModelConfigIPC } = await import('../ipc/transport');
-      return updateAiModelConfigIPC(id, data);
-    }
     return this.request(`/ai-model-configs/${id}`, {
       method: 'PUT',
       body: JSON.stringify(data),
@@ -455,10 +386,6 @@ class ApiClient {
   }
 
   async deleteAiModelConfig(id: string) {
-    if (ipcAvailable()) {
-      const { deleteAiModelConfigIPC } = await import('../ipc/transport');
-      return deleteAiModelConfigIPC(id);
-    }
     return this.request(`/ai-model-configs/${id}`, {
       method: 'DELETE',
     });
@@ -466,18 +393,10 @@ class ApiClient {
 
   // 系统上下文相关API
   async getSystemContexts(userId: string): Promise<any[]> {
-    if (ipcAvailable()) {
-      const { getSystemContextsIPC } = await import('../ipc/transport');
-      return getSystemContextsIPC(userId);
-    }
     return this.request<any[]>(`/system-contexts?user_id=${userId}`);
   }
 
   async getActiveSystemContext(userId: string): Promise<{ content: string; context: any }> {
-    if (ipcAvailable()) {
-      const { getActiveSystemContextIPC } = await import('../ipc/transport');
-      return getActiveSystemContextIPC(userId);
-    }
     return this.request<{ content: string; context: any }>(`/system-context/active?user_id=${userId}`);
   }
 
@@ -489,10 +408,6 @@ class ApiClient {
   }): Promise<any> {
     debugLog('🔍 API client createSystemContext 调用:', data);
     debugLog('🔍 [关键] app_ids 字段:', data.app_ids, '类型:', typeof data.app_ids, '是否为数组:', Array.isArray(data.app_ids));
-    if (ipcAvailable()) {
-      const { createSystemContextIPC } = await import('../ipc/transport');
-      return createSystemContextIPC(data);
-    }
     return this.request<any>('/system-contexts', {
       method: 'POST',
       body: JSON.stringify(data),
@@ -506,10 +421,6 @@ class ApiClient {
   }): Promise<any> {
     debugLog('🔍 API client updateSystemContext 调用:', { id, data });
     debugLog('🔍 [关键] app_ids 字段:', data.app_ids, '类型:', typeof data.app_ids, '是否为数组:', Array.isArray(data.app_ids));
-    if (ipcAvailable()) {
-      const { updateSystemContextIPC } = await import('../ipc/transport');
-      return updateSystemContextIPC(id, data);
-    }
     return this.request<any>(`/system-contexts/${id}`, {
       method: 'PUT',
       body: JSON.stringify(data),
@@ -517,21 +428,12 @@ class ApiClient {
   }
 
   async deleteSystemContext(id: string): Promise<void> {
-    if (ipcAvailable()) {
-      const { deleteSystemContextIPC } = await import('../ipc/transport');
-      await deleteSystemContextIPC(id);
-      return;
-    }
     return this.request<void>(`/system-contexts/${id}`, {
       method: 'DELETE',
     });
   }
 
   async activateSystemContext(id: string, userId: string): Promise<any> {
-    if (ipcAvailable()) {
-      const { activateSystemContextIPC } = await import('../ipc/transport');
-      return activateSystemContextIPC(id, userId);
-    }
     return this.request<any>(`/system-contexts/${id}/activate`, {
       method: 'POST',
       body: JSON.stringify({ user_id: userId, is_active: true }),
@@ -579,19 +481,11 @@ class ApiClient {
 
   // 应用（Application）相关API
   async getApplications(userId?: string): Promise<any[]> {
-    if (ipcAvailable()) {
-      const { getApplicationsIPC } = await import('../ipc/transport');
-      return getApplicationsIPC(userId);
-    }
     const params = userId ? `?user_id=${encodeURIComponent(userId)}` : '';
     return this.request<any[]>(`/applications${params}`);
   }
 
   async getApplication(id: string): Promise<any> {
-    if (ipcAvailable()) {
-      const { getApplicationIPC } = await import('../ipc/transport');
-      return getApplicationIPC(id);
-    }
     return this.request<any>(`/applications/${id}`);
   }
 
@@ -601,10 +495,6 @@ class ApiClient {
     icon_url?: string | null;
     user_id?: string;
   }): Promise<any> {
-    if (ipcAvailable()) {
-      const { createApplicationIPC } = await import('../ipc/transport');
-      return createApplicationIPC(data as any);
-    }
     return this.request<any>('/applications', {
       method: 'POST',
       body: JSON.stringify(data),
@@ -616,10 +506,6 @@ class ApiClient {
     url?: string;
     icon_url?: string | null;
   }): Promise<any> {
-    if (ipcAvailable()) {
-      const { updateApplicationIPC } = await import('../ipc/transport');
-      return updateApplicationIPC(id, data as any);
-    }
     return this.request<any>(`/applications/${id}`, {
       method: 'PUT',
       body: JSON.stringify(data),
@@ -627,10 +513,6 @@ class ApiClient {
   }
 
   async deleteApplication(id: string): Promise<any> {
-    if (ipcAvailable()) {
-      const { deleteApplicationIPC } = await import('../ipc/transport');
-      return deleteApplicationIPC(id);
-    }
     return this.request<any>(`/applications/${id}`, {
       method: 'DELETE',
     });
@@ -638,10 +520,6 @@ class ApiClient {
 
   // 智能体（Agent）相关API
   async getAgents(userId?: string): Promise<any[]> {
-    if (ipcAvailable()) {
-      const { getAgentsIPC } = await import('../ipc/transport');
-      return getAgentsIPC(userId);
-    }
     const params = userId ? `?user_id=${encodeURIComponent(userId)}` : '';
     return this.request<any[]>(`/agents${params}`);
   }
@@ -661,10 +539,6 @@ class ApiClient {
   }): Promise<any> {
     debugLog('🔍 API client createAgent 调用:', data);
     debugLog('🔍 [关键] app_ids 字段:', data.app_ids, '类型:', typeof data.app_ids, '是否为数组:', Array.isArray(data.app_ids));
-    if (ipcAvailable()) {
-      const { createAgentIPC } = await import('../ipc/transport');
-      return createAgentIPC(data as any);
-    }
     return this.request<any>('/agents', {
       method: 'POST',
       body: JSON.stringify(data),
@@ -685,10 +559,6 @@ class ApiClient {
   }): Promise<any> {
     debugLog('🔍 API client updateAgent 调用:', { agentId, data });
     debugLog('🔍 [关键] app_ids 字段:', data.app_ids, '类型:', typeof data.app_ids, '是否为数组:', Array.isArray(data.app_ids));
-    if (ipcAvailable()) {
-      const { updateAgentIPC } = await import('../ipc/transport');
-      return updateAgentIPC(agentId, data as any);
-    }
     return this.request<any>(`/agents/${agentId}`, {
       method: 'PUT',
       body: JSON.stringify(data),
@@ -696,10 +566,6 @@ class ApiClient {
   }
 
   async deleteAgent(agentId: string): Promise<any> {
-    if (ipcAvailable()) {
-      const { deleteAgentIPC } = await import('../ipc/transport');
-      return deleteAgentIPC(agentId);
-    }
     return this.request<any>(`/agents/${agentId}`, {
       method: 'DELETE',
     });
@@ -808,10 +674,6 @@ class ApiClient {
 
   async getMcpConfigResource(configId: string): Promise<{ success: boolean; config: any; alias?: string }> {
     try {
-      if (ipcAvailable()) {
-        const { getMcpConfigResourceIPC } = await import('../ipc/transport');
-        return await getMcpConfigResourceIPC(configId);
-      }
       const res = await this.request<any>(`/mcp-configs/${configId}/resource/config`);
       return res;
     } catch (error) {
@@ -829,10 +691,6 @@ class ApiClient {
     alias?: string | null;
   }): Promise<{ success: boolean; config: any; alias?: string }> {
     try {
-      if (ipcAvailable()) {
-        const { getMcpConfigResourceByCommandIPC } = await import('../ipc/transport');
-        return await getMcpConfigResourceByCommandIPC(data);
-      }
       const res = await this.request<any>(`/mcp-configs/resource/config`, {
         method: 'POST',
         body: JSON.stringify(data),
@@ -918,10 +776,6 @@ class ApiClient {
     reasoningEnabled?: boolean,
     options?: { turnId?: string }
   ): Promise<ReadableStream> {
-    // Prefer IPC transport when available (Electron). Fallback to HTTP/SSE.
-    if (ipcAvailable()) {
-      return streamChatIPC(sessionId, content, modelConfig, userId, attachments, reasoningEnabled, options?.turnId);
-    }
     const useResponses = modelConfig?.supports_responses === true;
     const url = `${this.baseUrl}/${useResponses ? 'agent_v3' : 'agent_v2'}/chat/stream`;
     
@@ -929,6 +783,7 @@ class ApiClient {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        ...(this.accessToken ? { Authorization: `Bearer ${this.accessToken}` } : {}),
       },
       body: JSON.stringify({
         session_id: sessionId,
@@ -971,9 +826,6 @@ class ApiClient {
     reasoningEnabled?: boolean,
     options?: { useResponses?: boolean; turnId?: string }
   ): Promise<ReadableStream> {
-    if (ipcAvailable()) {
-      return streamAgentChatIPC(sessionId, content, agentId, userId, attachments, reasoningEnabled, options);
-    }
     const useResponses = options?.useResponses === true;
     const url = `${this.baseUrl}/${useResponses ? 'agent_v3/agents' : 'agents'}/chat/stream`;
 
@@ -982,6 +834,7 @@ class ApiClient {
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'text/event-stream',
+        ...(this.accessToken ? { Authorization: `Bearer ${this.accessToken}` } : {}),
       },
       body: JSON.stringify({
         session_id: sessionId,
@@ -1098,14 +951,6 @@ class ApiClient {
       throw new Error('reviewId is required');
     }
 
-    if (ipcAvailable()) {
-      try {
-        return await submitTaskReviewDecisionIPC(reviewId, payload);
-      } catch (error) {
-        // Fallback to HTTP when IPC bridge does not implement this API.
-      }
-    }
-
     return this.request<any>(`/task-manager/reviews/${encodeURIComponent(reviewId)}/decision`, {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -1200,12 +1045,30 @@ class ApiClient {
     });
   }
 
+  async register(data: {
+    email: string;
+    password: string;
+    display_name?: string;
+  }): Promise<any> {
+    return this.request<any>('/auth/register', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async login(data: { email: string; password: string }): Promise<any> {
+    return this.request<any>('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getMe(): Promise<any> {
+    return this.request<any>('/auth/me');
+  }
+
   // 停止聊天流
   async stopChat(sessionId: string, options?: { useResponses?: boolean }): Promise<any> {
-    if (ipcAvailable()) {
-      await stopChatIPC(sessionId);
-      return { ok: true } as any;
-    }
     const useResponses = options?.useResponses === true;
     const path = useResponses ? '/agent_v3/chat/stop' : '/chat/stop';
     return this.request<any>(path, {
@@ -1218,17 +1081,11 @@ class ApiClient {
 
   // User settings APIs
   async getUserSettings(userId?: string): Promise<any> {
-    if (ipcAvailable()) {
-      return getUserSettingsIPC(userId);
-    }
     const qs = userId ? `?user_id=${encodeURIComponent(userId)}` : '';
     return this.request<any>(`/user-settings${qs}`);
   }
 
   async updateUserSettings(userId: string, settings: Record<string, any>): Promise<any> {
-    if (ipcAvailable()) {
-      return updateUserSettingsIPC(userId, settings);
-    }
     return this.request<any>(`/user-settings`, {
       method: 'PUT',
       body: JSON.stringify({ user_id: userId, settings })
