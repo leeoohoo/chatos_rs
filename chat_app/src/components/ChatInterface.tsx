@@ -15,6 +15,7 @@ import TerminalView from './TerminalView';
 // 搴旂敤寮圭獥绠＄悊鍣ㄧ敱 ApplicationsPanel 鐩存帴鎵挎媴
 import ApplicationsPanel from './ApplicationsPanel';
 import TaskDraftPanel from './TaskDraftPanel';
+import { MarkdownRenderer } from './MarkdownRenderer';
 import TaskWorkbar, {
   type SessionSummaryWorkbarItem,
   type TaskWorkbarItem,
@@ -121,15 +122,13 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [workbarLoading, setWorkbarLoading] = useState(false);
   const [workbarHistoryLoading, setWorkbarHistoryLoading] = useState(false);
   const [workbarSummaries, setWorkbarSummaries] = useState<SessionSummaryWorkbarItem[]>([]);
-  const [workbarHasSummaries, setWorkbarHasSummaries] = useState(false);
   const [workbarSummariesLoadedSessionId, setWorkbarSummariesLoadedSessionId] = useState<string | null>(null);
   const [workbarSummariesLoading, setWorkbarSummariesLoading] = useState(false);
   const [workbarError, setWorkbarError] = useState<string | null>(null);
   const [workbarHistoryError, setWorkbarHistoryError] = useState<string | null>(null);
   const [workbarSummariesError, setWorkbarSummariesError] = useState<string | null>(null);
   const [workbarActionLoadingTaskId, setWorkbarActionLoadingTaskId] = useState<string | null>(null);
-  const [workbarSummaryActionLoadingId, setWorkbarSummaryActionLoadingId] = useState<string | null>(null);
-  const [workbarSummaryBulkClearing, setWorkbarSummaryBulkClearing] = useState(false);
+  const [summaryPaneSessionId, setSummaryPaneSessionId] = useState<string | null>(null);
 
   const activeTaskReviewPanel = useMemo(() => {
     if (!currentSession) {
@@ -174,6 +173,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const userInitial = useMemo(() => (
     userDisplayName.trim().charAt(0).toUpperCase() || 'U'
   ), [userDisplayName]);
+  const sessionSummaryPaneVisible = Boolean(
+    activePanel === 'chat' && currentSession && summaryPaneSessionId === currentSession.id
+  );
 
   useEffect(() => {
     if (!showUserMenu) {
@@ -556,7 +558,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const loadWorkbarSummaries = useCallback(async (sessionId: string, force = false) => {
     if (!sessionId) {
       setWorkbarSummaries([]);
-      setWorkbarHasSummaries(false);
       setWorkbarSummariesLoadedSessionId(null);
       setWorkbarSummariesError(null);
       return;
@@ -574,7 +575,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         ? payload.items.map(normalizeWorkbarSummary)
         : [];
       setWorkbarSummaries(items);
-      setWorkbarHasSummaries(payload?.has_summary === true || items.length > 0);
       setWorkbarSummariesLoadedSessionId(sessionId);
     } catch (error) {
       setWorkbarSummariesError(error instanceof Error ? error.message : '会话总结加载失败');
@@ -582,6 +582,22 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       setWorkbarSummariesLoading(false);
     }
   }, [apiClient, normalizeWorkbarSummary, workbarSummariesLoadedSessionId]);
+
+  const formatSummaryCreatedAt = useCallback((value: string) => {
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+      return value || '-';
+    }
+    return parsed.toLocaleString('zh-CN', { hour12: false });
+  }, []);
+
+  const handleOpenSessionSummaryPane = useCallback((sessionId: string) => {
+    if (!sessionId) {
+      return;
+    }
+    setSummaryPaneSessionId(sessionId);
+    void loadWorkbarSummaries(sessionId, true);
+  }, [loadWorkbarSummaries]);
 
   const refreshWorkbarTasks = useCallback(async () => {
     if (!currentSession) {
@@ -765,54 +781,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     });
   }, [apiClient, currentSession, withWorkbarTaskMutation]);
 
-  const handleWorkbarDeleteSummary = useCallback(async (summary: SessionSummaryWorkbarItem) => {
-    if (!currentSession) {
-      return;
-    }
-
-    if (typeof window !== 'undefined') {
-      const confirmed = window.confirm('确认删除这条会话总结？');
-      if (!confirmed) {
-        return;
-      }
-    }
-
-    setWorkbarSummaryActionLoadingId(summary.id);
-    setWorkbarSummariesError(null);
-    try {
-      await apiClient.deleteSessionSummary(currentSession.id, summary.id);
-      await loadWorkbarSummaries(currentSession.id, true);
-    } catch (error) {
-      setWorkbarSummariesError(error instanceof Error ? error.message : '删除会话总结失败');
-    } finally {
-      setWorkbarSummaryActionLoadingId(null);
-    }
-  }, [apiClient, currentSession, loadWorkbarSummaries]);
-
-  const handleWorkbarClearAllSummaries = useCallback(async () => {
-    if (!currentSession) {
-      return;
-    }
-
-    if (typeof window !== 'undefined') {
-      const confirmed = window.confirm('确认清空当前会话的全部总结？');
-      if (!confirmed) {
-        return;
-      }
-    }
-
-    setWorkbarSummaryBulkClearing(true);
-    setWorkbarSummariesError(null);
-    try {
-      await apiClient.clearSessionSummaries(currentSession.id);
-      await loadWorkbarSummaries(currentSession.id, true);
-    } catch (error) {
-      setWorkbarSummariesError(error instanceof Error ? error.message : '清空会话总结失败');
-    } finally {
-      setWorkbarSummaryBulkClearing(false);
-    }
-  }, [apiClient, currentSession, loadWorkbarSummaries]);
-
   // 鍒濆鍖栧姞杞戒細璇濄€丄I妯″瀷鍜屾櫤鑳戒綋閰嶇疆
   useEffect(() => {
     // React 18 鍦ㄥ紑鍙戞ā寮忎笅浼氬弻璋冪敤鍓綔鐢紝杩欓噷鍔犱竴娆℃€т繚鎶わ紙缁勪欢鍐咃級
@@ -830,14 +798,11 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       setWorkbarCurrentTurnTasks([]);
       setWorkbarHistoryTasks([]);
       setWorkbarSummaries([]);
-      setWorkbarHasSummaries(false);
       setWorkbarError(null);
       setWorkbarHistoryError(null);
       setWorkbarSummariesError(null);
       setWorkbarHistoryLoadedSessionId(null);
       setWorkbarSummariesLoadedSessionId(null);
-      setWorkbarSummaryActionLoadingId(null);
-      setWorkbarSummaryBulkClearing(false);
       return;
     }
 
@@ -1159,6 +1124,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
           <SessionList
             collapsed={!sidebarOpen}
             onToggleCollapse={toggleSidebar}
+            onSelectSession={() => setSummaryPaneSessionId(null)}
+            onOpenSummary={handleOpenSessionSummaryPane}
+            summaryOpenSessionId={sessionSummaryPaneVisible ? currentSession?.id ?? null : null}
           />
 
           {/* 宸茬Щ闄ゅ乏渚у簲鐢ㄦ娊灞夐潰鏉匡紝鏀逛负寮圭獥 */}
@@ -1176,17 +1144,97 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
                   <div className="flex-1 overflow-hidden">
                     {currentSession ? (
-                      <MessageList
-                        messages={messages}
-                        isLoading={chatIsLoading}
-                        isStreaming={chatIsStreaming}
-                        hasMore={hasMoreMessages}
-                        onLoadMore={handleLoadMore}
-                        onToggleTurnProcess={handleToggleTurnProcess}
-                        activeTurnProcessUserMessageId={activeTurnProcessUserMessageId}
-                        loadingTurnProcessUserMessageId={loadingTurnProcessUserMessageId}
-                        customRenderer={customRenderer}
-                      />
+                      sessionSummaryPaneVisible ? (
+                        <div className="h-full min-h-0 flex flex-col overflow-hidden">
+                          <div className="basis-[42%] min-h-[170px] bg-card/40 flex flex-col overflow-hidden">
+                            <div className="px-3 py-2 border-b border-border flex items-center justify-between gap-2">
+                              <div className="min-w-0">
+                                <div className="text-sm font-medium truncate">会话总结</div>
+                                <div className="text-[11px] text-muted-foreground truncate">{currentSession.title}</div>
+                              </div>
+                              <div className="flex items-center gap-2 shrink-0">
+                                <button
+                                  type="button"
+                                  className="px-2 py-1 text-xs rounded border border-border hover:bg-accent"
+                                  onClick={() => {
+                                    void loadWorkbarSummaries(currentSession.id, true);
+                                  }}
+                                >
+                                  刷新
+                                </button>
+                                <button
+                                  type="button"
+                                  className="px-2 py-1 text-xs rounded border border-border hover:bg-accent"
+                                  onClick={() => setSummaryPaneSessionId(null)}
+                                >
+                                  关闭
+                                </button>
+                              </div>
+                            </div>
+                            <div
+                              className="flex-1 min-h-0 overflow-y-auto px-3 py-3 space-y-3"
+                              style={{ overscrollBehavior: 'contain' }}
+                            >
+                              {workbarSummariesLoading ? (
+                                <div className="text-xs text-muted-foreground">总结加载中...</div>
+                              ) : workbarSummariesError ? (
+                                <div className="text-xs text-destructive">{workbarSummariesError}</div>
+                              ) : workbarSummaries.length === 0 ? (
+                                <div className="text-xs text-muted-foreground">当前会话暂无总结。</div>
+                              ) : (
+                                workbarSummaries.map((summary) => (
+                                  <div key={summary.id} className="rounded-lg border border-border bg-background/80 p-3">
+                                    <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                                      <span className="truncate">{summary.triggerType || '-'}</span>
+                                      <span className="shrink-0">{formatSummaryCreatedAt(summary.createdAt)}</span>
+                                    </div>
+                                    <div className="mt-1 text-[11px] text-muted-foreground">
+                                      {`消息 ${summary.sourceMessageCount} · 估算 ${summary.sourceEstimatedTokens} tok`}
+                                    </div>
+                                    {summary.status && summary.status !== 'done' && (
+                                      <div className="mt-1 text-[11px] text-amber-600">
+                                        {summary.errorMessage || summary.status}
+                                      </div>
+                                    )}
+                                    <div className="mt-2 text-sm leading-6">
+                                      <MarkdownRenderer content={summary.summaryText || '(空总结)'} />
+                                    </div>
+                                  </div>
+                                ))
+                              )}
+                            </div>
+                          </div>
+                          <div className="relative shrink-0 px-3 py-1.5 bg-card/20">
+                            <div className="h-[2px] rounded-full bg-gradient-to-r from-transparent via-sky-400/95 to-transparent shadow-[0_0_16px_rgba(56,189,248,0.95)]" />
+                            <div className="pointer-events-none absolute inset-x-0 top-0 h-full bg-gradient-to-b from-sky-400/10 via-transparent to-transparent" />
+                          </div>
+                          <div className="flex-1 min-h-0 overflow-hidden">
+                            <MessageList
+                              messages={messages}
+                              isLoading={chatIsLoading}
+                              isStreaming={chatIsStreaming}
+                              hasMore={hasMoreMessages}
+                              onLoadMore={handleLoadMore}
+                              onToggleTurnProcess={handleToggleTurnProcess}
+                              activeTurnProcessUserMessageId={activeTurnProcessUserMessageId}
+                              loadingTurnProcessUserMessageId={loadingTurnProcessUserMessageId}
+                              customRenderer={customRenderer}
+                            />
+                          </div>
+                        </div>
+                      ) : (
+                        <MessageList
+                          messages={messages}
+                          isLoading={chatIsLoading}
+                          isStreaming={chatIsStreaming}
+                          hasMore={hasMoreMessages}
+                          onLoadMore={handleLoadMore}
+                          onToggleTurnProcess={handleToggleTurnProcess}
+                          activeTurnProcessUserMessageId={activeTurnProcessUserMessageId}
+                          loadingTurnProcessUserMessageId={loadingTurnProcessUserMessageId}
+                          customRenderer={customRenderer}
+                        />
+                      )
                     ) : (
                       <div className="flex items-center justify-center h-full">
                         <div className="text-center">
@@ -1213,23 +1261,14 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                       <TaskWorkbar
                         tasks={mergedCurrentTurnTasks}
                         historyTasks={workbarHistoryTasks}
-                        summaries={workbarSummaries}
-                        hasSummaries={workbarHasSummaries}
                         currentTurnId={activeConversationTurnId}
                         isLoading={workbarLoading}
                         historyLoading={workbarHistoryLoading}
-                        summariesLoading={workbarSummariesLoading}
                         error={workbarError}
                         historyError={workbarHistoryError}
-                        summariesError={workbarSummariesError}
                         actionLoadingTaskId={workbarActionLoadingTaskId}
                         onRefresh={() => {
                           void refreshWorkbarTasks();
-                        }}
-                        onRefreshSummaries={() => {
-                          if (currentSession) {
-                            void loadWorkbarSummaries(currentSession.id, true);
-                          }
                         }}
                         onOpenHistory={() => {
                           void loadHistoryWorkbarTasks(currentSession.id);
@@ -1244,14 +1283,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                         onEditTask={(task) => {
                           void handleWorkbarEditTask(task);
                         }}
-                        onDeleteSummary={(summary) => {
-                          void handleWorkbarDeleteSummary(summary);
-                        }}
-                        onClearAllSummaries={() => {
-                          void handleWorkbarClearAllSummaries();
-                        }}
-                        summaryActionLoadingId={workbarSummaryActionLoadingId}
-                        summaryBulkClearing={workbarSummaryBulkClearing}
                       />
                       {activeTaskReviewPanel ? (
                         <TaskDraftPanel

@@ -53,6 +53,9 @@ interface SessionListProps {
   onToggleCollapse?: () => void;
   className?: string;
   store?: typeof useChatStore;
+  onOpenSummary?: (sessionId: string) => void;
+  onSelectSession?: (sessionId: string) => void;
+  summaryOpenSessionId?: string | null;
 }
 
 export const SessionList: React.FC<SessionListProps> = (props) => {
@@ -61,6 +64,9 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     collapsed,
     className,
     store,
+    onOpenSummary,
+    onSelectSession,
+    summaryOpenSessionId = null,
   } = props;
   // 尝试从Context获取store（如果可用）
   let contextStore = null;
@@ -105,6 +111,8 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [hasMoreLocked, setHasMoreLocked] = useState(false);
+  const [sessionHasSummaryMap, setSessionHasSummaryMap] = useState<Record<string, boolean>>({});
+  const checkingSummaryIdsRef = useRef<Set<string>>(new Set());
   const [sessionsExpanded, setSessionsExpanded] = useState(true);
   const [projectsExpanded, setProjectsExpanded] = useState(true);
   const [terminalsExpanded, setTerminalsExpanded] = useState(true);
@@ -442,6 +450,83 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
   }, [sessions.length, hasMoreLocked]);
 
   useEffect(() => {
+    const validIds = new Set(sessions.map((session: Session) => session.id));
+    checkingSummaryIdsRef.current.forEach((sessionId) => {
+      if (!validIds.has(sessionId)) {
+        checkingSummaryIdsRef.current.delete(sessionId);
+      }
+    });
+
+    setSessionHasSummaryMap((prev) => {
+      const next: Record<string, boolean> = {};
+      let changed = false;
+      Object.entries(prev).forEach(([sessionId, hasSummary]) => {
+        if (validIds.has(sessionId)) {
+          next[sessionId] = hasSummary;
+        } else {
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [sessions]);
+
+  useEffect(() => {
+    if (sessions.length === 0) {
+      return;
+    }
+
+    const pendingSessionIds = sessions
+      .map((session: Session) => session.id)
+      .filter((sessionId) => (
+        typeof sessionHasSummaryMap[sessionId] !== 'boolean'
+        && !checkingSummaryIdsRef.current.has(sessionId)
+      ));
+
+    if (pendingSessionIds.length === 0) {
+      return;
+    }
+
+    pendingSessionIds.forEach((sessionId) => checkingSummaryIdsRef.current.add(sessionId));
+
+    let cancelled = false;
+    void (async () => {
+      const pairs = await Promise.all(
+        pendingSessionIds.map(async (sessionId) => {
+          try {
+            const payload = await apiClient.getSessionSummaries(sessionId, { limit: 1, offset: 0 });
+            const hasSummary = payload?.has_summary === true
+              || (Array.isArray(payload?.items) && payload.items.length > 0);
+            return { sessionId, hasSummary };
+          } catch (error) {
+            console.warn('Failed to detect session summary status:', sessionId, error);
+            return { sessionId, hasSummary: false };
+          }
+        })
+      );
+
+      if (cancelled) {
+        return;
+      }
+
+      setSessionHasSummaryMap((prev) => {
+        const next = { ...prev };
+        pairs.forEach(({ sessionId, hasSummary }) => {
+          next[sessionId] = hasSummary;
+        });
+        return next;
+      });
+
+      pairs.forEach(({ sessionId }) => checkingSummaryIdsRef.current.delete(sessionId));
+    })();
+
+    return () => {
+      cancelled = true;
+      pendingSessionIds.forEach((sessionId) => checkingSummaryIdsRef.current.delete(sessionId));
+    };
+  }, [apiClient, sessionHasSummaryMap, sessions]);
+
+  useEffect(() => {
     if (didLoadProjectsRef.current) return;
     didLoadProjectsRef.current = true;
     loadProjects();
@@ -536,7 +621,10 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
                             ? 'bg-accent border border-border'
                             : 'hover:bg-accent/50'
                         }`}
-                        onClick={() => handleSelectSession(session.id)}
+                        onClick={() => {
+                          onSelectSession?.(session.id);
+                          void handleSelectSession(session.id);
+                        }}
                       >
                         <div className="flex-1 min-w-0">
                           {editingSessionId === session.id ? (
@@ -582,6 +670,25 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
                                     </span>
                                   );
                                 })()}
+                                {sessionHasSummaryMap[session.id] && (
+                                  <button
+                                    type="button"
+                                    className={cn(
+                                      'inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] transition-colors',
+                                      summaryOpenSessionId === session.id
+                                        ? 'border-blue-500/50 bg-blue-500/10 text-blue-600'
+                                        : 'border-blue-500/30 text-blue-600 hover:bg-blue-500/10'
+                                    )}
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      void handleSelectSession(session.id);
+                                      onOpenSummary?.(session.id);
+                                    }}
+                                    title="查看会话总结"
+                                  >
+                                    总结
+                                  </button>
+                                )}
                               </div>
                             </>
                           )}
