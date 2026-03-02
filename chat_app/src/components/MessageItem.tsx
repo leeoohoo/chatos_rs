@@ -17,6 +17,7 @@ const ToolCallTimeline: React.FC<ToolCallTimelineProps> = ({
   toolResultById,
 }) => {
   const [expanded, setExpanded] = useState(false);
+  const shouldClampTimeline = toolCalls.length > 6;
 
   const resolveToolResult = (toolCall: ToolCall) => {
     if (toolCall.result !== undefined && toolCall.result !== null) return toolCall.result;
@@ -91,7 +92,12 @@ const ToolCallTimeline: React.FC<ToolCallTimelineProps> = ({
       </div>
 
       {expanded && (
-        <div className="px-3 pb-3 space-y-2">
+        <div
+          className={cn(
+            'px-3 pb-3 space-y-2',
+            shouldClampTimeline && 'max-h-72 overflow-y-auto pr-1',
+          )}
+        >
           {toolCalls.map((toolCall, index) => {
             const status = getToolStatus(toolCall);
             const dotClass = status === 'error'
