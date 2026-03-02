@@ -19,7 +19,6 @@ import TaskWorkbar, {
   type SessionSummaryWorkbarItem,
   type TaskWorkbarItem,
 } from './TaskWorkbar';
-import SessionSummaryJobConfigPanel from './SessionSummaryJobConfigPanel';
 import { apiClient as globalApiClient } from '../lib/api/client';
 import { cn } from '../lib/utils';
 import type { ChatInterfaceProps } from '../types';
@@ -111,7 +110,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [showAgentManager, setShowAgentManager] = useState(false);
   const [showApplicationsPanel, setShowApplicationsPanel] = useState(false);
   const [showUserSettings, setShowUserSettings] = useState(false);
-  const [showSessionSummaryJobConfig, setShowSessionSummaryJobConfig] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const userMenuRef = useRef<HTMLDivElement | null>(null);
   const [activeTurnProcessUserMessageId, setActiveTurnProcessUserMessageId] = useState<string | null>(null);
@@ -1117,15 +1115,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 <button
                   onClick={() => {
                     setShowUserMenu(false);
-                    setShowSessionSummaryJobConfig(true);
-                  }}
-                  className="w-full text-left px-3 py-2 text-sm hover:bg-accent"
-                >
-                  会话总结任务配置
-                </button>
-                <button
-                  onClick={() => {
-                    setShowUserMenu(false);
                     setShowUserSettings(true);
                   }}
                   className="w-full text-left px-3 py-2 text-sm hover:bg-accent"
@@ -1327,10 +1316,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
         {showUserSettings && (
           <UserSettingsPanel onClose={() => setShowUserSettings(false)} />
-        )}
-
-        {showSessionSummaryJobConfig && (
-          <SessionSummaryJobConfigPanel onClose={() => setShowSessionSummaryJobConfig(false)} />
         )}
 
         {/* 搴旂敤鍒楄〃锛堝脊绐楋級 */}
