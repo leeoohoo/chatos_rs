@@ -962,6 +962,178 @@ class ApiClient {
     });
   }
 
+  async notepadInit(projectId?: string): Promise<any> {
+    const params = new URLSearchParams();
+    if (projectId) {
+      params.set('project_id', projectId);
+    }
+    const query = params.toString();
+    return this.request<any>(`/notepad/init${query ? `?${query}` : ''}`);
+  }
+
+  async listNotepadFolders(projectId?: string): Promise<any> {
+    const params = new URLSearchParams();
+    if (projectId) {
+      params.set('project_id', projectId);
+    }
+    const query = params.toString();
+    return this.request<any>(`/notepad/folders${query ? `?${query}` : ''}`);
+  }
+
+  async createNotepadFolder(payload: { folder: string; project_id?: string }): Promise<any> {
+    return this.request<any>('/notepad/folders', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async renameNotepadFolder(payload: { from: string; to: string; project_id?: string }): Promise<any> {
+    return this.request<any>('/notepad/folders', {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async deleteNotepadFolder(options: { folder: string; recursive?: boolean; project_id?: string }): Promise<any> {
+    const params = new URLSearchParams();
+    params.set('folder', options.folder);
+    if (options.project_id) {
+      params.set('project_id', options.project_id);
+    }
+    if (options.recursive === true) {
+      params.set('recursive', 'true');
+    }
+    return this.request<any>('/notepad/folders?' + params.toString(), {
+      method: 'DELETE',
+    });
+  }
+
+  async listNotepadNotes(options?: {
+    project_id?: string;
+    folder?: string;
+    recursive?: boolean;
+    tags?: string[];
+    match?: 'all' | 'any';
+    query?: string;
+    limit?: number;
+  }): Promise<any> {
+    const params = new URLSearchParams();
+    if (options?.project_id) {
+      params.set('project_id', options.project_id);
+    }
+    if (options?.folder) {
+      params.set('folder', options.folder);
+    }
+    if (typeof options?.recursive === 'boolean') {
+      params.set('recursive', options.recursive ? 'true' : 'false');
+    }
+    if (options?.tags && options.tags.length > 0) {
+      params.set('tags', options.tags.join(','));
+    }
+    if (options?.match) {
+      params.set('match', options.match);
+    }
+    if (options?.query) {
+      params.set('query', options.query);
+    }
+    if (typeof options?.limit === 'number') {
+      params.set('limit', String(options.limit));
+    }
+    const query = params.toString();
+    return this.request<any>(`/notepad/notes${query ? `?${query}` : ''}`);
+  }
+
+  async createNotepadNote(payload: {
+    project_id?: string;
+    folder?: string;
+    title?: string;
+    content?: string;
+    tags?: string[];
+  }): Promise<any> {
+    return this.request<any>('/notepad/notes', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async getNotepadNote(noteId: string, projectId?: string): Promise<any> {
+    const params = new URLSearchParams();
+    if (projectId) {
+      params.set('project_id', projectId);
+    }
+    const query = params.toString();
+    return this.request<any>(`/notepad/notes/${encodeURIComponent(noteId)}${query ? `?${query}` : ''}`);
+  }
+
+  async updateNotepadNote(noteId: string, payload: {
+    project_id?: string;
+    title?: string;
+    content?: string;
+    folder?: string;
+    tags?: string[];
+  }): Promise<any> {
+    return this.request<any>(`/notepad/notes/${encodeURIComponent(noteId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async deleteNotepadNote(noteId: string, projectId?: string): Promise<any> {
+    const params = new URLSearchParams();
+    if (projectId) {
+      params.set('project_id', projectId);
+    }
+    const query = params.toString();
+    return this.request<any>(`/notepad/notes/${encodeURIComponent(noteId)}${query ? `?${query}` : ''}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async listNotepadTags(projectId?: string): Promise<any> {
+    const params = new URLSearchParams();
+    if (projectId) {
+      params.set('project_id', projectId);
+    }
+    const query = params.toString();
+    return this.request<any>(`/notepad/tags${query ? `?${query}` : ''}`);
+  }
+
+  async searchNotepadNotes(options: {
+    project_id?: string;
+    query: string;
+    folder?: string;
+    recursive?: boolean;
+    tags?: string[];
+    match?: 'all' | 'any';
+    include_content?: boolean;
+    limit?: number;
+  }): Promise<any> {
+    const params = new URLSearchParams();
+    if (options.project_id) {
+      params.set('project_id', options.project_id);
+    }
+    params.set('query', options.query);
+    if (options.folder) {
+      params.set('folder', options.folder);
+    }
+    if (typeof options.recursive === 'boolean') {
+      params.set('recursive', options.recursive ? 'true' : 'false');
+    }
+    if (options.tags && options.tags.length > 0) {
+      params.set('tags', options.tags.join(','));
+    }
+    if (options.match) {
+      params.set('match', options.match);
+    }
+    if (typeof options.include_content === 'boolean') {
+      params.set('include_content', options.include_content ? 'true' : 'false');
+    }
+    if (typeof options.limit === 'number') {
+      params.set('limit', String(options.limit));
+    }
+    return this.request<any>('/notepad/search?' + params.toString());
+  }
+
   async getSessionSummaryJobConfig(userId?: string): Promise<any> {
     const params = userId ? `?user_id=${encodeURIComponent(userId)}` : '';
     return this.request<any>(`/session-summary-job-config${params}`);

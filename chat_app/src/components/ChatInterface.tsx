@@ -14,6 +14,7 @@ import ProjectExplorer from './ProjectExplorer';
 import TerminalView from './TerminalView';
 // 搴旂敤寮圭獥绠＄悊鍣ㄧ敱 ApplicationsPanel 鐩存帴鎵挎媴
 import ApplicationsPanel from './ApplicationsPanel';
+import NotepadPanel from './NotepadPanel';
 import TaskDraftPanel from './TaskDraftPanel';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import TaskWorkbar, {
@@ -110,6 +111,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [showSystemContextEditor, setShowSystemContextEditor] = useState(false);
   const [showAgentManager, setShowAgentManager] = useState(false);
   const [showApplicationsPanel, setShowApplicationsPanel] = useState(false);
+  const [showNotepadPanel, setShowNotepadPanel] = useState(false);
   const [showUserSettings, setShowUserSettings] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const userMenuRef = useRef<HTMLDivElement | null>(null);
@@ -1006,6 +1008,15 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         
         <div className="flex items-center space-x-2">
           <button
+            onClick={() => setShowNotepadPanel(true)}
+            className="p-2 text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg transition-colors"
+            title="打开记事本"
+          >
+            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path d="M7 3h10a2 2 0 0 1 2 2v14l-3-2-3 2-3-2-3 2V5a2 2 0 0 1 2-2z" strokeWidth="1.8" />
+            </svg>
+          </button>
+          <button
             onClick={() => setShowApplicationsPanel(true)}
             className="p-2 text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg transition-colors"
             title="打开应用列表"
@@ -1332,6 +1343,12 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         {showMcpManager && (
           <McpManager onClose={() => setShowMcpManager(false)} />
         )}
+
+        <NotepadPanel
+          isOpen={showNotepadPanel}
+          onClose={() => setShowNotepadPanel(false)}
+          projectId={currentProject?.id || null}
+        />
 
         {/* 鏅鸿兘浣撶鐞嗗櫒 */}
         {showAgentManager && (

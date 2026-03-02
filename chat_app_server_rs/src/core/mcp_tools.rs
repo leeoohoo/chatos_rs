@@ -8,6 +8,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use uuid::Uuid;
 
 use crate::builtin::code_maintainer::{CodeMaintainerOptions, CodeMaintainerService};
+use crate::builtin::notepad::{NotepadBuiltinService, NotepadOptions};
 use crate::builtin::sub_agent_router::{SubAgentRouterOptions, SubAgentRouterService};
 use crate::builtin::task_manager::{TaskManagerOptions, TaskManagerService};
 use crate::builtin::terminal_controller::{TerminalControllerOptions, TerminalControllerService};
@@ -111,6 +112,7 @@ pub enum BuiltinToolService {
     CodeMaintainer(CodeMaintainerService),
     TerminalController(TerminalControllerService),
     TaskManager(TaskManagerService),
+    Notepad(NotepadBuiltinService),
     SubAgentRouter(SubAgentRouterService),
 }
 
@@ -120,6 +122,7 @@ impl BuiltinToolService {
             Self::CodeMaintainer(service) => service.list_tools(),
             Self::TerminalController(service) => service.list_tools(),
             Self::TaskManager(service) => service.list_tools(),
+            Self::Notepad(service) => service.list_tools(),
             Self::SubAgentRouter(service) => service.list_tools(),
         }
     }
@@ -142,6 +145,7 @@ impl BuiltinToolService {
                 conversation_turn_id,
                 on_stream_chunk,
             ),
+            Self::Notepad(service) => service.call_tool(name, args),
             Self::SubAgentRouter(service) => service.call_tool(
                 name,
                 args,
@@ -204,6 +208,14 @@ pub fn build_builtin_tool_service(server: &McpBuiltinServer) -> Result<BuiltinTo
                 review_timeout_ms: crate::services::task_manager::REVIEW_TIMEOUT_MS_DEFAULT,
             })?;
             Ok(BuiltinToolService::TaskManager(service))
+        }
+        BuiltinMcpKind::Notepad => {
+            let service = NotepadBuiltinService::new(NotepadOptions {
+                server_name: server.name.clone(),
+                user_id: server.user_id.clone(),
+                project_id: server.project_id.clone(),
+            })?;
+            Ok(BuiltinToolService::Notepad(service))
         }
         BuiltinMcpKind::SubAgentRouter => {
             let service = SubAgentRouterService::new(SubAgentRouterOptions {

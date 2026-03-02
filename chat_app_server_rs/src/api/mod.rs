@@ -32,6 +32,7 @@ pub mod chat_v3;
 pub mod configs;
 pub mod fs;
 pub mod messages;
+pub mod notepad;
 pub mod projects;
 pub mod session_summary_job_config;
 pub mod sessions;
@@ -120,6 +121,7 @@ pub fn router() -> Router {
         .merge(configs::router())
         .merge(system_contexts::router())
         .merge(fs::router())
+        .merge(notepad::router())
         .nest("/api/v2", chat_agent_v2::router())
         .merge(user_settings::router())
         .route_layer(middleware::from_fn(require_auth));
