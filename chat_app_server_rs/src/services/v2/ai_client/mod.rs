@@ -91,6 +91,85 @@ impl AiClient {
         self.system_prompt = prompt;
     }
 
+    async fn load_summary_pending_messages(&self, session_id: &str) -> Vec<Value> {
+        let mut mapped = Vec::new();
+        let (merged_summary, _summary_count, history) = self
+            .message_manager
+            .get_chat_history_context(session_id, 2)
+            .await;
+        if let Some(summary_text) = merged_summary {
+            mapped.push(json!({"role": "system", "content": summary_text}));
+        }
+
+        for msg in history {
+            if msg
+                .metadata
+                .as_ref()
+                .and_then(|m| m.get("type"))
+                .and_then(|v| v.as_str())
+                == Some("session_summary")
+            {
+                continue;
+            }
+            if msg.role == "tool" {
+                let mut content = msg.content;
+                if content.is_empty() && msg.metadata.is_some() {
+                    content = msg
+                        .metadata
+                        .clone()
+                        .map(|v| v.to_string())
+                        .unwrap_or_default();
+                }
+                mapped.push(json!({"role": "tool", "tool_call_id": msg.tool_call_id.clone().unwrap_or_default(), "content": content}));
+            } else {
+                let mut item = json!({"role": msg.role, "content": msg.content});
+                if let Some(tc) = msg.tool_calls {
+                    item["tool_calls"] = tc;
+                }
+                if let Some(tc) = msg
+                    .metadata
+                    .clone()
+                    .and_then(|m| m.get("toolCalls").cloned())
+                {
+                    item["tool_calls"] = tc;
+                }
+                mapped.push(item);
+            }
+        }
+
+        mapped
+    }
+
+    async fn maybe_refresh_context_from_summary_pending(
+        &self,
+        purpose: &str,
+        iteration: i64,
+        session_id: Option<&str>,
+        messages: &mut Vec<Value>,
+    ) {
+        if purpose != "chat" || iteration <= 0 {
+            return;
+        }
+        let Some(sid) = session_id else {
+            return;
+        };
+
+        let mut refreshed = Vec::new();
+        if let Some(prompt) = self.system_prompt.clone() {
+            refreshed.push(json!({"role": "system", "content": prompt}));
+        }
+        let mapped = self.load_summary_pending_messages(sid).await;
+        refreshed.extend(ensure_tool_responses(mapped));
+        if refreshed != *messages {
+            info!(
+                "[AI_V2] context refreshed from summary+pending: old_messages={}, new_messages={}",
+                messages.len(),
+                refreshed.len()
+            );
+            *messages = refreshed;
+        }
+    }
+
     pub async fn process_request(
         &mut self,
         messages: Vec<Value>,
@@ -129,51 +208,7 @@ impl AiClient {
 
         let mut history_messages: Vec<Value> = Vec::new();
         if let Some(session_id) = session_id.clone() {
-            let mut mapped = Vec::new();
-            let (merged_summary, _summary_count, history) = self
-                .message_manager
-                .get_chat_history_context(&session_id, 2)
-                .await;
-            if let Some(summary_text) = merged_summary {
-                mapped.push(json!({"role": "system", "content": summary_text}));
-            }
-
-            for msg in history {
-                if msg
-                    .metadata
-                    .as_ref()
-                    .and_then(|m| m.get("type"))
-                    .and_then(|v| v.as_str())
-                    == Some("session_summary")
-                {
-                    continue;
-                }
-                if msg.role == "tool" {
-                    let mut content = msg.content;
-                    if content.is_empty() && msg.metadata.is_some() {
-                        content = msg
-                            .metadata
-                            .clone()
-                            .map(|v| v.to_string())
-                            .unwrap_or_default();
-                    }
-                    mapped.push(json!({"role": "tool", "tool_call_id": msg.tool_call_id.clone().unwrap_or_default(), "content": content}));
-                } else {
-                    let mut item = json!({"role": msg.role, "content": msg.content});
-                    if let Some(tc) = msg.tool_calls {
-                        item["tool_calls"] = tc;
-                    }
-                    if let Some(tc) = msg
-                        .metadata
-                        .clone()
-                        .and_then(|m| m.get("toolCalls").cloned())
-                    {
-                        item["tool_calls"] = tc;
-                    }
-                    mapped.push(item);
-                }
-            }
-
+            let mapped = self.load_summary_pending_messages(&session_id).await;
             history_messages = ensure_tool_responses(drop_duplicate_tail(mapped, &messages));
         }
 
@@ -255,6 +290,14 @@ impl AiClient {
                 iteration,
                 messages.len()
             );
+
+            self.maybe_refresh_context_from_summary_pending(
+                purpose.as_str(),
+                iteration,
+                session_id.as_deref(),
+                &mut messages,
+            )
+            .await;
 
             // dynamic summary (in-memory) if enabled
             let mut api_messages = messages.clone();

@@ -269,6 +269,57 @@ impl AiClient {
         result
     }
 
+    async fn maybe_refresh_stateless_context_for_chat(
+        &self,
+        session_id: Option<&str>,
+        stable_prefix_mode: bool,
+        use_prev_id: bool,
+        raw_input: &Value,
+        force_text_content: bool,
+        history_limit: i64,
+        include_tool_items: bool,
+        stateless_context_items: &mut Option<Vec<Value>>,
+        input: &mut Value,
+    ) {
+        if !stable_prefix_mode || use_prev_id {
+            return;
+        }
+
+        let Some(sid) = session_id else {
+            return;
+        };
+
+        let current_items = build_current_input_items(raw_input, force_text_content);
+        let rebuilt = self
+            .build_stateless_items(
+                Some(sid.to_string()),
+                history_limit,
+                stable_prefix_mode,
+                force_text_content,
+                &current_items,
+                include_tool_items,
+            )
+            .await;
+        let previous_len = stateless_context_items
+            .as_ref()
+            .map(|items| items.len())
+            .unwrap_or(0);
+        let changed = stateless_context_items
+            .as_ref()
+            .map(|items| items != &rebuilt)
+            .unwrap_or(true);
+        if changed {
+            info!(
+                "[AI_V3] stateless context refreshed: old_items={}, new_items={}, history_limit={}",
+                previous_len,
+                rebuilt.len(),
+                history_limit
+            );
+            *stateless_context_items = Some(rebuilt.clone());
+            *input = Value::Array(rebuilt);
+        }
+    }
+
     async fn process_with_tools(
         &mut self,
         input: Value,
@@ -330,6 +381,21 @@ impl AiClient {
             }
 
             info!("AI_V3 request iteration {}", iteration);
+
+            // In chat/stateless mode, refresh context from persisted summary+pending messages
+            // before each model request so newly generated summaries are reflected immediately.
+            self.maybe_refresh_stateless_context_for_chat(
+                session_id.as_deref(),
+                stable_prefix_mode,
+                use_prev_id,
+                &raw_input,
+                force_text_content,
+                adaptive_history_limit,
+                include_tool_items,
+                &mut stateless_context_items,
+                &mut input,
+            )
+            .await;
 
             if !use_prev_id {
                 if let Some(compacted) = self
