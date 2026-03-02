@@ -62,6 +62,14 @@ const normalizeFolderPath = (raw: string | undefined | null): string => {
   return input.trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
 };
 
+const sanitizeFileName = (raw: string): string => {
+  const cleaned = String(raw || '')
+    .replace(/[\\/:*?"<>|]+/g, '_')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return cleaned || 'note';
+};
+
 const noteUpdatedAtTs = (note: NoteMeta): number => {
   const value = Date.parse(note.updated_at || '');
   return Number.isNaN(value) ? 0 : value;
@@ -369,6 +377,84 @@ const NotepadPanel: React.FC<NotepadPanelProps> = ({ isOpen, onClose, projectId 
     }
   }, [apiClient, content, loadNotes, scopedProjectId, selectedNoteId, tagsText, title]);
 
+  const resolveNotePayload = useCallback(async (note?: NoteMeta | null): Promise<{ title: string; content: string }> => {
+    const targetNoteId = String(note?.id || selectedNoteId || '').trim();
+    const fallbackTitle = String(note?.title || title || 'Untitled').trim() || 'Untitled';
+
+    if (targetNoteId && targetNoteId === selectedNoteId) {
+      return {
+        title: title.trim() || fallbackTitle,
+        content,
+      };
+    }
+
+    if (!targetNoteId) {
+      return {
+        title: fallbackTitle,
+        content,
+      };
+    }
+
+    const res = await apiClient.getNotepadNote(targetNoteId, scopedProjectId);
+    const remoteNote = res?.note || {};
+    return {
+      title: String(remoteNote.title || fallbackTitle || 'Untitled'),
+      content: String(res?.content || ''),
+    };
+  }, [apiClient, content, scopedProjectId, selectedNoteId, title]);
+
+  const copyTextToClipboard = useCallback(async (text: string) => {
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+
+    if (typeof document !== 'undefined') {
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
+      return;
+    }
+
+    throw new Error('clipboard is not available');
+  }, []);
+
+  const handleCopyText = useCallback(async (note?: NoteMeta | null) => {
+    try {
+      const payload = await resolveNotePayload(note);
+      await copyTextToClipboard(payload.content || '');
+    } catch (err: any) {
+      setError(err?.message || '复制文本失败');
+    }
+  }, [copyTextToClipboard, resolveNotePayload]);
+
+  const handleCopyAsMdFile = useCallback(async (note?: NoteMeta | null) => {
+    try {
+      const payload = await resolveNotePayload(note);
+      if (typeof document === 'undefined') {
+        throw new Error('document is not available');
+      }
+      const filename = `${sanitizeFileName(payload.title)}.md`;
+      const blob = new Blob([payload.content || ''], { type: 'text/markdown;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = filename;
+      anchor.style.display = 'none';
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      setError(err?.message || '导出 .md 失败');
+    }
+  }, [resolveNotePayload]);
+
   const handleDeleteNoteById = useCallback(async (noteId: string, titleHint?: string) => {
     const normalizedId = String(noteId || '').trim();
     if (!normalizedId) return;
@@ -478,6 +564,32 @@ const NotepadPanel: React.FC<NotepadPanelProps> = ({ isOpen, onClose, projectId 
     setContextMenu(null);
     await handleDeleteNoteById(selectedNoteMeta.id, selectedNoteMeta.title || undefined);
   }, [handleDeleteNoteById, selectedNoteMeta]);
+
+  const handleContextCopyText = useCallback(async () => {
+    if (!contextMenu) return;
+    const targetNote = contextMenu.target.type === 'note'
+      ? contextMenu.target.note
+      : selectedNoteMeta;
+    setContextMenu(null);
+    if (!targetNote) {
+      setError('请先选中笔记');
+      return;
+    }
+    await handleCopyText(targetNote);
+  }, [contextMenu, handleCopyText, selectedNoteMeta]);
+
+  const handleContextCopyAsMd = useCallback(async () => {
+    if (!contextMenu) return;
+    const targetNote = contextMenu.target.type === 'note'
+      ? contextMenu.target.note
+      : selectedNoteMeta;
+    setContextMenu(null);
+    if (!targetNote) {
+      setError('请先选中笔记');
+      return;
+    }
+    await handleCopyAsMdFile(targetNote);
+  }, [contextMenu, handleCopyAsMdFile, selectedNoteMeta]);
 
   const contextMenuStyle = useMemo(() => {
     if (!contextMenu) {
@@ -696,6 +808,22 @@ const NotepadPanel: React.FC<NotepadPanelProps> = ({ isOpen, onClose, projectId 
               </button>
               <button
                 type="button"
+                onClick={() => { void handleCopyText(selectedNoteMeta); }}
+                disabled={!selectedNoteId}
+                className="px-3 py-1.5 text-xs rounded border border-border hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                复制文本
+              </button>
+              <button
+                type="button"
+                onClick={() => { void handleCopyAsMdFile(selectedNoteMeta); }}
+                disabled={!selectedNoteId}
+                className="px-3 py-1.5 text-xs rounded border border-border hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                复制为.md
+              </button>
+              <button
+                type="button"
                 onClick={() => { void handleSaveNote(); }}
                 disabled={!selectedNoteId || !dirty}
                 className="px-3 py-1.5 text-xs rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -796,6 +924,24 @@ const NotepadPanel: React.FC<NotepadPanelProps> = ({ isOpen, onClose, projectId 
           >
             新建笔记
           </button>
+          {(contextMenu.target.type === 'note' || selectedNoteMeta) && (
+            <button
+              type="button"
+              onClick={() => { void handleContextCopyText(); }}
+              className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent"
+            >
+              复制文本
+            </button>
+          )}
+          {(contextMenu.target.type === 'note' || selectedNoteMeta) && (
+            <button
+              type="button"
+              onClick={() => { void handleContextCopyAsMd(); }}
+              className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent"
+            >
+              复制为.md 文件
+            </button>
+          )}
           <button
             type="button"
             onClick={() => { void handleContextDelete(); }}
