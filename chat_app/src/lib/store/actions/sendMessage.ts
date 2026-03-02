@@ -718,51 +718,6 @@ export function createSendMessageHandler({
                       persistStreamingMessageDraft(state, message);
                     });
                   }
-                } else if (parsed.type === 'context_summarized' || parsed.type === 'context_summarized_start' || parsed.type === 'context_summarized_stream' || parsed.type === 'context_summarized_end') {
-                  // 将“摘要”作为当前助手消息的一个流式分段（thinking 样式），严格按事件顺序渲染并具备打字机效果
-                  const data = parsed.data || {};
-                  const header = '【上下文摘要】\\n';
-                  set((state: any) => {
-                    const message = ensureStreamingMessage(state);
-                    if (!message || !message.metadata) return;
-                    const segments = message.metadata.contentSegments || [];
-
-                    // 定位/创建“摘要”专用分段（使用 thinking 样式以便流式渲染）
-                    const ensureSummarySegment = () => {
-                      const lastIdx = segments.length - 1;
-                      if (lastIdx >= 0 && segments[lastIdx].type === 'thinking' && String((segments[lastIdx] as any).content || '').startsWith(header)) {
-                        return lastIdx;
-                      }
-                      segments.push({ content: header, type: 'thinking' as const });
-                      message.metadata.contentSegments = segments;
-                      message.metadata.currentSegmentIndex = segments.length - 1;
-                      return segments.length - 1;
-                    };
-
-                    if (parsed.type === 'context_summarized_start') {
-                      ensureSummarySegment();
-                    } else if (parsed.type === 'context_summarized_stream') {
-                      const idx = ensureSummarySegment();
-                      const chunkContent = data.content || data.chunk || data.data || '';
-                      (segments[idx] as any).content += String(chunkContent);
-                      message.metadata.currentSegmentIndex = idx;
-                    } else if (parsed.type === 'context_summarized_end' || parsed.type === 'context_summarized') {
-                      const idx = ensureSummarySegment();
-                      const full = typeof data.full_summary === 'string' && data.full_summary.length > 0 ? data.full_summary : (data.summary_preview || '');
-                      (segments[idx] as any).content = header + String(full);
-                      message.metadata.contentSegments = segments;
-                      message.metadata.currentSegmentIndex = idx;
-                    }
-
-                    updateTurnHistoryProcess(state, (current: any) => ({
-                      hasProcess: true,
-                      thinkingCount: Number(current?.thinkingCount || 0) + (parsed.type === 'context_summarized_start' ? 1 : 0),
-                      processMessageCount: Number(current?.processMessageCount || 0) + (parsed.type === 'context_summarized_start' ? 1 : 0),
-                    }));
-
-                    (message as any).updatedAt = new Date();
-                    persistStreamingMessageDraft(state, message);
-                  });
                 } else if (parsed.type === 'content') {
                   // 兼容旧格式: {type: 'content', content: '...'}
                   const contentStr =

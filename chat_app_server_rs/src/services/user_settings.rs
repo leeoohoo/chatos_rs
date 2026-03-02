@@ -5,18 +5,6 @@ use crate::core::pagination::parse_js_int_value;
 use crate::repositories::user_settings as repo;
 
 pub const USER_SETTING_KEYS: &[&str] = &[
-    "SUMMARY_ENABLED",
-    "DYNAMIC_SUMMARY_ENABLED",
-    "SUMMARY_MESSAGE_LIMIT",
-    "SUMMARY_MAX_CONTEXT_TOKENS",
-    "SUMMARY_KEEP_LAST_N",
-    "SUMMARY_TARGET_TOKENS",
-    "SUMMARY_MERGE_TARGET_TOKENS",
-    "SUMMARY_COOLDOWN_SECONDS",
-    "SUMMARY_BISECT_ENABLED",
-    "SUMMARY_BISECT_MAX_DEPTH",
-    "SUMMARY_BISECT_MIN_MESSAGES",
-    "SUMMARY_RETRY_ON_CONTEXT_OVERFLOW",
     "MAX_ITERATIONS",
     "LOG_LEVEL",
     "HISTORY_LIMIT",
@@ -28,43 +16,11 @@ fn coerce(value: &Value, key: &str) -> Value {
         return Value::Null;
     }
     match key {
-        "SUMMARY_ENABLED"
-        | "DYNAMIC_SUMMARY_ENABLED"
-        | "SUMMARY_BISECT_ENABLED"
-        | "SUMMARY_RETRY_ON_CONTEXT_OVERFLOW" => Value::Bool(js_truthy(value)),
-        "SUMMARY_MESSAGE_LIMIT"
-        | "SUMMARY_MAX_CONTEXT_TOKENS"
-        | "SUMMARY_KEEP_LAST_N"
-        | "SUMMARY_TARGET_TOKENS"
-        | "SUMMARY_MERGE_TARGET_TOKENS"
-        | "SUMMARY_COOLDOWN_SECONDS"
-        | "SUMMARY_BISECT_MAX_DEPTH"
-        | "SUMMARY_BISECT_MIN_MESSAGES"
-        | "MAX_ITERATIONS"
-        | "HISTORY_LIMIT"
-        | "CHAT_MAX_TOKENS" => parse_js_int_value(value)
+        "MAX_ITERATIONS" | "HISTORY_LIMIT" | "CHAT_MAX_TOKENS" => parse_js_int_value(value)
             .map(|n| Value::Number(serde_json::Number::from(n)))
             .unwrap_or(Value::Null),
         "LOG_LEVEL" => Value::String(value.as_str().unwrap_or(&value.to_string()).to_string()),
         _ => value.clone(),
-    }
-}
-
-fn js_truthy(value: &Value) -> bool {
-    match value {
-        Value::Null => false,
-        Value::Bool(v) => *v,
-        Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                i != 0
-            } else if let Some(f) = n.as_f64() {
-                f != 0.0
-            } else {
-                false
-            }
-        }
-        Value::String(s) => !s.is_empty(),
-        Value::Array(_) | Value::Object(_) => true,
     }
 }
 
@@ -86,18 +42,6 @@ pub fn get_default_user_settings() -> Value {
         .unwrap_or(Value::Null);
 
     json!({
-        "SUMMARY_ENABLED": cfg.summary_enabled,
-        "DYNAMIC_SUMMARY_ENABLED": cfg.dynamic_summary_enabled,
-        "SUMMARY_MESSAGE_LIMIT": cfg.summary_message_limit,
-        "SUMMARY_MAX_CONTEXT_TOKENS": cfg.summary_max_context_tokens,
-        "SUMMARY_KEEP_LAST_N": cfg.summary_keep_last_n,
-        "SUMMARY_TARGET_TOKENS": cfg.summary_target_tokens,
-        "SUMMARY_MERGE_TARGET_TOKENS": cfg.summary_merge_target_tokens,
-        "SUMMARY_COOLDOWN_SECONDS": cfg.summary_cooldown_seconds,
-        "SUMMARY_BISECT_ENABLED": cfg.summary_bisect_enabled,
-        "SUMMARY_BISECT_MAX_DEPTH": cfg.summary_bisect_max_depth,
-        "SUMMARY_BISECT_MIN_MESSAGES": cfg.summary_bisect_min_messages,
-        "SUMMARY_RETRY_ON_CONTEXT_OVERFLOW": cfg.summary_retry_on_context_overflow,
         "MAX_ITERATIONS": max_iterations,
         "LOG_LEVEL": cfg.log_level,
         "HISTORY_LIMIT": history_limit,

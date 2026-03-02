@@ -5,24 +5,13 @@ use serde_json::{json, Value};
 use tracing::info;
 use tracing::warn;
 
-use crate::config::Config;
 use crate::services::ai_common::{
     build_aborted_tool_results, build_tool_stream_callback, completion_failed_error,
-};
-use crate::services::summary::engine::{
-    maybe_summarize as maybe_summarize_with_engine,
-    retry_after_context_overflow as retry_after_context_overflow_with_engine,
-};
-use crate::services::summary::persist::persist_summary;
-use crate::services::summary::types::{
-    build_summarizer_system_prompt, PersistSummaryPayload, SummaryCallbacks, SummaryOptions,
-    SummarySourceInfo, SummaryTrigger,
 };
 use crate::services::user_settings::AiClientSettings;
 use crate::services::v3::ai_request_handler::{AiRequestHandler, StreamCallbacks};
 use crate::services::v3::mcp_tool_execute::McpToolExecute;
 use crate::services::v3::message_manager::MessageManager;
-use crate::services::v3::summary_adapter::V3SummaryAdapter;
 use crate::utils::abort_registry;
 
 mod input_transform;
@@ -79,16 +68,6 @@ pub struct AiClient {
     max_iterations: i64,
     history_limit: i64,
     system_prompt: Option<String>,
-    summary_threshold: i64,
-    summary_keep_last_n: i64,
-    max_context_tokens: Option<i64>,
-    target_summary_tokens: Option<i64>,
-    merge_target_summary_tokens: Option<i64>,
-    dynamic_summary_enabled: bool,
-    summary_bisect_enabled: bool,
-    summary_bisect_max_depth: i64,
-    summary_bisect_min_messages: i64,
-    summary_retry_on_context_overflow: bool,
     prev_response_id_disabled_sessions: HashSet<String>,
     force_text_content_sessions: HashSet<String>,
     no_system_message_sessions: HashSet<String>,
@@ -100,7 +79,6 @@ impl AiClient {
         mcp_tool_execute: McpToolExecute,
         message_manager: MessageManager,
     ) -> Self {
-        let cfg = Config::get();
         Self {
             ai_request_handler,
             mcp_tool_execute,
@@ -108,16 +86,6 @@ impl AiClient {
             max_iterations: 25,
             history_limit: 20,
             system_prompt: None,
-            summary_threshold: cfg.summary_message_limit,
-            summary_keep_last_n: cfg.summary_keep_last_n,
-            max_context_tokens: Some(cfg.summary_max_context_tokens),
-            target_summary_tokens: Some(cfg.summary_target_tokens),
-            merge_target_summary_tokens: Some(cfg.summary_merge_target_tokens),
-            dynamic_summary_enabled: cfg.dynamic_summary_enabled,
-            summary_bisect_enabled: cfg.summary_bisect_enabled,
-            summary_bisect_max_depth: cfg.summary_bisect_max_depth,
-            summary_bisect_min_messages: cfg.summary_bisect_min_messages,
-            summary_retry_on_context_overflow: cfg.summary_retry_on_context_overflow,
             prev_response_id_disabled_sessions: HashSet::new(),
             force_text_content_sessions: HashSet::new(),
             no_system_message_sessions: HashSet::new(),
@@ -161,9 +129,6 @@ impl AiClient {
             on_context_summarized_stream: None,
             on_context_summarized_end: None,
         });
-        let dynamic_summary_enabled_before = self.dynamic_summary_enabled;
-        self.dynamic_summary_enabled =
-            dynamic_summary_enabled_before && purpose == "sub_agent_router";
         let stable_prefix_mode = purpose == "chat";
 
         // Chat mode favors a stable stateless prefix so provider-side prompt caching can reuse
@@ -265,7 +230,6 @@ impl AiClient {
             )
             .await;
 
-        self.dynamic_summary_enabled = dynamic_summary_enabled_before;
         result
     }
 
@@ -396,22 +360,6 @@ impl AiClient {
                 &mut input,
             )
             .await;
-
-            if !use_prev_id {
-                if let Some(compacted) = self
-                    .maybe_proactive_summarize_stateless_input(
-                        &input,
-                        &model,
-                        session_id.clone(),
-                        &callbacks,
-                        force_text_content,
-                    )
-                    .await?
-                {
-                    stateless_context_items = compacted.as_array().cloned();
-                    input = compacted;
-                }
-            }
 
             let mut ai_response = None;
             let mut last_error: Option<String> = None;
@@ -616,24 +564,6 @@ impl AiClient {
                             continue;
                         }
                         if is_context_length_exceeded_error(&err_msg) {
-                            if let Some(compacted) = self
-                                .try_summary_after_context_overflow(
-                                    &input,
-                                    &err_msg,
-                                    &model,
-                                    session_id.clone(),
-                                    &callbacks,
-                                    force_text_content,
-                                )
-                                .await?
-                            {
-                                can_use_prev_id = false;
-                                use_prev_id = false;
-                                previous_response_id = None;
-                                stateless_context_items = compacted.as_array().cloned();
-                                input = compacted;
-                                continue;
-                            }
                             if let Some(next_limit) = reduce_history_limit(adaptive_history_limit) {
                                 warn!(
                                     "[AI_V3] context length exceeded; reduce history_limit {} -> {}",
@@ -681,24 +611,6 @@ impl AiClient {
                 ai_response.provider_error.as_ref(),
             ) {
                 if is_context_length_exceeded_error(&err) {
-                    if let Some(compacted) = self
-                        .try_summary_after_context_overflow(
-                            &input,
-                            &err,
-                            &model,
-                            session_id.clone(),
-                            &callbacks,
-                            force_text_content,
-                        )
-                        .await?
-                    {
-                        can_use_prev_id = false;
-                        use_prev_id = false;
-                        previous_response_id = None;
-                        stateless_context_items = compacted.as_array().cloned();
-                        input = compacted;
-                        continue;
-                    }
                     if let Some(next_limit) = reduce_history_limit(adaptive_history_limit) {
                         warn!(
                             "[AI_V3] failed response due to context overflow; reduce history_limit {} -> {}",
@@ -908,215 +820,6 @@ impl AiClient {
         }
     }
 
-    fn summary_options_for_model(&self, model: &str) -> SummaryOptions {
-        let max_context_tokens = self.max_context_tokens.unwrap_or(6000);
-        let target_summary_tokens = self.target_summary_tokens.unwrap_or(700);
-        let merge_target_tokens = self
-            .merge_target_summary_tokens
-            .unwrap_or(target_summary_tokens);
-
-        SummaryOptions {
-            message_limit: self.summary_threshold,
-            max_context_tokens,
-            keep_last_n: self.summary_keep_last_n.max(0) as usize,
-            target_summary_tokens,
-            merge_target_tokens,
-            model: model.to_string(),
-            temperature: 0.2,
-            bisect_enabled: self.summary_bisect_enabled,
-            bisect_max_depth: self.summary_bisect_max_depth.max(1) as usize,
-            bisect_min_messages: self.summary_bisect_min_messages.max(1) as usize,
-            retry_on_context_overflow: self.summary_retry_on_context_overflow,
-        }
-    }
-
-    fn build_summary_callbacks(callbacks: &AiClientCallbacks) -> Option<SummaryCallbacks> {
-        let on_stream = callbacks.on_context_summarized_stream.clone().map(|cb| {
-            Arc::new(move |chunk: String| {
-                cb(Value::String(chunk));
-            }) as Arc<dyn Fn(String) + Send + Sync>
-        });
-
-        let mapped = SummaryCallbacks {
-            on_start: callbacks.on_context_summarized_start.clone(),
-            on_stream,
-            on_end: callbacks.on_context_summarized_end.clone(),
-        };
-
-        if mapped.on_start.is_none() && mapped.on_stream.is_none() && mapped.on_end.is_none() {
-            None
-        } else {
-            Some(mapped)
-        }
-    }
-
-    async fn maybe_proactive_summarize_stateless_input(
-        &mut self,
-        input: &Value,
-        model: &str,
-        session_id: Option<String>,
-        callbacks: &AiClientCallbacks,
-        force_text_content: bool,
-    ) -> Result<Option<Value>, String> {
-        if !self.dynamic_summary_enabled {
-            return Ok(None);
-        }
-
-        let options = self.summary_options_for_model(model);
-        let messages = response_input_to_chat_messages(input);
-        if messages.is_empty() {
-            return Ok(None);
-        }
-
-        let adapter = V3SummaryAdapter::new(
-            self.ai_request_handler.clone(),
-            self.message_manager.clone(),
-        );
-        let result = maybe_summarize_with_engine(
-            &adapter,
-            messages.as_slice(),
-            &options,
-            session_id.clone(),
-            Self::build_summary_callbacks(callbacks),
-            SummaryTrigger::Proactive,
-        )
-        .await?;
-
-        if !result.summarized {
-            return Ok(None);
-        }
-
-        self.persist_summary_for_session(
-            session_id.as_deref(),
-            &result,
-            &options,
-            SummaryTrigger::Proactive,
-        )
-        .await;
-
-        Ok(Some(build_input_from_summary_result(
-            &result,
-            force_text_content,
-        )))
-    }
-
-    async fn try_summary_after_context_overflow(
-        &mut self,
-        input: &Value,
-        err: &str,
-        model: &str,
-        session_id: Option<String>,
-        callbacks: &AiClientCallbacks,
-        force_text_content: bool,
-    ) -> Result<Option<Value>, String> {
-        if !self.dynamic_summary_enabled {
-            return Ok(None);
-        }
-
-        let options = self.summary_options_for_model(model);
-        let messages = response_input_to_chat_messages(input);
-        if messages.is_empty() {
-            return Ok(None);
-        }
-
-        let adapter = V3SummaryAdapter::new(
-            self.ai_request_handler.clone(),
-            self.message_manager.clone(),
-        );
-        let result = retry_after_context_overflow_with_engine(
-            &adapter,
-            messages.as_slice(),
-            err,
-            &options,
-            session_id.clone(),
-            Self::build_summary_callbacks(callbacks),
-        )
-        .await?;
-
-        let Some(result) = result else {
-            return Ok(None);
-        };
-
-        self.persist_summary_for_session(
-            session_id.as_deref(),
-            &result,
-            &options,
-            SummaryTrigger::OverflowRetry,
-        )
-        .await;
-
-        Ok(Some(build_input_from_summary_result(
-            &result,
-            force_text_content,
-        )))
-    }
-
-    async fn persist_summary_for_session(
-        &self,
-        session_id: Option<&str>,
-        result: &crate::services::summary::types::SummaryResult,
-        options: &SummaryOptions,
-        trigger: SummaryTrigger,
-    ) {
-        let Some(sid) = session_id else {
-            return;
-        };
-        let Some(summary_text) = result.summary_text.as_ref() else {
-            return;
-        };
-
-        let records: Vec<_> = self
-            .message_manager
-            .get_session_messages(sid, None)
-            .await
-            .into_iter()
-            .filter(|message| {
-                message
-                    .metadata
-                    .as_ref()
-                    .and_then(|value| value.get("type"))
-                    .and_then(|value| value.as_str())
-                    != Some("session_summary")
-            })
-            .collect();
-
-        let source = build_source_info(
-            records.as_slice(),
-            result.summarized_messages.len(),
-            result.kept_messages.len(),
-        );
-
-        let adapter = V3SummaryAdapter::new(
-            self.ai_request_handler.clone(),
-            self.message_manager.clone(),
-        );
-        let payload = PersistSummaryPayload {
-            session_id: sid.to_string(),
-            summary_text: summary_text.clone(),
-            summary_prompt: build_summarizer_system_prompt(options.target_summary_tokens),
-            model: options.model.clone(),
-            temperature: options.temperature,
-            target_summary_tokens: options.target_summary_tokens,
-            keep_last_n: options.keep_last_n as i64,
-            approx_tokens: result.stats.input_tokens,
-            trigger,
-            truncated: result.truncated,
-            stats: result.stats.clone(),
-            source,
-        };
-
-        match persist_summary(&adapter, payload).await {
-            Ok(outcome) => {
-                if let Some(summary_id) = outcome.summary_id {
-                    info!("[AI_V3] persisted summary_id={}", summary_id);
-                }
-            }
-            Err(err) => {
-                warn!("[AI_V3] persist summary failed: {}", err);
-            }
-        }
-    }
-
     async fn build_stateless_items(
         &self,
         session_id: Option<String>,
@@ -1283,34 +986,6 @@ impl AiClient {
     }
 }
 
-fn build_source_info(
-    records: &[crate::models::message::Message],
-    summarized_messages_len: usize,
-    kept_messages_len: usize,
-) -> SummarySourceInfo {
-    if records.is_empty() || summarized_messages_len == 0 {
-        return SummarySourceInfo::default();
-    }
-
-    let total = records.len();
-    let kept_start = total.saturating_sub(kept_messages_len);
-    let summarize_end = kept_start.min(total);
-    let summarize_start = summarize_end.saturating_sub(summarized_messages_len.min(summarize_end));
-
-    if summarize_start >= summarize_end {
-        return SummarySourceInfo::default();
-    }
-
-    let slice = &records[summarize_start..summarize_end];
-    SummarySourceInfo {
-        message_ids: slice.iter().map(|item| item.id.clone()).collect(),
-        first_message_id: slice.first().map(|item| item.id.clone()),
-        last_message_id: slice.last().map(|item| item.id.clone()),
-        first_message_created_at: slice.first().map(|item| item.created_at.clone()),
-        last_message_created_at: slice.last().map(|item| item.created_at.clone()),
-    }
-}
-
 fn usage_value_i64(value: &Value, key: &str) -> Option<i64> {
     value
         .get(key)
@@ -1342,77 +1017,6 @@ fn log_usage_snapshot(purpose: &str, usage: Option<&Value>) {
         "[AI_V3] usage snapshot: purpose={}, input_tokens={}, cached_tokens={}, output_tokens={}",
         purpose, input_tokens, cached_tokens, output_tokens
     );
-}
-
-fn response_input_to_chat_messages(input: &Value) -> Vec<Value> {
-    let mut messages = Vec::new();
-    if let Some(items) = input.as_array() {
-        for item in items {
-            let item_type = item
-                .get("type")
-                .and_then(|value| value.as_str())
-                .unwrap_or("");
-            match item_type {
-                "message" => {
-                    let role = item
-                        .get("role")
-                        .and_then(|value| value.as_str())
-                        .unwrap_or("user");
-                    let content = item.get("content").cloned().unwrap_or(Value::Null);
-                    let content_text = response_content_to_text(&content);
-                    messages.push(json!({"role": role, "content": content_text}));
-                }
-                "function_call" => {
-                    let call_id = item
-                        .get("call_id")
-                        .and_then(|value| value.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let name = item
-                        .get("name")
-                        .and_then(|value| value.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let arguments = item
-                        .get("arguments")
-                        .cloned()
-                        .unwrap_or(Value::String("{}".to_string()));
-                    messages.push(json!({
-                        "role": "assistant",
-                        "content": "",
-                        "tool_calls": [{
-                            "id": call_id,
-                            "function": {
-                                "name": name,
-                                "arguments": if let Some(raw) = arguments.as_str() { Value::String(raw.to_string()) } else { arguments }
-                            }
-                        }]
-                    }));
-                }
-                "function_call_output" => {
-                    let call_id = item
-                        .get("call_id")
-                        .and_then(|value| value.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let output = item.get("output").cloned().unwrap_or(Value::Null);
-                    messages.push(json!({
-                        "role": "tool",
-                        "tool_call_id": call_id,
-                        "content": response_content_to_text(&output)
-                    }));
-                }
-                _ => {
-                    messages.push(json!({
-                        "role": "user",
-                        "content": item.to_string()
-                    }));
-                }
-            }
-        }
-    }
-
-    messages
 }
 
 fn rewrite_system_messages_to_user(input: &Value, force_text_content: bool) -> Value {
@@ -1464,63 +1068,6 @@ fn rewrite_system_messages_to_user(input: &Value, force_text_content: bool) -> V
     }
 }
 
-fn build_input_from_summary_result(
-    result: &crate::services::summary::types::SummaryResult,
-    force_text_content: bool,
-) -> Value {
-    let mut items = Vec::new();
-
-    if let Some(summary_prompt) = result.system_prompt.as_ref() {
-        items.push(to_message_item(
-            "system",
-            &Value::String(summary_prompt.clone()),
-            force_text_content,
-        ));
-    }
-
-    for message in result.kept_messages.as_slice() {
-        let role = message
-            .get("role")
-            .and_then(|value| value.as_str())
-            .unwrap_or("user");
-        if role == "tool" {
-            let call_id = message
-                .get("tool_call_id")
-                .and_then(|value| value.as_str())
-                .unwrap_or("");
-            let content = response_content_to_text(message.get("content").unwrap_or(&Value::Null));
-            let wrapped = if call_id.is_empty() {
-                format!(
-                    "[tool output]
-{}",
-                    content
-                )
-            } else {
-                format!(
-                    "[tool:{}]
-{}",
-                    call_id, content
-                )
-            };
-            items.push(to_message_item(
-                "assistant",
-                &Value::String(wrapped),
-                force_text_content,
-            ));
-            continue;
-        }
-
-        let content = response_content_to_text(message.get("content").unwrap_or(&Value::Null));
-        items.push(to_message_item(
-            role,
-            &Value::String(content),
-            force_text_content,
-        ));
-    }
-
-    Value::Array(items)
-}
-
 fn response_content_to_text(content: &Value) -> String {
     if let Some(text) = content.as_str() {
         return text.to_string();
@@ -1568,66 +1115,6 @@ impl AiClientSettings for AiClient {
         }
         if let Some(v) = effective.get("HISTORY_LIMIT").and_then(|v| v.as_i64()) {
             self.history_limit = v.max(0);
-        }
-        if let Some(v) = effective
-            .get("SUMMARY_MESSAGE_LIMIT")
-            .and_then(|v| v.as_i64())
-        {
-            self.summary_threshold = v;
-        }
-        if let Some(v) = effective
-            .get("SUMMARY_KEEP_LAST_N")
-            .and_then(|v| v.as_i64())
-        {
-            self.summary_keep_last_n = v;
-        }
-        if let Some(v) = effective
-            .get("SUMMARY_MAX_CONTEXT_TOKENS")
-            .and_then(|v| v.as_i64())
-        {
-            self.max_context_tokens = Some(v);
-        }
-        if let Some(v) = effective
-            .get("SUMMARY_TARGET_TOKENS")
-            .and_then(|v| v.as_i64())
-        {
-            self.target_summary_tokens = Some(v);
-        }
-        if let Some(v) = effective
-            .get("SUMMARY_MERGE_TARGET_TOKENS")
-            .and_then(|v| v.as_i64())
-        {
-            self.merge_target_summary_tokens = Some(v);
-        }
-        if let Some(v) = effective
-            .get("SUMMARY_BISECT_ENABLED")
-            .and_then(|v| v.as_bool())
-        {
-            self.summary_bisect_enabled = v;
-        }
-        if let Some(v) = effective
-            .get("SUMMARY_BISECT_MAX_DEPTH")
-            .and_then(|v| v.as_i64())
-        {
-            self.summary_bisect_max_depth = v.max(1);
-        }
-        if let Some(v) = effective
-            .get("SUMMARY_BISECT_MIN_MESSAGES")
-            .and_then(|v| v.as_i64())
-        {
-            self.summary_bisect_min_messages = v.max(1);
-        }
-        if let Some(v) = effective
-            .get("SUMMARY_RETRY_ON_CONTEXT_OVERFLOW")
-            .and_then(|v| v.as_bool())
-        {
-            self.summary_retry_on_context_overflow = v;
-        }
-        if let Some(v) = effective
-            .get("DYNAMIC_SUMMARY_ENABLED")
-            .and_then(|v| v.as_bool())
-        {
-            self.dynamic_summary_enabled = v;
         }
     }
 }

@@ -1,5 +1,5 @@
 use serde_json::{json, Value};
-use tracing::{info, warn};
+use tracing::info;
 
 use crate::config::Config;
 use crate::services::ai_common::{
@@ -7,7 +7,6 @@ use crate::services::ai_common::{
 };
 use crate::services::user_settings::AiClientSettings;
 use crate::services::v2::ai_request_handler::{AiRequestHandler, StreamCallbacks};
-use crate::services::v2::conversation_summarizer::{ConversationSummarizer, SummaryOverrides};
 use crate::services::v2::mcp_tool_execute::McpToolExecute;
 use crate::services::v2::message_manager::MessageManager;
 use crate::utils::abort_registry;
@@ -15,12 +14,9 @@ use crate::utils::abort_registry;
 mod history_tools;
 mod token_compaction;
 
-use self::history_tools::{
-    drop_duplicate_tail, ensure_tool_responses, find_anchor_index, find_summary_index,
-};
+use self::history_tools::{drop_duplicate_tail, ensure_tool_responses};
 use self::token_compaction::{
-    estimate_delta_stats, is_token_limit_error, token_limit_budget_from_error,
-    truncate_messages_by_tokens,
+    is_token_limit_error, token_limit_budget_from_error, truncate_messages_by_tokens,
 };
 
 #[derive(Clone)]
@@ -40,21 +36,9 @@ pub struct AiClient {
     mcp_tool_execute: McpToolExecute,
     message_manager: MessageManager,
     max_iterations: i64,
-    summary_threshold: i64,
-    summary_keep_last_n: i64,
     history_limit: i64,
     system_prompt: Option<String>,
-    summary_system_prompt: Option<String>,
-    dynamic_summary_enabled: bool,
     max_context_tokens: i64,
-    target_summary_tokens: i64,
-    merge_target_summary_tokens: i64,
-    summary_bisect_enabled: bool,
-    summary_bisect_max_depth: i64,
-    summary_bisect_min_messages: i64,
-    summary_retry_on_context_overflow: bool,
-    summarizer: Option<ConversationSummarizer>,
-    anchor_user_content: Option<Value>,
 }
 
 impl AiClient {
@@ -69,21 +53,9 @@ impl AiClient {
             mcp_tool_execute,
             message_manager,
             max_iterations: 25,
-            summary_threshold: cfg.summary_message_limit,
-            summary_keep_last_n: cfg.summary_keep_last_n,
             history_limit: 2,
             system_prompt: None,
-            summary_system_prompt: None,
-            dynamic_summary_enabled: cfg.dynamic_summary_enabled,
             max_context_tokens: cfg.summary_max_context_tokens,
-            target_summary_tokens: cfg.summary_target_tokens,
-            merge_target_summary_tokens: cfg.summary_merge_target_tokens,
-            summary_bisect_enabled: cfg.summary_bisect_enabled,
-            summary_bisect_max_depth: cfg.summary_bisect_max_depth,
-            summary_bisect_min_messages: cfg.summary_bisect_min_messages,
-            summary_retry_on_context_overflow: cfg.summary_retry_on_context_overflow,
-            summarizer: None,
-            anchor_user_content: None,
         }
     }
 
@@ -188,22 +160,10 @@ impl AiClient {
         message_source: Option<String>,
     ) -> Result<Value, String> {
         let resolved_purpose = purpose.unwrap_or_else(|| "chat".to_string());
-        let dynamic_summary_enabled_before = self.dynamic_summary_enabled;
-        self.dynamic_summary_enabled =
-            dynamic_summary_enabled_before && resolved_purpose == "sub_agent_router";
-        if !self.dynamic_summary_enabled {
-            // Avoid carrying in-memory dynamic summary into normal chat requests.
-            self.summary_system_prompt = None;
-        }
         let mut all_messages: Vec<Value> = Vec::new();
 
         if let Some(prompt) = self.system_prompt.clone() {
             all_messages.push(json!({"role": "system", "content": prompt}));
-        }
-        if let Some(summary) = self.summary_system_prompt.clone() {
-            if self.dynamic_summary_enabled {
-                all_messages.push(json!({"role": "system", "content": summary}));
-            }
         }
 
         let mut history_messages: Vec<Value> = Vec::new();
@@ -215,41 +175,30 @@ impl AiClient {
         all_messages.extend(history_messages);
         all_messages.extend(messages.clone());
 
-        // anchor user content for dynamic summary
-        self.anchor_user_content = messages
-            .iter()
-            .rev()
-            .find(|m| m.get("role").and_then(|v| v.as_str()) == Some("user"))
-            .and_then(|m| m.get("content").cloned());
-
         let tools = if use_tools {
             Some(self.mcp_tool_execute.get_available_tools())
         } else {
             None
         };
 
-        let result = self
-            .process_with_tools(
-                all_messages,
-                tools,
-                session_id,
-                turn_id,
-                model,
-                temperature,
-                max_tokens,
-                callbacks,
-                reasoning_enabled,
-                provider,
-                thinking_level,
-                Some(resolved_purpose),
-                message_mode,
-                message_source,
-                0,
-            )
-            .await;
-
-        self.dynamic_summary_enabled = dynamic_summary_enabled_before;
-        result
+        self.process_with_tools(
+            all_messages,
+            tools,
+            session_id,
+            turn_id,
+            model,
+            temperature,
+            max_tokens,
+            callbacks,
+            reasoning_enabled,
+            provider,
+            thinking_level,
+            Some(resolved_purpose),
+            message_mode,
+            message_source,
+            0,
+        )
+        .await
     }
 
     async fn process_with_tools(
@@ -299,111 +248,7 @@ impl AiClient {
             )
             .await;
 
-            // dynamic summary (in-memory) if enabled
             let mut api_messages = messages.clone();
-            if self.dynamic_summary_enabled {
-                if self.summarizer.is_none() {
-                    self.summarizer = Some(ConversationSummarizer::new(
-                        self.ai_request_handler.clone(),
-                        self.message_manager.clone(),
-                    ));
-                }
-                if let Some(summarizer) = &self.summarizer {
-                    let idx_last_summary =
-                        find_summary_index(&api_messages, self.summary_system_prompt.as_ref());
-                    let idx_anchor =
-                        find_anchor_index(&api_messages, self.anchor_user_content.as_ref());
-                    let start_idx = if idx_last_summary >= 0 {
-                        idx_last_summary
-                    } else {
-                        idx_anchor
-                    };
-                    let delta = if start_idx >= 0 {
-                        api_messages[(start_idx as usize + 1)..].to_vec()
-                    } else {
-                        Vec::new()
-                    };
-
-                    let (delta_tokens, delta_count) = estimate_delta_stats(&delta);
-                    let trigger_by_count =
-                        self.summary_threshold > 0 && delta_count >= self.summary_threshold;
-                    let trigger_by_tokens =
-                        self.max_context_tokens > 0 && delta_tokens >= self.max_context_tokens;
-
-                    if trigger_by_count || trigger_by_tokens {
-                        let mut input = Vec::new();
-                        if let Some(summary_prompt) = self.summary_system_prompt.clone() {
-                            input.push(json!({"role": "system", "content": summary_prompt}));
-                        } else if let Some(anchor) = self.anchor_user_content.clone() {
-                            input.push(json!({"role": "user", "content": anchor}));
-                        }
-                        input.extend(delta);
-
-                        let summary_callbacks =
-                            crate::services::v2::conversation_summarizer::SummaryCallbacks {
-                                on_start: callbacks.on_context_summarized_start.clone(),
-                                on_stream: callbacks.on_context_summarized_stream.clone().map(
-                                    |cb| {
-                                        std::sync::Arc::new(move |chunk: String| {
-                                            cb(Value::String(chunk));
-                                        })
-                                            as std::sync::Arc<dyn Fn(String) + Send + Sync>
-                                    },
-                                ),
-                                on_end: callbacks.on_context_summarized_end.clone(),
-                            };
-
-                        let res = summarizer
-                            .maybe_summarize_in_memory(
-                                &input,
-                                Some(SummaryOverrides {
-                                    message_limit: Some(1),
-                                    max_context_tokens: Some(1),
-                                    keep_last_n: Some(0),
-                                    target_summary_tokens: Some(self.target_summary_tokens),
-                                    merge_target_tokens: Some(self.merge_target_summary_tokens),
-                                    model: Some(model.clone()),
-                                    temperature: Some(0.2),
-                                    bisect_enabled: Some(self.summary_bisect_enabled),
-                                    bisect_max_depth: Some(self.summary_bisect_max_depth),
-                                    bisect_min_messages: Some(self.summary_bisect_min_messages),
-                                    retry_on_context_overflow: Some(
-                                        self.summary_retry_on_context_overflow,
-                                    ),
-                                }),
-                                session_id.clone(),
-                                true,
-                                Some(summary_callbacks),
-                            )
-                            .await;
-
-                        match res {
-                            Ok(res) => {
-                                if res.summarized {
-                                    self.summary_system_prompt = res.system_prompt.clone();
-                                    let mut rebuilt = Vec::new();
-                                    if let Some(prompt) = self.system_prompt.clone() {
-                                        rebuilt.push(json!({"role": "system", "content": prompt}));
-                                    }
-                                    if let Some(anchor) = self.anchor_user_content.clone() {
-                                        rebuilt.push(json!({"role": "user", "content": anchor}));
-                                    }
-                                    if let Some(summary_prompt) = self.summary_system_prompt.clone()
-                                    {
-                                        rebuilt.push(
-                                            json!({"role": "system", "content": summary_prompt}),
-                                        );
-                                    }
-                                    api_messages = rebuilt;
-                                }
-                            }
-                            Err(err) => {
-                                warn!("[SUM-MEM] failed: {}", err);
-                            }
-                        }
-                    }
-                }
-            }
 
             let mut resp = None;
             let mut last_err: Option<String> = None;
@@ -441,15 +286,8 @@ impl AiClient {
                         last_err = Some(err.clone());
                         if !token_limit_compacted && is_token_limit_error(&err) {
                             token_limit_compacted = true;
-                            if let Some(compacted) = self
-                                .try_compact_for_token_limit(
-                                    &api_messages,
-                                    &err,
-                                    &callbacks,
-                                    session_id.clone(),
-                                    &model,
-                                )
-                                .await
+                            if let Some(compacted) =
+                                self.try_compact_for_token_limit(&api_messages, &err).await
                             {
                                 api_messages = compacted;
                                 continue;
@@ -578,90 +416,15 @@ impl AiClient {
     }
 
     async fn try_compact_for_token_limit(
-        &mut self,
+        &self,
         messages: &Vec<Value>,
         err: &str,
-        callbacks: &AiClientCallbacks,
-        session_id: Option<String>,
-        model: &str,
     ) -> Option<Vec<Value>> {
         let summary_input_budget = if self.max_context_tokens > 0 {
             self.max_context_tokens
         } else {
             6000
         };
-
-        if self.dynamic_summary_enabled {
-            if self.summarizer.is_none() {
-                self.summarizer = Some(ConversationSummarizer::new(
-                    self.ai_request_handler.clone(),
-                    self.message_manager.clone(),
-                ));
-            }
-            if let Some(summarizer) = &self.summarizer {
-                let (trimmed_for_summary, _) =
-                    truncate_messages_by_tokens(messages, summary_input_budget);
-                let summary_callbacks =
-                    crate::services::v2::conversation_summarizer::SummaryCallbacks {
-                        on_start: callbacks.on_context_summarized_start.clone(),
-                        on_stream: callbacks.on_context_summarized_stream.clone().map(|cb| {
-                            std::sync::Arc::new(move |chunk: String| {
-                                cb(Value::String(chunk));
-                            })
-                                as std::sync::Arc<dyn Fn(String) + Send + Sync>
-                        }),
-                        on_end: callbacks.on_context_summarized_end.clone(),
-                    };
-
-                let res = summarizer
-                    .retry_after_context_overflow_in_memory(
-                        &trimmed_for_summary,
-                        err,
-                        Some(SummaryOverrides {
-                            message_limit: Some(1),
-                            max_context_tokens: Some(1),
-                            keep_last_n: Some(0),
-                            target_summary_tokens: Some(self.target_summary_tokens),
-                            merge_target_tokens: Some(self.merge_target_summary_tokens),
-                            model: Some(model.to_string()),
-                            temperature: Some(0.2),
-                            bisect_enabled: Some(self.summary_bisect_enabled),
-                            bisect_max_depth: Some(self.summary_bisect_max_depth),
-                            bisect_min_messages: Some(self.summary_bisect_min_messages),
-                            retry_on_context_overflow: Some(self.summary_retry_on_context_overflow),
-                        }),
-                        session_id.clone(),
-                        true,
-                        Some(summary_callbacks),
-                    )
-                    .await;
-
-                match res {
-                    Ok(Some(res)) => {
-                        if res.summarized {
-                            self.summary_system_prompt = res.system_prompt.clone();
-                            let mut rebuilt = Vec::new();
-                            if let Some(prompt) = self.system_prompt.clone() {
-                                rebuilt.push(json!({"role": "system", "content": prompt}));
-                            }
-                            if let Some(anchor) = self.anchor_user_content.clone() {
-                                rebuilt.push(json!({"role": "user", "content": anchor}));
-                            }
-                            if let Some(summary_prompt) = self.summary_system_prompt.clone() {
-                                rebuilt.push(json!({"role": "system", "content": summary_prompt}));
-                            }
-                            if !rebuilt.is_empty() {
-                                return Some(rebuilt);
-                            }
-                        }
-                    }
-                    Ok(None) => {}
-                    Err(err) => {
-                        warn!("[SUM-MEM] retry summary failed: {}", err);
-                    }
-                }
-            }
-        }
 
         let budget = token_limit_budget_from_error(err)
             .unwrap_or(summary_input_budget)
@@ -680,68 +443,14 @@ impl AiClientSettings for AiClient {
         if let Some(v) = effective.get("MAX_ITERATIONS").and_then(|v| v.as_i64()) {
             self.max_iterations = v;
         }
-        if let Some(v) = effective
-            .get("DYNAMIC_SUMMARY_ENABLED")
-            .and_then(|v| v.as_bool())
-        {
-            self.dynamic_summary_enabled = v;
-        }
         if let Some(v) = effective.get("HISTORY_LIMIT").and_then(|v| v.as_i64()) {
             self.history_limit = v.max(0);
-        }
-        if let Some(v) = effective
-            .get("SUMMARY_MESSAGE_LIMIT")
-            .and_then(|v| v.as_i64())
-        {
-            self.summary_threshold = v;
-        }
-        if let Some(v) = effective
-            .get("SUMMARY_KEEP_LAST_N")
-            .and_then(|v| v.as_i64())
-        {
-            self.summary_keep_last_n = v;
         }
         if let Some(v) = effective
             .get("SUMMARY_MAX_CONTEXT_TOKENS")
             .and_then(|v| v.as_i64())
         {
             self.max_context_tokens = v;
-        }
-        if let Some(v) = effective
-            .get("SUMMARY_TARGET_TOKENS")
-            .and_then(|v| v.as_i64())
-        {
-            self.target_summary_tokens = v;
-        }
-        if let Some(v) = effective
-            .get("SUMMARY_MERGE_TARGET_TOKENS")
-            .and_then(|v| v.as_i64())
-        {
-            self.merge_target_summary_tokens = v;
-        }
-        if let Some(v) = effective
-            .get("SUMMARY_BISECT_ENABLED")
-            .and_then(|v| v.as_bool())
-        {
-            self.summary_bisect_enabled = v;
-        }
-        if let Some(v) = effective
-            .get("SUMMARY_BISECT_MAX_DEPTH")
-            .and_then(|v| v.as_i64())
-        {
-            self.summary_bisect_max_depth = v.max(1);
-        }
-        if let Some(v) = effective
-            .get("SUMMARY_BISECT_MIN_MESSAGES")
-            .and_then(|v| v.as_i64())
-        {
-            self.summary_bisect_min_messages = v.max(1);
-        }
-        if let Some(v) = effective
-            .get("SUMMARY_RETRY_ON_CONTEXT_OVERFLOW")
-            .and_then(|v| v.as_bool())
-        {
-            self.summary_retry_on_context_overflow = v;
         }
     }
 }

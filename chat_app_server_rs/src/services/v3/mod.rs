@@ -4,4 +4,3 @@ pub mod ai_request_handler;
 pub mod ai_server;
 pub mod mcp_tool_execute;
 pub mod message_manager;
-pub mod summary_adapter;
