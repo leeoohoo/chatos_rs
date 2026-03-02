@@ -1067,28 +1067,27 @@ impl AiClient {
         let mut tool_call_ids: HashSet<String> = HashSet::new();
         let mut tool_output_ids: HashSet<String> = HashSet::new();
         if let Some(sid) = session_id.as_ref() {
-            let history = if stable_prefix_mode && history_limit > 0 {
-                self.message_manager
-                    .get_session_messages(sid, Some(history_limit))
-                    .await
-            } else {
-                let (merged_summary, merged_summary_count, mut pending_history) =
-                    self.message_manager.get_chat_history_context(sid, 2).await;
-                summary_count = merged_summary_count;
-                if let Some(summary_text) = merged_summary {
-                    summary_context_used = true;
-                    items.push(to_message_item(
-                        "system",
-                        &Value::String(summary_text),
-                        force_text,
-                    ));
-                }
-                if history_limit > 0 && pending_history.len() > history_limit as usize {
-                    let keep_from = pending_history.len() - history_limit as usize;
-                    pending_history = pending_history.split_off(keep_from);
-                }
-                pending_history
-            };
+            let use_full_pending_history =
+                stable_prefix_mode && history_limit >= self.history_limit;
+            let (merged_summary, merged_summary_count, mut pending_history) =
+                self.message_manager.get_chat_history_context(sid, 2).await;
+            summary_count = merged_summary_count;
+            if let Some(summary_text) = merged_summary {
+                summary_context_used = true;
+                items.push(to_message_item(
+                    "system",
+                    &Value::String(summary_text),
+                    force_text,
+                ));
+            }
+            if !use_full_pending_history
+                && history_limit > 0
+                && pending_history.len() > history_limit as usize
+            {
+                let keep_from = pending_history.len() - history_limit as usize;
+                pending_history = pending_history.split_off(keep_from);
+            }
+            let history = pending_history;
 
             history_count = history.len();
 
