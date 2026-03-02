@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useChatStoreFromContext, useChatApiClientFromContext } from '../lib/store/ChatStoreContext';
 import { useChatStore } from '../lib/store';
+import { apiClient as globalApiClient } from '../lib/api/client';
 import type { Session, Project, FsEntry, Terminal } from '../types';
 import { PlusIcon, DotsVerticalIcon, PencilIcon, TrashIcon, ChatIcon } from './ui/icons';
 import ConfirmDialog from './ui/ConfirmDialog';
@@ -131,8 +132,8 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
   const [dirPickerCreatingFolder, setDirPickerCreatingFolder] = useState(false);
   const [dirPickerCreateModalOpen, setDirPickerCreateModalOpen] = useState(false);
 
-  const apiClient = useChatApiClientFromContext();
-  const apiBaseUrl = apiClient?.getBaseUrl ? apiClient.getBaseUrl() : '/api';
+  const apiClientFromContext = useChatApiClientFromContext();
+  const apiClient = apiClientFromContext || globalApiClient;
   const didLoadProjectsRef = useRef(false);
   const didLoadTerminalsRef = useRef(false);
   
@@ -291,12 +292,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     setDirPickerLoading(true);
     setDirPickerError(null);
     try {
-      const url = `${apiBaseUrl}/fs/list${path ? `?path=${encodeURIComponent(path)}` : ''}`;
-      const resp = await fetch(url);
-      if (!resp.ok) {
-        throw new Error(`HTTP ${resp.status}`);
-      }
-      const data = await resp.json();
+      const data = await apiClient.listFsDirectories(path || undefined);
       const mapEntry = (entry: any): FsEntry => ({
         name: entry?.name ?? '',
         path: entry?.path ?? '',
@@ -357,20 +353,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     setDirPickerCreatingFolder(true);
     setDirPickerError(null);
     try {
-      let data: any = null;
-      if (apiClient?.createFsDirectory) {
-        data = await apiClient.createFsDirectory(basePath, name);
-      } else {
-        const resp = await fetch(`${apiBaseUrl}/fs/mkdir`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ parent_path: basePath, name }),
-        });
-        data = await resp.json().catch(() => ({}));
-        if (!resp.ok) {
-          throw new Error(data?.error || `HTTP ${resp.status}`);
-        }
-      }
+      const data = await apiClient.createFsDirectory(basePath, name);
 
       const apiPath = typeof data?.path === 'string' ? data.path.trim() : '';
       const fallbackSep = basePath.includes('\\') && !basePath.includes('/') ? '\\' : '/';
