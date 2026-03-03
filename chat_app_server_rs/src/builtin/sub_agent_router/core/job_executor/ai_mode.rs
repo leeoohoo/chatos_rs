@@ -271,6 +271,7 @@ pub(super) fn execute_ai_mode(
                         conversation_turn_id: Some(conversation_turn_id.clone()),
                         message_mode: None,
                         message_source: None,
+                        sub_agent_run_id: Some(job_id.clone()),
                         callbacks: Some(AiClientCallbacks {
                             on_chunk: Some(callbacks.on_chunk.clone()),
                             on_thinking: Some(callbacks.on_thinking.clone()),
@@ -402,6 +403,7 @@ pub(super) fn execute_ai_mode(
                     Some("sub_agent_router".to_string()),
                     None,
                     None,
+                    Some(job_id.clone()),
                 );
                 append_job_event(
                     job_id.as_str(),
@@ -557,6 +559,21 @@ pub(super) fn execute_ai_mode(
         })),
         execution.session_id.as_str(),
         execution.run_id.as_str(),
+    );
+    append_job_message(
+        execution.job_id.as_str(),
+        "assistant",
+        ai.response.as_str(),
+        None,
+        ai.reasoning.clone(),
+        Some(json!({
+            "mode": "ai",
+            "model_id": ai.model_id.clone(),
+            "model_name": ai.model_name.clone(),
+            "provider": ai.provider.clone(),
+            "model": ai.model.clone(),
+            "finish_reason": ai.finish_reason.clone(),
+        })),
     );
 
     let payload = json!({

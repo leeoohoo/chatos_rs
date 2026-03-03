@@ -113,6 +113,7 @@ impl AiServer {
                 Some("chat".to_string()),
                 options.message_mode.clone(),
                 options.message_source.clone(),
+                None,
             )
             .await?;
 

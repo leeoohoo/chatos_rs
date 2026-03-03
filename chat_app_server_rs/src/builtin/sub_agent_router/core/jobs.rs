@@ -1,6 +1,9 @@
 use super::super::*;
 pub(crate) use crate::core::async_bridge::block_on_result;
 use crate::core::mcp_tools::ToolStreamChunkCallback;
+use crate::models::sub_agent_run::{SubAgentRun, SubAgentRunService};
+use crate::models::sub_agent_run_event::{SubAgentRunEvent, SubAgentRunEventService};
+use crate::models::sub_agent_run_message::{SubAgentRunMessage, SubAgentRunMessageService};
 
 static JOBS: Lazy<Mutex<HashMap<String, JobRecord>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 static JOB_EVENTS: Lazy<Mutex<HashMap<String, Vec<JobEvent>>>> =
@@ -15,6 +18,106 @@ static ROUTER_TRACE_LOG_PATH: Lazy<Option<PathBuf>> = Lazy::new(|| {
         .map(|paths| paths.root.join(ROUTER_TRACE_LOG_FILE))
 });
 static ROUTER_TRACE_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+
+fn to_persisted_run(record: &JobRecord) -> SubAgentRun {
+    SubAgentRun {
+        id: record.id.clone(),
+        status: record.status.clone(),
+        task: record.task.clone(),
+        agent_id: record.agent_id.clone(),
+        command_id: record.command_id.clone(),
+        payload_json: record.payload_json.clone(),
+        result_json: record.result_json.clone(),
+        error: record.error.clone(),
+        created_at: record.created_at.clone(),
+        updated_at: record.updated_at.clone(),
+        session_id: record.session_id.clone(),
+        run_id: record.run_id.clone(),
+    }
+}
+
+fn from_persisted_run(run: SubAgentRun) -> JobRecord {
+    JobRecord {
+        id: run.id,
+        status: run.status,
+        task: run.task,
+        agent_id: run.agent_id,
+        command_id: run.command_id,
+        payload_json: run.payload_json,
+        result_json: run.result_json,
+        error: run.error,
+        created_at: run.created_at,
+        updated_at: run.updated_at,
+        session_id: run.session_id,
+        run_id: run.run_id,
+    }
+}
+
+fn to_persisted_event(event: &JobEvent) -> SubAgentRunEvent {
+    SubAgentRunEvent {
+        id: event.id.clone(),
+        job_id: event.job_id.clone(),
+        event_type: event.r#type.clone(),
+        payload_json: event.payload_json.clone(),
+        created_at: event.created_at.clone(),
+        session_id: event.session_id.clone(),
+        run_id: event.run_id.clone(),
+    }
+}
+
+fn from_persisted_event(event: SubAgentRunEvent) -> JobEvent {
+    JobEvent {
+        id: event.id,
+        job_id: event.job_id,
+        r#type: event.event_type,
+        payload_json: event.payload_json,
+        created_at: event.created_at,
+        session_id: event.session_id,
+        run_id: event.run_id,
+    }
+}
+
+fn persist_job_create(record: &JobRecord) {
+    let run = to_persisted_run(record);
+    let _ = block_on_result(async move {
+        SubAgentRunService::create(run).await?;
+        Ok(())
+    });
+}
+
+fn persist_job_status(
+    job_id: &str,
+    status: &str,
+    result_json: Option<String>,
+    error: Option<String>,
+) -> Option<JobRecord> {
+    let id = job_id.to_string();
+    let status_value = status.to_string();
+    block_on_result(async move {
+        SubAgentRunService::update_status(id.as_str(), status_value.as_str(), result_json, error)
+            .await
+            .map(|item| item.map(from_persisted_run))
+    })
+    .ok()
+    .flatten()
+}
+
+fn persist_job_event(event: &JobEvent) {
+    let persisted = to_persisted_event(event);
+    let _ = block_on_result(async move {
+        SubAgentRunEventService::create(persisted).await?;
+        Ok(())
+    });
+}
+
+fn load_job_events_from_db(job_id: &str) -> Vec<JobEvent> {
+    let id = job_id.to_string();
+    block_on_result(async move {
+        let items = SubAgentRunEventService::list_by_job_id(id.as_str()).await?;
+        Ok(items.into_iter().map(from_persisted_event).collect())
+    })
+    .unwrap_or_default()
+}
 
 pub(crate) fn trace_log_path_string() -> Option<String> {
     ROUTER_TRACE_LOG_PATH
@@ -174,6 +277,7 @@ pub(crate) fn create_job(
     if let Ok(mut jobs) = JOBS.lock() {
         jobs.insert(record.id.clone(), record.clone());
     }
+    persist_job_create(&record);
 
     trace_router_node(
         "job",
@@ -198,13 +302,18 @@ pub(crate) fn update_job_status(
     result_json: Option<String>,
     error: Option<String>,
 ) -> Option<JobRecord> {
-    let mut jobs = JOBS.lock().ok()?;
-    let job = jobs.get_mut(job_id)?;
-    job.status = status.to_string();
-    job.result_json = result_json;
-    job.error = error;
-    job.updated_at = Utc::now().to_rfc3339();
-    let snapshot = job.clone();
+    let mut snapshot = None;
+    if let Ok(mut jobs) = JOBS.lock() {
+        if let Some(job) = jobs.get_mut(job_id) {
+            job.status = status.to_string();
+            job.result_json = result_json.clone();
+            job.error = error.clone();
+            job.updated_at = Utc::now().to_rfc3339();
+            snapshot = Some(job.clone());
+        }
+    }
+    let persisted_snapshot = persist_job_status(job_id, status, result_json, error);
+    let snapshot = snapshot.or(persisted_snapshot)?;
     trace_router_node(
         "job",
         "status_update",
@@ -244,8 +353,9 @@ pub(crate) fn append_job_event(
         events
             .entry(job_id.to_string())
             .or_insert_with(Vec::new)
-            .push(event);
+            .push(event.clone());
     }
+    persist_job_event(&event);
 
     trace_router_node(
         "job_event",
@@ -267,11 +377,41 @@ pub(crate) fn append_job_event(
 }
 
 pub(crate) fn list_job_events(job_id: &str) -> Vec<JobEvent> {
-    JOB_EVENTS
+    let in_memory = JOB_EVENTS
         .lock()
         .ok()
         .and_then(|events| events.get(job_id).cloned())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    if !in_memory.is_empty() {
+        return in_memory;
+    }
+    load_job_events_from_db(job_id)
+}
+
+pub(crate) fn append_job_message(
+    job_id: &str,
+    role: &str,
+    content: &str,
+    tool_call_id: Option<String>,
+    reasoning: Option<String>,
+    metadata: Option<Value>,
+) {
+    let role = role.trim();
+    let content = content.trim();
+    if job_id.trim().is_empty() || role.is_empty() || content.is_empty() {
+        return;
+    }
+
+    let mut message =
+        SubAgentRunMessage::new(job_id.to_string(), role.to_string(), content.to_string());
+    message.tool_call_id = tool_call_id;
+    message.reasoning = reasoning.filter(|value| !value.trim().is_empty());
+    message.metadata = metadata;
+
+    let _ = block_on_result(async move {
+        SubAgentRunMessageService::create(message).await?;
+        Ok(())
+    });
 }
 
 pub(crate) fn set_cancel_flag(job_id: &str, flag: Arc<AtomicBool>) {

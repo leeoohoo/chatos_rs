@@ -39,6 +39,7 @@ async fn main() {
     }
 
     modules::session_summary_job::start_background();
+    modules::sub_agent_summary_job::start_background();
 
     cfg.print();
 

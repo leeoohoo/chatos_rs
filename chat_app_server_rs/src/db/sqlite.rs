@@ -319,6 +319,60 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
             job_interval_seconds INTEGER NOT NULL DEFAULT 30,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )"#,
+        r#"CREATE TABLE IF NOT EXISTS sub_agent_runs (
+            id TEXT PRIMARY KEY,
+            status TEXT NOT NULL,
+            task TEXT NOT NULL,
+            agent_id TEXT,
+            command_id TEXT,
+            payload_json TEXT,
+            result_json TEXT,
+            error TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            run_id TEXT NOT NULL
+        )"#,
+        r#"CREATE TABLE IF NOT EXISTS sub_agent_run_events (
+            id TEXT PRIMARY KEY,
+            job_id TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            payload_json TEXT,
+            created_at TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            run_id TEXT NOT NULL,
+            FOREIGN KEY (job_id) REFERENCES sub_agent_runs(id) ON DELETE CASCADE
+        )"#,
+        r#"CREATE TABLE IF NOT EXISTS sub_agent_run_messages (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            tool_call_id TEXT,
+            reasoning TEXT,
+            metadata TEXT,
+            summary_status TEXT NOT NULL DEFAULT 'pending',
+            summary_id TEXT,
+            summarized_at TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (run_id) REFERENCES sub_agent_runs(id) ON DELETE CASCADE
+        )"#,
+        r#"CREATE TABLE IF NOT EXISTS sub_agent_run_summaries (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            summary_text TEXT NOT NULL,
+            summary_model TEXT NOT NULL,
+            trigger_type TEXT NOT NULL,
+            source_start_message_id TEXT,
+            source_end_message_id TEXT,
+            source_message_count INTEGER NOT NULL DEFAULT 0,
+            source_estimated_tokens INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'done',
+            error_message TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (run_id) REFERENCES sub_agent_runs(id) ON DELETE CASCADE
+        )"#,
     ];
 
     for sql in statements {
@@ -434,6 +488,14 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
         "CREATE INDEX IF NOT EXISTS idx_mcp_config_applications_mcp_config_id ON mcp_config_applications(mcp_config_id)",
         "CREATE INDEX IF NOT EXISTS idx_system_context_applications_context_id ON system_context_applications(system_context_id)",
         "CREATE INDEX IF NOT EXISTS idx_agent_applications_agent_id ON agent_applications(agent_id)",
+        "CREATE INDEX IF NOT EXISTS idx_sub_agent_runs_session_id ON sub_agent_runs(session_id)",
+        "CREATE INDEX IF NOT EXISTS idx_sub_agent_runs_status_updated_at ON sub_agent_runs(status, updated_at)",
+        "CREATE INDEX IF NOT EXISTS idx_sub_agent_runs_run_id ON sub_agent_runs(run_id)",
+        "CREATE INDEX IF NOT EXISTS idx_sub_agent_run_events_job_id_created_at ON sub_agent_run_events(job_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_sub_agent_run_messages_run_id_created_at ON sub_agent_run_messages(run_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_sub_agent_run_messages_run_summary_status_created_at ON sub_agent_run_messages(run_id, summary_status, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_sub_agent_run_summaries_run_created_at ON sub_agent_run_summaries(run_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_sub_agent_run_summaries_run_status_created_at ON sub_agent_run_summaries(run_id, status, created_at)",
     ];
     for sql in indexes {
         let _ = sqlx::query(sql).execute(pool).await;

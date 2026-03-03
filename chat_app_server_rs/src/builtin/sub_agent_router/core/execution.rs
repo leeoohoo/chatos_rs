@@ -2,6 +2,34 @@ use super::super::*;
 use super::agent_resolver::resolve_agent_and_command;
 use super::job_executor::execute_job;
 
+fn build_final_conclusion(payload: &Value, status: &str) -> String {
+    let pick_text = |keys: &[&str]| -> Option<String> {
+        keys.iter()
+            .find_map(|key| payload.get(*key).and_then(|value| value.as_str()))
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| {
+                let max_chars = 12_000usize;
+                if value.chars().count() <= max_chars {
+                    value.to_string()
+                } else {
+                    value.chars().take(max_chars).collect::<String>() + "\n...[truncated]"
+                }
+            })
+    };
+
+    if let Some(text) = pick_text(&["final_conclusion", "response", "stdout"]) {
+        return text;
+    }
+    if status.eq_ignore_ascii_case("cancelled") {
+        return "Sub-agent run cancelled.".to_string();
+    }
+    if let Some(err) = pick_text(&["error", "stderr"]) {
+        return format!("Sub-agent run failed: {}", err);
+    }
+    format!("Sub-agent run finished with status: {}", status)
+}
+
 pub(crate) fn run_sub_agent_schema() -> Value {
     json!({
         "type": "object",
@@ -110,6 +138,24 @@ pub(crate) fn run_sub_agent_sync(
         })),
         tool_ctx.session_id,
         tool_ctx.run_id,
+    );
+    append_job_message(
+        job.id.as_str(),
+        "user",
+        task.as_str(),
+        None,
+        None,
+        Some(json!({
+            "agent_id": resolved.agent.id,
+            "agent_name": resolved.agent.name,
+            "command_id": resolved.command.as_ref().map(|c| c.id.clone()),
+            "skills": resolved
+                .used_skills
+                .iter()
+                .map(|skill| skill.id.clone())
+                .collect::<Vec<_>>(),
+            "reason": resolved.reason,
+        })),
     );
 
     let execution = JobExecutionContext {
@@ -279,27 +325,11 @@ pub(crate) fn run_sub_agent_sync(
         tool_ctx.session_id,
         tool_ctx.run_id,
     );
-
-    let mut response_payload = payload;
-    if let Value::Object(ref mut map) = response_payload {
-        map.insert(
-            "job_events".to_string(),
-            serde_json::to_value(list_job_events(job.id.as_str())).unwrap_or_else(|_| json!([])),
-        );
-        map.insert(
-            "trace_log_path".to_string(),
-            trace_log_path_string()
-                .map(Value::String)
-                .unwrap_or(Value::Null),
-        );
-    }
+    let _ = list_job_events(job.id.as_str());
+    let _ = trace_log_path_string();
+    let final_conclusion = build_final_conclusion(&payload, status.as_str());
 
     remove_job_stream_sink(job.id.as_str());
 
-    Ok(text_result(with_chatos(
-        ctx.server_name.as_str(),
-        "run_sub_agent",
-        response_payload,
-        status.as_str(),
-    )))
+    Ok(text_result(Value::String(final_conclusion)))
 }

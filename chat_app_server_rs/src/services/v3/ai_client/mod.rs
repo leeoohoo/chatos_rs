@@ -58,6 +58,7 @@ pub struct ProcessOptions {
     pub conversation_turn_id: Option<String>,
     pub message_mode: Option<String>,
     pub message_source: Option<String>,
+    pub sub_agent_run_id: Option<String>,
     pub callbacks: Option<AiClientCallbacks>,
 }
 
@@ -113,6 +114,12 @@ impl AiClient {
         let purpose = options.purpose.unwrap_or_else(|| "chat".to_string());
         let message_mode = options.message_mode;
         let message_source = options.message_source;
+        let sub_agent_run_id = options
+            .sub_agent_run_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| value.to_string());
         let turn_id = options
             .conversation_turn_id
             .as_deref()
@@ -129,11 +136,11 @@ impl AiClient {
             on_context_summarized_stream: None,
             on_context_summarized_end: None,
         });
-        let stable_prefix_mode = purpose == "chat";
+        let stable_prefix_mode = purpose == "chat" || sub_agent_run_id.is_some();
 
         // Chat mode favors a stable stateless prefix so provider-side prompt caching can reuse
         // a bounded recent window even when async summary jobs are updating session summaries.
-        let prefer_stateless = if purpose == "chat" {
+        let prefer_stateless = if purpose == "chat" || sub_agent_run_id.is_some() {
             true
         } else {
             history_limit != 0
@@ -196,6 +203,7 @@ impl AiClient {
                     force_text_content,
                     &current_items,
                     include_tool_items,
+                    sub_agent_run_id.clone(),
                 )
                 .await,
             )
@@ -227,15 +235,17 @@ impl AiClient {
                 prefer_stateless,
                 message_mode,
                 message_source,
+                sub_agent_run_id,
             )
             .await;
 
         result
     }
 
-    async fn maybe_refresh_stateless_context_for_chat(
+    async fn maybe_refresh_stateless_context(
         &self,
         session_id: Option<&str>,
+        sub_agent_run_id: Option<&str>,
         stable_prefix_mode: bool,
         use_prev_id: bool,
         raw_input: &Value,
@@ -249,19 +259,20 @@ impl AiClient {
             return;
         }
 
-        let Some(sid) = session_id else {
+        if session_id.is_none() && sub_agent_run_id.is_none() {
             return;
-        };
+        }
 
         let current_items = build_current_input_items(raw_input, force_text_content);
         let rebuilt = self
             .build_stateless_items(
-                Some(sid.to_string()),
+                session_id.map(|value| value.to_string()),
                 history_limit,
                 stable_prefix_mode,
                 force_text_content,
                 &current_items,
                 include_tool_items,
+                sub_agent_run_id.map(|value| value.to_string()),
             )
             .await;
         let previous_len = stateless_context_items
@@ -310,6 +321,7 @@ impl AiClient {
         prefer_stateless: bool,
         message_mode: Option<String>,
         message_source: Option<String>,
+        sub_agent_run_id: Option<String>,
     ) -> Result<Value, String> {
         let include_tool_items = !tools.is_empty();
         let persist_tool_messages = purpose != "sub_agent_router";
@@ -348,8 +360,9 @@ impl AiClient {
 
             // In chat/stateless mode, refresh context from persisted summary+pending messages
             // before each model request so newly generated summaries are reflected immediately.
-            self.maybe_refresh_stateless_context_for_chat(
+            self.maybe_refresh_stateless_context(
                 session_id.as_deref(),
+                sub_agent_run_id.as_deref(),
                 stable_prefix_mode,
                 use_prev_id,
                 &raw_input,
@@ -441,6 +454,7 @@ impl AiClient {
                                     force_text_content,
                                     &current_items,
                                     include_tool_items,
+                                    sub_agent_run_id.clone(),
                                 )
                                 .await;
                             if !stateless.is_empty() {
@@ -472,6 +486,7 @@ impl AiClient {
                                     force_text_content,
                                     &current_items,
                                     include_tool_items,
+                                    sub_agent_run_id.clone(),
                                 )
                                 .await
                             };
@@ -582,6 +597,7 @@ impl AiClient {
                                         force_text_content,
                                         &current_items,
                                         include_tool_items,
+                                        sub_agent_run_id.clone(),
                                     )
                                     .await;
                                 if !stateless.is_empty() {
@@ -631,6 +647,7 @@ impl AiClient {
                                 force_text_content,
                                 &current_items,
                                 include_tool_items,
+                                sub_agent_run_id.clone(),
                             )
                             .await;
                         if !stateless.is_empty() {
@@ -794,6 +811,7 @@ impl AiClient {
                         force_text_content,
                         &current_items,
                         include_tool_items,
+                        sub_agent_run_id.clone(),
                     )
                     .await
                 };
@@ -828,138 +846,145 @@ impl AiClient {
         force_text: bool,
         current_input_items: &[Value],
         include_tool_items: bool,
+        sub_agent_run_id: Option<String>,
     ) -> Vec<Value> {
         let mut items = Vec::new();
-        let mut summary_count = 0usize;
-        let mut history_count = 0usize;
+        let summary_count;
+        let history_count;
         let mut summary_context_used = false;
         let mut tool_call_ids: HashSet<String> = HashSet::new();
         let mut tool_output_ids: HashSet<String> = HashSet::new();
-        if let Some(sid) = session_id.as_ref() {
-            let use_full_pending_history =
-                stable_prefix_mode && history_limit >= self.history_limit;
-            let (merged_summary, merged_summary_count, mut pending_history) =
-                self.message_manager.get_chat_history_context(sid, 2).await;
-            summary_count = merged_summary_count;
-            if let Some(summary_text) = merged_summary {
-                summary_context_used = true;
+        let context_data = if let Some(run_id) = sub_agent_run_id.as_ref() {
+            self.message_manager
+                .get_sub_agent_run_history_context(run_id, 2)
+                .await
+        } else if let Some(sid) = session_id.as_ref() {
+            self.message_manager.get_chat_history_context(sid, 2).await
+        } else {
+            (None, 0, Vec::new())
+        };
+
+        let use_full_pending_history = stable_prefix_mode && history_limit >= self.history_limit;
+        let (merged_summary, merged_summary_count, mut pending_history) = context_data;
+        summary_count = merged_summary_count;
+        if let Some(summary_text) = merged_summary {
+            summary_context_used = true;
+            items.push(to_message_item(
+                "system",
+                &Value::String(summary_text),
+                force_text,
+            ));
+        }
+        if !use_full_pending_history
+            && history_limit > 0
+            && pending_history.len() > history_limit as usize
+        {
+            let keep_from = pending_history.len() - history_limit as usize;
+            pending_history = pending_history.split_off(keep_from);
+        }
+        let history = pending_history;
+
+        history_count = history.len();
+
+        if include_tool_items {
+            for msg in &history {
+                if msg.role == "tool" {
+                    if let Some(call_id) = msg.tool_call_id.clone() {
+                        if !call_id.is_empty() {
+                            tool_output_ids.insert(call_id);
+                        }
+                    }
+                }
+            }
+        }
+
+        for msg in history {
+            if msg
+                .metadata
+                .as_ref()
+                .and_then(|m| m.get("type"))
+                .and_then(|v| v.as_str())
+                == Some("session_summary")
+            {
+                continue;
+            }
+
+            if msg.role == "user"
+                || msg.role == "assistant"
+                || msg.role == "system"
+                || msg.role == "developer"
+            {
                 items.push(to_message_item(
-                    "system",
-                    &Value::String(summary_text),
+                    &msg.role,
+                    &Value::String(msg.content.clone()),
                     force_text,
                 ));
-            }
-            if !use_full_pending_history
-                && history_limit > 0
-                && pending_history.len() > history_limit as usize
-            {
-                let keep_from = pending_history.len() - history_limit as usize;
-                pending_history = pending_history.split_off(keep_from);
-            }
-            let history = pending_history;
-
-            history_count = history.len();
-
-            if include_tool_items {
-                for msg in &history {
-                    if msg.role == "tool" {
-                        if let Some(call_id) = msg.tool_call_id.clone() {
-                            if !call_id.is_empty() {
-                                tool_output_ids.insert(call_id);
-                            }
+                if include_tool_items {
+                    let mut tool_calls = msg.tool_calls.clone().or_else(|| {
+                        msg.metadata
+                            .as_ref()
+                            .and_then(|m| m.get("toolCalls").cloned())
+                    });
+                    if let Some(Value::String(s)) = tool_calls.clone() {
+                        if let Ok(v) = serde_json::from_str::<Value>(&s) {
+                            tool_calls = Some(v);
                         }
                     }
-                }
-            }
-
-            for msg in history {
-                if msg
-                    .metadata
-                    .as_ref()
-                    .and_then(|m| m.get("type"))
-                    .and_then(|v| v.as_str())
-                    == Some("session_summary")
-                {
-                    continue;
-                }
-
-                if msg.role == "user"
-                    || msg.role == "assistant"
-                    || msg.role == "system"
-                    || msg.role == "developer"
-                {
-                    items.push(to_message_item(
-                        &msg.role,
-                        &Value::String(msg.content.clone()),
-                        force_text,
-                    ));
-                    if include_tool_items {
-                        let mut tool_calls = msg.tool_calls.clone().or_else(|| {
-                            msg.metadata
-                                .as_ref()
-                                .and_then(|m| m.get("toolCalls").cloned())
-                        });
-                        if let Some(Value::String(s)) = tool_calls.clone() {
-                            if let Ok(v) = serde_json::from_str::<Value>(&s) {
-                                tool_calls = Some(v);
-                            }
-                        }
-                        if msg.role == "assistant" {
-                            if let Some(arr) = tool_calls.and_then(|v| v.as_array().cloned()) {
-                                for tc in arr {
-                                    let call_id = tc
-                                        .get("id")
-                                        .and_then(|v| v.as_str())
-                                        .or_else(|| tc.get("call_id").and_then(|v| v.as_str()))
-                                        .unwrap_or("")
-                                        .to_string();
-                                    if call_id.is_empty() {
-                                        continue;
-                                    }
-                                    if !tool_output_ids.contains(&call_id) {
-                                        continue;
-                                    }
-                                    let func = tc.get("function").cloned().unwrap_or(json!({}));
-                                    let name = func
-                                        .get("name")
-                                        .and_then(|v| v.as_str())
-                                        .or_else(|| tc.get("name").and_then(|v| v.as_str()))
-                                        .unwrap_or("")
-                                        .to_string();
-                                    let args = func
-                                        .get("arguments")
-                                        .cloned()
-                                        .or_else(|| tc.get("arguments").cloned())
-                                        .unwrap_or(Value::String("{}".to_string()));
-                                    let args_str = if let Some(s) = args.as_str() {
-                                        s.to_string()
-                                    } else {
-                                        args.to_string()
-                                    };
-                                    tool_call_ids.insert(call_id.clone());
-                                    items.push(json!({
-                                        "type": "function_call",
-                                        "call_id": call_id,
-                                        "name": name,
-                                        "arguments": args_str
-                                    }));
+                    if msg.role == "assistant" {
+                        if let Some(arr) = tool_calls.and_then(|v| v.as_array().cloned()) {
+                            for tc in arr {
+                                let call_id = tc
+                                    .get("id")
+                                    .and_then(|v| v.as_str())
+                                    .or_else(|| tc.get("call_id").and_then(|v| v.as_str()))
+                                    .unwrap_or("")
+                                    .to_string();
+                                if call_id.is_empty() {
+                                    continue;
                                 }
-                            }
-                        }
-                    }
-                    continue;
-                }
-                if msg.role == "tool" {
-                    if include_tool_items {
-                        if let Some(call_id) = msg.tool_call_id.clone() {
-                            if tool_call_ids.contains(&call_id) {
-                                let output = msg.content.clone();
+                                if !tool_output_ids.contains(&call_id) {
+                                    continue;
+                                }
+                                let func = tc.get("function").cloned().unwrap_or(json!({}));
+                                let name = func
+                                    .get("name")
+                                    .and_then(|v| v.as_str())
+                                    .or_else(|| tc.get("name").and_then(|v| v.as_str()))
+                                    .unwrap_or("")
+                                    .to_string();
+                                let args = func
+                                    .get("arguments")
+                                    .cloned()
+                                    .or_else(|| tc.get("arguments").cloned())
+                                    .unwrap_or(Value::String("{}".to_string()));
+                                let args_str = if let Some(s) = args.as_str() {
+                                    s.to_string()
+                                } else {
+                                    args.to_string()
+                                };
+                                tool_call_ids.insert(call_id.clone());
                                 items.push(json!({
-                                    "type": "function_call_output",
+                                    "type": "function_call",
                                     "call_id": call_id,
-                                    "output": output
+                                    "name": name,
+                                    "arguments": args_str
                                 }));
                             }
+                        }
+                    }
+                }
+                continue;
+            }
+            if msg.role == "tool" {
+                if include_tool_items {
+                    if let Some(call_id) = msg.tool_call_id.clone() {
+                        if tool_call_ids.contains(&call_id) {
+                            let output = msg.content.clone();
+                            items.push(json!({
+                                "type": "function_call_output",
+                                "call_id": call_id,
+                                "output": output
+                            }));
                         }
                     }
                 }

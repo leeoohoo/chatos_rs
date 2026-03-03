@@ -65,14 +65,27 @@ pub(super) fn create_ai_stream_callbacks(
         let session_id = session_id.to_string();
         let run_id = run_id.to_string();
         Arc::new(move |tool_calls: Value| {
+            let summarized_calls = summarize_tool_calls_for_event(&tool_calls);
             append_job_event(
                 job_id.as_str(),
                 "ai_tools_start",
                 Some(json!({
-                    "tool_calls": summarize_tool_calls_for_event(&tool_calls),
+                    "tool_calls": summarized_calls,
                 })),
                 session_id.as_str(),
                 run_id.as_str(),
+            );
+
+            append_job_message(
+                job_id.as_str(),
+                "assistant",
+                "Tool calls requested.",
+                None,
+                None,
+                Some(json!({
+                    "mode": "ai",
+                    "toolCalls": tool_calls,
+                })),
             );
         }) as Arc<dyn Fn(Value) + Send + Sync>
     };
@@ -89,6 +102,39 @@ pub(super) fn create_ai_stream_callbacks(
                 session_id.as_str(),
                 run_id.as_str(),
             );
+
+            let is_stream = result
+                .get("is_stream")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
+            if !is_stream {
+                let tool_content = result
+                    .get("content")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                if !tool_content.is_empty() {
+                    let tool_call_id = result
+                        .get("tool_call_id")
+                        .and_then(|value| value.as_str())
+                        .map(|value| value.to_string())
+                        .filter(|value| !value.trim().is_empty());
+                    let metadata = Some(json!({
+                        "tool_name": result.get("name").and_then(|value| value.as_str()),
+                        "success": result.get("success").and_then(|value| value.as_bool()).unwrap_or(false),
+                        "is_error": result.get("is_error").and_then(|value| value.as_bool()).unwrap_or(false),
+                    }));
+                    append_job_message(
+                        job_id.as_str(),
+                        "tool",
+                        tool_content.as_str(),
+                        tool_call_id,
+                        None,
+                        metadata,
+                    );
+                }
+            }
 
             if let Some(raw_chunk) = extract_task_review_event_stream_chunk(&result) {
                 // Re-emit task review events as raw tool chunks so the top-level chat UI can open the review panel.

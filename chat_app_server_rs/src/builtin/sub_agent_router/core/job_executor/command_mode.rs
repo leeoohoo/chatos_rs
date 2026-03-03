@@ -88,6 +88,33 @@ pub(super) fn execute_command_mode(
         execution.session_id.as_str(),
         execution.run_id.as_str(),
     );
+    let final_output = if !result.stdout.trim().is_empty() {
+        result.stdout.clone()
+    } else if !result.stderr.trim().is_empty() {
+        result.stderr.clone()
+    } else if let Some(error) = result.error.clone() {
+        error
+    } else {
+        format!(
+            "command finished: exit_code={}",
+            result.exit_code.unwrap_or_default()
+        )
+    };
+    append_job_message(
+        execution.job_id.as_str(),
+        "assistant",
+        final_output.as_str(),
+        None,
+        None,
+        Some(json!({
+            "mode": "command",
+            "status": status.clone(),
+            "exit_code": result.exit_code,
+            "signal": result.signal,
+            "duration_ms": result.duration_ms,
+            "timed_out": result.timed_out,
+        })),
+    );
 
     Ok((
         payload

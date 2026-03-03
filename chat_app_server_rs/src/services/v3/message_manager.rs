@@ -119,6 +119,22 @@ impl MessageManager {
         )
     }
 
+    pub async fn get_sub_agent_run_history_context(
+        &self,
+        run_id: &str,
+        summary_limit: usize,
+    ) -> (Option<String>, usize, Vec<Message>) {
+        let context = self
+            .core
+            .get_sub_agent_run_history_context(run_id, summary_limit)
+            .await;
+        (
+            context.merged_summary,
+            context.summary_count,
+            context.messages,
+        )
+    }
+
     pub async fn get_last_response_id(&self, session_id: &str, limit: i64) -> Option<String> {
         let summary_limit = Some(2);
         let (_summaries, messages) = self

@@ -9,6 +9,8 @@ use crate::core::mcp_tools::ToolResult;
 use crate::models::message::{Message, MessageService};
 use crate::models::session_summary::{SessionSummary, SessionSummaryService};
 use crate::models::session_summary_v2::SessionSummaryV2Service;
+use crate::models::sub_agent_run_message::{SubAgentRunMessage, SubAgentRunMessageService};
+use crate::models::sub_agent_run_summary::SubAgentRunSummaryService;
 use crate::services::ai_common::build_tool_result_metadata;
 
 #[derive(Debug, Default, Clone)]
@@ -298,6 +300,88 @@ impl MessageManagerCore {
         }
     }
 
+    pub(crate) async fn get_sub_agent_run_history_context(
+        &self,
+        run_id: &str,
+        summary_limit: usize,
+    ) -> ChatHistoryContext {
+        let target_summary_limit = summary_limit.max(1);
+        let fetch_summary_limit = (target_summary_limit as i64).saturating_mul(10).max(10);
+        let mut recent_summary_texts: Vec<String> = Vec::new();
+
+        match SubAgentRunSummaryService::list_by_run(run_id, Some(fetch_summary_limit), 0).await {
+            Ok(records) => {
+                for record in records {
+                    if record.status != "done" {
+                        continue;
+                    }
+                    let text = record.summary_text.trim();
+                    if text.is_empty() {
+                        continue;
+                    }
+                    recent_summary_texts.push(text.to_string());
+                    if recent_summary_texts.len() >= target_summary_limit {
+                        break;
+                    }
+                }
+            }
+            Err(err) => {
+                error!(
+                    "get_sub_agent_run_history_context summaries failed: run_id={} error={}",
+                    run_id, err
+                );
+            }
+        }
+
+        if recent_summary_texts.is_empty() {
+            let messages = match SubAgentRunMessageService::list_by_run(run_id, None).await {
+                Ok(items) => items
+                    .into_iter()
+                    .map(map_sub_agent_run_message_to_message)
+                    .collect(),
+                Err(err) => {
+                    error!(
+                        "get_sub_agent_run_history_context messages failed: run_id={} error={}",
+                        run_id, err
+                    );
+                    Vec::new()
+                }
+            };
+            return ChatHistoryContext {
+                merged_summary: None,
+                summary_count: 0,
+                messages,
+            };
+        }
+
+        recent_summary_texts.reverse();
+        let merged_summary = Some(format!(
+            "以下是当前 Sub-Agent 历史总结（按时间从旧到新）：\n\n{}",
+            recent_summary_texts.join("\n\n---\n\n")
+        ));
+
+        let messages = match SubAgentRunMessageService::get_pending_for_summary(run_id, None).await
+        {
+            Ok(items) => items
+                .into_iter()
+                .map(map_sub_agent_run_message_to_message)
+                .collect(),
+            Err(err) => {
+                error!(
+                    "get_sub_agent_run_history_context pending failed: run_id={} error={}",
+                    run_id, err
+                );
+                Vec::new()
+            }
+        };
+
+        ChatHistoryContext {
+            merged_summary,
+            summary_count: recent_summary_texts.len(),
+            messages,
+        }
+    }
+
     pub(crate) async fn get_message_by_id(&self, message_id: &str) -> Option<Message> {
         if let Some(cached) = {
             let mut state = self.state.lock();
@@ -376,5 +460,22 @@ impl MessageManagerCore {
 
         state.recent_messages.insert(message.id.clone(), message);
         state.stats.messages_saved += 1;
+    }
+}
+
+fn map_sub_agent_run_message_to_message(source: SubAgentRunMessage) -> Message {
+    Message {
+        id: source.id,
+        session_id: source.run_id,
+        role: source.role,
+        content: source.content,
+        message_mode: None,
+        message_source: None,
+        summary: None,
+        tool_calls: None,
+        tool_call_id: source.tool_call_id,
+        reasoning: source.reasoning,
+        metadata: source.metadata,
+        created_at: source.created_at,
     }
 }

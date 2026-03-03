@@ -63,12 +63,21 @@ impl AiClient {
         self.system_prompt = prompt;
     }
 
-    async fn load_summary_pending_messages(&self, session_id: &str) -> Vec<Value> {
+    async fn load_summary_pending_messages_for_scope(
+        &self,
+        session_id: Option<&str>,
+        sub_agent_run_id: Option<&str>,
+    ) -> Vec<Value> {
         let mut mapped = Vec::new();
-        let (merged_summary, _summary_count, history) = self
-            .message_manager
-            .get_chat_history_context(session_id, 2)
-            .await;
+        let (merged_summary, _summary_count, history) = if let Some(run_id) = sub_agent_run_id {
+            self.message_manager
+                .get_sub_agent_run_history_context(run_id, 2)
+                .await
+        } else if let Some(sid) = session_id {
+            self.message_manager.get_chat_history_context(sid, 2).await
+        } else {
+            (None, 0, Vec::new())
+        };
         if let Some(summary_text) = merged_summary {
             mapped.push(json!({"role": "system", "content": summary_text}));
         }
@@ -117,20 +126,23 @@ impl AiClient {
         purpose: &str,
         iteration: i64,
         session_id: Option<&str>,
+        sub_agent_run_id: Option<&str>,
         messages: &mut Vec<Value>,
     ) {
-        if purpose != "chat" || iteration <= 0 {
+        if (purpose != "chat" && sub_agent_run_id.is_none()) || iteration <= 0 {
             return;
         }
-        let Some(sid) = session_id else {
+        if session_id.is_none() && sub_agent_run_id.is_none() {
             return;
-        };
+        }
 
         let mut refreshed = Vec::new();
         if let Some(prompt) = self.system_prompt.clone() {
             refreshed.push(json!({"role": "system", "content": prompt}));
         }
-        let mapped = self.load_summary_pending_messages(sid).await;
+        let mapped = self
+            .load_summary_pending_messages_for_scope(session_id, sub_agent_run_id)
+            .await;
         refreshed.extend(ensure_tool_responses(mapped));
         if refreshed != *messages {
             info!(
@@ -158,6 +170,7 @@ impl AiClient {
         purpose: Option<String>,
         message_mode: Option<String>,
         message_source: Option<String>,
+        sub_agent_run_id: Option<String>,
     ) -> Result<Value, String> {
         let resolved_purpose = purpose.unwrap_or_else(|| "chat".to_string());
         let mut all_messages: Vec<Value> = Vec::new();
@@ -167,8 +180,13 @@ impl AiClient {
         }
 
         let mut history_messages: Vec<Value> = Vec::new();
-        if let Some(session_id) = session_id.clone() {
-            let mapped = self.load_summary_pending_messages(&session_id).await;
+        if session_id.is_some() || sub_agent_run_id.is_some() {
+            let mapped = self
+                .load_summary_pending_messages_for_scope(
+                    session_id.as_deref(),
+                    sub_agent_run_id.as_deref(),
+                )
+                .await;
             history_messages = ensure_tool_responses(drop_duplicate_tail(mapped, &messages));
         }
 
@@ -196,6 +214,7 @@ impl AiClient {
             Some(resolved_purpose),
             message_mode,
             message_source,
+            sub_agent_run_id,
             0,
         )
         .await
@@ -217,6 +236,7 @@ impl AiClient {
         purpose: Option<String>,
         message_mode: Option<String>,
         message_source: Option<String>,
+        sub_agent_run_id: Option<String>,
         iteration: i64,
     ) -> Result<Value, String> {
         let mut messages = messages;
@@ -244,6 +264,7 @@ impl AiClient {
                 purpose.as_str(),
                 iteration,
                 session_id.as_deref(),
+                sub_agent_run_id.as_deref(),
                 &mut messages,
             )
             .await;
