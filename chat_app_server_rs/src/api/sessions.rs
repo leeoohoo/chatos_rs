@@ -91,6 +91,10 @@ pub fn router() -> Router {
             get(get_session_turn_process_messages),
         )
         .route(
+            "/api/sessions/:session_id/turns/by-turn/:turn_id/process",
+            get(get_session_turn_process_messages_by_turn),
+        )
+        .route(
             "/api/sessions/:session_id/summaries",
             get(get_session_summaries).delete(clear_session_summaries),
         )
@@ -742,6 +746,61 @@ async fn get_session_messages(
     }
 }
 
+fn message_turn_id(message: &Message) -> Option<&str> {
+    message
+        .metadata
+        .as_ref()
+        .and_then(|meta| meta.get("conversation_turn_id"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn find_user_index_by_turn_id(messages: &[Message], turn_id: &str) -> Option<usize> {
+    let normalized = turn_id.trim();
+    if normalized.is_empty() {
+        return None;
+    }
+
+    messages
+        .iter()
+        .position(|message| message.role == "user" && message_turn_id(message) == Some(normalized))
+}
+
+fn build_turn_process_messages(messages: &[Message], user_index: usize) -> Vec<Message> {
+    let user_message_id = messages[user_index].id.clone();
+    let next_user_index = messages
+        .iter()
+        .enumerate()
+        .skip(user_index + 1)
+        .find_map(|(index, message)| (message.role == "user").then_some(index))
+        .unwrap_or(messages.len());
+
+    let final_assistant_index =
+        select_final_assistant_index(messages, user_index + 1, next_user_index);
+
+    let mut process_messages: Vec<Message> = Vec::new();
+    for index in (user_index + 1)..next_user_index {
+        if Some(index) == final_assistant_index {
+            continue;
+        }
+
+        let source = &messages[index];
+        if source.role == "assistant" && !is_session_summary(source) {
+            let mut assistant = source.clone();
+            enrich_assistant_message_for_display(&mut assistant);
+            mark_process_message_loaded(&mut assistant, &user_message_id);
+            process_messages.push(assistant);
+        } else if source.role == "tool" {
+            let mut tool_message = source.clone();
+            mark_process_message_loaded(&mut tool_message, &user_message_id);
+            process_messages.push(tool_message);
+        }
+    }
+
+    process_messages
+}
+
 async fn get_session_turn_process_messages(
     auth: AuthUser,
     Path((session_id, user_message_id)): Path<(String, String)>,
@@ -753,45 +812,49 @@ async fn get_session_turn_process_messages(
 
     match result {
         Ok(messages) => {
-            let Some(user_index) = messages
+            let user_index = messages
                 .iter()
                 .position(|message| message.id == user_message_id && message.role == "user")
-            else {
-                return (
-                    StatusCode::NOT_FOUND,
-                    Json(serde_json::json!({"error": "user message not found in session"})),
-                );
+                .or_else(|| find_user_index_by_turn_id(&messages, &user_message_id));
+
+            let Some(user_index) = user_index else {
+                return (StatusCode::OK, Json(Value::Array(Vec::new())));
             };
 
-            let next_user_index = messages
-                .iter()
-                .enumerate()
-                .skip(user_index + 1)
-                .find_map(|(index, message)| (message.role == "user").then_some(index))
-                .unwrap_or(messages.len());
+            let process_messages = build_turn_process_messages(&messages, user_index);
+            let out: Vec<Value> = process_messages
+                .into_iter()
+                .map(|message| {
+                    serde_json::to_value(MessageOut::from(message)).unwrap_or(Value::Null)
+                })
+                .collect();
+            (StatusCode::OK, Json(Value::Array(out)))
+        }
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(
+                serde_json::json!({"error": "Failed to get turn process messages", "detail": err}),
+            ),
+        ),
+    }
+}
 
-            let final_assistant_index =
-                select_final_assistant_index(&messages, user_index + 1, next_user_index);
+async fn get_session_turn_process_messages_by_turn(
+    auth: AuthUser,
+    Path((session_id, turn_id)): Path<(String, String)>,
+) -> (StatusCode, Json<Value>) {
+    if let Err(err) = ensure_owned_session(&session_id, &auth).await {
+        return map_session_access_error(err);
+    }
+    let result = MessageService::get_by_session(&session_id, None, 0).await;
 
-            let mut process_messages: Vec<Message> = Vec::new();
-            for index in (user_index + 1)..next_user_index {
-                if Some(index) == final_assistant_index {
-                    continue;
-                }
+    match result {
+        Ok(messages) => {
+            let Some(user_index) = find_user_index_by_turn_id(&messages, &turn_id) else {
+                return (StatusCode::OK, Json(Value::Array(Vec::new())));
+            };
 
-                let source = &messages[index];
-                if source.role == "assistant" && !is_session_summary(source) {
-                    let mut assistant = source.clone();
-                    enrich_assistant_message_for_display(&mut assistant);
-                    mark_process_message_loaded(&mut assistant, &user_message_id);
-                    process_messages.push(assistant);
-                } else if source.role == "tool" {
-                    let mut tool_message = source.clone();
-                    mark_process_message_loaded(&mut tool_message, &user_message_id);
-                    process_messages.push(tool_message);
-                }
-            }
-
+            let process_messages = build_turn_process_messages(&messages, user_index);
             let out: Vec<Value> = process_messages
                 .into_iter()
                 .map(|message| {

@@ -412,6 +412,7 @@ impl AiClient {
                         Some(provider.clone()),
                         thinking_level.clone(),
                         session_id.clone(),
+                        turn_id.clone(),
                         callbacks.on_chunk.is_some() || callbacks.on_thinking.is_some(),
                         message_mode.clone(),
                         message_source.clone(),

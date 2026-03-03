@@ -62,6 +62,7 @@ impl AiRequestHandler {
         provider: Option<String>,
         thinking_level: Option<String>,
         session_id: Option<String>,
+        turn_id: Option<String>,
         stream: bool,
         message_mode: Option<String>,
         message_source: Option<String>,
@@ -121,6 +122,7 @@ impl AiRequestHandler {
                 callbacks,
                 reasoning_enabled,
                 session_id,
+                turn_id,
                 token,
                 force_identity_encoding,
                 persist_messages,
@@ -134,6 +136,7 @@ impl AiRequestHandler {
                 payload,
                 reasoning_enabled,
                 session_id,
+                turn_id,
                 token,
                 force_identity_encoding,
                 persist_messages,
@@ -150,6 +153,7 @@ impl AiRequestHandler {
         payload: Value,
         reasoning_enabled: bool,
         session_id: Option<String>,
+        turn_id: Option<String>,
         token: Option<CancellationToken>,
         force_identity_encoding: bool,
         persist_messages: bool,
@@ -213,7 +217,8 @@ impl AiRequestHandler {
 
         if persist_messages {
             if let Some(session_id) = session_id {
-                let meta_val = build_assistant_message_metadata(tool_calls.as_ref(), None);
+                let meta_val =
+                    build_assistant_message_metadata(tool_calls.as_ref(), None, turn_id.as_deref());
                 let _ = self
                     .message_manager
                     .save_assistant_message(
@@ -246,6 +251,7 @@ impl AiRequestHandler {
         callbacks: StreamCallbacks,
         reasoning_enabled: bool,
         session_id: Option<String>,
+        turn_id: Option<String>,
         token: Option<CancellationToken>,
         force_identity_encoding: bool,
         persist_messages: bool,
@@ -299,7 +305,8 @@ impl AiRequestHandler {
 
         if persist_messages {
             if let Some(session_id) = session_id {
-                let meta_val = build_assistant_message_metadata(tool_calls.as_ref(), None);
+                let meta_val =
+                    build_assistant_message_metadata(tool_calls.as_ref(), None, turn_id.as_deref());
                 let _ = self
                     .message_manager
                     .save_assistant_message(

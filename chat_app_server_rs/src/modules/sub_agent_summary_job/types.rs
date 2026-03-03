@@ -21,7 +21,7 @@ pub struct SummaryJobDefaults {
 impl SummaryJobDefaults {
     pub fn from_env() -> Self {
         let enabled = std::env::var("SUB_AGENT_SUMMARY_JOB_ENABLED")
-            .unwrap_or_else(|_| "true".to_string())
+            .unwrap_or_else(|_| "false".to_string())
             .to_lowercase()
             != "false";
         let token_limit = std::env::var("SUB_AGENT_SUMMARY_JOB_TOKEN_LIMIT")

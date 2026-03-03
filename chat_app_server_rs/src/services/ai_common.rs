@@ -156,9 +156,16 @@ fn build_provider_error_preview(provider_error: &Value) -> Option<String> {
 pub(crate) fn build_assistant_message_metadata(
     tool_calls: Option<&Value>,
     response_id: Option<&str>,
+    turn_id: Option<&str>,
 ) -> Option<Value> {
     let mut map = serde_json::Map::new();
 
+    if let Some(turn) = turn_id.map(str::trim).filter(|value| !value.is_empty()) {
+        map.insert(
+            "conversation_turn_id".to_string(),
+            Value::String(turn.to_string()),
+        );
+    }
     if let Some(id) = response_id.map(str::trim).filter(|value| !value.is_empty()) {
         map.insert("response_id".to_string(), Value::String(id.to_string()));
     }
@@ -301,11 +308,22 @@ where
 }
 
 pub(crate) fn build_tool_result_metadata(result: &ToolResult) -> Value {
-    json!({
-        "toolName": result.name,
-        "success": result.success,
-        "isError": result.is_error
-    })
+    let mut map = serde_json::Map::new();
+    map.insert("toolName".to_string(), Value::String(result.name.clone()));
+    map.insert("success".to_string(), Value::Bool(result.success));
+    map.insert("isError".to_string(), Value::Bool(result.is_error));
+    if let Some(turn_id) = result
+        .conversation_turn_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        map.insert(
+            "conversation_turn_id".to_string(),
+            Value::String(turn_id.to_string()),
+        );
+    }
+    Value::Object(map)
 }
 
 pub(crate) fn build_tool_stream_callback(
@@ -361,6 +379,7 @@ pub(crate) fn build_aborted_tool_results(
             success: false,
             is_error: true,
             is_stream: false,
+            conversation_turn_id: None,
             content: "aborted".to_string(),
         });
     }
@@ -417,14 +436,15 @@ mod tests {
 
     #[test]
     fn build_assistant_message_metadata_skips_empty_fields() {
-        assert!(build_assistant_message_metadata(None, None).is_none());
-        assert!(build_assistant_message_metadata(None, Some("   ")).is_none());
+        assert!(build_assistant_message_metadata(None, None, None).is_none());
+        assert!(build_assistant_message_metadata(None, Some("   "), None).is_none());
     }
 
     #[test]
     fn build_assistant_message_metadata_keeps_response_id_and_tool_calls() {
         let tool_calls = serde_json::json!([{"id": "call_1"}]);
-        let metadata = build_assistant_message_metadata(Some(&tool_calls), Some("resp_123"));
+        let metadata =
+            build_assistant_message_metadata(Some(&tool_calls), Some("resp_123"), Some("turn_123"));
 
         assert_eq!(
             metadata
@@ -440,6 +460,13 @@ mod tests {
                 .cloned(),
             Some(tool_calls)
         );
+        assert_eq!(
+            metadata
+                .as_ref()
+                .and_then(|value| value.get("conversation_turn_id"))
+                .and_then(|value| value.as_str()),
+            Some("turn_123")
+        );
     }
 
     #[test]
@@ -450,6 +477,7 @@ mod tests {
             success: true,
             is_error: false,
             is_stream: false,
+            conversation_turn_id: Some("turn_abc".to_string()),
             content: "ok".to_string(),
         };
 
@@ -467,6 +495,12 @@ mod tests {
             metadata.get("isError").and_then(|value| value.as_bool()),
             Some(false)
         );
+        assert_eq!(
+            metadata
+                .get("conversation_turn_id")
+                .and_then(|value| value.as_str()),
+            Some("turn_abc")
+        );
     }
 
     #[test]
@@ -483,6 +517,7 @@ mod tests {
             success: true,
             is_error: false,
             is_stream: false,
+            conversation_turn_id: None,
             content: "done".to_string(),
         }];
 
@@ -519,6 +554,7 @@ mod tests {
             success: true,
             is_error: false,
             is_stream: false,
+            conversation_turn_id: None,
             content: "ok".to_string(),
         });
 
@@ -557,6 +593,7 @@ mod tests {
             success: true,
             is_error: false,
             is_stream: false,
+            conversation_turn_id: None,
             content: "ok".to_string(),
         });
 

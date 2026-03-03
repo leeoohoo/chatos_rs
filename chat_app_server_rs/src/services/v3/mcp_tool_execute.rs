@@ -182,6 +182,7 @@ impl McpToolExecute {
         execute_tools_stream_common(
             tool_calls,
             session_id,
+            conversation_turn_id,
             on_tool_result,
             |tool_name, args, on_stream_chunk| async move {
                 self.call_tool_once(

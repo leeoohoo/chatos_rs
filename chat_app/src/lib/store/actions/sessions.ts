@@ -36,6 +36,73 @@ const ensureSessionTurnMaps = (state: any, sessionId: string) => {
   }
 };
 
+const normalizeDate = (value: any): Date => {
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+};
+
+const normalizeTurnId = (value: unknown): string => (
+  typeof value === 'string' ? value.trim() : ''
+);
+
+const resolveUserByTurnId = (messages: any[], turnId: string) => {
+  if (!turnId) {
+    return null;
+  }
+
+  return messages.find((message: any) => {
+    if (message?.role !== 'user') {
+      return false;
+    }
+    const messageTurnId = normalizeTurnId(
+      message?.metadata?.conversation_turn_id || message?.metadata?.historyProcess?.turnId,
+    );
+    return messageTurnId === turnId;
+  }) || null;
+};
+
+const buildDraftUserMessageForStreaming = (
+  sessionId: string,
+  draftMessage: any,
+  finalAssistantMessageId: string,
+) => {
+  const linkedUserMessageId = typeof draftMessage?.metadata?.historyFinalForUserMessageId === 'string'
+    ? draftMessage.metadata.historyFinalForUserMessageId
+    : '';
+  if (!linkedUserMessageId) {
+    return null;
+  }
+
+  const draftUser = draftMessage?.metadata?.historyDraftUserMessage || {};
+  const turnId = typeof draftMessage?.metadata?.conversation_turn_id === 'string'
+    ? draftMessage.metadata.conversation_turn_id
+    : '';
+
+  return {
+    id: linkedUserMessageId,
+    sessionId,
+    role: 'user' as const,
+    content: typeof draftUser.content === 'string' ? draftUser.content : '',
+    status: 'completed' as const,
+    createdAt: normalizeDate(draftUser.createdAt || draftMessage?.createdAt || Date.now()),
+    metadata: {
+      ...(turnId ? { conversation_turn_id: turnId } : {}),
+      historyProcess: {
+        hasProcess: false,
+        toolCallCount: 0,
+        thinkingCount: 0,
+        processMessageCount: 0,
+        userMessageId: linkedUserMessageId,
+        ...(turnId ? { turnId } : {}),
+        finalAssistantMessageId: finalAssistantMessageId || null,
+        expanded: false,
+        loaded: false,
+        loading: false,
+      },
+    },
+  };
+};
+
 interface Deps {
   set: any;
   get: any;
@@ -235,6 +302,50 @@ export function createSessionActions({
               let restoredStreamingMessage: any = null;
               if (draftMessage && typeof draftMessage === 'object') {
                 restoredStreamingMessage = cloneStreamingMessageDraft(draftMessage);
+              } else if (localStreamingMessage && typeof localStreamingMessage === 'object') {
+                restoredStreamingMessage = cloneStreamingMessageDraft(localStreamingMessage);
+              }
+
+              const streamingDraftSource = restoredStreamingMessage || localStreamingMessage;
+              if (streamingDraftSource) {
+                const linkedUserMessageId = typeof streamingDraftSource.metadata?.historyFinalForUserMessageId === 'string'
+                  ? streamingDraftSource.metadata.historyFinalForUserMessageId
+                  : '';
+                const linkedTurnId = normalizeTurnId(
+                  streamingDraftSource.metadata?.historyFinalForTurnId
+                  || streamingDraftSource.metadata?.conversation_turn_id,
+                );
+                const linkedUserById = linkedUserMessageId
+                  ? nextMessages.find((message: any) => message?.role === 'user' && message?.id === linkedUserMessageId)
+                  : null;
+                const linkedUserByTurn = linkedUserById || !linkedTurnId
+                  ? null
+                  : resolveUserByTurnId(nextMessages, linkedTurnId);
+                const linkedUserMessage = linkedUserById || linkedUserByTurn;
+
+                if (linkedUserMessage && restoredStreamingMessage?.metadata) {
+                  restoredStreamingMessage.metadata.historyFinalForUserMessageId = linkedUserMessage.id;
+                  const resolvedTurnId = linkedTurnId || normalizeTurnId(
+                    linkedUserMessage?.metadata?.conversation_turn_id || linkedUserMessage?.metadata?.historyProcess?.turnId,
+                  );
+                  if (resolvedTurnId) {
+                    restoredStreamingMessage.metadata.historyFinalForTurnId = resolvedTurnId;
+                  }
+                  if (restoredStreamingMessage.metadata.historyDraftUserMessage) {
+                    restoredStreamingMessage.metadata.historyDraftUserMessage.id = linkedUserMessage.id;
+                  }
+                }
+
+                if (linkedUserMessageId && !linkedUserMessage) {
+                  const draftUserMessage = buildDraftUserMessageForStreaming(
+                    sessionId,
+                    streamingDraftSource,
+                    chatState.streamingMessageId,
+                  );
+                  if (draftUserMessage) {
+                    nextMessages = [...nextMessages, draftUserMessage];
+                  }
+                }
               }
 
               nextMessages = [

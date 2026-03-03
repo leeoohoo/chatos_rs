@@ -121,6 +121,12 @@ class ApiClient {
     return this.request<any[]>(`/sessions/${sessionId}/turns/${encodeURIComponent(userMessageId)}/process`);
   }
 
+  async getSessionTurnProcessMessagesByTurn(sessionId: string, turnId: string): Promise<any[]> {
+    return this.request<any[]>(
+      `/sessions/${sessionId}/turns/by-turn/${encodeURIComponent(turnId)}/process`,
+    );
+  }
+
   // 项目相关API
   async listProjects(userId?: string): Promise<any[]> {
     const params = userId ? `?user_id=${encodeURIComponent(userId)}` : '';

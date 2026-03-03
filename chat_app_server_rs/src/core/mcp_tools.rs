@@ -35,6 +35,8 @@ pub struct ToolResult {
     pub is_error: bool,
     #[serde(default)]
     pub is_stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conversation_turn_id: Option<String>,
     pub content: String,
 }
 
@@ -237,6 +239,7 @@ pub fn build_builtin_tool_service(server: &McpBuiltinServer) -> Result<BuiltinTo
 pub async fn execute_tools_stream<F, Fut>(
     tool_calls: &[Value],
     session_id: Option<&str>,
+    conversation_turn_id: Option<&str>,
     on_tool_result: Option<ToolResultCallback>,
     mut call_tool_once: F,
 ) -> Vec<ToolResult>
@@ -245,6 +248,10 @@ where
     Fut: Future<Output = Result<String, String>>,
 {
     let mut results = Vec::new();
+    let normalized_turn_id = conversation_turn_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string());
 
     for tc in tool_calls {
         if is_aborted(session_id) {
@@ -273,6 +280,7 @@ where
                     success: false,
                     is_error: true,
                     is_stream: false,
+                    conversation_turn_id: normalized_turn_id.clone(),
                     content: "工具名称不能为空".to_string(),
                 },
                 session_id,
@@ -298,6 +306,7 @@ where
                         success: false,
                         is_error: true,
                         is_stream: false,
+                        conversation_turn_id: normalized_turn_id.clone(),
                         content: format!("参数解析失败: {}", err),
                     },
                     session_id,
@@ -307,11 +316,13 @@ where
             }
         };
 
+        let stream_turn_id = normalized_turn_id.clone();
         let on_stream_chunk = on_tool_result.as_ref().map(|callback| {
             let callback = Arc::clone(callback);
             let sid = session_id.map(|value| value.to_string());
             let stream_call_id = call_id.clone();
             let stream_tool_name = tool_name.clone();
+            let stream_turn_id = stream_turn_id.clone();
             Arc::new(move |chunk: String| {
                 if chunk.is_empty() {
                     return;
@@ -325,6 +336,7 @@ where
                     success: true,
                     is_error: false,
                     is_stream: true,
+                    conversation_turn_id: stream_turn_id.clone(),
                     content: chunk,
                 };
                 callback(&event);
@@ -341,6 +353,7 @@ where
                         success: true,
                         is_error: false,
                         is_stream: false,
+                        conversation_turn_id: normalized_turn_id.clone(),
                         content: text,
                     },
                     session_id,
@@ -360,6 +373,7 @@ where
                         success: false,
                         is_error: true,
                         is_stream: false,
+                        conversation_turn_id: normalized_turn_id.clone(),
                         content: format!("工具执行失败: {}", err),
                     },
                     session_id,

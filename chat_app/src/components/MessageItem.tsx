@@ -144,6 +144,7 @@ interface MessageItemProps {
   allMessages?: Message[]; // 添加所有消息的引用
   toolResultById?: Map<string, Message>;
   toolResultKey?: string;
+  processSignal?: string;
   customRenderer?: {
     renderMessage?: (message: Message) => React.ReactNode;
     renderAttachment?: (attachment: Attachment) => React.ReactNode;
@@ -193,9 +194,18 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
       return { hasProcess: false, toolCallCount: 0, thinkingCount: 0 };
     }
 
+    const rawTurnId = message.metadata?.conversation_turn_id || message.metadata?.historyProcess?.turnId;
+    const userTurnId = typeof rawTurnId === 'string'
+      ? rawTurnId.trim()
+      : '';
     const finalAssistantForUser = allMessages.find((candidate) => (
-      candidate.role === 'assistant'
-      && candidate.metadata?.historyFinalForUserMessageId === message.id
+      candidate.role === 'assistant' && (
+        candidate.metadata?.historyFinalForUserMessageId === message.id
+        || (userTurnId && (
+          candidate.metadata?.historyFinalForTurnId === userTurnId
+          || candidate.metadata?.conversation_turn_id === userTurnId
+        ))
+      )
     ));
 
     if (!finalAssistantForUser) {
@@ -244,7 +254,12 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
 
   const isTurnLinkedAssistant = (
     isAssistant
-    && Boolean(message.metadata?.historyFinalForUserMessageId || message.metadata?.historyProcessUserMessageId)
+    && Boolean(
+      message.metadata?.historyFinalForUserMessageId
+      || message.metadata?.historyFinalForTurnId
+      || message.metadata?.historyProcessUserMessageId
+      || message.metadata?.historyProcessTurnId
+    )
   );
   const collapseAssistantProcessByDefault = isTurnLinkedAssistant && renderContext !== 'process_drawer';
 
@@ -692,6 +707,7 @@ export const MessageItem = memo(MessageItemComponent, (prevProps, nextProps) => 
     (prevProps.activeTurnProcessUserMessageId ?? "") === (nextProps.activeTurnProcessUserMessageId ?? "") &&
     (prevProps.loadingTurnProcessUserMessageId ?? "") === (nextProps.loadingTurnProcessUserMessageId ?? "") &&
     (prevProps.renderContext ?? 'chat') === (nextProps.renderContext ?? 'chat') &&
+    (prevProps.processSignal ?? "") === (nextProps.processSignal ?? "") &&
     getMetaKey(prevProps.message.metadata) === getMetaKey(nextProps.message.metadata) &&
     getToolCallsKey(prevProps.message) === getToolCallsKey(nextProps.message) &&
     (prevProps.toolResultKey ?? "") === (nextProps.toolResultKey ?? "")

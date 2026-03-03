@@ -26,9 +26,14 @@ const clampPanelWidth = (width: number, maxWidth: number = getMaxPanelWidth()): 
   Math.max(MIN_PANEL_WIDTH, Math.min(maxWidth, width))
 );
 
+const normalizeTurnId = (value: unknown): string => (
+  typeof value === 'string' ? value.trim() : ''
+);
+
 const buildFallbackProcessMessage = (
   finalAssistantMessage: Message | null,
   userMessageId: string,
+  turnId: string,
 ): Message | null => {
   if (!finalAssistantMessage || finalAssistantMessage.role !== 'assistant') {
     return null;
@@ -68,6 +73,7 @@ const buildFallbackProcessMessage = (
       ...metadata,
       contentSegments: normalizedSegments,
       historyProcessUserMessageId: userMessageId,
+      ...(turnId ? { historyProcessTurnId: turnId } : {}),
       historyProcessLoaded: true,
       historyProcessPlaceholder: false,
     },
@@ -145,16 +151,44 @@ export const TurnProcessDrawer: React.FC<TurnProcessDrawerProps> = ({
     return messages.find((message) => message.id === userMessageId && message.role === 'user') || null;
   }, [messages, panelOpen, userMessageId]);
 
+  const turnId = useMemo(() => {
+    if (!panelOpen || !userMessageId) {
+      return '';
+    }
+
+    const direct = normalizeTurnId(
+      userMessage?.metadata?.conversation_turn_id
+      || userMessage?.metadata?.historyProcess?.turnId,
+    );
+    if (direct) {
+      return direct;
+    }
+
+    const finalAssistant = messages.find((message) => (
+      message.role === 'assistant'
+      && !message.metadata?.historyProcessUserMessageId
+      && !message.metadata?.historyProcessTurnId
+      && message.metadata?.historyFinalForUserMessageId === userMessageId
+    ));
+    return normalizeTurnId(
+      finalAssistant?.metadata?.historyFinalForTurnId
+      || finalAssistant?.metadata?.conversation_turn_id,
+    );
+  }, [messages, panelOpen, userMessage, userMessageId]);
+
   const processMessages = useMemo(() => {
     if (!panelOpen || !userMessageId) {
       return [] as Message[];
     }
 
     return messages.filter((message) => (
-      message.metadata?.historyProcessUserMessageId === userMessageId
+      (
+        message.metadata?.historyProcessUserMessageId === userMessageId
+        || (turnId && normalizeTurnId(message.metadata?.historyProcessTurnId) === turnId)
+      )
       && message.metadata?.historyProcessPlaceholder !== true
     ));
-  }, [messages, panelOpen, userMessageId]);
+  }, [messages, panelOpen, turnId, userMessageId]);
 
   const finalAssistantMessage = useMemo(() => {
     if (!panelOpen || !userMessageId) {
@@ -162,17 +196,30 @@ export const TurnProcessDrawer: React.FC<TurnProcessDrawerProps> = ({
     }
 
     return messages.find((message) => (
-      message.role === 'assistant'
-      && message.metadata?.historyFinalForUserMessageId === userMessageId
+      message.role === 'assistant' && (
+        (
+          !message.metadata?.historyProcessUserMessageId
+          && !message.metadata?.historyProcessTurnId
+          && message.metadata?.historyFinalForUserMessageId === userMessageId
+        )
+        || (turnId && (
+          !message.metadata?.historyProcessUserMessageId
+          && !message.metadata?.historyProcessTurnId
+          && (
+          normalizeTurnId(message.metadata?.historyFinalForTurnId) === turnId
+          || normalizeTurnId(message.metadata?.conversation_turn_id) === turnId
+          )
+        ))
+      )
     )) || null;
-  }, [messages, panelOpen, userMessageId]);
+  }, [messages, panelOpen, turnId, userMessageId]);
 
   const fallbackProcessMessage = useMemo(() => {
     if (!panelOpen || !userMessageId || processMessages.length > 0) {
       return null;
     }
-    return buildFallbackProcessMessage(finalAssistantMessage, userMessageId);
-  }, [finalAssistantMessage, panelOpen, processMessages.length, userMessageId]);
+    return buildFallbackProcessMessage(finalAssistantMessage, userMessageId, turnId);
+  }, [finalAssistantMessage, panelOpen, processMessages.length, turnId, userMessageId]);
 
   const assistantProcessMessages = useMemo(() => {
     const base = processMessages.filter((message) => message.role === 'assistant');

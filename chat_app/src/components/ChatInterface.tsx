@@ -164,6 +164,76 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     return null;
   }, [currentSession, messages]);
 
+  const resolveTurnProcessKey = useCallback((userMessageId: string): string => {
+    if (!userMessageId) {
+      return '';
+    }
+
+    const userMessage = messages.find((message: any) => (
+      message?.id === userMessageId && message?.role === 'user'
+    ));
+    if (!userMessage) {
+      return userMessageId;
+    }
+
+    const rawTurnId = userMessage?.metadata?.conversation_turn_id
+      || userMessage?.metadata?.historyProcess?.turnId;
+    const turnId = typeof rawTurnId === 'string'
+      ? rawTurnId.trim()
+      : '';
+    return turnId || userMessageId;
+  }, [messages]);
+
+  const hasTurnProcessInMemory = useCallback((userMessageId: string) => {
+    if (!userMessageId) {
+      return false;
+    }
+
+    const processKey = resolveTurnProcessKey(userMessageId);
+    const userMessage = messages.find((message: any) => (
+      message?.id === userMessageId && message?.role === 'user'
+    ));
+    const inlineMessages = userMessage?.metadata?.historyProcessInlineMessages;
+    if (Array.isArray(inlineMessages) && inlineMessages.length > 0) {
+      return true;
+    }
+
+    const persistedProcess = messages.some((message: any) => (
+      (
+        message?.metadata?.historyProcessUserMessageId === userMessageId
+        || (processKey && message?.metadata?.historyProcessTurnId === processKey)
+      )
+      && message?.metadata?.historyProcessPlaceholder !== true
+    ));
+    if (persistedProcess) {
+      return true;
+    }
+
+    const finalAssistant = messages.find((message: any) => (
+      message?.role === 'assistant' && (
+        message?.metadata?.historyFinalForUserMessageId === userMessageId
+        || (processKey && (
+          message?.metadata?.historyFinalForTurnId === processKey
+          || message?.metadata?.conversation_turn_id === processKey
+        ))
+      )
+    ));
+    if (!finalAssistant) {
+      return false;
+    }
+
+    const segments = Array.isArray(finalAssistant.metadata?.contentSegments)
+      ? finalAssistant.metadata.contentSegments
+      : [];
+    const toolCalls = Array.isArray(finalAssistant.metadata?.toolCalls)
+      ? finalAssistant.metadata.toolCalls
+      : [];
+    return segments.some((segment: any) => (
+      segment?.type === 'thinking'
+      || (segment?.type === 'tool_call' && Boolean(segment?.toolCallId))
+    )) || toolCalls.length > 0;
+  }, [messages, resolveTurnProcessKey]);
+
   const handledTaskMutationKeysRef = useRef<Set<string>>(new Set());
 
   const userDisplayName = useMemo(() => (
@@ -847,16 +917,25 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       return;
     }
 
-    const targetState = currentSessionTurnState[loadingTurnProcessUserMessageId];
+    const processKey = resolveTurnProcessKey(loadingTurnProcessUserMessageId);
+    const targetState = currentSessionTurnState[processKey]
+      || currentSessionTurnState[loadingTurnProcessUserMessageId];
     if (!targetState?.loading) {
       setLoadingTurnProcessUserMessageId(null);
     }
-  }, [currentSessionTurnState, loadingTurnProcessUserMessageId]);
+  }, [currentSessionTurnState, loadingTurnProcessUserMessageId, resolveTurnProcessKey]);
 
-  const handleCloseTurnProcessDrawer = useCallback(() => {
+  const handleCloseTurnProcessDrawer = useCallback((targetUserMessageId?: string) => {
+    const userMessageId = targetUserMessageId || activeTurnProcessUserMessageId;
+    if (userMessageId) {
+      void toggleTurnProcess(userMessageId, { forceCollapse: true })
+        .catch((error) => {
+          console.error('Failed to collapse turn process state:', error);
+        });
+    }
     setActiveTurnProcessUserMessageId(null);
     setLoadingTurnProcessUserMessageId(null);
-  }, []);
+  }, [activeTurnProcessUserMessageId, toggleTurnProcess]);
 
   const handleToggleTurnProcess = useCallback((userMessageId: string) => {
     if (!userMessageId) {
@@ -864,25 +943,33 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     }
 
     if (activeTurnProcessUserMessageId === userMessageId) {
-      handleCloseTurnProcessDrawer();
+      handleCloseTurnProcessDrawer(userMessageId);
       return;
     }
 
     setActiveTurnProcessUserMessageId(userMessageId);
 
-    const turnState = currentSessionTurnState[userMessageId];
+    const processKey = resolveTurnProcessKey(userMessageId) || userMessageId;
+    const turnState = currentSessionTurnState[processKey]
+      || currentSessionTurnState[userMessageId];
     if (turnState?.loading) {
       setLoadingTurnProcessUserMessageId(userMessageId);
       return;
     }
 
-    if (turnState?.loaded) {
+    const hasProcessInMemory = hasTurnProcessInMemory(userMessageId);
+    const isLocalOnlyUserMessage = userMessageId.startsWith('temp_user_');
+    if (isLocalOnlyUserMessage && hasProcessInMemory) {
+      setLoadingTurnProcessUserMessageId(null);
+      return;
+    }
+    if (turnState?.loaded && hasProcessInMemory) {
       setLoadingTurnProcessUserMessageId(null);
       return;
     }
 
     setLoadingTurnProcessUserMessageId(userMessageId);
-    void toggleTurnProcess(userMessageId)
+    void toggleTurnProcess(userMessageId, { forceExpand: true })
       .catch((error) => {
         console.error('Failed to load turn process messages:', error);
       })
@@ -894,7 +981,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   }, [
     activeTurnProcessUserMessageId,
     currentSessionTurnState,
+    hasTurnProcessInMemory,
     handleCloseTurnProcessDrawer,
+    resolveTurnProcessKey,
     toggleTurnProcess,
   ]);
 

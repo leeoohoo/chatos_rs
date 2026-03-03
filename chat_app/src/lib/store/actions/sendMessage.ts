@@ -285,14 +285,16 @@ export function createSendMessageHandler({
             userMessageId: '',
             finalAssistantMessageId: null,
             expanded: false,
-            loaded: true,
+            loaded: false,
             loading: false,
           },
         },
       };
       tempUserId = userMessage.id;
+      const turnProcessKey = conversationTurnId || userMessage.id;
       if (userMessage.metadata?.historyProcess) {
         userMessage.metadata.historyProcess.userMessageId = userMessage.id;
+        userMessage.metadata.historyProcess.turnId = turnProcessKey;
       }
 
       set((state: any) => {
@@ -304,9 +306,9 @@ export function createSendMessageHandler({
         if (!state.sessionTurnProcessState[currentSessionId]) {
           state.sessionTurnProcessState[currentSessionId] = {};
         }
-        state.sessionTurnProcessState[currentSessionId][userMessage.id] = {
+        state.sessionTurnProcessState[currentSessionId][turnProcessKey] = {
           expanded: false,
-          loaded: true,
+          loaded: false,
           loading: false,
         };
 
@@ -341,7 +343,13 @@ export function createSendMessageHandler({
               }
             : {}),
           historyFinalForUserMessageId: userMessage.id,
+          historyFinalForTurnId: conversationTurnId,
           historyProcessExpanded: false,
+          historyDraftUserMessage: {
+            id: userMessage.id,
+            content: userMessage.content,
+            createdAt: userMessageTime.toISOString(),
+          },
           toolCalls: [], // 初始化工具调用数组
           contentSegments: [{ content: '', type: 'text' as const }], // 初始化内容分段
           currentSegmentIndex: 0, // 当前正在写入的分段索引
@@ -534,9 +542,10 @@ export function createSendMessageHandler({
           thinkingCount: 0,
           processMessageCount: 0,
           userMessageId: tempUserId,
+          turnId: conversationTurnId,
           finalAssistantMessageId: tempAssistantMessage.id,
           expanded: false,
-          loaded: true,
+          loaded: false,
           loading: false,
         };
 
@@ -545,6 +554,7 @@ export function createSendMessageHandler({
           ...current,
           ...patch,
           userMessageId: tempUserId,
+          turnId: conversationTurnId,
           finalAssistantMessageId: tempAssistantMessage.id,
         };
 

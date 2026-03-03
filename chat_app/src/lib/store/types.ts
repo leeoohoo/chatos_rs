@@ -96,7 +96,10 @@ export interface ChatActions {
   // 消息操作
   loadMessages: (sessionId: string) => Promise<void>;
   loadMoreMessages: (sessionId: string) => Promise<void>;
-  toggleTurnProcess: (userMessageId: string) => Promise<void>;
+  toggleTurnProcess: (
+    userMessageId: string,
+    options?: { forceExpand?: boolean; forceCollapse?: boolean }
+  ) => Promise<void>;
   sendMessage: (content: string, attachments?: any[]) => Promise<void>;
   updateMessage: (messageId: string, updates: Partial<Message>) => Promise<void>;
   deleteMessage: (messageId: string) => Promise<void>;

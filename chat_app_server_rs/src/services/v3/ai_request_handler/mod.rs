@@ -71,6 +71,7 @@ impl AiRequestHandler {
         provider: Option<String>,
         thinking_level: Option<String>,
         session_id: Option<String>,
+        turn_id: Option<String>,
         stream: bool,
         message_mode: Option<String>,
         message_source: Option<String>,
@@ -138,6 +139,7 @@ impl AiRequestHandler {
                 payload,
                 callbacks,
                 session_id,
+                turn_id,
                 token,
                 force_identity_encoding,
                 persist_messages,
@@ -150,6 +152,7 @@ impl AiRequestHandler {
                 url,
                 payload,
                 session_id,
+                turn_id,
                 token,
                 force_identity_encoding,
                 persist_messages,
@@ -165,6 +168,7 @@ impl AiRequestHandler {
         url: String,
         payload: Value,
         session_id: Option<String>,
+        turn_id: Option<String>,
         token: Option<CancellationToken>,
         force_identity_encoding: bool,
         persist_messages: bool,
@@ -215,8 +219,11 @@ impl AiRequestHandler {
 
         if persist_messages {
             if let Some(session_id) = session_id.clone() {
-                let meta_val =
-                    build_assistant_message_metadata(tool_calls.as_ref(), response_id.as_deref());
+                let meta_val = build_assistant_message_metadata(
+                    tool_calls.as_ref(),
+                    response_id.as_deref(),
+                    turn_id.as_deref(),
+                );
                 let reasoning = None;
                 let _ = self
                     .message_manager
@@ -251,6 +258,7 @@ impl AiRequestHandler {
         payload: Value,
         callbacks: StreamCallbacks,
         session_id: Option<String>,
+        turn_id: Option<String>,
         token: Option<CancellationToken>,
         force_identity_encoding: bool,
         persist_messages: bool,
@@ -347,6 +355,7 @@ impl AiRequestHandler {
                 let meta_val = build_assistant_message_metadata(
                     tool_calls.as_ref(),
                     stream_state.response_id.as_deref(),
+                    turn_id.as_deref(),
                 );
                 let _ = self
                     .message_manager

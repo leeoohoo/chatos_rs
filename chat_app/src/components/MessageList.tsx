@@ -4,6 +4,10 @@ import { LoadingSpinner } from './LoadingSpinner';
 // import { cn } from '../lib/utils';
 import type { Message, MessageListProps } from '../types';
 
+const normalizeTurnId = (value: unknown): string => (
+  typeof value === 'string' ? value.trim() : ''
+);
+
 export const MessageList: React.FC<MessageListProps> = ({
   messages,
   isLoading = false,
@@ -28,7 +32,7 @@ export const MessageList: React.FC<MessageListProps> = ({
       if (metadata?.hidden) return false;
       if (message.role === 'tool') return false;
       // 过程消息统一由右侧抽屉展示，不在主聊天流中展开
-      if (metadata?.historyProcessUserMessageId) return false;
+      if (metadata?.historyProcessUserMessageId || metadata?.historyProcessTurnId) return false;
       return true;
     }),
     [messages]
@@ -78,6 +82,100 @@ export const MessageList: React.FC<MessageListProps> = ({
     }
     return map;
   }, [visibleMessages, toolResultMetaById]);
+
+  const processSignalByUserMessageId = useMemo(() => {
+    const signalMap = new Map<string, string>();
+    const userMessageIds = new Set<string>();
+    const turnToUserMessageId = new Map<string, string>();
+
+    for (const message of messages || []) {
+      if (message.role !== 'user') {
+        continue;
+      }
+      userMessageIds.add(message.id);
+      signalMap.set(message.id, '');
+      const turnId = normalizeTurnId(
+        (message as any)?.metadata?.conversation_turn_id
+        || (message as any)?.metadata?.historyProcess?.turnId,
+      );
+      if (turnId && !turnToUserMessageId.has(turnId)) {
+        turnToUserMessageId.set(turnId, message.id);
+      }
+    }
+
+    const appendSignal = (userMessageId: string, piece: string) => {
+      if (!userMessageId || !piece) {
+        return;
+      }
+      const prev = signalMap.get(userMessageId) || '';
+      signalMap.set(userMessageId, prev ? `${prev}||${piece}` : piece);
+    };
+
+    for (const message of messages || []) {
+      const metadata = (message as any)?.metadata || {};
+
+      if (message.role === 'assistant') {
+        let linkedUserMessageId = typeof metadata.historyFinalForUserMessageId === 'string'
+          ? metadata.historyFinalForUserMessageId
+          : '';
+        if (!linkedUserMessageId || !userMessageIds.has(linkedUserMessageId)) {
+          const linkedTurnId = normalizeTurnId(
+            metadata.historyFinalForTurnId || metadata.conversation_turn_id,
+          );
+          if (linkedTurnId) {
+            linkedUserMessageId = turnToUserMessageId.get(linkedTurnId) || '';
+          }
+        }
+        if (!linkedUserMessageId || !userMessageIds.has(linkedUserMessageId)) {
+          continue;
+        }
+
+        const segments = Array.isArray(metadata.contentSegments)
+          ? metadata.contentSegments
+          : [];
+        const toolCalls = Array.isArray(metadata.toolCalls)
+          ? metadata.toolCalls
+          : [];
+        const thinkingCount = segments.filter((segment: any) => (
+          segment?.type === 'thinking'
+          && typeof segment?.content === 'string'
+          && segment.content.trim().length > 0
+        )).length;
+        const toolCallSegmentCount = segments.filter((segment: any) => (
+          segment?.type === 'tool_call'
+          && Boolean(segment?.toolCallId)
+        )).length;
+        appendSignal(
+          linkedUserMessageId,
+          `A:${message.id}:${message.status || ''}:${toolCalls.length}:${toolCallSegmentCount}:${thinkingCount}:${segments.length}`,
+        );
+        continue;
+      }
+
+      const processUserMessageId = typeof metadata.historyProcessUserMessageId === 'string'
+        ? metadata.historyProcessUserMessageId
+        : '';
+      const processTurnId = normalizeTurnId(
+        metadata.historyProcessTurnId || metadata.conversation_turn_id,
+      );
+      let linkedUserMessageId = processUserMessageId;
+      if (!linkedUserMessageId || !userMessageIds.has(linkedUserMessageId)) {
+        if (processTurnId) {
+          linkedUserMessageId = turnToUserMessageId.get(processTurnId) || '';
+        }
+      }
+      if (!linkedUserMessageId || !userMessageIds.has(linkedUserMessageId)) {
+        continue;
+      }
+
+      appendSignal(
+        linkedUserMessageId,
+        `P:${message.id}:${message.role}:${metadata.historyProcessPlaceholder ? '1' : '0'}`,
+      );
+    }
+
+    return signalMap;
+  }, [messages]);
 
   const measureAtBottom = () => {
     const el = scrollRef.current;
@@ -194,6 +292,7 @@ export const MessageList: React.FC<MessageListProps> = ({
             allMessages={messages}
             toolResultById={toolResultById}
             toolResultKey={toolResultKeyByMessageId.get(message.id) || ''}
+            processSignal={processSignalByUserMessageId.get(message.id) || ''}
             customRenderer={customRenderer}
           />
         ))}

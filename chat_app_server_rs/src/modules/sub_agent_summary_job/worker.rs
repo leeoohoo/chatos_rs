@@ -50,6 +50,16 @@ pub fn start_worker() {
         info!("[SUB-AGENT-SUMMARY-JOB] disabled by env");
         return;
     }
+    if defaults
+        .model_config_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_none()
+    {
+        info!("[SUB-AGENT-SUMMARY-JOB] disabled: SUB_AGENT_SUMMARY_JOB_MODEL_CONFIG_ID is not set");
+        return;
+    }
 
     let base_interval_seconds = defaults.job_interval_seconds.max(10) as u64;
     let poll_interval_seconds = 10u64;

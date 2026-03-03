@@ -5,6 +5,7 @@ import {
   fetchSessionMessages,
   fetchTurnProcessMessages,
   mergeTurnProcessMessages,
+  resolveTurnProcessKeyForUserMessage,
   setTurnProcessExpanded,
 } from '../helpers/messages';
 
@@ -30,6 +31,11 @@ interface Deps {
   client: ApiClient;
 }
 
+type ToggleTurnProcessOptions = {
+  forceExpand?: boolean;
+  forceCollapse?: boolean;
+};
+
 const countLoadedBaseMessages = (messages: any[]): number => (
   (messages || []).filter((message: any) => !message?.metadata?.historyProcessUserMessageId).length
 );
@@ -40,6 +46,109 @@ const getInlineTurnProcessMessages = (messages: any[], userMessageId: string): M
   ));
   const inlineMessages = userMessage?.metadata?.historyProcessInlineMessages;
   return Array.isArray(inlineMessages) ? inlineMessages : [];
+};
+
+const getTurnIdForUserMessage = (messages: any[], userMessageId: string): string => {
+  const userMessage = (messages || []).find((message: any) => (
+    message?.id === userMessageId && message?.role === 'user'
+  ));
+  const turnId = userMessage?.metadata?.conversation_turn_id
+    || userMessage?.metadata?.historyProcess?.turnId;
+  return typeof turnId === 'string' ? turnId.trim() : '';
+};
+
+const hasAssistantProcessFallback = (
+  messages: any[],
+  userMessageId: string,
+  turnId: string,
+): boolean => {
+  const finalAssistantMessage = (messages || []).find((message: any) => (
+    message?.role === 'assistant' && (
+      message?.metadata?.historyFinalForUserMessageId === userMessageId
+      || (turnId && (
+        message?.metadata?.historyFinalForTurnId === turnId
+        || message?.metadata?.conversation_turn_id === turnId
+      ))
+    )
+  ));
+  if (!finalAssistantMessage) {
+    return false;
+  }
+
+  const metadata = finalAssistantMessage.metadata || {};
+  const segments = Array.isArray(metadata.contentSegments) ? metadata.contentSegments : [];
+  const toolCalls = Array.isArray(metadata.toolCalls) ? metadata.toolCalls : [];
+  return segments.some((segment: any) => (
+    segment?.type === 'thinking'
+    || (segment?.type === 'tool_call' && Boolean(segment?.toolCallId))
+  )) || toolCalls.length > 0;
+};
+
+const hasTurnProcessInMemory = (messages: any[], userMessageId: string): boolean => {
+  if (!userMessageId) {
+    return false;
+  }
+
+  const turnId = getTurnIdForUserMessage(messages, userMessageId);
+  if (getInlineTurnProcessMessages(messages, userMessageId).length > 0) {
+    return true;
+  }
+
+  const hasPersistedProcessMessages = (messages || []).some((message: any) => (
+    (
+      message?.metadata?.historyProcessUserMessageId === userMessageId
+      || (turnId && message?.metadata?.historyProcessTurnId === turnId)
+    )
+    && message?.metadata?.historyProcessPlaceholder !== true
+  ));
+  if (hasPersistedProcessMessages) {
+    return true;
+  }
+
+  return hasAssistantProcessFallback(messages, userMessageId, turnId);
+};
+
+const readTurnProcessState = (
+  sessionState: Record<string, { expanded: boolean; loaded: boolean; loading: boolean }> | undefined,
+  processKey: string,
+  userMessageId: string,
+) => {
+  if (!sessionState) {
+    return undefined;
+  }
+  if (processKey && sessionState[processKey]) {
+    return sessionState[processKey];
+  }
+  if (userMessageId && sessionState[userMessageId]) {
+    return sessionState[userMessageId];
+  }
+  return undefined;
+};
+
+const writeTurnProcessState = (
+  sessionState: Record<string, { expanded: boolean; loaded: boolean; loading: boolean }>,
+  processKey: string,
+  userMessageId: string,
+  value: { expanded: boolean; loaded: boolean; loading: boolean },
+) => {
+  const key = processKey || userMessageId;
+  sessionState[key] = value;
+  if (userMessageId && key !== userMessageId && userMessageId in sessionState) {
+    delete sessionState[userMessageId];
+  }
+};
+
+const writeTurnProcessCache = (
+  sessionCache: Record<string, Message[]>,
+  processKey: string,
+  userMessageId: string,
+  value: Message[],
+) => {
+  const key = processKey || userMessageId;
+  sessionCache[key] = value;
+  if (userMessageId && key !== userMessageId && userMessageId in sessionCache) {
+    delete sessionCache[userMessageId];
+  }
 };
 
 const ensureSessionTurnMaps = (state: any, sessionId: string) => {
@@ -129,37 +238,87 @@ export function createMessageActions({ set, get, client }: Deps) {
       }
     },
 
-    toggleTurnProcess: async (userMessageId: string) => {
+    toggleTurnProcess: async (
+      userMessageId: string,
+      options: ToggleTurnProcessOptions = {},
+    ) => {
       const snapshot = get();
       const sessionId = snapshot.currentSessionId;
       if (!sessionId || !userMessageId) {
         return;
       }
 
-      const currentState = snapshot.sessionTurnProcessState?.[sessionId]?.[userMessageId] || {
+      const processKey = resolveTurnProcessKeyForUserMessage(snapshot.messages, userMessageId) || userMessageId;
+      const currentState = readTurnProcessState(
+        snapshot.sessionTurnProcessState?.[sessionId],
+        processKey,
+        userMessageId,
+      ) || {
         expanded: false,
         loaded: false,
         loading: false,
       };
-      const nextExpanded = !currentState.expanded;
+      const turnId = getTurnIdForUserMessage(snapshot.messages, userMessageId);
+      const hasProcessInMemory = hasTurnProcessInMemory(snapshot.messages, userMessageId);
+      const isLocalOnlyUserMessage = userMessageId.startsWith('temp_user_');
+      const nextExpanded = options.forceCollapse
+        ? false
+        : options.forceExpand
+          ? true
+          : !currentState.expanded;
+      if (nextExpanded && isLocalOnlyUserMessage) {
+        set((state: any) => {
+          ensureSessionTurnMaps(state, sessionId);
+          writeTurnProcessState(
+            state.sessionTurnProcessState[sessionId],
+            processKey,
+            userMessageId,
+            {
+              expanded: true,
+              loaded: hasTurnProcessInMemory(state.messages, userMessageId),
+              loading: false,
+            },
+          );
+          state.messages = applyTurnProcessCache(
+            setTurnProcessExpanded(state.messages, userMessageId, true, { processKey }),
+            state.sessionTurnProcessCache?.[sessionId],
+            state.sessionTurnProcessState?.[sessionId],
+          );
+        });
+        return;
+      }
+      const shouldLoadProcess = nextExpanded
+        && !currentState.loading
+        && (!currentState.loaded || !hasProcessInMemory);
 
-      if (nextExpanded && !currentState.loaded && !currentState.loading) {
+      if (shouldLoadProcess) {
         const inlineProcessMessages = getInlineTurnProcessMessages(snapshot.messages, userMessageId);
         if (inlineProcessMessages.length > 0) {
           set((state: any) => {
             ensureSessionTurnMaps(state, sessionId);
-            state.sessionTurnProcessCache[sessionId][userMessageId] = inlineProcessMessages;
-            state.sessionTurnProcessState[sessionId][userMessageId] = {
-              expanded: true,
-              loaded: true,
-              loading: false,
-            };
+            writeTurnProcessCache(
+              state.sessionTurnProcessCache[sessionId],
+              processKey,
+              userMessageId,
+              inlineProcessMessages,
+            );
+            writeTurnProcessState(
+              state.sessionTurnProcessState[sessionId],
+              processKey,
+              userMessageId,
+              {
+                expanded: true,
+                loaded: true,
+                loading: false,
+              },
+            );
 
             state.messages = mergeTurnProcessMessages(
               state.messages,
               userMessageId,
               inlineProcessMessages,
               true,
+              { processKey },
             );
           });
           return;
@@ -167,11 +326,16 @@ export function createMessageActions({ set, get, client }: Deps) {
 
         set((state: any) => {
           ensureSessionTurnMaps(state, sessionId);
-          state.sessionTurnProcessState[sessionId][userMessageId] = {
-            expanded: true,
-            loaded: false,
-            loading: true,
-          };
+          writeTurnProcessState(
+            state.sessionTurnProcessState[sessionId],
+            processKey,
+            userMessageId,
+            {
+              expanded: true,
+              loaded: false,
+              loading: true,
+            },
+          );
           state.messages = applyTurnProcessCache(
             state.messages,
             state.sessionTurnProcessCache?.[sessionId],
@@ -180,34 +344,77 @@ export function createMessageActions({ set, get, client }: Deps) {
         });
 
         try {
-          const processMessages = await fetchTurnProcessMessages(client, sessionId, userMessageId);
+          const processMessages = await fetchTurnProcessMessages(
+            client,
+            sessionId,
+            userMessageId,
+            { turnId },
+          );
           set((state: any) => {
             ensureSessionTurnMaps(state, sessionId);
-            state.sessionTurnProcessCache[sessionId][userMessageId] = processMessages;
-            state.sessionTurnProcessState[sessionId][userMessageId] = {
-              expanded: true,
-              loaded: true,
-              loading: false,
-            };
+            const isStreaming = state.sessionChatState?.[sessionId]?.isStreaming === true;
+            const shouldRetryLater = isStreaming && processMessages.length === 0;
+            writeTurnProcessCache(
+              state.sessionTurnProcessCache[sessionId],
+              processKey,
+              userMessageId,
+              processMessages,
+            );
+
+            if (shouldRetryLater) {
+              writeTurnProcessState(
+                state.sessionTurnProcessState[sessionId],
+                processKey,
+                userMessageId,
+                {
+                  expanded: true,
+                  loaded: false,
+                  loading: false,
+                },
+              );
+              state.messages = applyTurnProcessCache(
+                setTurnProcessExpanded(state.messages, userMessageId, true, { processKey }),
+                state.sessionTurnProcessCache?.[sessionId],
+                state.sessionTurnProcessState?.[sessionId],
+              );
+              return;
+            }
+
+            writeTurnProcessState(
+              state.sessionTurnProcessState[sessionId],
+              processKey,
+              userMessageId,
+              {
+                expanded: true,
+                loaded: true,
+                loading: false,
+              },
+            );
 
             state.messages = mergeTurnProcessMessages(
               state.messages,
               userMessageId,
               processMessages,
               true,
+              { processKey },
             );
           });
         } catch (error) {
           console.error('Failed to load turn process messages:', error);
           set((state: any) => {
             ensureSessionTurnMaps(state, sessionId);
-            state.sessionTurnProcessState[sessionId][userMessageId] = {
-              expanded: false,
-              loaded: false,
-              loading: false,
-            };
+            writeTurnProcessState(
+              state.sessionTurnProcessState[sessionId],
+              processKey,
+              userMessageId,
+              {
+                expanded: false,
+                loaded: false,
+                loading: false,
+              },
+            );
             state.messages = applyTurnProcessCache(
-              setTurnProcessExpanded(state.messages, userMessageId, false),
+              setTurnProcessExpanded(state.messages, userMessageId, false, { processKey }),
               state.sessionTurnProcessCache?.[sessionId],
               state.sessionTurnProcessState?.[sessionId],
             );
@@ -220,13 +427,23 @@ export function createMessageActions({ set, get, client }: Deps) {
 
       set((state: any) => {
         ensureSessionTurnMaps(state, sessionId);
-        state.sessionTurnProcessState[sessionId][userMessageId] = {
-          expanded: nextExpanded,
-          loaded: currentState.loaded,
-          loading: false,
-        };
+        writeTurnProcessState(
+          state.sessionTurnProcessState[sessionId],
+          processKey,
+          userMessageId,
+          {
+            expanded: nextExpanded,
+            loaded: currentState.loaded,
+            loading: false,
+          },
+        );
 
-        const toggled = setTurnProcessExpanded(state.messages, userMessageId, nextExpanded);
+        const toggled = setTurnProcessExpanded(
+          state.messages,
+          userMessageId,
+          nextExpanded,
+          { processKey },
+        );
         state.messages = applyTurnProcessCache(
           toggled,
           state.sessionTurnProcessCache?.[sessionId],
