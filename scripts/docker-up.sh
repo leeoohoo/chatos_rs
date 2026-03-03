@@ -30,9 +30,14 @@ mkdir -p "$ROOT_DIR/chat_app_server_rs/data" "$ROOT_DIR/chat_app_server_rs/logs"
 
 "${COMPOSE_CMD[@]}" --env-file "$ENV_FILE" up -d --build
 
+BACKEND_HOST_PORT="$(grep -E '^BACKEND_HOST_PORT=' "$ENV_FILE" | tail -n1 | cut -d'=' -f2- | tr -d '[:space:]')"
+if [[ -z "$BACKEND_HOST_PORT" ]]; then
+  BACKEND_HOST_PORT=3001
+fi
+
 echo
 echo "[OK] 服务已启动"
 echo "- 前端: http://localhost:8080"
-echo "- 后端健康检查: http://localhost:3001/health"
+echo "- 后端健康检查: http://localhost:${BACKEND_HOST_PORT}/health"
 echo "- API Key: 可在前端“模型配置”页面按模型填写；OPENAI_API_KEY 仅作兜底"
 echo "- 查看日志: ${COMPOSE_CMD[*]} --env-file $ENV_FILE logs -f"
