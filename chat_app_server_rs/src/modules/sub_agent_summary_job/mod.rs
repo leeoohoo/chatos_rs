@@ -1,3 +1,4 @@
+mod config;
 mod executor;
 pub mod types;
 mod worker;

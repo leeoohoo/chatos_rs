@@ -178,6 +178,7 @@ pub async fn maybe_summarize<C: SummaryLlmClient>(
     })
 }
 
+#[allow(dead_code)]
 pub async fn retry_after_context_overflow<C: SummaryLlmClient>(
     client: &C,
     messages: &[Value],
@@ -482,6 +483,7 @@ fn message_content_to_text(content: &Value) -> String {
     content.to_string()
 }
 
+#[allow(dead_code)]
 pub fn build_summary_messages_for_llm(
     context_messages: Vec<Value>,
     target_tokens: i64,

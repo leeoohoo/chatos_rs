@@ -11,6 +11,7 @@ use tracing::{info, warn};
 
 use crate::models::sub_agent_run_message::SubAgentRunMessageService;
 
+use super::config;
 use super::executor;
 use super::types::SummaryJobDefaults;
 
@@ -48,16 +49,6 @@ pub fn start_worker() {
     let defaults = SummaryJobDefaults::from_env();
     if !defaults.enabled {
         info!("[SUB-AGENT-SUMMARY-JOB] disabled by env");
-        return;
-    }
-    if defaults
-        .model_config_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .is_none()
-    {
-        info!("[SUB-AGENT-SUMMARY-JOB] disabled: SUB_AGENT_SUMMARY_JOB_MODEL_CONFIG_ID is not set");
         return;
     }
 
@@ -109,9 +100,24 @@ async fn run_once(
 
     let now_ts = chrono::Utc::now().timestamp();
     for run_id in run_ids {
+        let effective = match config::resolve_effective_config(&run_id, defaults).await {
+            Ok(Some(value)) => value,
+            Ok(None) => continue,
+            Err(err) => {
+                warn!(
+                    "[SUB-AGENT-SUMMARY-JOB] resolve config failed: run_id={} error={}",
+                    run_id, err
+                );
+                continue;
+            }
+        };
+        if !effective.enabled {
+            continue;
+        }
+
         let due = {
             let state_guard = state.lock().await;
-            state_guard.is_due(&run_id, defaults.job_interval_seconds, now_ts)
+            state_guard.is_due(&run_id, effective.job_interval_seconds, now_ts)
         };
         if !due {
             continue;
@@ -121,7 +127,7 @@ async fn run_once(
             state_guard.mark_checked(&run_id, now_ts);
         }
 
-        match executor::process_run(&run_id, defaults).await {
+        match executor::process_run(&run_id, &effective).await {
             Ok(outcome) => {
                 info!(
                     "[SUB-AGENT-SUMMARY-JOB] processed run_id={} status={} trigger={} summary_id={} marked_messages={}",

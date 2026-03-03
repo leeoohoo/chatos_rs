@@ -15,13 +15,12 @@ pub struct SummaryJobDefaults {
     pub keep_last_n_messages: usize,
     pub max_runs_per_tick: i64,
     pub fallback_model: String,
-    pub model_config_id: Option<String>,
 }
 
 impl SummaryJobDefaults {
     pub fn from_env() -> Self {
         let enabled = std::env::var("SUB_AGENT_SUMMARY_JOB_ENABLED")
-            .unwrap_or_else(|_| "false".to_string())
+            .unwrap_or_else(|_| "true".to_string())
             .to_lowercase()
             != "false";
         let token_limit = std::env::var("SUB_AGENT_SUMMARY_JOB_TOKEN_LIMIT")
@@ -55,10 +54,6 @@ impl SummaryJobDefaults {
             .max(1);
         let fallback_model = std::env::var("SUB_AGENT_SUMMARY_JOB_MODEL")
             .unwrap_or_else(|_| "gpt-5.3-codex".to_string());
-        let model_config_id = std::env::var("SUB_AGENT_SUMMARY_JOB_MODEL_CONFIG_ID")
-            .ok()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty());
 
         Self {
             enabled,
@@ -69,7 +64,18 @@ impl SummaryJobDefaults {
             keep_last_n_messages,
             max_runs_per_tick,
             fallback_model,
-            model_config_id,
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EffectiveSummaryJobConfig {
+    pub enabled: bool,
+    pub token_limit: i64,
+    pub round_limit: i64,
+    pub target_summary_tokens: i64,
+    pub job_interval_seconds: i64,
+    pub keep_last_n_messages: usize,
+    pub model_config_id: Option<String>,
+    pub fallback_model: String,
 }

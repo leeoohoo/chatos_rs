@@ -15,7 +15,7 @@ use crate::services::summary::types::{
     SummaryTrigger,
 };
 
-use super::types::{SummaryJobDefaults, MIN_TARGET_SUMMARY_TOKENS};
+use super::types::{EffectiveSummaryJobConfig, MIN_TARGET_SUMMARY_TOKENS};
 
 const PREVIOUS_SUMMARY_CONTEXT_LIMIT: i64 = 2;
 
@@ -49,13 +49,19 @@ impl RunProcessOutcome {
 
 pub async fn process_run(
     run_id: &str,
-    defaults: &SummaryJobDefaults,
+    effective: &EffectiveSummaryJobConfig,
 ) -> Result<RunProcessOutcome, String> {
     if run_id.trim().is_empty() {
         return Ok(RunProcessOutcome::skipped("empty_run_id"));
     }
+    if !effective.enabled {
+        return Ok(RunProcessOutcome::skipped("disabled"));
+    }
+    if effective.model_config_id.is_none() {
+        return Ok(RunProcessOutcome::skipped("no_model_config"));
+    }
 
-    let message_limit = defaults.round_limit.max(1) as usize;
+    let message_limit = effective.round_limit.max(1) as usize;
     let pending =
         SubAgentRunMessageService::get_pending_for_summary(run_id, Some(message_limit as i64))
             .await?;
@@ -74,13 +80,13 @@ pub async fn process_run(
     let selected_tokens =
         estimate_messages_tokens(pending_to_summary_messages(&selected_messages).as_slice());
 
-    let runtime = resolve_runtime(defaults).await;
+    let runtime = resolve_runtime(effective).await;
     let model_name = runtime.model.clone();
     let client = JobSummaryLlmClient::new(runtime);
-    let mut options = build_summary_options(defaults, &model_name);
+    let mut options = build_summary_options(effective, &model_name);
     options.keep_last_n = 0;
 
-    let chunks = split_chunks_by_token_limit(selected_messages.as_slice(), defaults.token_limit);
+    let chunks = split_chunks_by_token_limit(selected_messages.as_slice(), effective.token_limit);
     let split_chunk_count = chunks.len();
     let trigger_type = if chunks.len() > 1 {
         "message_count_limit+token_limit_split".to_string()
@@ -218,7 +224,7 @@ pub async fn process_run(
     })
 }
 
-fn build_summary_options(config: &SummaryJobDefaults, model_name: &str) -> SummaryOptions {
+fn build_summary_options(config: &EffectiveSummaryJobConfig, model_name: &str) -> SummaryOptions {
     let target_summary_tokens = config.target_summary_tokens.max(MIN_TARGET_SUMMARY_TOKENS);
 
     SummaryOptions {
@@ -462,8 +468,8 @@ async fn persist_failed_summary(
     }
 }
 
-async fn resolve_runtime(defaults: &SummaryJobDefaults) -> PromptRunnerRuntime {
-    if let Some(model_config_id) = defaults.model_config_id.as_deref() {
+async fn resolve_runtime(effective: &EffectiveSummaryJobConfig) -> PromptRunnerRuntime {
+    if let Some(model_config_id) = effective.model_config_id.as_deref() {
         match ai_model_configs::get_ai_model_config_by_id(model_config_id).await {
             Ok(Some(model_cfg)) if model_cfg.enabled => {
                 let source = json!({
@@ -477,7 +483,7 @@ async fn resolve_runtime(defaults: &SummaryJobDefaults) -> PromptRunnerRuntime {
                 });
                 return PromptRunnerRuntime::from_ai_model_config(
                     &source,
-                    &defaults.fallback_model,
+                    &effective.fallback_model,
                 );
             }
             Ok(Some(_)) => {
@@ -502,12 +508,12 @@ async fn resolve_runtime(defaults: &SummaryJobDefaults) -> PromptRunnerRuntime {
     }
 
     let fallback = json!({
-        "model_name": defaults.fallback_model,
+        "model_name": effective.fallback_model,
         "provider": "gpt",
         "temperature": 0.2,
         "supports_responses": false,
     });
-    PromptRunnerRuntime::from_ai_model_config(&fallback, &defaults.fallback_model)
+    PromptRunnerRuntime::from_ai_model_config(&fallback, &effective.fallback_model)
 }
 
 #[derive(Clone)]
