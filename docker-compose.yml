@@ -19,6 +19,9 @@ services:
       - ./chat_app_server_rs/config:/app/config:ro
       - ./chat_app_server_rs/data:/app/data
       - ./chat_app_server_rs/logs:/app/logs
+      # Optional: map a host folder into container for file browsing/editing features.
+      # Example: HOST_MOUNT_DIR=/Users/lilei/workspace
+      - ${HOST_MOUNT_DIR:-.}:/workspace:rw
     ports:
       - "3001:3001"
 
