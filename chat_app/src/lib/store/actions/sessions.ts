@@ -66,20 +66,27 @@ const buildDraftUserMessageForStreaming = (
   draftMessage: any,
   finalAssistantMessageId: string,
 ) => {
-  const linkedUserMessageId = typeof draftMessage?.metadata?.historyFinalForUserMessageId === 'string'
-    ? draftMessage.metadata.historyFinalForUserMessageId
+  const linkedUserMessageId = normalizeTurnId(
+    typeof draftMessage?.metadata?.historyFinalForUserMessageId === 'string'
+      ? draftMessage.metadata.historyFinalForUserMessageId
+      : (
+        typeof draftMessage?.metadata?.historyDraftUserMessage?.id === 'string'
+          ? draftMessage.metadata.historyDraftUserMessage.id
+          : ''
+      )
+  );
+  const turnId = typeof draftMessage?.metadata?.conversation_turn_id === 'string'
+    ? draftMessage.metadata.conversation_turn_id
     : '';
-  if (!linkedUserMessageId) {
+  const effectiveUserMessageId = linkedUserMessageId || (turnId ? `temp_user_turn_${turnId}` : '');
+  if (!effectiveUserMessageId) {
     return null;
   }
 
   const draftUser = draftMessage?.metadata?.historyDraftUserMessage || {};
-  const turnId = typeof draftMessage?.metadata?.conversation_turn_id === 'string'
-    ? draftMessage.metadata.conversation_turn_id
-    : '';
 
   return {
-    id: linkedUserMessageId,
+    id: effectiveUserMessageId,
     sessionId,
     role: 'user' as const,
     content: typeof draftUser.content === 'string' ? draftUser.content : '',
@@ -92,7 +99,7 @@ const buildDraftUserMessageForStreaming = (
         toolCallCount: 0,
         thinkingCount: 0,
         processMessageCount: 0,
-        userMessageId: linkedUserMessageId,
+        userMessageId: effectiveUserMessageId,
         ...(turnId ? { turnId } : {}),
         finalAssistantMessageId: finalAssistantMessageId || null,
         expanded: false,
@@ -308,9 +315,15 @@ export function createSessionActions({
 
               const streamingDraftSource = restoredStreamingMessage || localStreamingMessage;
               if (streamingDraftSource) {
-                const linkedUserMessageId = typeof streamingDraftSource.metadata?.historyFinalForUserMessageId === 'string'
-                  ? streamingDraftSource.metadata.historyFinalForUserMessageId
-                  : '';
+                const linkedUserMessageId = normalizeTurnId(
+                  typeof streamingDraftSource.metadata?.historyFinalForUserMessageId === 'string'
+                    ? streamingDraftSource.metadata.historyFinalForUserMessageId
+                    : (
+                      typeof streamingDraftSource.metadata?.historyDraftUserMessage?.id === 'string'
+                        ? streamingDraftSource.metadata.historyDraftUserMessage.id
+                        : ''
+                    ),
+                );
                 const linkedTurnId = normalizeTurnId(
                   streamingDraftSource.metadata?.historyFinalForTurnId
                   || streamingDraftSource.metadata?.conversation_turn_id,
@@ -336,7 +349,7 @@ export function createSessionActions({
                   }
                 }
 
-                if (linkedUserMessageId && !linkedUserMessage) {
+                if ((linkedUserMessageId || linkedTurnId) && !linkedUserMessage) {
                   const draftUserMessage = buildDraftUserMessageForStreaming(
                     sessionId,
                     streamingDraftSource,

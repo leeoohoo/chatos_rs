@@ -35,6 +35,7 @@ type ToggleTurnProcessOptions = {
   forceExpand?: boolean;
   forceCollapse?: boolean;
 };
+const turnProcessLoadInFlight = new Map<string, Promise<void>>();
 
 const countLoadedBaseMessages = (messages: any[]): number => (
   (messages || []).filter((message: any) => !message?.metadata?.historyProcessUserMessageId).length
@@ -261,12 +262,22 @@ export function createMessageActions({ set, get, client }: Deps) {
       const turnId = getTurnIdForUserMessage(snapshot.messages, userMessageId);
       const hasProcessInMemory = hasTurnProcessInMemory(snapshot.messages, userMessageId);
       const isLocalOnlyUserMessage = userMessageId.startsWith('temp_user_');
+      const shouldRetryExpandedLoad = (
+        currentState.expanded
+        && !currentState.loaded
+        && !currentState.loading
+        && !hasProcessInMemory
+        && !options.forceCollapse
+        && !options.forceExpand
+      );
       const nextExpanded = options.forceCollapse
         ? false
         : options.forceExpand
           ? true
-          : !currentState.expanded;
-      if (nextExpanded && isLocalOnlyUserMessage) {
+          : shouldRetryExpandedLoad
+            ? true
+            : !currentState.expanded;
+      if (nextExpanded && isLocalOnlyUserMessage && !turnId) {
         set((state: any) => {
           ensureSessionTurnMaps(state, sessionId);
           writeTurnProcessState(
@@ -324,6 +335,31 @@ export function createMessageActions({ set, get, client }: Deps) {
           return;
         }
 
+        const inFlightKey = `${sessionId}::${processKey}`;
+        const existingLoad = turnProcessLoadInFlight.get(inFlightKey);
+        if (existingLoad) {
+          set((state: any) => {
+            ensureSessionTurnMaps(state, sessionId);
+            writeTurnProcessState(
+              state.sessionTurnProcessState[sessionId],
+              processKey,
+              userMessageId,
+              {
+                expanded: true,
+                loaded: false,
+                loading: true,
+              },
+            );
+            state.messages = applyTurnProcessCache(
+              setTurnProcessExpanded(state.messages, userMessageId, true, { processKey }),
+              state.sessionTurnProcessCache?.[sessionId],
+              state.sessionTurnProcessState?.[sessionId],
+            );
+          });
+          await existingLoad;
+          return;
+        }
+
         set((state: any) => {
           ensureSessionTurnMaps(state, sessionId);
           writeTurnProcessState(
@@ -343,83 +379,100 @@ export function createMessageActions({ set, get, client }: Deps) {
           );
         });
 
-        try {
-          const processMessages = await fetchTurnProcessMessages(
-            client,
-            sessionId,
-            userMessageId,
-            { turnId },
-          );
-          set((state: any) => {
-            ensureSessionTurnMaps(state, sessionId);
-            const isStreaming = state.sessionChatState?.[sessionId]?.isStreaming === true;
-            const shouldRetryLater = isStreaming && processMessages.length === 0;
-            writeTurnProcessCache(
-              state.sessionTurnProcessCache[sessionId],
-              processKey,
+        const loadPromise = (async () => {
+          try {
+            const processMessages = await fetchTurnProcessMessages(
+              client,
+              sessionId,
               userMessageId,
-              processMessages,
+              { turnId },
             );
+            set((state: any) => {
+              ensureSessionTurnMaps(state, sessionId);
+              const latestTurnState = readTurnProcessState(
+                state.sessionTurnProcessState?.[sessionId],
+                processKey,
+                userMessageId,
+              );
+              const shouldKeepExpanded = latestTurnState?.expanded === true;
+              const isStreaming = state.sessionChatState?.[sessionId]?.isStreaming === true;
+              const shouldRetryLater = isStreaming && processMessages.length === 0;
+              writeTurnProcessCache(
+                state.sessionTurnProcessCache[sessionId],
+                processKey,
+                userMessageId,
+                processMessages,
+              );
 
-            if (shouldRetryLater) {
+              if (shouldRetryLater) {
+                writeTurnProcessState(
+                  state.sessionTurnProcessState[sessionId],
+                  processKey,
+                  userMessageId,
+                  {
+                    expanded: shouldKeepExpanded,
+                    loaded: false,
+                    loading: false,
+                  },
+                );
+                state.messages = applyTurnProcessCache(
+                  setTurnProcessExpanded(state.messages, userMessageId, shouldKeepExpanded, { processKey }),
+                  state.sessionTurnProcessCache?.[sessionId],
+                  state.sessionTurnProcessState?.[sessionId],
+                );
+                return;
+              }
+
               writeTurnProcessState(
                 state.sessionTurnProcessState[sessionId],
                 processKey,
                 userMessageId,
                 {
-                  expanded: true,
+                  expanded: shouldKeepExpanded,
+                  loaded: true,
+                  loading: false,
+                },
+              );
+
+              state.messages = mergeTurnProcessMessages(
+                state.messages,
+                userMessageId,
+                processMessages,
+                shouldKeepExpanded,
+                { processKey },
+              );
+            });
+          } catch (error) {
+            console.error('Failed to load turn process messages:', error);
+            set((state: any) => {
+              ensureSessionTurnMaps(state, sessionId);
+              writeTurnProcessState(
+                state.sessionTurnProcessState[sessionId],
+                processKey,
+                userMessageId,
+                {
+                  expanded: false,
                   loaded: false,
                   loading: false,
                 },
               );
               state.messages = applyTurnProcessCache(
-                setTurnProcessExpanded(state.messages, userMessageId, true, { processKey }),
+                setTurnProcessExpanded(state.messages, userMessageId, false, { processKey }),
                 state.sessionTurnProcessCache?.[sessionId],
                 state.sessionTurnProcessState?.[sessionId],
               );
-              return;
-            }
+              state.error = error instanceof Error ? error.message : 'Failed to load turn process messages';
+            });
+          }
+        })();
 
-            writeTurnProcessState(
-              state.sessionTurnProcessState[sessionId],
-              processKey,
-              userMessageId,
-              {
-                expanded: true,
-                loaded: true,
-                loading: false,
-              },
-            );
-
-            state.messages = mergeTurnProcessMessages(
-              state.messages,
-              userMessageId,
-              processMessages,
-              true,
-              { processKey },
-            );
-          });
-        } catch (error) {
-          console.error('Failed to load turn process messages:', error);
-          set((state: any) => {
-            ensureSessionTurnMaps(state, sessionId);
-            writeTurnProcessState(
-              state.sessionTurnProcessState[sessionId],
-              processKey,
-              userMessageId,
-              {
-                expanded: false,
-                loaded: false,
-                loading: false,
-              },
-            );
-            state.messages = applyTurnProcessCache(
-              setTurnProcessExpanded(state.messages, userMessageId, false, { processKey }),
-              state.sessionTurnProcessCache?.[sessionId],
-              state.sessionTurnProcessState?.[sessionId],
-            );
-            state.error = error instanceof Error ? error.message : 'Failed to load turn process messages';
-          });
+        turnProcessLoadInFlight.set(inFlightKey, loadPromise);
+        try {
+          await loadPromise;
+        } finally {
+          if (turnProcessLoadInFlight.get(inFlightKey) === loadPromise) {
+            turnProcessLoadInFlight.delete(inFlightKey);
+          }
         }
 
         return;

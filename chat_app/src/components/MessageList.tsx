@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { MessageItem } from './MessageItem';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { MessageItem, type DerivedProcessStats } from './MessageItem';
 import { LoadingSpinner } from './LoadingSpinner';
 // import { cn } from '../lib/utils';
 import type { Message, MessageListProps } from '../types';
@@ -7,16 +7,24 @@ import type { Message, MessageListProps } from '../types';
 const normalizeTurnId = (value: unknown): string => (
   typeof value === 'string' ? value.trim() : ''
 );
+const normalizeMetaId = (value: unknown): string => (
+  typeof value === 'string' ? value.trim() : ''
+);
+const MESSAGE_WINDOW_EXPAND_TOP_OFFSET = 120;
+const ESTIMATED_MESSAGE_ROW_HEIGHT = 88;
+const MESSAGE_WINDOW_MIN_SIZE = 120;
+const MESSAGE_WINDOW_MAX_SIZE = 280;
+const MESSAGE_WINDOW_OVERSCAN_ROWS = 24;
+const MESSAGE_WINDOW_THRESHOLD_EXTRA = 48;
 
 export const MessageList: React.FC<MessageListProps> = ({
+  sessionId,
   messages,
   isLoading = false,
   isStreaming = false,
   hasMore = false,
   onLoadMore,
   onToggleTurnProcess,
-  activeTurnProcessUserMessageId,
-  loadingTurnProcessUserMessageId,
   onMessageEdit,
   onMessageDelete,
   customRenderer,
@@ -24,19 +32,35 @@ export const MessageList: React.FC<MessageListProps> = ({
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const scrollRafRef = useRef<number | null>(null);
+  const expandingWindowRef = useRef(false);
+  const prevVisibleCountRef = useRef(0);
   const [autoScroll, setAutoScroll] = useState<boolean>(true);
   const [isAtBottom, setIsAtBottom] = useState<boolean>(true);
+  const [renderStartIndex, setRenderStartIndex] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(0);
   const visibleMessages = useMemo(
     () => (messages || []).filter((message) => {
       const metadata = (message as any)?.metadata;
       if (metadata?.hidden) return false;
       if (message.role === 'tool') return false;
-      // 过程消息统一由右侧抽屉展示，不在主聊天流中展开
-      if (metadata?.historyProcessUserMessageId || metadata?.historyProcessTurnId) return false;
       return true;
     }),
     [messages]
   );
+  const windowSize = useMemo(() => {
+    const estimatedRows = Math.ceil((viewportHeight || 960) / ESTIMATED_MESSAGE_ROW_HEIGHT);
+    const candidate = estimatedRows + MESSAGE_WINDOW_OVERSCAN_ROWS;
+    return Math.min(MESSAGE_WINDOW_MAX_SIZE, Math.max(MESSAGE_WINDOW_MIN_SIZE, candidate));
+  }, [viewportHeight]);
+  const windowThreshold = windowSize + MESSAGE_WINDOW_THRESHOLD_EXTRA;
+  const windowStep = Math.max(60, Math.floor(windowSize * 0.72));
+  const shouldWindowMessages = visibleMessages.length > windowThreshold;
+  const boundedRenderStartIndex = shouldWindowMessages
+    ? Math.min(renderStartIndex, Math.max(0, visibleMessages.length - 1))
+    : 0;
+  const renderedMessages = shouldWindowMessages
+    ? visibleMessages.slice(boundedRenderStartIndex)
+    : visibleMessages;
   const lastVisibleIndex = visibleMessages.length - 1;
   const getTimeValue = (value: unknown): number => {
     if (!value) return 0;
@@ -64,6 +88,37 @@ export const MessageList: React.FC<MessageListProps> = ({
     });
     return map;
   }, [toolResultById]);
+  const {
+    assistantToolCallById,
+    assistantToolCallMetaById,
+  } = useMemo(() => {
+    const byId = new Map<string, any>();
+    const metaById = new Map<string, { messageId: string; time: number }>();
+    for (const message of messages || []) {
+      if (message.role !== 'assistant') {
+        continue;
+      }
+      const time = message.updatedAt ? getTimeValue(message.updatedAt) : getTimeValue(message.createdAt);
+      const topLevel = Array.isArray((message as any).toolCalls) ? (message as any).toolCalls : [];
+      const metadataLevel = Array.isArray(message.metadata?.toolCalls) ? message.metadata.toolCalls : [];
+      [...metadataLevel, ...topLevel].forEach((toolCall: any) => {
+        const id = normalizeMetaId(toolCall?.id);
+        if (!id) {
+          return;
+        }
+        if (!byId.has(id)) {
+          byId.set(id, toolCall);
+        }
+        if (!metaById.has(id)) {
+          metaById.set(id, { messageId: message.id, time });
+        }
+      });
+    }
+    return {
+      assistantToolCallById: byId,
+      assistantToolCallMetaById: metaById,
+    };
+  }, [messages]);
   const toolResultKeyByMessageId = useMemo(() => {
     const map = new Map<string, string>();
     for (const message of visibleMessages) {
@@ -82,11 +137,42 @@ export const MessageList: React.FC<MessageListProps> = ({
     }
     return map;
   }, [visibleMessages, toolResultMetaById]);
-
-  const processSignalByUserMessageId = useMemo(() => {
+  const toolCallLookupKeyByMessageId = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const message of visibleMessages) {
+      const segments = Array.isArray(message.metadata?.contentSegments) ? message.metadata.contentSegments : [];
+      const toolCallIds = segments
+        .filter((segment: any) => segment?.type === 'tool_call')
+        .map((segment: any) => normalizeMetaId(segment?.toolCallId))
+        .filter(Boolean);
+      if (toolCallIds.length === 0) {
+        map.set(message.id, '');
+        continue;
+      }
+      const key = [...new Set(toolCallIds)]
+        .map((toolCallId) => {
+          const meta = assistantToolCallMetaById.get(toolCallId);
+          return `${toolCallId}:${meta?.messageId ?? ''}:${meta?.time ?? 0}`;
+        })
+        .join('|');
+      map.set(message.id, key);
+    }
+    return map;
+  }, [visibleMessages, assistantToolCallMetaById]);
+  const {
+    derivedProcessStatsByUserId,
+    processSignalByUserMessageId,
+  } = useMemo(() => {
     const signalMap = new Map<string, string>();
     const userMessageIds = new Set<string>();
     const turnToUserMessageId = new Map<string, string>();
+    const assistantIdToUserMessageId = new Map<string, string>();
+    const mutableStats = new Map<string, {
+      hasStreamingAssistant: boolean;
+      thinkingCount: number;
+      processMessageCount: number;
+      toolCallIds: Set<string>;
+    }>();
 
     for (const message of messages || []) {
       if (message.role !== 'user') {
@@ -94,12 +180,24 @@ export const MessageList: React.FC<MessageListProps> = ({
       }
       userMessageIds.add(message.id);
       signalMap.set(message.id, '');
+      mutableStats.set(message.id, {
+        hasStreamingAssistant: false,
+        thinkingCount: 0,
+        processMessageCount: 0,
+        toolCallIds: new Set<string>(),
+      });
       const turnId = normalizeTurnId(
         (message as any)?.metadata?.conversation_turn_id
         || (message as any)?.metadata?.historyProcess?.turnId,
       );
       if (turnId && !turnToUserMessageId.has(turnId)) {
         turnToUserMessageId.set(turnId, message.id);
+      }
+      const finalAssistantMessageId = normalizeMetaId(
+        (message as any)?.metadata?.historyProcess?.finalAssistantMessageId,
+      );
+      if (finalAssistantMessageId && !assistantIdToUserMessageId.has(finalAssistantMessageId)) {
+        assistantIdToUserMessageId.set(finalAssistantMessageId, message.id);
       }
     }
 
@@ -111,30 +209,62 @@ export const MessageList: React.FC<MessageListProps> = ({
       signalMap.set(userMessageId, prev ? `${prev}||${piece}` : piece);
     };
 
-    for (const message of messages || []) {
-      const metadata = (message as any)?.metadata || {};
-
+    const resolveLinkedUserMessageId = (message: Message, metadata: Record<string, any>): string => {
       if (message.role === 'assistant') {
-        let linkedUserMessageId = typeof metadata.historyFinalForUserMessageId === 'string'
-          ? metadata.historyFinalForUserMessageId
-          : '';
+        let linkedUserMessageId = normalizeMetaId(metadata.historyProcessUserMessageId);
         if (!linkedUserMessageId || !userMessageIds.has(linkedUserMessageId)) {
-          const linkedTurnId = normalizeTurnId(
-            metadata.historyFinalForTurnId || metadata.conversation_turn_id,
+          const processTurnId = normalizeTurnId(
+            metadata.historyProcessTurnId || metadata.conversation_turn_id,
           );
-          if (linkedTurnId) {
-            linkedUserMessageId = turnToUserMessageId.get(linkedTurnId) || '';
+          if (processTurnId) {
+            linkedUserMessageId = turnToUserMessageId.get(processTurnId) || '';
           }
         }
         if (!linkedUserMessageId || !userMessageIds.has(linkedUserMessageId)) {
-          continue;
+          linkedUserMessageId = normalizeMetaId(metadata.historyFinalForUserMessageId);
         }
+        if (!linkedUserMessageId || !userMessageIds.has(linkedUserMessageId)) {
+          const finalTurnId = normalizeTurnId(
+            metadata.historyFinalForTurnId || metadata.conversation_turn_id,
+          );
+          if (finalTurnId) {
+            linkedUserMessageId = turnToUserMessageId.get(finalTurnId) || '';
+          }
+        }
+        if (!linkedUserMessageId || !userMessageIds.has(linkedUserMessageId)) {
+          linkedUserMessageId = assistantIdToUserMessageId.get(message.id) || '';
+        }
+        return userMessageIds.has(linkedUserMessageId) ? linkedUserMessageId : '';
+      }
 
+      let linkedUserMessageId = normalizeMetaId(metadata.historyProcessUserMessageId);
+      if (!linkedUserMessageId || !userMessageIds.has(linkedUserMessageId)) {
+        const processTurnId = normalizeTurnId(
+          metadata.historyProcessTurnId || metadata.conversation_turn_id,
+        );
+        if (processTurnId) {
+          linkedUserMessageId = turnToUserMessageId.get(processTurnId) || '';
+        }
+      }
+      return userMessageIds.has(linkedUserMessageId) ? linkedUserMessageId : '';
+    };
+
+    for (const message of messages || []) {
+      const metadata = (message as any)?.metadata || {};
+      const linkedUserMessageId = resolveLinkedUserMessageId(message, metadata);
+      if (!linkedUserMessageId) {
+        continue;
+      }
+
+      if (message.role === 'assistant') {
         const segments = Array.isArray(metadata.contentSegments)
           ? metadata.contentSegments
           : [];
-        const toolCalls = Array.isArray(metadata.toolCalls)
+        const metadataToolCalls = Array.isArray(metadata.toolCalls)
           ? metadata.toolCalls
+          : [];
+        const topLevelToolCalls = Array.isArray((message as any).toolCalls)
+          ? (message as any).toolCalls
           : [];
         const thinkingCount = segments.filter((segment: any) => (
           segment?.type === 'thinking'
@@ -147,24 +277,46 @@ export const MessageList: React.FC<MessageListProps> = ({
         )).length;
         appendSignal(
           linkedUserMessageId,
-          `A:${message.id}:${message.status || ''}:${toolCalls.length}:${toolCallSegmentCount}:${thinkingCount}:${segments.length}`,
+          `A:${message.id}:${message.status || ''}:${metadataToolCalls.length}:${toolCallSegmentCount}:${thinkingCount}:${segments.length}`,
         );
-        continue;
-      }
 
-      const processUserMessageId = typeof metadata.historyProcessUserMessageId === 'string'
-        ? metadata.historyProcessUserMessageId
-        : '';
-      const processTurnId = normalizeTurnId(
-        metadata.historyProcessTurnId || metadata.conversation_turn_id,
-      );
-      let linkedUserMessageId = processUserMessageId;
-      if (!linkedUserMessageId || !userMessageIds.has(linkedUserMessageId)) {
-        if (processTurnId) {
-          linkedUserMessageId = turnToUserMessageId.get(processTurnId) || '';
+        const stats = mutableStats.get(linkedUserMessageId);
+        if (!stats) {
+          continue;
         }
-      }
-      if (!linkedUserMessageId || !userMessageIds.has(linkedUserMessageId)) {
+
+        if (message.status === 'streaming') {
+          stats.hasStreamingAssistant = true;
+        }
+
+        const isProcessAssistant = Boolean(metadata.historyProcessUserMessageId || metadata.historyProcessTurnId);
+        if (isProcessAssistant && metadata.historyProcessPlaceholder !== true) {
+          stats.processMessageCount += 1;
+        }
+
+        [...metadataToolCalls, ...topLevelToolCalls].forEach((toolCall: any) => {
+          const id = normalizeMetaId(toolCall?.id);
+          if (id) {
+            stats.toolCallIds.add(id);
+          }
+        });
+
+        segments.forEach((segment: any) => {
+          if (segment?.type === 'tool_call') {
+            const id = normalizeMetaId(segment?.toolCallId);
+            if (id) {
+              stats.toolCallIds.add(id);
+            }
+            return;
+          }
+          if (
+            segment?.type === 'thinking'
+            && typeof segment?.content === 'string'
+            && segment.content.trim().length > 0
+          ) {
+            stats.thinkingCount += 1;
+          }
+        });
         continue;
       }
 
@@ -174,8 +326,119 @@ export const MessageList: React.FC<MessageListProps> = ({
       );
     }
 
-    return signalMap;
+    const derivedStats = new Map<string, DerivedProcessStats>();
+    mutableStats.forEach((stats, userMessageId) => {
+      const toolCallCount = stats.toolCallIds.size;
+      derivedStats.set(userMessageId, {
+        hasProcess: toolCallCount > 0 || stats.thinkingCount > 0 || stats.processMessageCount > 0,
+        hasStreamingAssistant: stats.hasStreamingAssistant,
+        toolCallCount,
+        thinkingCount: stats.thinkingCount,
+        processMessageCount: stats.processMessageCount,
+      });
+    });
+
+    return {
+      derivedProcessStatsByUserId: derivedStats,
+      processSignalByUserMessageId: signalMap,
+    };
   }, [messages]);
+
+  useEffect(() => {
+    const target = scrollRef.current;
+    if (!target) {
+      return;
+    }
+
+    const updateHeight = () => {
+      setViewportHeight((prev) => {
+        const next = target.clientHeight || 0;
+        return prev === next ? prev : next;
+      });
+    };
+
+    updateHeight();
+
+    if (typeof ResizeObserver === 'undefined') {
+      return undefined;
+    }
+
+    const observer = new ResizeObserver(() => {
+      updateHeight();
+    });
+    observer.observe(target);
+
+    return () => observer.disconnect();
+  }, [sessionId]);
+
+  useEffect(() => {
+    const nextCount = visibleMessages.length;
+    const previousCount = prevVisibleCountRef.current;
+    prevVisibleCountRef.current = nextCount;
+
+    if (nextCount <= windowThreshold) {
+      setRenderStartIndex(0);
+      return;
+    }
+
+    const latestStart = Math.max(0, nextCount - windowSize);
+    setRenderStartIndex((prev) => {
+      // 初次进入长会话时直接启用窗口渲染
+      if (previousCount === 0) {
+        return latestStart;
+      }
+      // 用户已展开到最前面时，保持不折叠
+      if (prev === 0) {
+        return 0;
+      }
+      // 在底部连续对话时，窗口跟随最新消息，避免渲染集合持续膨胀
+      if (isStreaming || autoScroll || isAtBottom) {
+        return latestStart;
+      }
+      return Math.min(prev, latestStart);
+    });
+  }, [visibleMessages.length, isStreaming, autoScroll, isAtBottom, windowSize, windowThreshold]);
+
+  useEffect(() => {
+    const nextCount = visibleMessages.length;
+    if (nextCount <= windowThreshold) {
+      setRenderStartIndex(0);
+      return;
+    }
+    setRenderStartIndex(Math.max(0, nextCount - windowSize));
+  }, [sessionId, visibleMessages.length, windowSize, windowThreshold]);
+
+  const expandRenderedWindow = useCallback(() => {
+    if (!shouldWindowMessages || boundedRenderStartIndex <= 0) {
+      return;
+    }
+
+    const scroller = scrollRef.current;
+    if (expandingWindowRef.current) {
+      return;
+    }
+    if (!scroller) {
+      setRenderStartIndex((prev) => Math.max(0, prev - windowStep));
+      return;
+    }
+
+    expandingWindowRef.current = true;
+    const prevScrollHeight = scroller.scrollHeight;
+    setRenderStartIndex((prev) => Math.max(0, prev - windowStep));
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const nextScroller = scrollRef.current;
+        if (nextScroller) {
+          const delta = nextScroller.scrollHeight - prevScrollHeight;
+          if (delta > 0) {
+            nextScroller.scrollTop += delta;
+          }
+        }
+        expandingWindowRef.current = false;
+      });
+    });
+  }, [boundedRenderStartIndex, shouldWindowMessages, windowStep]);
 
   const measureAtBottom = () => {
     const el = scrollRef.current;
@@ -213,10 +476,19 @@ export const MessageList: React.FC<MessageListProps> = ({
     if (scrollRafRef.current !== null) return;
     scrollRafRef.current = requestAnimationFrame(() => {
       scrollRafRef.current = null;
+      const el = scrollRef.current;
+      if (!el) return;
       const atBottom = measureAtBottom();
       setIsAtBottom(prev => (prev === atBottom ? prev : atBottom));
       if (!atBottom) {
         setAutoScroll(prev => (prev ? false : prev));
+      }
+      if (
+        shouldWindowMessages
+        && boundedRenderStartIndex > 0
+        && el.scrollTop <= MESSAGE_WINDOW_EXPAND_TOP_OFFSET
+      ) {
+        expandRenderedWindow();
       }
     });
   };
@@ -232,6 +504,7 @@ export const MessageList: React.FC<MessageListProps> = ({
         cancelAnimationFrame(scrollRafRef.current);
         scrollRafRef.current = null;
       }
+      expandingWindowRef.current = false;
     };
   }, []);
 
@@ -278,24 +551,39 @@ export const MessageList: React.FC<MessageListProps> = ({
             </button>
           </div>
         )}
-        {visibleMessages.map((message, index) => (
+        {shouldWindowMessages && boundedRenderStartIndex > 0 && (
+          <div className="flex justify-center mb-2">
+            <button
+              type="button"
+              onClick={expandRenderedWindow}
+              className="text-sm px-3 py-1 rounded border border-border text-foreground hover:bg-accent"
+            >
+              显示更早消息（{boundedRenderStartIndex}）
+            </button>
+          </div>
+        )}
+        {renderedMessages.map((message, index) => {
+          const globalIndex = boundedRenderStartIndex + index;
+          return (
           <MessageItem
             key={message.id}
             message={message}
-            isLast={index === lastVisibleIndex}
-            isStreaming={isStreaming && index === lastVisibleIndex}
+            isLast={globalIndex === lastVisibleIndex}
+            isStreaming={isStreaming && globalIndex === lastVisibleIndex}
             onEdit={onMessageEdit}
             onDelete={onMessageDelete}
             onToggleTurnProcess={onToggleTurnProcess}
-            activeTurnProcessUserMessageId={activeTurnProcessUserMessageId}
-            loadingTurnProcessUserMessageId={loadingTurnProcessUserMessageId}
             allMessages={messages}
+            derivedProcessStatsByUserId={derivedProcessStatsByUserId}
             toolResultById={toolResultById}
+            assistantToolCallsById={assistantToolCallById}
             toolResultKey={toolResultKeyByMessageId.get(message.id) || ''}
+            toolCallLookupKey={toolCallLookupKeyByMessageId.get(message.id) || ''}
             processSignal={processSignalByUserMessageId.get(message.id) || ''}
             customRenderer={customRenderer}
           />
-        ))}
+          );
+        })}
         
         {isLoading && (
           <div className="flex justify-start">

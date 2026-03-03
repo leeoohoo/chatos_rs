@@ -130,6 +130,14 @@ const ToolCallTimeline: React.FC<ToolCallTimelineProps> = ({
 };
 
 
+export type DerivedProcessStats = {
+  hasProcess: boolean;
+  hasStreamingAssistant: boolean;
+  toolCallCount: number;
+  thinkingCount: number;
+  processMessageCount: number;
+};
+
 
 interface MessageItemProps {
   message: Message;
@@ -138,12 +146,13 @@ interface MessageItemProps {
   onEdit?: (messageId: string, content: string) => void;
   onDelete?: (messageId: string) => void;
   onToggleTurnProcess?: (userMessageId: string) => void;
-  activeTurnProcessUserMessageId?: string | null;
-  loadingTurnProcessUserMessageId?: string | null;
   renderContext?: 'chat' | 'process_drawer';
   allMessages?: Message[]; // 添加所有消息的引用
+  derivedProcessStatsByUserId?: Map<string, DerivedProcessStats>;
   toolResultById?: Map<string, Message>;
+  assistantToolCallsById?: Map<string, ToolCall>;
   toolResultKey?: string;
+  toolCallLookupKey?: string;
   processSignal?: string;
   customRenderer?: {
     renderMessage?: (message: Message) => React.ReactNode;
@@ -158,11 +167,11 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
   onEdit,
   onDelete,
   onToggleTurnProcess,
-  activeTurnProcessUserMessageId = null,
-  loadingTurnProcessUserMessageId = null,
   renderContext = 'chat',
   allMessages = [],
+  derivedProcessStatsByUserId,
   toolResultById,
+  assistantToolCallsById,
   customRenderer,
 }) => {
   const [isEditing, setIsEditing] = useState(false);
@@ -188,60 +197,134 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
 
   const historyProcess = isUser ? (message.metadata?.historyProcess as any) : null;
 
+  const normalizeMetaId = (value: unknown): string => (
+    typeof value === 'string' ? value.trim() : ''
+  );
+  const emptyDerivedStats: DerivedProcessStats = {
+    hasProcess: false,
+    hasStreamingAssistant: false,
+    toolCallCount: 0,
+    thinkingCount: 0,
+    processMessageCount: 0,
+  };
+
   // 部分历史数据只把过程信息保存在最终assistant消息里，user消息的historyProcess.hasProcess可能为false
   const derivedProcessStats = useMemo(() => {
     if (!isUser) {
-      return { hasProcess: false, toolCallCount: 0, thinkingCount: 0 };
+      return emptyDerivedStats;
     }
 
-    const rawTurnId = message.metadata?.conversation_turn_id || message.metadata?.historyProcess?.turnId;
-    const userTurnId = typeof rawTurnId === 'string'
-      ? rawTurnId.trim()
-      : '';
+    const precomputed = derivedProcessStatsByUserId?.get(message.id);
+    if (precomputed) {
+      return precomputed;
+    }
+
+    const finalAssistantMessageId = normalizeMetaId(message.metadata?.historyProcess?.finalAssistantMessageId);
+    const userTurnId = normalizeMetaId(
+      message.metadata?.conversation_turn_id || message.metadata?.historyProcess?.turnId,
+    );
+    const linkedProcessAssistants = allMessages.filter((candidate) => (
+      candidate.role === 'assistant'
+      && (
+        candidate.metadata?.historyProcessUserMessageId === message.id
+        || (userTurnId && candidate.metadata?.historyProcessTurnId === userTurnId)
+      )
+      && candidate.metadata?.historyProcessPlaceholder !== true
+    ));
+
     const finalAssistantForUser = allMessages.find((candidate) => (
       candidate.role === 'assistant' && (
-        candidate.metadata?.historyFinalForUserMessageId === message.id
-        || (userTurnId && (
-          candidate.metadata?.historyFinalForTurnId === userTurnId
-          || candidate.metadata?.conversation_turn_id === userTurnId
-        ))
+        !candidate.metadata?.historyProcessUserMessageId
+        && !candidate.metadata?.historyProcessTurnId
+        && (
+          (finalAssistantMessageId && candidate.id === finalAssistantMessageId)
+          || candidate.metadata?.historyFinalForUserMessageId === message.id
+          || (userTurnId && (
+            candidate.metadata?.historyFinalForTurnId === userTurnId
+            || candidate.metadata?.conversation_turn_id === userTurnId
+          ))
+        )
       )
     ));
 
-    if (!finalAssistantForUser) {
-      return { hasProcess: false, toolCallCount: 0, thinkingCount: 0 };
+    const assistantPool = [...linkedProcessAssistants];
+    if (finalAssistantForUser && !assistantPool.some((candidate) => candidate.id === finalAssistantForUser.id)) {
+      assistantPool.push(finalAssistantForUser);
     }
 
-    const toolCalls = Array.isArray(finalAssistantForUser.metadata?.toolCalls)
-      ? finalAssistantForUser.metadata.toolCalls
-      : [];
-    const segments = Array.isArray(finalAssistantForUser.metadata?.contentSegments)
-      ? finalAssistantForUser.metadata.contentSegments
-      : [];
+    if (assistantPool.length === 0) {
+      return emptyDerivedStats;
+    }
 
-    const toolCallSegmentCount = segments.filter((segment: any) => (
-      segment?.type === 'tool_call' && Boolean(segment?.toolCallId)
-    )).length;
-    const thinkingSegmentCount = segments.filter((segment: any) => (
-      segment?.type === 'thinking'
-      && typeof segment?.content === 'string'
-      && segment.content.trim().length > 0
-    )).length;
+    let hasStreamingAssistant = false;
+    let thinkingCount = 0;
+    const toolCallIds = new Set<string>();
 
-    const toolCallCount = Math.max(toolCalls.length, toolCallSegmentCount);
+    assistantPool.forEach((assistantMessage) => {
+      if (assistantMessage.status === 'streaming') {
+        hasStreamingAssistant = true;
+      }
+
+      const toolCalls = Array.isArray(assistantMessage.metadata?.toolCalls)
+        ? assistantMessage.metadata.toolCalls
+        : [];
+      toolCalls.forEach((toolCall: any) => {
+        const id = normalizeMetaId(toolCall?.id);
+        if (id) {
+          toolCallIds.add(id);
+        }
+      });
+
+      const segments = Array.isArray(assistantMessage.metadata?.contentSegments)
+        ? assistantMessage.metadata.contentSegments
+        : [];
+      segments.forEach((segment: any) => {
+        if (segment?.type === 'tool_call') {
+          const id = normalizeMetaId(segment?.toolCallId);
+          if (id) {
+            toolCallIds.add(id);
+          }
+          return;
+        }
+        if (
+          segment?.type === 'thinking'
+          && typeof segment?.content === 'string'
+          && segment.content.trim().length > 0
+        ) {
+          thinkingCount += 1;
+        }
+      });
+    });
+
     return {
-      hasProcess: toolCallCount > 0 || thinkingSegmentCount > 0,
-      toolCallCount,
-      thinkingCount: thinkingSegmentCount,
+      hasProcess: toolCallIds.size > 0 || thinkingCount > 0 || linkedProcessAssistants.length > 0,
+      hasStreamingAssistant,
+      toolCallCount: toolCallIds.size,
+      thinkingCount,
+      processMessageCount: linkedProcessAssistants.length,
     };
-  }, [allMessages, isUser, message.id]);
+  }, [
+    allMessages,
+    isUser,
+    message.id,
+    message.metadata?.conversation_turn_id,
+    message.metadata?.historyProcess?.finalAssistantMessageId,
+    message.metadata?.historyProcess?.turnId,
+    derivedProcessStatsByUserId,
+  ]);
 
-  const hasHistoryProcess = Boolean(historyProcess?.hasProcess || derivedProcessStats.hasProcess);
+  const hasHistoryProcess = Boolean(
+    historyProcess?.hasProcess
+    || historyProcess?.loading
+    || derivedProcessStats.hasProcess
+    || derivedProcessStats.hasStreamingAssistant
+    || derivedProcessStats.processMessageCount > 0
+  );
   const historyProcessExpanded = isUser
-    ? activeTurnProcessUserMessageId === message.id
+    ? historyProcess?.expanded === true
     : false;
   const historyProcessLoading = isUser
-    ? loadingTurnProcessUserMessageId === message.id || historyProcess?.loading === true
+    ? historyProcess?.loading === true
     : false;
   const historyToolCount = Math.max(
     Number(historyProcess?.toolCallCount || 0),
@@ -252,6 +335,52 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
     derivedProcessStats.thinkingCount,
   );
 
+  const isProcessAssistant = (
+    isAssistant
+    && Boolean(message.metadata?.historyProcessUserMessageId || message.metadata?.historyProcessTurnId)
+  );
+  const linkedUserExpandedForFinalAssistant = useMemo(() => {
+    if (!isAssistant || isProcessAssistant) {
+      return false;
+    }
+
+    const linkedUserMessageId = normalizeMetaId(message.metadata?.historyFinalForUserMessageId);
+    const linkedTurnId = normalizeMetaId(
+      message.metadata?.historyFinalForTurnId || message.metadata?.conversation_turn_id,
+    );
+
+    const linkedUser = allMessages.find((candidate) => {
+      if (candidate.role !== 'user') {
+        return false;
+      }
+      if (linkedUserMessageId && candidate.id === linkedUserMessageId) {
+        return true;
+      }
+      const candidateFinalAssistantId = normalizeMetaId(
+        candidate.metadata?.historyProcess?.finalAssistantMessageId,
+      );
+      if (candidateFinalAssistantId && candidateFinalAssistantId === message.id) {
+        return true;
+      }
+      if (!linkedTurnId) {
+        return false;
+      }
+      const candidateTurnId = normalizeMetaId(
+        candidate.metadata?.conversation_turn_id || candidate.metadata?.historyProcess?.turnId,
+      );
+      return candidateTurnId === linkedTurnId;
+    });
+
+    return linkedUser?.metadata?.historyProcess?.expanded === true;
+  }, [
+    allMessages,
+    isAssistant,
+    isProcessAssistant,
+    message.metadata?.conversation_turn_id,
+    message.metadata?.historyFinalForTurnId,
+    message.metadata?.historyFinalForUserMessageId,
+  ]);
+
   const isTurnLinkedAssistant = (
     isAssistant
     && Boolean(
@@ -261,7 +390,12 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
       || message.metadata?.historyProcessTurnId
     )
   );
-  const collapseAssistantProcessByDefault = isTurnLinkedAssistant && renderContext !== 'process_drawer';
+  const collapseAssistantProcessByDefault = (
+    isTurnLinkedAssistant
+    && !isProcessAssistant
+    && !linkedUserExpandedForFinalAssistant
+    && renderContext !== 'process_drawer'
+  );
 
   // 隐藏tool角色的消息，因为它们应该作为工具调用的结果显示
   if (isTool) {
@@ -455,11 +589,33 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
 
                   if (segment.type === 'tool_call') {
                     const groupedToolCalls: ToolCall[] = [];
+                    const groupedToolCallIds = new Set<string>();
                     let j = index;
                     while (j < contentSegments.length && contentSegments[j].type === 'tool_call') {
                       const seg = contentSegments[j];
-                      const toolCall = seg.toolCallId ? toolCallsById.get(seg.toolCallId) : undefined;
-                      if (toolCall) groupedToolCalls.push(toolCall);
+                      const toolCallId = normalizeMetaId(seg?.toolCallId);
+                      if (toolCallId && !groupedToolCallIds.has(toolCallId)) {
+                        groupedToolCallIds.add(toolCallId);
+                        const matchedToolCall = toolCallsById.get(toolCallId) || assistantToolCallsById?.get(toolCallId);
+                        if (matchedToolCall) {
+                          groupedToolCalls.push({
+                            ...matchedToolCall,
+                            id: toolCallId,
+                            messageId: matchedToolCall.messageId || message.id,
+                            name: matchedToolCall.name || 'unknown_tool',
+                            arguments: matchedToolCall.arguments ?? {},
+                            createdAt: matchedToolCall.createdAt || message.createdAt,
+                          } as ToolCall);
+                        } else {
+                          groupedToolCalls.push({
+                            id: toolCallId,
+                            messageId: message.id,
+                            name: 'unknown_tool',
+                            arguments: {},
+                            createdAt: message.createdAt,
+                          } as ToolCall);
+                        }
+                      }
                       j += 1;
                     }
 
@@ -704,10 +860,9 @@ export const MessageItem = memo(MessageItemComponent, (prevProps, nextProps) => 
     getTime(prevProps.message.updatedAt) === getTime(nextProps.message.updatedAt) &&
     prevProps.isLast === nextProps.isLast &&
     prevProps.isStreaming === nextProps.isStreaming &&
-    (prevProps.activeTurnProcessUserMessageId ?? "") === (nextProps.activeTurnProcessUserMessageId ?? "") &&
-    (prevProps.loadingTurnProcessUserMessageId ?? "") === (nextProps.loadingTurnProcessUserMessageId ?? "") &&
     (prevProps.renderContext ?? 'chat') === (nextProps.renderContext ?? 'chat') &&
     (prevProps.processSignal ?? "") === (nextProps.processSignal ?? "") &&
+    (prevProps.toolCallLookupKey ?? "") === (nextProps.toolCallLookupKey ?? "") &&
     getMetaKey(prevProps.message.metadata) === getMetaKey(nextProps.message.metadata) &&
     getToolCallsKey(prevProps.message) === getToolCallsKey(nextProps.message) &&
     (prevProps.toolResultKey ?? "") === (nextProps.toolResultKey ?? "")

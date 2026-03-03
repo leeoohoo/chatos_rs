@@ -215,21 +215,98 @@ export const TurnProcessDrawer: React.FC<TurnProcessDrawerProps> = ({
   }, [messages, panelOpen, turnId, userMessageId]);
 
   const fallbackProcessMessage = useMemo(() => {
-    if (!panelOpen || !userMessageId || processMessages.length > 0) {
+    if (!panelOpen || !userMessageId) {
       return null;
     }
     return buildFallbackProcessMessage(finalAssistantMessage, userMessageId, turnId);
-  }, [finalAssistantMessage, panelOpen, processMessages.length, turnId, userMessageId]);
+  }, [finalAssistantMessage, panelOpen, turnId, userMessageId]);
 
   const assistantProcessMessages = useMemo(() => {
     const base = processMessages.filter((message) => message.role === 'assistant');
-    if (base.length > 0) {
+    if (!fallbackProcessMessage) {
       return base;
     }
-    if (fallbackProcessMessage) {
+
+    if (base.length === 0) {
       return [fallbackProcessMessage];
     }
-    return [] as Message[];
+
+    const baseToolCallIds = new Set<string>();
+    const baseThinkingContents = new Set<string>();
+
+    base.forEach((message) => {
+      const toolCalls = Array.isArray(message.metadata?.toolCalls) ? message.metadata?.toolCalls : [];
+      toolCalls.forEach((toolCall: any) => {
+        const id = normalizeTurnId(toolCall?.id);
+        if (id) {
+          baseToolCallIds.add(id);
+        }
+      });
+
+      const segments = Array.isArray(message.metadata?.contentSegments)
+        ? message.metadata.contentSegments
+        : [];
+      segments.forEach((segment: any) => {
+        if (segment?.type === 'tool_call') {
+          const id = normalizeTurnId(segment?.toolCallId);
+          if (id) {
+            baseToolCallIds.add(id);
+          }
+          return;
+        }
+        if (segment?.type === 'thinking' && typeof segment?.content === 'string') {
+          const key = segment.content.trim();
+          if (key) {
+            baseThinkingContents.add(key);
+          }
+        }
+      });
+    });
+
+    const fallbackSegments = Array.isArray(fallbackProcessMessage.metadata?.contentSegments)
+      ? fallbackProcessMessage.metadata.contentSegments
+      : [];
+    const missingSegments = fallbackSegments.filter((segment: any) => {
+      if (segment?.type === 'tool_call') {
+        const id = normalizeTurnId(segment?.toolCallId);
+        return id ? !baseToolCallIds.has(id) : false;
+      }
+      if (segment?.type === 'thinking' && typeof segment?.content === 'string') {
+        const key = segment.content.trim();
+        return key ? !baseThinkingContents.has(key) : false;
+      }
+      return false;
+    });
+
+    if (missingSegments.length === 0) {
+      return base;
+    }
+
+    const missingToolCallIds = new Set(
+      missingSegments
+        .filter((segment: any) => segment?.type === 'tool_call')
+        .map((segment: any) => normalizeTurnId(segment?.toolCallId))
+        .filter(Boolean),
+    );
+    const fallbackToolCalls = Array.isArray(fallbackProcessMessage.metadata?.toolCalls)
+      ? fallbackProcessMessage.metadata.toolCalls
+      : [];
+    const missingToolCalls = fallbackToolCalls.filter((toolCall: any) => (
+      missingToolCallIds.has(normalizeTurnId(toolCall?.id))
+    ));
+
+    return [
+      ...base,
+      {
+        ...fallbackProcessMessage,
+        id: `${fallbackProcessMessage.id}__delta`,
+        metadata: {
+          ...(fallbackProcessMessage.metadata || {}),
+          contentSegments: missingSegments,
+          ...(missingToolCalls.length > 0 ? { toolCalls: missingToolCalls } : {}),
+        },
+      },
+    ];
   }, [fallbackProcessMessage, processMessages]);
 
   const toolResultById = useMemo(() => {

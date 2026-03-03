@@ -288,14 +288,13 @@ export interface ChatInterfaceProps {
 }
 
 export interface MessageListProps {
+  sessionId?: string | null;
   messages: Message[];
   isLoading?: boolean;
   isStreaming?: boolean;
   hasMore?: boolean;
   onLoadMore?: () => void;
   onToggleTurnProcess?: (userMessageId: string) => void;
-  activeTurnProcessUserMessageId?: string | null;
-  loadingTurnProcessUserMessageId?: string | null;
   onMessageEdit?: (messageId: string, content: string) => void;
   onMessageDelete?: (messageId: string) => void;
   customRenderer?: {
