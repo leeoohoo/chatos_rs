@@ -14,7 +14,7 @@ COPY chat_app_server_rs/config ./config
 
 RUN cargo build --release
 
-FROM debian:bookworm-slim AS runtime
+FROM debian:bookworm-slim AS runtime-base
 
 WORKDIR /app
 
@@ -33,5 +33,41 @@ ENV NODE_ENV=production \
     OPENAI_BASE_URL=https://api.openai.com/v1
 
 EXPOSE 3001
-
 CMD ["/app/chat_app_server_rs"]
+
+FROM runtime-base AS runtime
+
+FROM runtime-base AS runtime-full
+
+ARG BACKEND_EXTRA_APT_PACKAGES=""
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+      bash \
+      build-essential \
+      cmake \
+      curl \
+      git \
+      iproute2 \
+      iputils-ping \
+      jq \
+      less \
+      nano \
+      net-tools \
+      pkg-config \
+      procps \
+      python3 \
+      python3-dev \
+      python3-pip \
+      python3-venv \
+      openjdk-17-jdk \
+      maven \
+      rsync \
+      unzip \
+      vim \
+      wget \
+      zip \
+    && if [ -n "$BACKEND_EXTRA_APT_PACKAGES" ]; then apt-get install -y --no-install-recommends $BACKEND_EXTRA_APT_PACKAGES; fi \
+    && ln -sf /usr/bin/python3 /usr/local/bin/python \
+    && ln -sf /usr/bin/pip3 /usr/local/bin/pip \
+    && rm -rf /var/lib/apt/lists/*

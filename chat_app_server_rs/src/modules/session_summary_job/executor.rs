@@ -440,6 +440,50 @@ fn build_previous_summary_context_messages(previous_summary_context: &[String]) 
         .collect()
 }
 
+fn normalize_message_id(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn is_same_source_message_range(
+    record: &SessionSummaryV2,
+    source_start_message_id: Option<&str>,
+    source_end_message_id: Option<&str>,
+) -> bool {
+    normalize_message_id(record.source_start_message_id.as_deref())
+        == normalize_message_id(source_start_message_id)
+        && normalize_message_id(record.source_end_message_id.as_deref())
+            == normalize_message_id(source_end_message_id)
+}
+
+async fn has_non_done_summary_for_same_batch(
+    session_id: &str,
+    source_start_message_id: Option<&str>,
+    source_end_message_id: Option<&str>,
+) -> bool {
+    let latest = match SessionSummaryV2Service::list_by_session(session_id, Some(1), 0).await {
+        Ok(items) => items.into_iter().next(),
+        Err(err) => {
+            warn!(
+                "[SESSION-SUMMARY-JOB] load latest summary before failed insert failed: session_id={} error={}",
+                session_id, err
+            );
+            return false;
+        }
+    };
+
+    let Some(record) = latest else {
+        return false;
+    };
+    if record.status == "done" {
+        return false;
+    }
+
+    is_same_source_message_range(&record, source_start_message_id, source_end_message_id)
+}
+
 async fn persist_failed_summary(
     session_id: &str,
     pending: &[Message],
@@ -450,6 +494,23 @@ async fn persist_failed_summary(
 ) {
     let source_start_message_id = pending.first().map(|message| message.id.clone());
     let source_end_message_id = pending.last().map(|message| message.id.clone());
+
+    if has_non_done_summary_for_same_batch(
+        session_id,
+        source_start_message_id.as_deref(),
+        source_end_message_id.as_deref(),
+    )
+    .await
+    {
+        info!(
+            "[SESSION-SUMMARY-JOB] skip duplicate failed summary record: session_id={} source_start_message_id={} source_end_message_id={}",
+            session_id,
+            source_start_message_id.as_deref().unwrap_or(""),
+            source_end_message_id.as_deref().unwrap_or("")
+        );
+        return;
+    }
+
     let fail_record = SessionSummaryV2::new(
         session_id.to_string(),
         String::new(),

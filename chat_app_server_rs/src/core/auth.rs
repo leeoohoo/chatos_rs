@@ -70,7 +70,16 @@ pub fn auth_user_from_headers(headers: &HeaderMap) -> Result<AuthUser, AuthHeade
     let Some(token) = raw.strip_prefix("Bearer ").map(str::trim) else {
         return Err(AuthHeaderError::InvalidAuthorization);
     };
-    let claims = verify_access_token(token).map_err(|_| AuthHeaderError::InvalidOrExpiredToken)?;
+    auth_user_from_access_token(token)
+}
+
+pub fn auth_user_from_access_token(token: &str) -> Result<AuthUser, AuthHeaderError> {
+    let trimmed = token.trim();
+    if trimmed.is_empty() {
+        return Err(AuthHeaderError::InvalidOrExpiredToken);
+    }
+    let claims =
+        verify_access_token(trimmed).map_err(|_| AuthHeaderError::InvalidOrExpiredToken)?;
     Ok(AuthUser {
         user_id: claims.sub,
         email: claims.email,

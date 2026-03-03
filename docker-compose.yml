@@ -3,6 +3,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.backend
+      target: ${BACKEND_DOCKER_TARGET:-runtime}
+      args:
+        BACKEND_EXTRA_APT_PACKAGES: ${BACKEND_EXTRA_APT_PACKAGES:-}
     image: chatos/backend:latest
     container_name: chatos-backend
     restart: unless-stopped
@@ -18,8 +21,9 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-*}
     volumes:
       - ./chat_app_server_rs/config:/app/config:ro
-      - ./chat_app_server_rs/data:/app/data
-      - ./chat_app_server_rs/logs:/app/logs
+      # Use named volumes to isolate Docker runtime data from local dev environment.
+      - chatos_backend_data:/app/data
+      - chatos_backend_logs:/app/logs
       # Optional: map a host folder into container for file browsing/editing features.
       # Example: HOST_MOUNT_DIR=/Users/lilei/workspace
       - ${HOST_MOUNT_DIR:-.}:/workspace:rw
@@ -38,3 +42,7 @@ services:
       - backend
     ports:
       - "8080:80"
+
+volumes:
+  chatos_backend_data:
+  chatos_backend_logs:

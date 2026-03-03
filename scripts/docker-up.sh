@@ -26,8 +26,6 @@ if [[ ! -f "$ENV_FILE" ]]; then
   echo "[INFO] 已创建 chat_app_server_rs/.env（可选配置，默认可直接启动）。"
 fi
 
-mkdir -p "$ROOT_DIR/chat_app_server_rs/data" "$ROOT_DIR/chat_app_server_rs/logs"
-
 "${COMPOSE_CMD[@]}" --env-file "$ENV_FILE" up -d --build
 
 BACKEND_HOST_PORT="$(grep -E '^BACKEND_HOST_PORT=' "$ENV_FILE" | tail -n1 | cut -d'=' -f2- | tr -d '[:space:]')"

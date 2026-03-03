@@ -1,7 +1,7 @@
 use axum::body::Body;
 use axum::extract::{DefaultBodyLimit, OriginalUri};
 use axum::http::{
-    header::{HeaderName, ACCEPT, AUTHORIZATION, CONTENT_TYPE, ORIGIN},
+    header::{HeaderName, ACCEPT, AUTHORIZATION, CONTENT_TYPE, ORIGIN, UPGRADE},
     Request, StatusCode,
 };
 use axum::middleware;
@@ -17,7 +17,9 @@ use tower_http::trace::TraceLayer;
 use tracing::{info, info_span};
 
 use crate::config::Config;
-use crate::core::auth::auth_user_from_headers;
+use crate::core::auth::{
+    auth_user_from_access_token, auth_user_from_headers, AuthHeaderError, AuthUser,
+};
 
 static START_TIME: Lazy<Instant> = Lazy::new(Instant::now);
 static REQUEST_ID_HEADER: HeaderName = HeaderName::from_static("x-request-id");
@@ -189,7 +191,43 @@ async fn require_auth(
     next: middleware::Next,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
     // 在中间件只解析一次 token，并把登录用户注入 request extensions。
-    let auth_user = auth_user_from_headers(req.headers()).map_err(|err| err.into_response())?;
+    let auth_user = match auth_user_from_headers(req.headers()) {
+        Ok(auth_user) => auth_user,
+        // Browser WebSocket cannot set Authorization headers directly.
+        // Allow terminal websocket auth via `?access_token=...` fallback.
+        Err(AuthHeaderError::MissingAuthorization) => {
+            auth_user_from_ws_query(&req).map_err(|err| err.into_response())?
+        }
+        Err(err) => return Err(err.into_response()),
+    };
     req.extensions_mut().insert(auth_user);
     Ok(next.run(req).await)
+}
+
+fn auth_user_from_ws_query(req: &Request<Body>) -> Result<AuthUser, AuthHeaderError> {
+    if !is_websocket_upgrade(req) {
+        return Err(AuthHeaderError::MissingAuthorization);
+    }
+    let query = req
+        .uri()
+        .query()
+        .ok_or(AuthHeaderError::MissingAuthorization)?;
+    let token = url::form_urlencoded::parse(query.as_bytes())
+        .find_map(|(key, value)| {
+            if key == "access_token" {
+                Some(value.into_owned())
+            } else {
+                None
+            }
+        })
+        .ok_or(AuthHeaderError::MissingAuthorization)?;
+    auth_user_from_access_token(token.as_str())
+}
+
+fn is_websocket_upgrade(req: &Request<Body>) -> bool {
+    req.headers()
+        .get(UPGRADE)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.eq_ignore_ascii_case("websocket"))
+        .unwrap_or(false)
 }

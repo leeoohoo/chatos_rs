@@ -123,6 +123,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [workbarHistoryError, setWorkbarHistoryError] = useState<string | null>(null);
   const [workbarSummariesError, setWorkbarSummariesError] = useState<string | null>(null);
   const [workbarActionLoadingTaskId, setWorkbarActionLoadingTaskId] = useState<string | null>(null);
+  const [workbarSummaryActionLoadingKey, setWorkbarSummaryActionLoadingKey] = useState<string | null>(null);
   const [summaryPaneSessionId, setSummaryPaneSessionId] = useState<string | null>(null);
 
   const activeTaskReviewPanel = useMemo(() => {
@@ -672,6 +673,27 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     }
   }, [refreshWorkbarTasks]);
 
+  const withWorkbarSummaryMutation = useCallback(async (
+    sessionId: string,
+    actionKey: string,
+    action: () => Promise<void>
+  ) => {
+    if (!sessionId) {
+      return;
+    }
+
+    setWorkbarSummaryActionLoadingKey(actionKey);
+    setWorkbarSummariesError(null);
+    try {
+      await action();
+      await loadWorkbarSummaries(sessionId, true);
+    } catch (error) {
+      setWorkbarSummariesError(error instanceof Error ? error.message : '会话总结操作失败');
+    } finally {
+      setWorkbarSummaryActionLoadingKey(null);
+    }
+  }, [loadWorkbarSummaries]);
+
   const handleWorkbarCompleteTask = useCallback(async (task: TaskWorkbarItem) => {
     if (!currentSession) {
       return;
@@ -775,6 +797,38 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       await apiClient.updateTaskManagerTask(currentSession.id, task.id, payload);
     });
   }, [apiClient, currentSession, withWorkbarTaskMutation]);
+
+  const handleDeleteWorkbarSummary = useCallback(async (summary: SessionSummaryWorkbarItem) => {
+    if (!currentSession) {
+      return;
+    }
+    if (typeof window !== 'undefined') {
+      const confirmed = window.confirm('确认删除这条会话总结吗？相关消息会重新进入待总结队列。');
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    await withWorkbarSummaryMutation(currentSession.id, `delete:${summary.id}`, async () => {
+      await apiClient.deleteSessionSummary(currentSession.id, summary.id);
+    });
+  }, [apiClient, currentSession, withWorkbarSummaryMutation]);
+
+  const handleClearWorkbarSummaries = useCallback(async () => {
+    if (!currentSession || workbarSummaries.length === 0) {
+      return;
+    }
+    if (typeof window !== 'undefined') {
+      const confirmed = window.confirm('确认清空当前会话的所有总结吗？相关消息会重新进入待总结队列。');
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    await withWorkbarSummaryMutation(currentSession.id, 'clear-all', async () => {
+      await apiClient.clearSessionSummaries(currentSession.id);
+    });
+  }, [apiClient, currentSession, withWorkbarSummaryMutation, workbarSummaries.length]);
 
   // 鍒濆鍖栧姞杞戒細璇濄€丄I妯″瀷鍜屾櫤鑳戒綋閰嶇疆
   useEffect(() => {
@@ -1105,9 +1159,22 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                                 <div className="text-[11px] text-muted-foreground truncate">{currentSession.title}</div>
                               </div>
                               <div className="flex items-center gap-2 shrink-0">
+                                {workbarSummaries.length > 0 && (
+                                  <button
+                                    type="button"
+                                    className="px-2 py-1 text-xs rounded border border-border hover:bg-accent disabled:opacity-60 disabled:cursor-not-allowed"
+                                    disabled={workbarSummaryActionLoadingKey !== null}
+                                    onClick={() => {
+                                      void handleClearWorkbarSummaries();
+                                    }}
+                                  >
+                                    {workbarSummaryActionLoadingKey === 'clear-all' ? '清空中...' : '清空所有总结'}
+                                  </button>
+                                )}
                                 <button
                                   type="button"
-                                  className="px-2 py-1 text-xs rounded border border-border hover:bg-accent"
+                                  className="px-2 py-1 text-xs rounded border border-border hover:bg-accent disabled:opacity-60 disabled:cursor-not-allowed"
+                                  disabled={workbarSummaryActionLoadingKey !== null || workbarSummariesLoading}
                                   onClick={() => {
                                     void loadWorkbarSummaries(currentSession.id, true);
                                   }}
@@ -1138,7 +1205,19 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                                   <div key={summary.id} className="rounded-lg border border-border bg-background/80 p-3">
                                     <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
                                       <span className="truncate">{summary.triggerType || '-'}</span>
-                                      <span className="shrink-0">{formatSummaryCreatedAt(summary.createdAt)}</span>
+                                      <div className="flex items-center gap-2 shrink-0">
+                                        <span className="shrink-0">{formatSummaryCreatedAt(summary.createdAt)}</span>
+                                        <button
+                                          type="button"
+                                          className="rounded border border-border px-1.5 py-0.5 text-[10px] text-foreground hover:bg-accent disabled:opacity-60 disabled:cursor-not-allowed"
+                                          disabled={workbarSummaryActionLoadingKey !== null}
+                                          onClick={() => {
+                                            void handleDeleteWorkbarSummary(summary);
+                                          }}
+                                        >
+                                          {workbarSummaryActionLoadingKey === `delete:${summary.id}` ? '删除中...' : '删除'}
+                                        </button>
+                                      </div>
                                     </div>
                                     <div className="mt-1 text-[11px] text-muted-foreground">
                                       {`消息 ${summary.sourceMessageCount} · 估算 ${summary.sourceEstimatedTokens} tok`}

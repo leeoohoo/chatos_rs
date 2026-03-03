@@ -4,6 +4,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { useChatStoreFromContext, useChatApiClientFromContext } from '../lib/store/ChatStoreContext';
 import { apiClient } from '../lib/api/client';
+import { useAuthStore } from '../lib/auth/authStore';
 import { normalizeTerminalLog } from '../lib/store/helpers/terminals';
 import { useTheme } from '../hooks/useTheme';
 import { cn } from '../lib/utils';
@@ -35,15 +36,22 @@ const MAX_COMMAND_HISTORY = 200;
 const TERMINAL_HISTORY_PAGE_SIZE = 1200;
 const TERMINAL_HISTORY_MAX_LIMIT = 5000;
 
-const buildWsUrl = (baseUrl: string, path: string) => {
+const buildWsUrl = (baseUrl: string, path: string, accessToken?: string | null) => {
   const cleanedBase = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
   const cleanedPath = path.startsWith('/') ? path : `/${path}`;
-  if (cleanedBase.startsWith('http://') || cleanedBase.startsWith('https://')) {
-    return cleanedBase.replace(/^http/, 'ws') + cleanedPath;
+  const rawUrl = (cleanedBase.startsWith('http://') || cleanedBase.startsWith('https://'))
+    ? cleanedBase.replace(/^http/, 'ws') + cleanedPath
+    : (() => {
+        const { protocol, host } = window.location;
+        const wsProtocol = protocol === 'https:' ? 'wss:' : 'ws:';
+        return `${wsProtocol}//${host}${cleanedBase}${cleanedPath}`;
+      })();
+  const wsUrl = new URL(rawUrl);
+  const token = (accessToken || '').trim();
+  if (token) {
+    wsUrl.searchParams.set('access_token', token);
   }
-  const { protocol, host } = window.location;
-  const wsProtocol = protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${wsProtocol}//${host}${cleanedBase}${cleanedPath}`;
+  return wsUrl.toString();
 };
 
 const getThemeColors = (theme: 'light' | 'dark') => {
@@ -381,6 +389,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
 
   const client = apiClientFromContext ?? apiClient;
   const apiBaseUrl = client.getBaseUrl();
+  const accessToken = useAuthStore((state) => state.accessToken);
 
   const terminalTitle = currentTerminal?.name || '终端';
   const terminalCwd = currentTerminal?.cwd || '';
@@ -697,7 +706,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
     if (!currentTerminal) return;
     if (historyState === 'loading') return;
 
-    const wsUrl = buildWsUrl(apiBaseUrl, `/terminals/${currentTerminal.id}/ws`);
+    const wsUrl = buildWsUrl(apiBaseUrl, `/terminals/${currentTerminal.id}/ws`, accessToken);
     setConnectionState('connecting');
     inputForwardEnabledRef.current = false;
 
@@ -770,7 +779,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
       }
       ws.close();
     };
-  }, [currentTerminal?.id, historyState, apiBaseUrl, connectSeq, loadTerminals]);
+  }, [currentTerminal?.id, historyState, apiBaseUrl, accessToken, connectSeq, loadTerminals]);
 
   useEffect(() => {
     loadTerminals();
