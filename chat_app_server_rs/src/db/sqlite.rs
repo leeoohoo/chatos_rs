@@ -67,6 +67,8 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
             metadata TEXT,
             user_id TEXT,
             project_id TEXT,
+            status TEXT NOT NULL DEFAULT 'active',
+            archived_at TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )"#,
@@ -139,6 +141,68 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (summary_id) REFERENCES session_summaries(id) ON DELETE CASCADE,
             FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
+        )"#,
+        r#"CREATE TABLE IF NOT EXISTS archived_messages (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            message_mode TEXT,
+            message_source TEXT,
+            summary TEXT,
+            tool_calls TEXT,
+            tool_call_id TEXT,
+            reasoning TEXT,
+            metadata TEXT,
+            summary_status TEXT,
+            summary_id TEXT,
+            summarized_at TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            archived_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )"#,
+        r#"CREATE TABLE IF NOT EXISTS archived_session_summaries (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            summary_text TEXT NOT NULL,
+            summary_prompt TEXT,
+            model TEXT,
+            temperature REAL,
+            target_summary_tokens INTEGER,
+            keep_last_n INTEGER,
+            message_count INTEGER,
+            approx_tokens INTEGER,
+            first_message_id TEXT,
+            last_message_id TEXT,
+            first_message_created_at TEXT,
+            last_message_created_at TEXT,
+            metadata TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            archived_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )"#,
+        r#"CREATE TABLE IF NOT EXISTS archived_session_summaries_v2 (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            summary_text TEXT NOT NULL,
+            summary_model TEXT NOT NULL,
+            trigger_type TEXT NOT NULL,
+            source_start_message_id TEXT,
+            source_end_message_id TEXT,
+            source_message_count INTEGER NOT NULL DEFAULT 0,
+            source_estimated_tokens INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'done',
+            error_message TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            archived_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )"#,
+        r#"CREATE TABLE IF NOT EXISTS archived_session_summary_messages (
+            id TEXT PRIMARY KEY,
+            summary_id TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            message_id TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            archived_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )"#,
         r#"CREATE TABLE IF NOT EXISTS mcp_configs (
             id TEXT PRIMARY KEY,
@@ -440,6 +504,12 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
     ensure_column(pool, "agents", "project_id", "TEXT")
         .await
         .ok();
+    ensure_column(pool, "sessions", "status", "TEXT NOT NULL DEFAULT 'active'")
+        .await
+        .ok();
+    ensure_column(pool, "sessions", "archived_at", "TEXT")
+        .await
+        .ok();
     ensure_column(pool, "agents", "workspace_dir", "TEXT")
         .await
         .ok();
@@ -481,6 +551,8 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
         "CREATE INDEX IF NOT EXISTS idx_messages_summary_status ON messages(summary_status)",
         "CREATE INDEX IF NOT EXISTS idx_messages_session_summary_status_created_at ON messages(session_id, summary_status, created_at)",
         "CREATE INDEX IF NOT EXISTS idx_messages_summary_id ON messages(summary_id)",
+        "CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status)",
+        "CREATE INDEX IF NOT EXISTS idx_sessions_user_status_created_at ON sessions(user_id, status, created_at)",
         "CREATE INDEX IF NOT EXISTS idx_session_summaries_session_id ON session_summaries(session_id)",
         "CREATE INDEX IF NOT EXISTS idx_session_summaries_last_created_at ON session_summaries(session_id, last_message_created_at)",
         "CREATE INDEX IF NOT EXISTS idx_session_summaries_v2_session_id ON session_summaries_v2(session_id)",
@@ -489,6 +561,10 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
         "CREATE INDEX IF NOT EXISTS idx_session_summary_messages_session_id ON session_summary_messages(session_id)",
         "CREATE INDEX IF NOT EXISTS idx_session_summary_messages_summary_id ON session_summary_messages(summary_id)",
         "CREATE INDEX IF NOT EXISTS idx_session_summary_messages_message_id ON session_summary_messages(message_id)",
+        "CREATE INDEX IF NOT EXISTS idx_archived_messages_session_created_at ON archived_messages(session_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_archived_session_summaries_session_created_at ON archived_session_summaries(session_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_archived_session_summaries_v2_session_created_at ON archived_session_summaries_v2(session_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_archived_session_summary_messages_session_created_at ON archived_session_summary_messages(session_id, created_at)",
         "CREATE INDEX IF NOT EXISTS idx_session_summary_job_configs_user_id ON session_summary_job_configs(user_id)",
         "CREATE INDEX IF NOT EXISTS idx_mcp_change_logs_server_name ON mcp_change_logs(server_name)",
         "CREATE INDEX IF NOT EXISTS idx_mcp_change_logs_session_id ON mcp_change_logs(session_id)",

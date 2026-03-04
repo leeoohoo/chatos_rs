@@ -13,6 +13,8 @@ pub struct Session {
     pub metadata: Option<Value>,
     pub user_id: Option<String>,
     pub project_id: Option<String>,
+    pub status: String,
+    pub archived_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -25,6 +27,8 @@ pub struct SessionRow {
     pub metadata: Option<String>,
     pub user_id: Option<String>,
     pub project_id: Option<String>,
+    pub status: String,
+    pub archived_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -40,6 +44,12 @@ impl SessionRow {
                 .and_then(|m| serde_json::from_str::<Value>(&m).ok()),
             user_id: self.user_id,
             project_id: self.project_id,
+            status: if self.status.trim().is_empty() {
+                "active".to_string()
+            } else {
+                self.status
+            },
+            archived_at: self.archived_at,
             created_at: self.created_at,
             updated_at: self.updated_at,
         }
@@ -62,6 +72,8 @@ impl Session {
             metadata,
             user_id,
             project_id,
+            status: "active".to_string(),
+            archived_at: None,
             created_at: now.clone(),
             updated_at: now,
         }
@@ -94,6 +106,14 @@ impl SessionService {
 
     pub async fn delete(session_id: &str) -> Result<(), String> {
         repo::delete_session(session_id).await
+    }
+
+    pub async fn list_archiving(limit: Option<i64>) -> Result<Vec<String>, String> {
+        repo::list_archiving_session_ids(limit).await
+    }
+
+    pub async fn process_archive(session_id: &str) -> Result<(), String> {
+        repo::process_session_archive(session_id).await
     }
 
     pub async fn update(

@@ -6,6 +6,7 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::{json, Number, Value};
+use tracing::warn;
 use uuid::Uuid;
 
 use crate::core::auth::AuthUser;
@@ -224,10 +225,21 @@ async fn delete_session(auth: AuthUser, Path(id): Path<String>) -> (StatusCode, 
         return map_session_access_error(err);
     }
     match SessionService::delete(&id).await {
-        Ok(_) => (
-            StatusCode::OK,
-            Json(serde_json::json!({"success": true, "message": "会话已删除"})),
-        ),
+        Ok(_) => {
+            let session_id = id.clone();
+            tokio::spawn(async move {
+                if let Err(err) = SessionService::process_archive(&session_id).await {
+                    warn!(
+                        "[SESSION-ARCHIVE] async archive failed: session_id={} error={}",
+                        session_id, err
+                    );
+                }
+            });
+            (
+                StatusCode::ACCEPTED,
+                Json(serde_json::json!({"success": true, "message": "会话已进入归档队列"})),
+            )
+        }
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": err})),

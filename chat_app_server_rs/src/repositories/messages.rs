@@ -10,6 +10,47 @@ use crate::core::sql_query::append_limit_offset_clause;
 use crate::models::message::{Message, MessageRow};
 use crate::repositories::db::{doc_from_pairs, get_db_sync, to_doc, with_db};
 
+fn active_session_doc(session_id: &str) -> Document {
+    doc! {
+        "id": session_id,
+        "$or": [
+            { "status": "active" },
+            { "status": { "$exists": false } },
+            { "status": Bson::Null }
+        ]
+    }
+}
+
+async fn ensure_session_writable_mongo(db: &mongodb::Database, session_id: &str) -> Result<(), String> {
+    let exists = db
+        .collection::<Document>("sessions")
+        .find_one(active_session_doc(session_id), None)
+        .await
+        .map_err(|e| e.to_string())?
+        .is_some();
+    if !exists {
+        return Err("会话不存在或已归档，无法写入消息".to_string());
+    }
+    Ok(())
+}
+
+async fn ensure_session_writable_sqlite(
+    pool: &sqlx::SqlitePool,
+    session_id: &str,
+) -> Result<(), String> {
+    let row = sqlx::query(
+        "SELECT id FROM sessions WHERE id = ? AND (status = 'active' OR status IS NULL)",
+    )
+    .bind(session_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    if row.is_none() {
+        return Err("会话不存在或已归档，无法写入消息".to_string());
+    }
+    Ok(())
+}
+
 fn normalize_from_doc(doc: &Document) -> Option<Message> {
     let id = doc.get_str("id").ok()?.to_string();
     let session_id = doc.get_str("session_id").ok()?.to_string();
@@ -75,12 +116,14 @@ pub async fn create_message(data: &Message) -> Result<Message, String> {
                 ("created_at", Bson::String(now_mongo.clone())),
             ]));
             Box::pin(async move {
+                ensure_session_writable_mongo(db, data_mongo.session_id.as_str()).await?;
                 db.collection::<Document>("messages").insert_one(doc.clone(), None).await.map_err(|e| e.to_string())?;
                 Ok(data_mongo.clone())
             })
         },
         |pool| {
             Box::pin(async move {
+                ensure_session_writable_sqlite(pool, data_sqlite.session_id.as_str()).await?;
                 sqlx::query("INSERT INTO messages (id, session_id, role, content, message_mode, message_source, summary, tool_calls, tool_call_id, reasoning, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
                     .bind(&data_sqlite.id)
                     .bind(&data_sqlite.session_id)
@@ -403,12 +446,12 @@ pub async fn list_sessions_with_pending_summary(limit: Option<i64>) -> Result<Ve
             Box::pin(async move {
                 let query = if let Some(value) = limit {
                     if value > 0 {
-                        "SELECT session_id FROM messages WHERE summary_status = 'pending' OR summary_status IS NULL GROUP BY session_id ORDER BY MIN(created_at) ASC LIMIT ?".to_string()
+                        "SELECT m.session_id FROM messages m JOIN sessions s ON s.id = m.session_id WHERE (m.summary_status = 'pending' OR m.summary_status IS NULL) AND (s.status = 'active' OR s.status IS NULL) GROUP BY m.session_id ORDER BY MIN(m.created_at) ASC LIMIT ?".to_string()
                     } else {
-                        "SELECT session_id FROM messages WHERE summary_status = 'pending' OR summary_status IS NULL GROUP BY session_id ORDER BY MIN(created_at) ASC".to_string()
+                        "SELECT m.session_id FROM messages m JOIN sessions s ON s.id = m.session_id WHERE (m.summary_status = 'pending' OR m.summary_status IS NULL) AND (s.status = 'active' OR s.status IS NULL) GROUP BY m.session_id ORDER BY MIN(m.created_at) ASC".to_string()
                     }
                 } else {
-                    "SELECT session_id FROM messages WHERE summary_status = 'pending' OR summary_status IS NULL GROUP BY session_id ORDER BY MIN(created_at) ASC".to_string()
+                    "SELECT m.session_id FROM messages m JOIN sessions s ON s.id = m.session_id WHERE (m.summary_status = 'pending' OR m.summary_status IS NULL) AND (s.status = 'active' OR s.status IS NULL) GROUP BY m.session_id ORDER BY MIN(m.created_at) ASC".to_string()
                 };
                 let mut q = sqlx::query(&query);
                 if let Some(value) = limit {
