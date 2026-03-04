@@ -130,6 +130,33 @@ const cloneStreamingMessageDraft = <T,>(value: T): T => {
   }
 };
 
+const joinStreamingText = (current: string, chunk: string): string => {
+  if (!chunk) return current;
+  if (!current) return chunk;
+
+  // 兼容部分模型返回累计快照、部分模型返回增量。
+  if (chunk.startsWith(current)) return chunk;
+  if (current.startsWith(chunk)) return current;
+  if (current.includes(chunk)) return current;
+  if (chunk.includes(current)) return chunk;
+
+  const maxOverlap = Math.min(current.length, chunk.length);
+  for (let overlap = maxOverlap; overlap >= 8; overlap -= 1) {
+    if (current.slice(-overlap) === chunk.slice(0, overlap)) {
+      return `${current}${chunk.slice(overlap)}`;
+    }
+  }
+
+  return `${current}${chunk}`;
+};
+
+const normalizeStreamedText = (value: string): string => {
+  if (!value) return value;
+  return value
+    .replace(/\r\n?/g, '\n')
+    .replace(/\n{6,}/g, '\n\n\n\n');
+};
+
 // 工厂函数：创建 sendMessage 处理器，注入依赖以便于在 store 外部维护
 export function createSendMessageHandler({
   set,
@@ -573,7 +600,6 @@ export function createSendMessageHandler({
 
       const appendTextToStreamingMessage = (contentStr: string) => {
         if (!contentStr) return;
-        streamedTextBuffer += contentStr;
 
         set((state: any) => {
           const message = ensureStreamingMessage(state);
@@ -582,9 +608,17 @@ export function createSendMessageHandler({
             const segments = message.metadata.contentSegments || [];
 
             if (segments[currentIndex] && segments[currentIndex].type === 'text') {
-              segments[currentIndex].content += contentStr;
+              const currentText = typeof segments[currentIndex].content === 'string'
+                ? segments[currentIndex].content
+                : '';
+              segments[currentIndex].content = normalizeStreamedText(
+                joinStreamingText(currentText, contentStr),
+              );
             } else {
-              segments.push({ content: contentStr, type: 'text' as const });
+              segments.push({
+                content: normalizeStreamedText(contentStr),
+                type: 'text' as const,
+              });
               message.metadata.currentSegmentIndex = segments.length - 1;
             }
 
@@ -593,6 +627,7 @@ export function createSendMessageHandler({
               .filter((s: any) => s.type === 'text')
               .map((s: any) => s.content)
               .join('');
+            streamedTextBuffer = message.content;
             (message as any).updatedAt = new Date();
           }
           persistStreamingMessageDraft(state, message);
@@ -601,7 +636,8 @@ export function createSendMessageHandler({
 
       const applyCompleteContent = (finalContent: string) => {
         if (!finalContent) return;
-        streamedTextBuffer = finalContent;
+        const normalizedFinalContent = normalizeStreamedText(finalContent);
+        streamedTextBuffer = normalizedFinalContent;
 
         set((state: any) => {
           const message = ensureStreamingMessage(state);
@@ -617,10 +653,10 @@ export function createSendMessageHandler({
           }
 
           if (textIndex === -1) {
-            segments.push({ content: finalContent, type: 'text' as const });
+            segments.push({ content: normalizedFinalContent, type: 'text' as const });
             textIndex = segments.length - 1;
           } else {
-            segments[textIndex].content = finalContent;
+            segments[textIndex].content = normalizedFinalContent;
             for (let i = 0; i < segments.length; i++) {
               if (i !== textIndex && segments[i].type === 'text') {
                 segments[i].content = '';
@@ -630,7 +666,7 @@ export function createSendMessageHandler({
 
           message.metadata.contentSegments = segments;
           message.metadata.currentSegmentIndex = textIndex;
-          message.content = finalContent;
+          message.content = normalizedFinalContent;
           (message as any).updatedAt = new Date();
           persistStreamingMessageDraft(state, message);
         });
