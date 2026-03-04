@@ -14,14 +14,14 @@ fn derive_title_from_content(text: &str, max_len: usize) -> String {
     if first_line.starts_with('>') {
         first_line = first_line.trim_start_matches('>').trim_start().to_string();
     }
-    if first_line.len() <= max_len {
-        if first_line.is_empty() {
-            "New Chat".to_string()
-        } else {
-            first_line
-        }
-    } else {
-        format!("{}…", &first_line[..max_len])
+    if first_line.is_empty() {
+        return "New Chat".to_string();
+    }
+
+    // String slicing uses byte offsets; char_indices yields safe UTF-8 boundaries.
+    match first_line.char_indices().nth(max_len) {
+        Some((cutoff, _)) => format!("{}...", &first_line[..cutoff]),
+        None => first_line,
     }
 }
 
@@ -44,4 +44,29 @@ pub async fn maybe_rename_session_title(
         }
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::derive_title_from_content;
+
+    #[test]
+    fn keeps_short_title_unchanged() {
+        assert_eq!(derive_title_from_content("hello world", 30), "hello world");
+    }
+
+    #[test]
+    fn truncates_multibyte_title_on_char_boundary() {
+        let content = String::from_utf8(vec![
+            0x61, 0x62, 0x63, 0xE4, 0xBD, 0xA0, 0xE5, 0xA5, 0xBD, 0xE4, 0xB8, 0x96, 0xE7,
+            0x95, 0x8C, 0x64, 0x65, 0x66,
+        ])
+        .expect("valid utf8");
+
+        let title = derive_title_from_content(&content, 5);
+        let expected = String::from_utf8(vec![0x61, 0x62, 0x63, 0xE4, 0xBD, 0xA0, 0xE5, 0xA5, 0xBD])
+            .expect("valid utf8");
+
+        assert_eq!(title, format!("{}...", expected));
+    }
 }
