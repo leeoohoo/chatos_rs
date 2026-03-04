@@ -29,6 +29,8 @@ struct SessionQuery {
     project_id: Option<String>,
     limit: Option<String>,
     offset: Option<String>,
+    include_archived: Option<String>,
+    include_archiving: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -114,6 +116,8 @@ async fn list_sessions(
         project_id,
         limit,
         offset,
+        include_archived,
+        include_archiving,
     } = query;
     let user_id = match resolve_user_id(user_id, &auth) {
         Ok(user_id) => user_id,
@@ -121,8 +125,33 @@ async fn list_sessions(
     };
     let limit = parse_positive_limit(limit);
     let offset = parse_non_negative_offset(offset);
-    let result =
-        SessionService::get_by_user_project(Some(user_id), project_id, limit, offset).await;
+    let include_archived = include_archived
+        .as_deref()
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes"
+            )
+        })
+        .unwrap_or(false);
+    let include_archiving = include_archiving
+        .as_deref()
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes"
+            )
+        })
+        .unwrap_or(false);
+    let result = SessionService::get_by_user_project(
+        Some(user_id),
+        project_id,
+        limit,
+        offset,
+        include_archived,
+        include_archiving,
+    )
+    .await;
     match result {
         Ok(list) => (
             StatusCode::OK,
@@ -586,10 +615,7 @@ fn strip_assistant_for_compact_history(message: &mut Message, user_message_id: &
         Value::String(user_message_id.to_string()),
     );
     if let Some(turn_id) = turn_id {
-        metadata.insert(
-            "historyFinalForTurnId".to_string(),
-            Value::String(turn_id),
-        );
+        metadata.insert("historyFinalForTurnId".to_string(), Value::String(turn_id));
     }
     metadata.insert("historyProcessExpanded".to_string(), Value::Bool(false));
 }

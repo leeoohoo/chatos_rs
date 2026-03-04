@@ -99,13 +99,15 @@ class ApiClient {
   async getSessions(
     userId?: string,
     projectId?: string,
-    paging?: { limit?: number; offset?: number }
+    paging?: { limit?: number; offset?: number; includeArchived?: boolean; includeArchiving?: boolean }
   ): Promise<any[]> {
     const params = new URLSearchParams();
     if (userId) params.append('user_id', userId);  // 修复：使用user_id匹配后端参数名
     if (projectId) params.append('project_id', projectId);  // 修复：使用project_id匹配后端参数名
     if (paging?.limit !== undefined) params.append('limit', String(paging.limit));
     if (paging?.offset !== undefined) params.append('offset', String(paging.offset));
+    if (paging?.includeArchived === true) params.append('include_archived', 'true');
+    if (paging?.includeArchiving === true) params.append('include_archiving', 'true');
     const queryString = params.toString();
     debugLog('🔍 getSessions API调用:', { userId, projectId, queryString });
     return this.request<any[]>(`/sessions${queryString ? `?${queryString}` : ''}`);

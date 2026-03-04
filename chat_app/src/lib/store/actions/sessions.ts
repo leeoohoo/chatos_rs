@@ -1,6 +1,6 @@
 import type { Session } from '../../../types';
 import type ApiClient from '../../api/client';
-import { fetchSession } from '../helpers/sessions';
+import { fetchSession, normalizeSession } from '../helpers/sessions';
 import { applyTurnProcessCache, fetchSessionMessages } from '../helpers/messages';
 import { debugLog } from '@/lib/utils';
 
@@ -142,7 +142,14 @@ export function createSessionActions({
         const { userId, projectId } = getSessionParams();
 
         debugLog('🔍 loadSessions 调用 client.getSessions', { userId, projectId, customUserId, customProjectId, options });
-        const sessions = await client.getSessions(userId, projectId, { limit: options.limit, offset: options.offset });
+        const rawSessions = await client.getSessions(
+          userId,
+          projectId,
+          { limit: options.limit, offset: options.offset, includeArchiving: true },
+        );
+        const sessions = Array.isArray(rawSessions)
+          ? rawSessions.map(normalizeSession)
+          : [];
         debugLog('🔍 loadSessions 返回结果:', sessions);
 
         const existing = options.append ? (get().sessions || []) : [];
@@ -171,24 +178,32 @@ export function createSessionActions({
 
         const currentState = get();
         if (deduped.length > 0 && !currentState.currentSessionId) {
-          const lastSessionId = localStorage.getItem(`lastSessionId_${userId}_${projectId}`);
-          let sessionToSelect = null;
+          const activeSessions = deduped.filter((session: Session) => {
+            const status = typeof session.status === 'string'
+              ? session.status.toLowerCase()
+              : '';
+            return !(session.archived || status === 'archived' || status === 'archiving');
+          });
+          if (activeSessions.length > 0) {
+            const lastSessionId = localStorage.getItem(`lastSessionId_${userId}_${projectId}`);
+            let sessionToSelect: Session | undefined;
 
-          if (lastSessionId) {
-            sessionToSelect = deduped.find(s => s.id === lastSessionId);
-          }
+            if (lastSessionId) {
+              sessionToSelect = activeSessions.find(s => s.id === lastSessionId);
+            }
 
-          if (!sessionToSelect) {
-            sessionToSelect = [...deduped].sort((a, b) =>
-              new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-            )[0];
-          }
+            if (!sessionToSelect) {
+              sessionToSelect = [...activeSessions].sort((a, b) =>
+                new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+              )[0];
+            }
 
-          if (sessionToSelect) {
-            debugLog('🔍 自动选择会话:', sessionToSelect.id);
-            setTimeout(() => {
-              get().selectSession(sessionToSelect.id);
-            }, 0);
+            if (sessionToSelect) {
+              debugLog('🔍 自动选择会话:', sessionToSelect.id);
+              setTimeout(() => {
+                get().selectSession(sessionToSelect.id);
+              }, 0);
+            }
           }
         }
 
@@ -240,6 +255,7 @@ export function createSessionActions({
           tokenUsage: 0,
           pinned: false,
           archived: false,
+          status: 'active',
           tags: null,
           metadata: null,
         };
@@ -443,9 +459,18 @@ export function createSessionActions({
     deleteSession: async (sessionId: string) => {
       try {
         await client.deleteSession(sessionId);
+        const now = new Date();
 
         set((state: any) => {
-          state.sessions = state.sessions.filter((s: any) => s.id !== sessionId);
+          const index = state.sessions.findIndex((s: any) => s.id === sessionId);
+          if (index !== -1) {
+            state.sessions[index] = {
+              ...state.sessions[index],
+              archived: true,
+              status: 'archiving',
+              updatedAt: now,
+            };
+          }
           if (state.sessionStreamingMessageDrafts && sessionId in state.sessionStreamingMessageDrafts) {
             delete state.sessionStreamingMessageDrafts[sessionId];
           }

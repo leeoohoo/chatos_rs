@@ -42,6 +42,7 @@ export interface Session {
   tags?: string | null;
   pinned: boolean;
   archived: boolean;
+  status?: 'active' | 'archiving' | 'archived' | string;
   metadata?: string | null;
 }
 

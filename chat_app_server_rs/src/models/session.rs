@@ -100,8 +100,18 @@ impl SessionService {
         project_id: Option<String>,
         limit: Option<i64>,
         offset: i64,
+        include_archived: bool,
+        include_archiving: bool,
     ) -> Result<Vec<Session>, String> {
-        repo::get_sessions_by_user_project(user_id, project_id, limit, offset).await
+        repo::get_sessions_by_user_project(
+            user_id,
+            project_id,
+            limit,
+            offset,
+            include_archived,
+            include_archiving,
+        )
+        .await
     }
 
     pub async fn delete(session_id: &str) -> Result<(), String> {

@@ -5,9 +5,7 @@ use sqlx::Row;
 
 use crate::core::mongo_cursor::{apply_offset_limit, collect_map_sorted_desc};
 use crate::core::mongo_query::insert_optional_user_id;
-use crate::core::sql_query::{
-    append_limit_offset_clause, append_optional_user_id_filter,
-};
+use crate::core::sql_query::{append_limit_offset_clause, append_optional_user_id_filter};
 use crate::core::update_fields::{
     mongo_set_doc_from_optional_strings, sqlite_update_parts_from_optional_strings,
 };
@@ -18,6 +16,17 @@ fn active_session_filter() -> Document {
     doc! {
         "$or": [
             { "status": "active" },
+            { "status": { "$exists": false } },
+            { "status": Bson::Null }
+        ]
+    }
+}
+
+fn active_or_archiving_session_filter() -> Document {
+    doc! {
+        "$or": [
+            { "status": "active" },
+            { "status": "archiving" },
             { "status": { "$exists": false } },
             { "status": Bson::Null }
         ]
@@ -128,10 +137,10 @@ pub async fn get_session_by_id(id: &str) -> Result<Option<Session>, String> {
                 let row = sqlx::query_as::<_, SessionRow>(
                     "SELECT * FROM sessions WHERE id = ? AND (status = 'active' OR status IS NULL)",
                 )
-                    .bind(&id)
-                    .fetch_optional(pool)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                .bind(&id)
+                .fetch_optional(pool)
+                .await
+                .map_err(|e| e.to_string())?;
                 Ok(row.map(|r| r.to_session()))
             })
         },
@@ -185,13 +194,23 @@ pub async fn get_sessions_by_user_project(
     project_id: Option<String>,
     limit: Option<i64>,
     offset: i64,
+    include_archived: bool,
+    include_archiving: bool,
 ) -> Result<Vec<Session>, String> {
     with_db(
         |db| {
             let user_id = user_id.clone();
             let project_id = project_id.clone();
+            let include_archived = include_archived;
+            let include_archiving = include_archiving;
             Box::pin(async move {
-                let mut filter = active_session_filter();
+                let mut filter = if include_archived {
+                    doc! {}
+                } else if include_archiving {
+                    active_or_archiving_session_filter()
+                } else {
+                    active_session_filter()
+                };
                 insert_optional_user_id(&mut filter, user_id);
                 if let Some(pid) = project_id {
                     filter.insert("project_id", pid);
@@ -211,10 +230,17 @@ pub async fn get_sessions_by_user_project(
         |pool| {
             let user_id = user_id.clone();
             let project_id = project_id.clone();
+            let include_archived = include_archived;
+            let include_archiving = include_archiving;
             Box::pin(async move {
-                let mut query =
-                    "SELECT * FROM sessions WHERE (status = 'active' OR status IS NULL)"
-                        .to_string();
+                let mut query = if include_archived {
+                    "SELECT * FROM sessions WHERE 1 = 1".to_string()
+                } else if include_archiving {
+                    "SELECT * FROM sessions WHERE ((status = 'active' OR status IS NULL) OR status = 'archiving')"
+                        .to_string()
+                } else {
+                    "SELECT * FROM sessions WHERE (status = 'active' OR status IS NULL)".to_string()
+                };
                 let mut binds: Vec<String> = Vec::new();
                 let has_user_filter = user_id.is_some();
                 append_optional_user_id_filter(&mut query, has_user_filter, true);
@@ -473,13 +499,15 @@ async fn archive_session_sqlite(pool: &sqlx::SqlitePool, id: &str) -> Result<(),
         .await
         .map_err(|e| e.to_string())?;
 
-    sqlx::query("UPDATE sessions SET status = 'archived', archived_at = ?, updated_at = ? WHERE id = ?")
-        .bind(&now)
-        .bind(&now)
-        .bind(id)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| e.to_string())?;
+    sqlx::query(
+        "UPDATE sessions SET status = 'archived', archived_at = ?, updated_at = ? WHERE id = ?",
+    )
+    .bind(&now)
+    .bind(&now)
+    .bind(id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| e.to_string())?;
 
     tx.commit().await.map_err(|e| e.to_string())?;
     Ok(())

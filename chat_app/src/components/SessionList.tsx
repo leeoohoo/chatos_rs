@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useCallback, useState, useEffect, useRef } from 'react';
 import { useChatStoreFromContext, useChatApiClientFromContext } from '../lib/store/ChatStoreContext';
 import { useChatStore } from '../lib/store';
 import { apiClient as globalApiClient } from '../lib/api/client';
@@ -44,6 +44,14 @@ const formatTimeAgo = (date: string | Date | undefined | null) => {
   if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}小时前`;
   if (diffInSeconds < 2592000) return `${Math.floor(diffInSeconds / 86400)}天前`;
   return past.toLocaleDateString('zh-CN');
+};
+
+const getSessionStatus = (session: Session): 'active' | 'archiving' | 'archived' => {
+  const rawStatus = typeof session.status === 'string' ? session.status.toLowerCase() : '';
+  if (rawStatus === 'archiving') return 'archiving';
+  if (rawStatus === 'archived') return 'archived';
+  if (session.archived) return 'archived';
+  return 'active';
 };
 
 interface SessionListProps {
@@ -720,10 +728,13 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
 
   const handleDeleteSession = async (sessionId: string) => {
     const session = sessions.find((s: Session) => s.id === sessionId);
+    if (!session || getSessionStatus(session) !== 'active') {
+      return;
+    }
     showConfirmDialog({
-      title: '删除确认',
-      message: `确定要删除会话 "${session?.title || 'Untitled'}" 吗？此操作无法撤销。`,
-      confirmText: '删除',
+      title: '归档确认',
+      message: `确定要归档会话 "${session.title || 'Untitled'}" 吗？归档后将不再参与总结。`,
+      confirmText: '归档',
       cancelText: '取消',
       type: 'danger',
       onConfirm: async () => {
@@ -794,26 +805,21 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     });
   }, [sessions]);
 
-  useEffect(() => {
-    if (sessions.length === 0) {
-      return;
-    }
-
-    const pendingSessionIds = sessions
-      .map((session: Session) => session.id)
-      .filter((sessionId) => (
-        typeof sessionHasSummaryMap[sessionId] !== 'boolean'
-        && !checkingSummaryIdsRef.current.has(sessionId)
-      ));
-
+  const checkSessionSummaryStatus = useCallback(async (sessionIds: string[]) => {
+    const uniqueSessionIds = Array.from(new Set(
+      sessionIds
+        .map((sessionId) => String(sessionId || '').trim())
+        .filter((sessionId) => sessionId.length > 0)
+    ));
+    const pendingSessionIds = uniqueSessionIds.filter(
+      (sessionId) => !checkingSummaryIdsRef.current.has(sessionId)
+    );
     if (pendingSessionIds.length === 0) {
       return;
     }
 
     pendingSessionIds.forEach((sessionId) => checkingSummaryIdsRef.current.add(sessionId));
-
-    let cancelled = false;
-    void (async () => {
+    try {
       const pairs = await Promise.all(
         pendingSessionIds.map(async (sessionId) => {
           try {
@@ -828,26 +834,58 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
         })
       );
 
-      if (cancelled) {
-        return;
-      }
-
       setSessionHasSummaryMap((prev) => {
         const next = { ...prev };
+        let changed = false;
         pairs.forEach(({ sessionId, hasSummary }) => {
-          next[sessionId] = hasSummary;
+          if (next[sessionId] !== hasSummary) {
+            next[sessionId] = hasSummary;
+            changed = true;
+          }
         });
-        return next;
+        return changed ? next : prev;
       });
-
-      pairs.forEach(({ sessionId }) => checkingSummaryIdsRef.current.delete(sessionId));
-    })();
-
-    return () => {
-      cancelled = true;
+    } finally {
       pendingSessionIds.forEach((sessionId) => checkingSummaryIdsRef.current.delete(sessionId));
-    };
-  }, [apiClient, sessionHasSummaryMap, sessions]);
+    }
+  }, [apiClient]);
+
+  useEffect(() => {
+    if (sessions.length === 0) {
+      return;
+    }
+
+    const unknownSessionIds = sessions
+      .filter((session: Session) => getSessionStatus(session) === 'active')
+      .map((session: Session) => session.id)
+      .filter((sessionId) => (
+        typeof sessionHasSummaryMap[sessionId] !== 'boolean'
+      ));
+    if (unknownSessionIds.length === 0) {
+      return;
+    }
+
+    void checkSessionSummaryStatus(unknownSessionIds);
+  }, [checkSessionSummaryStatus, sessionHasSummaryMap, sessions]);
+
+  useEffect(() => {
+    if (sessions.length === 0) {
+      return;
+    }
+
+    const sessionIds = sessions
+      .filter((session: Session) => getSessionStatus(session) === 'active')
+      .map((session: Session) => session.id);
+    if (sessionIds.length === 0) {
+      return;
+    }
+    void checkSessionSummaryStatus(sessionIds);
+
+    const timer = window.setInterval(() => {
+      void checkSessionSummaryStatus(sessionIds);
+    }, 30000);
+    return () => window.clearInterval(timer);
+  }, [checkSessionSummaryStatus, sessions]);
 
   useEffect(() => {
     if (didLoadProjectsRef.current) return;
@@ -957,134 +995,172 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
                   </div>
                 ) : (
                   <div className="p-2 space-y-1">
-                    {sessions.map((session: Session) => (
-                      <div
-                        key={session.id}
-                        className={`group relative flex items-center p-3 rounded-lg cursor-pointer transition-colors ${
-                          currentSession?.id === session.id
-                            ? 'bg-accent border border-border'
-                            : 'hover:bg-accent/50'
-                        }`}
-                        onClick={() => {
-                          onSelectSession?.(session.id);
-                          void handleSelectSession(session.id);
-                        }}
-                      >
-                        <div className="flex-1 min-w-0">
-                          {editingSessionId === session.id ? (
-                            <input
-                              type="text"
-                              value={editingTitle}
-                              onChange={(e) => setEditingTitle(e.target.value)}
-                              onBlur={handleSaveEdit}
-                              onKeyDown={handleKeyPress}
-                              className="w-full px-2 py-1 text-sm bg-background border border-border rounded focus:outline-none focus:ring-2 focus:ring-ring"
-                              autoFocus
-                              onClick={(e) => e.stopPropagation()}
-                            />
-                          ) : (
-                            <>
-                              <h3 className="text-sm font-medium text-foreground truncate">
-                                {session.title}
-                              </h3>
-                              <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
-                                <span>{formatTimeAgo(session.updatedAt)}</span>
-                                <span className="text-muted-foreground/60">·</span>
-                                {(() => {
-                                  const chatState = sessionChatState?.[session.id];
-                                  const isBusy = !!(chatState?.isLoading || chatState?.isStreaming);
-                                  return (
-                                    <span className={cn('inline-flex items-center gap-1', isBusy ? 'text-amber-600' : 'text-muted-foreground')}>
-                                      <span className={cn('inline-block w-2 h-2 rounded-full', isBusy ? 'bg-amber-500' : 'bg-muted-foreground/40')} />
-                                      {isBusy ? '执行中' : '空闲'}
-                                    </span>
-                                  );
-                                })()}
-                                {(() => {
-                                  const pendingCount = Array.isArray(taskReviewPanelsBySession?.[session.id])
-                                    ? taskReviewPanelsBySession[session.id].length
-                                    : 0;
-                                  if (pendingCount <= 0) {
-                                    return null;
-                                  }
-                                  return (
-                                    <span className="inline-flex items-center gap-1 text-blue-600">
-                                      <span className="inline-block w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
-                                      {`\u5f85\u5904\u7406 ${pendingCount}`}
-                                    </span>
-                                  );
-                                })()}
-                                {sessionHasSummaryMap[session.id] && (
-                                  <button
-                                    type="button"
-                                    className={cn(
-                                      'inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] transition-colors',
-                                      summaryOpenSessionId === session.id
-                                        ? 'border-blue-500/50 bg-blue-500/10 text-blue-600'
-                                        : 'border-blue-500/30 text-blue-600 hover:bg-blue-500/10'
-                                    )}
-                                    onClick={(event) => {
-                                      event.stopPropagation();
-                                      void handleSelectSession(session.id);
-                                      onOpenSummary?.(session.id);
-                                    }}
-                                    title="查看会话总结"
-                                  >
-                                    总结
-                                  </button>
-                                )}
-                              </div>
-                            </>
-                          )}
-                        </div>
+                    {sessions.map((session: Session) => {
+                      const sessionStatus = getSessionStatus(session);
+                      const isArchivedSession = sessionStatus !== 'active';
+                      const isArchivingSession = sessionStatus === 'archiving';
 
-                        {/* 操作菜单 */}
-                        {editingSessionId !== session.id && (
-                          <div className="relative">
-                            <button
-                              className="p-1 text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 transition-opacity"
-                              onClick={(e: React.MouseEvent) => {
-                                e.stopPropagation();
-                                const menu = e.currentTarget.nextElementSibling as HTMLElement;
-                                if (menu) {
-                                  menu.classList.toggle('hidden');
-                                }
-                              }}
-                            >
-                              <DotsVerticalIcon className="w-4 h-4" />
-                            </button>
-                            <div className="hidden absolute right-0 z-10 mt-1 w-32 bg-popover border border-border rounded-md shadow-lg">
-                              <div className="py-1">
-                                <button
-                                  onClick={(e: React.MouseEvent) => {
-                                    e.stopPropagation();
-                                    handleStartEdit(session.id, session.title);
-                                    const menu = e.currentTarget.closest('.absolute') as HTMLElement;
-                                    if (menu) menu.classList.add('hidden');
-                                  }}
-                                  className="flex items-center w-full px-3 py-2 text-sm text-popover-foreground hover:bg-accent"
-                                >
-                                  <PencilIcon className="w-4 h-4 mr-2" />
-                                  重命名
-                                </button>
-                                <button
-                                  onClick={(e: React.MouseEvent) => {
-                                    e.stopPropagation();
-                                    handleDeleteSession(session.id);
-                                    const menu = e.currentTarget.closest('.absolute') as HTMLElement;
-                                    if (menu) menu.classList.add('hidden');
-                                  }}
-                                  className="flex items-center w-full px-3 py-2 text-sm text-destructive hover:bg-destructive/10"
-                                >
-                                  <TrashIcon className="w-4 h-4 mr-2" />
-                                  删除
-                                </button>
+                      return (
+                        <div
+                          key={session.id}
+                          className={cn(
+                            'group relative flex items-center p-3 rounded-lg transition-colors',
+                            isArchivedSession ? 'cursor-default opacity-70' : 'cursor-pointer',
+                            currentSession?.id === session.id
+                              ? 'bg-accent border border-border'
+                              : (!isArchivedSession && 'hover:bg-accent/50'),
+                          )}
+                          onClick={() => {
+                            if (isArchivedSession) {
+                              return;
+                            }
+                            onSelectSession?.(session.id);
+                            void handleSelectSession(session.id);
+                          }}
+                        >
+                          <div className="flex-1 min-w-0">
+                            {editingSessionId === session.id ? (
+                              <input
+                                type="text"
+                                value={editingTitle}
+                                onChange={(e) => setEditingTitle(e.target.value)}
+                                onBlur={handleSaveEdit}
+                                onKeyDown={handleKeyPress}
+                                className="w-full px-2 py-1 text-sm bg-background border border-border rounded focus:outline-none focus:ring-2 focus:ring-ring"
+                                autoFocus
+                                onClick={(e) => e.stopPropagation()}
+                              />
+                            ) : (
+                              <>
+                                <h3 className="text-sm font-medium text-foreground truncate">
+                                  {session.title}
+                                </h3>
+                                <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                                  <span>{formatTimeAgo(session.updatedAt)}</span>
+                                  <span className="text-muted-foreground/60">·</span>
+                                  {isArchivedSession ? (
+                                    <span className={cn(
+                                      'inline-flex items-center gap-1',
+                                      isArchivingSession ? 'text-amber-600' : 'text-slate-500'
+                                    )}>
+                                      <span className={cn(
+                                        'inline-block w-2 h-2 rounded-full',
+                                        isArchivingSession ? 'bg-amber-500 animate-pulse' : 'bg-slate-400'
+                                      )} />
+                                      {isArchivingSession ? '归档中' : '已归档'}
+                                    </span>
+                                  ) : (
+                                    (() => {
+                                      const chatState = sessionChatState?.[session.id];
+                                      const isBusy = !!(chatState?.isLoading || chatState?.isStreaming);
+                                      return (
+                                        <span className={cn('inline-flex items-center gap-1', isBusy ? 'text-amber-600' : 'text-muted-foreground')}>
+                                          <span className={cn('inline-block w-2 h-2 rounded-full', isBusy ? 'bg-amber-500' : 'bg-muted-foreground/40')} />
+                                          {isBusy ? '执行中' : '空闲'}
+                                        </span>
+                                      );
+                                    })()
+                                  )}
+                                  {(() => {
+                                    if (isArchivedSession) {
+                                      return null;
+                                    }
+                                    const pendingCount = Array.isArray(taskReviewPanelsBySession?.[session.id])
+                                      ? taskReviewPanelsBySession[session.id].length
+                                      : 0;
+                                    if (pendingCount <= 0) {
+                                      return null;
+                                    }
+                                    return (
+                                      <span className="inline-flex items-center gap-1 text-blue-600">
+                                        <span className="inline-block w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+                                        {`\u5f85\u5904\u7406 ${pendingCount}`}
+                                      </span>
+                                    );
+                                  })()}
+                                  {!isArchivedSession && sessionHasSummaryMap[session.id] && (
+                                    <button
+                                      type="button"
+                                      className={cn(
+                                        'inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] transition-colors',
+                                        summaryOpenSessionId === session.id
+                                          ? 'border-blue-500/50 bg-blue-500/10 text-blue-600'
+                                          : 'border-blue-500/30 text-blue-600 hover:bg-blue-500/10'
+                                      )}
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        void handleSelectSession(session.id);
+                                        onOpenSummary?.(session.id);
+                                      }}
+                                      title="查看会话总结"
+                                    >
+                                      总结
+                                    </button>
+                                  )}
+                                </div>
+                              </>
+                            )}
+                          </div>
+
+                          {/* 操作菜单 */}
+                          {editingSessionId !== session.id && (
+                            <div className="relative">
+                              <button
+                                className="p-1 text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 transition-opacity"
+                                onClick={(e: React.MouseEvent) => {
+                                  e.stopPropagation();
+                                  const menu = e.currentTarget.nextElementSibling as HTMLElement;
+                                  if (menu) {
+                                    menu.classList.toggle('hidden');
+                                  }
+                                }}
+                              >
+                                <DotsVerticalIcon className="w-4 h-4" />
+                              </button>
+                              <div className="hidden absolute right-0 z-10 mt-1 w-32 bg-popover border border-border rounded-md shadow-lg">
+                                <div className="py-1">
+                                  <button
+                                    onClick={(e: React.MouseEvent) => {
+                                      e.stopPropagation();
+                                      if (isArchivedSession) {
+                                        return;
+                                      }
+                                      handleStartEdit(session.id, session.title);
+                                      const menu = e.currentTarget.closest('.absolute') as HTMLElement;
+                                      if (menu) menu.classList.add('hidden');
+                                    }}
+                                    disabled={isArchivedSession}
+                                    className={cn(
+                                      'flex items-center w-full px-3 py-2 text-sm text-popover-foreground hover:bg-accent',
+                                      isArchivedSession && 'opacity-50 cursor-not-allowed hover:bg-transparent',
+                                    )}
+                                  >
+                                    <PencilIcon className="w-4 h-4 mr-2" />
+                                    重命名
+                                  </button>
+                                  <button
+                                    onClick={(e: React.MouseEvent) => {
+                                      e.stopPropagation();
+                                      handleDeleteSession(session.id);
+                                      const menu = e.currentTarget.closest('.absolute') as HTMLElement;
+                                      if (menu) menu.classList.add('hidden');
+                                    }}
+                                    disabled={isArchivedSession}
+                                    className={cn(
+                                      'flex items-center w-full px-3 py-2 text-sm text-destructive hover:bg-destructive/10',
+                                      isArchivedSession && 'opacity-50 cursor-not-allowed hover:bg-transparent',
+                                    )}
+                                  >
+                                    <TrashIcon className="w-4 h-4 mr-2" />
+                                    {isArchivedSession ? '已归档' : '归档'}
+                                  </button>
+                                </div>
                               </div>
                             </div>
-                          </div>
-                        )}
-                      </div>
-                    ))}
+                          )}
+                        </div>
+                      );
+                    })}
                     {hasMore && (
                       <div className="pt-2">
                         <button
