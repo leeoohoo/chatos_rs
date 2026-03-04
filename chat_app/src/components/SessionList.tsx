@@ -234,6 +234,34 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     }
   };
 
+  const closeActionMenus = useCallback((exceptMenu?: HTMLElement | null) => {
+    if (typeof document === 'undefined') {
+      return;
+    }
+    const menus = document.querySelectorAll<HTMLElement>('.js-inline-action-menu');
+    menus.forEach((menu) => {
+      if (exceptMenu && menu === exceptMenu) {
+        return;
+      }
+      menu.classList.add('hidden');
+    });
+  }, []);
+
+  const toggleActionMenu = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    const menu = event.currentTarget.nextElementSibling as HTMLElement | null;
+    if (!menu) {
+      return;
+    }
+    const shouldOpen = menu.classList.contains('hidden');
+    closeActionMenus(menu);
+    if (shouldOpen) {
+      menu.classList.remove('hidden');
+    } else {
+      menu.classList.add('hidden');
+    }
+  }, [closeActionMenus]);
+
   const handleRefreshSessions = async () => {
     setIsRefreshing(true);
     const fetched = await loadSessions({ limit: PAGE_SIZE, offset: 0, append: false, silent: true });
@@ -778,6 +806,38 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
   };
 
   useEffect(() => {
+    if (typeof document === 'undefined') {
+      return;
+    }
+
+    const handlePointerDown = (event: MouseEvent | TouchEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target) {
+        return;
+      }
+      if (target.closest('[data-action-menu-root="true"]')) {
+        return;
+      }
+      closeActionMenus();
+    };
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        closeActionMenus();
+      }
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('touchstart', handlePointerDown);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('touchstart', handlePointerDown);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [closeActionMenus]);
+
+  useEffect(() => {
     if (hasMoreLocked) return;
     if (sessions.length === 0) return;
     setHasMore(sessions.length >= PAGE_SIZE);
@@ -1104,20 +1164,14 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
 
                           {/* 操作菜单 */}
                           {editingSessionId !== session.id && (
-                            <div className="relative">
+                            <div className="relative" data-action-menu-root="true">
                               <button
                                 className="p-1 text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 transition-opacity"
-                                onClick={(e: React.MouseEvent) => {
-                                  e.stopPropagation();
-                                  const menu = e.currentTarget.nextElementSibling as HTMLElement;
-                                  if (menu) {
-                                    menu.classList.toggle('hidden');
-                                  }
-                                }}
+                                onClick={toggleActionMenu}
                               >
                                 <DotsVerticalIcon className="w-4 h-4" />
                               </button>
-                              <div className="hidden absolute right-0 z-10 mt-1 w-32 bg-popover border border-border rounded-md shadow-lg">
+                              <div className="js-inline-action-menu hidden absolute right-0 z-10 mt-1 w-32 bg-popover border border-border rounded-md shadow-lg">
                                 <div className="py-1">
                                   <button
                                     onClick={(e: React.MouseEvent) => {
@@ -1126,8 +1180,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
                                         return;
                                       }
                                       handleStartEdit(session.id, session.title);
-                                      const menu = e.currentTarget.closest('.absolute') as HTMLElement;
-                                      if (menu) menu.classList.add('hidden');
+                                      closeActionMenus();
                                     }}
                                     disabled={isArchivedSession}
                                     className={cn(
@@ -1142,8 +1195,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
                                     onClick={(e: React.MouseEvent) => {
                                       e.stopPropagation();
                                       handleDeleteSession(session.id);
-                                      const menu = e.currentTarget.closest('.absolute') as HTMLElement;
-                                      if (menu) menu.classList.add('hidden');
+                                      closeActionMenus();
                                     }}
                                     disabled={isArchivedSession}
                                     className={cn(
@@ -1236,27 +1288,20 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
                             {project.rootPath}
                           </div>
                         </div>
-                        <div className="relative">
+                        <div className="relative" data-action-menu-root="true">
                           <button
                             className="p-1 text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 transition-opacity"
-                            onClick={(e: React.MouseEvent) => {
-                              e.stopPropagation();
-                              const menu = e.currentTarget.nextElementSibling as HTMLElement;
-                              if (menu) {
-                                menu.classList.toggle('hidden');
-                              }
-                            }}
+                            onClick={toggleActionMenu}
                           >
                             <DotsVerticalIcon className="w-4 h-4" />
                           </button>
-                          <div className="hidden absolute right-0 z-10 mt-1 w-32 bg-popover border border-border rounded-md shadow-lg">
+                          <div className="js-inline-action-menu hidden absolute right-0 z-10 mt-1 w-32 bg-popover border border-border rounded-md shadow-lg">
                             <div className="py-1">
                               <button
                                 onClick={(e: React.MouseEvent) => {
                                   e.stopPropagation();
                                   handleDeleteProject(project.id);
-                                  const menu = e.currentTarget.closest('.absolute') as HTMLElement;
-                                  if (menu) menu.classList.add('hidden');
+                                  closeActionMenus();
                                 }}
                                 className="flex items-center w-full px-3 py-2 text-sm text-destructive hover:bg-destructive/10"
                               >
@@ -1368,27 +1413,20 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
                             </div>
                           )}
                         </div>
-                        <div className="relative">
+                        <div className="relative" data-action-menu-root="true">
                           <button
                             className="p-1 text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 transition-opacity"
-                            onClick={(e: React.MouseEvent) => {
-                              e.stopPropagation();
-                              const menu = e.currentTarget.nextElementSibling as HTMLElement;
-                              if (menu) {
-                                menu.classList.toggle('hidden');
-                              }
-                            }}
+                            onClick={toggleActionMenu}
                           >
                             <DotsVerticalIcon className="w-4 h-4" />
                           </button>
-                          <div className="hidden absolute right-0 z-10 mt-1 w-32 bg-popover border border-border rounded-md shadow-lg">
+                          <div className="js-inline-action-menu hidden absolute right-0 z-10 mt-1 w-32 bg-popover border border-border rounded-md shadow-lg">
                             <div className="py-1">
                               <button
                                 onClick={(e: React.MouseEvent) => {
                                   e.stopPropagation();
                                   handleDeleteTerminal(terminal.id);
-                                  const menu = e.currentTarget.closest('.absolute') as HTMLElement;
-                                  if (menu) menu.classList.add('hidden');
+                                  closeActionMenus();
                                 }}
                                 className="flex items-center w-full px-3 py-2 text-sm text-destructive hover:bg-destructive/10"
                               >
@@ -1497,27 +1535,20 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
                           >
                             SFTP
                           </button>
-                          <div className="relative">
+                          <div className="relative" data-action-menu-root="true">
                             <button
                               className="p-1 text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 transition-opacity"
-                              onClick={(e: React.MouseEvent) => {
-                                e.stopPropagation();
-                                const menu = e.currentTarget.nextElementSibling as HTMLElement;
-                                if (menu) {
-                                  menu.classList.toggle('hidden');
-                                }
-                              }}
+                              onClick={toggleActionMenu}
                             >
                               <DotsVerticalIcon className="w-4 h-4" />
                             </button>
-                            <div className="hidden absolute right-0 z-10 mt-1 w-36 bg-popover border border-border rounded-md shadow-lg">
+                            <div className="js-inline-action-menu hidden absolute right-0 z-10 mt-1 w-36 bg-popover border border-border rounded-md shadow-lg">
                               <div className="py-1">
                                 <button
                                   onClick={(e: React.MouseEvent) => {
                                     e.stopPropagation();
                                     openEditRemoteModal(connection);
-                                    const menu = e.currentTarget.closest('.absolute') as HTMLElement;
-                                    if (menu) menu.classList.add('hidden');
+                                    closeActionMenus();
                                   }}
                                   className="flex items-center w-full px-3 py-2 text-sm text-popover-foreground hover:bg-accent"
                                 >
@@ -1527,8 +1558,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
                                 <button
                                   onClick={async (e: React.MouseEvent) => {
                                     e.stopPropagation();
-                                    const menu = e.currentTarget.closest('.absolute') as HTMLElement;
-                                    if (menu) menu.classList.add('hidden');
+                                    closeActionMenus();
                                     try {
                                       await apiClient.testRemoteConnection(connection.id);
                                       setRemoteSuccess(`连接测试成功 (${connection.name})`);
@@ -1548,8 +1578,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
                                   onClick={(e: React.MouseEvent) => {
                                     e.stopPropagation();
                                     handleDeleteRemoteConnection(connection.id);
-                                    const menu = e.currentTarget.closest('.absolute') as HTMLElement;
-                                    if (menu) menu.classList.add('hidden');
+                                    closeActionMenus();
                                   }}
                                   className="flex items-center w-full px-3 py-2 text-sm text-destructive hover:bg-destructive/10"
                                 >
