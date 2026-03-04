@@ -6,6 +6,7 @@ const API_BASE_URL = '/api';
 class ApiClient {
   private baseUrl: string;
   private accessToken: string | null = null;
+  private tokenRefreshListeners = new Set<(token: string) => void>();
 
   constructor(baseUrl: string = API_BASE_URL) {
     this.baseUrl = baseUrl;
@@ -24,6 +25,26 @@ class ApiClient {
     return this.accessToken;
   }
 
+  onAccessTokenRefresh(listener: (token: string) => void): () => void {
+    this.tokenRefreshListeners.add(listener);
+    return () => this.tokenRefreshListeners.delete(listener);
+  }
+
+  private applyRefreshedAccessToken(response: Response): void {
+    const refreshed = (response.headers.get('x-access-token') || '').trim();
+    if (!refreshed || refreshed === this.accessToken) {
+      return;
+    }
+    this.accessToken = refreshed;
+    this.tokenRefreshListeners.forEach((listener) => {
+      try {
+        listener(refreshed);
+      } catch (error) {
+        console.error('Access token refresh listener failed:', error);
+      }
+    });
+  }
+
   private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`;
     const headers = new Headers(options.headers || {});
@@ -40,6 +61,7 @@ class ApiClient {
 
     try {
       const response = await fetch(url, config);
+      this.applyRefreshedAccessToken(response);
       const text = await response.text();
       let parsedBody: any = null;
 
@@ -816,6 +838,7 @@ class ApiClient {
         }
       }),
     });
+    this.applyRefreshedAccessToken(response);
 
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
@@ -857,6 +880,7 @@ class ApiClient {
         turn_id: options?.turnId,
       }),
     });
+    this.applyRefreshedAccessToken(response);
 
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
