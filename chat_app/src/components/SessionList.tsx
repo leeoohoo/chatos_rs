@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useChatStoreFromContext, useChatApiClientFromContext } from '../lib/store/ChatStoreContext';
 import { useChatStore } from '../lib/store';
 import { apiClient as globalApiClient } from '../lib/api/client';
-import type { Session, Project, FsEntry, Terminal } from '../types';
+import type { Session, Project, FsEntry, Terminal, RemoteConnection } from '../types';
 import { PlusIcon, DotsVerticalIcon, PencilIcon, TrashIcon, ChatIcon } from './ui/icons';
 import ConfirmDialog from './ui/ConfirmDialog';
 import { useConfirmDialog } from '../hooks/useConfirmDialog';
@@ -58,6 +58,25 @@ interface SessionListProps {
   summaryOpenSessionId?: string | null;
 }
 
+interface RemoteConnectionFormPayload {
+  name?: string;
+  host: string;
+  port?: number;
+  username: string;
+  auth_type?: 'private_key' | 'private_key_cert' | 'password';
+  password?: string;
+  private_key_path?: string;
+  certificate_path?: string;
+  default_remote_path?: string;
+  host_key_policy?: 'strict' | 'accept_new';
+  jump_enabled?: boolean;
+  jump_host?: string;
+  jump_port?: number;
+  jump_username?: string;
+  jump_private_key_path?: string;
+  jump_password?: string;
+}
+
 export const SessionList: React.FC<SessionListProps> = (props) => {
   const {
     isOpen = true,
@@ -104,6 +123,14 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     createTerminal,
     selectTerminal,
     deleteTerminal,
+    remoteConnections,
+    currentRemoteConnection,
+    loadRemoteConnections,
+    createRemoteConnection,
+    updateRemoteConnection,
+    selectRemoteConnection,
+    deleteRemoteConnection,
+    openRemoteSftp,
   } = storeToUse;
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
@@ -116,7 +143,9 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
   const [sessionsExpanded, setSessionsExpanded] = useState(true);
   const [projectsExpanded, setProjectsExpanded] = useState(true);
   const [terminalsExpanded, setTerminalsExpanded] = useState(true);
+  const [remoteExpanded, setRemoteExpanded] = useState(true);
   const [isRefreshingTerminals, setIsRefreshingTerminals] = useState(false);
+  const [isRefreshingRemote, setIsRefreshingRemote] = useState(false);
   const PAGE_SIZE = 30;
 
   const [projectModalOpen, setProjectModalOpen] = useState(false);
@@ -126,6 +155,38 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
   const [terminalModalOpen, setTerminalModalOpen] = useState(false);
   const [terminalRoot, setTerminalRoot] = useState('');
   const [terminalError, setTerminalError] = useState<string | null>(null);
+
+  const [remoteModalOpen, setRemoteModalOpen] = useState(false);
+  const [remoteName, setRemoteName] = useState('');
+  const [remoteHost, setRemoteHost] = useState('');
+  const [remotePort, setRemotePort] = useState('22');
+  const [remoteUsername, setRemoteUsername] = useState('');
+  const [remoteAuthType, setRemoteAuthType] = useState<'private_key' | 'private_key_cert' | 'password'>('private_key');
+  const [remotePassword, setRemotePassword] = useState('');
+  const [remotePrivateKeyPath, setRemotePrivateKeyPath] = useState('');
+  const [remoteCertificatePath, setRemoteCertificatePath] = useState('');
+  const [remoteDefaultPath, setRemoteDefaultPath] = useState('');
+  const [remoteHostKeyPolicy, setRemoteHostKeyPolicy] = useState<'strict' | 'accept_new'>('strict');
+  const [remoteJumpEnabled, setRemoteJumpEnabled] = useState(false);
+  const [remoteJumpHost, setRemoteJumpHost] = useState('');
+  const [remoteJumpPort, setRemoteJumpPort] = useState('22');
+  const [remoteJumpUsername, setRemoteJumpUsername] = useState('');
+  const [remoteJumpPrivateKeyPath, setRemoteJumpPrivateKeyPath] = useState('');
+  const [remoteJumpPassword, setRemoteJumpPassword] = useState('');
+  const [remoteError, setRemoteError] = useState<string | null>(null);
+  const [remoteSuccess, setRemoteSuccess] = useState<string | null>(null);
+  const [remoteTesting, setRemoteTesting] = useState(false);
+  const [remoteSaving, setRemoteSaving] = useState(false);
+  const [editingRemoteConnectionId, setEditingRemoteConnectionId] = useState<string | null>(null);
+
+  const [keyFilePickerOpen, setKeyFilePickerOpen] = useState(false);
+  const [keyFilePickerTarget, setKeyFilePickerTarget] = useState<'private_key' | 'certificate' | 'jump_private_key'>('private_key');
+  const [keyFilePickerPath, setKeyFilePickerPath] = useState<string | null>(null);
+  const [keyFilePickerParent, setKeyFilePickerParent] = useState<string | null>(null);
+  const [keyFilePickerEntries, setKeyFilePickerEntries] = useState<FsEntry[]>([]);
+  const [keyFilePickerRoots, setKeyFilePickerRoots] = useState<FsEntry[]>([]);
+  const [keyFilePickerLoading, setKeyFilePickerLoading] = useState(false);
+  const [keyFilePickerError, setKeyFilePickerError] = useState<string | null>(null);
 
   const [dirPickerOpen, setDirPickerOpen] = useState(false);
   const [dirPickerTarget, setDirPickerTarget] = useState<'project' | 'terminal'>('project');
@@ -144,6 +205,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
   const apiClient = apiClientFromContext || globalApiClient;
   const didLoadProjectsRef = useRef(false);
   const didLoadTerminalsRef = useRef(false);
+  const didLoadRemoteRef = useRef(false);
   
   const { dialogState, showConfirmDialog, handleConfirm, handleCancel } = useConfirmDialog();
 
@@ -178,6 +240,12 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     setIsRefreshingTerminals(false);
   };
 
+  const handleRefreshRemote = async () => {
+    setIsRefreshingRemote(true);
+    await loadRemoteConnections();
+    setIsRefreshingRemote(false);
+  };
+
   const handleLoadMoreSessions = async () => {
     if (isLoadingMore) return;
     setIsLoadingMore(true);
@@ -199,6 +267,32 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     setTerminalRoot('');
     setTerminalError(null);
     setTerminalModalOpen(true);
+  };
+
+  const openRemoteModal = () => {
+    setEditingRemoteConnectionId(null);
+    setRemoteName('');
+    setRemoteHost('');
+    setRemotePort('22');
+    setRemoteUsername('');
+    setRemoteAuthType('private_key');
+    setRemotePassword('');
+    setRemotePrivateKeyPath('');
+    setRemoteCertificatePath('');
+    setRemoteDefaultPath('');
+    setRemoteHostKeyPolicy('strict');
+    setRemoteJumpEnabled(false);
+    setRemoteJumpHost('');
+    setRemoteJumpPort('22');
+    setRemoteJumpUsername('');
+    setRemoteJumpPrivateKeyPath('');
+    setRemoteJumpPassword('');
+    setRemoteError(null);
+    setRemoteSuccess(null);
+    setRemoteTesting(false);
+    setRemoteSaving(false);
+    setKeyFilePickerOpen(false);
+    setRemoteModalOpen(true);
   };
 
   const deriveProjectName = (path: string) => {
@@ -243,6 +337,135 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     }
   };
 
+  const buildRemoteConnectionPayload = (): { payload: RemoteConnectionFormPayload } | { error: string } => {
+    if (!remoteHost.trim()) {
+      return { error: '请输入主机地址' };
+    }
+    if (!remoteUsername.trim()) {
+      return { error: '请输入用户名' };
+    }
+    if (remoteAuthType === 'password' && !remotePassword.trim()) {
+      return { error: '密码模式需要填写密码' };
+    }
+    if (remoteAuthType !== 'password' && !remotePrivateKeyPath.trim()) {
+      return { error: '请输入私钥路径' };
+    }
+    if (remoteAuthType === 'private_key_cert' && !remoteCertificatePath.trim()) {
+      return { error: '私钥+证书模式需要证书路径' };
+    }
+    if (remoteJumpEnabled && (!remoteJumpHost.trim() || !remoteJumpUsername.trim())) {
+      return { error: '启用跳板机后需填写跳板机主机和用户名' };
+    }
+
+    const parsedPort = Number(remotePort);
+    if (!Number.isFinite(parsedPort) || parsedPort < 1 || parsedPort > 65535) {
+      return { error: '端口范围必须在 1-65535' };
+    }
+    const parsedJumpPort = Number(remoteJumpPort);
+    if (remoteJumpEnabled && (!Number.isFinite(parsedJumpPort) || parsedJumpPort < 1 || parsedJumpPort > 65535)) {
+      return { error: '跳板机端口范围必须在 1-65535' };
+    }
+
+    const defaultName = `${remoteUsername.trim()}@${remoteHost.trim()}`;
+    return {
+      payload: {
+        name: remoteName.trim() || defaultName,
+        host: remoteHost.trim(),
+        port: parsedPort,
+        username: remoteUsername.trim(),
+        auth_type: remoteAuthType,
+        password: remoteAuthType === 'password' ? remotePassword : undefined,
+        private_key_path: remoteAuthType === 'password' ? undefined : remotePrivateKeyPath.trim(),
+        certificate_path: remoteAuthType === 'private_key_cert' ? remoteCertificatePath.trim() : undefined,
+        default_remote_path: remoteDefaultPath.trim() || undefined,
+        host_key_policy: remoteHostKeyPolicy,
+        jump_enabled: remoteJumpEnabled,
+        jump_host: remoteJumpEnabled ? remoteJumpHost.trim() : undefined,
+        jump_port: remoteJumpEnabled ? parsedJumpPort : undefined,
+        jump_username: remoteJumpEnabled ? remoteJumpUsername.trim() : undefined,
+        jump_private_key_path: remoteJumpEnabled && remoteJumpPrivateKeyPath.trim()
+          ? remoteJumpPrivateKeyPath.trim()
+          : undefined,
+        jump_password: remoteJumpEnabled && remoteJumpPassword.trim()
+          ? remoteJumpPassword
+          : undefined,
+      },
+    };
+  };
+
+  const handleTestRemoteConnection = async () => {
+    const built = buildRemoteConnectionPayload();
+    if ('error' in built) {
+      setRemoteError(built.error);
+      setRemoteSuccess(null);
+      return;
+    }
+    setRemoteTesting(true);
+    setRemoteError(null);
+    setRemoteSuccess(null);
+    try {
+      const result = await apiClient.testRemoteConnectionDraft(built.payload);
+      const remoteHostName = result?.remote_host ? ` (${result.remote_host})` : '';
+      setRemoteSuccess(`连接测试成功${remoteHostName}`);
+    } catch (error) {
+      setRemoteError(error instanceof Error ? error.message : '连接测试失败');
+    } finally {
+      setRemoteTesting(false);
+    }
+  };
+
+  const handleSaveRemoteConnection = async () => {
+    const built = buildRemoteConnectionPayload();
+    if ('error' in built) {
+      setRemoteError(built.error);
+      setRemoteSuccess(null);
+      return;
+    }
+    setRemoteSaving(true);
+    setRemoteError(null);
+    setRemoteSuccess(null);
+    try {
+      if (editingRemoteConnectionId) {
+        const updated = await updateRemoteConnection(editingRemoteConnectionId, built.payload);
+        if (!updated) {
+          throw new Error('更新远端连接失败');
+        }
+      } else {
+        await createRemoteConnection(built.payload);
+      }
+      setRemoteModalOpen(false);
+    } catch (error) {
+      setRemoteError(error instanceof Error ? error.message : (editingRemoteConnectionId ? '更新远端连接失败' : '创建远端连接失败'));
+    } finally {
+      setRemoteSaving(false);
+    }
+  };
+
+  const openEditRemoteModal = (connection: RemoteConnection) => {
+    setEditingRemoteConnectionId(connection.id);
+    setRemoteName(connection.name || '');
+    setRemoteHost(connection.host || '');
+    setRemotePort(String(connection.port || 22));
+    setRemoteUsername(connection.username || '');
+    setRemoteAuthType(connection.authType || 'private_key');
+    setRemotePassword(connection.password || '');
+    setRemotePrivateKeyPath(connection.privateKeyPath || '');
+    setRemoteCertificatePath(connection.certificatePath || '');
+    setRemoteDefaultPath(connection.defaultRemotePath || '');
+    setRemoteHostKeyPolicy(connection.hostKeyPolicy || 'strict');
+    setRemoteJumpEnabled(Boolean(connection.jumpEnabled));
+    setRemoteJumpHost(connection.jumpHost || '');
+    setRemoteJumpPort(String(connection.jumpPort || 22));
+    setRemoteJumpUsername(connection.jumpUsername || '');
+    setRemoteJumpPrivateKeyPath(connection.jumpPrivateKeyPath || '');
+    setRemoteJumpPassword(connection.jumpPassword || '');
+    setRemoteError(null);
+    setRemoteSuccess(null);
+    setRemoteTesting(false);
+    setRemoteSaving(false);
+    setRemoteModalOpen(true);
+  };
+
   const handleSelectProject = async (projectId: string) => {
     try {
       await selectProject(projectId);
@@ -257,6 +480,22 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
       await selectTerminal(terminalId);
     } catch (error) {
       console.error('Failed to select terminal:', error);
+    }
+  };
+
+  const handleSelectRemoteConnection = async (connectionId: string) => {
+    try {
+      await selectRemoteConnection(connectionId);
+    } catch (error) {
+      console.error('Failed to select remote connection:', error);
+    }
+  };
+
+  const handleOpenRemoteSftp = async (connectionId: string) => {
+    try {
+      await openRemoteSftp(connectionId);
+    } catch (error) {
+      console.error('Failed to open remote sftp:', error);
     }
   };
 
@@ -291,6 +530,24 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
           await deleteTerminal(terminalId);
         } catch (error) {
           console.error('Failed to delete terminal:', error);
+        }
+      }
+    });
+  };
+
+  const handleDeleteRemoteConnection = async (connectionId: string) => {
+    const connection = remoteConnections.find((item: RemoteConnection) => item.id === connectionId);
+    showConfirmDialog({
+      title: '删除确认',
+      message: `确定要删除远端连接 "${connection?.name || 'Untitled'}" 吗？此操作无法撤销。`,
+      confirmText: '删除',
+      cancelText: '取消',
+      type: 'danger',
+      onConfirm: async () => {
+        try {
+          await deleteRemoteConnection(connectionId);
+        } catch (error) {
+          console.error('Failed to delete remote connection:', error);
         }
       }
     });
@@ -393,6 +650,72 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
       setTerminalRoot(path);
     }
     closeDirPicker();
+  };
+
+  const deriveParentPath = (path: string) => {
+    const normalized = path.trim().replace(/[\\/]+$/, '');
+    if (!normalized) return null;
+    const idx = Math.max(normalized.lastIndexOf('/'), normalized.lastIndexOf('\\'));
+    if (idx < 0) return null;
+    if (idx === 0) return normalized[0];
+    const parent = normalized.slice(0, idx);
+    if (/^[A-Za-z]:$/.test(parent)) {
+      return `${parent}\\`;
+    }
+    return parent;
+  };
+
+  const loadKeyFileEntries = async (path?: string | null) => {
+    setKeyFilePickerLoading(true);
+    setKeyFilePickerError(null);
+    try {
+      const data = await apiClient.listFsEntries(path || undefined);
+      const mapEntry = (entry: any): FsEntry => ({
+        name: entry?.name ?? '',
+        path: entry?.path ?? '',
+        isDir: entry?.is_dir ?? entry?.isDir ?? false,
+        size: entry?.size ?? null,
+        modifiedAt: entry?.modified_at ?? entry?.modifiedAt ?? null,
+      });
+      setKeyFilePickerPath(data?.path ?? null);
+      setKeyFilePickerParent(data?.parent ?? null);
+      setKeyFilePickerEntries(Array.isArray(data?.entries) ? data.entries.map(mapEntry) : []);
+      setKeyFilePickerRoots(Array.isArray(data?.roots) ? data.roots.map(mapEntry) : []);
+    } catch (err: any) {
+      setKeyFilePickerError(err?.message || '加载文件列表失败');
+    } finally {
+      setKeyFilePickerLoading(false);
+    }
+  };
+
+  const openKeyFilePicker = async (target: 'private_key' | 'certificate' | 'jump_private_key') => {
+    setKeyFilePickerTarget(target);
+    setKeyFilePickerError(null);
+    setKeyFilePickerOpen(true);
+    const currentPath = target === 'private_key'
+      ? remotePrivateKeyPath
+      : target === 'certificate'
+        ? remoteCertificatePath
+        : remoteJumpPrivateKeyPath;
+    const parentPath = currentPath ? deriveParentPath(currentPath) : null;
+    await loadKeyFileEntries(parentPath);
+  };
+
+  const closeKeyFilePicker = () => {
+    setKeyFilePickerOpen(false);
+    setKeyFilePickerError(null);
+  };
+
+  const applySelectedKeyFile = (path: string) => {
+    if (!path) return;
+    if (keyFilePickerTarget === 'private_key') {
+      setRemotePrivateKeyPath(path);
+    } else if (keyFilePickerTarget === 'certificate') {
+      setRemoteCertificatePath(path);
+    } else {
+      setRemoteJumpPrivateKeyPath(path);
+    }
+    closeKeyFilePicker();
   };
 
   const handleDeleteSession = async (sessionId: string) => {
@@ -539,6 +862,12 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
   }, [loadTerminals]);
 
   useEffect(() => {
+    if (didLoadRemoteRef.current) return;
+    didLoadRemoteRef.current = true;
+    loadRemoteConnections();
+  }, [loadRemoteConnections]);
+
+  useEffect(() => {
     if (isCollapsed || !terminalsExpanded) return;
     const timer = window.setInterval(() => {
       loadTerminals();
@@ -546,8 +875,22 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     return () => window.clearInterval(timer);
   }, [isCollapsed, terminalsExpanded, loadTerminals]);
 
+  useEffect(() => {
+    if (isCollapsed || !remoteExpanded) return;
+    const timer = window.setInterval(() => {
+      loadRemoteConnections();
+    }, 12000);
+    return () => window.clearInterval(timer);
+  }, [isCollapsed, remoteExpanded, loadRemoteConnections]);
+
   const dirPickerItems = (dirPickerPath ? dirPickerEntries : dirPickerRoots)
     .filter((entry) => showHiddenDirs || !entry.name.startsWith('.'));
+  const keyFilePickerItems = keyFilePickerPath ? keyFilePickerEntries : keyFilePickerRoots;
+  const keyFilePickerTitle = keyFilePickerTarget === 'private_key'
+    ? '选择私钥文件'
+    : keyFilePickerTarget === 'certificate'
+      ? '选择证书文件'
+      : '选择跳板机私钥文件';
 
   return (
     <div
@@ -570,6 +913,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
                   if (next) {
                     setProjectsExpanded(false);
                     setTerminalsExpanded(false);
+                    setRemoteExpanded(false);
                   }
                   return next;
                 });
@@ -770,6 +1114,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
                   if (next) {
                     setSessionsExpanded(false);
                     setTerminalsExpanded(false);
+                    setRemoteExpanded(false);
                   }
                   return next;
                 });
@@ -865,6 +1210,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
                     if (next) {
                       setSessionsExpanded(false);
                       setProjectsExpanded(false);
+                      setRemoteExpanded(false);
                     }
                     return next;
                   });
@@ -973,6 +1319,168 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
                                 <TrashIcon className="w-4 h-4 mr-2" />
                                 删除
                               </button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="my-2 border-t border-border" />
+
+          <div className={cn('flex flex-col min-h-0', remoteExpanded ? 'flex-1' : 'shrink-0')}>
+            <div className="px-3 py-2 text-xs text-muted-foreground flex items-center justify-between">
+              <button
+                type="button"
+                onClick={() => {
+                  setRemoteExpanded((prev) => {
+                    const next = !prev;
+                    if (next) {
+                      setSessionsExpanded(false);
+                      setProjectsExpanded(false);
+                      setTerminalsExpanded(false);
+                    }
+                    return next;
+                  });
+                }}
+                className="flex items-center gap-2 uppercase tracking-wide"
+              >
+                <span>{remoteExpanded ? '▾' : '▸'}</span>
+                <span>REMOTE</span>
+              </button>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={handleRefreshRemote}
+                  className="p-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded"
+                  title="刷新远端连接列表"
+                >
+                  <svg className={cn('w-4 h-4', isRefreshingRemote && 'animate-spin')} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12a7.5 7.5 0 0112.125-5.303M19.5 12a7.5 7.5 0 01-12.125 5.303M16.5 6.697V3m0 3.697h-3.697M7.5 17.303V21m0-3.697H3.803" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  onClick={openRemoteModal}
+                  className="p-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded"
+                  title="新增远端连接"
+                >
+                  <PlusIcon className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {remoteExpanded && (
+              <div className="flex-1 min-h-0 overflow-y-auto">
+                {remoteConnections.length === 0 ? (
+                  <div className="px-3 py-3 text-xs text-muted-foreground">
+                    还没有远端连接，点击右侧 + 新建。
+                  </div>
+                ) : (
+                  <div className="p-2 space-y-1">
+                    {remoteConnections.map((connection: RemoteConnection) => (
+                      <div
+                        key={connection.id}
+                        className={`group relative flex items-center p-2 rounded-lg cursor-pointer transition-colors ${
+                          currentRemoteConnection?.id === connection.id
+                            ? 'bg-accent border border-border'
+                            : 'hover:bg-accent/50'
+                        }`}
+                        onClick={() => handleSelectRemoteConnection(connection.id)}
+                      >
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <h3 className="text-sm font-medium text-foreground truncate">
+                              {connection.name}
+                            </h3>
+                            <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded border border-blue-500/40 text-blue-600">
+                              SSH
+                            </span>
+                          </div>
+                          <div className="mt-1 text-xs text-muted-foreground truncate" title={`${connection.username}@${connection.host}:${connection.port}`}>
+                            {connection.username}@{connection.host}:{connection.port}
+                          </div>
+                          {connection.lastActiveAt && (
+                            <div className="mt-1 text-[10px] text-muted-foreground/70">
+                              最近活动：{formatTimeAgo(connection.lastActiveAt)}
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void handleOpenRemoteSftp(connection.id);
+                            }}
+                            className="rounded border border-border px-2 py-1 text-[10px] text-foreground hover:bg-accent"
+                            title="打开 SFTP"
+                          >
+                            SFTP
+                          </button>
+                          <div className="relative">
+                            <button
+                              className="p-1 text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 transition-opacity"
+                              onClick={(e: React.MouseEvent) => {
+                                e.stopPropagation();
+                                const menu = e.currentTarget.nextElementSibling as HTMLElement;
+                                if (menu) {
+                                  menu.classList.toggle('hidden');
+                                }
+                              }}
+                            >
+                              <DotsVerticalIcon className="w-4 h-4" />
+                            </button>
+                            <div className="hidden absolute right-0 z-10 mt-1 w-36 bg-popover border border-border rounded-md shadow-lg">
+                              <div className="py-1">
+                                <button
+                                  onClick={(e: React.MouseEvent) => {
+                                    e.stopPropagation();
+                                    openEditRemoteModal(connection);
+                                    const menu = e.currentTarget.closest('.absolute') as HTMLElement;
+                                    if (menu) menu.classList.add('hidden');
+                                  }}
+                                  className="flex items-center w-full px-3 py-2 text-sm text-popover-foreground hover:bg-accent"
+                                >
+                                  <PencilIcon className="w-4 h-4 mr-2" />
+                                  编辑
+                                </button>
+                                <button
+                                  onClick={async (e: React.MouseEvent) => {
+                                    e.stopPropagation();
+                                    const menu = e.currentTarget.closest('.absolute') as HTMLElement;
+                                    if (menu) menu.classList.add('hidden');
+                                    try {
+                                      await apiClient.testRemoteConnection(connection.id);
+                                      setRemoteSuccess(`连接测试成功 (${connection.name})`);
+                                      setRemoteError(null);
+                                    } catch (error) {
+                                      setRemoteError(error instanceof Error ? error.message : '连接测试失败');
+                                    }
+                                  }}
+                                  className="flex items-center w-full px-3 py-2 text-sm text-popover-foreground hover:bg-accent"
+                                >
+                                  <svg className="w-4 h-4 mr-2" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 12h16M12 4v16" />
+                                  </svg>
+                                  测试连接
+                                </button>
+                                <button
+                                  onClick={(e: React.MouseEvent) => {
+                                    e.stopPropagation();
+                                    handleDeleteRemoteConnection(connection.id);
+                                    const menu = e.currentTarget.closest('.absolute') as HTMLElement;
+                                    if (menu) menu.classList.add('hidden');
+                                  }}
+                                  className="flex items-center w-full px-3 py-2 text-sm text-destructive hover:bg-destructive/10"
+                                >
+                                  <TrashIcon className="w-4 h-4 mr-2" />
+                                  删除
+                                </button>
+                              </div>
                             </div>
                           </div>
                         </div>
@@ -1106,6 +1614,343 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
                 创建
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 远端连接创建弹窗 */}
+      {remoteModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="fixed inset-0 bg-black/50" onClick={() => setRemoteModalOpen(false)} />
+          <div className="relative bg-card border border-border rounded-lg shadow-xl w-[620px] p-6 max-h-[85vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-foreground">
+                {editingRemoteConnectionId ? '编辑远端连接' : '新增远端连接'}
+              </h3>
+              <button
+                onClick={() => setRemoteModalOpen(false)}
+                className="p-2 text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg transition-colors"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="col-span-2">
+                  <label className="text-sm text-muted-foreground">名称（可选）</label>
+                  <input
+                    value={remoteName}
+                    onChange={(e) => setRemoteName(e.target.value)}
+                    className="mt-1 w-full px-3 py-2 rounded border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                    placeholder="默认：user@host"
+                  />
+                </div>
+                <div>
+                  <label className="text-sm text-muted-foreground">主机</label>
+                  <input
+                    value={remoteHost}
+                    onChange={(e) => setRemoteHost(e.target.value)}
+                    className="mt-1 w-full px-3 py-2 rounded border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                    placeholder="例如 1.2.3.4"
+                  />
+                </div>
+                <div>
+                  <label className="text-sm text-muted-foreground">端口</label>
+                  <input
+                    value={remotePort}
+                    onChange={(e) => setRemotePort(e.target.value)}
+                    className="mt-1 w-full px-3 py-2 rounded border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                    placeholder="22"
+                  />
+                </div>
+                <div>
+                  <label className="text-sm text-muted-foreground">用户名</label>
+                  <input
+                    value={remoteUsername}
+                    onChange={(e) => setRemoteUsername(e.target.value)}
+                    className="mt-1 w-full px-3 py-2 rounded border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                    placeholder="root"
+                  />
+                </div>
+                <div>
+                  <label className="text-sm text-muted-foreground">主机校验策略</label>
+                  <select
+                    value={remoteHostKeyPolicy}
+                    onChange={(e) => setRemoteHostKeyPolicy(e.target.value as 'strict' | 'accept_new')}
+                    className="mt-1 w-full px-3 py-2 rounded border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                  >
+                    <option value="strict">strict</option>
+                    <option value="accept_new">accept_new</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-sm text-muted-foreground">认证方式</label>
+                  <select
+                    value={remoteAuthType}
+                    onChange={(e) => setRemoteAuthType(e.target.value as 'private_key' | 'private_key_cert' | 'password')}
+                    className="mt-1 w-full px-3 py-2 rounded border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                  >
+                    <option value="private_key">private_key</option>
+                    <option value="private_key_cert">private_key_cert</option>
+                    <option value="password">password</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-sm text-muted-foreground">默认远端目录（可选）</label>
+                  <input
+                    value={remoteDefaultPath}
+                    onChange={(e) => setRemoteDefaultPath(e.target.value)}
+                    className="mt-1 w-full px-3 py-2 rounded border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                    placeholder="例如 /home/root"
+                  />
+                </div>
+                {remoteAuthType === 'password' ? (
+                  <div className="col-span-2">
+                    <label className="text-sm text-muted-foreground">密码</label>
+                    <input
+                      type="password"
+                      value={remotePassword}
+                      onChange={(e) => setRemotePassword(e.target.value)}
+                      className="mt-1 w-full px-3 py-2 rounded border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                      placeholder="请输入 SSH 登录密码"
+                    />
+                  </div>
+                ) : (
+                  <>
+                    <div className="col-span-2">
+                      <label className="text-sm text-muted-foreground">私钥路径</label>
+                      <div className="mt-1 flex items-center gap-2">
+                        <input
+                          value={remotePrivateKeyPath}
+                          onChange={(e) => setRemotePrivateKeyPath(e.target.value)}
+                          className="flex-1 px-3 py-2 rounded border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                          placeholder="/Users/you/.ssh/id_rsa"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => openKeyFilePicker('private_key')}
+                          className="px-3 py-2 rounded bg-muted text-muted-foreground hover:bg-accent"
+                        >
+                          选择文件
+                        </button>
+                      </div>
+                    </div>
+                    {remoteAuthType === 'private_key_cert' && (
+                      <div className="col-span-2">
+                        <label className="text-sm text-muted-foreground">证书路径</label>
+                        <div className="mt-1 flex items-center gap-2">
+                          <input
+                            value={remoteCertificatePath}
+                            onChange={(e) => setRemoteCertificatePath(e.target.value)}
+                            className="flex-1 px-3 py-2 rounded border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                            placeholder="/Users/you/.ssh/id_rsa-cert.pub"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => openKeyFilePicker('certificate')}
+                            className="px-3 py-2 rounded bg-muted text-muted-foreground hover:bg-accent"
+                          >
+                            选择文件
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+
+              <div className="rounded border border-border p-3 space-y-3">
+                <label className="inline-flex items-center gap-2 text-sm text-foreground">
+                  <input
+                    type="checkbox"
+                    checked={remoteJumpEnabled}
+                    onChange={(e) => setRemoteJumpEnabled(e.target.checked)}
+                  />
+                  启用跳板机
+                </label>
+
+                {remoteJumpEnabled && (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-sm text-muted-foreground">跳板机主机</label>
+                      <input
+                        value={remoteJumpHost}
+                        onChange={(e) => setRemoteJumpHost(e.target.value)}
+                        className="mt-1 w-full px-3 py-2 rounded border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                        placeholder="bastion.example.com"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-sm text-muted-foreground">跳板机端口</label>
+                      <input
+                        value={remoteJumpPort}
+                        onChange={(e) => setRemoteJumpPort(e.target.value)}
+                        className="mt-1 w-full px-3 py-2 rounded border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                        placeholder="22"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-sm text-muted-foreground">跳板机用户名</label>
+                      <input
+                        value={remoteJumpUsername}
+                        onChange={(e) => setRemoteJumpUsername(e.target.value)}
+                        className="mt-1 w-full px-3 py-2 rounded border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                        placeholder="jump_user"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-sm text-muted-foreground">跳板机私钥路径（可选）</label>
+                      <div className="mt-1 flex items-center gap-2">
+                        <input
+                          value={remoteJumpPrivateKeyPath}
+                          onChange={(e) => setRemoteJumpPrivateKeyPath(e.target.value)}
+                          className="flex-1 px-3 py-2 rounded border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                          placeholder="/Users/you/.ssh/jump_key"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => openKeyFilePicker('jump_private_key')}
+                          className="px-3 py-2 rounded bg-muted text-muted-foreground hover:bg-accent"
+                        >
+                          选择文件
+                        </button>
+                      </div>
+                    </div>
+                    <div className="col-span-2">
+                      <label className="text-sm text-muted-foreground">跳板机密码（可选）</label>
+                      <input
+                        type="password"
+                        value={remoteJumpPassword}
+                        onChange={(e) => setRemoteJumpPassword(e.target.value)}
+                        className="mt-1 w-full px-3 py-2 rounded border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                        placeholder="留空则尝试私钥/Agent/目标密码"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {remoteError && (
+                <div className="text-xs text-destructive">{remoteError}</div>
+              )}
+              {remoteSuccess && (
+                <div className="text-xs text-emerald-600">{remoteSuccess}</div>
+              )}
+            </div>
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                onClick={() => setRemoteModalOpen(false)}
+                className="px-3 py-2 rounded bg-muted text-muted-foreground hover:bg-accent"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleTestRemoteConnection}
+                disabled={remoteTesting || remoteSaving}
+                className="px-4 py-2 rounded border border-border text-foreground hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {remoteTesting ? '测试中...' : '测试连接'}
+              </button>
+              <button
+                onClick={handleSaveRemoteConnection}
+                disabled={remoteSaving || remoteTesting}
+                className="px-4 py-2 rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {remoteSaving ? '保存中...' : editingRemoteConnectionId ? '保存' : '创建'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 远端密钥文件选择弹窗 */}
+      {keyFilePickerOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center">
+          <div className="fixed inset-0 bg-black/50" onClick={closeKeyFilePicker} />
+          <div className="relative bg-card border border-border rounded-lg shadow-xl w-[680px] max-h-[82vh] p-6 flex flex-col">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-lg font-semibold text-foreground">{keyFilePickerTitle}</h3>
+              <button
+                onClick={closeKeyFilePicker}
+                className="p-2 text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg transition-colors"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="text-xs text-muted-foreground break-all">
+              当前路径：<span className="text-foreground">{keyFilePickerPath || '请选择磁盘/目录'}</span>
+            </div>
+            <div className="mt-3 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => loadKeyFileEntries(keyFilePickerParent)}
+                disabled={!keyFilePickerParent}
+                className="px-3 py-1.5 rounded bg-muted text-muted-foreground hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                返回上级
+              </button>
+              <button
+                type="button"
+                onClick={() => loadKeyFileEntries(keyFilePickerPath)}
+                className="px-3 py-1.5 rounded bg-muted text-muted-foreground hover:bg-accent"
+              >
+                刷新
+              </button>
+            </div>
+            <div className="mt-3 flex-1 overflow-y-auto border border-border rounded">
+              {keyFilePickerLoading && (
+                <div className="p-4 text-sm text-muted-foreground">加载中...</div>
+              )}
+              {!keyFilePickerLoading && keyFilePickerItems.length === 0 && (
+                <div className="p-4 text-sm text-muted-foreground">没有可用文件</div>
+              )}
+              {!keyFilePickerLoading && keyFilePickerItems.length > 0 && (
+                <div className="divide-y divide-border">
+                  {keyFilePickerItems.map((entry) => (
+                    <div
+                      key={entry.path}
+                      className="px-4 py-2 hover:bg-accent flex items-center justify-between gap-3"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (entry.isDir) {
+                            loadKeyFileEntries(entry.path);
+                          } else {
+                            applySelectedKeyFile(entry.path);
+                          }
+                        }}
+                        className="flex-1 text-left"
+                      >
+                        <span className="text-foreground truncate block">
+                          {entry.isDir ? '📁' : '🔑'} {entry.name || entry.path}
+                        </span>
+                        <span className="text-[11px] text-muted-foreground truncate block">{entry.path}</span>
+                      </button>
+                      {!entry.isDir && (
+                        <button
+                          type="button"
+                          onClick={() => applySelectedKeyFile(entry.path)}
+                          className="px-2.5 py-1 rounded border border-border text-xs text-foreground hover:bg-accent"
+                        >
+                          选择
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            {keyFilePickerError && (
+              <div className="mt-2 text-xs text-destructive">{keyFilePickerError}</div>
+            )}
           </div>
         </div>
       )}

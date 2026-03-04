@@ -11,6 +11,7 @@ import { createChatConfigActions } from './actions/chatConfig';
 import { createSessionActions } from './actions/sessions';
 import { createProjectActions } from './actions/projects';
 import { createTerminalActions } from './actions/terminals';
+import { createRemoteConnectionActions } from './actions/remoteConnections';
 import { createMessageActions } from './actions/messages';
 import { createStreamingActions } from './actions/streaming';
 import { createAgentActions } from './actions/agents';
@@ -58,6 +59,9 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                     terminals: [],
                     currentTerminalId: null,
                     currentTerminal: null,
+                    remoteConnections: [],
+                    currentRemoteConnectionId: null,
+                    currentRemoteConnection: null,
                     messages: [],
                     isLoading: false,
                     isStreaming: false,
@@ -93,6 +97,7 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                     ...createSessionActions({ set, get, client, getSessionParams, customUserId, customProjectId }),
                     ...createProjectActions({ set, get, client, getUserIdParam }),
                     ...createTerminalActions({ set, get, client, getUserIdParam }),
+                    ...createRemoteConnectionActions({ set, get, client, getUserIdParam }),
                     ...createMessageActions({ set, get, client }),
                     sendMessage: createSendMessageHandler({ set, get, client, getUserIdParam }),
                     ...createStreamingActions({ set, get, client }),

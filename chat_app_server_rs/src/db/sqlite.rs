@@ -263,6 +263,29 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             last_active_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )"#,
+        r#"CREATE TABLE IF NOT EXISTS remote_connections (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            host TEXT NOT NULL,
+            port INTEGER NOT NULL DEFAULT 22,
+            username TEXT NOT NULL,
+            auth_type TEXT NOT NULL DEFAULT 'private_key',
+            password TEXT,
+            private_key_path TEXT,
+            certificate_path TEXT,
+            default_remote_path TEXT,
+            host_key_policy TEXT NOT NULL DEFAULT 'strict',
+            jump_enabled INTEGER NOT NULL DEFAULT 0,
+            jump_host TEXT,
+            jump_port INTEGER,
+            jump_username TEXT,
+            jump_private_key_path TEXT,
+            jump_password TEXT,
+            user_id TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            last_active_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )"#,
         r#"CREATE TABLE IF NOT EXISTS terminal_logs (
             id TEXT PRIMARY KEY,
             terminal_id TEXT NOT NULL,
@@ -443,6 +466,12 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
     ensure_column(pool, "messages", "summarized_at", "TEXT")
         .await
         .ok();
+    ensure_column(pool, "remote_connections", "password", "TEXT")
+        .await
+        .ok();
+    ensure_column(pool, "remote_connections", "jump_password", "TEXT")
+        .await
+        .ok();
 
     let indexes = vec![
         "CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id)",
@@ -481,6 +510,8 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
         "CREATE INDEX IF NOT EXISTS idx_terminals_user_id ON terminals(user_id)",
         "CREATE INDEX IF NOT EXISTS idx_terminals_project_id ON terminals(project_id)",
         "CREATE INDEX IF NOT EXISTS idx_terminals_status ON terminals(status)",
+        "CREATE INDEX IF NOT EXISTS idx_remote_connections_user_id ON remote_connections(user_id)",
+        "CREATE INDEX IF NOT EXISTS idx_remote_connections_host ON remote_connections(host)",
         "CREATE INDEX IF NOT EXISTS idx_terminal_logs_terminal_id ON terminal_logs(terminal_id)",
         "CREATE INDEX IF NOT EXISTS idx_terminal_logs_created_at ON terminal_logs(created_at)",
         "CREATE INDEX IF NOT EXISTS idx_session_mcp_servers_session_id ON session_mcp_servers(session_id)",

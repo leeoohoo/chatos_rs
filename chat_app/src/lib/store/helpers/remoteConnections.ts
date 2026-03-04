@@ -1,0 +1,25 @@
+import type { RemoteConnection } from '../../../types';
+
+export const normalizeRemoteConnection = (raw: any): RemoteConnection => ({
+  id: raw?.id ?? '',
+  name: raw?.name ?? '',
+  host: raw?.host ?? '',
+  port: Number(raw?.port ?? 22),
+  username: raw?.username ?? '',
+  authType: (raw?.auth_type ?? raw?.authType ?? 'private_key') as 'private_key' | 'private_key_cert' | 'password',
+  password: raw?.password ?? null,
+  privateKeyPath: raw?.private_key_path ?? raw?.privateKeyPath ?? null,
+  certificatePath: raw?.certificate_path ?? raw?.certificatePath ?? null,
+  defaultRemotePath: raw?.default_remote_path ?? raw?.defaultRemotePath ?? null,
+  hostKeyPolicy: (raw?.host_key_policy ?? raw?.hostKeyPolicy ?? 'strict') as 'strict' | 'accept_new',
+  jumpEnabled: Boolean(raw?.jump_enabled ?? raw?.jumpEnabled ?? false),
+  jumpHost: raw?.jump_host ?? raw?.jumpHost ?? null,
+  jumpPort: raw?.jump_port ?? raw?.jumpPort ?? null,
+  jumpUsername: raw?.jump_username ?? raw?.jumpUsername ?? null,
+  jumpPrivateKeyPath: raw?.jump_private_key_path ?? raw?.jumpPrivateKeyPath ?? null,
+  jumpPassword: raw?.jump_password ?? raw?.jumpPassword ?? null,
+  userId: raw?.user_id ?? raw?.userId ?? null,
+  createdAt: new Date(raw?.created_at ?? raw?.createdAt ?? Date.now()),
+  updatedAt: new Date(raw?.updated_at ?? raw?.updatedAt ?? raw?.created_at ?? raw?.createdAt ?? Date.now()),
+  lastActiveAt: new Date(raw?.last_active_at ?? raw?.lastActiveAt ?? raw?.updated_at ?? raw?.updatedAt ?? Date.now()),
+});

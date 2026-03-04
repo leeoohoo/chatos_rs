@@ -134,7 +134,7 @@ export function createProjectActions({ set, get, client, getUserIdParam }: Deps)
       }
     },
 
-    setActivePanel: (panel: 'chat' | 'project' | 'terminal') => {
+    setActivePanel: (panel: 'chat' | 'project' | 'terminal' | 'remote_terminal' | 'remote_sftp') => {
       set((state: any) => {
         state.activePanel = panel;
       });

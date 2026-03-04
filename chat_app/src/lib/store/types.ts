@@ -1,4 +1,4 @@
-import type { Message, Session, ChatConfig, Theme, McpConfig, AiModelConfig, SystemContext, AgentConfig, Application, Project, Terminal } from '../../types';
+import type { Message, Session, ChatConfig, Theme, McpConfig, AiModelConfig, SystemContext, AgentConfig, Application, Project, Terminal, RemoteConnection } from '../../types';
 
 export interface TaskReviewDraft {
   id: string;
@@ -30,12 +30,17 @@ export interface ChatState {
   projects: Project[];
   currentProjectId: string | null;
   currentProject: Project | null;
-  activePanel: 'chat' | 'project' | 'terminal';
+  activePanel: 'chat' | 'project' | 'terminal' | 'remote_terminal' | 'remote_sftp';
 
   // 终端相关
   terminals: Terminal[];
   currentTerminalId: string | null;
   currentTerminal: Terminal | null;
+
+  // 远端连接
+  remoteConnections: RemoteConnection[];
+  currentRemoteConnectionId: string | null;
+  currentRemoteConnection: RemoteConnection | null;
 
   // 消息相关
   messages: Message[];
@@ -85,13 +90,53 @@ export interface ChatActions {
   updateProject: (projectId: string, updates: Partial<Project>) => Promise<Project | null>;
   deleteProject: (projectId: string) => Promise<void>;
   selectProject: (projectId: string) => Promise<void>;
-  setActivePanel: (panel: 'chat' | 'project' | 'terminal') => void;
+  setActivePanel: (panel: 'chat' | 'project' | 'terminal' | 'remote_terminal' | 'remote_sftp') => void;
 
   // 终端操作
   loadTerminals: () => Promise<Terminal[]>;
   createTerminal: (cwd: string, name?: string) => Promise<Terminal>;
   deleteTerminal: (terminalId: string) => Promise<void>;
   selectTerminal: (terminalId: string) => Promise<void>;
+  loadRemoteConnections: () => Promise<RemoteConnection[]>;
+  createRemoteConnection: (payload: {
+    name?: string;
+    host: string;
+    port?: number;
+    username: string;
+    auth_type?: 'private_key' | 'private_key_cert' | 'password';
+    password?: string;
+    private_key_path?: string;
+    certificate_path?: string;
+    default_remote_path?: string;
+    host_key_policy?: 'strict' | 'accept_new';
+    jump_enabled?: boolean;
+    jump_host?: string;
+    jump_port?: number;
+    jump_username?: string;
+    jump_private_key_path?: string;
+    jump_password?: string;
+  }) => Promise<RemoteConnection>;
+  updateRemoteConnection: (connectionId: string, payload: {
+    name?: string;
+    host?: string;
+    port?: number;
+    username?: string;
+    auth_type?: 'private_key' | 'private_key_cert' | 'password';
+    password?: string;
+    private_key_path?: string;
+    certificate_path?: string;
+    default_remote_path?: string;
+    host_key_policy?: 'strict' | 'accept_new';
+    jump_enabled?: boolean;
+    jump_host?: string;
+    jump_port?: number;
+    jump_username?: string;
+    jump_private_key_path?: string;
+    jump_password?: string;
+  }) => Promise<RemoteConnection | null>;
+  deleteRemoteConnection: (connectionId: string) => Promise<void>;
+  selectRemoteConnection: (connectionId: string) => Promise<void>;
+  openRemoteSftp: (connectionId: string) => Promise<void>;
 
   // 消息操作
   loadMessages: (sessionId: string) => Promise<void>;

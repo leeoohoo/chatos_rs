@@ -7,6 +7,7 @@ pub mod db;
 pub mod mcp_configs;
 pub mod messages;
 pub mod projects;
+pub mod remote_connections;
 pub mod session_mcp_servers;
 pub mod session_summaries;
 pub mod session_summaries_v2;
