@@ -54,7 +54,12 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
         "users",
         "messages",
         "session_summaries",
+        "session_summaries_v2",
         "session_summary_messages",
+        "archived_messages",
+        "archived_session_summaries",
+        "archived_session_summaries_v2",
+        "archived_session_summary_messages",
         "mcp_configs",
         "mcp_change_logs",
         "task_manager_tasks",
@@ -112,6 +117,13 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
         )
         .await;
     let _ = db
+        .collection::<mongodb::bson::Document>("sessions")
+        .create_index(
+            IndexModel::builder().keys(doc! { "status": 1 }).build(),
+            None,
+        )
+        .await;
+    let _ = db
         .collection::<mongodb::bson::Document>("messages")
         .create_index(
             IndexModel::builder().keys(doc! { "session_id": 1 }).build(),
@@ -135,6 +147,22 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
         )
         .await;
     let _ = db
+        .collection::<mongodb::bson::Document>("session_summaries_v2")
+        .create_index(
+            IndexModel::builder().keys(doc! { "session_id": 1 }).build(),
+            None,
+        )
+        .await;
+    let _ = db
+        .collection::<mongodb::bson::Document>("session_summaries_v2")
+        .create_index(
+            IndexModel::builder()
+                .keys(doc! { "session_id": 1, "created_at": -1 })
+                .build(),
+            None,
+        )
+        .await;
+    let _ = db
         .collection::<mongodb::bson::Document>("session_summary_messages")
         .create_index(
             IndexModel::builder().keys(doc! { "session_id": 1 }).build(),
@@ -145,6 +173,98 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
         .collection::<mongodb::bson::Document>("session_summary_messages")
         .create_index(
             IndexModel::builder().keys(doc! { "summary_id": 1 }).build(),
+            None,
+        )
+        .await;
+    let _ = db
+        .collection::<mongodb::bson::Document>("archived_messages")
+        .create_index(
+            IndexModel::builder()
+                .keys(doc! { "id": 1 })
+                .options(
+                    mongodb::options::IndexOptions::builder()
+                        .unique(true)
+                        .build(),
+                )
+                .build(),
+            None,
+        )
+        .await;
+    let _ = db
+        .collection::<mongodb::bson::Document>("archived_messages")
+        .create_index(
+            IndexModel::builder()
+                .keys(doc! { "session_id": 1, "created_at": 1 })
+                .build(),
+            None,
+        )
+        .await;
+    let _ = db
+        .collection::<mongodb::bson::Document>("archived_session_summaries")
+        .create_index(
+            IndexModel::builder()
+                .keys(doc! { "id": 1 })
+                .options(
+                    mongodb::options::IndexOptions::builder()
+                        .unique(true)
+                        .build(),
+                )
+                .build(),
+            None,
+        )
+        .await;
+    let _ = db
+        .collection::<mongodb::bson::Document>("archived_session_summaries")
+        .create_index(
+            IndexModel::builder()
+                .keys(doc! { "session_id": 1, "created_at": 1 })
+                .build(),
+            None,
+        )
+        .await;
+    let _ = db
+        .collection::<mongodb::bson::Document>("archived_session_summaries_v2")
+        .create_index(
+            IndexModel::builder()
+                .keys(doc! { "id": 1 })
+                .options(
+                    mongodb::options::IndexOptions::builder()
+                        .unique(true)
+                        .build(),
+                )
+                .build(),
+            None,
+        )
+        .await;
+    let _ = db
+        .collection::<mongodb::bson::Document>("archived_session_summaries_v2")
+        .create_index(
+            IndexModel::builder()
+                .keys(doc! { "session_id": 1, "created_at": 1 })
+                .build(),
+            None,
+        )
+        .await;
+    let _ = db
+        .collection::<mongodb::bson::Document>("archived_session_summary_messages")
+        .create_index(
+            IndexModel::builder()
+                .keys(doc! { "id": 1 })
+                .options(
+                    mongodb::options::IndexOptions::builder()
+                        .unique(true)
+                        .build(),
+                )
+                .build(),
+            None,
+        )
+        .await;
+    let _ = db
+        .collection::<mongodb::bson::Document>("archived_session_summary_messages")
+        .create_index(
+            IndexModel::builder()
+                .keys(doc! { "session_id": 1, "created_at": 1 })
+                .build(),
             None,
         )
         .await;

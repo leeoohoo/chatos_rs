@@ -19,6 +19,7 @@ services:
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       CORS_ORIGINS: ${CORS_ORIGINS:-*}
+      NOTEPAD_DATA_DIR: ${NOTEPAD_DATA_DIR:-/app/data/notepad}
     volumes:
       - ./chat_app_server_rs/config:/app/config:ro
       # Use named volumes to isolate Docker runtime data from local dev environment.

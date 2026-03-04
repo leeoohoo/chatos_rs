@@ -1,7 +1,7 @@
 use axum::body::Body;
 use axum::extract::{DefaultBodyLimit, OriginalUri};
 use axum::http::{
-    header::{HeaderName, ACCEPT, AUTHORIZATION, CONTENT_TYPE, ORIGIN, UPGRADE},
+    header::{HeaderName, HeaderValue, ACCEPT, AUTHORIZATION, CONTENT_TYPE, ORIGIN, UPGRADE},
     Request, StatusCode,
 };
 use axum::middleware;
@@ -18,11 +18,15 @@ use tracing::{info, info_span};
 
 use crate::config::Config;
 use crate::core::auth::{
-    auth_user_from_access_token, auth_user_from_headers, AuthHeaderError, AuthUser,
+    auth_user_from_access_token, auth_user_from_headers, sign_access_token, AuthHeaderError,
+    AuthUser,
 };
 
 static START_TIME: Lazy<Instant> = Lazy::new(Instant::now);
 static REQUEST_ID_HEADER: HeaderName = HeaderName::from_static("x-request-id");
+static ACCESS_TOKEN_HEADER: HeaderName = HeaderName::from_static("x-access-token");
+static ACCESS_TOKEN_EXPIRES_IN_HEADER: HeaderName =
+    HeaderName::from_static("x-access-token-expires-in");
 
 pub mod agents;
 pub mod agents_v3;
@@ -65,6 +69,11 @@ pub fn router() -> Router {
         CorsLayer::new()
             .allow_origin(Any)
             .allow_headers(allowed_headers)
+            .expose_headers([
+                REQUEST_ID_HEADER.clone(),
+                ACCESS_TOKEN_HEADER.clone(),
+                ACCESS_TOKEN_EXPIRES_IN_HEADER.clone(),
+            ])
             .allow_methods(Any)
             .allow_credentials(false)
     } else {
@@ -76,6 +85,11 @@ pub fn router() -> Router {
         CorsLayer::new()
             .allow_origin(origins)
             .allow_headers(allowed_headers)
+            .expose_headers([
+                REQUEST_ID_HEADER.clone(),
+                ACCESS_TOKEN_HEADER.clone(),
+                ACCESS_TOKEN_EXPIRES_IN_HEADER.clone(),
+            ])
             .allow_methods(Any)
             .allow_credentials(true)
     };
@@ -192,6 +206,7 @@ async fn require_auth(
     mut req: Request<Body>,
     next: middleware::Next,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
+    let is_ws_upgrade = is_websocket_upgrade(&req);
     // 在中间件只解析一次 token，并把登录用户注入 request extensions。
     let auth_user = match auth_user_from_headers(req.headers()) {
         Ok(auth_user) => auth_user,
@@ -202,8 +217,34 @@ async fn require_auth(
         }
         Err(err) => return Err(err.into_response()),
     };
-    req.extensions_mut().insert(auth_user);
-    Ok(next.run(req).await)
+    req.extensions_mut().insert(auth_user.clone());
+    let mut response = next.run(req).await;
+
+    if !is_ws_upgrade {
+        match sign_access_token(&auth_user.user_id, &auth_user.email) {
+            Ok(token) => {
+                if let Ok(header_value) = HeaderValue::from_str(&token) {
+                    response
+                        .headers_mut()
+                        .insert(ACCESS_TOKEN_HEADER.clone(), header_value);
+                }
+                let ttl = crate::config::Config::get()
+                    .auth_access_token_ttl_seconds
+                    .max(60)
+                    .to_string();
+                if let Ok(header_value) = HeaderValue::from_str(&ttl) {
+                    response
+                        .headers_mut()
+                        .insert(ACCESS_TOKEN_EXPIRES_IN_HEADER.clone(), header_value);
+                }
+            }
+            Err(err) => {
+                tracing::warn!(error = %err, "failed to refresh access token");
+            }
+        }
+    }
+
+    Ok(response)
 }
 
 fn auth_user_from_ws_query(req: &Request<Body>) -> Result<AuthUser, AuthHeaderError> {

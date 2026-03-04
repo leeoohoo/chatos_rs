@@ -640,11 +640,20 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
                   }
 
                   if (segment.type === 'text') {
+                    const rawSegmentContent = typeof segment.content === 'string' ? segment.content : '';
+                    const renderSegmentContent = rawSegmentContent.trim().length > 0
+                      ? rawSegmentContent
+                      : '';
+                    const shouldRenderStreamingCursor = isCurrentlyStreaming && index === contentSegments.length - 1;
+                    if (!renderSegmentContent && !shouldRenderStreamingCursor) {
+                      index += 1;
+                      continue;
+                    }
                     nodes.push(
                       <div key={`segment-${index}`} className="prose prose-sm max-w-none">
                         <MarkdownRenderer
-                          content={segment.content as string}
-                          isStreaming={isCurrentlyStreaming && index === contentSegments.length - 1}
+                          content={renderSegmentContent}
+                          isStreaming={shouldRenderStreamingCursor}
                           onApplyCode={handleApplyCode}
                         />
                       </div>

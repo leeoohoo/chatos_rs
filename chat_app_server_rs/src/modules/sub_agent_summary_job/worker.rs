@@ -35,6 +35,14 @@ impl WorkerState {
     }
 }
 
+fn should_delay_next_check(status: &str) -> bool {
+    !matches!(status, "skipped:threshold_not_met" | "skipped:no_pending")
+}
+
+fn consumes_tick_quota(status: &str) -> bool {
+    !matches!(status, "skipped:threshold_not_met" | "skipped:no_pending")
+}
+
 struct TickRunningGuard {
     running: Arc<AtomicBool>,
 }
@@ -91,15 +99,19 @@ async fn run_once(
     defaults: &SummaryJobDefaults,
     state: Arc<Mutex<WorkerState>>,
 ) -> Result<(), String> {
-    let run_ids =
-        SubAgentRunMessageService::list_runs_with_pending_summary(Some(defaults.max_runs_per_tick))
-            .await?;
+    let run_ids = SubAgentRunMessageService::list_runs_with_pending_summary(None).await?;
     if run_ids.is_empty() {
         return Ok(());
     }
 
     let now_ts = chrono::Utc::now().timestamp();
+    let max_runs_per_tick = defaults.max_runs_per_tick.max(1) as usize;
+    let mut processed_runs = 0usize;
     for run_id in run_ids {
+        if processed_runs >= max_runs_per_tick {
+            break;
+        }
+
         let effective = match config::resolve_effective_config(&run_id, defaults).await {
             Ok(Some(value)) => value,
             Ok(None) => continue,
@@ -122,13 +134,15 @@ async fn run_once(
         if !due {
             continue;
         }
-        {
-            let mut state_guard = state.lock().await;
-            state_guard.mark_checked(&run_id, now_ts);
-        }
-
         match executor::process_run(&run_id, &effective).await {
             Ok(outcome) => {
+                if should_delay_next_check(outcome.status.as_str()) {
+                    let mut state_guard = state.lock().await;
+                    state_guard.mark_checked(&run_id, now_ts);
+                }
+                if consumes_tick_quota(outcome.status.as_str()) {
+                    processed_runs += 1;
+                }
                 info!(
                     "[SUB-AGENT-SUMMARY-JOB] processed run_id={} status={} trigger={} summary_id={} marked_messages={}",
                     run_id,
@@ -139,6 +153,11 @@ async fn run_once(
                 );
             }
             Err(err) => {
+                {
+                    let mut state_guard = state.lock().await;
+                    state_guard.mark_checked(&run_id, now_ts);
+                }
+                processed_runs += 1;
                 warn!(
                     "[SUB-AGENT-SUMMARY-JOB] process run failed: run_id={} error={}",
                     run_id, err

@@ -1250,6 +1250,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                           </div>
                           <div className="flex-1 min-h-0 overflow-hidden">
                             <MessageList
+                              key={`messages-${currentSession?.id || 'none'}-summary`}
                               sessionId={currentSession?.id}
                               messages={messages}
                               isLoading={chatIsLoading}
@@ -1263,6 +1264,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                         </div>
                       ) : (
                         <MessageList
+                          key={`messages-${currentSession?.id || 'none'}-chat`}
                           sessionId={currentSession?.id}
                           messages={messages}
                           isLoading={chatIsLoading}
@@ -1367,7 +1369,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         <NotepadPanel
           isOpen={showNotepadPanel}
           onClose={() => setShowNotepadPanel(false)}
-          projectId={currentProject?.id || null}
         />
 
         {/* 鏅鸿兘浣撶鐞嗗櫒 */}

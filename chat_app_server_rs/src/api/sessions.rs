@@ -6,6 +6,7 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::{json, Number, Value};
+use tracing::warn;
 use uuid::Uuid;
 
 use crate::core::auth::AuthUser;
@@ -28,6 +29,8 @@ struct SessionQuery {
     project_id: Option<String>,
     limit: Option<String>,
     offset: Option<String>,
+    include_archived: Option<String>,
+    include_archiving: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -113,6 +116,8 @@ async fn list_sessions(
         project_id,
         limit,
         offset,
+        include_archived,
+        include_archiving,
     } = query;
     let user_id = match resolve_user_id(user_id, &auth) {
         Ok(user_id) => user_id,
@@ -120,8 +125,33 @@ async fn list_sessions(
     };
     let limit = parse_positive_limit(limit);
     let offset = parse_non_negative_offset(offset);
-    let result =
-        SessionService::get_by_user_project(Some(user_id), project_id, limit, offset).await;
+    let include_archived = include_archived
+        .as_deref()
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes"
+            )
+        })
+        .unwrap_or(false);
+    let include_archiving = include_archiving
+        .as_deref()
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes"
+            )
+        })
+        .unwrap_or(false);
+    let result = SessionService::get_by_user_project(
+        Some(user_id),
+        project_id,
+        limit,
+        offset,
+        include_archived,
+        include_archiving,
+    )
+    .await;
     match result {
         Ok(list) => (
             StatusCode::OK,
@@ -224,10 +254,21 @@ async fn delete_session(auth: AuthUser, Path(id): Path<String>) -> (StatusCode, 
         return map_session_access_error(err);
     }
     match SessionService::delete(&id).await {
-        Ok(_) => (
-            StatusCode::OK,
-            Json(serde_json::json!({"success": true, "message": "会话已删除"})),
-        ),
+        Ok(_) => {
+            let session_id = id.clone();
+            tokio::spawn(async move {
+                if let Err(err) = SessionService::process_archive(&session_id).await {
+                    warn!(
+                        "[SESSION-ARCHIVE] async archive failed: session_id={} error={}",
+                        session_id, err
+                    );
+                }
+            });
+            (
+                StatusCode::ACCEPTED,
+                Json(serde_json::json!({"success": true, "message": "会话已进入归档队列"})),
+            )
+        }
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": err})),
@@ -538,18 +579,22 @@ fn attach_user_history_process_metadata(
     final_assistant_message_id: Option<String>,
 ) {
     let user_message_id = user_message.id.clone();
+    let mut history_process = json!({
+        "hasProcess": has_process,
+        "toolCallCount": tool_call_count,
+        "thinkingCount": thinking_count,
+        "processMessageCount": process_message_count,
+        "userMessageId": user_message_id,
+        "finalAssistantMessageId": final_assistant_message_id,
+    });
+    if let Some(turn_id) = message_turn_id(user_message) {
+        if let Some(map) = history_process.as_object_mut() {
+            map.insert("turnId".to_string(), Value::String(turn_id.to_string()));
+        }
+    }
+
     let metadata = ensure_metadata_object(user_message);
-    metadata.insert(
-        "historyProcess".to_string(),
-        json!({
-            "hasProcess": has_process,
-            "toolCallCount": tool_call_count,
-            "thinkingCount": thinking_count,
-            "processMessageCount": process_message_count,
-            "userMessageId": user_message_id,
-            "finalAssistantMessageId": final_assistant_message_id,
-        }),
-    );
+    metadata.insert("historyProcess".to_string(), history_process);
 }
 
 fn strip_assistant_for_compact_history(message: &mut Message, user_message_id: &str) {
@@ -557,20 +602,21 @@ fn strip_assistant_for_compact_history(message: &mut Message, user_message_id: &
         return;
     }
 
+    enrich_assistant_message_for_display(message);
     message.reasoning = None;
     message.tool_calls = None;
+    let turn_id = message_turn_id(message).map(|id| id.to_string());
 
     let metadata = ensure_metadata_object(message);
-    metadata.remove("toolCalls");
     metadata.remove("tool_calls");
-    metadata.remove("contentSegments");
-    metadata.remove("content_segments");
-    metadata.remove("currentSegmentIndex");
     metadata.remove("hidden");
     metadata.insert(
         "historyFinalForUserMessageId".to_string(),
         Value::String(user_message_id.to_string()),
     );
+    if let Some(turn_id) = turn_id {
+        metadata.insert("historyFinalForTurnId".to_string(), Value::String(turn_id));
+    }
     metadata.insert("historyProcessExpanded".to_string(), Value::Bool(false));
 }
 
@@ -637,7 +683,7 @@ fn build_compact_history_messages(messages: Vec<Message>) -> Vec<Message> {
             final_assistant_index.map(|index| messages[index].id.clone());
         attach_user_history_process_metadata(
             &mut user_message,
-            process_message_count > 0,
+            process_message_count > 0 || tool_call_count > 0 || thinking_count > 0,
             tool_call_count,
             thinking_count,
             process_message_count,

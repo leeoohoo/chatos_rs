@@ -6,6 +6,7 @@ const API_BASE_URL = '/api';
 class ApiClient {
   private baseUrl: string;
   private accessToken: string | null = null;
+  private tokenRefreshListeners = new Set<(token: string) => void>();
 
   constructor(baseUrl: string = API_BASE_URL) {
     this.baseUrl = baseUrl;
@@ -24,6 +25,26 @@ class ApiClient {
     return this.accessToken;
   }
 
+  onAccessTokenRefresh(listener: (token: string) => void): () => void {
+    this.tokenRefreshListeners.add(listener);
+    return () => this.tokenRefreshListeners.delete(listener);
+  }
+
+  private applyRefreshedAccessToken(response: Response): void {
+    const refreshed = (response.headers.get('x-access-token') || '').trim();
+    if (!refreshed || refreshed === this.accessToken) {
+      return;
+    }
+    this.accessToken = refreshed;
+    this.tokenRefreshListeners.forEach((listener) => {
+      try {
+        listener(refreshed);
+      } catch (error) {
+        console.error('Access token refresh listener failed:', error);
+      }
+    });
+  }
+
   private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`;
     const headers = new Headers(options.headers || {});
@@ -40,6 +61,7 @@ class ApiClient {
 
     try {
       const response = await fetch(url, config);
+      this.applyRefreshedAccessToken(response);
       const text = await response.text();
       let parsedBody: any = null;
 
@@ -77,13 +99,15 @@ class ApiClient {
   async getSessions(
     userId?: string,
     projectId?: string,
-    paging?: { limit?: number; offset?: number }
+    paging?: { limit?: number; offset?: number; includeArchived?: boolean; includeArchiving?: boolean }
   ): Promise<any[]> {
     const params = new URLSearchParams();
     if (userId) params.append('user_id', userId);  // 修复：使用user_id匹配后端参数名
     if (projectId) params.append('project_id', projectId);  // 修复：使用project_id匹配后端参数名
     if (paging?.limit !== undefined) params.append('limit', String(paging.limit));
     if (paging?.offset !== undefined) params.append('offset', String(paging.offset));
+    if (paging?.includeArchived === true) params.append('include_archived', 'true');
+    if (paging?.includeArchiving === true) params.append('include_archiving', 'true');
     const queryString = params.toString();
     debugLog('🔍 getSessions API调用:', { userId, projectId, queryString });
     return this.request<any[]>(`/sessions${queryString ? `?${queryString}` : ''}`);
@@ -991,6 +1015,7 @@ class ApiClient {
         }
       }),
     });
+    this.applyRefreshedAccessToken(response);
 
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
@@ -1032,6 +1057,7 @@ class ApiClient {
         turn_id: options?.turnId,
       }),
     });
+    this.applyRefreshedAccessToken(response);
 
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
@@ -1143,44 +1169,31 @@ class ApiClient {
     });
   }
 
-  async notepadInit(projectId?: string): Promise<any> {
-    const params = new URLSearchParams();
-    if (projectId) {
-      params.set('project_id', projectId);
-    }
-    const query = params.toString();
-    return this.request<any>(`/notepad/init${query ? `?${query}` : ''}`);
+  async notepadInit(): Promise<any> {
+    return this.request<any>('/notepad/init');
   }
 
-  async listNotepadFolders(projectId?: string): Promise<any> {
-    const params = new URLSearchParams();
-    if (projectId) {
-      params.set('project_id', projectId);
-    }
-    const query = params.toString();
-    return this.request<any>(`/notepad/folders${query ? `?${query}` : ''}`);
+  async listNotepadFolders(): Promise<any> {
+    return this.request<any>('/notepad/folders');
   }
 
-  async createNotepadFolder(payload: { folder: string; project_id?: string }): Promise<any> {
+  async createNotepadFolder(payload: { folder: string }): Promise<any> {
     return this.request<any>('/notepad/folders', {
       method: 'POST',
       body: JSON.stringify(payload),
     });
   }
 
-  async renameNotepadFolder(payload: { from: string; to: string; project_id?: string }): Promise<any> {
+  async renameNotepadFolder(payload: { from: string; to: string }): Promise<any> {
     return this.request<any>('/notepad/folders', {
       method: 'PATCH',
       body: JSON.stringify(payload),
     });
   }
 
-  async deleteNotepadFolder(options: { folder: string; recursive?: boolean; project_id?: string }): Promise<any> {
+  async deleteNotepadFolder(options: { folder: string; recursive?: boolean }): Promise<any> {
     const params = new URLSearchParams();
     params.set('folder', options.folder);
-    if (options.project_id) {
-      params.set('project_id', options.project_id);
-    }
     if (options.recursive === true) {
       params.set('recursive', 'true');
     }
@@ -1190,7 +1203,6 @@ class ApiClient {
   }
 
   async listNotepadNotes(options?: {
-    project_id?: string;
     folder?: string;
     recursive?: boolean;
     tags?: string[];
@@ -1199,9 +1211,6 @@ class ApiClient {
     limit?: number;
   }): Promise<any> {
     const params = new URLSearchParams();
-    if (options?.project_id) {
-      params.set('project_id', options.project_id);
-    }
     if (options?.folder) {
       params.set('folder', options.folder);
     }
@@ -1225,7 +1234,6 @@ class ApiClient {
   }
 
   async createNotepadNote(payload: {
-    project_id?: string;
     folder?: string;
     title?: string;
     content?: string;
@@ -1237,17 +1245,11 @@ class ApiClient {
     });
   }
 
-  async getNotepadNote(noteId: string, projectId?: string): Promise<any> {
-    const params = new URLSearchParams();
-    if (projectId) {
-      params.set('project_id', projectId);
-    }
-    const query = params.toString();
-    return this.request<any>(`/notepad/notes/${encodeURIComponent(noteId)}${query ? `?${query}` : ''}`);
+  async getNotepadNote(noteId: string): Promise<any> {
+    return this.request<any>(`/notepad/notes/${encodeURIComponent(noteId)}`);
   }
 
   async updateNotepadNote(noteId: string, payload: {
-    project_id?: string;
     title?: string;
     content?: string;
     folder?: string;
@@ -1259,28 +1261,17 @@ class ApiClient {
     });
   }
 
-  async deleteNotepadNote(noteId: string, projectId?: string): Promise<any> {
-    const params = new URLSearchParams();
-    if (projectId) {
-      params.set('project_id', projectId);
-    }
-    const query = params.toString();
-    return this.request<any>(`/notepad/notes/${encodeURIComponent(noteId)}${query ? `?${query}` : ''}`, {
+  async deleteNotepadNote(noteId: string): Promise<any> {
+    return this.request<any>(`/notepad/notes/${encodeURIComponent(noteId)}`, {
       method: 'DELETE',
     });
   }
 
-  async listNotepadTags(projectId?: string): Promise<any> {
-    const params = new URLSearchParams();
-    if (projectId) {
-      params.set('project_id', projectId);
-    }
-    const query = params.toString();
-    return this.request<any>(`/notepad/tags${query ? `?${query}` : ''}`);
+  async listNotepadTags(): Promise<any> {
+    return this.request<any>('/notepad/tags');
   }
 
   async searchNotepadNotes(options: {
-    project_id?: string;
     query: string;
     folder?: string;
     recursive?: boolean;
@@ -1290,9 +1281,6 @@ class ApiClient {
     limit?: number;
   }): Promise<any> {
     const params = new URLSearchParams();
-    if (options.project_id) {
-      params.set('project_id', options.project_id);
-    }
     params.set('query', options.query);
     if (options.folder) {
       params.set('folder', options.folder);

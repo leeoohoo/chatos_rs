@@ -36,6 +36,14 @@ impl WorkerState {
     }
 }
 
+fn should_delay_next_check(status: &str) -> bool {
+    !matches!(status, "skipped:threshold_not_met" | "skipped:no_pending")
+}
+
+fn consumes_tick_quota(status: &str) -> bool {
+    !matches!(status, "skipped:threshold_not_met" | "skipped:no_pending")
+}
+
 struct TickRunningGuard {
     running: Arc<AtomicBool>,
 }
@@ -92,15 +100,19 @@ async fn run_once(
     defaults: &SummaryJobDefaults,
     state: Arc<Mutex<WorkerState>>,
 ) -> Result<(), String> {
-    let session_ids =
-        MessageService::list_sessions_with_pending_summary(Some(defaults.max_sessions_per_tick))
-            .await?;
+    let session_ids = MessageService::list_sessions_with_pending_summary(None).await?;
     if session_ids.is_empty() {
         return Ok(());
     }
 
     let now_ts = chrono::Utc::now().timestamp();
+    let max_sessions_per_tick = defaults.max_sessions_per_tick.max(1) as usize;
+    let mut processed_sessions = 0usize;
     for session_id in session_ids {
+        if processed_sessions >= max_sessions_per_tick {
+            break;
+        }
+
         let session = match SessionService::get_by_id(&session_id).await {
             Ok(Some(value)) => value,
             Ok(None) => continue,
@@ -114,6 +126,10 @@ async fn run_once(
         };
 
         let effective = config::resolve_effective_config(&session, defaults).await;
+        if !effective.enabled || effective.model_config_id.is_none() {
+            continue;
+        }
+
         let due = {
             let state_guard = state.lock().await;
             state_guard.is_due(&session_id, effective.job_interval_seconds, now_ts)
@@ -121,13 +137,15 @@ async fn run_once(
         if !due {
             continue;
         }
-        {
-            let mut state_guard = state.lock().await;
-            state_guard.mark_checked(&session_id, now_ts);
-        }
-
         match executor::process_session(&session_id, defaults).await {
             Ok(outcome) => {
+                if should_delay_next_check(outcome.status.as_str()) {
+                    let mut state_guard = state.lock().await;
+                    state_guard.mark_checked(&session_id, now_ts);
+                }
+                if consumes_tick_quota(outcome.status.as_str()) {
+                    processed_sessions += 1;
+                }
                 info!(
                     "[SESSION-SUMMARY-JOB] processed session_id={} status={} trigger={} summary_id={} marked_messages={}",
                     session_id,
@@ -138,6 +156,11 @@ async fn run_once(
                 );
             }
             Err(err) => {
+                {
+                    let mut state_guard = state.lock().await;
+                    state_guard.mark_checked(&session_id, now_ts);
+                }
+                processed_sessions += 1;
                 warn!(
                     "[SESSION-SUMMARY-JOB] process session failed: session_id={} error={}",
                     session_id, err
