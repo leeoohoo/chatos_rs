@@ -28,6 +28,15 @@ interface SftpTransferStatus {
   error: string | null;
 }
 
+interface SftpTransferRequest {
+  id: string;
+  direction: 'upload' | 'download';
+  localSource: string;
+  remoteSource: string;
+  fallbackSuccess: string;
+  label: string;
+}
+
 const normalizeLocalEntry = (raw: any): FsEntry => ({
   name: raw?.name ?? '',
   path: raw?.path ?? '',
@@ -118,11 +127,13 @@ const RemoteSftpPanel: React.FC<RemoteSftpPanelProps> = ({ className }) => {
   const [error, setError] = useState<string | null>(null);
   const [transfering, setTransfering] = useState(false);
   const [transferStatus, setTransferStatus] = useState<SftpTransferStatus | null>(null);
+  const [queuedTransfers, setQueuedTransfers] = useState<SftpTransferRequest[]>([]);
   const [remoteActionLoading, setRemoteActionLoading] = useState(false);
   const transferPollTimerRef = useRef<number | null>(null);
   const transferPollingBusyRef = useRef(false);
   const remotePathRef = useRef<string>('.');
   const localPathRef = useRef<string | null>(null);
+  const transferQueueSeqRef = useRef(0);
 
   const loadLocal = useCallback(async (path?: string | null) => {
     setLoadingLocal(true);
@@ -184,6 +195,7 @@ const RemoteSftpPanel: React.FC<RemoteSftpPanelProps> = ({ className }) => {
     setError(null);
     setTransferStatus(null);
     setTransfering(false);
+    setQueuedTransfers([]);
     void loadLocal(null);
     void loadRemote(currentRemoteDefaultPath);
   }, [currentRemoteConnectionId, currentRemoteDefaultPath, loadLocal, loadRemote, stopTransferPolling]);
@@ -254,6 +266,43 @@ const RemoteSftpPanel: React.FC<RemoteSftpPanelProps> = ({ className }) => {
     }
   }, [client, currentRemoteConnectionId, loadLocal, loadRemote, stopTransferPolling]);
 
+  const enqueueTransfer = useCallback((request: Omit<SftpTransferRequest, 'id'>) => {
+    const queuedRequest: SftpTransferRequest = {
+      ...request,
+      id: `transfer-${Date.now()}-${transferQueueSeqRef.current}`,
+    };
+    transferQueueSeqRef.current += 1;
+
+    setQueuedTransfers((prev) => {
+      const next = [...prev, queuedRequest];
+      if (prev.length > 0 || transfering) {
+        setMessage(`已加入队列：${queuedRequest.label}（当前队列 ${next.length}）`);
+        setError(null);
+      }
+      return next;
+    });
+  }, [transfering]);
+
+  useEffect(() => {
+    if (!currentRemoteConnectionId || transfering || queuedTransfers.length === 0) return;
+    const [next, ...rest] = queuedTransfers;
+    setQueuedTransfers(rest);
+    setMessage(`开始队列任务：${next.label}${rest.length > 0 ? `（剩余 ${rest.length}）` : ''}`);
+    setError(null);
+    void startTransfer(next.direction, next.localSource, next.remoteSource, next.fallbackSuccess);
+  }, [currentRemoteConnectionId, queuedTransfers, transfering, startTransfer]);
+
+  const handleRemoveQueuedTransfer = useCallback((transferId: string) => {
+    setQueuedTransfers((prev) => prev.filter((item) => item.id !== transferId));
+  }, []);
+
+  const handleClearQueuedTransfers = useCallback(() => {
+    if (queuedTransfers.length === 0) return;
+    setQueuedTransfers([]);
+    setMessage('已清空传输队列');
+    setError(null);
+  }, [queuedTransfers.length]);
+
   const handleCancelTransfer = useCallback(async () => {
     if (!currentRemoteConnectionId || !transferStatus?.id || !transfering) return;
     try {
@@ -274,7 +323,13 @@ const RemoteSftpPanel: React.FC<RemoteSftpPanelProps> = ({ className }) => {
       return;
     }
     const target = joinRemotePath(remotePath, selectedLocal.name);
-    await startTransfer('upload', selectedLocal.path, target, `上传成功: ${selectedLocal.name}`);
+    enqueueTransfer({
+      direction: 'upload',
+      localSource: selectedLocal.path,
+      remoteSource: target,
+      fallbackSuccess: `上传成功: ${selectedLocal.name}`,
+      label: `上传 ${selectedLocal.name}`,
+    });
   };
 
   const handleDownload = async () => {
@@ -288,7 +343,13 @@ const RemoteSftpPanel: React.FC<RemoteSftpPanelProps> = ({ className }) => {
       return;
     }
     const target = joinLocalPath(localPath, selectedRemote.name);
-    await startTransfer('download', target, selectedRemote.path, `下载成功: ${selectedRemote.name}`);
+    enqueueTransfer({
+      direction: 'download',
+      localSource: target,
+      remoteSource: selectedRemote.path,
+      fallbackSuccess: `下载成功: ${selectedRemote.name}`,
+      label: `下载 ${selectedRemote.name}`,
+    });
   };
 
   const handleCreateRemoteDirectory = async () => {
@@ -407,7 +468,7 @@ const RemoteSftpPanel: React.FC<RemoteSftpPanelProps> = ({ className }) => {
           <button
             type="button"
             onClick={handleUpload}
-            disabled={transfering || remoteActionLoading}
+            disabled={remoteActionLoading}
             className="rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
           >
             上传 →
@@ -415,7 +476,7 @@ const RemoteSftpPanel: React.FC<RemoteSftpPanelProps> = ({ className }) => {
           <button
             type="button"
             onClick={handleDownload}
-            disabled={transfering || remoteActionLoading}
+            disabled={remoteActionLoading}
             className="rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
           >
             ← 下载
@@ -471,6 +532,40 @@ const RemoteSftpPanel: React.FC<RemoteSftpPanelProps> = ({ className }) => {
           {transferStatus.currentPath && (
             <div className="mt-1 text-[11px] text-muted-foreground truncate">{transferStatus.currentPath}</div>
           )}
+        </div>
+      )}
+      {queuedTransfers.length > 0 && (
+        <div className="px-4 py-2 border-b border-border bg-muted/20">
+          <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+            <span>排队任务：{queuedTransfers.length}</span>
+            <button
+              type="button"
+              onClick={handleClearQueuedTransfers}
+              className="rounded border border-border px-2 py-0.5 text-[11px] text-foreground hover:bg-accent"
+            >
+              清空队列
+            </button>
+          </div>
+          <div className="mt-1 space-y-1">
+            {queuedTransfers.slice(0, 3).map((item, index) => (
+              <div
+                key={item.id}
+                className="flex items-center justify-between gap-2 rounded border border-border px-2 py-1 text-[11px]"
+              >
+                <span className="truncate text-foreground">{index + 1}. {item.label}</span>
+                <button
+                  type="button"
+                  onClick={() => handleRemoveQueuedTransfer(item.id)}
+                  className="rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-accent"
+                >
+                  移除
+                </button>
+              </div>
+            ))}
+            {queuedTransfers.length > 3 && (
+              <div className="text-[11px] text-muted-foreground">还有 {queuedTransfers.length - 3} 项待传输…</div>
+            )}
+          </div>
         </div>
       )}
 
