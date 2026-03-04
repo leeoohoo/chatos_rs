@@ -215,7 +215,6 @@ pub fn build_builtin_tool_service(server: &McpBuiltinServer) -> Result<BuiltinTo
             let service = NotepadBuiltinService::new(NotepadOptions {
                 server_name: server.name.clone(),
                 user_id: server.user_id.clone(),
-                project_id: server.project_id.clone(),
             })?;
             Ok(BuiltinToolService::Notepad(service))
         }

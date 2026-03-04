@@ -538,18 +538,22 @@ fn attach_user_history_process_metadata(
     final_assistant_message_id: Option<String>,
 ) {
     let user_message_id = user_message.id.clone();
+    let mut history_process = json!({
+        "hasProcess": has_process,
+        "toolCallCount": tool_call_count,
+        "thinkingCount": thinking_count,
+        "processMessageCount": process_message_count,
+        "userMessageId": user_message_id,
+        "finalAssistantMessageId": final_assistant_message_id,
+    });
+    if let Some(turn_id) = message_turn_id(user_message) {
+        if let Some(map) = history_process.as_object_mut() {
+            map.insert("turnId".to_string(), Value::String(turn_id.to_string()));
+        }
+    }
+
     let metadata = ensure_metadata_object(user_message);
-    metadata.insert(
-        "historyProcess".to_string(),
-        json!({
-            "hasProcess": has_process,
-            "toolCallCount": tool_call_count,
-            "thinkingCount": thinking_count,
-            "processMessageCount": process_message_count,
-            "userMessageId": user_message_id,
-            "finalAssistantMessageId": final_assistant_message_id,
-        }),
-    );
+    metadata.insert("historyProcess".to_string(), history_process);
 }
 
 fn strip_assistant_for_compact_history(message: &mut Message, user_message_id: &str) {
@@ -557,20 +561,24 @@ fn strip_assistant_for_compact_history(message: &mut Message, user_message_id: &
         return;
     }
 
+    enrich_assistant_message_for_display(message);
     message.reasoning = None;
     message.tool_calls = None;
+    let turn_id = message_turn_id(message).map(|id| id.to_string());
 
     let metadata = ensure_metadata_object(message);
-    metadata.remove("toolCalls");
     metadata.remove("tool_calls");
-    metadata.remove("contentSegments");
-    metadata.remove("content_segments");
-    metadata.remove("currentSegmentIndex");
     metadata.remove("hidden");
     metadata.insert(
         "historyFinalForUserMessageId".to_string(),
         Value::String(user_message_id.to_string()),
     );
+    if let Some(turn_id) = turn_id {
+        metadata.insert(
+            "historyFinalForTurnId".to_string(),
+            Value::String(turn_id),
+        );
+    }
     metadata.insert("historyProcessExpanded".to_string(), Value::Bool(false));
 }
 
@@ -637,7 +645,7 @@ fn build_compact_history_messages(messages: Vec<Message>) -> Vec<Message> {
             final_assistant_index.map(|index| messages[index].id.clone());
         attach_user_history_process_metadata(
             &mut user_message,
-            process_message_count > 0,
+            process_message_count > 0 || tool_call_count > 0 || thinking_count > 0,
             tool_call_count,
             thinking_count,
             process_message_count,

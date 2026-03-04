@@ -1367,7 +1367,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         <NotepadPanel
           isOpen={showNotepadPanel}
           onClose={() => setShowNotepadPanel(false)}
-          projectId={currentProject?.id || null}
         />
 
         {/* 鏅鸿兘浣撶鐞嗗櫒 */}

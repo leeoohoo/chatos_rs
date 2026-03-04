@@ -8,26 +8,18 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::core::auth::AuthUser;
-use crate::core::project_access::{ensure_owned_project, map_project_access_error};
 use crate::services::notepad::{
     CreateNoteParams, ListNotesParams, NotepadService, SearchNotesParams, UpdateNoteParams,
 };
 
 #[derive(Debug, Deserialize)]
-struct ProjectQuery {
-    project_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
 struct DeleteFolderQuery {
-    project_id: Option<String>,
     folder: Option<String>,
     recursive: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
 struct ListNotesQuery {
-    project_id: Option<String>,
     folder: Option<String>,
     recursive: Option<bool>,
     tags: Option<String>,
@@ -39,7 +31,6 @@ struct ListNotesQuery {
 
 #[derive(Debug, Deserialize)]
 struct SearchNotesQuery {
-    project_id: Option<String>,
     query: Option<String>,
     folder: Option<String>,
     recursive: Option<bool>,
@@ -52,20 +43,17 @@ struct SearchNotesQuery {
 
 #[derive(Debug, Deserialize)]
 struct CreateFolderRequest {
-    project_id: Option<String>,
     folder: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct RenameFolderRequest {
-    project_id: Option<String>,
     from: Option<String>,
     to: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct CreateNoteRequest {
-    project_id: Option<String>,
     folder: Option<String>,
     title: Option<String>,
     content: Option<String>,
@@ -74,7 +62,6 @@ struct CreateNoteRequest {
 
 #[derive(Debug, Deserialize)]
 struct UpdateNoteRequest {
-    project_id: Option<String>,
     title: Option<String>,
     content: Option<String>,
     folder: Option<String>,
@@ -100,11 +87,8 @@ pub fn router() -> Router {
         .route("/api/notepad/search", get(search_notes))
 }
 
-async fn init_notepad(
-    auth: AuthUser,
-    Query(query): Query<ProjectQuery>,
-) -> (StatusCode, Json<Value>) {
-    let service = match resolve_service(&auth, query.project_id.as_deref()).await {
+async fn init_notepad(auth: AuthUser) -> (StatusCode, Json<Value>) {
+    let service = match resolve_service(&auth) {
         Ok(service) => service,
         Err(err) => return err,
     };
@@ -114,11 +98,8 @@ async fn init_notepad(
     }
 }
 
-async fn list_folders(
-    auth: AuthUser,
-    Query(query): Query<ProjectQuery>,
-) -> (StatusCode, Json<Value>) {
-    let service = match resolve_service(&auth, query.project_id.as_deref()).await {
+async fn list_folders(auth: AuthUser) -> (StatusCode, Json<Value>) {
+    let service = match resolve_service(&auth) {
         Ok(service) => service,
         Err(err) => return err,
     };
@@ -132,7 +113,7 @@ async fn create_folder(
     auth: AuthUser,
     Json(req): Json<CreateFolderRequest>,
 ) -> (StatusCode, Json<Value>) {
-    let service = match resolve_service(&auth, req.project_id.as_deref()).await {
+    let service = match resolve_service(&auth) {
         Ok(service) => service,
         Err(err) => return err,
     };
@@ -147,7 +128,7 @@ async fn rename_folder(
     auth: AuthUser,
     Json(req): Json<RenameFolderRequest>,
 ) -> (StatusCode, Json<Value>) {
-    let service = match resolve_service(&auth, req.project_id.as_deref()).await {
+    let service = match resolve_service(&auth) {
         Ok(service) => service,
         Err(err) => return err,
     };
@@ -163,7 +144,7 @@ async fn delete_folder(
     auth: AuthUser,
     Query(query): Query<DeleteFolderQuery>,
 ) -> (StatusCode, Json<Value>) {
-    let service = match resolve_service(&auth, query.project_id.as_deref()).await {
+    let service = match resolve_service(&auth) {
         Ok(service) => service,
         Err(err) => return err,
     };
@@ -179,7 +160,7 @@ async fn list_notes(
     auth: AuthUser,
     Query(query): Query<ListNotesQuery>,
 ) -> (StatusCode, Json<Value>) {
-    let service = match resolve_service(&auth, query.project_id.as_deref()).await {
+    let service = match resolve_service(&auth) {
         Ok(service) => service,
         Err(err) => return err,
     };
@@ -205,7 +186,7 @@ async fn create_note(
     auth: AuthUser,
     Json(req): Json<CreateNoteRequest>,
 ) -> (StatusCode, Json<Value>) {
-    let service = match resolve_service(&auth, req.project_id.as_deref()).await {
+    let service = match resolve_service(&auth) {
         Ok(service) => service,
         Err(err) => return err,
     };
@@ -224,9 +205,8 @@ async fn create_note(
 async fn get_note(
     auth: AuthUser,
     Path(note_id): Path<String>,
-    Query(query): Query<ProjectQuery>,
 ) -> (StatusCode, Json<Value>) {
-    let service = match resolve_service(&auth, query.project_id.as_deref()).await {
+    let service = match resolve_service(&auth) {
         Ok(service) => service,
         Err(err) => return err,
     };
@@ -241,7 +221,7 @@ async fn update_note(
     Path(note_id): Path<String>,
     Json(req): Json<UpdateNoteRequest>,
 ) -> (StatusCode, Json<Value>) {
-    let service = match resolve_service(&auth, req.project_id.as_deref()).await {
+    let service = match resolve_service(&auth) {
         Ok(service) => service,
         Err(err) => return err,
     };
@@ -261,9 +241,8 @@ async fn update_note(
 async fn delete_note_by_id(
     auth: AuthUser,
     Path(note_id): Path<String>,
-    Query(query): Query<ProjectQuery>,
 ) -> (StatusCode, Json<Value>) {
-    let service = match resolve_service(&auth, query.project_id.as_deref()).await {
+    let service = match resolve_service(&auth) {
         Ok(service) => service,
         Err(err) => return err,
     };
@@ -273,8 +252,8 @@ async fn delete_note_by_id(
     }
 }
 
-async fn list_tags(auth: AuthUser, Query(query): Query<ProjectQuery>) -> (StatusCode, Json<Value>) {
-    let service = match resolve_service(&auth, query.project_id.as_deref()).await {
+async fn list_tags(auth: AuthUser) -> (StatusCode, Json<Value>) {
+    let service = match resolve_service(&auth) {
         Ok(service) => service,
         Err(err) => return err,
     };
@@ -288,7 +267,7 @@ async fn search_notes(
     auth: AuthUser,
     Query(query): Query<SearchNotesQuery>,
 ) -> (StatusCode, Json<Value>) {
-    let service = match resolve_service(&auth, query.project_id.as_deref()).await {
+    let service = match resolve_service(&auth) {
         Ok(service) => service,
         Err(err) => return err,
     };
@@ -311,17 +290,8 @@ async fn search_notes(
     }
 }
 
-async fn resolve_service(
-    auth: &AuthUser,
-    project_id: Option<&str>,
-) -> Result<NotepadService, (StatusCode, Json<Value>)> {
-    let project_opt = project_id.map(str::trim).filter(|value| !value.is_empty());
-    if let Some(project_id) = project_opt {
-        if let Err(err) = ensure_owned_project(project_id, auth).await {
-            return Err(map_project_access_error(err));
-        }
-    }
-    NotepadService::new(auth.user_id.as_str(), project_opt).map_err(bad_request)
+fn resolve_service(auth: &AuthUser) -> Result<NotepadService, (StatusCode, Json<Value>)> {
+    NotepadService::new(auth.user_id.as_str()).map_err(bad_request)
 }
 
 fn parse_tags_csv(raw: Option<&str>) -> Vec<String> {

@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn sanitize_segment(value: &str) -> String {
     let trimmed = value.trim();
@@ -23,17 +23,86 @@ fn sanitize_segment(value: &str) -> String {
     }
 }
 
-pub fn resolve_data_dir(user_id: &str, project_id: Option<&str>) -> PathBuf {
+fn resolve_user_root(user_id: &str) -> PathBuf {
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
     let user_seg = sanitize_segment(user_id);
-    let project_seg = project_id
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(sanitize_segment)
-        .unwrap_or_else(|| "__global__".to_string());
 
-    home.join(".chatos")
-        .join("notepad")
-        .join(user_seg)
-        .join(project_seg)
+    home.join(".chatos").join("notepad").join(user_seg)
+}
+
+pub fn resolve_data_dir(user_id: &str) -> PathBuf {
+    resolve_user_root(user_id).join("__global__")
+}
+
+fn copy_dir_recursive(source: &Path, target: &Path) -> Result<bool, String> {
+    if !source.exists() {
+        return Ok(false);
+    }
+
+    std::fs::create_dir_all(target).map_err(|err| err.to_string())?;
+    let mut copied_any = false;
+    for entry in std::fs::read_dir(source).map_err(|err| err.to_string())? {
+        let entry = entry.map_err(|err| err.to_string())?;
+        let source_path = entry.path();
+        let target_path = target.join(entry.file_name());
+
+        if source_path.is_dir() {
+            copied_any |= copy_dir_recursive(source_path.as_path(), target_path.as_path())?;
+            continue;
+        }
+        if !source_path.is_file() || target_path.exists() {
+            continue;
+        }
+
+        if let Some(parent) = target_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+        }
+        std::fs::copy(source_path.as_path(), target_path.as_path()).map_err(|err| err.to_string())?;
+        copied_any = true;
+    }
+
+    Ok(copied_any)
+}
+
+pub fn migrate_legacy_project_data(user_id: &str, target_data_dir: &Path) -> Result<(), String> {
+    let user_root = resolve_user_root(user_id);
+    let entries = match std::fs::read_dir(&user_root) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(err.to_string()),
+    };
+
+    let target_notes_root = target_data_dir.join("notes");
+    std::fs::create_dir_all(&target_notes_root).map_err(|err| err.to_string())?;
+
+    let mut copied_any = false;
+    for entry in entries {
+        let entry = entry.map_err(|err| err.to_string())?;
+        let scope_path = entry.path();
+        if !scope_path.is_dir() {
+            continue;
+        }
+
+        let scope = entry.file_name().to_string_lossy().to_string();
+        if scope == "__global__" {
+            continue;
+        }
+
+        let legacy_notes_root = scope_path.join("notes");
+        if !legacy_notes_root.is_dir() {
+            continue;
+        }
+
+        let target_scope_root = target_notes_root.join(scope);
+        copied_any |= copy_dir_recursive(legacy_notes_root.as_path(), target_scope_root.as_path())?;
+    }
+
+    if copied_any {
+        let index_path = target_data_dir.join("notes-index.json");
+        if index_path.exists() {
+            let _ = std::fs::remove_file(index_path);
+        }
+    }
+
+    Ok(())
 }

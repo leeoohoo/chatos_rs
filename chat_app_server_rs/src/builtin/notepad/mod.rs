@@ -13,7 +13,6 @@ use crate::services::notepad::{
 pub struct NotepadOptions {
     pub server_name: String,
     pub user_id: Option<String>,
-    pub project_id: Option<String>,
 }
 
 #[derive(Clone)]
@@ -39,12 +38,7 @@ impl NotepadBuiltinService {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .unwrap_or("builtin");
-        let project_id = opts
-            .project_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty());
-        let service = NotepadService::new(user_id, project_id)?;
+        let service = NotepadService::new(user_id)?;
 
         let mut out = Self {
             tools: HashMap::new(),
