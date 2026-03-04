@@ -23,11 +23,30 @@ fn sanitize_segment(value: &str) -> String {
     }
 }
 
-fn resolve_user_root(user_id: &str) -> PathBuf {
+fn resolve_home_notepad_root() -> PathBuf {
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    let user_seg = sanitize_segment(user_id);
+    home.join(".chatos").join("notepad")
+}
 
-    home.join(".chatos").join("notepad").join(user_seg)
+fn resolve_notepad_root() -> PathBuf {
+    if let Ok(raw) = std::env::var("NOTEPAD_DATA_DIR") {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed);
+        }
+    }
+
+    let container_data_dir = Path::new("/app/data");
+    if container_data_dir.exists() {
+        return container_data_dir.join("notepad");
+    }
+
+    resolve_home_notepad_root()
+}
+
+fn resolve_user_root(user_id: &str) -> PathBuf {
+    let user_seg = sanitize_segment(user_id);
+    resolve_notepad_root().join(user_seg)
 }
 
 pub fn resolve_data_dir(user_id: &str) -> PathBuf {
@@ -65,36 +84,50 @@ fn copy_dir_recursive(source: &Path, target: &Path) -> Result<bool, String> {
 }
 
 pub fn migrate_legacy_project_data(user_id: &str, target_data_dir: &Path) -> Result<(), String> {
-    let user_root = resolve_user_root(user_id);
-    let entries = match std::fs::read_dir(&user_root) {
-        Ok(entries) => entries,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(err) => return Err(err.to_string()),
-    };
+    let current_root = resolve_user_root(user_id);
+    let home_root = resolve_home_notepad_root().join(sanitize_segment(user_id));
+    let mut source_roots = vec![current_root];
+    if source_roots[0] != home_root {
+        source_roots.push(home_root);
+    }
 
     let target_notes_root = target_data_dir.join("notes");
     std::fs::create_dir_all(&target_notes_root).map_err(|err| err.to_string())?;
 
     let mut copied_any = false;
-    for entry in entries {
-        let entry = entry.map_err(|err| err.to_string())?;
-        let scope_path = entry.path();
-        if !scope_path.is_dir() {
-            continue;
-        }
+    for source_root in source_roots {
+        copied_any |= copy_dir_recursive(
+            source_root.join("__global__").join("notes").as_path(),
+            target_notes_root.as_path(),
+        )?;
 
-        let scope = entry.file_name().to_string_lossy().to_string();
-        if scope == "__global__" {
-            continue;
-        }
+        let entries = match std::fs::read_dir(&source_root) {
+            Ok(entries) => entries,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(err) => return Err(err.to_string()),
+        };
 
-        let legacy_notes_root = scope_path.join("notes");
-        if !legacy_notes_root.is_dir() {
-            continue;
-        }
+        for entry in entries {
+            let entry = entry.map_err(|err| err.to_string())?;
+            let scope_path = entry.path();
+            if !scope_path.is_dir() {
+                continue;
+            }
 
-        let target_scope_root = target_notes_root.join(scope);
-        copied_any |= copy_dir_recursive(legacy_notes_root.as_path(), target_scope_root.as_path())?;
+            let scope = entry.file_name().to_string_lossy().to_string();
+            if scope == "__global__" {
+                continue;
+            }
+
+            let legacy_notes_root = scope_path.join("notes");
+            if !legacy_notes_root.is_dir() {
+                continue;
+            }
+
+            let target_scope_root = target_notes_root.join(scope);
+            copied_any |=
+                copy_dir_recursive(legacy_notes_root.as_path(), target_scope_root.as_path())?;
+        }
     }
 
     if copied_any {
