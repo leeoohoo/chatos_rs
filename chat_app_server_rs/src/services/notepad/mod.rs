@@ -14,12 +14,12 @@ pub struct NotepadService {
 }
 
 impl NotepadService {
-    pub fn new(user_id: &str, project_id: Option<&str>) -> Result<Self, String> {
+    pub fn new(user_id: &str, _project_id: Option<&str>) -> Result<Self, String> {
         let user = user_id.trim();
         if user.is_empty() {
             return Err("user_id is required".to_string());
         }
-        let data_dir = paths::resolve_data_dir(user, project_id);
+        let data_dir = paths::resolve_data_dir(user, None);
         Ok(Self {
             store: std::sync::Arc::new(NotepadStore::new(data_dir)),
         })

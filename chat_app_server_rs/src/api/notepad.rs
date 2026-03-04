@@ -8,7 +8,6 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::core::auth::AuthUser;
-use crate::core::project_access::{ensure_owned_project, map_project_access_error};
 use crate::services::notepad::{
     CreateNoteParams, ListNotesParams, NotepadService, SearchNotesParams, UpdateNoteParams,
 };
@@ -313,15 +312,9 @@ async fn search_notes(
 
 async fn resolve_service(
     auth: &AuthUser,
-    project_id: Option<&str>,
+    _project_id: Option<&str>,
 ) -> Result<NotepadService, (StatusCode, Json<Value>)> {
-    let project_opt = project_id.map(str::trim).filter(|value| !value.is_empty());
-    if let Some(project_id) = project_opt {
-        if let Err(err) = ensure_owned_project(project_id, auth).await {
-            return Err(map_project_access_error(err));
-        }
-    }
-    NotepadService::new(auth.user_id.as_str(), project_opt).map_err(bad_request)
+    NotepadService::new(auth.user_id.as_str(), None).map_err(bad_request)
 }
 
 fn parse_tags_csv(raw: Option<&str>) -> Vec<String> {

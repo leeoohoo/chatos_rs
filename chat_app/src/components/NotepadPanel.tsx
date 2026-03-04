@@ -6,7 +6,6 @@ import { MarkdownRenderer } from './MarkdownRenderer';
 interface NotepadPanelProps {
   isOpen: boolean;
   onClose: () => void;
-  projectId?: string | null;
 }
 
 interface NoteMeta {
@@ -133,7 +132,7 @@ const buildFolderTree = (folders: string[], notes: NoteMeta[]): FolderNode => {
   return root;
 };
 
-const NotepadPanel: React.FC<NotepadPanelProps> = ({ isOpen, onClose, projectId }) => {
+const NotepadPanel: React.FC<NotepadPanelProps> = ({ isOpen, onClose }) => {
   const apiClientFromContext = useChatApiClientFromContext();
   const apiClient = useMemo(() => apiClientFromContext || globalApiClient, [apiClientFromContext]);
 
@@ -152,7 +151,7 @@ const NotepadPanel: React.FC<NotepadPanelProps> = ({ isOpen, onClose, projectId 
   const [error, setError] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
 
-  const scopedProjectId = projectId || undefined;
+  const scopedProjectLabel = '全局';
   const availableFolders = useMemo(
     () => folders.filter((item) => item.trim().length > 0),
     [folders]
@@ -193,44 +192,43 @@ const NotepadPanel: React.FC<NotepadPanelProps> = ({ isOpen, onClose, projectId 
   }, []);
 
   const loadFolders = useCallback(async () => {
-    const res = await apiClient.listNotepadFolders(scopedProjectId);
+    const res = await apiClient.listNotepadFolders();
     const list = Array.isArray(res?.folders) ? res.folders : [];
     const normalized = list
       .map((item: any) => String(item || '').trim())
       .filter((item: string) => item.length > 0);
     setFolders(['', ...normalized]);
-  }, [apiClient, scopedProjectId]);
+  }, [apiClient]);
 
   const loadNotes = useCallback(async () => {
     const res = await apiClient.listNotepadNotes({
-      project_id: scopedProjectId,
       recursive: true,
       query: searchQuery || undefined,
       limit: 500,
     });
     const list = Array.isArray(res?.notes) ? res.notes : [];
     setNotes(list);
-  }, [apiClient, scopedProjectId, searchQuery]);
+  }, [apiClient, searchQuery]);
 
   const refreshAll = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      await apiClient.notepadInit(scopedProjectId);
+      await apiClient.notepadInit();
       await Promise.all([loadFolders(), loadNotes()]);
     } catch (err: any) {
       setError(err?.message || '加载记事本失败');
     } finally {
       setLoading(false);
     }
-  }, [apiClient, loadFolders, loadNotes, scopedProjectId]);
+  }, [apiClient, loadFolders, loadNotes]);
 
   const openNote = useCallback(async (id: string) => {
     if (!id) return;
     setLoading(true);
     setError(null);
     try {
-      const res = await apiClient.getNotepadNote(id, scopedProjectId);
+      const res = await apiClient.getNotepadNote(id);
       const note = res?.note || {};
       const noteFolder = String(note.folder || '');
       setSelectedNoteId(String(note.id || id));
@@ -245,7 +243,7 @@ const NotepadPanel: React.FC<NotepadPanelProps> = ({ isOpen, onClose, projectId 
     } finally {
       setLoading(false);
     }
-  }, [apiClient, ensureFolderExpanded, scopedProjectId]);
+  }, [apiClient, ensureFolderExpanded]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -284,6 +282,30 @@ const NotepadPanel: React.FC<NotepadPanelProps> = ({ isOpen, onClose, projectId 
     };
   }, [contextMenu]);
 
+  useEffect(() => {
+    if (!isOpen || !dirty) {
+      return undefined;
+    }
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [dirty, isOpen]);
+
+  const confirmDiscardDirty = useCallback((actionLabel: string): boolean => {
+    if (!dirty) return true;
+    return window.confirm(`当前笔记有未保存内容，继续${actionLabel}会丢失修改。确定继续吗？`);
+  }, [dirty]);
+
+  const handleRequestClose = useCallback(() => {
+    if (!confirmDiscardDirty('关闭记事本')) {
+      return;
+    }
+    onClose();
+  }, [confirmDiscardDirty, onClose]);
+
   const toggleFolderExpanded = useCallback((folderPath: string) => {
     const normalized = normalizeFolderPath(folderPath);
     setExpandedFolders((prev) => {
@@ -315,7 +337,6 @@ const NotepadPanel: React.FC<NotepadPanelProps> = ({ isOpen, onClose, projectId 
     try {
       await apiClient.createNotepadFolder({
         folder,
-        project_id: scopedProjectId,
       });
       setSelectedFolder(folder);
       ensureFolderExpanded(folder);
@@ -325,9 +346,12 @@ const NotepadPanel: React.FC<NotepadPanelProps> = ({ isOpen, onClose, projectId 
     } finally {
       setLoading(false);
     }
-  }, [apiClient, ensureFolderExpanded, loadFolders, loadNotes, scopedProjectId, selectedFolder]);
+  }, [apiClient, ensureFolderExpanded, loadFolders, loadNotes, selectedFolder]);
 
   const handleCreateNote = useCallback(async (folderOverride?: string) => {
+    if (!confirmDiscardDirty('新建笔记')) {
+      return;
+    }
     const targetFolder = normalizeFolderPath(folderOverride ?? selectedFolder);
     const noteTitle = window.prompt('请输入笔记标题', '');
     if (noteTitle === null) return;
@@ -335,7 +359,6 @@ const NotepadPanel: React.FC<NotepadPanelProps> = ({ isOpen, onClose, projectId 
     setError(null);
     try {
       const res = await apiClient.createNotepadNote({
-        project_id: scopedProjectId,
         folder: targetFolder,
         title: noteTitle.trim(),
       });
@@ -355,7 +378,7 @@ const NotepadPanel: React.FC<NotepadPanelProps> = ({ isOpen, onClose, projectId 
     } finally {
       setLoading(false);
     }
-  }, [apiClient, ensureFolderExpanded, loadNotes, openNote, resetEditor, scopedProjectId, selectedFolder]);
+  }, [apiClient, confirmDiscardDirty, ensureFolderExpanded, loadNotes, openNote, resetEditor, selectedFolder]);
 
   const handleSaveNote = useCallback(async () => {
     if (!selectedNoteId) return;
@@ -363,7 +386,6 @@ const NotepadPanel: React.FC<NotepadPanelProps> = ({ isOpen, onClose, projectId 
     setError(null);
     try {
       await apiClient.updateNotepadNote(selectedNoteId, {
-        project_id: scopedProjectId,
         title: title.trim(),
         content,
         tags: parseTags(tagsText),
@@ -375,7 +397,7 @@ const NotepadPanel: React.FC<NotepadPanelProps> = ({ isOpen, onClose, projectId 
     } finally {
       setLoading(false);
     }
-  }, [apiClient, content, loadNotes, scopedProjectId, selectedNoteId, tagsText, title]);
+  }, [apiClient, content, loadNotes, selectedNoteId, tagsText, title]);
 
   const resolveNotePayload = useCallback(async (note?: NoteMeta | null): Promise<{ title: string; content: string }> => {
     const targetNoteId = String(note?.id || selectedNoteId || '').trim();
@@ -395,13 +417,13 @@ const NotepadPanel: React.FC<NotepadPanelProps> = ({ isOpen, onClose, projectId 
       };
     }
 
-    const res = await apiClient.getNotepadNote(targetNoteId, scopedProjectId);
+    const res = await apiClient.getNotepadNote(targetNoteId);
     const remoteNote = res?.note || {};
     return {
       title: String(remoteNote.title || fallbackTitle || 'Untitled'),
       content: String(res?.content || ''),
     };
-  }, [apiClient, content, scopedProjectId, selectedNoteId, title]);
+  }, [apiClient, content, selectedNoteId, title]);
 
   const copyTextToClipboard = useCallback(async (text: string) => {
     if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
@@ -464,7 +486,7 @@ const NotepadPanel: React.FC<NotepadPanelProps> = ({ isOpen, onClose, projectId 
     setLoading(true);
     setError(null);
     try {
-      await apiClient.deleteNotepadNote(normalizedId, scopedProjectId);
+      await apiClient.deleteNotepadNote(normalizedId);
       if (selectedNoteId === normalizedId) {
         resetEditor();
       }
@@ -474,7 +496,7 @@ const NotepadPanel: React.FC<NotepadPanelProps> = ({ isOpen, onClose, projectId 
     } finally {
       setLoading(false);
     }
-  }, [apiClient, loadNotes, resetEditor, scopedProjectId, selectedNoteId]);
+  }, [apiClient, loadNotes, resetEditor, selectedNoteId]);
 
   const handleDeleteNote = useCallback(async () => {
     if (!selectedNoteId) return;
@@ -499,7 +521,6 @@ const NotepadPanel: React.FC<NotepadPanelProps> = ({ isOpen, onClose, projectId 
       await apiClient.deleteNotepadFolder({
         folder,
         recursive: true,
-        project_id: scopedProjectId,
       });
 
       if (selectedFolder === folder || selectedFolder.startsWith(`${folder}/`)) {
@@ -518,7 +539,7 @@ const NotepadPanel: React.FC<NotepadPanelProps> = ({ isOpen, onClose, projectId 
     } finally {
       setLoading(false);
     }
-  }, [apiClient, loadFolders, loadNotes, notes, resetEditor, scopedProjectId, selectedFolder, selectedNoteId]);
+  }, [apiClient, loadFolders, loadNotes, notes, resetEditor, selectedFolder, selectedNoteId]);
 
   const openContextMenu = useCallback((event: React.MouseEvent, target: ContextMenuTarget) => {
     event.preventDefault();
@@ -607,14 +628,14 @@ const NotepadPanel: React.FC<NotepadPanelProps> = ({ isOpen, onClose, projectId 
 
   return (
     <>
-      <div className="fixed inset-0 bg-black/50 z-40" onClick={onClose} />
+      <div className="fixed inset-0 bg-black/50 z-40" onClick={handleRequestClose} />
       <div className="fixed inset-x-10 top-10 bottom-10 bg-card z-50 rounded-lg border border-border shadow-xl flex overflow-hidden">
         <div className="w-[320px] border-r border-border flex flex-col">
           <div className="px-4 py-3 border-b border-border flex items-center justify-between">
             <div className="text-sm font-semibold text-foreground">记事本</div>
             <button
               type="button"
-              onClick={onClose}
+              onClick={handleRequestClose}
               className="px-2 py-1 text-xs rounded border border-border hover:bg-accent"
             >
               关闭
@@ -646,6 +667,9 @@ const NotepadPanel: React.FC<NotepadPanelProps> = ({ isOpen, onClose, projectId 
             />
             <div className="text-[11px] text-muted-foreground truncate" title={selectedFolder || 'root'}>
               当前目录：{selectedFolder || 'root'}
+            </div>
+            <div className="text-[11px] text-muted-foreground truncate" title={scopedProjectLabel}>
+              当前范围：{scopedProjectLabel}
             </div>
           </div>
 
@@ -710,7 +734,10 @@ const NotepadPanel: React.FC<NotepadPanelProps> = ({ isOpen, onClose, projectId 
                               <button
                                 key={note.id}
                                 type="button"
-                                onClick={() => { void openNote(note.id); }}
+                                onClick={() => {
+                                  if (!confirmDiscardDirty('切换笔记')) return;
+                                  void openNote(note.id);
+                                }}
                                 onContextMenu={(event) => {
                                   openContextMenu(event, { type: 'note', note });
                                 }}
@@ -741,7 +768,10 @@ const NotepadPanel: React.FC<NotepadPanelProps> = ({ isOpen, onClose, projectId 
                   <button
                     key={note.id}
                     type="button"
-                    onClick={() => { void openNote(note.id); }}
+                    onClick={() => {
+                      if (!confirmDiscardDirty('切换笔记')) return;
+                      void openNote(note.id);
+                    }}
                     onContextMenu={(event) => {
                       openContextMenu(event, { type: 'note', note });
                     }}

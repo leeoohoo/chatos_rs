@@ -19,6 +19,8 @@ use super::types::{
 const LOCK_TIMEOUT_MS: u64 = 10_000;
 const LOCK_STALE_MS: u64 = 30_000;
 const LOCK_POLL_MS: u64 = 25;
+const GLOBAL_SCOPE_SEGMENT: &str = "__global__";
+const GLOBAL_MIGRATION_MARKER_FILE: &str = ".global-notes-migrated-v1.json";
 
 fn normalize_string(value: &str) -> String {
     value.trim().to_string()
@@ -251,6 +253,7 @@ pub struct NotepadStore {
     notes_root: PathBuf,
     index_path: PathBuf,
     lock_path: PathBuf,
+    migration_marker_path: PathBuf,
 }
 
 impl NotepadStore {
@@ -258,11 +261,13 @@ impl NotepadStore {
         let notes_root = data_dir.join("notes");
         let index_path = data_dir.join("notes-index.json");
         let lock_path = data_dir.join("notes.lock");
+        let migration_marker_path = data_dir.join(GLOBAL_MIGRATION_MARKER_FILE);
         Self {
             data_dir,
             notes_root,
             index_path,
             lock_path,
+            migration_marker_path,
         }
     }
 
@@ -414,10 +419,264 @@ impl NotepadStore {
         Ok(rebuilt)
     }
 
+    fn is_global_scope_store(&self) -> bool {
+        self.data_dir
+            .file_name()
+            .and_then(|value| value.to_str())
+            .map(|value| value == GLOBAL_SCOPE_SEGMENT)
+            .unwrap_or(false)
+    }
+
+    async fn migrate_legacy_project_scopes_locked(&self) -> Result<(), String> {
+        if !self.is_global_scope_store() {
+            return Ok(());
+        }
+        if fs::metadata(&self.migration_marker_path).await.is_ok() {
+            return Ok(());
+        }
+
+        let Some(user_scope_root) = self.data_dir.parent() else {
+            return Ok(());
+        };
+        let mut legacy_dirs = Vec::new();
+        let mut read_dir = fs::read_dir(user_scope_root)
+            .await
+            .map_err(|err| err.to_string())?;
+        while let Some(entry) = read_dir.next_entry().await.map_err(|err| err.to_string())? {
+            let file_type = match entry.file_type().await {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
+            if !file_type.is_dir() {
+                continue;
+            }
+            let path = entry.path();
+            if path == self.data_dir {
+                continue;
+            }
+            if path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .map(|value| value == GLOBAL_SCOPE_SEGMENT)
+                .unwrap_or(false)
+            {
+                continue;
+            }
+            legacy_dirs.push(path);
+        }
+
+        if legacy_dirs.is_empty() {
+            let marker = json!({
+                "migrated_at": now_iso(),
+                "legacy_scopes": 0,
+                "imported_notes": 0
+            });
+            let marker_text =
+                serde_json::to_string_pretty(&marker).map_err(|err| err.to_string())?;
+            Self::atomic_write_text(self.migration_marker_path.as_path(), marker_text.as_str())
+                .await?;
+            return Ok(());
+        }
+
+        let mut index = if fs::metadata(&self.index_path).await.is_ok() {
+            let raw = fs::read_to_string(&self.index_path)
+                .await
+                .unwrap_or_else(|_| "{}".to_string());
+            serde_json::from_str::<NotesIndex>(&raw)
+                .map(normalize_index)
+                .unwrap_or_default()
+        } else {
+            NotesIndex::default()
+        };
+        let mut known_ids: HashSet<String> = index.notes.iter().map(|note| note.id.clone()).collect();
+
+        fs::create_dir_all(&self.notes_root)
+            .await
+            .map_err(|err| err.to_string())?;
+
+        let mut imported_notes = 0usize;
+        let mut new_entries = Vec::new();
+        for legacy_dir in &legacy_dirs {
+            let legacy_notes_root = legacy_dir.join("notes");
+            let legacy_index_map: HashMap<String, NoteIndexEntry> = if fs::metadata(legacy_dir.join("notes-index.json"))
+                .await
+                .is_ok()
+            {
+                let raw = fs::read_to_string(legacy_dir.join("notes-index.json"))
+                    .await
+                    .unwrap_or_else(|_| "{}".to_string());
+                let parsed = serde_json::from_str::<NotesIndex>(&raw).unwrap_or_default();
+                let normalized = normalize_index(parsed);
+                normalized
+                    .notes
+                    .into_iter()
+                    .map(|note| {
+                        let folder_key = normalize_folder_path(note.folder.as_str()).unwrap_or_default();
+                        (format!("{folder_key}\n{}", note.id), note)
+                    })
+                    .collect()
+            } else {
+                HashMap::new()
+            };
+            let notes_meta = fs::metadata(&legacy_notes_root).await;
+            let Ok(meta) = notes_meta else {
+                continue;
+            };
+            if !meta.is_dir() {
+                continue;
+            }
+
+            for entry in WalkDir::new(&legacy_notes_root)
+                .into_iter()
+                .filter_map(|entry| entry.ok())
+                .filter(|entry| entry.file_type().is_file())
+            {
+                let source_abs = entry.path().to_path_buf();
+                let is_markdown = source_abs
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .map(|ext| ext.eq_ignore_ascii_case("md"))
+                    .unwrap_or(false);
+                if !is_markdown {
+                    continue;
+                }
+
+                let relative = match source_abs.strip_prefix(&legacy_notes_root) {
+                    Ok(value) => value,
+                    Err(_) => continue,
+                };
+                let folder_raw = relative
+                    .parent()
+                    .map(|value| value.to_string_lossy().replace('\\', "/"))
+                    .unwrap_or_default();
+                let folder = normalize_folder_path(folder_raw.as_str()).unwrap_or_default();
+
+                let Some(stem) = relative.file_stem().and_then(|value| value.to_str()) else {
+                    continue;
+                };
+                let mut note_id = normalize_string(stem);
+                if note_id.is_empty() {
+                    continue;
+                }
+                let source_note_id = note_id.clone();
+
+                let mut target_abs = self.note_abs_path(folder.as_str(), note_id.as_str());
+                if fs::metadata(&target_abs).await.is_ok() {
+                    let source_bytes = fs::read(&source_abs).await.unwrap_or_default();
+                    let target_bytes = fs::read(&target_abs).await.unwrap_or_default();
+                    if source_bytes == target_bytes {
+                        continue;
+                    }
+                    note_id = Uuid::new_v4().to_string();
+                    target_abs = self.note_abs_path(folder.as_str(), note_id.as_str());
+                }
+
+                if let Some(parent) = target_abs.parent() {
+                    fs::create_dir_all(parent)
+                        .await
+                        .map_err(|err| err.to_string())?;
+                }
+                fs::copy(&source_abs, &target_abs)
+                    .await
+                    .map_err(|err| err.to_string())?;
+
+                if !known_ids.insert(note_id.clone()) {
+                    continue;
+                }
+
+                let content = fs::read_to_string(&target_abs).await.unwrap_or_default();
+                let title_from_content = {
+                    let parsed = normalize_title(extract_title_from_markdown(content.as_str()).as_str());
+                    if parsed.is_empty() {
+                        "Untitled".to_string()
+                    } else {
+                        parsed
+                    }
+                };
+                let (created_at, updated_at) = match fs::metadata(&source_abs).await {
+                    Ok(meta) => {
+                        let created = meta
+                            .created()
+                            .ok()
+                            .map(ts_to_rfc3339)
+                            .unwrap_or_else(now_iso);
+                        let updated = meta
+                            .modified()
+                            .ok()
+                            .map(ts_to_rfc3339)
+                            .unwrap_or_else(|| created.clone());
+                        (created, updated)
+                    }
+                    Err(_) => {
+                        let now = now_iso();
+                        (now.clone(), now)
+                    }
+                };
+
+                let mut entry = legacy_index_map
+                    .get(format!("{folder}\n{source_note_id}").as_str())
+                    .cloned()
+                    .unwrap_or(NoteIndexEntry {
+                        id: note_id.clone(),
+                        title: title_from_content.clone(),
+                        folder: folder.clone(),
+                        tags: Vec::new(),
+                        created_at: created_at.clone(),
+                        updated_at: updated_at.clone(),
+                    });
+
+                entry.id = note_id;
+                entry.folder = folder;
+                entry.title = {
+                    let normalized = normalize_title(entry.title.as_str());
+                    if normalized.is_empty() {
+                        title_from_content
+                    } else {
+                        normalized
+                    }
+                };
+                entry.tags = unique_tags(&entry.tags);
+                if normalize_string(entry.created_at.as_str()).is_empty() {
+                    entry.created_at = created_at;
+                }
+                if normalize_string(entry.updated_at.as_str()).is_empty() {
+                    entry.updated_at = updated_at;
+                }
+
+                new_entries.push(NoteIndexEntry {
+                    id: entry.id,
+                    title: entry.title,
+                    folder: entry.folder,
+                    tags: entry.tags,
+                    created_at: entry.created_at,
+                    updated_at: entry.updated_at,
+                });
+                imported_notes += 1;
+            }
+        }
+
+        if !new_entries.is_empty() {
+            new_entries.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+            index.notes.splice(0..0, new_entries);
+            self.save_index_locked(&index).await?;
+        }
+
+        let marker = json!({
+            "migrated_at": now_iso(),
+            "legacy_scopes": legacy_dirs.len(),
+            "imported_notes": imported_notes
+        });
+        let marker_text = serde_json::to_string_pretty(&marker).map_err(|err| err.to_string())?;
+        Self::atomic_write_text(self.migration_marker_path.as_path(), marker_text.as_str()).await?;
+        Ok(())
+    }
+
     async fn load_index_locked(&self) -> Result<NotesIndex, String> {
         fs::create_dir_all(&self.notes_root)
             .await
             .map_err(|err| err.to_string())?;
+
+        self.migrate_legacy_project_scopes_locked().await?;
 
         if fs::metadata(&self.index_path).await.is_err() {
             return self.rebuild_index_from_filesystem().await;

@@ -23,14 +23,10 @@ fn sanitize_segment(value: &str) -> String {
     }
 }
 
-pub fn resolve_data_dir(user_id: &str, project_id: Option<&str>) -> PathBuf {
+pub fn resolve_data_dir(user_id: &str, _project_id: Option<&str>) -> PathBuf {
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
     let user_seg = sanitize_segment(user_id);
-    let project_seg = project_id
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(sanitize_segment)
-        .unwrap_or_else(|| "__global__".to_string());
+    let project_seg = "__global__".to_string();
 
     home.join(".chatos")
         .join("notepad")
