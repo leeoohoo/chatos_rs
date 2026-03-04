@@ -11,6 +11,8 @@ import AgentManager from './AgentManager';
 import UserSettingsPanel from './UserSettingsPanel';
 import ProjectExplorer from './ProjectExplorer';
 import TerminalView from './TerminalView';
+import RemoteTerminalView from './RemoteTerminalView';
+import RemoteSftpPanel from './RemoteSftpPanel';
 // 搴旂敤寮圭獥绠＄悊鍣ㄧ敱 ApplicationsPanel 鐩存帴鎵挎媴
 import ApplicationsPanel from './ApplicationsPanel';
 import NotepadPanel from './NotepadPanel';
@@ -37,6 +39,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     currentSession,
     currentProject,
     currentTerminal,
+    currentRemoteConnection,
     projects,
     activePanel,
     messages,
@@ -99,6 +102,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     ? (currentProject?.name || '项目')
     : activePanel === 'terminal'
       ? (currentTerminal?.name || '终端')
+      : activePanel === 'remote_terminal' || activePanel === 'remote_sftp'
+        ? (currentRemoteConnection?.name || '远端连接')
       : (currentSession?.title || '');
 
   const [showMcpManager, setShowMcpManager] = useState(false);
@@ -1145,6 +1150,10 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
               <ProjectExplorer project={currentProject} className="flex-1" />
             ) : activePanel === 'terminal' ? (
               <TerminalView className="flex-1" />
+            ) : activePanel === 'remote_terminal' ? (
+              <RemoteTerminalView className="flex-1" />
+            ) : activePanel === 'remote_sftp' ? (
+              <RemoteSftpPanel className="flex-1" />
             ) : (
               <div className="flex-1 min-h-0 flex overflow-hidden">
                 <div className="flex-1 min-w-0 flex flex-col overflow-hidden">

@@ -77,6 +77,30 @@ export interface TerminalLog {
   createdAt: Date | string;
 }
 
+export interface RemoteConnection {
+  id: string;
+  name: string;
+  host: string;
+  port: number;
+  username: string;
+  authType: 'private_key' | 'private_key_cert' | 'password';
+  password?: string | null;
+  privateKeyPath?: string | null;
+  certificatePath?: string | null;
+  defaultRemotePath?: string | null;
+  hostKeyPolicy: 'strict' | 'accept_new';
+  jumpEnabled: boolean;
+  jumpHost?: string | null;
+  jumpPort?: number | null;
+  jumpUsername?: string | null;
+  jumpPrivateKeyPath?: string | null;
+  jumpPassword?: string | null;
+  userId?: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  lastActiveAt: Date;
+}
+
 
 // 文件系统条目
 export interface FsEntry {

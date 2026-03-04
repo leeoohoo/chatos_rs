@@ -18,6 +18,8 @@ pub mod mongo_cursor;
 pub mod mongo_query;
 pub mod pagination;
 pub mod project_access;
+pub mod remote_connection_access;
+pub mod secrets;
 pub mod session_access;
 pub mod sql_query;
 pub mod sql_rows;

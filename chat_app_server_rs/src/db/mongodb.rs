@@ -65,6 +65,7 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
         "applications",
         "projects",
         "terminals",
+        "remote_connections",
         "terminal_logs",
         "mcp_config_applications",
         "system_context_applications",
@@ -231,6 +232,17 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
             IndexModel::builder().keys(doc! { "status": 1 }).build(),
             None,
         )
+        .await;
+    let _ = db
+        .collection::<mongodb::bson::Document>("remote_connections")
+        .create_index(
+            IndexModel::builder().keys(doc! { "user_id": 1 }).build(),
+            None,
+        )
+        .await;
+    let _ = db
+        .collection::<mongodb::bson::Document>("remote_connections")
+        .create_index(IndexModel::builder().keys(doc! { "host": 1 }).build(), None)
         .await;
     let _ = db
         .collection::<mongodb::bson::Document>("terminal_logs")

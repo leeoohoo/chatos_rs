@@ -203,6 +203,181 @@ class ApiClient {
     return this.request<any[]>(`/terminals/${terminalId}/history${query}`);
   }
 
+  // 远端连接 API
+  async listRemoteConnections(userId?: string): Promise<any[]> {
+    const params = userId ? `?user_id=${encodeURIComponent(userId)}` : '';
+    return this.request<any[]>(`/remote-connections${params}`);
+  }
+
+  async createRemoteConnection(data: {
+    name?: string;
+    host: string;
+    port?: number;
+    username: string;
+    auth_type?: 'private_key' | 'private_key_cert' | 'password';
+    password?: string;
+    private_key_path?: string;
+    certificate_path?: string;
+    default_remote_path?: string;
+    host_key_policy?: 'strict' | 'accept_new';
+    jump_enabled?: boolean;
+    jump_host?: string;
+    jump_port?: number;
+    jump_username?: string;
+    jump_private_key_path?: string;
+    jump_password?: string;
+    user_id?: string;
+  }): Promise<any> {
+    return this.request<any>('/remote-connections', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getRemoteConnection(id: string): Promise<any> {
+    return this.request<any>(`/remote-connections/${id}`);
+  }
+
+  async updateRemoteConnection(id: string, data: {
+    name?: string;
+    host?: string;
+    port?: number;
+    username?: string;
+    auth_type?: 'private_key' | 'private_key_cert' | 'password';
+    password?: string;
+    private_key_path?: string;
+    certificate_path?: string;
+    default_remote_path?: string;
+    host_key_policy?: 'strict' | 'accept_new';
+    jump_enabled?: boolean;
+    jump_host?: string;
+    jump_port?: number;
+    jump_username?: string;
+    jump_private_key_path?: string;
+    jump_password?: string;
+  }): Promise<any> {
+    return this.request<any>(`/remote-connections/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteRemoteConnection(id: string): Promise<any> {
+    return this.request<any>(`/remote-connections/${id}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async testRemoteConnectionDraft(data: {
+    name?: string;
+    host: string;
+    port?: number;
+    username: string;
+    auth_type?: 'private_key' | 'private_key_cert' | 'password';
+    password?: string;
+    private_key_path?: string;
+    certificate_path?: string;
+    default_remote_path?: string;
+    host_key_policy?: 'strict' | 'accept_new';
+    jump_enabled?: boolean;
+    jump_host?: string;
+    jump_port?: number;
+    jump_username?: string;
+    jump_private_key_path?: string;
+    jump_password?: string;
+    user_id?: string;
+  }): Promise<any> {
+    return this.request<any>('/remote-connections/test', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async testRemoteConnection(id: string): Promise<any> {
+    return this.request<any>(`/remote-connections/${id}/test`, {
+      method: 'POST',
+    });
+  }
+
+  async listRemoteSftpEntries(connectionId: string, path?: string): Promise<any> {
+    const qs = path ? `?path=${encodeURIComponent(path)}` : '';
+    return this.request<any>(`/remote-connections/${connectionId}/sftp/list${qs}`);
+  }
+
+  async uploadRemoteSftpFile(connectionId: string, localPath: string, remotePath: string): Promise<any> {
+    return this.request<any>(`/remote-connections/${connectionId}/sftp/upload`, {
+      method: 'POST',
+      body: JSON.stringify({
+        local_path: localPath,
+        remote_path: remotePath,
+      }),
+    });
+  }
+
+  async downloadRemoteSftpFile(connectionId: string, remotePath: string, localPath: string): Promise<any> {
+    return this.request<any>(`/remote-connections/${connectionId}/sftp/download`, {
+      method: 'POST',
+      body: JSON.stringify({
+        remote_path: remotePath,
+        local_path: localPath,
+      }),
+    });
+  }
+
+  async startRemoteSftpTransfer(
+    connectionId: string,
+    data: {
+      direction: 'upload' | 'download';
+      local_path: string;
+      remote_path: string;
+    },
+  ): Promise<any> {
+    return this.request<any>(`/remote-connections/${connectionId}/sftp/transfer/start`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getRemoteSftpTransferStatus(connectionId: string, transferId: string): Promise<any> {
+    return this.request<any>(`/remote-connections/${connectionId}/sftp/transfer/${encodeURIComponent(transferId)}`);
+  }
+
+  async cancelRemoteSftpTransfer(connectionId: string, transferId: string): Promise<any> {
+    return this.request<any>(`/remote-connections/${connectionId}/sftp/transfer/${encodeURIComponent(transferId)}/cancel`, {
+      method: 'POST',
+    });
+  }
+
+  async createRemoteSftpDirectory(connectionId: string, parentPath: string, name: string): Promise<any> {
+    return this.request<any>(`/remote-connections/${connectionId}/sftp/mkdir`, {
+      method: 'POST',
+      body: JSON.stringify({
+        parent_path: parentPath,
+        name,
+      }),
+    });
+  }
+
+  async renameRemoteSftpEntry(connectionId: string, fromPath: string, toPath: string): Promise<any> {
+    return this.request<any>(`/remote-connections/${connectionId}/sftp/rename`, {
+      method: 'POST',
+      body: JSON.stringify({
+        from_path: fromPath,
+        to_path: toPath,
+      }),
+    });
+  }
+
+  async deleteRemoteSftpEntry(connectionId: string, path: string, recursive = false): Promise<any> {
+    return this.request<any>(`/remote-connections/${connectionId}/sftp/delete`, {
+      method: 'POST',
+      body: JSON.stringify({
+        path,
+        recursive,
+      }),
+    });
+  }
+
   // 文件系统
   async listFsDirectories(path?: string): Promise<any> {
     const qs = path ? `?path=${encodeURIComponent(path)}` : '';

@@ -36,6 +36,7 @@ pub mod fs;
 pub mod messages;
 pub mod notepad;
 pub mod projects;
+pub mod remote_connections;
 pub mod session_summary_job_config;
 pub mod sessions;
 pub mod system_contexts;
@@ -117,6 +118,7 @@ pub fn router() -> Router {
         .nest("/api/agents", agents::router())
         .nest("/api/applications", applications::router())
         .merge(projects::router())
+        .merge(remote_connections::router())
         .merge(session_summary_job_config::router())
         .merge(task_manager::router())
         .merge(terminals::router())
