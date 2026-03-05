@@ -13,6 +13,7 @@ use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ssh2::{CheckResult, KnownHostFileKind, KnownHostKeyFormat, OpenFlags, OpenType, Session};
+use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream, ToSocketAddrs};
 use std::path::{Path as FsPath, PathBuf};
@@ -139,6 +140,8 @@ enum WsInput {
 enum WsOutput {
     #[serde(rename = "output")]
     Output { data: String },
+    #[serde(rename = "snapshot")]
+    Snapshot { data: String },
     #[serde(rename = "exit")]
     Exit { code: i32 },
     #[serde(rename = "state")]
@@ -186,11 +189,69 @@ enum NativeTerminalControl {
     Resize { cols: u16, rows: u16 },
 }
 
+const REMOTE_TERMINAL_SNAPSHOT_LIMIT_BYTES: usize = 512 * 1024;
+const REMOTE_TERMINAL_IDLE_TIMEOUT: StdDuration = StdDuration::from_secs(20 * 60);
+const REMOTE_TERMINAL_IDLE_SWEEP_INTERVAL: Duration = Duration::from_secs(60);
+
+#[derive(Clone, Copy)]
+enum DisconnectReason {
+    Manual,
+    IdleTimeout,
+    ConnectionDeleted,
+}
+
+impl DisconnectReason {
+    fn notice(self) -> &'static str {
+        match self {
+            DisconnectReason::Manual => "已手动断开连接",
+            DisconnectReason::IdleTimeout => "20 分钟无操作，连接已自动断开",
+            DisconnectReason::ConnectionDeleted => "连接配置已删除，终端已断开",
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct OutputHistory {
+    chunks: VecDeque<String>,
+    total_bytes: usize,
+}
+
+impl OutputHistory {
+    fn push(&mut self, chunk: String) {
+        if chunk.is_empty() {
+            return;
+        }
+        self.total_bytes += chunk.len();
+        self.chunks.push_back(chunk);
+
+        while self.total_bytes > REMOTE_TERMINAL_SNAPSHOT_LIMIT_BYTES {
+            let Some(removed) = self.chunks.pop_front() else {
+                self.total_bytes = 0;
+                break;
+            };
+            self.total_bytes = self.total_bytes.saturating_sub(removed.len());
+        }
+    }
+
+    fn snapshot(&self) -> String {
+        if self.chunks.is_empty() {
+            return String::new();
+        }
+        let mut output = String::with_capacity(self.total_bytes);
+        for chunk in self.chunks.iter() {
+            output.push_str(chunk.as_str());
+        }
+        output
+    }
+}
+
 struct RemoteTerminalSession {
     sender: broadcast::Sender<RemoteTerminalEvent>,
     writer: Option<Mutex<Box<dyn Write + Send>>>,
     master: Option<Mutex<Box<dyn MasterPty + Send>>>,
     native_tx: Option<std::sync::mpsc::Sender<NativeTerminalControl>>,
+    output_history: Mutex<OutputHistory>,
+    last_activity_at: Mutex<Instant>,
     busy: AtomicBool,
     alive: AtomicBool,
 }
@@ -249,6 +310,8 @@ impl RemoteTerminalSession {
             writer: Some(Mutex::new(writer)),
             master: Some(Mutex::new(pair.master)),
             native_tx: None,
+            output_history: Mutex::new(OutputHistory::default()),
+            last_activity_at: Mutex::new(Instant::now()),
             busy: AtomicBool::new(false),
             alive: AtomicBool::new(true),
         });
@@ -261,8 +324,7 @@ impl RemoteTerminalSession {
                     Ok(0) => break,
                     Ok(n) => {
                         let text = String::from_utf8_lossy(&buf[..n]).to_string();
-                        let _ = session_clone.sender.send(RemoteTerminalEvent::Output(text));
-                        session_clone.set_busy(false);
+                        session_clone.append_and_emit_output(text);
                     }
                     Err(_) => break,
                 }
@@ -301,6 +363,8 @@ impl RemoteTerminalSession {
             writer: None,
             master: None,
             native_tx: Some(control_tx),
+            output_history: Mutex::new(OutputHistory::default()),
+            last_activity_at: Mutex::new(Instant::now()),
             busy: AtomicBool::new(false),
             alive: AtomicBool::new(true),
         });
@@ -315,8 +379,8 @@ impl RemoteTerminalSession {
                             if let Err(err) =
                                 write_channel_nonblocking(&mut channel, data.as_bytes())
                             {
-                                let _ = session_clone.sender.send(RemoteTerminalEvent::Output(
-                                    format!("\r\n[remote error] {err}\r\n"),
+                                session_clone.append_and_emit_output(format!(
+                                    "\r\n[remote error] {err}\r\n"
                                 ));
                                 session_clone.mark_exited(1);
                                 return;
@@ -328,8 +392,8 @@ impl RemoteTerminalSession {
                                 cols as u32,
                                 rows as u32,
                             ) {
-                                let _ = session_clone.sender.send(RemoteTerminalEvent::Output(
-                                    format!("\r\n[remote resize error] {err}\r\n"),
+                                session_clone.append_and_emit_output(format!(
+                                    "\r\n[remote resize error] {err}\r\n"
                                 ));
                             }
                         }
@@ -347,19 +411,15 @@ impl RemoteTerminalSession {
                     }
                     Ok(n) => {
                         let text = String::from_utf8_lossy(&buf[..n]).to_string();
-                        let _ = session_clone.sender.send(RemoteTerminalEvent::Output(text));
-                        session_clone.set_busy(false);
+                        session_clone.append_and_emit_output(text);
                     }
                     Err(err) => {
                         if is_io_would_block(&err) {
                             std::thread::sleep(std::time::Duration::from_millis(8));
                         } else {
-                            let _ =
-                                session_clone
-                                    .sender
-                                    .send(RemoteTerminalEvent::Output(format!(
-                                        "\r\n[remote read error] {err}\r\n"
-                                    )));
+                            session_clone.append_and_emit_output(format!(
+                                "\r\n[remote read error] {err}\r\n"
+                            ));
                             session_clone.mark_exited(1);
                             return;
                         }
@@ -379,27 +439,13 @@ impl RemoteTerminalSession {
         if data.is_empty() {
             return Ok(());
         }
+        self.touch_activity();
         self.set_busy(input_triggers_busy(data));
-        if let Some(tx) = self.native_tx.as_ref() {
-            return tx
-                .send(NativeTerminalControl::Input(data.to_string()))
-                .map_err(|_| "terminal input channel closed".to_string());
-        }
-        let writer_lock = self
-            .writer
-            .as_ref()
-            .ok_or_else(|| "writer missing".to_string())?;
-        let mut writer = writer_lock
-            .lock()
-            .map_err(|_| "writer lock failed".to_string())?;
-        writer
-            .write_all(data.as_bytes())
-            .map_err(|e| format!("write failed: {e}"))?;
-        writer.flush().map_err(|e| format!("flush failed: {e}"))?;
-        Ok(())
+        self.send_control_input(data)
     }
 
     fn resize(&self, cols: u16, rows: u16) -> Result<(), String> {
+        self.touch_activity();
         if let Some(tx) = self.native_tx.as_ref() {
             return tx
                 .send(NativeTerminalControl::Resize { cols, rows })
@@ -423,6 +469,35 @@ impl RemoteTerminalSession {
         Ok(())
     }
 
+    fn send_control_input(&self, data: &str) -> Result<(), String> {
+        if data.is_empty() {
+            return Ok(());
+        }
+        if let Some(tx) = self.native_tx.as_ref() {
+            return tx
+                .send(NativeTerminalControl::Input(data.to_string()))
+                .map_err(|_| "terminal input channel closed".to_string());
+        }
+        let writer_lock = self
+            .writer
+            .as_ref()
+            .ok_or_else(|| "writer missing".to_string())?;
+        let mut writer = writer_lock
+            .lock()
+            .map_err(|_| "writer lock failed".to_string())?;
+        writer
+            .write_all(data.as_bytes())
+            .map_err(|e| format!("write failed: {e}"))?;
+        writer.flush().map_err(|e| format!("flush failed: {e}"))?;
+        Ok(())
+    }
+
+    fn touch_activity(&self) {
+        if let Ok(mut last_activity_at) = self.last_activity_at.lock() {
+            *last_activity_at = Instant::now();
+        }
+    }
+
     fn set_busy(&self, busy: bool) {
         let prev = self.busy.swap(busy, Ordering::Relaxed);
         if prev != busy {
@@ -430,8 +505,42 @@ impl RemoteTerminalSession {
         }
     }
 
+    fn is_busy(&self) -> bool {
+        self.busy.load(Ordering::Relaxed)
+    }
+
     fn is_alive(&self) -> bool {
         self.alive.load(Ordering::Relaxed)
+    }
+
+    fn is_idle_timed_out(&self, now: Instant) -> bool {
+        match self.last_activity_at.lock() {
+            Ok(last_activity_at) => {
+                now.saturating_duration_since(*last_activity_at) >= REMOTE_TERMINAL_IDLE_TIMEOUT
+            }
+            Err(_) => false,
+        }
+    }
+
+    fn append_and_emit_output(&self, output: String) {
+        if let Ok(mut history) = self.output_history.lock() {
+            history.push(output.clone());
+        }
+        let _ = self.sender.send(RemoteTerminalEvent::Output(output));
+        self.set_busy(false);
+    }
+
+    fn output_snapshot(&self) -> String {
+        match self.output_history.lock() {
+            Ok(history) => history.snapshot(),
+            Err(_) => String::new(),
+        }
+    }
+
+    fn disconnect(&self, reason: DisconnectReason) {
+        self.append_and_emit_output(format!("\r\n[remote] {}\r\n", reason.notice()));
+        let _ = self.send_control_input("\u{3}exit\n");
+        self.mark_exited(0);
     }
 
     fn mark_exited(&self, code: i32) {
@@ -503,6 +612,20 @@ impl RemoteTerminalManager {
         }
     }
 
+    fn spawn_idle_sweeper(manager: Arc<Self>) {
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        handle.spawn(async move {
+            let mut ticker = tokio::time::interval(REMOTE_TERMINAL_IDLE_SWEEP_INTERVAL);
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                ticker.tick().await;
+                manager.close_idle_sessions();
+            }
+        });
+    }
+
     fn get(&self, connection_id: &str) -> Option<Arc<RemoteTerminalSession>> {
         self.sessions.get(connection_id).map(|s| s.clone())
     }
@@ -511,11 +634,18 @@ impl RemoteTerminalManager {
         &self,
         connection: &RemoteConnection,
     ) -> Result<Arc<RemoteTerminalSession>, String> {
+        self.close_idle_sessions();
+
         if let Some(existing) = self.get(&connection.id) {
             if existing.is_alive() {
-                return Ok(existing);
+                if existing.is_idle_timed_out(Instant::now()) {
+                    self.close_with_reason(&connection.id, DisconnectReason::IdleTimeout);
+                } else {
+                    return Ok(existing);
+                }
+            } else {
+                self.sessions.remove(&connection.id);
             }
-            self.sessions.remove(&connection.id);
         }
 
         let (session, child) = RemoteTerminalSession::new(connection)?;
@@ -535,9 +665,30 @@ impl RemoteTerminalManager {
         Ok(session)
     }
 
-    async fn close(&self, connection_id: &str) {
+    fn close_with_reason(&self, connection_id: &str, reason: DisconnectReason) -> bool {
         if let Some((_, session)) = self.sessions.remove(connection_id) {
-            let _ = session.write_input("exit\n");
+            session.disconnect(reason);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn close_idle_sessions(&self) {
+        let now = Instant::now();
+        let stale_ids: Vec<String> = self
+            .sessions
+            .iter()
+            .filter_map(|entry| {
+                if entry.value().is_idle_timed_out(now) {
+                    Some(entry.key().clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        for id in stale_ids {
+            let _ = self.close_with_reason(id.as_str(), DisconnectReason::IdleTimeout);
         }
     }
 }
@@ -706,7 +857,11 @@ static SFTP_TRANSFER_MANAGER: OnceCell<Arc<SftpTransferManager>> = OnceCell::new
 
 fn get_remote_terminal_manager() -> Arc<RemoteTerminalManager> {
     REMOTE_TERMINAL_MANAGER
-        .get_or_init(|| Arc::new(RemoteTerminalManager::new()))
+        .get_or_init(|| {
+            let manager = Arc::new(RemoteTerminalManager::new());
+            RemoteTerminalManager::spawn_idle_sweeper(manager.clone());
+            manager
+        })
         .clone()
 }
 
@@ -735,6 +890,10 @@ pub fn router() -> Router {
         .route(
             "/api/remote-connections/:id/test",
             axum::routing::post(test_remote_connection_saved),
+        )
+        .route(
+            "/api/remote-connections/:id/disconnect",
+            axum::routing::post(disconnect_remote_terminal),
         )
         .route("/api/remote-connections/:id/ws", get(remote_terminal_ws))
         .route(
@@ -927,7 +1086,7 @@ async fn delete_remote_connection(
     }
 
     let manager = get_remote_terminal_manager();
-    manager.close(&id).await;
+    manager.close_with_reason(&id, DisconnectReason::ConnectionDeleted);
 
     match RemoteConnectionService::delete(&id).await {
         Ok(_) => (
@@ -939,6 +1098,26 @@ async fn delete_remote_connection(
             Json(serde_json::json!({ "error": err })),
         ),
     }
+}
+
+async fn disconnect_remote_terminal(
+    auth: AuthUser,
+    Path(id): Path<String>,
+) -> (StatusCode, Json<Value>) {
+    if let Err(err) = ensure_owned_remote_connection(&id, &auth).await {
+        return map_remote_connection_access_error(err);
+    }
+
+    let manager = get_remote_terminal_manager();
+    let closed = manager.close_with_reason(&id, DisconnectReason::Manual);
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "success": true,
+            "disconnected": closed,
+            "message": if closed { "远端终端已断开" } else { "远端终端当前未连接" }
+        })),
+    )
 }
 
 async fn test_remote_connection_saved(
@@ -990,10 +1169,28 @@ async fn handle_remote_terminal_socket(connection: RemoteConnection, socket: Web
         }
     };
 
+    session.touch_activity();
     let _ = RemoteConnectionService::touch(&connection.id).await;
 
     let mut receiver = session.subscribe();
     let (mut sender, mut receiver_ws) = socket.split();
+
+    let snapshot = session.output_snapshot();
+    if !snapshot.is_empty() {
+        let payload = serde_json::to_string(&WsOutput::Snapshot { data: snapshot })
+            .unwrap_or_else(|_| "{}".to_string());
+        if sender.send(Message::Text(payload)).await.is_err() {
+            return;
+        }
+    }
+    let payload = serde_json::to_string(&WsOutput::State {
+        busy: session.is_busy(),
+    })
+    .unwrap_or_else(|_| "{}".to_string());
+    if sender.send(Message::Text(payload)).await.is_err() {
+        return;
+    }
+
     let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
 
     let forward_task = tokio::spawn(async move {
@@ -1028,7 +1225,8 @@ async fn handle_remote_terminal_socket(connection: RemoteConnection, socket: Web
                         break;
                     }
                 }
-                Err(_) => break,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             }
         }
     });
@@ -1068,6 +1266,7 @@ async fn handle_remote_terminal_socket(connection: RemoteConnection, socket: Web
                         }
                     }
                     Ok(WsInput::Ping) => {
+                        session.touch_activity();
                         let timestamp = crate::core::time::now_rfc3339();
                         let payload = serde_json::to_string(&WsOutput::Pong { timestamp })
                             .unwrap_or_else(|_| "{}".to_string());
@@ -1092,6 +1291,8 @@ async fn handle_remote_terminal_socket(connection: RemoteConnection, socket: Web
     }
 
     drop(tx);
+    event_task.abort();
+    forward_task.abort();
     let _ = event_task.await;
     let _ = forward_task.await;
 }

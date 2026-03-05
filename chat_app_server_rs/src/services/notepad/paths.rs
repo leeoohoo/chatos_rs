@@ -76,7 +76,8 @@ fn copy_dir_recursive(source: &Path, target: &Path) -> Result<bool, String> {
         if let Some(parent) = target_path.parent() {
             std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
         }
-        std::fs::copy(source_path.as_path(), target_path.as_path()).map_err(|err| err.to_string())?;
+        std::fs::copy(source_path.as_path(), target_path.as_path())
+            .map_err(|err| err.to_string())?;
         copied_any = true;
     }
 

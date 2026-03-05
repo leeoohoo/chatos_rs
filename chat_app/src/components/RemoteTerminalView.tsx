@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
@@ -100,9 +100,32 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [connectSeq, setConnectSeq] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
 
   const apiBaseUrl = client.getBaseUrl();
   const palette = useMemo(() => getThemeColors(actualTheme), [actualTheme]);
+
+  const handleDisconnect = useCallback(async () => {
+    if (!currentRemoteConnection?.id || disconnecting) {
+      return;
+    }
+    setDisconnecting(true);
+    setErrorMessage(null);
+    try {
+      await client.disconnectRemoteTerminal(currentRemoteConnection.id);
+      const active = socketRef.current;
+      if (active) {
+        socketRef.current = null;
+        active.close();
+      }
+      setConnectionState('disconnected');
+      setBusy(false);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : '断开连接失败');
+    } finally {
+      setDisconnecting(false);
+    }
+  }, [client, currentRemoteConnection?.id, disconnecting]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -181,11 +204,13 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
     if (!currentRemoteConnection?.id) {
       setConnectionState('disconnected');
       setErrorMessage(null);
+      setBusy(false);
       return;
     }
 
     const term = terminalRef.current;
     if (!term) return;
+    term.reset();
 
     const wsUrl = buildWsUrl(apiBaseUrl, `/remote-connections/${currentRemoteConnection.id}/ws`, accessToken);
     const ws = new WebSocket(wsUrl);
@@ -214,6 +239,11 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
           terminalRef.current?.write(payload.data);
           return;
         }
+        if (payload?.type === 'snapshot' && typeof payload.data === 'string') {
+          terminalRef.current?.reset();
+          terminalRef.current?.write(payload.data);
+          return;
+        }
         if (payload?.type === 'state') {
           setBusy(Boolean(payload.busy));
           return;
@@ -230,11 +260,13 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
     ws.onerror = () => {
       if (socketRef.current !== ws) return;
       setConnectionState('error');
+      setBusy(false);
     };
 
     ws.onclose = () => {
       if (socketRef.current !== ws) return;
       setConnectionState('disconnected');
+      setBusy(false);
     };
 
     return () => {
@@ -277,9 +309,18 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
           <button
             type="button"
             onClick={() => setConnectSeq((prev) => prev + 1)}
+            disabled={disconnecting}
             className="rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-accent"
           >
             重连
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleDisconnect()}
+            disabled={disconnecting || connectionState === 'disconnected'}
+            className="rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-accent disabled:opacity-50"
+          >
+            {disconnecting ? '断开中...' : '断开'}
           </button>
           <button
             type="button"

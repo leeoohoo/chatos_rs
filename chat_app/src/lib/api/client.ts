@@ -292,6 +292,12 @@ class ApiClient {
     });
   }
 
+  async disconnectRemoteTerminal(id: string): Promise<any> {
+    return this.request<any>(`/remote-connections/${id}/disconnect`, {
+      method: 'POST',
+    });
+  }
+
   async testRemoteConnectionDraft(data: {
     name?: string;
     host: string;

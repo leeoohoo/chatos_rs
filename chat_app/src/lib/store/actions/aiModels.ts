@@ -1,5 +1,6 @@
 import type { AiModelConfig } from '../../../types';
 import type ApiClient from '../../api/client';
+import { generateId } from '@/lib/utils';
 
 export function createAiModelActions({ set, get, client, getUserIdParam }: { set: any; get: any; client: ApiClient; getUserIdParam: () => string; }) {
   return {
@@ -40,7 +41,7 @@ export function createAiModelActions({ set, get, client, getUserIdParam }: { set
         const provider = config.provider || 'gpt';
         const thinking_level = provider === 'gpt' ? (config.thinking_level || undefined) : undefined;
         const apiData = {
-          id: config.id || crypto.randomUUID(),
+          id: config.id || generateId(),
           name: config.name,
           provider,
           model: config.model_name,

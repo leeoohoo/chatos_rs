@@ -27,7 +27,9 @@ impl NotepadService {
         }
         let data_dir = paths::resolve_data_dir(user);
         let should_migrate = {
-            let mut guard = MIGRATED_USERS.lock().unwrap_or_else(|poison| poison.into_inner());
+            let mut guard = MIGRATED_USERS
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
             guard.insert(user.to_string())
         };
         if should_migrate {

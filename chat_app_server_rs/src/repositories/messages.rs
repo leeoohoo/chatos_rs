@@ -21,7 +21,10 @@ fn active_session_doc(session_id: &str) -> Document {
     }
 }
 
-async fn ensure_session_writable_mongo(db: &mongodb::Database, session_id: &str) -> Result<(), String> {
+async fn ensure_session_writable_mongo(
+    db: &mongodb::Database,
+    session_id: &str,
+) -> Result<(), String> {
     let exists = db
         .collection::<Document>("sessions")
         .find_one(active_session_doc(session_id), None)
