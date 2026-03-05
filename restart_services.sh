@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
+if [[ -z "${CHATOS_RS_SHELL_SANITIZED-}" ]]; then export CHATOS_RS_SHELL_SANITIZED=1; export CHATOS_RS_SCRIPT_PATH="$0"; exec bash <(tr -d '\r' < "$0") "$@"; fi # CRLF-safe bootstrap for `bash restart_services.sh` #
+
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_PATH="${CHATOS_RS_SCRIPT_PATH:-${BASH_SOURCE[0]}}"
+ROOT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 BACKEND_DIR="$ROOT_DIR/chat_app_server_rs"
 FRONTEND_DIR="$ROOT_DIR/chat_app"
 
