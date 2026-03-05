@@ -2,7 +2,7 @@ import type { Session } from '../../../types';
 import type ApiClient from '../../api/client';
 import { fetchSession, normalizeSession } from '../helpers/sessions';
 import { applyTurnProcessCache, fetchSessionMessages } from '../helpers/messages';
-import { debugLog } from '@/lib/utils';
+import { debugLog, generateId } from '@/lib/utils';
 
 const cloneStreamingMessageDraft = <T,>(value: T): T => {
   try {
@@ -235,7 +235,7 @@ export function createSessionActions({
         });
 
         const sessionData: { id: string; title: string; user_id: string; project_id?: string } = {
-          id: crypto.randomUUID(),
+          id: generateId(),
           title,
           user_id: userId,
         };

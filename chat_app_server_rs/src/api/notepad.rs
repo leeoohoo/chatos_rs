@@ -202,10 +202,7 @@ async fn create_note(
     }
 }
 
-async fn get_note(
-    auth: AuthUser,
-    Path(note_id): Path<String>,
-) -> (StatusCode, Json<Value>) {
+async fn get_note(auth: AuthUser, Path(note_id): Path<String>) -> (StatusCode, Json<Value>) {
     let service = match resolve_service(&auth) {
         Ok(service) => service,
         Err(err) => return err,

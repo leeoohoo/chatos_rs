@@ -110,7 +110,8 @@ impl Config {
             != "false";
         let auth_jwt_secret = std::env::var("AUTH_JWT_SECRET")
             .unwrap_or_else(|_| "dev-only-change-me-please".to_string());
-        let auth_access_token_ttl_seconds = read_int("AUTH_ACCESS_TOKEN_TTL_SECONDS", 43_200).max(60);
+        let auth_access_token_ttl_seconds =
+            read_int("AUTH_ACCESS_TOKEN_TTL_SECONDS", 43_200).max(60);
 
         Ok(Config {
             openai_api_key,
