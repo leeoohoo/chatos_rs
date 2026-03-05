@@ -16,6 +16,13 @@ interface ExplorerContextMenuState {
   entry: FsEntry;
 }
 
+interface MoveConflictState {
+  sourcePath: string;
+  targetDirPath: string;
+  sourceName: string;
+  renameTo: string;
+}
+
 const normalizeEntry = (raw: any): FsEntry => ({
   name: raw?.name ?? '',
   path: raw?.path ?? '',
@@ -146,8 +153,13 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
   const client = useMemo(() => apiClientFromContext || globalApiClient, [apiClientFromContext]);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const treeScrollRef = useRef<HTMLDivElement | null>(null);
   const resizeStartX = useRef(0);
   const resizeStartWidth = useRef(0);
+  const dragExpandTimerRef = useRef<number | null>(null);
+  const dragExpandPathRef = useRef<string | null>(null);
+  const dragAutoScrollTimerRef = useRef<number | null>(null);
+  const dragAutoScrollVelocityRef = useRef(0);
 
   const [entriesMap, setEntriesMap] = useState<Record<string, FsEntry[]>>({});
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
@@ -160,6 +172,9 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
   const [contextMenu, setContextMenu] = useState<ExplorerContextMenuState | null>(null);
+  const [moveConflict, setMoveConflict] = useState<MoveConflictState | null>(null);
+  const [draggingEntryPath, setDraggingEntryPath] = useState<string | null>(null);
+  const [dropTargetDirPath, setDropTargetDirPath] = useState<string | null>(null);
   const [changeLogs, setChangeLogs] = useState<ChangeLogItem[]>([]);
   const [loadingLogs, setLoadingLogs] = useState(false);
   const [logsError, setLogsError] = useState<string | null>(null);
@@ -277,19 +292,23 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     };
   }, [project?.name, project?.rootPath]);
 
-  const selectedEntry = useMemo<FsEntry | null>(() => {
-    if (!selectedPath) return null;
-    const normalizedSelected = normalizePath(selectedPath);
+  const findEntryByPath = useCallback((path: string): FsEntry | null => {
+    const normalizedTarget = normalizePath(path);
     const root = project?.rootPath ? normalizePath(project.rootPath) : '';
-    if (root && normalizedSelected === root) {
+    if (root && normalizedTarget === root) {
       return projectRootEntry;
     }
     for (const entries of Object.values(entriesMap)) {
-      const found = entries.find((entry) => normalizePath(entry.path) === normalizedSelected);
+      const found = entries.find((entry) => normalizePath(entry.path) === normalizedTarget);
       if (found) return found;
     }
     return null;
-  }, [entriesMap, normalizePath, project?.rootPath, projectRootEntry, selectedPath]);
+  }, [entriesMap, normalizePath, project?.rootPath, projectRootEntry]);
+
+  const selectedEntry = useMemo<FsEntry | null>(() => {
+    if (!selectedPath) return null;
+    return findEntryByPath(selectedPath);
+  }, [findEntryByPath, selectedPath]);
 
   const selectedDirPath = useMemo(
     () => (selectedEntry?.isDir ? selectedEntry.path : null),
@@ -311,6 +330,125 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     if (selectedEntry.isDir) return selectedEntry.path;
     return getParentPath(selectedEntry.path) || project?.rootPath || null;
   }, [getParentPath, project?.rootPath, selectedEntry]);
+
+  const canDropToDirectory = useCallback((sourcePath: string, targetDirPath: string): boolean => {
+    const normalizedSource = normalizePath(sourcePath);
+    const normalizedTarget = normalizePath(targetDirPath);
+    if (!normalizedSource || !normalizedTarget) return false;
+    if (normalizedSource === normalizedTarget) return false;
+
+    const targetEntry = findEntryByPath(targetDirPath);
+    if (!targetEntry?.isDir) return false;
+
+    const sourceEntry = findEntryByPath(sourcePath);
+    if (!sourceEntry) return false;
+
+    const sourceParent = getParentPath(sourcePath);
+    if (sourceParent && normalizePath(sourceParent) === normalizedTarget) {
+      return false;
+    }
+
+    if (sourceEntry.isDir && normalizedTarget.startsWith(`${normalizedSource}/`)) {
+      return false;
+    }
+
+    return true;
+  }, [findEntryByPath, getParentPath, normalizePath]);
+
+  const clearDragExpandTimer = useCallback(() => {
+    if (dragExpandTimerRef.current !== null) {
+      window.clearTimeout(dragExpandTimerRef.current);
+      dragExpandTimerRef.current = null;
+    }
+    dragExpandPathRef.current = null;
+  }, []);
+
+  const cancelDragExpandIfMatches = useCallback((path: string) => {
+    const pendingPath = dragExpandPathRef.current;
+    if (!pendingPath) return;
+    if (normalizePath(pendingPath) !== normalizePath(path)) return;
+    clearDragExpandTimer();
+  }, [clearDragExpandTimer, normalizePath]);
+
+  const scheduleDragExpand = useCallback((path: string) => {
+    const normalizedPath = normalizePath(path);
+    const pendingPath = dragExpandPathRef.current;
+    if (pendingPath && normalizePath(pendingPath) === normalizedPath) {
+      return;
+    }
+    clearDragExpandTimer();
+    dragExpandPathRef.current = path;
+    dragExpandTimerRef.current = window.setTimeout(() => {
+      const key = toExpandedKey(path);
+      setExpandedPaths((prev) => {
+        if (prev.has(key)) return prev;
+        const next = new Set(prev);
+        next.add(key);
+        return next;
+      });
+      if (!entriesMap[path] && !loadingPaths.has(path)) {
+        void loadEntries(path);
+      }
+      dragExpandTimerRef.current = null;
+      dragExpandPathRef.current = null;
+    }, 500);
+  }, [clearDragExpandTimer, entriesMap, loadingPaths, loadEntries, normalizePath, toExpandedKey]);
+
+  const clearDragAutoScroll = useCallback(() => {
+    if (dragAutoScrollTimerRef.current !== null) {
+      window.clearInterval(dragAutoScrollTimerRef.current);
+      dragAutoScrollTimerRef.current = null;
+    }
+    dragAutoScrollVelocityRef.current = 0;
+  }, []);
+
+  const startDragAutoScroll = useCallback((velocity: number) => {
+    if (!Number.isFinite(velocity) || velocity === 0) {
+      clearDragAutoScroll();
+      return;
+    }
+    dragAutoScrollVelocityRef.current = velocity;
+    if (dragAutoScrollTimerRef.current !== null) {
+      return;
+    }
+    dragAutoScrollTimerRef.current = window.setInterval(() => {
+      const container = treeScrollRef.current;
+      if (!container) return;
+      const nextTop = container.scrollTop + dragAutoScrollVelocityRef.current;
+      const maxTop = Math.max(0, container.scrollHeight - container.clientHeight);
+      container.scrollTop = Math.max(0, Math.min(maxTop, nextTop));
+    }, 16);
+  }, [clearDragAutoScroll]);
+
+  const replaceExpandedPathPrefix = useCallback((sourcePath: string, movedPath: string) => {
+    const normalizedSource = normalizePath(sourcePath);
+    const normalizedMoved = normalizePath(movedPath);
+    const sourcePrefix = `${normalizedSource}/`;
+    const next = new Set<string>();
+    expandedPaths.forEach((key) => {
+      const full = normalizePath(keyToPath(key));
+      if (full === normalizedSource || full.startsWith(sourcePrefix)) {
+        const suffix = full.slice(normalizedSource.length);
+        const nextPath = normalizePath(`${normalizedMoved}${suffix}`);
+        next.add(toExpandedKey(nextPath));
+      } else {
+        next.add(key);
+      }
+    });
+    return next;
+  }, [expandedPaths, keyToPath, normalizePath, toExpandedKey]);
+
+  const reloadTreeWithExpanded = useCallback(async (nextExpanded: Set<string>) => {
+    if (!project?.rootPath) return;
+    setEntriesMap({});
+    await loadEntries(project.rootPath);
+    const tasks = Array.from(nextExpanded)
+      .filter((key) => key.length > 0)
+      .map((key) => loadEntries(keyToPath(key)));
+    if (tasks.length > 0) {
+      await Promise.all(tasks);
+    }
+  }, [keyToPath, loadEntries, project?.rootPath]);
 
   const pruneDeletedPath = useCallback((deletedPath: string) => {
     const normalizedDeleted = normalizePath(deletedPath);
@@ -364,6 +502,7 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     setActionLoading(true);
     setActionError(null);
     setActionMessage(null);
+    setMoveConflict(null);
     try {
       await client.createFsDirectory(targetDirPath, name);
       setExpandedPaths((prev) => {
@@ -527,6 +666,139 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     }
   }, [actionReloadPath, loadEntries]);
 
+  const applyMoveResult = useCallback(async (
+    sourcePath: string,
+    targetDirPath: string,
+    result: any,
+    movedLabel: string
+  ) => {
+    const movedPath = typeof result?.to_path === 'string' ? result.to_path : '';
+    if (!movedPath) {
+      throw new Error('移动成功，但返回路径为空');
+    }
+    const nextExpanded = replaceExpandedPathPrefix(sourcePath, movedPath);
+    nextExpanded.add(toExpandedKey(targetDirPath));
+    setExpandedPaths(nextExpanded);
+    setSelectedPath(movedPath);
+    setSelectedFile(null);
+    await reloadTreeWithExpanded(nextExpanded);
+    setActionMessage(`已移动：${movedLabel}`);
+  }, [reloadTreeWithExpanded, replaceExpandedPathPrefix, toExpandedKey]);
+
+  const executeMoveEntry = useCallback(async (
+    sourcePath: string,
+    targetDirPath: string,
+    movedLabel: string,
+    options?: { targetName?: string; replaceExisting?: boolean }
+  ) => {
+    const result = await client.moveFsEntry(sourcePath, targetDirPath, options);
+    await applyMoveResult(sourcePath, targetDirPath, result, movedLabel);
+    return result;
+  }, [applyMoveResult, client]);
+
+  const handleMoveEntryByDrop = useCallback(async (sourcePath: string, targetDirPath: string) => {
+    clearDragExpandTimer();
+    clearDragAutoScroll();
+    if (!canDropToDirectory(sourcePath, targetDirPath)) return;
+    const sourceEntry = findEntryByPath(sourcePath);
+    if (!sourceEntry) {
+      setActionError('拖拽源文件不存在');
+      return;
+    }
+
+    setActionLoading(true);
+    setActionError(null);
+    setActionMessage(null);
+    try {
+      try {
+        await executeMoveEntry(sourcePath, targetDirPath, sourceEntry.name);
+      } catch (err: any) {
+        const message = String(err?.message || '');
+        if (!message.includes('已存在同名')) {
+          throw err;
+        }
+        setMoveConflict({
+          sourcePath,
+          targetDirPath,
+          sourceName: sourceEntry.name,
+          renameTo: `${sourceEntry.name}_copy`,
+        });
+        setActionMessage('目标已存在同名项，请选择处理方式');
+      }
+    } catch (err: any) {
+      setActionError(err?.message || '移动失败');
+    } finally {
+      setActionLoading(false);
+    }
+  }, [canDropToDirectory, clearDragAutoScroll, clearDragExpandTimer, executeMoveEntry, findEntryByPath]);
+
+  const handleMoveConflictCancel = useCallback(() => {
+    setMoveConflict(null);
+    setActionMessage('已取消移动');
+  }, []);
+
+  const handleMoveConflictOverwrite = useCallback(async () => {
+    if (!moveConflict) return;
+    setActionLoading(true);
+    setActionError(null);
+    try {
+      await executeMoveEntry(
+        moveConflict.sourcePath,
+        moveConflict.targetDirPath,
+        moveConflict.sourceName,
+        { replaceExisting: true }
+      );
+      setActionMessage(`已覆盖并移动：${moveConflict.sourceName}`);
+      setMoveConflict(null);
+    } catch (err: any) {
+      setActionError(err?.message || '覆盖移动失败');
+    } finally {
+      setActionLoading(false);
+    }
+  }, [executeMoveEntry, moveConflict]);
+
+  const handleMoveConflictRename = useCallback(async () => {
+    if (!moveConflict) return;
+    const renamed = moveConflict.renameTo.trim();
+    if (!renamed || !isValidEntryName(renamed)) {
+      setActionError('新名称不合法');
+      return;
+    }
+    setActionLoading(true);
+    setActionError(null);
+    try {
+      await executeMoveEntry(
+        moveConflict.sourcePath,
+        moveConflict.targetDirPath,
+        renamed,
+        { targetName: renamed }
+      );
+      setMoveConflict(null);
+    } catch (err: any) {
+      setActionError(err?.message || '重命名移动失败');
+    } finally {
+      setActionLoading(false);
+    }
+  }, [executeMoveEntry, moveConflict]);
+
+  const handleDragStart = useCallback((event: React.DragEvent, entry: FsEntry) => {
+    if (!entry.path) return;
+    clearDragExpandTimer();
+    clearDragAutoScroll();
+    setDraggingEntryPath(entry.path);
+    setDropTargetDirPath(null);
+    setMoveConflict(null);
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', entry.path);
+  }, [clearDragAutoScroll, clearDragExpandTimer]);
+
+  const handleDragEnd = useCallback(() => {
+    clearDragExpandTimer();
+    clearDragAutoScroll();
+    setDraggingEntryPath(null);
+    setDropTargetDirPath(null);
+  }, [clearDragAutoScroll, clearDragExpandTimer]);
+
   const openEntryContextMenu = useCallback((event: React.MouseEvent, entry: FsEntry) => {
     event.preventDefault();
     event.stopPropagation();
@@ -553,6 +825,8 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
 
   useEffect(() => {
     if (!project?.rootPath) {
+      clearDragExpandTimer();
+      clearDragAutoScroll();
       setEntriesMap({});
       setExpandedPaths(new Set());
       setSelectedPath(null);
@@ -561,6 +835,9 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
       setActionError(null);
       setActionLoading(false);
       setContextMenu(null);
+      setMoveConflict(null);
+      setDraggingEntryPath(null);
+      setDropTargetDirPath(null);
       setChangeLogs([]);
       setLogsError(null);
       setSelectedLogId(null);
@@ -568,6 +845,8 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
       return;
     }
     const root = project.rootPath;
+    clearDragExpandTimer();
+    clearDragAutoScroll();
     setEntriesMap({});
     const saved = project.id ? localStorage.getItem(`project_explorer_expanded_${project.id}`) : null;
     let nextExpanded = new Set<string>();
@@ -593,6 +872,9 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     setActionError(null);
     setActionLoading(false);
     setContextMenu(null);
+    setMoveConflict(null);
+    setDraggingEntryPath(null);
+    setDropTargetDirPath(null);
     setChangeLogs([]);
     setLogsError(null);
     setSelectedLogId(null);
@@ -602,7 +884,7 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
       const full = keyToPath(p);
       if (full !== root) loadEntries(full);
     });
-  }, [project?.id, project?.rootPath, loadEntries, keyToPath, toExpandedKey]);
+  }, [clearDragAutoScroll, clearDragExpandTimer, project?.id, project?.rootPath, loadEntries, keyToPath, toExpandedKey]);
 
   useEffect(() => {
     if (!expandedReady || !project?.id || !project?.rootPath) return;
@@ -630,6 +912,11 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
       window.removeEventListener('keydown', onKeyDown);
     };
   }, [contextMenu]);
+
+  useEffect(() => (() => {
+    clearDragExpandTimer();
+    clearDragAutoScroll();
+  }), [clearDragAutoScroll, clearDragExpandTimer]);
 
   useEffect(() => {
     if (!isResizing) return;
@@ -703,16 +990,66 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     }
     return entries.map((entry) => {
       const entryKey = toExpandedKey(entry.path);
-      const isActive = selectedPath === entry.path;
+      const normalizedEntryPath = normalizePath(entry.path);
+      const isActive = selectedPath ? normalizePath(selectedPath) === normalizedEntryPath : false;
+      const isDragging = draggingEntryPath ? normalizePath(draggingEntryPath) === normalizedEntryPath : false;
+      const isDropTarget = entry.isDir && dropTargetDirPath
+        ? normalizePath(dropTargetDirPath) === normalizedEntryPath
+        : false;
       return (
         <div key={entry.path}>
           <button
             type="button"
             onClick={() => (entry.isDir ? toggleDir(entry) : openFile(entry))}
             onContextMenu={(event) => openEntryContextMenu(event, entry)}
+            draggable
+            onDragStart={(event) => handleDragStart(event, entry)}
+            onDragEnd={handleDragEnd}
+            onDragOver={(event) => {
+              if (!entry.isDir) return;
+              const sourcePath = draggingEntryPath || event.dataTransfer.getData('text/plain');
+              if (!sourcePath || !canDropToDirectory(sourcePath, entry.path)) return;
+              event.preventDefault();
+              event.dataTransfer.dropEffect = 'move';
+            }}
+            onDragEnter={(event) => {
+              if (!entry.isDir) return;
+              const sourcePath = draggingEntryPath || event.dataTransfer.getData('text/plain');
+              if (!sourcePath || !canDropToDirectory(sourcePath, entry.path)) return;
+              event.preventDefault();
+              setDropTargetDirPath(entry.path);
+              scheduleDragExpand(entry.path);
+            }}
+            onDragLeave={(event) => {
+              if (!entry.isDir) return;
+              const nextTarget = event.relatedTarget as Node | null;
+              if (nextTarget && (event.currentTarget as HTMLElement).contains(nextTarget)) {
+                return;
+              }
+              cancelDragExpandIfMatches(entry.path);
+              clearDragAutoScroll();
+              setDropTargetDirPath(prev => (
+                prev && normalizePath(prev) === normalizePath(entry.path) ? null : prev
+              ));
+            }}
+            onDrop={(event) => {
+              if (!entry.isDir) return;
+              const sourcePath = draggingEntryPath || event.dataTransfer.getData('text/plain');
+              if (!sourcePath) return;
+              if (!canDropToDirectory(sourcePath, entry.path)) return;
+              event.preventDefault();
+              event.stopPropagation();
+              cancelDragExpandIfMatches(entry.path);
+              clearDragAutoScroll();
+              setDropTargetDirPath(null);
+              setDraggingEntryPath(null);
+              void handleMoveEntryByDrop(sourcePath, entry.path);
+            }}
             className={cn(
               'min-w-full w-max grid grid-cols-[12px_auto_64px] items-center gap-2 py-1.5 pr-2 text-left rounded hover:bg-accent transition-colors',
-              isActive && 'bg-accent'
+              isActive && 'bg-accent',
+              isDragging && 'opacity-50',
+              isDropTarget && 'ring-1 ring-blue-500 bg-blue-500/10'
             )}
             style={{ paddingLeft: 12 + depth * 14 }}
           >
@@ -968,11 +1305,56 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     <div ref={containerRef} className={cn('flex h-full overflow-hidden', className)}>
       <div className="border-r border-border bg-card flex flex-col shrink-0" style={{ width: treeWidth }}>
         <div
-          className="px-3 py-2 border-b border-border space-y-2"
+          className={cn(
+            'px-3 py-2 border-b border-border space-y-2',
+            dropTargetDirPath && project.rootPath && normalizePath(dropTargetDirPath) === normalizePath(project.rootPath)
+              ? 'ring-1 ring-blue-500 bg-blue-500/10'
+              : ''
+          )}
           onContextMenu={(event) => {
             if (projectRootEntry) {
               openEntryContextMenu(event, projectRootEntry);
             }
+          }}
+          onDragOver={(event) => {
+            const sourcePath = draggingEntryPath || event.dataTransfer.getData('text/plain');
+            if (!sourcePath || !project.rootPath) return;
+            if (!canDropToDirectory(sourcePath, project.rootPath)) return;
+            event.preventDefault();
+            event.dataTransfer.dropEffect = 'move';
+          }}
+          onDragEnter={(event) => {
+            const sourcePath = draggingEntryPath || event.dataTransfer.getData('text/plain');
+            if (!sourcePath || !project.rootPath) return;
+            if (!canDropToDirectory(sourcePath, project.rootPath)) return;
+            event.preventDefault();
+            clearDragExpandTimer();
+            clearDragAutoScroll();
+            setDropTargetDirPath(project.rootPath);
+          }}
+          onDragLeave={(event) => {
+            const nextTarget = event.relatedTarget as Node | null;
+            if (nextTarget && (event.currentTarget as HTMLElement).contains(nextTarget)) {
+              return;
+            }
+            if (project.rootPath) {
+              const normalizedRoot = normalizePath(project.rootPath);
+              setDropTargetDirPath(prev => (
+                prev && normalizePath(prev) === normalizedRoot ? null : prev
+              ));
+            }
+          }}
+          onDrop={(event) => {
+            const sourcePath = draggingEntryPath || event.dataTransfer.getData('text/plain');
+            if (!sourcePath || !project.rootPath) return;
+            if (!canDropToDirectory(sourcePath, project.rootPath)) return;
+            event.preventDefault();
+            event.stopPropagation();
+            clearDragExpandTimer();
+            clearDragAutoScroll();
+            setDropTargetDirPath(null);
+            setDraggingEntryPath(null);
+            void handleMoveEntryByDrop(sourcePath, project.rootPath);
           }}
         >
           <div className="text-xs text-muted-foreground">项目目录</div>
@@ -1048,7 +1430,43 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
             </div>
           )}
         </div>
-        <div className="flex-1 overflow-y-auto overflow-x-auto py-2">
+        <div
+          ref={treeScrollRef}
+          className="flex-1 overflow-y-auto overflow-x-auto py-2"
+          onDragOver={(event) => {
+            if (!draggingEntryPath) return;
+            const container = treeScrollRef.current;
+            if (!container) return;
+            const rect = container.getBoundingClientRect();
+            const threshold = Math.max(28, Math.min(64, rect.height / 3));
+            let velocity = 0;
+
+            if (event.clientY < rect.top + threshold) {
+              const ratio = (rect.top + threshold - event.clientY) / threshold;
+              velocity = -Math.max(4, Math.round(22 * ratio));
+            } else if (event.clientY > rect.bottom - threshold) {
+              const ratio = (event.clientY - (rect.bottom - threshold)) / threshold;
+              velocity = Math.max(4, Math.round(22 * ratio));
+            }
+
+            if (velocity !== 0) {
+              event.preventDefault();
+              startDragAutoScroll(velocity);
+            } else {
+              clearDragAutoScroll();
+            }
+          }}
+          onDragLeave={(event) => {
+            const nextTarget = event.relatedTarget as Node | null;
+            if (nextTarget && (event.currentTarget as HTMLElement).contains(nextTarget)) {
+              return;
+            }
+            clearDragAutoScroll();
+          }}
+          onDrop={() => {
+            clearDragAutoScroll();
+          }}
+        >
           {renderEntries(project.rootPath, 0)}
           {loadingPaths.has(project.rootPath) && (
             <div className="px-3 py-2 text-xs text-muted-foreground">加载中...</div>
@@ -1103,6 +1521,68 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
           </div>
         )}
       </div>
+      {moveConflict && (
+        <div
+          className="fixed inset-0 z-[90] bg-black/35 flex items-center justify-center p-4"
+          onClick={() => {
+            if (!actionLoading) {
+              handleMoveConflictCancel();
+            }
+          }}
+        >
+          <div
+            className="w-full max-w-md rounded-lg border border-border bg-card p-4 shadow-xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="text-sm font-medium text-foreground">目标目录存在同名项</div>
+            <div className="mt-2 text-xs text-muted-foreground">
+              将 {moveConflict.sourceName} 移动到目标目录时发生冲突，请选择处理方式。
+            </div>
+            <div className="mt-3 space-y-1.5">
+              <label className="text-xs text-muted-foreground">重命名后移动</label>
+              <input
+                value={moveConflict.renameTo}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setMoveConflict((prev) => (prev ? { ...prev, renameTo: value } : prev));
+                }}
+                className="w-full h-9 rounded border border-input bg-background px-2 text-sm"
+                placeholder="请输入新名称"
+              />
+            </div>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={handleMoveConflictCancel}
+                disabled={actionLoading}
+                className="px-3 py-1.5 text-xs rounded border border-border hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void handleMoveConflictOverwrite();
+                }}
+                disabled={actionLoading}
+                className="px-3 py-1.5 text-xs rounded border border-amber-500/50 text-amber-700 hover:bg-amber-500/10 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                覆盖后移动
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void handleMoveConflictRename();
+                }}
+                disabled={actionLoading}
+                className="px-3 py-1.5 text-xs rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                重命名后移动
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {contextMenu && contextMenuStyle && (
         <div
           className="fixed z-[80] w-56 rounded-md border border-border bg-popover text-popover-foreground shadow-lg p-1"

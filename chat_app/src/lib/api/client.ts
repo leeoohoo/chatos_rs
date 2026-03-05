@@ -493,6 +493,22 @@ class ApiClient {
     });
   }
 
+  async moveFsEntry(
+    sourcePath: string,
+    targetParentPath: string,
+    options?: { targetName?: string; replaceExisting?: boolean }
+  ): Promise<any> {
+    return this.request<any>('/fs/move', {
+      method: 'POST',
+      body: JSON.stringify({
+        source_path: sourcePath,
+        target_parent_path: targetParentPath,
+        target_name: options?.targetName,
+        replace_existing: options?.replaceExisting,
+      }),
+    });
+  }
+
   async downloadFsEntry(path: string): Promise<{ blob: Blob; filename: string; contentType: string }> {
     const qs = `?path=${encodeURIComponent(path)}`;
     const headers = new Headers();
