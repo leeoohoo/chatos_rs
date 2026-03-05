@@ -607,33 +607,71 @@ pub fn normalize_json_schema(schema: &Value) -> Value {
 }
 
 pub fn to_text(result: &Value) -> String {
-    if let Some(text) = result.as_str() {
-        return text.to_string();
-    }
-
-    if let Some(content) = result.get("content").and_then(|value| value.as_array()) {
+    let raw = if let Some(text) = result.as_str() {
+        text.to_string()
+    } else if let Some(content) = result.get("content").and_then(|value| value.as_array()) {
+        let mut extracted: Option<String> = None;
         for item in content {
             if item.get("type").and_then(|value| value.as_str()) != Some("text") {
                 continue;
             }
             if let Some(text) = item.get("text").and_then(|value| value.as_str()) {
-                return text.to_string();
+                extracted = Some(text.to_string());
+                break;
             }
             if let Some(value) = item.get("value").and_then(|value| value.as_str()) {
-                return value.to_string();
+                extracted = Some(value.to_string());
+                break;
             }
         }
+        extracted.unwrap_or_else(|| result.to_string())
+    } else if let Some(text) = result.get("text").and_then(|value| value.as_str()) {
+        text.to_string()
+    } else if let Some(value) = result.get("value").and_then(|value| value.as_str()) {
+        value.to_string()
+    } else {
+        result.to_string()
+    };
+
+    truncate_tool_text(raw.as_str(), tool_result_text_max_chars())
+}
+
+fn tool_result_text_max_chars() -> usize {
+    std::env::var("MCP_TOOL_RESULT_MAX_CHARS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(16_000)
+}
+
+fn truncate_tool_text(text: &str, max_chars: usize) -> String {
+    if max_chars == 0 {
+        return String::new();
     }
 
-    if let Some(text) = result.get("text").and_then(|value| value.as_str()) {
+    let total = text.chars().count();
+    if total <= max_chars {
         return text.to_string();
     }
 
-    if let Some(value) = result.get("value").and_then(|value| value.as_str()) {
-        return value.to_string();
+    let marker = format!("\n...[truncated {} chars]...\n", total - max_chars);
+    let marker_chars = marker.chars().count();
+    if marker_chars >= max_chars {
+        return text.chars().take(max_chars).collect();
     }
 
-    result.to_string()
+    let head_chars = ((max_chars - marker_chars) * 3 / 5).max(1);
+    let tail_chars = (max_chars - marker_chars).saturating_sub(head_chars);
+    let head: String = text.chars().take(head_chars).collect();
+    let tail: String = text
+        .chars()
+        .rev()
+        .take(tail_chars)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    format!("{}{}{}", head, marker, tail)
 }
 
 pub fn inject_sub_agent_router_args(args: Value, caller_model: Option<&str>) -> Value {
@@ -743,7 +781,8 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        build_function_tool_schema, normalize_json_schema, parse_tool_definition, ToolSchemaFormat,
+        build_function_tool_schema, normalize_json_schema, parse_tool_definition,
+        truncate_tool_text, ToolSchemaFormat,
     };
 
     #[test]
@@ -832,5 +871,15 @@ mod tests {
             .cloned()
             .unwrap_or_default();
         assert!(nested_required.contains(&json!("limit")));
+    }
+
+    #[test]
+    fn truncate_tool_text_keeps_head_and_tail() {
+        let input = format!("{}{}", "a".repeat(200), "z".repeat(200));
+        let out = truncate_tool_text(input.as_str(), 120);
+        assert!(out.chars().count() <= 120);
+        assert!(out.contains("truncated"));
+        assert!(out.starts_with("a"));
+        assert!(out.ends_with("z"));
     }
 }

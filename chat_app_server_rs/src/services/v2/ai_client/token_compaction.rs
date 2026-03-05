@@ -26,11 +26,18 @@ pub(super) fn estimate_delta_stats(messages: &[Value]) -> (i64, i64) {
 }
 
 pub(super) fn is_token_limit_error(err: &str) -> bool {
-    is_context_overflow_error(err)
+    is_context_overflow_error(err) || is_request_body_too_large_error(err)
 }
 
 pub(super) fn token_limit_budget_from_error(err: &str) -> Option<i64> {
     token_budget_from_context_overflow_error(err)
+}
+
+fn is_request_body_too_large_error(err: &str) -> bool {
+    let message = err.to_lowercase();
+    message.contains("request body too large")
+        || message.contains("body too large")
+        || message.contains("payload too large")
 }
 
 pub(super) fn truncate_messages_by_tokens(
@@ -94,4 +101,17 @@ pub(super) fn truncate_messages_by_tokens(
     output.extend(tail_reversed);
     let changed = output.len() < messages.len();
     (output, changed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_token_limit_error;
+
+    #[test]
+    fn token_limit_error_includes_request_body_too_large() {
+        assert!(is_token_limit_error(
+            "Read from request Body failed: http: request body too large"
+        ));
+        assert!(!is_token_limit_error("rate_limit_exceeded"));
+    }
 }
