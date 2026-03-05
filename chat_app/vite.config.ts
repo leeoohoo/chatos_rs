@@ -33,7 +33,8 @@ export default defineConfig({
     global: 'globalThis',
   },
   server: {
-    port: 5173,
+    host: '0.0.0.0',
+    port: 8088,
     open: true,
     proxy: {
       '/api': {
