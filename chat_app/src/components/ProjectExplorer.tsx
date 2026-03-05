@@ -10,6 +10,12 @@ interface ProjectExplorerProps {
   className?: string;
 }
 
+interface ExplorerContextMenuState {
+  x: number;
+  y: number;
+  entry: FsEntry;
+}
+
 const normalizeEntry = (raw: any): FsEntry => ({
   name: raw?.name ?? '',
   path: raw?.path ?? '',
@@ -127,6 +133,14 @@ const escapeHtml = (value: string) => (
     .replace(/'/g, '&#39;')
 );
 
+const isValidEntryName = (name: string): boolean => (
+  name !== '.' &&
+  name !== '..' &&
+  !name.includes('/') &&
+  !name.includes('\\') &&
+  !name.includes('\0')
+);
+
 export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, className }) => {
   const apiClientFromContext = useChatApiClientFromContext();
   const client = useMemo(() => apiClientFromContext || globalApiClient, [apiClientFromContext]);
@@ -142,6 +156,10 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
   const [selectedFile, setSelectedFile] = useState<FsReadResult | null>(null);
   const [loadingFile, setLoadingFile] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [contextMenu, setContextMenu] = useState<ExplorerContextMenuState | null>(null);
   const [changeLogs, setChangeLogs] = useState<ChangeLogItem[]>([]);
   const [loadingLogs, setLoadingLogs] = useState(false);
   const [logsError, setLogsError] = useState<string | null>(null);
@@ -201,6 +219,7 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
 
   const toggleDir = useCallback(async (entry: FsEntry) => {
     if (!entry.isDir) return;
+    setActionError(null);
     setSelectedPath(entry.path);
     setSelectedFile(null);
     const key = toExpandedKey(entry.path);
@@ -219,6 +238,7 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
   }, [entriesMap, loadEntries, toExpandedKey]);
 
   const openFile = useCallback(async (entry: FsEntry) => {
+    setActionError(null);
     setSelectedPath(entry.path);
     setSelectedFile(null);
     setLoadingFile(true);
@@ -233,12 +253,314 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     }
   }, [client]);
 
+  const getParentPath = useCallback((value: string): string | null => {
+    const normalized = normalizePath(value);
+    if (!normalized) return null;
+    const idx = normalized.lastIndexOf('/');
+    if (idx < 0) return null;
+    if (idx === 0) return '/';
+    const parent = normalized.slice(0, idx);
+    if (/^[A-Za-z]:$/.test(parent)) {
+      return `${parent}/`;
+    }
+    return parent;
+  }, [normalizePath]);
+
+  const projectRootEntry = useMemo<FsEntry | null>(() => {
+    if (!project?.rootPath) return null;
+    return {
+      name: project.name || project.rootPath,
+      path: project.rootPath,
+      isDir: true,
+      size: null,
+      modifiedAt: null,
+    };
+  }, [project?.name, project?.rootPath]);
+
+  const selectedEntry = useMemo<FsEntry | null>(() => {
+    if (!selectedPath) return null;
+    const normalizedSelected = normalizePath(selectedPath);
+    const root = project?.rootPath ? normalizePath(project.rootPath) : '';
+    if (root && normalizedSelected === root) {
+      return projectRootEntry;
+    }
+    for (const entries of Object.values(entriesMap)) {
+      const found = entries.find((entry) => normalizePath(entry.path) === normalizedSelected);
+      if (found) return found;
+    }
+    return null;
+  }, [entriesMap, normalizePath, project?.rootPath, projectRootEntry, selectedPath]);
+
+  const selectedDirPath = useMemo(
+    () => (selectedEntry?.isDir ? selectedEntry.path : null),
+    [selectedEntry]
+  );
+
+  const isRootSelected = useMemo(() => {
+    if (!selectedEntry?.path || !project?.rootPath) return false;
+    return normalizePath(selectedEntry.path) === normalizePath(project.rootPath);
+  }, [normalizePath, project?.rootPath, selectedEntry?.path]);
+
+  const isContextRootEntry = useMemo(() => {
+    if (!contextMenu?.entry.path || !project?.rootPath) return false;
+    return normalizePath(contextMenu.entry.path) === normalizePath(project.rootPath);
+  }, [contextMenu?.entry.path, normalizePath, project?.rootPath]);
+
+  const actionReloadPath = useMemo(() => {
+    if (!selectedEntry) return project?.rootPath || null;
+    if (selectedEntry.isDir) return selectedEntry.path;
+    return getParentPath(selectedEntry.path) || project?.rootPath || null;
+  }, [getParentPath, project?.rootPath, selectedEntry]);
+
+  const pruneDeletedPath = useCallback((deletedPath: string) => {
+    const normalizedDeleted = normalizePath(deletedPath);
+    const deletedPrefix = `${normalizedDeleted}/`;
+
+    setEntriesMap((prev) => {
+      const next: Record<string, FsEntry[]> = {};
+      Object.entries(prev).forEach(([key, entries]) => {
+        const normalizedKey = normalizePath(key);
+        if (normalizedKey === normalizedDeleted || normalizedKey.startsWith(deletedPrefix)) {
+          return;
+        }
+        next[key] = entries.filter((entry) => {
+          const normalizedEntryPath = normalizePath(entry.path);
+          return normalizedEntryPath !== normalizedDeleted && !normalizedEntryPath.startsWith(deletedPrefix);
+        });
+      });
+      return next;
+    });
+
+    setExpandedPaths((prev) => {
+      const next = new Set<string>();
+      prev.forEach((key) => {
+        const full = normalizePath(keyToPath(key));
+        if (full !== normalizedDeleted && !full.startsWith(deletedPrefix)) {
+          next.add(key);
+        }
+      });
+      return next;
+    });
+  }, [keyToPath, normalizePath]);
+
+  const handleCreateDirectory = useCallback(async (dirPathOverride?: string) => {
+    const targetDirPath = dirPathOverride || selectedDirPath;
+    if (!targetDirPath) {
+      setActionError('请先选择一个目录');
+      return;
+    }
+    const rawName = window.prompt('请输入新目录名称');
+    if (rawName === null) return;
+    const name = rawName.trim();
+    if (!name) {
+      setActionError('目录名称不能为空');
+      return;
+    }
+    if (!isValidEntryName(name)) {
+      setActionError('目录名称不合法');
+      return;
+    }
+
+    setActionLoading(true);
+    setActionError(null);
+    setActionMessage(null);
+    try {
+      await client.createFsDirectory(targetDirPath, name);
+      setExpandedPaths((prev) => {
+        const next = new Set(prev);
+        next.add(toExpandedKey(targetDirPath));
+        return next;
+      });
+      await loadEntries(targetDirPath);
+      setActionMessage(`已创建目录：${name}`);
+    } catch (err: any) {
+      setActionError(err?.message || '创建目录失败');
+    } finally {
+      setActionLoading(false);
+    }
+  }, [client, loadEntries, selectedDirPath, toExpandedKey]);
+
+  const handleCreateFile = useCallback(async (dirPathOverride?: string) => {
+    const targetDirPath = dirPathOverride || selectedDirPath;
+    if (!targetDirPath) {
+      setActionError('请先选择一个目录');
+      return;
+    }
+    const rawName = window.prompt('请输入新文件名称');
+    if (rawName === null) return;
+    const name = rawName.trim();
+    if (!name) {
+      setActionError('文件名称不能为空');
+      return;
+    }
+    if (!isValidEntryName(name)) {
+      setActionError('文件名称不合法');
+      return;
+    }
+
+    setActionLoading(true);
+    setActionError(null);
+    setActionMessage(null);
+    try {
+      const data = await client.createFsFile(targetDirPath, name, '');
+      const createdPath = typeof data?.path === 'string' ? data.path.trim() : '';
+      setExpandedPaths((prev) => {
+        const next = new Set(prev);
+        next.add(toExpandedKey(targetDirPath));
+        return next;
+      });
+      await loadEntries(targetDirPath);
+      setActionMessage(`已创建文件：${name}`);
+      if (createdPath) {
+        await openFile({
+          name,
+          path: createdPath,
+          isDir: false,
+          size: 0,
+          modifiedAt: null,
+        });
+      }
+    } catch (err: any) {
+      setActionError(err?.message || '创建文件失败');
+    } finally {
+      setActionLoading(false);
+    }
+  }, [client, loadEntries, openFile, selectedDirPath, toExpandedKey]);
+
+  const handleDeleteSelected = useCallback(async (entryOverride?: FsEntry) => {
+    const targetEntry = entryOverride || selectedEntry;
+    if (!targetEntry) {
+      setActionError('请先选择要删除的文件或目录');
+      return;
+    }
+    const targetIsRoot = !!project?.rootPath
+      && normalizePath(targetEntry.path) === normalizePath(project.rootPath);
+    if (targetIsRoot) {
+      setActionError('不支持删除项目根目录');
+      return;
+    }
+
+    const confirmed = window.confirm(
+      targetEntry.isDir
+        ? `确认删除目录 "${targetEntry.name}" 吗？将递归删除其全部内容。`
+        : `确认删除文件 "${targetEntry.name}" 吗？`
+    );
+    if (!confirmed) return;
+
+    setActionLoading(true);
+    setActionError(null);
+    setActionMessage(null);
+    try {
+      await client.deleteFsEntry(targetEntry.path, targetEntry.isDir);
+      pruneDeletedPath(targetEntry.path);
+      if (selectedFile?.path && normalizePath(selectedFile.path) === normalizePath(targetEntry.path)) {
+        setSelectedFile(null);
+      }
+
+      const fallbackPath = getParentPath(targetEntry.path) || project?.rootPath || null;
+      setSelectedPath(fallbackPath);
+      if (fallbackPath) {
+        await loadEntries(fallbackPath);
+      }
+      setActionMessage(`已删除：${targetEntry.name}`);
+    } catch (err: any) {
+      setActionError(err?.message || '删除失败');
+    } finally {
+      setActionLoading(false);
+    }
+  }, [
+    client,
+    getParentPath,
+    loadEntries,
+    normalizePath,
+    project?.rootPath,
+    pruneDeletedPath,
+    selectedEntry,
+    selectedFile?.path,
+  ]);
+
+  const handleDownloadSelected = useCallback(async (entryOverride?: FsEntry) => {
+    const targetEntry = entryOverride || selectedEntry;
+    if (!targetEntry) {
+      setActionError('请先选择要下载的文件或目录');
+      return;
+    }
+    if (typeof document === 'undefined') {
+      setActionError('当前环境不支持下载');
+      return;
+    }
+
+    setActionLoading(true);
+    setActionError(null);
+    setActionMessage(null);
+    try {
+      const { blob, filename } = await client.downloadFsEntry(targetEntry.path);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = filename || targetEntry.name || 'download';
+      anchor.style.display = 'none';
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(url);
+      setActionMessage(`开始下载：${anchor.download}`);
+    } catch (err: any) {
+      setActionError(err?.message || '下载失败');
+    } finally {
+      setActionLoading(false);
+    }
+  }, [client, selectedEntry]);
+
+  const handleRefresh = useCallback(async () => {
+    if (!actionReloadPath) return;
+    setActionLoading(true);
+    setActionError(null);
+    setActionMessage(null);
+    try {
+      await loadEntries(actionReloadPath);
+      setActionMessage('目录已刷新');
+    } catch (err: any) {
+      setActionError(err?.message || '刷新失败');
+    } finally {
+      setActionLoading(false);
+    }
+  }, [actionReloadPath, loadEntries]);
+
+  const openEntryContextMenu = useCallback((event: React.MouseEvent, entry: FsEntry) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setSelectedPath(entry.path);
+    if (entry.isDir) {
+      setSelectedFile(null);
+    }
+    setContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      entry,
+    });
+  }, []);
+
+  const contextMenuStyle = useMemo(() => {
+    if (!contextMenu) return undefined;
+    const maxX = typeof window !== 'undefined' ? window.innerWidth - 220 : contextMenu.x;
+    const maxY = typeof window !== 'undefined' ? window.innerHeight - 240 : contextMenu.y;
+    return {
+      left: `${Math.max(8, Math.min(contextMenu.x, maxX))}px`,
+      top: `${Math.max(8, Math.min(contextMenu.y, maxY))}px`,
+    };
+  }, [contextMenu]);
+
   useEffect(() => {
     if (!project?.rootPath) {
       setEntriesMap({});
       setExpandedPaths(new Set());
       setSelectedPath(null);
       setSelectedFile(null);
+      setActionMessage(null);
+      setActionError(null);
+      setActionLoading(false);
+      setContextMenu(null);
       setChangeLogs([]);
       setLogsError(null);
       setSelectedLogId(null);
@@ -267,6 +589,10 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     setExpandedReady(true);
     setSelectedPath(root);
     setSelectedFile(null);
+    setActionMessage(null);
+    setActionError(null);
+    setActionLoading(false);
+    setContextMenu(null);
     setChangeLogs([]);
     setLogsError(null);
     setSelectedLogId(null);
@@ -283,6 +609,27 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     const next = Array.from(expandedPaths);
     localStorage.setItem(`project_explorer_expanded_${project.id}`, JSON.stringify(next));
   }, [expandedPaths, expandedReady, project?.id, project?.rootPath]);
+
+  useEffect(() => {
+    if (!contextMenu) return undefined;
+    const closeMenu = () => setContextMenu(null);
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        closeMenu();
+      }
+    };
+
+    window.addEventListener('click', closeMenu);
+    window.addEventListener('resize', closeMenu);
+    window.addEventListener('scroll', closeMenu, true);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('click', closeMenu);
+      window.removeEventListener('resize', closeMenu);
+      window.removeEventListener('scroll', closeMenu, true);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [contextMenu]);
 
   useEffect(() => {
     if (!isResizing) return;
@@ -362,6 +709,7 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
           <button
             type="button"
             onClick={() => (entry.isDir ? toggleDir(entry) : openFile(entry))}
+            onContextMenu={(event) => openEntryContextMenu(event, entry)}
             className={cn(
               'min-w-full w-max grid grid-cols-[12px_auto_64px] items-center gap-2 py-1.5 pr-2 text-left rounded hover:bg-accent transition-colors',
               isActive && 'bg-accent'
@@ -619,7 +967,14 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
   return (
     <div ref={containerRef} className={cn('flex h-full overflow-hidden', className)}>
       <div className="border-r border-border bg-card flex flex-col shrink-0" style={{ width: treeWidth }}>
-        <div className="px-3 py-2 border-b border-border">
+        <div
+          className="px-3 py-2 border-b border-border space-y-2"
+          onContextMenu={(event) => {
+            if (projectRootEntry) {
+              openEntryContextMenu(event, projectRootEntry);
+            }
+          }}
+        >
           <div className="text-xs text-muted-foreground">项目目录</div>
           <div className="text-sm font-medium text-foreground truncate" title={project.rootPath}>
             {project.name}
@@ -627,6 +982,71 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
           <div className="text-[11px] text-muted-foreground truncate" title={project.rootPath}>
             {project.rootPath}
           </div>
+          <div className="text-[11px] text-muted-foreground truncate" title={selectedEntry?.path || ''}>
+            当前选择：{selectedEntry ? selectedEntry.path : '未选择'}
+          </div>
+          <div className="flex flex-wrap gap-1">
+            <button
+              type="button"
+              onClick={() => {
+                void handleCreateDirectory();
+              }}
+              disabled={!selectedDirPath || actionLoading}
+              className="rounded border border-border px-2 py-1 text-[11px] hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              新建目录
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                void handleCreateFile();
+              }}
+              disabled={!selectedDirPath || actionLoading}
+              className="rounded border border-border px-2 py-1 text-[11px] hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              新建文件
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                void handleDeleteSelected();
+              }}
+              disabled={!selectedEntry || isRootSelected || actionLoading}
+              className="rounded border border-border px-2 py-1 text-[11px] text-destructive hover:bg-destructive/10 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              删除
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                void handleDownloadSelected();
+              }}
+              disabled={!selectedEntry || actionLoading}
+              className="rounded border border-border px-2 py-1 text-[11px] hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              下载
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                void handleRefresh();
+              }}
+              disabled={!actionReloadPath || actionLoading}
+              className="rounded border border-border px-2 py-1 text-[11px] hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              刷新
+            </button>
+          </div>
+          {actionMessage && (
+            <div className="text-[11px] text-emerald-600 truncate" title={actionMessage}>
+              {actionMessage}
+            </div>
+          )}
+          {actionError && (
+            <div className="text-[11px] text-destructive truncate" title={actionError}>
+              {actionError}
+            </div>
+          )}
         </div>
         <div className="flex-1 overflow-y-auto overflow-x-auto py-2">
           {renderEntries(project.rootPath, 0)}
@@ -683,6 +1103,67 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
           </div>
         )}
       </div>
+      {contextMenu && contextMenuStyle && (
+        <div
+          className="fixed z-[80] w-56 rounded-md border border-border bg-popover text-popover-foreground shadow-lg p-1"
+          style={contextMenuStyle}
+          onClick={(event) => event.stopPropagation()}
+          onContextMenu={(event) => event.preventDefault()}
+        >
+          <div className="px-2 py-1 text-[11px] text-muted-foreground truncate">
+            {contextMenu.entry.isDir ? '目录' : '文件'}：{contextMenu.entry.path}
+          </div>
+          {contextMenu.entry.isDir && (
+            <button
+              type="button"
+              onClick={() => {
+                const targetPath = contextMenu.entry.path;
+                setContextMenu(null);
+                void handleCreateDirectory(targetPath);
+              }}
+              className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent"
+            >
+              新建目录
+            </button>
+          )}
+          {contextMenu.entry.isDir && (
+            <button
+              type="button"
+              onClick={() => {
+                const targetPath = contextMenu.entry.path;
+                setContextMenu(null);
+                void handleCreateFile(targetPath);
+              }}
+              className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent"
+            >
+              新建文件
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              const targetEntry = contextMenu.entry;
+              setContextMenu(null);
+              void handleDownloadSelected(targetEntry);
+            }}
+            className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent"
+          >
+            下载
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const targetEntry = contextMenu.entry;
+              setContextMenu(null);
+              void handleDeleteSelected(targetEntry);
+            }}
+            disabled={isContextRootEntry}
+            className="w-full text-left px-2 py-1.5 text-sm rounded text-destructive hover:bg-destructive/10 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            删除
+          </button>
+        </div>
+      )}
     </div>
   );
 };

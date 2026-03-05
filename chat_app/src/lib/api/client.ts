@@ -3,6 +3,33 @@ import { debugLog } from '@/lib/utils';
 // 使用相对路径，让浏览器自动处理协议和域名
 const API_BASE_URL = '/api';
 
+const parseFilenameFromContentDisposition = (value: string | null): string | null => {
+  if (!value) return null;
+
+  const utf8Match = /filename\*\s*=\s*UTF-8''([^;]+)/i.exec(value);
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1]);
+    } catch {
+      // ignore decode error
+    }
+  }
+
+  const plainMatch = /filename\s*=\s*"([^"]+)"|filename\s*=\s*([^;]+)/i.exec(value);
+  const name = plainMatch?.[1] || plainMatch?.[2] || '';
+  const trimmed = name.trim();
+  if (!trimmed) return null;
+  return trimmed;
+};
+
+const guessFilenameFromPath = (path: string): string => {
+  const trimmed = (path || '').trim().replace(/[\\/]+$/, '');
+  if (!trimmed) return 'download';
+  const idx = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
+  if (idx < 0) return trimmed;
+  return trimmed.slice(idx + 1) || 'download';
+};
+
 class ApiClient {
   private baseUrl: string;
   private accessToken: string | null = null;
@@ -443,6 +470,71 @@ class ApiClient {
         name,
       }),
     });
+  }
+
+  async createFsFile(parentPath: string, name: string, content = ''): Promise<any> {
+    return this.request<any>('/fs/touch', {
+      method: 'POST',
+      body: JSON.stringify({
+        parent_path: parentPath,
+        name,
+        content,
+      }),
+    });
+  }
+
+  async deleteFsEntry(path: string, recursive = false): Promise<any> {
+    return this.request<any>('/fs/delete', {
+      method: 'POST',
+      body: JSON.stringify({
+        path,
+        recursive,
+      }),
+    });
+  }
+
+  async downloadFsEntry(path: string): Promise<{ blob: Blob; filename: string; contentType: string }> {
+    const qs = `?path=${encodeURIComponent(path)}`;
+    const headers = new Headers();
+    if (this.accessToken) {
+      headers.set('Authorization', `Bearer ${this.accessToken}`);
+    }
+    const response = await fetch(`${this.baseUrl}/fs/download${qs}`, {
+      method: 'GET',
+      headers,
+    });
+
+    this.applyRefreshedAccessToken(response);
+
+    if (!response.ok) {
+      const text = await response.text();
+      let message = `HTTP error! status: ${response.status}`;
+      if (text) {
+        try {
+          const parsed = JSON.parse(text);
+          message =
+            (typeof parsed?.error === 'string' && parsed.error) ||
+            (typeof parsed?.message === 'string' && parsed.message) ||
+            message;
+        } catch {
+          message = text;
+        }
+      }
+      throw new Error(message);
+    }
+
+    const blob = await response.blob();
+    const contentType = response.headers.get('content-type') || blob.type || 'application/octet-stream';
+    const nameFromHeader = parseFilenameFromContentDisposition(response.headers.get('content-disposition'));
+    let filename = nameFromHeader || guessFilenameFromPath(path);
+    if (contentType.includes('application/zip') && !filename.toLowerCase().endsWith('.zip')) {
+      filename = `${filename}.zip`;
+    }
+    return {
+      blob,
+      filename,
+      contentType,
+    };
   }
 
   // 消息相关API
