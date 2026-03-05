@@ -1175,6 +1175,46 @@ class ApiClient {
     });
   }
 
+  async getPendingUiPrompts(
+    sessionId: string,
+    options?: { limit?: number }
+  ): Promise<any[]> {
+    if (!sessionId) {
+      return [];
+    }
+
+    const params = new URLSearchParams();
+    params.set('session_id', sessionId);
+    if (typeof options?.limit === 'number') {
+      params.set('limit', String(options.limit));
+    }
+
+    const result = await this.request<any>('/ui-prompts/pending?' + params.toString());
+    if (Array.isArray(result)) {
+      return result;
+    }
+    return Array.isArray(result?.prompts) ? result.prompts : [];
+  }
+
+  async submitUiPromptResponse(
+    promptId: string,
+    payload: {
+      status: 'ok' | 'canceled' | 'timeout';
+      values?: Record<string, string>;
+      selection?: string | string[];
+      reason?: string;
+    }
+  ): Promise<any> {
+    if (!promptId) {
+      throw new Error('promptId is required');
+    }
+
+    return this.request<any>(`/ui-prompts/${encodeURIComponent(promptId)}/respond`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
   async notepadInit(): Promise<any> {
     return this.request<any>('/notepad/init');
   }

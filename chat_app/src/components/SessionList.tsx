@@ -119,6 +119,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     loadSessions,
     sessionChatState,
     taskReviewPanelsBySession = {},
+    uiPromptPanelsBySession = {},
     projects,
     currentProject,
     loadProjects,
@@ -1125,9 +1126,13 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
                                     if (isArchivedSession) {
                                       return null;
                                     }
-                                    const pendingCount = Array.isArray(taskReviewPanelsBySession?.[session.id])
+                                    const taskReviewCount = Array.isArray(taskReviewPanelsBySession?.[session.id])
                                       ? taskReviewPanelsBySession[session.id].length
                                       : 0;
+                                    const uiPromptCount = Array.isArray(uiPromptPanelsBySession?.[session.id])
+                                      ? uiPromptPanelsBySession[session.id].length
+                                      : 0;
+                                    const pendingCount = taskReviewCount + uiPromptCount;
                                     if (pendingCount <= 0) {
                                       return null;
                                     }

@@ -243,6 +243,20 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
         )"#,
+        r#"CREATE TABLE IF NOT EXISTS ui_prompt_requests (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            conversation_turn_id TEXT NOT NULL,
+            tool_call_id TEXT,
+            kind TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            prompt_json TEXT NOT NULL,
+            response_json TEXT,
+            expires_at TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+        )"#,
         r#"CREATE TABLE IF NOT EXISTS mcp_config_profiles (
             id TEXT PRIMARY KEY,
             mcp_config_id TEXT NOT NULL,
@@ -572,6 +586,8 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
         "CREATE INDEX IF NOT EXISTS idx_task_manager_tasks_session_turn ON task_manager_tasks(session_id, conversation_turn_id)",
         "CREATE INDEX IF NOT EXISTS idx_task_manager_tasks_session_created_at ON task_manager_tasks(session_id, created_at)",
         "CREATE INDEX IF NOT EXISTS idx_task_manager_tasks_turn_created_at ON task_manager_tasks(conversation_turn_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_ui_prompt_requests_session_status_updated_at ON ui_prompt_requests(session_id, status, updated_at)",
+        "CREATE INDEX IF NOT EXISTS idx_ui_prompt_requests_turn_created_at ON ui_prompt_requests(conversation_turn_id, created_at)",
         "CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)",
         "CREATE INDEX IF NOT EXISTS idx_sessions_project_id ON sessions(project_id)",
         "CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)",

@@ -5,6 +5,7 @@ use std::sync::Arc;
 use serde::Serialize;
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tracing::warn;
 use uuid::Uuid;
 
 use crate::builtin::code_maintainer::{CodeMaintainerOptions, CodeMaintainerService};
@@ -12,6 +13,7 @@ use crate::builtin::notepad::{NotepadBuiltinService, NotepadOptions};
 use crate::builtin::sub_agent_router::{SubAgentRouterOptions, SubAgentRouterService};
 use crate::builtin::task_manager::{TaskManagerOptions, TaskManagerService};
 use crate::builtin::terminal_controller::{TerminalControllerOptions, TerminalControllerService};
+use crate::builtin::ui_prompter::{UiPrompterOptions, UiPrompterService};
 use crate::services::builtin_mcp::BuiltinMcpKind;
 use crate::services::mcp_loader::{McpBuiltinServer, McpStdioServer};
 use crate::utils::abort_registry;
@@ -116,6 +118,7 @@ pub enum BuiltinToolService {
     TaskManager(TaskManagerService),
     Notepad(NotepadBuiltinService),
     SubAgentRouter(SubAgentRouterService),
+    UiPrompter(UiPrompterService),
 }
 
 impl BuiltinToolService {
@@ -126,6 +129,7 @@ impl BuiltinToolService {
             Self::TaskManager(service) => service.list_tools(),
             Self::Notepad(service) => service.list_tools(),
             Self::SubAgentRouter(service) => service.list_tools(),
+            Self::UiPrompter(service) => service.list_tools(),
         }
     }
 
@@ -149,6 +153,13 @@ impl BuiltinToolService {
             ),
             Self::Notepad(service) => service.call_tool(name, args),
             Self::SubAgentRouter(service) => service.call_tool(
+                name,
+                args,
+                session_id,
+                conversation_turn_id,
+                on_stream_chunk,
+            ),
+            Self::UiPrompter(service) => service.call_tool(
                 name,
                 args,
                 session_id,
@@ -232,6 +243,13 @@ pub fn build_builtin_tool_service(server: &McpBuiltinServer) -> Result<BuiltinTo
             })?;
             Ok(BuiltinToolService::SubAgentRouter(service))
         }
+        BuiltinMcpKind::UiPrompter => {
+            let service = UiPrompterService::new(UiPrompterOptions {
+                server_name: server.name.clone(),
+                prompt_timeout_ms: crate::services::ui_prompt_manager::UI_PROMPT_TIMEOUT_MS_DEFAULT,
+            })?;
+            Ok(BuiltinToolService::UiPrompter(service))
+        }
     }
 }
 
@@ -297,6 +315,10 @@ where
         let args = match parse_tool_args(args_val) {
             Ok(value) => value,
             Err(err) => {
+                warn!(
+                    "[MCP] parse tool args failed: tool={}, call_id={}, err={}",
+                    tool_name, call_id, err
+                );
                 push_tool_result(
                     &mut results,
                     ToolResult {
@@ -363,6 +385,10 @@ where
                 if err == "aborted" {
                     break;
                 }
+                warn!(
+                    "[MCP] tool execution failed: tool={}, call_id={}, err={}",
+                    tool_name, call_id, err
+                );
 
                 push_tool_result(
                     &mut results,

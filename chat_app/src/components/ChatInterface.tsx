@@ -17,6 +17,7 @@ import RemoteSftpPanel from './RemoteSftpPanel';
 import ApplicationsPanel from './ApplicationsPanel';
 import NotepadPanel from './NotepadPanel';
 import TaskDraftPanel from './TaskDraftPanel';
+import UiPromptPanel from './UiPromptPanel';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import TaskWorkbar, {
   type SessionSummaryWorkbarItem,
@@ -25,7 +26,7 @@ import TaskWorkbar, {
 import { apiClient as globalApiClient } from '../lib/api/client';
 import { cn } from '../lib/utils';
 import type { ChatInterfaceProps } from '../types';
-import type { TaskReviewDraft } from '../lib/store/types';
+import type { TaskReviewDraft, UiPromptPanelState, UiPromptResponsePayload } from '../lib/store/types';
 import { useAuthStore } from '../lib/auth/authStore';
 
 const SESSION_PAGE_SIZE = 30;
@@ -67,8 +68,11 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     abortCurrentConversation,
     sessionChatState = {},
     taskReviewPanelsBySession = {},
+    uiPromptPanelsBySession = {},
     upsertTaskReviewPanel,
     removeTaskReviewPanel,
+    upsertUiPromptPanel,
+    removeUiPromptPanel,
     // applications,  // 涓嶅啀鍦ㄦ缁勪欢涓娇鐢?
     // selectedApplicationId,  // 涓嶅啀鐢ㄤ簬鑷姩鏄剧ず
   } = useChatStoreFromContext();
@@ -142,6 +146,53 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     return panels[0];
   }, [currentSession, taskReviewPanelsBySession]);
 
+  const activeUiPromptPanel = useMemo(() => {
+    if (!currentSession) {
+      return null;
+    }
+    const panels = uiPromptPanelsBySession[currentSession.id];
+    if (!Array.isArray(panels) || panels.length === 0) {
+      return null;
+    }
+    return panels[0];
+  }, [currentSession, uiPromptPanelsBySession]);
+
+  const toUiPromptPanelFromRecord = useCallback((record: any): UiPromptPanelState | null => {
+    const source = record?.prompt && typeof record.prompt === 'object' ? record.prompt : record;
+    const promptId = typeof source?.prompt_id === 'string' ? source.prompt_id.trim() : '';
+    const sessionId = typeof source?.session_id === 'string' ? source.session_id.trim() : '';
+    const conversationTurnId = typeof source?.conversation_turn_id === 'string'
+      ? source.conversation_turn_id.trim()
+      : '';
+    if (!promptId || !sessionId || !conversationTurnId) {
+      return null;
+    }
+
+    const kindRaw = String(source?.kind || 'kv').trim().toLowerCase();
+    const kind = kindRaw === 'choice' ? 'choice' : (kindRaw === 'mixed' ? 'mixed' : 'kv');
+
+    const payload = source?.payload && typeof source.payload === 'object' ? source.payload : {};
+    const fields = Array.isArray((payload as any).fields) ? (payload as any).fields : [];
+    const choice = (payload as any).choice && typeof (payload as any).choice === 'object'
+      ? (payload as any).choice
+      : undefined;
+
+    return {
+      promptId,
+      sessionId,
+      conversationTurnId,
+      toolCallId: typeof source?.tool_call_id === 'string' ? source.tool_call_id : null,
+      kind,
+      title: typeof source?.title === 'string' ? source.title : '',
+      message: typeof source?.message === 'string' ? source.message : '',
+      allowCancel: source?.allow_cancel !== false,
+      timeoutMs: typeof source?.timeout_ms === 'number' ? source.timeout_ms : undefined,
+      payload: { fields, choice },
+      submitting: false,
+      error: null,
+    };
+  }, []);
+
   const activeConversationTurnId = useMemo(() => {
     if (!currentSession) {
       return null;
@@ -193,6 +244,36 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     document.addEventListener('mousedown', onDocumentClick);
     return () => document.removeEventListener('mousedown', onDocumentClick);
   }, [showUserMenu]);
+
+  const currentSessionIdForUiPrompts = currentSession?.id || null;
+
+  useEffect(() => {
+    if (!currentSessionIdForUiPrompts || activePanel !== 'chat') {
+      return;
+    }
+
+    let cancelled = false;
+    void apiClient
+      .getPendingUiPrompts(currentSessionIdForUiPrompts, { limit: 50 })
+      .then((records) => {
+        if (cancelled || !Array.isArray(records)) {
+          return;
+        }
+        records.forEach((record) => {
+          const panel = toUiPromptPanelFromRecord(record);
+          if (panel) {
+            upsertUiPromptPanel(panel);
+          }
+        });
+      })
+      .catch((error) => {
+        console.warn('Failed to load pending ui prompts:', error);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activePanel, apiClient, currentSessionIdForUiPrompts, toUiPromptPanelFromRecord, upsertUiPromptPanel]);
 
   const isTaskMutationToolName = useCallback((name: unknown) => {
     const normalized = String(name || '').toLowerCase();
@@ -972,6 +1053,59 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     }
   }, [activeTaskReviewPanel, apiClient, loadCurrentTurnWorkbarTasks, loadHistoryWorkbarTasks, loadWorkbarSummaries, removeTaskReviewPanel, upsertTaskReviewPanel]);
 
+  const handleUiPromptSubmit = useCallback(async (payload: UiPromptResponsePayload) => {
+    if (!activeUiPromptPanel) {
+      return;
+    }
+
+    const pendingPanel = {
+      ...activeUiPromptPanel,
+      submitting: true,
+      error: null,
+    };
+    upsertUiPromptPanel(pendingPanel);
+
+    try {
+      await apiClient.submitUiPromptResponse(activeUiPromptPanel.promptId, payload);
+      removeUiPromptPanel(activeUiPromptPanel.promptId, activeUiPromptPanel.sessionId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'UI Prompt 提交失败';
+      upsertUiPromptPanel({
+        ...pendingPanel,
+        submitting: false,
+        error: message,
+      });
+    }
+  }, [activeUiPromptPanel, apiClient, removeUiPromptPanel, upsertUiPromptPanel]);
+
+  const handleUiPromptCancel = useCallback(async () => {
+    if (!activeUiPromptPanel) {
+      return;
+    }
+
+    const pendingPanel = {
+      ...activeUiPromptPanel,
+      submitting: true,
+      error: null,
+    };
+    upsertUiPromptPanel(pendingPanel);
+
+    try {
+      await apiClient.submitUiPromptResponse(activeUiPromptPanel.promptId, {
+        status: 'canceled',
+        reason: 'user_cancelled',
+      });
+      removeUiPromptPanel(activeUiPromptPanel.promptId, activeUiPromptPanel.sessionId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'UI Prompt 取消失败';
+      upsertUiPromptPanel({
+        ...pendingPanel,
+        submitting: false,
+        error: message,
+      });
+    }
+  }, [activeUiPromptPanel, apiClient, removeUiPromptPanel, upsertUiPromptPanel]);
+
 
   if (showSystemContextEditor) {
     return (
@@ -1324,6 +1458,13 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                           void handleWorkbarEditTask(task);
                         }}
                       />
+                      {activeUiPromptPanel ? (
+                        <UiPromptPanel
+                          panel={activeUiPromptPanel}
+                          onSubmit={handleUiPromptSubmit}
+                          onCancel={handleUiPromptCancel}
+                        />
+                      ) : null}
                       {activeTaskReviewPanel ? (
                         <TaskDraftPanel
                           panel={activeTaskReviewPanel}

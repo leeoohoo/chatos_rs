@@ -67,6 +67,7 @@ impl AiClient {
         &self,
         session_id: Option<&str>,
         sub_agent_run_id: Option<&str>,
+        include_reasoning: bool,
     ) -> Vec<Value> {
         let mut mapped = Vec::new();
         let (merged_summary, _summary_count, history) = if let Some(run_id) = sub_agent_run_id {
@@ -114,6 +115,20 @@ impl AiClient {
                 {
                     item["tool_calls"] = tc;
                 }
+                if include_reasoning && msg.role == "assistant" {
+                    let has_tool_calls = item
+                        .get("tool_calls")
+                        .map(|value| !value.is_null())
+                        .unwrap_or(false);
+                    if has_tool_calls {
+                        item["reasoning_content"] =
+                            Value::String(msg.reasoning.clone().unwrap_or_default());
+                    } else if let Some(reasoning) = msg.reasoning.clone() {
+                        if !reasoning.trim().is_empty() {
+                            item["reasoning_content"] = Value::String(reasoning);
+                        }
+                    }
+                }
                 mapped.push(item);
             }
         }
@@ -127,6 +142,7 @@ impl AiClient {
         iteration: i64,
         session_id: Option<&str>,
         sub_agent_run_id: Option<&str>,
+        include_reasoning: bool,
         messages: &mut Vec<Value>,
     ) {
         if (purpose != "chat" && sub_agent_run_id.is_none()) || iteration <= 0 {
@@ -141,7 +157,11 @@ impl AiClient {
             refreshed.push(json!({"role": "system", "content": prompt}));
         }
         let mapped = self
-            .load_summary_pending_messages_for_scope(session_id, sub_agent_run_id)
+            .load_summary_pending_messages_for_scope(
+                session_id,
+                sub_agent_run_id,
+                include_reasoning,
+            )
             .await;
         refreshed.extend(ensure_tool_responses(mapped));
         if refreshed != *messages {
@@ -185,6 +205,7 @@ impl AiClient {
                 .load_summary_pending_messages_for_scope(
                     session_id.as_deref(),
                     sub_agent_run_id.as_deref(),
+                    reasoning_enabled,
                 )
                 .await;
             history_messages = ensure_tool_responses(drop_duplicate_tail(mapped, &messages));
@@ -265,6 +286,7 @@ impl AiClient {
                 iteration,
                 session_id.as_deref(),
                 sub_agent_run_id.as_deref(),
+                reasoning_enabled,
                 &mut messages,
             )
             .await;

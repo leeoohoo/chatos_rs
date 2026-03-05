@@ -17,7 +17,13 @@ import { createStreamingActions } from './actions/streaming';
 import { createAgentActions } from './actions/agents';
 import { createSystemContextActions } from './actions/systemContexts';
 import { createUiActions } from './actions/ui';
-import type { ChatActions, ChatState, ChatStoreConfig, TaskReviewPanelState } from './types';
+import type {
+  ChatActions,
+  ChatState,
+  ChatStoreConfig,
+  TaskReviewPanelState,
+  UiPromptPanelState,
+} from './types';
 
 export type { ChatActions, ChatState, ChatStoreConfig } from './types';
 
@@ -73,6 +79,8 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                     sessionTurnProcessCache: {},
                     taskReviewPanel: null,
                     taskReviewPanelsBySession: {},
+                    uiPromptPanel: null,
+                    uiPromptPanelsBySession: {},
                     sidebarOpen: true,
                     theme: 'light',
                     chatConfig: {
@@ -148,6 +156,58 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                                 }
                                 if (state.currentSessionId === sid) {
                                     state.taskReviewPanel = nextPanels[0] || null;
+                                }
+                                break;
+                            }
+                        });
+                    },
+                    setUiPromptPanel: (panel: ChatState['uiPromptPanel']) => {
+                        set((state: any) => {
+                            state.uiPromptPanel = panel;
+                        });
+                    },
+                    upsertUiPromptPanel: (panel: UiPromptPanelState) => {
+                        if (!panel || !panel.promptId || !panel.sessionId) {
+                            return;
+                        }
+                        set((state: any) => {
+                            const sessionId = panel.sessionId;
+                            const panels = Array.isArray(state.uiPromptPanelsBySession?.[sessionId])
+                                ? state.uiPromptPanelsBySession[sessionId]
+                                : [];
+                            const index = panels.findIndex((item: any) => item.promptId === panel.promptId);
+                            if (index >= 0) {
+                                panels[index] = panel;
+                            } else {
+                                panels.push(panel);
+                            }
+                            state.uiPromptPanelsBySession[sessionId] = panels;
+                            if (state.currentSessionId === sessionId) {
+                                state.uiPromptPanel = panels[0] || panel;
+                            }
+                        });
+                    },
+                    removeUiPromptPanel: (promptId: string, sessionId?: string) => {
+                        if (!promptId) {
+                            return;
+                        }
+                        set((state: any) => {
+                            const candidates = sessionId
+                                ? [sessionId]
+                                : Object.keys(state.uiPromptPanelsBySession || {});
+                            for (const sid of candidates) {
+                                const panels = state.uiPromptPanelsBySession?.[sid];
+                                if (!Array.isArray(panels) || panels.length === 0) {
+                                    continue;
+                                }
+                                const nextPanels = panels.filter((item: any) => item.promptId !== promptId);
+                                if (nextPanels.length > 0) {
+                                    state.uiPromptPanelsBySession[sid] = nextPanels;
+                                } else {
+                                    delete state.uiPromptPanelsBySession[sid];
+                                }
+                                if (state.currentSessionId === sid) {
+                                    state.uiPromptPanel = nextPanels[0] || null;
                                 }
                                 break;
                             }

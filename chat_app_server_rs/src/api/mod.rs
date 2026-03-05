@@ -46,6 +46,7 @@ pub mod sessions;
 pub mod system_contexts;
 pub mod task_manager;
 pub mod terminals;
+pub mod ui_prompts;
 pub mod user_settings;
 
 pub fn router() -> Router {
@@ -135,6 +136,7 @@ pub fn router() -> Router {
         .merge(remote_connections::router())
         .merge(session_summary_job_config::router())
         .merge(task_manager::router())
+        .merge(ui_prompts::router())
         .merge(terminals::router())
         .merge(configs::router())
         .merge(system_contexts::router())
