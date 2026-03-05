@@ -33,7 +33,7 @@ interface InputCommandParseState {
 }
 
 const MAX_COMMAND_HISTORY = 200;
-const TERMINAL_HISTORY_PAGE_SIZE = 1200;
+const TERMINAL_HISTORY_PAGE_SIZE = 800;
 const TERMINAL_HISTORY_MAX_LIMIT = 5000;
 
 const buildWsUrl = (baseUrl: string, path: string, accessToken?: string | null) => {
@@ -361,6 +361,53 @@ const writeToTerminal = (term: XTerm, data: string): Promise<void> => (
   })
 );
 
+const writeToTerminalInChunks = async (
+  term: XTerm,
+  data: string,
+  chunkSize = 24 * 1024,
+): Promise<void> => {
+  if (!data) {
+    return;
+  }
+  for (let i = 0; i < data.length; i += chunkSize) {
+    const chunk = data.slice(i, i + chunkSize);
+    await writeToTerminal(term, chunk);
+  }
+};
+
+const getTimestampMs = (value: string): number => {
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? 0 : parsed;
+};
+
+const sortCommandHistory = (items: CommandHistoryItem[]): CommandHistoryItem[] => (
+  [...items].sort((a, b) => getTimestampMs(a.createdAt) - getTimestampMs(b.createdAt))
+);
+
+const mergeCommandHistory = (
+  logHistory: CommandHistoryItem[],
+  cachedHistory: CommandHistoryItem[],
+): CommandHistoryItem[] => {
+  const dedup = new Map<string, CommandHistoryItem>();
+  for (const item of [...logHistory, ...cachedHistory]) {
+    const normalizedCommand = normalizeCommandForCompare(item.command);
+    if (!canCommandBeUsed(normalizedCommand)) {
+      continue;
+    }
+    const createdAt = normalizeLogTimestamp(item.createdAt);
+    const key = `${normalizedCommand}@@${createdAt}`;
+    if (dedup.has(key)) {
+      continue;
+    }
+    dedup.set(key, {
+      ...item,
+      command: normalizedCommand,
+      createdAt,
+    });
+  }
+  return sortCommandHistory(Array.from(dedup.values())).slice(-MAX_COMMAND_HISTORY);
+};
+
 export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
   const {
     currentTerminal,
@@ -378,6 +425,12 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
   const inputParseStateRef = useRef<InputCommandParseState>(createInitialInputCommandParseState());
   const outputParseStateRef = useRef<CommandHistoryParseState>(createInitialCommandHistoryParseState());
   const commandSeqRef = useRef(0);
+  const historyLoadSeqRef = useRef(0);
+  const replayingHistoryRef = useRef(false);
+  const pendingOutputChunksRef = useRef<string[]>([]);
+  const loadHistoryRef = useRef<((limit: number, mode: 'initial' | 'more') => Promise<void>) | null>(null);
+  const themeColorsRef = useRef(getThemeColors(actualTheme));
+  const commandHistoryCacheRef = useRef<Record<string, CommandHistoryItem[]>>({});
 
   const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected');
   const [historyState, setHistoryState] = useState<HistoryState>('idle');
@@ -386,6 +439,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
   const [commandHistory, setCommandHistory] = useState<CommandHistoryItem[]>([]);
   const [historyLogLimit, setHistoryLogLimit] = useState(TERMINAL_HISTORY_PAGE_SIZE);
   const [canLoadMoreHistory, setCanLoadMoreHistory] = useState(false);
+  const [historyBusy, setHistoryBusy] = useState(false);
 
   const client = apiClientFromContext ?? apiClient;
   const apiBaseUrl = client.getBaseUrl();
@@ -408,6 +462,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
     }
 
     setCommandHistory((prev) => {
+      const activeTerminalId = currentTerminal?.id;
       const next = [...prev];
       const normalizedCommands = commands
         .map((command) => normalizeCommandForCompare(command))
@@ -431,7 +486,11 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
           });
         }
 
-        return next.slice(-MAX_COMMAND_HISTORY);
+        const finalHistory = next.slice(-MAX_COMMAND_HISTORY);
+        if (activeTerminalId) {
+          commandHistoryCacheRef.current[activeTerminalId] = finalHistory;
+        }
+        return finalHistory;
       }
 
       if (next.length === 0) {
@@ -459,11 +518,16 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
         }
       }
 
-      return next.slice(-MAX_COMMAND_HISTORY);
+      const finalHistory = next.slice(-MAX_COMMAND_HISTORY);
+      if (activeTerminalId) {
+        commandHistoryCacheRef.current[activeTerminalId] = finalHistory;
+      }
+      return finalHistory;
     });
   };
 
   useEffect(() => {
+    themeColorsRef.current = themeColors;
     const term = terminalRef.current;
     if (term) {
       term.options.theme = themeColors;
@@ -471,12 +535,8 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
   }, [themeColors]);
 
   useEffect(() => {
-    setHistoryLogLimit(TERMINAL_HISTORY_PAGE_SIZE);
-    setCanLoadMoreHistory(false);
-  }, [currentTerminal?.id]);
-
-  useEffect(() => {
     if (!currentTerminal || !containerRef.current) {
+      loadHistoryRef.current = null;
       return;
     }
 
@@ -484,7 +544,13 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
 
     inputParseStateRef.current = createInitialInputCommandParseState();
     outputParseStateRef.current = createInitialCommandHistoryParseState();
-    setCommandHistory([]);
+    const cachedHistory = commandHistoryCacheRef.current[currentTerminal.id] ?? [];
+    setCommandHistory(cachedHistory);
+    pendingOutputChunksRef.current = [];
+    replayingHistoryRef.current = false;
+    setHistoryLogLimit(TERMINAL_HISTORY_PAGE_SIZE);
+    setCanLoadMoreHistory(false);
+    setHistoryBusy(false);
     setHistoryState('loading');
     setConnectionState('disconnected');
     setErrorMessage(null);
@@ -496,7 +562,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
       lineHeight: 1.2,
       cursorBlink: true,
       scrollback: 3000,
-      theme: themeColors,
+      theme: themeColorsRef.current,
     });
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
@@ -549,26 +615,53 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
     resizeObserver.observe(containerRef.current);
     resizeObserverRef.current = resizeObserver;
 
-    const loadHistory = async () => {
+    const loadHistory = async (
+      limit: number,
+      mode: 'initial' | 'more',
+    ) => {
+      const requestSeq = historyLoadSeqRef.current + 1;
+      historyLoadSeqRef.current = requestSeq;
+      const isCurrentRequest = () => requestSeq === historyLoadSeqRef.current;
+
+      if (mode === 'more') {
+        setHistoryBusy(true);
+      } else {
+        setHistoryState('loading');
+      }
+      setErrorMessage(null);
+      inputForwardEnabledRef.current = false;
+
       try {
-        const logs = await client.listTerminalLogs(currentTerminal.id, { limit: historyLogLimit, offset: 0 });
-        if (cancelled) {
+        const logs = await client.listTerminalLogs(currentTerminal.id, { limit, offset: 0 });
+        if (cancelled || !isCurrentRequest() || terminalRef.current !== term) {
           return;
         }
 
         const normalized = Array.isArray(logs) ? logs.map(normalizeTerminalLog) : [];
         setCanLoadMoreHistory(
-          normalized.length >= historyLogLimit && historyLogLimit < TERMINAL_HISTORY_MAX_LIMIT
+          normalized.length >= limit && limit < TERMINAL_HISTORY_MAX_LIMIT
         );
 
-        const outputLogs = normalized.filter((log: TerminalLog) => log.logType === 'output' || log.logType === 'system');
-        const commandLogs = normalized.filter((log: TerminalLog) => log.logType === 'command');
-        const inputLogs = normalized.filter((log: TerminalLog) => log.logType === 'input');
+        const outputLogs: TerminalLog[] = [];
+        const commandLogs: TerminalLog[] = [];
+        const inputLogs: TerminalLog[] = [];
+        for (const log of normalized) {
+          if (log.logType === 'command') {
+            commandLogs.push(log);
+          } else if (log.logType === 'input') {
+            inputLogs.push(log);
+          } else if (log.logType === 'output' || log.logType === 'system') {
+            outputLogs.push(log);
+          }
+        }
 
         const outputContent = outputLogs.map((log: TerminalLog) => log.content).join('');
-        await writeToTerminal(term, outputContent);
+        replayingHistoryRef.current = true;
+        pendingOutputChunksRef.current = [];
+        term.reset();
+        await writeToTerminalInChunks(term, outputContent);
 
-        if (cancelled) {
+        if (cancelled || !isCurrentRequest() || terminalRef.current !== term) {
           return;
         }
 
@@ -617,77 +710,104 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
         const outputDerivedCommands: CommandHistoryItem[] = [];
         let parseState = createInitialCommandHistoryParseState();
 
-        if (commandLogs.length === 0) {
-          for (const log of outputLogs) {
-            const parsed = parseOutputChunkForCommands(log.content, parseState);
-            parseState = parsed.nextState;
-            if (parsed.commands.length === 0) {
+        for (const log of outputLogs) {
+          const parsed = parseOutputChunkForCommands(log.content, parseState);
+          parseState = parsed.nextState;
+
+          if (commandLogs.length > 0 || parsed.commands.length === 0) {
+            continue;
+          }
+
+          const createdAt = normalizeLogTimestamp(log.createdAt);
+          for (const command of parsed.commands) {
+            const normalizedOutputCommand = normalizeCommandForCompare(command);
+            if (!canCommandBeUsed(normalizedOutputCommand)) {
               continue;
             }
 
-            const createdAt = normalizeLogTimestamp(log.createdAt);
-            for (const command of parsed.commands) {
-              const normalizedOutputCommand = normalizeCommandForCompare(command);
-              if (!canCommandBeUsed(normalizedOutputCommand)) {
-                continue;
-              }
+            outputDerivedCommands.push({
+              id: `cmd-${commandSeqRef.current++}`,
+              command: normalizedOutputCommand,
+              createdAt,
+            });
 
-              outputDerivedCommands.push({
-                id: `cmd-${commandSeqRef.current++}`,
-                command: normalizedOutputCommand,
-                createdAt,
-              });
+            if (parsedCommands.length === 0) {
+              continue;
+            }
 
-              if (parsedCommands.length === 0) {
-                continue;
-              }
-
-              const searchStart = Math.max(0, parsedCommands.length - 10);
-              for (let i = parsedCommands.length - 1; i >= searchStart; i -= 1) {
-                const baseCommand = parsedCommands[i].command;
-                if (canOutputCommandCorrectInput(baseCommand, normalizedOutputCommand)
-                  && normalizedOutputCommand.length > normalizeCommandForCompare(baseCommand).length
-                ) {
-                  parsedCommands[i] = {
-                    ...parsedCommands[i],
-                    command: normalizedOutputCommand,
-                    createdAt,
-                  };
-                  break;
-                }
+            const searchStart = Math.max(0, parsedCommands.length - 10);
+            for (let i = parsedCommands.length - 1; i >= searchStart; i -= 1) {
+              const baseCommand = parsedCommands[i].command;
+              if (canOutputCommandCorrectInput(baseCommand, normalizedOutputCommand)
+                && normalizedOutputCommand.length > normalizeCommandForCompare(baseCommand).length
+              ) {
+                parsedCommands[i] = {
+                  ...parsedCommands[i],
+                  command: normalizedOutputCommand,
+                  createdAt,
+                };
+                break;
               }
             }
           }
+        }
 
-          if (parsedCommands.length === 0 && outputDerivedCommands.length > 0) {
-            parsedCommands.push(...outputDerivedCommands);
-          }
+        if (commandLogs.length === 0 && parsedCommands.length === 0 && outputDerivedCommands.length > 0) {
+          parsedCommands.push(...outputDerivedCommands);
         }
 
         inputParseStateRef.current = createInitialInputCommandParseState();
         outputParseStateRef.current = parseState;
-        setCommandHistory(parsedCommands.slice(-MAX_COMMAND_HISTORY));
+        const cachedHistory = commandHistoryCacheRef.current[currentTerminal.id] ?? [];
+        const mergedHistory = mergeCommandHistory(parsedCommands, cachedHistory);
+        setCommandHistory(mergedHistory);
+        commandHistoryCacheRef.current[currentTerminal.id] = mergedHistory;
+
+        const pendingChunks = pendingOutputChunksRef.current;
+        pendingOutputChunksRef.current = [];
+        if (pendingChunks.length > 0) {
+          for (const chunk of pendingChunks) {
+            await writeToTerminal(term, chunk);
+            const parsed = parseOutputChunkForCommands(chunk, outputParseStateRef.current);
+            outputParseStateRef.current = parsed.nextState;
+            appendCommands(parsed.commands, new Date().toISOString(), 'correct');
+          }
+        }
+
+        replayingHistoryRef.current = false;
+        setHistoryLogLimit(limit);
         setHistoryState('ready');
       } catch (error) {
-        if (cancelled) {
+        if (cancelled || !isCurrentRequest()) {
           return;
         }
         console.error('Failed to load terminal history:', error);
-        setHistoryState('error');
-        setCanLoadMoreHistory(false);
+        if (mode === 'initial') {
+          setHistoryState('error');
+          setCanLoadMoreHistory(false);
+        }
         setErrorMessage(error instanceof Error ? error.message : '加载历史失败');
       } finally {
-        if (!cancelled) {
-          setConnectSeq((prev) => prev + 1);
+        if (cancelled || !isCurrentRequest()) {
+          return;
         }
+        replayingHistoryRef.current = false;
+        pendingOutputChunksRef.current = [];
+        setHistoryBusy(false);
+        inputForwardEnabledRef.current = socketRef.current?.readyState === WebSocket.OPEN;
       }
     };
 
-    loadHistory();
+    loadHistoryRef.current = loadHistory;
+    void loadHistory(TERMINAL_HISTORY_PAGE_SIZE, 'initial');
 
     return () => {
       cancelled = true;
+      historyLoadSeqRef.current += 1;
       inputForwardEnabledRef.current = false;
+      loadHistoryRef.current = null;
+      replayingHistoryRef.current = false;
+      pendingOutputChunksRef.current = [];
       socketRef.current?.close();
       socketRef.current = null;
       dataHandlerRef.current?.dispose();
@@ -700,11 +820,11 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
       setHistoryState('idle');
       setConnectionState('disconnected');
     };
-  }, [currentTerminal?.id, client, historyLogLimit]);
+  }, [currentTerminal?.id, client]);
 
   useEffect(() => {
     if (!currentTerminal) return;
-    if (historyState === 'loading') return;
+    if (historyState !== 'ready' && historyState !== 'error') return;
 
     const wsUrl = buildWsUrl(apiBaseUrl, `/terminals/${currentTerminal.id}/ws`, accessToken);
     setConnectionState('connecting');
@@ -734,6 +854,10 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
         const payload = JSON.parse(event.data);
         if (payload?.type === 'output') {
           const outputData = payload.data ?? '';
+          if (replayingHistoryRef.current) {
+            pendingOutputChunksRef.current.push(outputData);
+            return;
+          }
           terminalRef.current?.write(outputData);
 
           const parsed = parseOutputChunkForCommands(outputData, outputParseStateRef.current);
@@ -814,11 +938,20 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
           <span>状态: {terminalStatus}</span>
           <button
             type="button"
-            disabled={historyState === 'loading' || !canLoadMoreHistory}
-            onClick={() => setHistoryLogLimit((prev) => Math.min(prev + TERMINAL_HISTORY_PAGE_SIZE, TERMINAL_HISTORY_MAX_LIMIT))}
+            disabled={historyState === 'loading' || historyBusy || !canLoadMoreHistory}
+            onClick={() => {
+              if (!currentTerminal?.id) {
+                return;
+              }
+              const nextLimit = Math.min(historyLogLimit + TERMINAL_HISTORY_PAGE_SIZE, TERMINAL_HISTORY_MAX_LIMIT);
+              if (nextLimit <= historyLogLimit) {
+                return;
+              }
+              void loadHistoryRef.current?.(nextLimit, 'more');
+            }}
             className="rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Load More History
+            {historyBusy ? '加载中...' : 'Load More History'}
           </button>
           <button
             type="button"
