@@ -1,8 +1,4 @@
-use axum::body::Body;
-use axum::http::{
-    header::{self, HeaderValue},
-    StatusCode,
-};
+use axum::http::StatusCode;
 use axum::response::Response;
 use axum::{
     extract::Query,
@@ -18,6 +14,16 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use walkdir::WalkDir;
 use zip::write::FileOptions;
+
+mod read_mode;
+mod response;
+mod roots;
+mod search;
+
+use self::read_mode::should_render_text;
+use self::response::{binary_download_response, json_error_response};
+use self::roots::list_roots;
+use self::search::{is_search_match, normalize_search_keyword};
 
 const MAX_PREVIEW_BYTES: u64 = 2 * 1024 * 1024;
 const DEFAULT_SEARCH_LIMIT: usize = 200;
@@ -838,105 +844,7 @@ async fn read_file(Query(query): Query<FsReadQuery>) -> (StatusCode, Json<Value>
 
     let mime = mime_guess::from_path(&path).first_or_octet_stream();
     let content_type = mime.essence_str().to_string();
-    let ext = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_lowercase();
-    let file_name = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("")
-        .to_lowercase();
-    let is_text_ext = matches!(
-        ext.as_str(),
-        "rs" | "toml"
-            | "lock"
-            | "md"
-            | "txt"
-            | "json"
-            | "yaml"
-            | "yml"
-            | "xml"
-            | "html"
-            | "htm"
-            | "css"
-            | "scss"
-            | "less"
-            | "js"
-            | "jsx"
-            | "ts"
-            | "tsx"
-            | "mjs"
-            | "cjs"
-            | "py"
-            | "go"
-            | "java"
-            | "kt"
-            | "swift"
-            | "c"
-            | "cc"
-            | "cpp"
-            | "h"
-            | "hpp"
-            | "cs"
-            | "php"
-            | "rb"
-            | "sh"
-            | "bash"
-            | "zsh"
-            | "ps1"
-            | "bat"
-            | "ini"
-            | "conf"
-            | "env"
-            | "log"
-            | "sql"
-            | "vue"
-            | "svelte"
-            | "astro"
-            | "dart"
-            | "lua"
-            | "r"
-            | "m"
-            | "mm"
-            | "scala"
-            | "gradle"
-            | "make"
-            | "cmake"
-            | "dockerfile"
-            | "properties"
-            | "cfg"
-            | "rc"
-            | "proto"
-            | "graphql"
-    );
-    let is_text_name = matches!(
-        file_name.as_str(),
-        "dockerfile"
-            | "makefile"
-            | "cmakelists.txt"
-            | ".gitignore"
-            | ".gitattributes"
-            | ".editorconfig"
-            | ".npmrc"
-            | ".yarnrc"
-            | ".yarnrc.yml"
-            | ".prettierrc"
-            | ".eslintrc"
-            | ".babelrc"
-            | ".env"
-            | ".env.local"
-            | ".env.development"
-            | ".env.production"
-    );
-    let utf8_ok = std::str::from_utf8(&bytes).is_ok();
-    let is_text_mime = content_type.starts_with("text/")
-        || content_type == "application/json"
-        || content_type == "application/xml"
-        || content_type == "application/javascript"
-        || content_type == "application/typescript";
-    let should_render_text = utf8_ok && (is_text_mime || is_text_ext || is_text_name);
+    let should_render_text = should_render_text(&path, &bytes, &content_type);
 
     let (is_binary, content) = if should_render_text {
         (
@@ -1015,64 +923,6 @@ fn is_valid_entry_name(name: &str) -> bool {
         || name.contains('\0'))
 }
 
-fn json_error_response(status: StatusCode, message: impl AsRef<str>) -> Response {
-    let body = json!({ "error": message.as_ref() });
-    let bytes =
-        serde_json::to_vec(&body).unwrap_or_else(|_| b"{\"error\":\"internal_error\"}".to_vec());
-    let mut response = Response::new(Body::from(bytes));
-    *response.status_mut() = status;
-    response.headers_mut().insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static("application/json"),
-    );
-    response
-}
-
-fn binary_download_response(data: Vec<u8>, content_type: &str, file_name: &str) -> Response {
-    let mut response = Response::new(Body::from(data));
-    *response.status_mut() = StatusCode::OK;
-
-    let headers = response.headers_mut();
-    if let Ok(value) = HeaderValue::from_str(content_type) {
-        headers.insert(header::CONTENT_TYPE, value);
-    } else {
-        headers.insert(
-            header::CONTENT_TYPE,
-            HeaderValue::from_static("application/octet-stream"),
-        );
-    }
-
-    let disposition = build_content_disposition(file_name);
-    if let Ok(value) = HeaderValue::from_str(&disposition) {
-        headers.insert(header::CONTENT_DISPOSITION, value);
-    }
-
-    response
-}
-
-fn build_content_disposition(file_name: &str) -> String {
-    let fallback = sanitize_ascii_filename(file_name);
-    let encoded = urlencoding::encode(file_name);
-    format!("attachment; filename=\"{fallback}\"; filename*=UTF-8''{encoded}")
-}
-
-fn sanitize_ascii_filename(name: &str) -> String {
-    let mut out = String::new();
-    for ch in name.chars() {
-        if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_') {
-            out.push(ch);
-        } else {
-            out.push('_');
-        }
-    }
-    let trimmed = out.trim_matches('.').trim_matches('_').to_string();
-    if trimmed.is_empty() {
-        "download".to_string()
-    } else {
-        trimmed
-    }
-}
-
 fn infer_download_name(path: &Path) -> String {
     let base = path
         .file_name()
@@ -1134,122 +984,7 @@ fn path_to_zip_name(path: &Path) -> String {
         .join("/")
 }
 
-fn normalize_search_keyword(value: &str) -> String {
-    value.trim().to_lowercase()
-}
-
-fn compact_search_text(value: &str) -> String {
-    value
-        .chars()
-        .filter(|ch| !matches!(ch, ' ' | '\t' | '\n' | '\r' | '_' | '-' | '.' | '/' | '\\'))
-        .collect()
-}
-
-fn fuzzy_match(text: &str, keyword: &str) -> bool {
-    if keyword.is_empty() {
-        return true;
-    }
-    if text.contains(keyword) {
-        return true;
-    }
-
-    let mut keyword_iter = keyword.chars();
-    let mut current = match keyword_iter.next() {
-        Some(ch) => ch,
-        None => return true,
-    };
-
-    for ch in text.chars() {
-        if ch == current {
-            match keyword_iter.next() {
-                Some(next) => current = next,
-                None => return true,
-            }
-        }
-    }
-
-    false
-}
-
-fn is_search_match(name: &str, relative_path: &str, keyword: &str) -> bool {
-    if keyword.is_empty() {
-        return true;
-    }
-
-    let lower_name = name.to_lowercase();
-    let lower_path = relative_path.to_lowercase();
-
-    if fuzzy_match(&lower_name, keyword) || fuzzy_match(&lower_path, keyword) {
-        return true;
-    }
-
-    let compact_keyword = compact_search_text(keyword);
-    if compact_keyword.is_empty() {
-        return false;
-    }
-
-    let compact_name = compact_search_text(&lower_name);
-    let compact_path = compact_search_text(&lower_path);
-    fuzzy_match(&compact_name, &compact_keyword) || fuzzy_match(&compact_path, &compact_keyword)
-}
-
 fn format_system_time(time: SystemTime) -> Option<String> {
     let dt: chrono::DateTime<chrono::Utc> = time.into();
     Some(dt.to_rfc3339())
-}
-
-fn list_roots() -> Vec<Value> {
-    if cfg!(windows) {
-        let mut roots = Vec::new();
-        for c in b'A'..=b'Z' {
-            let drive = format!("{}:\\", c as char);
-            if Path::new(&drive).exists() {
-                roots.push(json!({
-                    "name": drive.clone(),
-                    "path": drive,
-                    "is_dir": true
-                }));
-            }
-        }
-        return roots;
-    }
-    let mut roots = Vec::new();
-    roots.push(json!({
-        "name": "/",
-        "path": "/",
-        "is_dir": true
-    }));
-    if let Some(home) = home_dir() {
-        roots.push(json!({
-            "name": home.clone(),
-            "path": home,
-            "is_dir": true
-        }));
-    }
-    roots
-}
-
-fn home_dir() -> Option<String> {
-    if let Ok(value) = std::env::var("HOME") {
-        let trimmed = value.trim().to_string();
-        if !trimmed.is_empty() {
-            return Some(trimmed);
-        }
-    }
-    if let Ok(value) = std::env::var("USERPROFILE") {
-        let trimmed = value.trim().to_string();
-        if !trimmed.is_empty() {
-            return Some(trimmed);
-        }
-    }
-    let drive = std::env::var("HOMEDRIVE").ok();
-    let path = std::env::var("HOMEPATH").ok();
-    if let (Some(d), Some(p)) = (drive, path) {
-        let d = d.trim().to_string();
-        let p = p.trim().to_string();
-        if !d.is_empty() || !p.is_empty() {
-            return Some(format!("{}{}", d, p));
-        }
-    }
-    None
 }

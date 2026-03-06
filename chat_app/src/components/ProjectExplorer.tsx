@@ -8,9 +8,32 @@ import type {
   FsReadResult,
   ChangeLogItem,
   ProjectChangeSummary,
-  ProjectChangeMark,
 } from '../types';
 import { cn, formatFileSize } from '../lib/utils';
+import {
+  CHANGE_KIND_COLOR_CLASS,
+  CHANGE_KIND_LABEL,
+  CHANGE_KIND_PRIORITY,
+  CHANGE_KIND_ROW_CLASS,
+  CHANGE_KIND_TEXT_CLASS,
+  EMPTY_CHANGE_SUMMARY,
+  escapeHtml,
+  getHighlightLanguage,
+  isProjectChangeSummaryEqual,
+  isValidEntryName,
+  normalizeChangeLog,
+  normalizeChangeKind,
+  normalizeEntry,
+  normalizeFile,
+  normalizeProjectChangeSummary,
+} from './projectExplorer/utils';
+import type { ChangeKind } from './projectExplorer/utils';
+import { ChangeLogPanel, DiffPanel } from './projectExplorer/ChangeLogPanels';
+import {
+  EntryContextMenu,
+  MoveConflictModal,
+} from './projectExplorer/Overlays';
+import type { MoveConflictState } from './projectExplorer/Overlays';
 
 interface ProjectExplorerProps {
   project: Project | null;
@@ -22,260 +45,6 @@ interface ExplorerContextMenuState {
   y: number;
   entry: FsEntry;
 }
-
-interface MoveConflictState {
-  sourcePath: string;
-  targetDirPath: string;
-  sourceName: string;
-  renameTo: string;
-}
-
-type ChangeKind = 'create' | 'edit' | 'delete';
-
-const normalizeEntry = (raw: any): FsEntry => ({
-  name: raw?.name ?? '',
-  path: raw?.path ?? '',
-  isDir: raw?.is_dir ?? raw?.isDir ?? false,
-  size: raw?.size ?? null,
-  modifiedAt: raw?.modified_at ?? raw?.modifiedAt ?? null,
-});
-
-const normalizeFile = (raw: any): FsReadResult => ({
-  path: raw?.path ?? '',
-  name: raw?.name ?? '',
-  size: raw?.size ?? 0,
-  contentType: raw?.content_type ?? raw?.contentType ?? 'application/octet-stream',
-  isBinary: raw?.is_binary ?? raw?.isBinary ?? false,
-  modifiedAt: raw?.modified_at ?? raw?.modifiedAt ?? null,
-  content: raw?.content ?? '',
-});
-
-const normalizeChangeLog = (raw: any): ChangeLogItem => ({
-  id: raw?.id ?? '',
-  serverName: raw?.server_name ?? raw?.serverName ?? '',
-  path: raw?.path ?? '',
-  action: raw?.action ?? '',
-  changeKind: raw?.change_kind ?? raw?.changeKind ?? (raw?.action === 'delete' ? 'delete' : 'edit'),
-  bytes: raw?.bytes ?? 0,
-  sha256: raw?.sha256 ?? null,
-  diff: raw?.diff ?? null,
-  sessionId: raw?.session_id ?? raw?.sessionId ?? null,
-  runId: raw?.run_id ?? raw?.runId ?? null,
-  confirmed: Boolean(raw?.confirmed),
-  confirmedAt: raw?.confirmed_at ?? raw?.confirmedAt ?? null,
-  confirmedBy: raw?.confirmed_by ?? raw?.confirmedBy ?? null,
-  createdAt: raw?.created_at ?? raw?.createdAt ?? '',
-  sessionTitle: raw?.session_title ?? raw?.sessionTitle ?? null,
-});
-
-const normalizeChangeKind = (value: any): ChangeKind => {
-  const kind = String(value ?? '').trim().toLowerCase();
-  if (kind === 'create') return 'create';
-  if (kind === 'delete') return 'delete';
-  return 'edit';
-};
-
-const normalizeProjectChangeMark = (raw: any): ProjectChangeMark => ({
-  path: raw?.path ?? '',
-  relativePath: raw?.relative_path ?? raw?.relativePath ?? '',
-  kind: normalizeChangeKind(raw?.kind),
-  lastChangeId: raw?.last_change_id ?? raw?.lastChangeId ?? '',
-  updatedAt: raw?.updated_at ?? raw?.updatedAt ?? '',
-});
-
-const areChangeMarksEqual = (left: ProjectChangeMark[], right: ProjectChangeMark[]): boolean => {
-  if (left.length !== right.length) return false;
-  for (let i = 0; i < left.length; i += 1) {
-    const a = left[i];
-    const b = right[i];
-    if (
-      a.path !== b.path ||
-      a.relativePath !== b.relativePath ||
-      a.kind !== b.kind ||
-      a.lastChangeId !== b.lastChangeId ||
-      a.updatedAt !== b.updatedAt
-    ) {
-      return false;
-    }
-  }
-  return true;
-};
-
-const EMPTY_CHANGE_SUMMARY: ProjectChangeSummary = {
-  fileMarks: [],
-  deletedMarks: [],
-  counts: {
-    create: 0,
-    edit: 0,
-    delete: 0,
-    total: 0,
-  },
-};
-
-const normalizeProjectChangeSummary = (raw: any): ProjectChangeSummary => {
-  const fileMarks = Array.isArray(raw?.file_marks ?? raw?.fileMarks)
-    ? (raw?.file_marks ?? raw?.fileMarks).map(normalizeProjectChangeMark)
-    : [];
-  const deletedMarks = Array.isArray(raw?.deleted_marks ?? raw?.deletedMarks)
-    ? (raw?.deleted_marks ?? raw?.deletedMarks).map(normalizeProjectChangeMark)
-    : [];
-  const countsRaw = raw?.counts ?? {};
-  const create = Number(countsRaw?.create ?? 0);
-  const edit = Number(countsRaw?.edit ?? 0);
-  const del = Number(countsRaw?.delete ?? 0);
-  const total = Number(countsRaw?.total ?? create + edit + del);
-  return {
-    fileMarks,
-    deletedMarks,
-    counts: {
-      create: Number.isFinite(create) ? create : 0,
-      edit: Number.isFinite(edit) ? edit : 0,
-      delete: Number.isFinite(del) ? del : 0,
-      total: Number.isFinite(total) ? total : 0,
-    },
-  };
-};
-
-const isProjectChangeSummaryEqual = (
-  left: ProjectChangeSummary,
-  right: ProjectChangeSummary
-): boolean => {
-  if (
-    left.counts.create !== right.counts.create ||
-    left.counts.edit !== right.counts.edit ||
-    left.counts.delete !== right.counts.delete ||
-    left.counts.total !== right.counts.total
-  ) {
-    return false;
-  }
-  return (
-    areChangeMarksEqual(left.fileMarks, right.fileMarks)
-    && areChangeMarksEqual(left.deletedMarks, right.deletedMarks)
-  );
-};
-
-const CHANGE_KIND_COLOR_CLASS: Record<ChangeKind, string> = {
-  create: 'bg-emerald-500',
-  edit: 'bg-amber-500',
-  delete: 'bg-rose-500',
-};
-
-const CHANGE_KIND_TEXT_CLASS: Record<ChangeKind, string> = {
-  create: 'text-emerald-600 dark:text-emerald-400',
-  edit: 'text-amber-600 dark:text-amber-400',
-  delete: 'text-rose-600 dark:text-rose-400',
-};
-
-const CHANGE_KIND_ROW_CLASS: Record<ChangeKind, string> = {
-  create: 'border-l-2 border-emerald-500 bg-emerald-500/10',
-  edit: 'border-l-2 border-amber-500 bg-amber-500/10',
-  delete: 'border-l-2 border-rose-500 bg-rose-500/10',
-};
-
-const CHANGE_KIND_LABEL: Record<ChangeKind, string> = {
-  create: '新增',
-  edit: '编辑',
-  delete: '删除',
-};
-
-const CHANGE_KIND_PRIORITY: Record<ChangeKind, number> = {
-  create: 2,
-  edit: 1,
-  delete: 3,
-};
-
-const EXT_LANGUAGE_MAP: Record<string, string> = {
-  rs: 'rust',
-  toml: 'toml',
-  lock: 'toml',
-  md: 'markdown',
-  txt: 'plaintext',
-  json: 'json',
-  yml: 'yaml',
-  yaml: 'yaml',
-  xml: 'xml',
-  html: 'xml',
-  htm: 'xml',
-  vue: 'vue',
-  svelte: 'svelte',
-  astro: 'astro',
-  css: 'css',
-  scss: 'scss',
-  less: 'less',
-  js: 'javascript',
-  jsx: 'javascript',
-  ts: 'typescript',
-  tsx: 'typescript',
-  mjs: 'javascript',
-  cjs: 'javascript',
-  py: 'python',
-  go: 'go',
-  java: 'java',
-  kt: 'kotlin',
-  swift: 'swift',
-  c: 'c',
-  cc: 'cpp',
-  cpp: 'cpp',
-  h: 'cpp',
-  hpp: 'cpp',
-  cs: 'csharp',
-  php: 'php',
-  rb: 'ruby',
-  sh: 'bash',
-  bash: 'bash',
-  zsh: 'bash',
-  ps1: 'powershell',
-  bat: 'dos',
-  sql: 'sql',
-  ini: 'ini',
-  conf: 'ini',
-  env: 'ini',
-  log: 'plaintext',
-  gradle: 'gradle',
-  properties: 'ini',
-  cfg: 'ini',
-  proto: 'protobuf',
-  graphql: 'graphql',
-  dart: 'dart',
-  lua: 'lua',
-  r: 'r',
-  m: 'objectivec',
-  mm: 'objectivec',
-  scala: 'scala',
-  cmake: 'cmake',
-  make: 'makefile',
-  dockerfile: 'dockerfile',
-};
-
-const getHighlightLanguage = (filename: string): string | null => {
-  const lower = filename.toLowerCase();
-  if (lower === 'dockerfile') return hljs.getLanguage('dockerfile') ? 'dockerfile' : null;
-  if (lower === 'makefile') return hljs.getLanguage('makefile') ? 'makefile' : null;
-  if (lower === 'cmakelists.txt') return hljs.getLanguage('cmake') ? 'cmake' : null;
-  const parts = lower.split('.');
-  if (parts.length < 2) return null;
-  const ext = parts[parts.length - 1];
-  const lang = EXT_LANGUAGE_MAP[ext];
-  if (!lang) return null;
-  return hljs.getLanguage(lang) ? lang : null;
-};
-
-const escapeHtml = (value: string) => (
-  value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
-);
-
-const isValidEntryName = (name: string): boolean => (
-  name !== '.' &&
-  name !== '..' &&
-  !name.includes('/') &&
-  !name.includes('\\') &&
-  !name.includes('\0')
-);
 
 export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, className }) => {
   const apiClientFromContext = useChatApiClientFromContext();
@@ -1494,159 +1263,6 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     );
   }, [selectedEntry, selectedFile, selectedPath, loadingFile]);
 
-  const parseUnifiedDiff = useCallback((diffText: string) => {
-    const lines = diffText.split(/\r?\n/);
-    const parsed: Array<{ type: 'meta' | 'hunk' | 'add' | 'del' | 'context'; oldLine?: number | null; newLine?: number | null; text: string }> = [];
-    let oldLine = 0;
-    let newLine = 0;
-    let inHunk = false;
-    const hunkRegex = /^@@\s+-(\d+)(?:,(\d+))?\s+\+(\d+)(?:,(\d+))?\s+@@/;
-    for (const line of lines) {
-      const hunkMatch = hunkRegex.exec(line);
-      if (hunkMatch) {
-        oldLine = parseInt(hunkMatch[1], 10);
-        newLine = parseInt(hunkMatch[3], 10);
-        inHunk = true;
-        parsed.push({ type: 'hunk', text: line });
-        continue;
-      }
-      if (!inHunk) {
-        parsed.push({ type: 'meta', text: line });
-        continue;
-      }
-      if (line.startsWith('+++') || line.startsWith('---')) {
-        parsed.push({ type: 'meta', text: line });
-        continue;
-      }
-      if (line.startsWith('+')) {
-        parsed.push({ type: 'add', oldLine: null, newLine, text: line });
-        newLine += 1;
-        continue;
-      }
-      if (line.startsWith('-')) {
-        parsed.push({ type: 'del', oldLine, newLine: null, text: line });
-        oldLine += 1;
-        continue;
-      }
-      if (line.startsWith('\\')) {
-        parsed.push({ type: 'meta', text: line });
-        continue;
-      }
-      parsed.push({ type: 'context', oldLine, newLine, text: line });
-      oldLine += 1;
-      newLine += 1;
-    }
-    return parsed;
-  }, []);
-
-  const renderDiffRows = useCallback((diffText: string) => {
-    const rows = parseUnifiedDiff(diffText);
-    if (!rows.length) {
-      return <div className="text-muted-foreground">该记录没有 diff 内容</div>;
-    }
-    return (
-      <div className="font-mono text-xs">
-        {rows.map((row, idx) => {
-          let lineClass = 'text-foreground';
-          if (row.type === 'hunk' || row.type === 'meta') {
-            lineClass = 'text-muted-foreground';
-          } else if (row.type === 'add') {
-            lineClass = 'text-emerald-600 dark:text-emerald-400';
-          } else if (row.type === 'del') {
-            lineClass = 'text-rose-600 dark:text-rose-400';
-          }
-          return (
-            <div key={`${idx}-${row.text}`} className={cn('grid grid-cols-[3rem_3rem_1fr] gap-2 leading-5', lineClass)}>
-              <div className="text-right pr-2 text-muted-foreground">
-                {row.oldLine ?? ''}
-              </div>
-              <div className="text-right pr-2 text-muted-foreground">
-                {row.newLine ?? ''}
-              </div>
-              <div className="whitespace-pre">
-                {row.text === '' ? ' ' : row.text}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    );
-  }, [parseUnifiedDiff]);
-
-  const diffPanel = useMemo(() => {
-    if (!selectedLog) return null;
-    const title = selectedLog.sessionTitle || selectedLog.sessionId || '未知会话';
-    const time = selectedLog.createdAt ? new Date(selectedLog.createdAt).toLocaleString() : '';
-    const kind = normalizeChangeKind(selectedLog.changeKind);
-    return (
-      <div className="border-b border-border bg-muted/30 max-h-64 overflow-hidden flex flex-col">
-        <div className="px-4 py-2 text-xs font-medium text-foreground flex items-center gap-2">
-          <span>变更内容</span>
-          <span className="text-muted-foreground">{selectedLog.action}</span>
-          <span className={CHANGE_KIND_TEXT_CLASS[kind]}>{CHANGE_KIND_LABEL[kind]}</span>
-          <span className="text-muted-foreground ml-auto">{time}</span>
-        </div>
-        <div className="px-4 pb-3 text-xs overflow-auto min-h-0">
-          <div className="text-[11px] text-muted-foreground mb-2 truncate" title={title}>
-            会话：{title}
-          </div>
-          {selectedLog.diff ? renderDiffRows(selectedLog.diff) : (
-            <div className="text-muted-foreground">该记录没有 diff 内容</div>
-          )}
-        </div>
-      </div>
-    );
-  }, [selectedLog, renderDiffRows]);
-
-  const changeLogPanel = useMemo(() => {
-    if (!selectedPath) {
-      return <div className="px-4 py-3 text-xs text-muted-foreground">请选择文件或目录以查看变更记录</div>;
-    }
-    if (loadingLogs) {
-      return <div className="px-4 py-3 text-xs text-muted-foreground">加载变更记录中...</div>;
-    }
-    if (logsError) {
-      return <div className="px-4 py-3 text-xs text-destructive">{logsError}</div>;
-    }
-    if (!changeLogs.length) {
-      return <div className="px-4 py-3 text-xs text-muted-foreground">暂无变更记录</div>;
-    }
-    return (
-      <div className="divide-y divide-border">
-        {changeLogs.map((log) => {
-          const isSelected = selectedLogId === log.id;
-          const title = log.sessionTitle || log.sessionId || '未知会话';
-          const time = log.createdAt ? new Date(log.createdAt).toLocaleString() : '';
-          const kind = normalizeChangeKind(log.changeKind);
-          return (
-            <button
-              key={log.id}
-              type="button"
-              onClick={() => setSelectedLogId(prev => (prev === log.id ? null : log.id))}
-              className={cn(
-                'w-full px-4 py-2 text-xs text-left hover:bg-accent transition-colors',
-                isSelected && 'bg-accent'
-              )}
-            >
-              <div className="flex items-center gap-2">
-                <span className="text-muted-foreground w-3">{isSelected ? '▾' : '▸'}</span>
-                <span className="font-medium text-foreground">{log.action}</span>
-                <span className={cn('font-medium', CHANGE_KIND_TEXT_CLASS[kind])}>
-                  {CHANGE_KIND_LABEL[kind]}
-                </span>
-                <span className="text-muted-foreground">{formatFileSize(log.bytes || 0)}</span>
-                <span className="text-muted-foreground ml-auto">{time}</span>
-              </div>
-              <div className="text-[11px] text-muted-foreground truncate" title={title}>
-                会话：{title}
-              </div>
-            </button>
-          );
-        })}
-      </div>
-    );
-  }, [selectedPath, loadingLogs, logsError, changeLogs, selectedLogId]);
-
   if (!project) {
     return (
       <div className={cn('flex items-center justify-center h-full text-muted-foreground', className)}>
@@ -1947,7 +1563,7 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
             )}
           </div>
           <div className="flex-1 overflow-hidden flex flex-col">
-            {diffPanel}
+            <DiffPanel selectedLog={selectedLog} />
             <div className="flex-1 min-h-0 overflow-hidden">
               {error ? (
                 <div className="p-4 text-sm text-destructive">{error}</div>
@@ -1961,134 +1577,55 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
           <div className="w-72 border-l border-border bg-card/60 flex flex-col overflow-hidden">
             <div className="px-4 py-2 text-xs font-medium text-foreground border-b border-border">变更记录</div>
             <div className="flex-1 min-h-0 overflow-auto">
-              {changeLogPanel}
+              <ChangeLogPanel
+                selectedPath={selectedPath}
+                loadingLogs={loadingLogs}
+                logsError={logsError}
+                changeLogs={changeLogs}
+                selectedLogId={selectedLogId}
+                onToggleLog={(logId) => {
+                  setSelectedLogId((prev) => (prev === logId ? null : logId));
+                }}
+              />
             </div>
           </div>
         )}
       </div>
-      {moveConflict && (
-        <div
-          className="fixed inset-0 z-[90] bg-black/35 flex items-center justify-center p-4"
-          onClick={() => {
-            if (!actionLoading) {
-              handleMoveConflictCancel();
-            }
-          }}
-        >
-          <div
-            className="w-full max-w-md rounded-lg border border-border bg-card p-4 shadow-xl"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="text-sm font-medium text-foreground">目标目录存在同名项</div>
-            <div className="mt-2 text-xs text-muted-foreground">
-              将 {moveConflict.sourceName} 移动到目标目录时发生冲突，请选择处理方式。
-            </div>
-            <div className="mt-3 space-y-1.5">
-              <label className="text-xs text-muted-foreground">重命名后移动</label>
-              <input
-                value={moveConflict.renameTo}
-                onChange={(event) => {
-                  const value = event.target.value;
-                  setMoveConflict((prev) => (prev ? { ...prev, renameTo: value } : prev));
-                }}
-                className="w-full h-9 rounded border border-input bg-background px-2 text-sm"
-                placeholder="请输入新名称"
-              />
-            </div>
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={handleMoveConflictCancel}
-                disabled={actionLoading}
-                className="px-3 py-1.5 text-xs rounded border border-border hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  void handleMoveConflictOverwrite();
-                }}
-                disabled={actionLoading}
-                className="px-3 py-1.5 text-xs rounded border border-amber-500/50 text-amber-700 hover:bg-amber-500/10 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                覆盖后移动
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  void handleMoveConflictRename();
-                }}
-                disabled={actionLoading}
-                className="px-3 py-1.5 text-xs rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                重命名后移动
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-      {contextMenu && contextMenuStyle && (
-        <div
-          className="fixed z-[80] w-56 rounded-md border border-border bg-popover text-popover-foreground shadow-lg p-1"
-          style={contextMenuStyle}
-          onClick={(event) => event.stopPropagation()}
-          onContextMenu={(event) => event.preventDefault()}
-        >
-          <div className="px-2 py-1 text-[11px] text-muted-foreground truncate">
-            {contextMenu.entry.isDir ? '目录' : '文件'}：{contextMenu.entry.path}
-          </div>
-          {contextMenu.entry.isDir && (
-            <button
-              type="button"
-              onClick={() => {
-                const targetPath = contextMenu.entry.path;
-                setContextMenu(null);
-                void handleCreateDirectory(targetPath);
-              }}
-              className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent"
-            >
-              新建目录
-            </button>
-          )}
-          {contextMenu.entry.isDir && (
-            <button
-              type="button"
-              onClick={() => {
-                const targetPath = contextMenu.entry.path;
-                setContextMenu(null);
-                void handleCreateFile(targetPath);
-              }}
-              className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent"
-            >
-              新建文件
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={() => {
-              const targetEntry = contextMenu.entry;
-              setContextMenu(null);
-              void handleDownloadSelected(targetEntry);
-            }}
-            className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent"
-          >
-            下载
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              const targetEntry = contextMenu.entry;
-              setContextMenu(null);
-              void handleDeleteSelected(targetEntry);
-            }}
-            disabled={isContextRootEntry}
-            className="w-full text-left px-2 py-1.5 text-sm rounded text-destructive hover:bg-destructive/10 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            删除
-          </button>
-        </div>
-      )}
+      <MoveConflictModal
+        moveConflict={moveConflict}
+        actionLoading={actionLoading}
+        onCancel={handleMoveConflictCancel}
+        onRenameChange={(value) => {
+          setMoveConflict((prev) => (prev ? { ...prev, renameTo: value } : prev));
+        }}
+        onOverwrite={() => {
+          void handleMoveConflictOverwrite();
+        }}
+        onRename={() => {
+          void handleMoveConflictRename();
+        }}
+      />
+      <EntryContextMenu
+        contextMenu={contextMenu}
+        contextMenuStyle={contextMenuStyle}
+        isContextRootEntry={isContextRootEntry}
+        onCreateDirectory={(path) => {
+          setContextMenu(null);
+          void handleCreateDirectory(path);
+        }}
+        onCreateFile={(path) => {
+          setContextMenu(null);
+          void handleCreateFile(path);
+        }}
+        onDownload={(entry) => {
+          setContextMenu(null);
+          void handleDownloadSelected(entry);
+        }}
+        onDelete={(entry) => {
+          setContextMenu(null);
+          void handleDeleteSelected(entry);
+        }}
+      />
     </div>
   );
 };

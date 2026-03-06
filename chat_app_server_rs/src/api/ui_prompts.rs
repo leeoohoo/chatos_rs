@@ -207,9 +207,7 @@ async fn submit_ui_prompt_response_route(
 
     let resolved = match submit_ui_prompt_response(prompt_id.as_str(), submission.clone()).await {
         Ok(payload) => Some(payload),
-        Err(err) if err == UI_PROMPT_NOT_FOUND_ERR || err == "ui_prompt_listener_closed" => {
-            None
-        }
+        Err(err) if err == UI_PROMPT_NOT_FOUND_ERR || err == "ui_prompt_listener_closed" => None,
         Err(err) => {
             return (
                 StatusCode::BAD_REQUEST,

@@ -1,132 +1,20 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime};
 
-use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
 use tokio::fs;
-use tokio::fs::OpenOptions;
-use tokio::io::AsyncWriteExt;
-use tokio::time::sleep;
 use uuid::Uuid;
 use walkdir::WalkDir;
 
+use super::store_lock::acquire_file_lock;
+use super::store_normalize::{
+    extract_title_from_markdown, normalize_folder_path, normalize_string, normalize_tag,
+    normalize_title, now_iso, split_folder, ts_to_rfc3339, unique_tags,
+};
 use super::types::{
     CreateNoteParams, ListNotesParams, NoteIndexEntry, NoteOutput, NotesIndex, SearchNotesParams,
     TagCount, UpdateNoteParams, INDEX_VERSION,
 };
-
-const LOCK_TIMEOUT_MS: u64 = 10_000;
-const LOCK_STALE_MS: u64 = 30_000;
-const LOCK_POLL_MS: u64 = 25;
-
-fn normalize_string(value: &str) -> String {
-    value.trim().to_string()
-}
-
-fn normalize_title(value: &str) -> String {
-    let out = normalize_string(value);
-    if out.is_empty() {
-        String::new()
-    } else {
-        out.chars().take(120).collect()
-    }
-}
-
-fn normalize_tag(value: &str) -> String {
-    normalize_string(value)
-}
-
-fn unique_tags(tags: &[String]) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut seen = HashSet::new();
-    for tag in tags {
-        let normalized = normalize_tag(tag);
-        if normalized.is_empty() {
-            continue;
-        }
-        let key = normalized.to_lowercase();
-        if seen.insert(key) {
-            out.push(normalized);
-        }
-    }
-    out
-}
-
-fn is_valid_path_segment(segment: &str) -> bool {
-    let s = segment.trim();
-    if s.is_empty() || s == "." || s == ".." {
-        return false;
-    }
-    if s.chars().any(|ch| {
-        matches!(
-            ch,
-            '<' | '>' | ':' | '\"' | '/' | '\\' | '|' | '?' | '*' | '\0'
-        )
-    }) {
-        return false;
-    }
-    !s.chars().any(|ch| (ch as u32) < 32)
-}
-
-fn normalize_folder_path(value: &str) -> Result<String, String> {
-    let raw = normalize_string(value).replace('\\', "/");
-    if raw.is_empty() {
-        return Ok(String::new());
-    }
-
-    let cleaned = raw.trim_matches('/').to_string();
-    if cleaned.is_empty() {
-        return Ok(String::new());
-    }
-
-    let mut out = Vec::new();
-    for part in cleaned.split('/').filter(|item| !item.trim().is_empty()) {
-        if !is_valid_path_segment(part) {
-            return Err(format!("Invalid folder segment: {part}"));
-        }
-        out.push(part.trim().to_string());
-    }
-
-    Ok(out.join("/"))
-}
-
-fn split_folder(folder: &str) -> Vec<String> {
-    folder
-        .trim()
-        .replace('\\', "/")
-        .split('/')
-        .filter(|item| !item.trim().is_empty())
-        .map(|item| item.trim().to_string())
-        .collect()
-}
-
-fn extract_title_from_markdown(markdown: &str) -> String {
-    let normalized = markdown.replace("\r\n", "\n");
-    for line in normalized.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        if let Some(rest) = trimmed.strip_prefix('#') {
-            let heading = rest.trim_start_matches('#').trim();
-            if !heading.is_empty() {
-                return heading.chars().take(120).collect();
-            }
-        }
-        return trimmed.chars().take(120).collect();
-    }
-    String::new()
-}
-
-fn now_iso() -> String {
-    crate::core::time::now_rfc3339()
-}
-
-fn ts_to_rfc3339(ts: SystemTime) -> String {
-    let datetime: DateTime<Utc> = DateTime::<Utc>::from(ts);
-    datetime.to_rfc3339()
-}
 
 fn entry_to_output(entry: &NoteIndexEntry) -> NoteOutput {
     NoteOutput::from_entry(entry)
@@ -181,68 +69,6 @@ fn normalize_index(mut index: NotesIndex) -> NotesIndex {
     NotesIndex {
         version: INDEX_VERSION,
         notes: out,
-    }
-}
-
-struct FileLockGuard {
-    path: PathBuf,
-}
-
-impl Drop for FileLockGuard {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
-    }
-}
-
-async fn acquire_file_lock(path: &Path) -> Result<FileLockGuard, String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .await
-            .map_err(|err| err.to_string())?;
-    }
-
-    let start = std::time::Instant::now();
-    loop {
-        match OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(path)
-            .await
-        {
-            Ok(mut file) => {
-                let payload = format!(
-                    "{{\"pid\":{},\"started_at\":\"{}\"}}",
-                    std::process::id(),
-                    now_iso()
-                );
-                let _ = file.write_all(payload.as_bytes()).await;
-                return Ok(FileLockGuard {
-                    path: path.to_path_buf(),
-                });
-            }
-            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
-                if let Ok(meta) = fs::metadata(path).await {
-                    if let Ok(modified_at) = meta.modified() {
-                        if let Ok(elapsed) = modified_at.elapsed() {
-                            if elapsed > Duration::from_millis(LOCK_STALE_MS) {
-                                let _ = fs::remove_file(path).await;
-                                continue;
-                            }
-                        }
-                    }
-                }
-                if start.elapsed() > Duration::from_millis(LOCK_TIMEOUT_MS) {
-                    return Err(format!(
-                        "Timed out waiting for lock ({})",
-                        path.file_name()
-                            .and_then(|value| value.to_str())
-                            .unwrap_or("notes.lock")
-                    ));
-                }
-                sleep(Duration::from_millis(LOCK_POLL_MS)).await;
-            }
-            Err(err) => return Err(err.to_string()),
-        }
     }
 }
 

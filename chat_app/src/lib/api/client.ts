@@ -1,39 +1,15 @@
 // API客户端，用于连接后端服务
-import { debugLog } from '@/lib/utils';
+import { buildQuery, guessFilenameFromPath, parseFilenameFromContentDisposition } from './client/shared';
+import * as configsApi from './client/configs';
+import * as workspaceApi from './client/workspace';
 // 使用相对路径，让浏览器自动处理协议和域名
 const API_BASE_URL = '/api';
-
-const parseFilenameFromContentDisposition = (value: string | null): string | null => {
-  if (!value) return null;
-
-  const utf8Match = /filename\*\s*=\s*UTF-8''([^;]+)/i.exec(value);
-  if (utf8Match?.[1]) {
-    try {
-      return decodeURIComponent(utf8Match[1]);
-    } catch {
-      // ignore decode error
-    }
-  }
-
-  const plainMatch = /filename\s*=\s*"([^"]+)"|filename\s*=\s*([^;]+)/i.exec(value);
-  const name = plainMatch?.[1] || plainMatch?.[2] || '';
-  const trimmed = name.trim();
-  if (!trimmed) return null;
-  return trimmed;
-};
-
-const guessFilenameFromPath = (path: string): string => {
-  const trimmed = (path || '').trim().replace(/[\\/]+$/, '');
-  if (!trimmed) return 'download';
-  const idx = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
-  if (idx < 0) return trimmed;
-  return trimmed.slice(idx + 1) || 'download';
-};
 
 class ApiClient {
   private baseUrl: string;
   private accessToken: string | null = null;
   private tokenRefreshListeners = new Set<(token: string) => void>();
+  private readonly requestFn: workspaceApi.ApiRequestFn = (endpoint, options) => this.request(endpoint, options);
 
   constructor(baseUrl: string = API_BASE_URL) {
     this.baseUrl = baseUrl;
@@ -128,160 +104,106 @@ class ApiClient {
     projectId?: string,
     paging?: { limit?: number; offset?: number; includeArchived?: boolean; includeArchiving?: boolean }
   ): Promise<any[]> {
-    const params = new URLSearchParams();
-    if (userId) params.append('user_id', userId);  // 修复：使用user_id匹配后端参数名
-    if (projectId) params.append('project_id', projectId);  // 修复：使用project_id匹配后端参数名
-    if (paging?.limit !== undefined) params.append('limit', String(paging.limit));
-    if (paging?.offset !== undefined) params.append('offset', String(paging.offset));
-    if (paging?.includeArchived === true) params.append('include_archived', 'true');
-    if (paging?.includeArchiving === true) params.append('include_archiving', 'true');
-    const queryString = params.toString();
-    debugLog('🔍 getSessions API调用:', { userId, projectId, queryString });
-    return this.request<any[]>(`/sessions${queryString ? `?${queryString}` : ''}`);
+    return workspaceApi.getSessions(this.requestFn, userId, projectId, paging);
   }
 
   async createSession(data: { id: string; title: string; user_id: string; project_id?: string; metadata?: any }): Promise<any> {
-    debugLog('🔍 createSession API调用:', data);
-    return this.request<any>('/sessions', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
+    return workspaceApi.createSession(this.requestFn, data);
   }
 
   async getSession(id: string): Promise<any> {
-    return this.request<any>(`/sessions/${id}`);
+    return workspaceApi.getSession(this.requestFn, id);
   }
 
   async updateSession(
     id: string,
     data: { title?: string; description?: string; metadata?: any },
   ): Promise<any> {
-    return this.request<any>(`/sessions/${id}`, {
-      method: 'PUT',
-      body: JSON.stringify(data),
-    });
+    return workspaceApi.updateSession(this.requestFn, id, data);
   }
 
   async deleteSession(id: string): Promise<any> {
-    return this.request<any>(`/sessions/${id}`, {
-      method: 'DELETE',
-    });
+    return workspaceApi.deleteSession(this.requestFn, id);
   }
 
   async getSessionMessages(sessionId: string, params?: { limit?: number; offset?: number; compact?: boolean }): Promise<any[]> {
-    const qs: string[] = [];
-    if (params?.limit !== undefined) qs.push(`limit=${encodeURIComponent(String(params.limit))}`);
-    if (params?.offset !== undefined) qs.push(`offset=${encodeURIComponent(String(params.offset))}`);
-    if (params?.compact !== undefined) qs.push(`compact=${params.compact ? 'true' : 'false'}`);
-    const query = qs.length ? `?${qs.join('&')}` : '';
-    return this.request<any[]>(`/sessions/${sessionId}/messages${query}`);
+    return workspaceApi.getSessionMessages(this.requestFn, sessionId, params);
   }
 
   async getSessionTurnProcessMessages(sessionId: string, userMessageId: string): Promise<any[]> {
-
-    return this.request<any[]>(`/sessions/${sessionId}/turns/${encodeURIComponent(userMessageId)}/process`);
+    return workspaceApi.getSessionTurnProcessMessages(this.requestFn, sessionId, userMessageId);
   }
 
   async getSessionTurnProcessMessagesByTurn(sessionId: string, turnId: string): Promise<any[]> {
-    return this.request<any[]>(
-      `/sessions/${sessionId}/turns/by-turn/${encodeURIComponent(turnId)}/process`,
-    );
+    return workspaceApi.getSessionTurnProcessMessagesByTurn(this.requestFn, sessionId, turnId);
   }
 
   // 项目相关API
   async listProjects(userId?: string): Promise<any[]> {
-    const params = userId ? `?user_id=${encodeURIComponent(userId)}` : '';
-    return this.request<any[]>(`/projects${params}`);
+    return workspaceApi.listProjects(this.requestFn, userId);
   }
 
   async createProject(data: { name: string; root_path: string; description?: string; user_id?: string }): Promise<any> {
-    return this.request<any>('/projects', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
+    return workspaceApi.createProject(this.requestFn, data);
   }
 
   async updateProject(id: string, data: { name?: string; root_path?: string; description?: string }): Promise<any> {
-    return this.request<any>(`/projects/${id}`, {
-      method: 'PUT',
-      body: JSON.stringify(data),
-    });
+    return workspaceApi.updateProject(this.requestFn, id, data);
   }
 
   async deleteProject(id: string): Promise<any> {
-    return this.request<any>(`/projects/${id}`, {
-      method: 'DELETE',
-    });
+    return workspaceApi.deleteProject(this.requestFn, id);
   }
 
   async getProject(id: string): Promise<any> {
-    return this.request<any>(`/projects/${id}`);
+    return workspaceApi.getProject(this.requestFn, id);
   }
 
   async listProjectChangeLogs(
     projectId: string,
     params?: { path?: string; limit?: number; offset?: number }
   ): Promise<any[]> {
-    const qs: string[] = [];
-    if (params?.path) qs.push(`path=${encodeURIComponent(params.path)}`);
-    if (params?.limit !== undefined) qs.push(`limit=${encodeURIComponent(String(params.limit))}`);
-    if (params?.offset !== undefined) qs.push(`offset=${encodeURIComponent(String(params.offset))}`);
-    const query = qs.length ? `?${qs.join('&')}` : '';
-    return this.request<any[]>(`/projects/${projectId}/changes${query}`);
+    return workspaceApi.listProjectChangeLogs(this.requestFn, projectId, params);
   }
 
   async getProjectChangeSummary(projectId: string): Promise<any> {
-    return this.request<any>(`/projects/${projectId}/changes/summary`);
+    return workspaceApi.getProjectChangeSummary(this.requestFn, projectId);
   }
 
   async confirmProjectChanges(
     projectId: string,
     payload: { mode?: 'all' | 'paths' | 'change_ids'; paths?: string[]; change_ids?: string[] }
   ): Promise<any> {
-    return this.request<any>(`/projects/${projectId}/changes/confirm`, {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
+    return workspaceApi.confirmProjectChanges(this.requestFn, projectId, payload);
   }
 
   // 终端相关API
   async listTerminals(userId?: string): Promise<any[]> {
-    const params = userId ? `?user_id=${encodeURIComponent(userId)}` : '';
-    return this.request<any[]>(`/terminals${params}`);
+    return workspaceApi.listTerminals(this.requestFn, userId);
   }
 
   async createTerminal(data: { name?: string; cwd: string; user_id?: string }): Promise<any> {
-    return this.request<any>('/terminals', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
+    return workspaceApi.createTerminal(this.requestFn, data);
   }
 
   async getTerminal(id: string): Promise<any> {
-    return this.request<any>(`/terminals/${id}`);
+    return workspaceApi.getTerminal(this.requestFn, id);
   }
 
   async deleteTerminal(id: string): Promise<any> {
-    return this.request<any>(`/terminals/${id}`, {
-      method: 'DELETE',
-    });
+    return workspaceApi.deleteTerminal(this.requestFn, id);
   }
 
   async listTerminalLogs(
     terminalId: string,
     params?: { limit?: number; offset?: number }
   ): Promise<any[]> {
-    const qs: string[] = [];
-    if (params?.limit !== undefined) qs.push(`limit=${encodeURIComponent(String(params.limit))}`);
-    if (params?.offset !== undefined) qs.push(`offset=${encodeURIComponent(String(params.offset))}`);
-    const query = qs.length ? `?${qs.join('&')}` : '';
-    return this.request<any[]>(`/terminals/${terminalId}/history${query}`);
+    return workspaceApi.listTerminalLogs(this.requestFn, terminalId, params);
   }
 
   // 远端连接 API
   async listRemoteConnections(userId?: string): Promise<any[]> {
-    const params = userId ? `?user_id=${encodeURIComponent(userId)}` : '';
-    return this.request<any[]>(`/remote-connections${params}`);
+    return workspaceApi.listRemoteConnections(this.requestFn, userId);
   }
 
   async createRemoteConnection(data: {
@@ -303,14 +225,11 @@ class ApiClient {
     jump_password?: string;
     user_id?: string;
   }): Promise<any> {
-    return this.request<any>('/remote-connections', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
+    return workspaceApi.createRemoteConnection(this.requestFn, data);
   }
 
   async getRemoteConnection(id: string): Promise<any> {
-    return this.request<any>(`/remote-connections/${id}`);
+    return workspaceApi.getRemoteConnection(this.requestFn, id);
   }
 
   async updateRemoteConnection(id: string, data: {
@@ -331,22 +250,15 @@ class ApiClient {
     jump_private_key_path?: string;
     jump_password?: string;
   }): Promise<any> {
-    return this.request<any>(`/remote-connections/${id}`, {
-      method: 'PUT',
-      body: JSON.stringify(data),
-    });
+    return workspaceApi.updateRemoteConnection(this.requestFn, id, data);
   }
 
   async deleteRemoteConnection(id: string): Promise<any> {
-    return this.request<any>(`/remote-connections/${id}`, {
-      method: 'DELETE',
-    });
+    return workspaceApi.deleteRemoteConnection(this.requestFn, id);
   }
 
   async disconnectRemoteTerminal(id: string): Promise<any> {
-    return this.request<any>(`/remote-connections/${id}/disconnect`, {
-      method: 'POST',
-    });
+    return workspaceApi.disconnectRemoteTerminal(this.requestFn, id);
   }
 
   async testRemoteConnectionDraft(data: {
@@ -368,41 +280,23 @@ class ApiClient {
     jump_password?: string;
     user_id?: string;
   }): Promise<any> {
-    return this.request<any>('/remote-connections/test', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
+    return workspaceApi.testRemoteConnectionDraft(this.requestFn, data);
   }
 
   async testRemoteConnection(id: string): Promise<any> {
-    return this.request<any>(`/remote-connections/${id}/test`, {
-      method: 'POST',
-    });
+    return workspaceApi.testRemoteConnection(this.requestFn, id);
   }
 
   async listRemoteSftpEntries(connectionId: string, path?: string): Promise<any> {
-    const qs = path ? `?path=${encodeURIComponent(path)}` : '';
-    return this.request<any>(`/remote-connections/${connectionId}/sftp/list${qs}`);
+    return workspaceApi.listRemoteSftpEntries(this.requestFn, connectionId, path);
   }
 
   async uploadRemoteSftpFile(connectionId: string, localPath: string, remotePath: string): Promise<any> {
-    return this.request<any>(`/remote-connections/${connectionId}/sftp/upload`, {
-      method: 'POST',
-      body: JSON.stringify({
-        local_path: localPath,
-        remote_path: remotePath,
-      }),
-    });
+    return workspaceApi.uploadRemoteSftpFile(this.requestFn, connectionId, localPath, remotePath);
   }
 
   async downloadRemoteSftpFile(connectionId: string, remotePath: string, localPath: string): Promise<any> {
-    return this.request<any>(`/remote-connections/${connectionId}/sftp/download`, {
-      method: 'POST',
-      body: JSON.stringify({
-        remote_path: remotePath,
-        local_path: localPath,
-      }),
-    });
+    return workspaceApi.downloadRemoteSftpFile(this.requestFn, connectionId, remotePath, localPath);
   }
 
   async startRemoteSftpTransfer(
@@ -413,108 +307,56 @@ class ApiClient {
       remote_path: string;
     },
   ): Promise<any> {
-    return this.request<any>(`/remote-connections/${connectionId}/sftp/transfer/start`, {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
+    return workspaceApi.startRemoteSftpTransfer(this.requestFn, connectionId, data);
   }
 
   async getRemoteSftpTransferStatus(connectionId: string, transferId: string): Promise<any> {
-    return this.request<any>(`/remote-connections/${connectionId}/sftp/transfer/${encodeURIComponent(transferId)}`);
+    return workspaceApi.getRemoteSftpTransferStatus(this.requestFn, connectionId, transferId);
   }
 
   async cancelRemoteSftpTransfer(connectionId: string, transferId: string): Promise<any> {
-    return this.request<any>(`/remote-connections/${connectionId}/sftp/transfer/${encodeURIComponent(transferId)}/cancel`, {
-      method: 'POST',
-    });
+    return workspaceApi.cancelRemoteSftpTransfer(this.requestFn, connectionId, transferId);
   }
 
   async createRemoteSftpDirectory(connectionId: string, parentPath: string, name: string): Promise<any> {
-    return this.request<any>(`/remote-connections/${connectionId}/sftp/mkdir`, {
-      method: 'POST',
-      body: JSON.stringify({
-        parent_path: parentPath,
-        name,
-      }),
-    });
+    return workspaceApi.createRemoteSftpDirectory(this.requestFn, connectionId, parentPath, name);
   }
 
   async renameRemoteSftpEntry(connectionId: string, fromPath: string, toPath: string): Promise<any> {
-    return this.request<any>(`/remote-connections/${connectionId}/sftp/rename`, {
-      method: 'POST',
-      body: JSON.stringify({
-        from_path: fromPath,
-        to_path: toPath,
-      }),
-    });
+    return workspaceApi.renameRemoteSftpEntry(this.requestFn, connectionId, fromPath, toPath);
   }
 
   async deleteRemoteSftpEntry(connectionId: string, path: string, recursive = false): Promise<any> {
-    return this.request<any>(`/remote-connections/${connectionId}/sftp/delete`, {
-      method: 'POST',
-      body: JSON.stringify({
-        path,
-        recursive,
-      }),
-    });
+    return workspaceApi.deleteRemoteSftpEntry(this.requestFn, connectionId, path, recursive);
   }
 
   // 文件系统
   async listFsDirectories(path?: string): Promise<any> {
-    const qs = path ? `?path=${encodeURIComponent(path)}` : '';
-    return this.request<any>(`/fs/list${qs}`);
+    return workspaceApi.listFsDirectories(this.requestFn, path);
   }
 
   async listFsEntries(path?: string): Promise<any> {
-    const qs = path ? `?path=${encodeURIComponent(path)}` : '';
-    return this.request<any>(`/fs/entries${qs}`);
+    return workspaceApi.listFsEntries(this.requestFn, path);
   }
 
   async searchFsEntries(path: string, query: string, limit?: number): Promise<any> {
-    const qs: string[] = [
-      `path=${encodeURIComponent(path)}`,
-      `q=${encodeURIComponent(query)}`,
-    ];
-    if (limit !== undefined) {
-      qs.push(`limit=${encodeURIComponent(String(limit))}`);
-    }
-    return this.request<any>(`/fs/search?${qs.join('&')}`);
+    return workspaceApi.searchFsEntries(this.requestFn, path, query, limit);
   }
 
   async readFsFile(path: string): Promise<any> {
-    const qs = `?path=${encodeURIComponent(path)}`;
-    return this.request<any>(`/fs/read${qs}`);
+    return workspaceApi.readFsFile(this.requestFn, path);
   }
 
   async createFsDirectory(parentPath: string, name: string): Promise<any> {
-    return this.request<any>('/fs/mkdir', {
-      method: 'POST',
-      body: JSON.stringify({
-        parent_path: parentPath,
-        name,
-      }),
-    });
+    return workspaceApi.createFsDirectory(this.requestFn, parentPath, name);
   }
 
   async createFsFile(parentPath: string, name: string, content = ''): Promise<any> {
-    return this.request<any>('/fs/touch', {
-      method: 'POST',
-      body: JSON.stringify({
-        parent_path: parentPath,
-        name,
-        content,
-      }),
-    });
+    return workspaceApi.createFsFile(this.requestFn, parentPath, name, content);
   }
 
   async deleteFsEntry(path: string, recursive = false): Promise<any> {
-    return this.request<any>('/fs/delete', {
-      method: 'POST',
-      body: JSON.stringify({
-        path,
-        recursive,
-      }),
-    });
+    return workspaceApi.deleteFsEntry(this.requestFn, path, recursive);
   }
 
   async moveFsEntry(
@@ -522,15 +364,7 @@ class ApiClient {
     targetParentPath: string,
     options?: { targetName?: string; replaceExisting?: boolean }
   ): Promise<any> {
-    return this.request<any>('/fs/move', {
-      method: 'POST',
-      body: JSON.stringify({
-        source_path: sourcePath,
-        target_parent_path: targetParentPath,
-        target_name: options?.targetName,
-        replace_existing: options?.replaceExisting,
-      }),
-    });
+    return workspaceApi.moveFsEntry(this.requestFn, sourcePath, targetParentPath, options);
   }
 
   async downloadFsEntry(path: string): Promise<{ blob: Blob; filename: string; contentType: string }> {
@@ -600,9 +434,7 @@ class ApiClient {
 
   // MCP配置相关API
   async getMcpConfigs(userId?: string) {
-    const params = userId ? `?user_id=${encodeURIComponent(userId)}` : '';
-    debugLog('🔍 getMcpConfigs API调用:', { userId, params });
-    return this.request(`/mcp-configs${params}`);
+    return configsApi.getMcpConfigs(this.requestFn, userId);
   }
 
   async createMcpConfig(data: {
@@ -616,11 +448,7 @@ class ApiClient {
     enabled: boolean;
     user_id?: string;
   }) {
-    debugLog('🔍 API client createMcpConfig 调用:', data);
-    return this.request('/mcp-configs', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
+    return configsApi.createMcpConfig(this.requestFn, data);
   }
 
   async updateMcpConfig(id: string, data: {
@@ -634,76 +462,53 @@ class ApiClient {
     enabled?: boolean;
     userId?: string;
   }) {
-    debugLog('🔍 API client updateMcpConfig 调用:', { id, data });
-    return this.request(`/mcp-configs/${id}`, {
-      method: 'PUT',
-      body: JSON.stringify(data),
-    });
+    return configsApi.updateMcpConfig(this.requestFn, id, data);
   }
 
   async deleteMcpConfig(id: string) {
-    return this.request(`/mcp-configs/${id}`, {
-      method: 'DELETE',
-    });
+    return configsApi.deleteMcpConfig(this.requestFn, id);
   }
 
   async getBuiltinMcpSettings(id: string): Promise<any> {
-    return this.request<any>(`/mcp-configs/${id}/builtin/settings`);
+    return configsApi.getBuiltinMcpSettings(this.requestFn, id);
   }
 
   async getBuiltinMcpPermissions(id: string): Promise<any> {
-    return this.request<any>(`/mcp-configs/${id}/builtin/mcp-permissions`);
+    return configsApi.getBuiltinMcpPermissions(this.requestFn, id);
   }
 
   async updateBuiltinMcpPermissions(
     id: string,
     payload: { enabled_mcp_ids: string[]; selected_system_context_id?: string }
   ): Promise<any> {
-    return this.request<any>(`/mcp-configs/${id}/builtin/mcp-permissions`, {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
+    return configsApi.updateBuiltinMcpPermissions(this.requestFn, id, payload);
   }
 
   async importBuiltinMcpAgents(id: string, content: string): Promise<any> {
-    return this.request<any>(`/mcp-configs/${id}/builtin/import-agents`, {
-      method: 'POST',
-      body: JSON.stringify({ content }),
-    });
+    return configsApi.importBuiltinMcpAgents(this.requestFn, id, content);
   }
 
   async importBuiltinMcpSkills(id: string, content: string): Promise<any> {
-    return this.request<any>(`/mcp-configs/${id}/builtin/import-skills`, {
-      method: 'POST',
-      body: JSON.stringify({ content }),
-    });
+    return configsApi.importBuiltinMcpSkills(this.requestFn, id, content);
   }
 
   async importBuiltinMcpFromGit(
     id: string,
     payload: { repository: string; branch?: string; agents_path?: string; skills_path?: string }
   ): Promise<any> {
-    return this.request<any>(`/mcp-configs/${id}/builtin/import-git`, {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
+    return configsApi.importBuiltinMcpFromGit(this.requestFn, id, payload);
   }
 
   async installBuiltinMcpPlugin(
     id: string,
     payload: { source?: string; install_all?: boolean }
   ): Promise<any> {
-    return this.request<any>(`/mcp-configs/${id}/builtin/install-plugin`, {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
+    return configsApi.installBuiltinMcpPlugin(this.requestFn, id, payload);
   }
 
   // AI模型配置相关API
   async getAiModelConfigs(userId?: string) {
-    const params = userId ? `?user_id=${encodeURIComponent(userId)}` : '';
-    debugLog('🔍 getAiModelConfigs API调用:', { userId, params });
-    return this.request(`/ai-model-configs${params}`);
+    return configsApi.getAiModelConfigs(this.requestFn, userId);
   }
 
   async createAiModelConfig(data: {
@@ -720,32 +525,24 @@ class ApiClient {
     supports_reasoning?: boolean;
     supports_responses?: boolean;
   }) {
-    return this.request('/ai-model-configs', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
+    return configsApi.createAiModelConfig(this.requestFn, data);
   }
 
   async updateAiModelConfig(id: string, data: any) {
-    return this.request(`/ai-model-configs/${id}`, {
-      method: 'PUT',
-      body: JSON.stringify(data),
-    });
+    return configsApi.updateAiModelConfig(this.requestFn, id, data);
   }
 
   async deleteAiModelConfig(id: string) {
-    return this.request(`/ai-model-configs/${id}`, {
-      method: 'DELETE',
-    });
+    return configsApi.deleteAiModelConfig(this.requestFn, id);
   }
 
   // 系统上下文相关API
   async getSystemContexts(userId: string): Promise<any[]> {
-    return this.request<any[]>(`/system-contexts?user_id=${userId}`);
+    return configsApi.getSystemContexts(this.requestFn, userId);
   }
 
   async getActiveSystemContext(userId: string): Promise<{ content: string; context: any }> {
-    return this.request<{ content: string; context: any }>(`/system-context/active?user_id=${userId}`);
+    return configsApi.getActiveSystemContext(this.requestFn, userId);
   }
 
   async createSystemContext(data: {
@@ -754,12 +551,7 @@ class ApiClient {
     user_id: string;
     app_ids?: string[];
   }): Promise<any> {
-    debugLog('🔍 API client createSystemContext 调用:', data);
-    debugLog('🔍 [关键] app_ids 字段:', data.app_ids, '类型:', typeof data.app_ids, '是否为数组:', Array.isArray(data.app_ids));
-    return this.request<any>('/system-contexts', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
+    return configsApi.createSystemContext(this.requestFn, data);
   }
 
   async updateSystemContext(id: string, data: {
@@ -767,25 +559,15 @@ class ApiClient {
     content: string;
     app_ids?: string[];
   }): Promise<any> {
-    debugLog('🔍 API client updateSystemContext 调用:', { id, data });
-    debugLog('🔍 [关键] app_ids 字段:', data.app_ids, '类型:', typeof data.app_ids, '是否为数组:', Array.isArray(data.app_ids));
-    return this.request<any>(`/system-contexts/${id}`, {
-      method: 'PUT',
-      body: JSON.stringify(data),
-    });
+    return configsApi.updateSystemContext(this.requestFn, id, data);
   }
 
   async deleteSystemContext(id: string): Promise<void> {
-    return this.request<void>(`/system-contexts/${id}`, {
-      method: 'DELETE',
-    });
+    return configsApi.deleteSystemContext(this.requestFn, id);
   }
 
   async activateSystemContext(id: string, userId: string): Promise<any> {
-    return this.request<any>(`/system-contexts/${id}/activate`, {
-      method: 'POST',
-      body: JSON.stringify({ user_id: userId, is_active: true }),
-    });
+    return configsApi.activateSystemContext(this.requestFn, id, userId);
   }
 
   async generateSystemContextDraft(data: {
@@ -799,10 +581,7 @@ class ApiClient {
     candidate_count?: number;
     ai_model_config?: any;
   }): Promise<any> {
-    return this.request<any>('/system-contexts/ai/generate', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
+    return configsApi.generateSystemContextDraft(this.requestFn, data);
   }
 
   async optimizeSystemContextDraft(data: {
@@ -812,29 +591,22 @@ class ApiClient {
     keep_intent?: boolean;
     ai_model_config?: any;
   }): Promise<any> {
-    return this.request<any>('/system-contexts/ai/optimize', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
+    return configsApi.optimizeSystemContextDraft(this.requestFn, data);
   }
 
   async evaluateSystemContextDraft(data: {
     content: string;
   }): Promise<any> {
-    return this.request<any>('/system-contexts/ai/evaluate', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
+    return configsApi.evaluateSystemContextDraft(this.requestFn, data);
   }
 
   // 应用（Application）相关API
   async getApplications(userId?: string): Promise<any[]> {
-    const params = userId ? `?user_id=${encodeURIComponent(userId)}` : '';
-    return this.request<any[]>(`/applications${params}`);
+    return configsApi.getApplications(this.requestFn, userId);
   }
 
   async getApplication(id: string): Promise<any> {
-    return this.request<any>(`/applications/${id}`);
+    return configsApi.getApplication(this.requestFn, id);
   }
 
   async createApplication(data: {
@@ -843,10 +615,7 @@ class ApiClient {
     icon_url?: string | null;
     user_id?: string;
   }): Promise<any> {
-    return this.request<any>('/applications', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
+    return configsApi.createApplication(this.requestFn, data);
   }
 
   async updateApplication(id: string, data: {
@@ -854,22 +623,16 @@ class ApiClient {
     url?: string;
     icon_url?: string | null;
   }): Promise<any> {
-    return this.request<any>(`/applications/${id}`, {
-      method: 'PUT',
-      body: JSON.stringify(data),
-    });
+    return configsApi.updateApplication(this.requestFn, id, data);
   }
 
   async deleteApplication(id: string): Promise<any> {
-    return this.request<any>(`/applications/${id}`, {
-      method: 'DELETE',
-    });
+    return configsApi.deleteApplication(this.requestFn, id);
   }
 
   // 智能体（Agent）相关API
   async getAgents(userId?: string): Promise<any[]> {
-    const params = userId ? `?user_id=${encodeURIComponent(userId)}` : '';
-    return this.request<any[]>(`/agents${params}`);
+    return configsApi.getAgents(this.requestFn, userId);
   }
 
   async createAgent(data: {
@@ -885,12 +648,7 @@ class ApiClient {
     enabled?: boolean;
     app_ids?: string[];
   }): Promise<any> {
-    debugLog('🔍 API client createAgent 调用:', data);
-    debugLog('🔍 [关键] app_ids 字段:', data.app_ids, '类型:', typeof data.app_ids, '是否为数组:', Array.isArray(data.app_ids));
-    return this.request<any>('/agents', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
+    return configsApi.createAgent(this.requestFn, data);
   }
 
   async updateAgent(agentId: string, data: {
@@ -905,18 +663,11 @@ class ApiClient {
     enabled?: boolean;
     app_ids?: string[];
   }): Promise<any> {
-    debugLog('🔍 API client updateAgent 调用:', { agentId, data });
-    debugLog('🔍 [关键] app_ids 字段:', data.app_ids, '类型:', typeof data.app_ids, '是否为数组:', Array.isArray(data.app_ids));
-    return this.request<any>(`/agents/${agentId}`, {
-      method: 'PUT',
-      body: JSON.stringify(data),
-    });
+    return configsApi.updateAgent(this.requestFn, agentId, data);
   }
 
   async deleteAgent(agentId: string): Promise<any> {
-    return this.request<any>(`/agents/${agentId}`, {
-      method: 'DELETE',
-    });
+    return configsApi.deleteAgent(this.requestFn, agentId);
   }
 
   // 会话详情和助手相关API (从index.ts合并)
@@ -1090,10 +841,7 @@ class ApiClient {
 
   async getMessages(conversationId: string, params: { limit?: number; offset?: number } = {}) {
     try {
-      const qs: string[] = [];
-      if (params.limit !== undefined) qs.push(`limit=${encodeURIComponent(String(params.limit))}`);
-      if (params.offset !== undefined) qs.push(`offset=${encodeURIComponent(String(params.offset))}`);
-      const query = qs.length ? `?${qs.join('&')}` : '';
+      const query = buildQuery({ limit: params.limit, offset: params.offset });
       const messages = await this.request<any[]>(`/sessions/${conversationId}/messages${query}`);
       return {
         data: {

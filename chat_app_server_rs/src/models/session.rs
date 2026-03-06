@@ -75,7 +75,8 @@ impl Session {
         project_id: Option<String>,
     ) -> Session {
         let now = crate::core::time::now_rfc3339();
-        let (selected_model_id, selected_agent_id) = extract_selection_from_metadata(metadata.as_ref());
+        let (selected_model_id, selected_agent_id) =
+            extract_selection_from_metadata(metadata.as_ref());
         Session {
             id: Uuid::new_v4().to_string(),
             title,
