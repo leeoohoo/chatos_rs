@@ -1318,6 +1318,30 @@ class ApiClient {
     return Array.isArray(result?.prompts) ? result.prompts : [];
   }
 
+  async getUiPromptHistory(
+    sessionId: string,
+    options?: { limit?: number; includePending?: boolean }
+  ): Promise<any[]> {
+    if (!sessionId) {
+      return [];
+    }
+
+    const params = new URLSearchParams();
+    params.set('session_id', sessionId);
+    if (typeof options?.limit === 'number') {
+      params.set('limit', String(options.limit));
+    }
+    if (options?.includePending === true) {
+      params.set('include_pending', 'true');
+    }
+
+    const result = await this.request<any>('/ui-prompts/history?' + params.toString());
+    if (Array.isArray(result)) {
+      return result;
+    }
+    return Array.isArray(result?.prompts) ? result.prompts : [];
+  }
+
   async submitUiPromptResponse(
     promptId: string,
     payload: {

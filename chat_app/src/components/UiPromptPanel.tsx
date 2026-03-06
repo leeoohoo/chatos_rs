@@ -124,34 +124,34 @@ export const UiPromptPanel: React.FC<UiPromptPanelProps> = ({ panel, onSubmit, o
   };
 
   return (
-    <div className="mx-3 mb-3 rounded-xl border border-blue-300 bg-blue-50 p-3 shadow-sm dark:border-blue-700 dark:bg-blue-900/20">
+    <div className="mx-3 mb-3 rounded-xl border border-border bg-card p-3 shadow-sm">
       <div className="mb-2">
-        <div className="text-sm font-semibold text-blue-900 dark:text-blue-100">
+        <div className="text-sm font-semibold text-foreground">
           {panel.title || '需要你的输入'}
         </div>
         {panel.message ? (
-          <div className="mt-1 text-xs text-blue-800/90 dark:text-blue-200/90">
+          <div className="mt-1 text-xs text-muted-foreground">
             {panel.message}
           </div>
         ) : null}
       </div>
 
       {fields.length > 0 ? (
-        <div className="space-y-2">
+        <div className="custom-scrollbar max-h-52 space-y-2 overflow-y-scroll pr-1 [scrollbar-gutter:stable]">
           {fields.map((field) => (
-            <label key={field.key} className="flex flex-col gap-1 text-xs text-slate-600 dark:text-slate-300">
+            <label key={field.key} className="flex flex-col gap-1 text-xs text-muted-foreground">
               <span>
                 {field.label || field.key}
-                {field.required ? <span className="ml-1 text-red-500">*</span> : null}
+                {field.required ? <span className="ml-1 text-destructive">*</span> : null}
               </span>
               {field.description ? (
-                <span className="text-[11px] text-slate-500 dark:text-slate-400">{field.description}</span>
+                <span className="text-[11px] text-muted-foreground">{field.description}</span>
               ) : null}
               {field.multiline ? (
                 <textarea
                   value={values[field.key] || ''}
                   onChange={(event) => setValues((prev) => ({ ...prev, [field.key]: event.target.value }))}
-                  className="min-h-[64px] rounded-md border border-slate-300 bg-white px-2 py-1 text-sm text-slate-900 outline-none focus:border-primary dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                  className="min-h-[64px] rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/20"
                   placeholder={field.placeholder || ''}
                   disabled={panel.submitting === true}
                 />
@@ -160,7 +160,7 @@ export const UiPromptPanel: React.FC<UiPromptPanelProps> = ({ panel, onSubmit, o
                   type={field.secret ? 'password' : 'text'}
                   value={values[field.key] || ''}
                   onChange={(event) => setValues((prev) => ({ ...prev, [field.key]: event.target.value }))}
-                  className="rounded-md border border-slate-300 bg-white px-2 py-1 text-sm text-slate-900 outline-none focus:border-primary dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                  className="rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/20"
                   placeholder={field.placeholder || ''}
                   disabled={panel.submitting === true}
                 />
@@ -171,20 +171,21 @@ export const UiPromptPanel: React.FC<UiPromptPanelProps> = ({ panel, onSubmit, o
       ) : null}
 
       {hasChoice ? (
-        <div className="mt-3 rounded-lg border border-blue-200 bg-white p-2 dark:border-blue-800 dark:bg-slate-900/60">
-          <div className="mb-2 text-xs font-medium text-slate-600 dark:text-slate-300">
+        <div className="mt-3 rounded-lg border border-border bg-background/50 p-2">
+          <div className="mb-2 text-xs font-medium text-muted-foreground">
             请选择{isMultiple ? `（${minSelections}-${maxSelections}项）` : ''}
           </div>
-          <div className="space-y-1.5">
+          <div className="custom-scrollbar max-h-72 space-y-1.5 overflow-y-scroll pr-1 [scrollbar-gutter:stable]">
             {choice!.options.map((option) => {
               const checked = isMultiple
                 ? multiSelection.includes(option.value)
                 : singleSelection === option.value;
               return (
-                <label key={option.value} className="flex cursor-pointer items-start gap-2 text-sm text-slate-700 dark:text-slate-200">
+                <label key={option.value} className="flex cursor-pointer items-start gap-2 text-sm text-foreground">
                   <input
                     type={isMultiple ? 'checkbox' : 'radio'}
                     name={`ui_prompt_${panel.promptId}`}
+                    className="mt-0.5 h-4 w-4 accent-primary"
                     checked={checked}
                     onChange={(event) => {
                       if (isMultiple) {
@@ -206,7 +207,7 @@ export const UiPromptPanel: React.FC<UiPromptPanelProps> = ({ panel, onSubmit, o
                   <span>
                     <span>{option.label || option.value}</span>
                     {option.description ? (
-                      <span className="block text-xs text-slate-500 dark:text-slate-400">{option.description}</span>
+                      <span className="block text-xs text-muted-foreground">{option.description}</span>
                     ) : null}
                   </span>
                 </label>
@@ -217,13 +218,13 @@ export const UiPromptPanel: React.FC<UiPromptPanelProps> = ({ panel, onSubmit, o
       ) : null}
 
       {panel.error ? (
-        <div className="mt-2 rounded-md border border-red-300 bg-red-50 px-2 py-1 text-xs text-red-700 dark:border-red-800 dark:bg-red-950/30 dark:text-red-200">
+        <div className="mt-2 rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs text-destructive">
           {panel.error}
         </div>
       ) : null}
 
       {selectionInvalid ? (
-        <div className="mt-2 text-xs text-amber-700 dark:text-amber-300">
+        <div className="mt-2 text-xs text-destructive">
           选择项数量不符合限制（最少 {minSelections}，最多 {maxSelections}）。
         </div>
       ) : null}
@@ -232,7 +233,7 @@ export const UiPromptPanel: React.FC<UiPromptPanelProps> = ({ panel, onSubmit, o
         {panel.allowCancel !== false ? (
           <button
             type="button"
-            className="rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+            className="rounded-md border border-border px-3 py-1.5 text-sm text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
             onClick={handleCancel}
             disabled={panel.submitting === true}
           >

@@ -469,6 +469,8 @@ fn kv_schema() -> Value {
                     "type": "object",
                     "properties": {
                         "key": { "type": "string", "minLength": 1 },
+                        "name": { "type": "string", "minLength": 1 },
+                        "id": { "type": "string", "minLength": 1 },
                         "label": { "type": "string" },
                         "description": { "type": "string" },
                         "placeholder": { "type": "string" },
@@ -477,7 +479,6 @@ fn kv_schema() -> Value {
                         "multiline": { "type": "boolean" },
                         "secret": { "type": "boolean" }
                     },
-                    "required": ["key"],
                     "additionalProperties": false
                 }
             },
@@ -535,6 +536,8 @@ fn mixed_schema() -> Value {
                     "type": "object",
                     "properties": {
                         "key": { "type": "string", "minLength": 1 },
+                        "name": { "type": "string", "minLength": 1 },
+                        "id": { "type": "string", "minLength": 1 },
                         "label": { "type": "string" },
                         "description": { "type": "string" },
                         "placeholder": { "type": "string" },
@@ -543,7 +546,6 @@ fn mixed_schema() -> Value {
                         "multiline": { "type": "boolean" },
                         "secret": { "type": "boolean" }
                     },
-                    "required": ["key"],
                     "additionalProperties": false
                 }
             },

@@ -155,21 +155,27 @@
 }
 
 /* Scrollbar styles */
-/* Scrollbar styles */
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--border)) hsl(var(--muted));
+}
+
 .custom-scrollbar::-webkit-scrollbar {
-  @apply w-2;
+  @apply h-2 w-2;
 }
 
 .custom-scrollbar::-webkit-scrollbar-track {
-  @apply bg-gray-100;
+  background: hsl(var(--muted));
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  @apply bg-gray-400 rounded-full;
+  background: hsl(var(--border));
+  border: 2px solid hsl(var(--muted));
+  border-radius: 9999px;
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  @apply bg-gray-600;
+  background: hsl(var(--foreground) / 0.35);
 }
 
 /* Animation utilities */

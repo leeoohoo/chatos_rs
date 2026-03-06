@@ -17,7 +17,7 @@ pub use normalizer::{
 #[allow(unused_imports)]
 pub use store::{
     create_ui_prompt_record, get_ui_prompt_record_by_id, list_pending_ui_prompt_records,
-    update_ui_prompt_response,
+    list_ui_prompt_history_records, update_ui_prompt_response,
 };
 #[allow(unused_imports)]
 pub use types::{
