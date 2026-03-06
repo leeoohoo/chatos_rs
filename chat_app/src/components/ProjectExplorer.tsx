@@ -488,11 +488,6 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     [selectedEntry]
   );
 
-  const isRootSelected = useMemo(() => {
-    if (!selectedEntry?.path || !project?.rootPath) return false;
-    return normalizePath(selectedEntry.path) === normalizePath(project.rootPath);
-  }, [normalizePath, project?.rootPath, selectedEntry?.path]);
-
   const isContextRootEntry = useMemo(() => {
     if (!contextMenu?.entry.path || !project?.rootPath) return false;
     return normalizePath(contextMenu.entry.path) === normalizePath(project.rootPath);
@@ -503,6 +498,16 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     if (selectedEntry.isDir) return selectedEntry.path;
     return getParentPath(selectedEntry.path) || project?.rootPath || null;
   }, [getParentPath, project?.rootPath, selectedEntry]);
+
+  const selectProjectRoot = useCallback(async () => {
+    const root = project?.rootPath;
+    if (!root) return;
+    setSelectedPath(root);
+    setSelectedFile(null);
+    if (!entriesMap[root]) {
+      await loadEntries(root);
+    }
+  }, [entriesMap, loadEntries, project?.rootPath]);
 
   const pendingMarks = useMemo(
     () => [...changeSummary.fileMarks, ...changeSummary.deletedMarks],
@@ -1716,6 +1721,16 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
           <div className="text-[11px] text-muted-foreground truncate" title={selectedEntry?.path || ''}>
             当前选择：{selectedEntry ? selectedEntry.path : '未选择'}
           </div>
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              void selectProjectRoot();
+            }}
+            className="text-[11px] text-blue-600 hover:underline text-left"
+          >
+            选中项目根目录
+          </button>
           <div className="text-[11px] text-muted-foreground flex items-center gap-3">
             <span className="inline-flex items-center gap-1">
               <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" />
@@ -1733,43 +1748,27 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
           <div className="flex flex-wrap gap-1">
             <button
               type="button"
-              onClick={() => {
-                void handleCreateDirectory();
+              onClick={(event) => {
+                event.stopPropagation();
+                if (!project.rootPath) return;
+                void handleCreateDirectory(project.rootPath);
               }}
-              disabled={!selectedDirPath || actionLoading}
-              className="rounded border border-border px-2 py-1 text-[11px] hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={!project.rootPath || actionLoading}
+              className="rounded border border-blue-500/40 px-2 py-1 text-[11px] text-blue-700 hover:bg-blue-500/10 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              新建目录
+              根目录新建目录
             </button>
             <button
               type="button"
-              onClick={() => {
-                void handleCreateFile();
+              onClick={(event) => {
+                event.stopPropagation();
+                if (!project.rootPath) return;
+                void handleCreateFile(project.rootPath);
               }}
-              disabled={!selectedDirPath || actionLoading}
-              className="rounded border border-border px-2 py-1 text-[11px] hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={!project.rootPath || actionLoading}
+              className="rounded border border-blue-500/40 px-2 py-1 text-[11px] text-blue-700 hover:bg-blue-500/10 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              新建文件
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                void handleDeleteSelected();
-              }}
-              disabled={!selectedEntry || isRootSelected || actionLoading}
-              className="rounded border border-border px-2 py-1 text-[11px] text-destructive hover:bg-destructive/10 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              删除
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                void handleDownloadSelected();
-              }}
-              disabled={!selectedEntry || actionLoading}
-              className="rounded border border-border px-2 py-1 text-[11px] hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              下载
+              根目录新建文件
             </button>
             <button
               type="button"
@@ -1815,6 +1814,9 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
             >
               {showOnlyChanged ? '显示全部' : '仅看变更'}
             </button>
+          </div>
+          <div className="text-[11px] text-muted-foreground">
+            目录/文件的新建、下载、删除请右键对应项操作
           </div>
           {loadingSummary && (
             <div className="text-[11px] text-muted-foreground">正在加载变更标记...</div>
