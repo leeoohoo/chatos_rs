@@ -2,7 +2,14 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import hljs from 'highlight.js';
 import { apiClient as globalApiClient } from '../lib/api/client';
 import { useChatApiClientFromContext } from '../lib/store/ChatStoreContext';
-import type { Project, FsEntry, FsReadResult, ChangeLogItem } from '../types';
+import type {
+  Project,
+  FsEntry,
+  FsReadResult,
+  ChangeLogItem,
+  ProjectChangeSummary,
+  ProjectChangeMark,
+} from '../types';
 import { cn, formatFileSize } from '../lib/utils';
 
 interface ProjectExplorerProps {
@@ -22,6 +29,8 @@ interface MoveConflictState {
   sourceName: string;
   renameTo: string;
 }
+
+type ChangeKind = 'create' | 'edit' | 'delete';
 
 const normalizeEntry = (raw: any): FsEntry => ({
   name: raw?.name ?? '',
@@ -46,14 +55,134 @@ const normalizeChangeLog = (raw: any): ChangeLogItem => ({
   serverName: raw?.server_name ?? raw?.serverName ?? '',
   path: raw?.path ?? '',
   action: raw?.action ?? '',
+  changeKind: raw?.change_kind ?? raw?.changeKind ?? (raw?.action === 'delete' ? 'delete' : 'edit'),
   bytes: raw?.bytes ?? 0,
   sha256: raw?.sha256 ?? null,
   diff: raw?.diff ?? null,
   sessionId: raw?.session_id ?? raw?.sessionId ?? null,
   runId: raw?.run_id ?? raw?.runId ?? null,
+  confirmed: Boolean(raw?.confirmed),
+  confirmedAt: raw?.confirmed_at ?? raw?.confirmedAt ?? null,
+  confirmedBy: raw?.confirmed_by ?? raw?.confirmedBy ?? null,
   createdAt: raw?.created_at ?? raw?.createdAt ?? '',
   sessionTitle: raw?.session_title ?? raw?.sessionTitle ?? null,
 });
+
+const normalizeChangeKind = (value: any): ChangeKind => {
+  const kind = String(value ?? '').trim().toLowerCase();
+  if (kind === 'create') return 'create';
+  if (kind === 'delete') return 'delete';
+  return 'edit';
+};
+
+const normalizeProjectChangeMark = (raw: any): ProjectChangeMark => ({
+  path: raw?.path ?? '',
+  relativePath: raw?.relative_path ?? raw?.relativePath ?? '',
+  kind: normalizeChangeKind(raw?.kind),
+  lastChangeId: raw?.last_change_id ?? raw?.lastChangeId ?? '',
+  updatedAt: raw?.updated_at ?? raw?.updatedAt ?? '',
+});
+
+const areChangeMarksEqual = (left: ProjectChangeMark[], right: ProjectChangeMark[]): boolean => {
+  if (left.length !== right.length) return false;
+  for (let i = 0; i < left.length; i += 1) {
+    const a = left[i];
+    const b = right[i];
+    if (
+      a.path !== b.path ||
+      a.relativePath !== b.relativePath ||
+      a.kind !== b.kind ||
+      a.lastChangeId !== b.lastChangeId ||
+      a.updatedAt !== b.updatedAt
+    ) {
+      return false;
+    }
+  }
+  return true;
+};
+
+const EMPTY_CHANGE_SUMMARY: ProjectChangeSummary = {
+  fileMarks: [],
+  deletedMarks: [],
+  counts: {
+    create: 0,
+    edit: 0,
+    delete: 0,
+    total: 0,
+  },
+};
+
+const normalizeProjectChangeSummary = (raw: any): ProjectChangeSummary => {
+  const fileMarks = Array.isArray(raw?.file_marks ?? raw?.fileMarks)
+    ? (raw?.file_marks ?? raw?.fileMarks).map(normalizeProjectChangeMark)
+    : [];
+  const deletedMarks = Array.isArray(raw?.deleted_marks ?? raw?.deletedMarks)
+    ? (raw?.deleted_marks ?? raw?.deletedMarks).map(normalizeProjectChangeMark)
+    : [];
+  const countsRaw = raw?.counts ?? {};
+  const create = Number(countsRaw?.create ?? 0);
+  const edit = Number(countsRaw?.edit ?? 0);
+  const del = Number(countsRaw?.delete ?? 0);
+  const total = Number(countsRaw?.total ?? create + edit + del);
+  return {
+    fileMarks,
+    deletedMarks,
+    counts: {
+      create: Number.isFinite(create) ? create : 0,
+      edit: Number.isFinite(edit) ? edit : 0,
+      delete: Number.isFinite(del) ? del : 0,
+      total: Number.isFinite(total) ? total : 0,
+    },
+  };
+};
+
+const isProjectChangeSummaryEqual = (
+  left: ProjectChangeSummary,
+  right: ProjectChangeSummary
+): boolean => {
+  if (
+    left.counts.create !== right.counts.create ||
+    left.counts.edit !== right.counts.edit ||
+    left.counts.delete !== right.counts.delete ||
+    left.counts.total !== right.counts.total
+  ) {
+    return false;
+  }
+  return (
+    areChangeMarksEqual(left.fileMarks, right.fileMarks)
+    && areChangeMarksEqual(left.deletedMarks, right.deletedMarks)
+  );
+};
+
+const CHANGE_KIND_COLOR_CLASS: Record<ChangeKind, string> = {
+  create: 'bg-emerald-500',
+  edit: 'bg-amber-500',
+  delete: 'bg-rose-500',
+};
+
+const CHANGE_KIND_TEXT_CLASS: Record<ChangeKind, string> = {
+  create: 'text-emerald-600 dark:text-emerald-400',
+  edit: 'text-amber-600 dark:text-amber-400',
+  delete: 'text-rose-600 dark:text-rose-400',
+};
+
+const CHANGE_KIND_ROW_CLASS: Record<ChangeKind, string> = {
+  create: 'border-l-2 border-emerald-500 bg-emerald-500/10',
+  edit: 'border-l-2 border-amber-500 bg-amber-500/10',
+  delete: 'border-l-2 border-rose-500 bg-rose-500/10',
+};
+
+const CHANGE_KIND_LABEL: Record<ChangeKind, string> = {
+  create: '新增',
+  edit: '编辑',
+  delete: '删除',
+};
+
+const CHANGE_KIND_PRIORITY: Record<ChangeKind, number> = {
+  create: 2,
+  edit: 1,
+  delete: 3,
+};
 
 const EXT_LANGUAGE_MAP: Record<string, string> = {
   rs: 'rust',
@@ -160,6 +289,7 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
   const dragExpandPathRef = useRef<string | null>(null);
   const dragAutoScrollTimerRef = useRef<number | null>(null);
   const dragAutoScrollVelocityRef = useRef(0);
+  const summaryLoadingRef = useRef(false);
 
   const [entriesMap, setEntriesMap] = useState<Record<string, FsEntry[]>>({});
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
@@ -176,10 +306,14 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
   const [draggingEntryPath, setDraggingEntryPath] = useState<string | null>(null);
   const [dropTargetDirPath, setDropTargetDirPath] = useState<string | null>(null);
   const [changeLogs, setChangeLogs] = useState<ChangeLogItem[]>([]);
+  const [changeSummary, setChangeSummary] = useState<ProjectChangeSummary>(EMPTY_CHANGE_SUMMARY);
   const [loadingLogs, setLoadingLogs] = useState(false);
+  const [loadingSummary, setLoadingSummary] = useState(false);
   const [logsError, setLogsError] = useState<string | null>(null);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
   const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
   const [expandedReady, setExpandedReady] = useState(false);
+  const [showOnlyChanged, setShowOnlyChanged] = useState(false);
   const [treeWidth, setTreeWidth] = useState(() => {
     if (typeof window === 'undefined') return 288;
     const saved = window.localStorage.getItem('project_explorer_tree_width');
@@ -231,6 +365,45 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
       });
     }
   }, [client]);
+
+  const loadChangeSummary = useCallback(async (options?: { silent?: boolean }) => {
+    const silent = options?.silent ?? false;
+    if (!project?.id) {
+      if (!silent) {
+        setChangeSummary(EMPTY_CHANGE_SUMMARY);
+        setSummaryError(null);
+      }
+      return;
+    }
+    if (summaryLoadingRef.current) {
+      return;
+    }
+    summaryLoadingRef.current = true;
+    if (!silent) {
+      setLoadingSummary(true);
+      setSummaryError(null);
+    }
+    try {
+      const data = await client.getProjectChangeSummary(project.id);
+      const nextSummary = normalizeProjectChangeSummary(data);
+      setChangeSummary((prev) => (
+        isProjectChangeSummaryEqual(prev, nextSummary) ? prev : nextSummary
+      ));
+      if (!silent) {
+        setSummaryError(null);
+      }
+    } catch (err: any) {
+      if (!silent) {
+        setSummaryError(err?.message || '加载变更标记失败');
+        setChangeSummary(EMPTY_CHANGE_SUMMARY);
+      }
+    } finally {
+      if (!silent) {
+        setLoadingSummary(false);
+      }
+      summaryLoadingRef.current = false;
+    }
+  }, [client, project?.id]);
 
   const toggleDir = useCallback(async (entry: FsEntry) => {
     if (!entry.isDir) return;
@@ -330,6 +503,57 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     if (selectedEntry.isDir) return selectedEntry.path;
     return getParentPath(selectedEntry.path) || project?.rootPath || null;
   }, [getParentPath, project?.rootPath, selectedEntry]);
+
+  const pendingMarks = useMemo(
+    () => [...changeSummary.fileMarks, ...changeSummary.deletedMarks],
+    [changeSummary.deletedMarks, changeSummary.fileMarks]
+  );
+
+  const hasPendingChangesForPath = useCallback((path: string | null): boolean => {
+    if (!path) return false;
+    const normalizedTarget = normalizePath(path);
+    if (!normalizedTarget) return false;
+    const prefix = `${normalizedTarget}/`;
+    return pendingMarks.some((mark) => {
+      const normalizedMarkPath = normalizePath(mark.path);
+      return normalizedMarkPath === normalizedTarget || normalizedMarkPath.startsWith(prefix);
+    });
+  }, [normalizePath, pendingMarks]);
+
+  const canConfirmCurrent = useMemo(
+    () => hasPendingChangesForPath(selectedPath),
+    [hasPendingChangesForPath, selectedPath]
+  );
+
+  const aggregatedChangeKindByPath = useMemo(() => {
+    const map = new Map<string, ChangeKind>();
+    const applyKind = (path: string, kind: ChangeKind) => {
+      const prev = map.get(path);
+      if (!prev || CHANGE_KIND_PRIORITY[kind] >= CHANGE_KIND_PRIORITY[prev]) {
+        map.set(path, kind);
+      }
+    };
+
+    for (const mark of pendingMarks) {
+      const normalizedMarkPath = normalizePath(mark.path);
+      if (!normalizedMarkPath) continue;
+      const kind = normalizeChangeKind(mark.kind);
+      applyKind(normalizedMarkPath, kind);
+
+      let parentPath = getParentPath(normalizedMarkPath);
+      while (parentPath) {
+        const normalizedParent = normalizePath(parentPath);
+        if (!normalizedParent) break;
+        applyKind(normalizedParent, kind);
+        if (rootPathNormalized && normalizedParent === rootPathNormalized) {
+          break;
+        }
+        parentPath = getParentPath(normalizedParent);
+      }
+    }
+
+    return map;
+  }, [getParentPath, normalizePath, pendingMarks, rootPathNormalized]);
 
   const canDropToDirectory = useCallback((sourcePath: string, targetDirPath: string): boolean => {
     const normalizedSource = normalizePath(sourcePath);
@@ -658,13 +882,69 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     setActionMessage(null);
     try {
       await loadEntries(actionReloadPath);
+      await loadChangeSummary();
       setActionMessage('目录已刷新');
     } catch (err: any) {
       setActionError(err?.message || '刷新失败');
     } finally {
       setActionLoading(false);
     }
-  }, [actionReloadPath, loadEntries]);
+  }, [actionReloadPath, loadChangeSummary, loadEntries]);
+
+  const handleConfirmCurrentChanges = useCallback(async () => {
+    if (!project?.id) return;
+    if (!selectedPath) {
+      setActionError('请先选择要确认的文件或目录');
+      return;
+    }
+    if (!hasPendingChangesForPath(selectedPath)) {
+      setActionError('当前项没有未确认变更');
+      return;
+    }
+
+    setActionLoading(true);
+    setActionError(null);
+    setActionMessage(null);
+    try {
+      const result = await client.confirmProjectChanges(project.id, {
+        mode: 'paths',
+        paths: [selectedPath],
+      });
+      await loadChangeSummary();
+      const confirmed = Number(result?.confirmed ?? 0);
+      if (Number.isFinite(confirmed) && confirmed > 0) {
+        setActionMessage(`已确认当前项变更（${confirmed} 条）`);
+      } else {
+        setActionMessage('当前项没有可确认的变更');
+      }
+    } catch (err: any) {
+      setActionError(err?.message || '确认当前项变更失败');
+    } finally {
+      setActionLoading(false);
+    }
+  }, [client, hasPendingChangesForPath, loadChangeSummary, project?.id, selectedPath]);
+
+  const handleConfirmAllChanges = useCallback(async () => {
+    if (!project?.id) return;
+
+    setActionLoading(true);
+    setActionError(null);
+    setActionMessage(null);
+    try {
+      const result = await client.confirmProjectChanges(project.id, { mode: 'all' });
+      await loadChangeSummary();
+      const confirmed = Number(result?.confirmed ?? 0);
+      if (Number.isFinite(confirmed) && confirmed > 0) {
+        setActionMessage(`已确认全部变更（${confirmed} 条）`);
+      } else {
+        setActionMessage('暂无可确认的变更');
+      }
+    } catch (err: any) {
+      setActionError(err?.message || '确认全部变更失败');
+    } finally {
+      setActionLoading(false);
+    }
+  }, [client, loadChangeSummary, project?.id]);
 
   const applyMoveResult = useCallback(async (
     sourcePath: string,
@@ -839,7 +1119,11 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
       setDraggingEntryPath(null);
       setDropTargetDirPath(null);
       setChangeLogs([]);
+      setChangeSummary(EMPTY_CHANGE_SUMMARY);
       setLogsError(null);
+      setSummaryError(null);
+      setLoadingSummary(false);
+      summaryLoadingRef.current = false;
       setSelectedLogId(null);
       setExpandedReady(false);
       return;
@@ -876,21 +1160,52 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     setDraggingEntryPath(null);
     setDropTargetDirPath(null);
     setChangeLogs([]);
+    setChangeSummary(EMPTY_CHANGE_SUMMARY);
     setLogsError(null);
+    setSummaryError(null);
     setSelectedLogId(null);
     loadEntries(root);
+    void loadChangeSummary();
     nextExpanded.forEach((p) => {
       if (!p) return;
       const full = keyToPath(p);
       if (full !== root) loadEntries(full);
     });
-  }, [clearDragAutoScroll, clearDragExpandTimer, project?.id, project?.rootPath, loadEntries, keyToPath, toExpandedKey]);
+  }, [clearDragAutoScroll, clearDragExpandTimer, project?.id, project?.rootPath, loadChangeSummary, loadEntries, keyToPath, toExpandedKey]);
 
   useEffect(() => {
     if (!expandedReady || !project?.id || !project?.rootPath) return;
     const next = Array.from(expandedPaths);
     localStorage.setItem(`project_explorer_expanded_${project.id}`, JSON.stringify(next));
   }, [expandedPaths, expandedReady, project?.id, project?.rootPath]);
+
+  useEffect(() => {
+    if (!project?.id) return undefined;
+    const timer = window.setInterval(() => {
+      void loadChangeSummary({ silent: true });
+    }, 6000);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [loadChangeSummary, project?.id]);
+
+  useEffect(() => {
+    if (!project?.id) {
+      setShowOnlyChanged(false);
+      return;
+    }
+    if (typeof window === 'undefined') return;
+    const saved = window.localStorage.getItem(`project_explorer_only_changed_${project.id}`);
+    setShowOnlyChanged(saved === '1');
+  }, [project?.id]);
+
+  useEffect(() => {
+    if (!project?.id || typeof window === 'undefined') return;
+    window.localStorage.setItem(
+      `project_explorer_only_changed_${project.id}`,
+      showOnlyChanged ? '1' : '0',
+    );
+  }, [project?.id, showOnlyChanged]);
 
   useEffect(() => {
     if (!contextMenu) return undefined;
@@ -945,7 +1260,8 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
   }, [treeWidth]);
 
   useEffect(() => {
-    if (!project?.id || !selectedFile?.path) {
+    const logPath = selectedFile?.path || selectedPath;
+    if (!project?.id || !logPath) {
       setChangeLogs([]);
       setLogsError(null);
       setSelectedLogId(null);
@@ -956,7 +1272,7 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
       setLoadingLogs(true);
       setLogsError(null);
       try {
-        const list = await client.listProjectChangeLogs(project.id, { path: selectedFile.path, limit: 100 });
+        const list = await client.listProjectChangeLogs(project.id, { path: logPath, limit: 100 });
         if (!cancelled) {
           const normalized = Array.isArray(list) ? list.map(normalizeChangeLog) : [];
           setChangeLogs(normalized);
@@ -975,7 +1291,7 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     };
     loadLogs();
     return () => { cancelled = true; };
-  }, [client, project?.id, selectedFile?.path]);
+  }, [client, project?.id, selectedFile?.path, selectedPath]);
 
   useEffect(() => {
     if (selectedLogId && !changeLogs.find(log => log.id === selectedLogId)) {
@@ -983,8 +1299,19 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     }
   }, [changeLogs, selectedLogId]);
 
+  const isEntryVisible = useCallback((entryPath: string): boolean => {
+    if (!showOnlyChanged) return true;
+    return aggregatedChangeKindByPath.has(normalizePath(entryPath));
+  }, [aggregatedChangeKindByPath, normalizePath, showOnlyChanged]);
+
+  const visibleRootEntryCount = useMemo(() => {
+    if (!project?.rootPath) return 0;
+    const rootEntries = entriesMap[project.rootPath] || [];
+    return rootEntries.filter((entry) => isEntryVisible(entry.path)).length;
+  }, [entriesMap, isEntryVisible, project?.rootPath]);
+
   const renderEntries = (path: string, depth: number): React.ReactNode => {
-    const entries = entriesMap[path] || [];
+    const entries = (entriesMap[path] || []).filter((entry) => isEntryVisible(entry.path));
     if (!entries.length) {
       return null;
     }
@@ -996,6 +1323,7 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
       const isDropTarget = entry.isDir && dropTargetDirPath
         ? normalizePath(dropTargetDirPath) === normalizedEntryPath
         : false;
+      const entryChangeKind = aggregatedChangeKindByPath.get(normalizedEntryPath);
       return (
         <div key={entry.path}>
           <button
@@ -1047,6 +1375,7 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
             }}
             className={cn(
               'min-w-full w-max grid grid-cols-[12px_auto_64px] items-center gap-2 py-1.5 pr-2 text-left rounded hover:bg-accent transition-colors',
+              entryChangeKind && CHANGE_KIND_ROW_CLASS[entryChangeKind],
               isActive && 'bg-accent',
               isDragging && 'opacity-50',
               isDropTarget && 'ring-1 ring-blue-500 bg-blue-500/10'
@@ -1058,11 +1387,18 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
             </span>
             <span
               className={cn(
-                'text-sm whitespace-nowrap',
-                entry.isDir ? 'text-foreground' : 'text-muted-foreground'
+                'text-sm whitespace-nowrap inline-flex items-center gap-1',
+                entry.isDir ? 'text-foreground' : 'text-muted-foreground',
+                entryChangeKind && CHANGE_KIND_TEXT_CLASS[entryChangeKind]
               )}
             >
               {entry.name}
+              {entryChangeKind && (
+                <span
+                  className={cn('inline-block h-2 w-2 rounded-full', CHANGE_KIND_COLOR_CLASS[entryChangeKind])}
+                  title={`未确认${CHANGE_KIND_LABEL[entryChangeKind]}变更`}
+                />
+              )}
             </span>
             <span className="text-[11px] text-muted-foreground text-right tabular-nums whitespace-nowrap">
               {!entry.isDir && entry.size != null ? formatFileSize(entry.size) : ''}
@@ -1084,6 +1420,13 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
       return <div className="p-4 text-sm text-muted-foreground">加载文件中...</div>;
     }
     if (!selectedFile) {
+      if (selectedPath && !selectedEntry) {
+        return (
+          <div className="p-4 text-sm text-muted-foreground">
+            该路径已删除或不存在，当前仅支持查看变更记录。
+          </div>
+        );
+      }
       return <div className="p-4 text-sm text-muted-foreground">请选择文件以预览</div>;
     }
     const isImage = selectedFile.contentType.startsWith('image/');
@@ -1144,7 +1487,7 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
         </a>
       </div>
     );
-  }, [selectedFile, loadingFile]);
+  }, [selectedEntry, selectedFile, selectedPath, loadingFile]);
 
   const parseUnifiedDiff = useCallback((diffText: string) => {
     const lines = diffText.split(/\r?\n/);
@@ -1229,11 +1572,13 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     if (!selectedLog) return null;
     const title = selectedLog.sessionTitle || selectedLog.sessionId || '未知会话';
     const time = selectedLog.createdAt ? new Date(selectedLog.createdAt).toLocaleString() : '';
+    const kind = normalizeChangeKind(selectedLog.changeKind);
     return (
       <div className="border-b border-border bg-muted/30 max-h-64 overflow-hidden flex flex-col">
         <div className="px-4 py-2 text-xs font-medium text-foreground flex items-center gap-2">
           <span>变更内容</span>
           <span className="text-muted-foreground">{selectedLog.action}</span>
+          <span className={CHANGE_KIND_TEXT_CLASS[kind]}>{CHANGE_KIND_LABEL[kind]}</span>
           <span className="text-muted-foreground ml-auto">{time}</span>
         </div>
         <div className="px-4 pb-3 text-xs overflow-auto min-h-0">
@@ -1249,8 +1594,8 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
   }, [selectedLog, renderDiffRows]);
 
   const changeLogPanel = useMemo(() => {
-    if (!selectedFile) {
-      return <div className="px-4 py-3 text-xs text-muted-foreground">请选择文件以查看变更记录</div>;
+    if (!selectedPath) {
+      return <div className="px-4 py-3 text-xs text-muted-foreground">请选择文件或目录以查看变更记录</div>;
     }
     if (loadingLogs) {
       return <div className="px-4 py-3 text-xs text-muted-foreground">加载变更记录中...</div>;
@@ -1267,6 +1612,7 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
           const isSelected = selectedLogId === log.id;
           const title = log.sessionTitle || log.sessionId || '未知会话';
           const time = log.createdAt ? new Date(log.createdAt).toLocaleString() : '';
+          const kind = normalizeChangeKind(log.changeKind);
           return (
             <button
               key={log.id}
@@ -1280,6 +1626,9 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
               <div className="flex items-center gap-2">
                 <span className="text-muted-foreground w-3">{isSelected ? '▾' : '▸'}</span>
                 <span className="font-medium text-foreground">{log.action}</span>
+                <span className={cn('font-medium', CHANGE_KIND_TEXT_CLASS[kind])}>
+                  {CHANGE_KIND_LABEL[kind]}
+                </span>
                 <span className="text-muted-foreground">{formatFileSize(log.bytes || 0)}</span>
                 <span className="text-muted-foreground ml-auto">{time}</span>
               </div>
@@ -1291,7 +1640,7 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
         })}
       </div>
     );
-  }, [selectedFile, loadingLogs, logsError, changeLogs, selectedLogId]);
+  }, [selectedPath, loadingLogs, logsError, changeLogs, selectedLogId]);
 
   if (!project) {
     return (
@@ -1367,6 +1716,20 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
           <div className="text-[11px] text-muted-foreground truncate" title={selectedEntry?.path || ''}>
             当前选择：{selectedEntry ? selectedEntry.path : '未选择'}
           </div>
+          <div className="text-[11px] text-muted-foreground flex items-center gap-3">
+            <span className="inline-flex items-center gap-1">
+              <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" />
+              新增 {changeSummary.counts.create}
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <span className="inline-block h-2 w-2 rounded-full bg-amber-500" />
+              编辑 {changeSummary.counts.edit}
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <span className="inline-block h-2 w-2 rounded-full bg-rose-500" />
+              删除 {changeSummary.counts.delete}
+            </span>
+          </div>
           <div className="flex flex-wrap gap-1">
             <button
               type="button"
@@ -1418,7 +1781,49 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
             >
               刷新
             </button>
+            <button
+              type="button"
+              onClick={() => {
+                void handleConfirmCurrentChanges();
+              }}
+              disabled={!canConfirmCurrent || actionLoading}
+              className="rounded border border-amber-500/40 px-2 py-1 text-[11px] text-amber-700 hover:bg-amber-500/10 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              确认当前项
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                void handleConfirmAllChanges();
+              }}
+              disabled={changeSummary.counts.total <= 0 || actionLoading}
+              className="rounded border border-emerald-500/40 px-2 py-1 text-[11px] text-emerald-700 hover:bg-emerald-500/10 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              确认全部变更
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setShowOnlyChanged((prev) => !prev);
+              }}
+              className={cn(
+                'rounded border px-2 py-1 text-[11px] disabled:opacity-50 disabled:cursor-not-allowed',
+                showOnlyChanged
+                  ? 'border-emerald-500/50 text-emerald-700 bg-emerald-500/10 hover:bg-emerald-500/20'
+                  : 'border-border hover:bg-accent'
+              )}
+            >
+              {showOnlyChanged ? '显示全部' : '仅看变更'}
+            </button>
           </div>
+          {loadingSummary && (
+            <div className="text-[11px] text-muted-foreground">正在加载变更标记...</div>
+          )}
+          {summaryError && (
+            <div className="text-[11px] text-destructive truncate" title={summaryError}>
+              {summaryError}
+            </div>
+          )}
           {actionMessage && (
             <div className="text-[11px] text-emerald-600 truncate" title={actionMessage}>
               {actionMessage}
@@ -1468,11 +1873,49 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
           }}
         >
           {renderEntries(project.rootPath, 0)}
+          {changeSummary.deletedMarks.length > 0 && (
+            <div className="mt-2 border-t border-border/70">
+              <div className="px-3 py-2 text-[11px] font-medium text-rose-600 dark:text-rose-400">
+                已删除（未确认）
+              </div>
+              <div className="space-y-0.5 pb-2">
+                {changeSummary.deletedMarks.map((mark) => {
+                  const normalizedMarkPath = normalizePath(mark.path);
+                  const isActive = selectedPath ? normalizePath(selectedPath) === normalizedMarkPath : false;
+                  return (
+                    <button
+                      key={mark.lastChangeId || mark.path}
+                      type="button"
+                      onClick={() => {
+                        setSelectedPath(mark.path);
+                        setSelectedFile(null);
+                      }}
+                      className={cn(
+                        'min-w-full w-max grid grid-cols-[12px_auto_64px] items-center gap-2 py-1.5 pr-2 text-left rounded hover:bg-accent transition-colors',
+                        isActive && 'bg-accent'
+                      )}
+                      style={{ paddingLeft: 12 + 14 }}
+                    >
+                      <span className="text-xs text-rose-500 w-3 shrink-0">•</span>
+                      <span className={cn('text-sm whitespace-nowrap truncate', CHANGE_KIND_TEXT_CLASS.delete)}>
+                        {mark.relativePath || mark.path}
+                      </span>
+                      <span className="text-[11px] text-muted-foreground text-right tabular-nums whitespace-nowrap">
+                        已删除
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
           {loadingPaths.has(project.rootPath) && (
             <div className="px-3 py-2 text-xs text-muted-foreground">加载中...</div>
           )}
-          {!loadingPaths.has(project.rootPath) && (entriesMap[project.rootPath]?.length ?? 0) === 0 && (
-            <div className="px-3 py-2 text-xs text-muted-foreground">目录为空</div>
+          {!loadingPaths.has(project.rootPath) && visibleRootEntryCount === 0 && (
+            <div className="px-3 py-2 text-xs text-muted-foreground">
+              {showOnlyChanged ? '暂无未确认变更文件' : '目录为空'}
+            </div>
           )}
         </div>
       </div>
@@ -1489,10 +1932,10 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
           <div className="px-4 py-2 border-b border-border bg-card flex items-center justify-between">
             <div className="min-w-0">
               <div className="text-sm font-medium text-foreground truncate">
-                {selectedFile?.name || '文件预览'}
+                {selectedFile?.name || (selectedPath ? '文件预览（当前项不可预览）' : '文件预览')}
               </div>
               <div className="text-[11px] text-muted-foreground truncate">
-                {selectedFile?.path || '请选择文件'}
+                {selectedFile?.path || selectedPath || '请选择文件'}
               </div>
             </div>
             {selectedFile && (

@@ -220,13 +220,18 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
         r#"CREATE TABLE IF NOT EXISTS mcp_change_logs (
             id TEXT PRIMARY KEY,
             server_name TEXT NOT NULL,
+            project_id TEXT,
             path TEXT NOT NULL,
             action TEXT NOT NULL,
+            change_kind TEXT,
             bytes INTEGER NOT NULL,
             sha256 TEXT,
             diff TEXT,
             session_id TEXT,
             run_id TEXT,
+            confirmed INTEGER NOT NULL DEFAULT 0,
+            confirmed_at TEXT,
+            confirmed_by TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )"#,
         r#"CREATE TABLE IF NOT EXISTS task_manager_tasks (
@@ -556,6 +561,26 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
     ensure_column(pool, "remote_connections", "jump_password", "TEXT")
         .await
         .ok();
+    ensure_column(pool, "mcp_change_logs", "change_kind", "TEXT")
+        .await
+        .ok();
+    ensure_column(pool, "mcp_change_logs", "project_id", "TEXT")
+        .await
+        .ok();
+    ensure_column(
+        pool,
+        "mcp_change_logs",
+        "confirmed",
+        "INTEGER NOT NULL DEFAULT 0",
+    )
+    .await
+    .ok();
+    ensure_column(pool, "mcp_change_logs", "confirmed_at", "TEXT")
+        .await
+        .ok();
+    ensure_column(pool, "mcp_change_logs", "confirmed_by", "TEXT")
+        .await
+        .ok();
 
     let indexes = vec![
         "CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id)",
@@ -581,8 +606,11 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
         "CREATE INDEX IF NOT EXISTS idx_archived_session_summary_messages_session_created_at ON archived_session_summary_messages(session_id, created_at)",
         "CREATE INDEX IF NOT EXISTS idx_session_summary_job_configs_user_id ON session_summary_job_configs(user_id)",
         "CREATE INDEX IF NOT EXISTS idx_mcp_change_logs_server_name ON mcp_change_logs(server_name)",
+        "CREATE INDEX IF NOT EXISTS idx_mcp_change_logs_project_id ON mcp_change_logs(project_id)",
         "CREATE INDEX IF NOT EXISTS idx_mcp_change_logs_session_id ON mcp_change_logs(session_id)",
         "CREATE INDEX IF NOT EXISTS idx_mcp_change_logs_created_at ON mcp_change_logs(created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_mcp_change_logs_confirmed_created_at ON mcp_change_logs(confirmed, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_mcp_change_logs_path ON mcp_change_logs(path)",
         "CREATE INDEX IF NOT EXISTS idx_task_manager_tasks_session_turn ON task_manager_tasks(session_id, conversation_turn_id)",
         "CREATE INDEX IF NOT EXISTS idx_task_manager_tasks_session_created_at ON task_manager_tasks(session_id, created_at)",
         "CREATE INDEX IF NOT EXISTS idx_task_manager_tasks_turn_created_at ON task_manager_tasks(conversation_turn_id, created_at)",

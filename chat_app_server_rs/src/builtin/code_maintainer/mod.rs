@@ -20,6 +20,7 @@ use crate::core::tool_io::text_result;
 pub struct CodeMaintainerOptions {
     pub server_name: String,
     pub root: PathBuf,
+    pub project_id: Option<String>,
     pub allow_writes: bool,
     pub max_file_bytes: i64,
     pub max_write_bytes: i64,
@@ -60,7 +61,8 @@ impl CodeMaintainerService {
         ensure_dir(&root)
             .map_err(|err| format!("create workspace dir {} failed: {}", root.display(), err))?;
 
-        let change_log = ChangeLogStore::new(&server_name, opts.db_path.clone())?;
+        let change_log =
+            ChangeLogStore::new(&server_name, opts.project_id.clone(), opts.db_path.clone())?;
         let change_log = Arc::new(Mutex::new(change_log));
 
         let fs_ops = FsOps::new(
@@ -269,6 +271,7 @@ impl CodeMaintainerService {
                         .and_then(|v| v.as_str())
                         .ok_or("content is required".to_string())?;
                     let target = fs_ops.resolve_path(path)?;
+                    let existed_before = target.exists();
                     let before_snapshot = read_text_for_diff(&target, max_file_bytes)
                         .unwrap_or_else(DiffInput::omitted);
                     let result = fs_ops.write_file(path, content)?;
@@ -280,6 +283,7 @@ impl CodeMaintainerService {
                         .log_change(
                             &result.path,
                             "write",
+                            if existed_before { "edit" } else { "create" },
                             result.bytes,
                             &result.sha256,
                             ctx.session_id,
@@ -321,6 +325,7 @@ impl CodeMaintainerService {
                         .and_then(|v| v.as_str())
                         .ok_or("content is required".to_string())?;
                     let target = fs_ops.resolve_path(path)?;
+                    let existed_before = target.exists();
                     let before_snapshot = read_text_for_diff(&target, max_file_bytes)
                         .unwrap_or_else(DiffInput::omitted);
                     let after_snapshot = if let Some(reason) = before_snapshot.reason.clone() {
@@ -338,6 +343,7 @@ impl CodeMaintainerService {
                         .log_change(
                             &result.path,
                             "append",
+                            if existed_before { "edit" } else { "create" },
                             result.bytes,
                             &result.sha256,
                             ctx.session_id,
@@ -380,13 +386,33 @@ impl CodeMaintainerService {
                     } else {
                         DiffInput::text(String::new())
                     };
-                    let deleted_path = fs_ops.delete_path(path)?;
+                    let delete_result = fs_ops.delete_path(path)?;
+                    let exists_after_delete = target.exists();
+                    if delete_result.deleted && exists_after_delete {
+                        return Err(format!(
+                            "Delete reported success but path still exists: {}",
+                            delete_result.path
+                        ));
+                    }
+                    if !delete_result.deleted {
+                        return Ok(text_result(json!({
+                            "result": {
+                                "path": delete_result.path,
+                                "deleted": false,
+                                "exists_after_delete": exists_after_delete,
+                                "already_absent": true
+                            },
+                            "message": "Path already absent. No file-system change was applied.",
+                            "hint": "Verify the exact path with list_dir before retrying delete."
+                        })));
+                    }
                     let diff = build_diff(before_snapshot, after_snapshot);
                     let record = change_log
                         .lock()
                         .map_err(|_| "change log unavailable".to_string())?
                         .log_change(
-                            &deleted_path,
+                            &delete_result.path,
+                            "delete",
                             "delete",
                             0,
                             "",
@@ -394,9 +420,15 @@ impl CodeMaintainerService {
                             ctx.run_id,
                             diff,
                         )?;
-                    Ok(text_result(
-                        json!({ "result": { "path": deleted_path }, "change": record }),
-                    ))
+                    Ok(text_result(json!({
+                        "result": {
+                            "path": delete_result.path,
+                            "deleted": true,
+                            "exists_after_delete": exists_after_delete,
+                            "already_absent": false
+                        },
+                        "change": record
+                    })))
                 }),
             );
         }
@@ -442,13 +474,50 @@ impl CodeMaintainerService {
                         let store = change_log
                             .lock()
                             .map_err(|_| "change log unavailable".to_string())?;
-                        for path in result.updated.iter().chain(result.added.iter()) {
+                        for path in &result.updated {
                             let full_path = fs_ops.resolve_path(path)?;
                             let content = std::fs::read(&full_path).map_err(|err| err.to_string())?;
                             let hash = sha256_bytes(&content);
                             let before_snapshot = before_snapshots
                                 .remove(path)
-                                .unwrap_or_else(|| DiffInput::text(String::new()));
+                                .unwrap_or(DiffInput {
+                                    text: None,
+                                    reason: None,
+                                });
+                            let after_snapshot = read_text_for_diff(&full_path, max_file_bytes)
+                                .unwrap_or_else(DiffInput::omitted);
+                            let change_kind = if before_snapshot.text.is_none()
+                                && before_snapshot.reason.is_none()
+                            {
+                                "create"
+                            } else {
+                                "edit"
+                            };
+                            let diff = build_diff(before_snapshot, after_snapshot)
+                                .or_else(|| patch_diffs.get(path).cloned());
+                            store.log_change(
+                                path,
+                                "write",
+                                change_kind,
+                                content.len() as i64,
+                                &hash,
+                                ctx.session_id,
+                                ctx.run_id,
+                                diff,
+                            )?;
+                            hashes.push(json!({ "path": path, "sha256": hash }));
+                        }
+
+                        for path in &result.added {
+                            let full_path = fs_ops.resolve_path(path)?;
+                            let content = std::fs::read(&full_path).map_err(|err| err.to_string())?;
+                            let hash = sha256_bytes(&content);
+                            let before_snapshot = before_snapshots
+                                .remove(path)
+                                .unwrap_or(DiffInput {
+                                    text: None,
+                                    reason: None,
+                                });
                             let after_snapshot = read_text_for_diff(&full_path, max_file_bytes)
                                 .unwrap_or_else(DiffInput::omitted);
                             let diff = build_diff(before_snapshot, after_snapshot)
@@ -456,6 +525,7 @@ impl CodeMaintainerService {
                             store.log_change(
                                 path,
                                 "write",
+                                "create",
                                 content.len() as i64,
                                 &hash,
                                 ctx.session_id,
@@ -472,7 +542,16 @@ impl CodeMaintainerService {
                             let after_snapshot = DiffInput::text(String::new());
                             let diff = build_diff(before_snapshot, after_snapshot)
                                 .or_else(|| patch_diffs.get(path).cloned());
-                            store.log_change(path, "delete", 0, "", ctx.session_id, ctx.run_id, diff)?;
+                            store.log_change(
+                                path,
+                                "delete",
+                                "delete",
+                                0,
+                                "",
+                                ctx.session_id,
+                                ctx.run_id,
+                                diff,
+                            )?;
                         }
                     }
 

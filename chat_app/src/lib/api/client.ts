@@ -220,6 +220,20 @@ class ApiClient {
     return this.request<any[]>(`/projects/${projectId}/changes${query}`);
   }
 
+  async getProjectChangeSummary(projectId: string): Promise<any> {
+    return this.request<any>(`/projects/${projectId}/changes/summary`);
+  }
+
+  async confirmProjectChanges(
+    projectId: string,
+    payload: { mode?: 'all' | 'paths' | 'change_ids'; paths?: string[]; change_ids?: string[] }
+  ): Promise<any> {
+    return this.request<any>(`/projects/${projectId}/changes/confirm`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
   // 终端相关API
   async listTerminals(userId?: string): Promise<any[]> {
     const params = userId ? `?user_id=${encodeURIComponent(userId)}` : '';

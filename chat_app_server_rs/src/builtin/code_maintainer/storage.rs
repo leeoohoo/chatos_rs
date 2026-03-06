@@ -3,7 +3,7 @@ use crate::db::{get_db_sync, Database};
 use mongodb::bson::doc;
 use mongodb::Database as MongoDatabase;
 use serde::Serialize;
-use sqlx::SqlitePool;
+use sqlx::{Row, SqlitePool};
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
@@ -13,6 +13,7 @@ use tracing::warn;
 pub struct ChangeLogStore {
     backend: ChangeLogBackend,
     server_name: String,
+    project_id: Option<String>,
 }
 
 #[derive(Clone)]
@@ -26,18 +27,30 @@ enum ChangeLogBackend {
 pub struct ChangeRecord {
     pub id: String,
     pub server_name: String,
+    pub project_id: Option<String>,
     pub path: String,
     pub action: String,
+    pub change_kind: String,
     pub bytes: i64,
     pub sha256: String,
     pub diff: Option<String>,
     pub session_id: String,
     pub run_id: String,
+    pub confirmed: bool,
+    pub confirmed_at: Option<String>,
+    pub confirmed_by: Option<String>,
     pub created_at: String,
 }
 
 impl ChangeLogStore {
-    pub fn new(server_name: &str, db_path: Option<String>) -> Result<Self, String> {
+    pub fn new(
+        server_name: &str,
+        project_id: Option<String>,
+        db_path: Option<String>,
+    ) -> Result<Self, String> {
+        let project_id = project_id
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
         if let Some(path) = db_path {
             let path = PathBuf::from(path);
             if let Some(parent) = path.parent() {
@@ -46,6 +59,7 @@ impl ChangeLogStore {
             return Ok(Self {
                 backend: ChangeLogBackend::Jsonl { path },
                 server_name: server_name.to_string(),
+                project_id: project_id.clone(),
             });
         }
 
@@ -56,6 +70,7 @@ impl ChangeLogStore {
                     Ok(Self {
                         backend: ChangeLogBackend::Sqlite { pool: pool.clone() },
                         server_name: server_name.to_string(),
+                        project_id: project_id.clone(),
                     })
                 }
                 Database::Mongo { db, .. } => {
@@ -63,6 +78,7 @@ impl ChangeLogStore {
                     Ok(Self {
                         backend: ChangeLogBackend::Mongo { db: db.clone() },
                         server_name: server_name.to_string(),
+                        project_id: project_id.clone(),
                     })
                 }
             },
@@ -75,6 +91,7 @@ impl ChangeLogStore {
                 Ok(Self {
                     backend: ChangeLogBackend::Jsonl { path },
                     server_name: server_name.to_string(),
+                    project_id: project_id.clone(),
                 })
             }
         }
@@ -84,6 +101,7 @@ impl ChangeLogStore {
         &self,
         path: &str,
         action: &str,
+        change_kind: &str,
         bytes: i64,
         sha256: &str,
         session_id: &str,
@@ -93,13 +111,18 @@ impl ChangeLogStore {
         let record = ChangeRecord {
             id: generate_id("change"),
             server_name: self.server_name.clone(),
+            project_id: self.project_id.clone(),
             path: path.to_string(),
             action: action.to_string(),
+            change_kind: change_kind.to_string(),
             bytes,
             sha256: sha256.to_string(),
             diff,
             session_id: session_id.to_string(),
             run_id: run_id.to_string(),
+            confirmed: false,
+            confirmed_at: None,
+            confirmed_by: None,
             created_at: now_iso(),
         };
         match &self.backend {
@@ -135,18 +158,23 @@ fn default_jsonl_path(server_name: &str) -> PathBuf {
 async fn sqlite_insert(pool: SqlitePool, record: ChangeRecord) -> Result<(), String> {
     sqlx::query(
         r#"INSERT INTO mcp_change_logs
-        (id, server_name, path, action, bytes, sha256, diff, session_id, run_id, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+        (id, server_name, project_id, path, action, change_kind, bytes, sha256, diff, session_id, run_id, confirmed, confirmed_at, confirmed_by, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
     )
     .bind(&record.id)
     .bind(&record.server_name)
+    .bind(&record.project_id)
     .bind(&record.path)
     .bind(&record.action)
+    .bind(&record.change_kind)
     .bind(record.bytes)
     .bind(&record.sha256)
     .bind(&record.diff)
     .bind(&record.session_id)
     .bind(&record.run_id)
+    .bind(record.confirmed)
+    .bind(&record.confirmed_at)
+    .bind(&record.confirmed_by)
     .bind(&record.created_at)
     .execute(&pool)
     .await
@@ -160,13 +188,18 @@ async fn mongo_insert(db: MongoDatabase, record: ChangeRecord) -> Result<(), Str
         "_id": &record.id,
         "id": &record.id,
         "server_name": &record.server_name,
+        "project_id": record.project_id.clone(),
         "path": &record.path,
         "action": &record.action,
+        "change_kind": &record.change_kind,
         "bytes": record.bytes,
         "sha256": &record.sha256,
         "diff": record.diff.clone(),
         "session_id": &record.session_id,
         "run_id": &record.run_id,
+        "confirmed": record.confirmed,
+        "confirmed_at": record.confirmed_at.clone(),
+        "confirmed_by": record.confirmed_by.clone(),
         "created_at": &record.created_at,
     };
     collection
@@ -183,21 +216,61 @@ fn ensure_sqlite_table(pool: &SqlitePool) -> Result<(), String> {
             r#"CREATE TABLE IF NOT EXISTS mcp_change_logs (
                 id TEXT PRIMARY KEY,
                 server_name TEXT NOT NULL,
+                project_id TEXT,
                 path TEXT NOT NULL,
                 action TEXT NOT NULL,
+                change_kind TEXT,
                 bytes INTEGER NOT NULL,
                 sha256 TEXT,
                 diff TEXT,
                 session_id TEXT,
                 run_id TEXT,
+                confirmed INTEGER NOT NULL DEFAULT 0,
+                confirmed_at TEXT,
+                confirmed_by TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )"#,
         )
         .execute(&pool)
         .await
         .map_err(|err| err.to_string())?;
+        ensure_column_sqlite(&pool, "mcp_change_logs", "project_id", "TEXT").await?;
+        ensure_column_sqlite(&pool, "mcp_change_logs", "change_kind", "TEXT").await?;
+        ensure_column_sqlite(
+            &pool,
+            "mcp_change_logs",
+            "confirmed",
+            "INTEGER NOT NULL DEFAULT 0",
+        )
+        .await?;
+        ensure_column_sqlite(&pool, "mcp_change_logs", "confirmed_at", "TEXT").await?;
+        ensure_column_sqlite(&pool, "mcp_change_logs", "confirmed_by", "TEXT").await?;
         Ok(())
     })
+}
+
+async fn ensure_column_sqlite(
+    pool: &SqlitePool,
+    table: &str,
+    column: &str,
+    ddl: &str,
+) -> Result<(), String> {
+    let rows = sqlx::query(&format!("PRAGMA table_info({table})"))
+        .fetch_all(pool)
+        .await
+        .map_err(|err| err.to_string())?;
+    let exists = rows.iter().any(|row| {
+        let name: String = row.try_get("name").unwrap_or_default();
+        name == column
+    });
+    if !exists {
+        let sql = format!("ALTER TABLE {table} ADD COLUMN {column} {ddl}");
+        sqlx::query(&sql)
+            .execute(pool)
+            .await
+            .map_err(|err| err.to_string())?;
+    }
+    Ok(())
 }
 
 fn ensure_mongo_indexes(db: &MongoDatabase) -> Result<(), String> {

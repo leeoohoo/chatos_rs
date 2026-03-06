@@ -176,6 +176,7 @@ pub fn build_builtin_tool_service(server: &McpBuiltinServer) -> Result<BuiltinTo
             let service = CodeMaintainerService::new(CodeMaintainerOptions {
                 server_name: server.name.clone(),
                 root: std::path::PathBuf::from(&server.workspace_dir),
+                project_id: server.project_id.clone(),
                 allow_writes: false,
                 max_file_bytes: server.max_file_bytes,
                 max_write_bytes: server.max_write_bytes,
@@ -192,6 +193,7 @@ pub fn build_builtin_tool_service(server: &McpBuiltinServer) -> Result<BuiltinTo
             let service = CodeMaintainerService::new(CodeMaintainerOptions {
                 server_name: server.name.clone(),
                 root: std::path::PathBuf::from(&server.workspace_dir),
+                project_id: server.project_id.clone(),
                 allow_writes: server.allow_writes,
                 max_file_bytes: server.max_file_bytes,
                 max_write_bytes: server.max_write_bytes,
