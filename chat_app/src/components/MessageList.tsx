@@ -32,6 +32,8 @@ export const MessageList: React.FC<MessageListProps> = ({
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const scrollRafRef = useRef<number | null>(null);
+  const initialScrollRafRef = useRef<number | null>(null);
+  const pendingSessionInitialScrollRef = useRef<boolean>(true);
   const expandingWindowRef = useRef(false);
   const prevVisibleCountRef = useRef(0);
   const [autoScroll, setAutoScroll] = useState<boolean>(true);
@@ -345,6 +347,51 @@ export const MessageList: React.FC<MessageListProps> = ({
   }, [messages]);
 
   useEffect(() => {
+    pendingSessionInitialScrollRef.current = true;
+    if (initialScrollRafRef.current !== null) {
+      cancelAnimationFrame(initialScrollRafRef.current);
+      initialScrollRafRef.current = null;
+    }
+    setIsAtBottom(true);
+    setAutoScroll(false);
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (!pendingSessionInitialScrollRef.current) {
+      return;
+    }
+
+    if (visibleMessages.length === 0 && !isLoading && !hasMore) {
+      pendingSessionInitialScrollRef.current = false;
+      return;
+    }
+
+    if (initialScrollRafRef.current !== null) {
+      cancelAnimationFrame(initialScrollRafRef.current);
+      initialScrollRafRef.current = null;
+    }
+
+    initialScrollRafRef.current = requestAnimationFrame(() => {
+      initialScrollRafRef.current = null;
+      const el = scrollRef.current;
+      if (!el) {
+        return;
+      }
+      el.scrollTop = el.scrollHeight;
+      setIsAtBottom(true);
+      setAutoScroll(isStreaming);
+      pendingSessionInitialScrollRef.current = false;
+    });
+
+    return () => {
+      if (initialScrollRafRef.current !== null) {
+        cancelAnimationFrame(initialScrollRafRef.current);
+        initialScrollRafRef.current = null;
+      }
+    };
+  }, [sessionId, visibleMessages.length, isLoading, hasMore, isStreaming]);
+
+  useEffect(() => {
     const target = scrollRef.current;
     if (!target) {
       return;
@@ -503,6 +550,10 @@ export const MessageList: React.FC<MessageListProps> = ({
       if (scrollRafRef.current !== null) {
         cancelAnimationFrame(scrollRafRef.current);
         scrollRafRef.current = null;
+      }
+      if (initialScrollRafRef.current !== null) {
+        cancelAnimationFrame(initialScrollRafRef.current);
+        initialScrollRafRef.current = null;
       }
       expandingWindowRef.current = false;
     };
