@@ -67,15 +67,24 @@ export function createStreamingActions({ set, get, client }: Deps) {
       });
 
       try {
-        const { selectedModelId, selectedAgentId, aiModelConfigs, agents } = get();
+        const {
+          selectedModelId,
+          selectedAgentId,
+          aiModelConfigs,
+          agents,
+          sessionAiSelectionBySession,
+        } = get();
+        const sessionAiSelection = sessionAiSelectionBySession?.[currentSessionId];
+        const effectiveSelectedAgentId = sessionAiSelection?.selectedAgentId ?? selectedAgentId;
+        const effectiveSelectedModelId = sessionAiSelection?.selectedModelId ?? selectedModelId;
         let activeModel: any = null;
-        if (selectedAgentId) {
-          const agent = agents.find((a: any) => a.id === selectedAgentId);
+        if (effectiveSelectedAgentId) {
+          const agent = agents.find((a: any) => a.id === effectiveSelectedAgentId);
           if (agent) {
             activeModel = aiModelConfigs.find((m: any) => m.id === agent.ai_model_config_id);
           }
-        } else if (selectedModelId) {
-          activeModel = aiModelConfigs.find((m: any) => m.id === selectedModelId);
+        } else if (effectiveSelectedModelId) {
+          activeModel = aiModelConfigs.find((m: any) => m.id === effectiveSelectedModelId);
         }
         const useResponses = activeModel?.supports_responses === true;
         await client.stopChat(currentSessionId, { useResponses });

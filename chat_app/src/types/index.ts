@@ -43,7 +43,7 @@ export interface Session {
   pinned: boolean;
   archived: boolean;
   status?: 'active' | 'archiving' | 'archived' | string;
-  metadata?: string | null;
+  metadata?: Record<string, any> | string | null;
 }
 
 // 项目接口

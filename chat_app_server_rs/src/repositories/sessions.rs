@@ -41,6 +41,29 @@ fn normalize_from_doc(doc: &Document) -> Option<Session> {
         .get_str("metadata")
         .ok()
         .and_then(|s| serde_json::from_str::<Value>(s).ok());
+    let (selected_model_id, selected_agent_id) = match &metadata {
+        Some(Value::Object(metadata_map)) => match metadata_map.get("ui_chat_selection") {
+            Some(Value::Object(selection)) => {
+                let model = selection
+                    .get("selected_model_id")
+                    .or_else(|| selection.get("selectedModelId"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToOwned::to_owned);
+                let agent = selection
+                    .get("selected_agent_id")
+                    .or_else(|| selection.get("selectedAgentId"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToOwned::to_owned);
+                (model, agent)
+            }
+            _ => (None, None),
+        },
+        _ => (None, None),
+    };
     let user_id = doc.get_str("user_id").ok().map(|s| s.to_string());
     let project_id = doc.get_str("project_id").ok().map(|s| s.to_string());
     let status = doc
@@ -56,6 +79,8 @@ fn normalize_from_doc(doc: &Document) -> Option<Session> {
         title,
         description,
         metadata,
+        selected_model_id,
+        selected_agent_id,
         user_id,
         project_id,
         status,

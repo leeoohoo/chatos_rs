@@ -140,7 +140,7 @@ class ApiClient {
     return this.request<any[]>(`/sessions${queryString ? `?${queryString}` : ''}`);
   }
 
-  async createSession(data: { id: string; title: string; user_id: string; project_id?: string }): Promise<any> {
+  async createSession(data: { id: string; title: string; user_id: string; project_id?: string; metadata?: any }): Promise<any> {
     debugLog('🔍 createSession API调用:', data);
     return this.request<any>('/sessions', {
       method: 'POST',
@@ -150,6 +150,16 @@ class ApiClient {
 
   async getSession(id: string): Promise<any> {
     return this.request<any>(`/sessions/${id}`);
+  }
+
+  async updateSession(
+    id: string,
+    data: { title?: string; description?: string; metadata?: any },
+  ): Promise<any> {
+    return this.request<any>(`/sessions/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
   }
 
   async deleteSession(id: string): Promise<any> {

@@ -320,6 +320,7 @@ export function createSendMessageHandler({
       activeSystemContext,
       selectedAgentId,
       agents,
+      sessionAiSelectionBySession,
     } = get();
 
     if (!currentSessionId) {
@@ -333,16 +334,20 @@ export function createSendMessageHandler({
       return;
     }
 
+    const sessionAiSelection = sessionAiSelectionBySession?.[currentSessionId];
+    const effectiveSelectedAgentId = sessionAiSelection?.selectedAgentId ?? selectedAgentId;
+    const effectiveSelectedModelId = sessionAiSelection?.selectedModelId ?? selectedModelId;
+
     // 需要选择模型或智能体之一
     let selectedModel: any = null;
     let selectedAgent: any = null;
-    if (selectedAgentId) {
-      selectedAgent = agents.find((a: any) => a.id === selectedAgentId);
+    if (effectiveSelectedAgentId) {
+      selectedAgent = agents.find((a: any) => a.id === effectiveSelectedAgentId);
       if (!selectedAgent || selectedAgent.enabled === false) {
         throw new Error('选择的智能体不可用');
       }
-    } else if (selectedModelId) {
-      selectedModel = aiModelConfigs.find((model: any) => model.id === selectedModelId);
+    } else if (effectiveSelectedModelId) {
+      selectedModel = aiModelConfigs.find((model: any) => model.id === effectiveSelectedModelId);
       if (!selectedModel || !selectedModel.enabled) {
         throw new Error('选择的模型不可用');
       }

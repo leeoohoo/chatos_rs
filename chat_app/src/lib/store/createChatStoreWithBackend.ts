@@ -95,6 +95,7 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                     selectedModelId: null,
                     agents: [],
                     selectedAgentId: null,
+                    sessionAiSelectionBySession: {},
                     systemContexts: [],
                     activeSystemContext: null,
                     applications: [],
@@ -228,7 +229,7 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                     ...createAiModelActions({ set, get, client, getUserIdParam }),
 
                     // 智能体/系统上下文（拆分到独立模块）
-                    ...createAgentActions({ set, client, getUserIdParam }),
+                    ...createAgentActions({ set, get, client, getUserIdParam }),
                     ...createSystemContextActions({ set, client, getUserIdParam }),
 
                     // 错误处理
@@ -252,6 +253,8 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                         sidebarOpen: state.sidebarOpen,
                         chatConfig: state.chatConfig,
                         selectedModelId: state.selectedModelId,
+                        selectedAgentId: state.selectedAgentId,
+                        sessionAiSelectionBySession: state.sessionAiSelectionBySession,
                     }),
                 }
             )

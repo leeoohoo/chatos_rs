@@ -6,6 +6,24 @@ export const normalizeSession = (raw: any): Session => {
     ? raw.status.toLowerCase()
     : (raw?.archived ? 'archived' : 'active');
   const archived = raw?.archived === true || status === 'archiving' || status === 'archived';
+  const selectedModelId = typeof raw?.selected_model_id === 'string'
+    ? raw.selected_model_id.trim()
+    : '';
+  const selectedAgentId = typeof raw?.selected_agent_id === 'string'
+    ? raw.selected_agent_id.trim()
+    : '';
+  let metadata = raw?.metadata ?? null;
+  const hasSelection = selectedModelId.length > 0 || selectedAgentId.length > 0;
+  if (hasSelection) {
+    const metadataObject = (metadata && typeof metadata === 'object' && !Array.isArray(metadata))
+      ? { ...metadata }
+      : {};
+    metadataObject.ui_chat_selection = {
+      selected_model_id: selectedModelId.length > 0 ? selectedModelId : null,
+      selected_agent_id: selectedAgentId.length > 0 ? selectedAgentId : null,
+    };
+    metadata = metadataObject;
+  }
 
   return {
     id: raw?.id,
@@ -18,7 +36,7 @@ export const normalizeSession = (raw: any): Session => {
     archived,
     status,
     tags: raw?.tags ?? null,
-    metadata: raw?.metadata ?? null,
+    metadata,
   };
 };
 

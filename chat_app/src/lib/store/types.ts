@@ -74,6 +74,11 @@ export interface UiPromptResponsePayload {
   reason?: string;
 }
 
+export interface SessionAiSelection {
+  selectedModelId: string | null;
+  selectedAgentId: string | null;
+}
+
 export interface ChatState {
   // 会话相关
   sessions: Session[];
@@ -122,6 +127,7 @@ export interface ChatState {
   selectedModelId: string | null;
   agents: AgentConfig[];
   selectedAgentId: string | null;
+  sessionAiSelectionBySession: Record<string, SessionAiSelection>;
   systemContexts: SystemContext[];
   activeSystemContext: SystemContext | null;
   // 应用相关

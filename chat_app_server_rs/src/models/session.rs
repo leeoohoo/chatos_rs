@@ -11,6 +11,10 @@ pub struct Session {
     pub title: String,
     pub description: Option<String>,
     pub metadata: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selected_model_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selected_agent_id: Option<String>,
     pub user_id: Option<String>,
     pub project_id: Option<String>,
     pub status: String,
@@ -35,13 +39,19 @@ pub struct SessionRow {
 
 impl SessionRow {
     pub fn to_session(self) -> Session {
+        let metadata = self
+            .metadata
+            .and_then(|m| serde_json::from_str::<Value>(&m).ok());
+        let (selected_model_id, selected_agent_id) =
+            extract_selection_from_metadata(metadata.as_ref());
+
         Session {
             id: self.id,
             title: self.title,
             description: self.description,
-            metadata: self
-                .metadata
-                .and_then(|m| serde_json::from_str::<Value>(&m).ok()),
+            metadata,
+            selected_model_id,
+            selected_agent_id,
             user_id: self.user_id,
             project_id: self.project_id,
             status: if self.status.trim().is_empty() {
@@ -65,11 +75,14 @@ impl Session {
         project_id: Option<String>,
     ) -> Session {
         let now = crate::core::time::now_rfc3339();
+        let (selected_model_id, selected_agent_id) = extract_selection_from_metadata(metadata.as_ref());
         Session {
             id: Uuid::new_v4().to_string(),
             title,
             description,
             metadata,
+            selected_model_id,
+            selected_agent_id,
             user_id,
             project_id,
             status: "active".to_string(),
@@ -78,6 +91,33 @@ impl Session {
             updated_at: now,
         }
     }
+}
+
+fn extract_selection_from_metadata(metadata: Option<&Value>) -> (Option<String>, Option<String>) {
+    let Some(Value::Object(metadata_map)) = metadata else {
+        return (None, None);
+    };
+    let Some(Value::Object(selection)) = metadata_map.get("ui_chat_selection") else {
+        return (None, None);
+    };
+
+    let selected_model_id = selection
+        .get("selected_model_id")
+        .or_else(|| selection.get("selectedModelId"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+
+    let selected_agent_id = selection
+        .get("selected_agent_id")
+        .or_else(|| selection.get("selectedAgentId"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+
+    (selected_model_id, selected_agent_id)
 }
 
 pub struct SessionService;

@@ -1,13 +1,16 @@
 import type ApiClient from '../../api/client';
+import { mergeSessionAiSelectionIntoMetadata } from '../helpers/sessionAiSelection';
 import { debugLog } from '@/lib/utils';
 
 interface Deps {
   set: any;
+  get: any;
   client: ApiClient;
   getUserIdParam: () => string;
 }
 
-export function createAgentActions({ set, client, getUserIdParam }: Deps) {
+export function createAgentActions({ set, get, client, getUserIdParam }: Deps) {
+  void get;
   return {
     loadAgents: async () => {
       try {
@@ -27,12 +30,49 @@ export function createAgentActions({ set, client, getUserIdParam }: Deps) {
     },
 
     setSelectedAgent: (agentId: string | null) => {
+      let sessionIdToPersist: string | null = null;
+      let metadataToPersist: Record<string, any> | null = null;
+
       set((state: any) => {
         state.selectedAgentId = agentId;
         if (agentId) {
           state.selectedModelId = null;
         }
+        const sessionId = state.currentSessionId;
+        if (sessionId) {
+          const nextSelection = {
+            selectedModelId: state.selectedModelId ?? null,
+            selectedAgentId: state.selectedAgentId ?? null,
+          };
+          if (!state.sessionAiSelectionBySession) {
+            state.sessionAiSelectionBySession = {};
+          }
+          state.sessionAiSelectionBySession[sessionId] = nextSelection;
+
+          const sessionIndex = state.sessions.findIndex((s: any) => s.id === sessionId);
+          const baseMetadata = sessionIndex >= 0
+            ? state.sessions[sessionIndex]?.metadata
+            : state.currentSession?.metadata;
+          const nextMetadata = mergeSessionAiSelectionIntoMetadata(baseMetadata, nextSelection);
+          if (sessionIndex >= 0) {
+            state.sessions[sessionIndex].metadata = nextMetadata;
+          }
+          if (state.currentSession?.id === sessionId) {
+            state.currentSession.metadata = nextMetadata;
+          }
+
+          sessionIdToPersist = sessionId;
+          metadataToPersist = nextMetadata;
+        }
       });
+
+      if (sessionIdToPersist) {
+        void client
+          .updateSession(sessionIdToPersist, { metadata: metadataToPersist })
+          .catch((error) => {
+            console.warn('Failed to persist selected agent to session metadata:', error);
+          });
+      }
     },
   };
 }

@@ -2,6 +2,11 @@ import type { Session } from '../../../types';
 import type ApiClient from '../../api/client';
 import { fetchSession, normalizeSession } from '../helpers/sessions';
 import { applyTurnProcessCache, fetchSessionMessages } from '../helpers/messages';
+import {
+  mergeSessionAiSelectionIntoMetadata,
+  readSessionAiSelectionFromMetadata,
+} from '../helpers/sessionAiSelection';
+import type { SessionAiSelection } from '../types';
 import { debugLog, generateId } from '@/lib/utils';
 
 const cloneStreamingMessageDraft = <T,>(value: T): T => {
@@ -165,6 +170,15 @@ export function createSessionActions({
 
         set((state: any) => {
           state.sessions = deduped;
+          if (!state.sessionAiSelectionBySession) {
+            state.sessionAiSelectionBySession = {};
+          }
+          for (const session of deduped) {
+            const selection = readSessionAiSelectionFromMetadata(session?.metadata);
+            if (selection) {
+              state.sessionAiSelectionBySession[session.id] = selection;
+            }
+          }
           if (!options.silent) {
             state.isLoading = false;
           }
@@ -224,6 +238,15 @@ export function createSessionActions({
     createSession: async (title = 'New Chat') => {
       try {
         const { userId, projectId } = getSessionParams();
+        const stateBeforeCreate = get();
+        const inheritedAiSelection: SessionAiSelection = {
+          selectedModelId: stateBeforeCreate.selectedModelId ?? null,
+          selectedAgentId: stateBeforeCreate.selectedAgentId ?? null,
+        };
+        const initialMetadata = mergeSessionAiSelectionIntoMetadata(
+          null,
+          inheritedAiSelection,
+        );
 
         debugLog('🔍 createSession 使用参数:', { userId, projectId, title });
         debugLog('🔍 createSession 自定义参数:', { customUserId, customProjectId });
@@ -234,7 +257,13 @@ export function createSessionActions({
           isCustomProjectId: !!customProjectId,
         });
 
-        const sessionData: { id: string; title: string; user_id: string; project_id?: string } = {
+        const sessionData: {
+          id: string;
+          title: string;
+          user_id: string;
+          project_id?: string;
+          metadata?: Record<string, any>;
+        } = {
           id: generateId(),
           title,
           user_id: userId,
@@ -242,28 +271,33 @@ export function createSessionActions({
         if (projectId) {
           sessionData.project_id = projectId;
         }
+        if (Object.keys(initialMetadata).length > 0) {
+          sessionData.metadata = initialMetadata;
+        }
 
         const session = await client.createSession(sessionData);
         debugLog('✅ createSession API调用成功:', session);
 
-        const formattedSession = {
-          id: session.id,
-          title: session.title,
-          createdAt: new Date(session.created_at),
-          updatedAt: new Date(session.updated_at),
-          messageCount: 0,
-          tokenUsage: 0,
-          pinned: false,
-          archived: false,
-          status: 'active',
-          tags: null,
-          metadata: null,
-        };
+        const formattedSession = normalizeSession({
+          ...session,
+          metadata: session?.metadata ?? (Object.keys(initialMetadata).length > 0 ? initialMetadata : null),
+        });
+        const selectionFromMetadata = readSessionAiSelectionFromMetadata(formattedSession.metadata);
+        const effectiveSelection = selectionFromMetadata || inheritedAiSelection;
 
         set((state: any) => {
           state.sessions.unshift(formattedSession);
           state.currentSessionId = formattedSession.id;
           state.currentSession = formattedSession;
+          if (!state.sessionAiSelectionBySession) {
+            state.sessionAiSelectionBySession = {};
+          }
+          state.sessionAiSelectionBySession[formattedSession.id] = {
+            selectedModelId: effectiveSelection.selectedModelId,
+            selectedAgentId: effectiveSelection.selectedAgentId,
+          };
+          state.selectedModelId = effectiveSelection.selectedModelId;
+          state.selectedAgentId = effectiveSelection.selectedAgentId;
           state.messages = [];
           if (!state.sessionStreamingMessageDrafts) {
             state.sessionStreamingMessageDrafts = {};
@@ -288,6 +322,7 @@ export function createSessionActions({
 
     selectSession: async (sessionId: string) => {
       const beforeSelect = get();
+      const previousSessionId = beforeSelect.currentSessionId;
       const sameSessionState = beforeSelect.sessionChatState?.[sessionId];
       if (beforeSelect.currentSessionId === sessionId && sameSessionState?.isStreaming) {
         // 同一会话流式过程中仍允许切回聊天面板，避免在项目/终端面板点击会话无响应
@@ -307,6 +342,7 @@ export function createSessionActions({
         });
 
         const session = await fetchSession(client, sessionId);
+        const sessionAiSelectionFromMetadata = readSessionAiSelectionFromMetadata(session?.metadata);
         const messages = await fetchSessionMessages(client, sessionId, { limit: 50, offset: 0 });
         const stateSnapshot = get();
         const snapshotChatState = stateSnapshot.sessionChatState?.[sessionId];
@@ -406,6 +442,39 @@ export function createSessionActions({
 
           state.currentSessionId = sessionId;
           (state as any).currentSession = session;
+          const index = state.sessions.findIndex((s: any) => s.id === sessionId);
+          if (index !== -1 && session) {
+            state.sessions[index] = session;
+          }
+          const savedAiSelection = state.sessionAiSelectionBySession?.[sessionId];
+          if (savedAiSelection) {
+            state.selectedModelId = savedAiSelection.selectedModelId ?? null;
+            state.selectedAgentId = savedAiSelection.selectedAgentId ?? null;
+          } else if (sessionAiSelectionFromMetadata) {
+            if (!state.sessionAiSelectionBySession) {
+              state.sessionAiSelectionBySession = {};
+            }
+            state.sessionAiSelectionBySession[sessionId] = {
+              selectedModelId: sessionAiSelectionFromMetadata.selectedModelId ?? null,
+              selectedAgentId: sessionAiSelectionFromMetadata.selectedAgentId ?? null,
+            };
+            state.selectedModelId = sessionAiSelectionFromMetadata.selectedModelId ?? null;
+            state.selectedAgentId = sessionAiSelectionFromMetadata.selectedAgentId ?? null;
+          } else if (
+            (previousSessionId === null || previousSessionId === sessionId)
+            && (state.selectedModelId || state.selectedAgentId)
+          ) {
+            if (!state.sessionAiSelectionBySession) {
+              state.sessionAiSelectionBySession = {};
+            }
+            state.sessionAiSelectionBySession[sessionId] = {
+              selectedModelId: state.selectedModelId ?? null,
+              selectedAgentId: state.selectedAgentId ?? null,
+            };
+          } else {
+            state.selectedModelId = null;
+            state.selectedAgentId = null;
+          }
           state.messages = nextMessages;
           state.activePanel = 'chat';
           state.isLoading = false;
@@ -434,10 +503,28 @@ export function createSessionActions({
       }
     },
 
-    updateSession: async (sessionId: string, _updates: Partial<Session>) => {
+    updateSession: async (sessionId: string, updates: Partial<Session>) => {
       try {
-        console.warn('updateSession not implemented yet');
-        const updatedSession = null;
+        const payload: { title?: string; description?: string; metadata?: any } = {};
+        if (typeof updates?.title === 'string') {
+          payload.title = updates.title;
+        }
+        if (Object.prototype.hasOwnProperty.call(updates || {}, 'metadata')) {
+          payload.metadata = (updates as any).metadata ?? null;
+        }
+        if (Object.prototype.hasOwnProperty.call(updates || {}, 'description')) {
+          payload.description = (updates as any).description ?? null;
+        }
+
+        if (Object.keys(payload).length === 0) {
+          return;
+        }
+
+        const response = await client.updateSession(sessionId, payload);
+        const updatedSession = response ? normalizeSession(response) : null;
+        const selectionFromMetadata = readSessionAiSelectionFromMetadata(
+          updatedSession?.metadata ?? payload.metadata,
+        );
 
         set((state: any) => {
           const index = state.sessions.findIndex((s: any) => s.id === sessionId);
@@ -446,6 +533,19 @@ export function createSessionActions({
           }
           if (state.currentSessionId === sessionId) {
             state.currentSession = updatedSession;
+            if (selectionFromMetadata) {
+              state.selectedModelId = selectionFromMetadata.selectedModelId ?? null;
+              state.selectedAgentId = selectionFromMetadata.selectedAgentId ?? null;
+            }
+          }
+          if (selectionFromMetadata) {
+            if (!state.sessionAiSelectionBySession) {
+              state.sessionAiSelectionBySession = {};
+            }
+            state.sessionAiSelectionBySession[sessionId] = {
+              selectedModelId: selectionFromMetadata.selectedModelId ?? null,
+              selectedAgentId: selectionFromMetadata.selectedAgentId ?? null,
+            };
           }
         });
       } catch (error) {
@@ -483,9 +583,14 @@ export function createSessionActions({
           if (state.sessionTurnProcessCache && sessionId in state.sessionTurnProcessCache) {
             delete state.sessionTurnProcessCache[sessionId];
           }
+          if (state.sessionAiSelectionBySession && sessionId in state.sessionAiSelectionBySession) {
+            delete state.sessionAiSelectionBySession[sessionId];
+          }
           if (state.currentSessionId === sessionId) {
             state.currentSessionId = null;
             state.currentSession = null;
+            state.selectedModelId = null;
+            state.selectedAgentId = null;
             state.messages = [];
           }
           if (state.activePanel === 'chat' && state.currentSessionId === null) {
