@@ -20,6 +20,65 @@ export interface TaskReviewPanelState {
   error?: string | null;
 }
 
+export type UiPromptKind = 'kv' | 'choice' | 'mixed';
+
+export interface UiPromptField {
+  key: string;
+  label?: string;
+  description?: string;
+  placeholder?: string;
+  default?: string;
+  required?: boolean;
+  multiline?: boolean;
+  secret?: boolean;
+}
+
+export interface UiPromptChoiceOption {
+  value: string;
+  label?: string;
+  description?: string;
+}
+
+export interface UiPromptChoice {
+  multiple?: boolean;
+  options: UiPromptChoiceOption[];
+  default?: string | string[];
+  min_selections?: number;
+  max_selections?: number;
+}
+
+export interface UiPromptPayloadShape {
+  fields?: UiPromptField[];
+  choice?: UiPromptChoice;
+}
+
+export interface UiPromptPanelState {
+  promptId: string;
+  sessionId: string;
+  conversationTurnId: string;
+  toolCallId?: string | null;
+  kind: UiPromptKind;
+  title?: string;
+  message?: string;
+  allowCancel?: boolean;
+  timeoutMs?: number;
+  payload: UiPromptPayloadShape;
+  submitting?: boolean;
+  error?: string | null;
+}
+
+export interface UiPromptResponsePayload {
+  status: 'ok' | 'canceled';
+  values?: Record<string, string>;
+  selection?: string | string[];
+  reason?: string;
+}
+
+export interface SessionAiSelection {
+  selectedModelId: string | null;
+  selectedAgentId: string | null;
+}
+
 export interface ChatState {
   // 会话相关
   sessions: Session[];
@@ -54,6 +113,8 @@ export interface ChatState {
   sessionTurnProcessCache: Record<string, Record<string, Message[]>>;
   taskReviewPanel: TaskReviewPanelState | null;
   taskReviewPanelsBySession: Record<string, TaskReviewPanelState[]>;
+  uiPromptPanel: UiPromptPanelState | null;
+  uiPromptPanelsBySession: Record<string, UiPromptPanelState[]>;
 
   // UI状态
   sidebarOpen: boolean;
@@ -66,6 +127,7 @@ export interface ChatState {
   selectedModelId: string | null;
   agents: AgentConfig[];
   selectedAgentId: string | null;
+  sessionAiSelectionBySession: Record<string, SessionAiSelection>;
   systemContexts: SystemContext[];
   activeSystemContext: SystemContext | null;
   // 应用相关
@@ -157,6 +219,9 @@ export interface ChatActions {
   setTaskReviewPanel: (panel: TaskReviewPanelState | null) => void;
   upsertTaskReviewPanel: (panel: TaskReviewPanelState) => void;
   removeTaskReviewPanel: (reviewId: string, sessionId?: string) => void;
+  setUiPromptPanel: (panel: UiPromptPanelState | null) => void;
+  upsertUiPromptPanel: (panel: UiPromptPanelState) => void;
+  removeUiPromptPanel: (promptId: string, sessionId?: string) => void;
 
   // UI操作
   toggleSidebar: () => void;

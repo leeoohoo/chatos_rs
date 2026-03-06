@@ -112,6 +112,14 @@ impl AiRequestHandler {
             payload["stream"] = Value::Bool(true);
         }
 
+        if let Err(err) = validate_request_payload_size(&payload) {
+            error!(
+                "[AI_V3] request payload rejected before send: purpose={}, detail={}",
+                purpose, err
+            );
+            return Err(err);
+        }
+
         let url = format!("{}/responses", self.base_url.trim_end_matches('/'));
         let token = if let Some(session_id) = session_id.as_ref() {
             let token = CancellationToken::new();
@@ -382,5 +390,52 @@ impl AiRequestHandler {
             usage: stream_state.usage,
             response_id: stream_state.response_id,
         })
+    }
+}
+
+fn request_payload_max_bytes() -> usize {
+    std::env::var("AI_V3_REQUEST_BODY_MAX_BYTES")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(1_500_000)
+}
+
+fn validate_request_payload_size(payload: &Value) -> Result<(), String> {
+    let bytes = serde_json::to_vec(payload).map_err(|err| err.to_string())?;
+    let max_bytes = request_payload_max_bytes();
+    if bytes.len() > max_bytes {
+        return Err(format!(
+            "request body too large (precheck): payload_bytes={}, limit_bytes={}",
+            bytes.len(),
+            max_bytes
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::validate_request_payload_size;
+
+    #[test]
+    fn payload_precheck_accepts_small_payload() {
+        let payload = json!({
+            "model": "gpt-4o",
+            "input": [{"role": "user", "content": [{"type":"input_text","text":"hello"}]}]
+        });
+        assert!(validate_request_payload_size(&payload).is_ok());
+    }
+
+    #[test]
+    fn payload_precheck_rejects_oversized_payload() {
+        let payload = json!({
+            "model": "gpt-4o",
+            "input": [{"role": "user", "content": [{"type":"input_text","text":"a".repeat(1_700_000)}]}]
+        });
+        let err = validate_request_payload_size(&payload).expect_err("should reject");
+        assert!(err.contains("request body too large"));
     }
 }

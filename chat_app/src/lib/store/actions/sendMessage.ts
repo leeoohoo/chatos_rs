@@ -1,9 +1,17 @@
 import type { Message } from '../../../types';
 import type ApiClient from '../../api/client';
-import type { TaskReviewDraft, TaskReviewPanelState } from '../types';
+import type {
+  TaskReviewDraft,
+  TaskReviewPanelState,
+  UiPromptChoice,
+  UiPromptField,
+  UiPromptKind,
+  UiPromptPanelState,
+} from '../types';
 import { debugLog } from '@/lib/utils';
 
 const TASK_CREATE_REVIEW_REQUIRED_EVENT = 'task_create_review_required';
+const UI_PROMPT_REQUIRED_EVENT = 'ui_prompt_required';
 
 const createInternalId = (prefix: string) => {
   const randomPart =
@@ -114,6 +122,137 @@ const extractTaskReviewPanelFromToolStream = (
   };
 };
 
+const normalizeUiPromptKind = (value: unknown): UiPromptKind => {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (normalized === 'choice') return 'choice';
+  if (normalized === 'mixed') return 'mixed';
+  return 'kv';
+};
+
+const normalizeUiPromptFields = (value: unknown): UiPromptField[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item) => {
+      const key = String(item?.key ?? '').trim();
+      if (!key) {
+        return null;
+      }
+      return {
+        key,
+        label: typeof item?.label === 'string' ? item.label : '',
+        description: typeof item?.description === 'string' ? item.description : '',
+        placeholder: typeof item?.placeholder === 'string' ? item.placeholder : '',
+        default: typeof item?.default === 'string' ? item.default : '',
+        required: item?.required === true,
+        multiline: item?.multiline === true,
+        secret: item?.secret === true,
+      } satisfies UiPromptField;
+    })
+    .filter(Boolean) as UiPromptField[];
+};
+
+const normalizeUiPromptChoice = (value: unknown): UiPromptChoice | undefined => {
+  if (!value || typeof value !== 'object') {
+    return undefined;
+  }
+
+  const optionsRaw = Array.isArray((value as any).options) ? (value as any).options : [];
+  const options = optionsRaw
+    .map((item: any) => {
+      const optionValue = String(item?.value ?? '').trim();
+      if (!optionValue) {
+        return null;
+      }
+      return {
+        value: optionValue,
+        label: typeof item?.label === 'string' ? item.label : '',
+        description: typeof item?.description === 'string' ? item.description : '',
+      };
+    })
+    .filter(Boolean) as UiPromptChoice['options'];
+
+  if (options.length === 0) {
+    return undefined;
+  }
+
+  const multiple = (value as any).multiple === true;
+  const minRaw = Number((value as any).min_selections ?? (multiple ? 0 : 0));
+  const maxRaw = Number((value as any).max_selections ?? (multiple ? options.length : 1));
+  const minSelections = Number.isFinite(minRaw) ? Math.max(0, Math.floor(minRaw)) : 0;
+  const maxSelections = Number.isFinite(maxRaw)
+    ? Math.max(0, Math.floor(maxRaw))
+    : (multiple ? options.length : 1);
+
+  return {
+    multiple,
+    options,
+    default: (value as any).default,
+    min_selections: Math.min(minSelections, maxSelections),
+    max_selections: maxSelections,
+  };
+};
+
+const extractUiPromptPanelFromToolStream = (
+  streamPayload: any,
+  fallbackSessionId: string,
+  fallbackTurnId: string
+): UiPromptPanelState | null => {
+  const rawContent = typeof streamPayload?.content === 'string' ? streamPayload.content.trim() : '';
+  if (!rawContent) {
+    return null;
+  }
+
+  let parsedChunk: any = null;
+  try {
+    parsedChunk = JSON.parse(rawContent);
+  } catch (_) {
+    return null;
+  }
+
+  if (parsedChunk?.event !== UI_PROMPT_REQUIRED_EVENT) {
+    return null;
+  }
+
+  const payload = parsedChunk?.data ?? {};
+  const promptId = typeof payload?.prompt_id === 'string' ? payload.prompt_id.trim() : '';
+  if (!promptId) {
+    return null;
+  }
+
+  const payloadSessionId = typeof payload?.session_id === 'string' ? payload.session_id.trim() : '';
+  const sessionId = payloadSessionId || fallbackSessionId;
+  const payloadTurnId = typeof payload?.conversation_turn_id === 'string'
+    ? payload.conversation_turn_id.trim()
+    : '';
+  const conversationTurnId = payloadTurnId || fallbackTurnId;
+  const kind = normalizeUiPromptKind(payload?.kind);
+  const shape = payload?.payload && typeof payload.payload === 'object' ? payload.payload : {};
+  const fields = normalizeUiPromptFields((shape as any).fields);
+  const choice = normalizeUiPromptChoice((shape as any).choice);
+
+  return {
+    promptId,
+    sessionId,
+    conversationTurnId,
+    toolCallId: typeof streamPayload?.tool_call_id === 'string'
+      ? streamPayload.tool_call_id
+      : (typeof streamPayload?.toolCallId === 'string' ? streamPayload.toolCallId : null),
+    kind,
+    title: typeof payload?.title === 'string' ? payload.title : '',
+    message: typeof payload?.message === 'string' ? payload.message : '',
+    allowCancel: payload?.allow_cancel !== false,
+    timeoutMs: typeof payload?.timeout_ms === 'number' ? payload.timeout_ms : undefined,
+    payload: {
+      fields,
+      choice,
+    },
+    submitting: false,
+    error: null,
+  };
+};
+
 const cloneStreamingMessageDraft = <T,>(value: T): T => {
   try {
     if (typeof structuredClone === 'function') {
@@ -181,6 +320,7 @@ export function createSendMessageHandler({
       activeSystemContext,
       selectedAgentId,
       agents,
+      sessionAiSelectionBySession,
     } = get();
 
     if (!currentSessionId) {
@@ -194,16 +334,20 @@ export function createSendMessageHandler({
       return;
     }
 
+    const sessionAiSelection = sessionAiSelectionBySession?.[currentSessionId];
+    const effectiveSelectedAgentId = sessionAiSelection?.selectedAgentId ?? selectedAgentId;
+    const effectiveSelectedModelId = sessionAiSelection?.selectedModelId ?? selectedModelId;
+
     // 需要选择模型或智能体之一
     let selectedModel: any = null;
     let selectedAgent: any = null;
-    if (selectedAgentId) {
-      selectedAgent = agents.find((a: any) => a.id === selectedAgentId);
+    if (effectiveSelectedAgentId) {
+      selectedAgent = agents.find((a: any) => a.id === effectiveSelectedAgentId);
       if (!selectedAgent || selectedAgent.enabled === false) {
         throw new Error('选择的智能体不可用');
       }
-    } else if (selectedModelId) {
-      selectedModel = aiModelConfigs.find((model: any) => model.id === selectedModelId);
+    } else if (effectiveSelectedModelId) {
+      selectedModel = aiModelConfigs.find((model: any) => model.id === effectiveSelectedModelId);
       if (!selectedModel || !selectedModel.enabled) {
         throw new Error('选择的模型不可用');
       }
@@ -979,6 +1123,49 @@ export function createSendMessageHandler({
                           const toolCall = message.metadata.toolCalls.find((tc: any) => tc.id === toolCallId);
                           if (toolCall) {
                             toolCall.result = 'Waiting for task confirmation...';
+                            toolCall.completed = false;
+                          }
+                        }
+                      }
+                      (message as any).updatedAt = new Date();
+                      persistStreamingMessageDraft(state, message);
+                    });
+                    continue;
+                  }
+
+                  const uiPromptPanel = extractUiPromptPanelFromToolStream(
+                    data,
+                    currentSessionId,
+                    conversationTurnId
+                  );
+                  if (uiPromptPanel) {
+                    debugLog('🧩 收到 UI Prompt 事件，打开交互面板:', uiPromptPanel);
+                    set((state: any) => {
+                      const sessionId = uiPromptPanel.sessionId;
+                      const panels = Array.isArray(state.uiPromptPanelsBySession?.[sessionId])
+                        ? state.uiPromptPanelsBySession[sessionId]
+                        : [];
+                      const index = panels.findIndex((item: any) => item.promptId === uiPromptPanel.promptId);
+                      if (index >= 0) {
+                        panels[index] = uiPromptPanel;
+                      } else {
+                        panels.push(uiPromptPanel);
+                      }
+                      state.uiPromptPanelsBySession[sessionId] = panels;
+                      if (state.currentSessionId === sessionId) {
+                        state.uiPromptPanel = panels[0] || uiPromptPanel;
+                      }
+
+                      const message = ensureStreamingMessage(state);
+                      if (!message) {
+                        return;
+                      }
+                      if (message.metadata && message.metadata.toolCalls) {
+                        const toolCallId = data?.toolCallId || data?.tool_call_id || data?.id;
+                        if (toolCallId) {
+                          const toolCall = message.metadata.toolCalls.find((tc: any) => tc.id === toolCallId);
+                          if (toolCall) {
+                            toolCall.result = 'Waiting for UI prompt response...';
                             toolCall.completed = false;
                           }
                         }

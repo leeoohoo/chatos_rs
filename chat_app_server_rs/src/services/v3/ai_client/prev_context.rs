@@ -78,6 +78,13 @@ pub(super) fn is_context_length_exceeded_error(err: &str) -> bool {
         || (message.contains("context window") && message.contains("exceed"))
 }
 
+pub(super) fn is_request_body_too_large_error(err: &str) -> bool {
+    let message = err.to_lowercase();
+    message.contains("request body too large")
+        || message.contains("body too large")
+        || message.contains("payload too large")
+}
+
 pub(super) fn reduce_history_limit(limit: i64) -> Option<i64> {
     if limit <= 1 {
         return None;
@@ -90,8 +97,8 @@ pub(super) fn reduce_history_limit(limit: i64) -> Option<i64> {
 mod tests {
     use super::{
         base_url_disallows_system_messages, is_context_length_exceeded_error,
-        is_system_messages_not_allowed_error, reduce_history_limit,
-        should_use_prev_id_for_next_turn,
+        is_request_body_too_large_error, is_system_messages_not_allowed_error,
+        reduce_history_limit, should_use_prev_id_for_next_turn,
     };
 
     #[test]
@@ -142,5 +149,14 @@ mod tests {
             "{\"detail\":\"System messages are not allowed\"}"
         ));
         assert!(!is_system_messages_not_allowed_error("rate_limit_exceeded"));
+    }
+
+    #[test]
+    fn detects_request_body_too_large_errors() {
+        assert!(is_request_body_too_large_error(
+            "Read from request Body failed: http: request body too large"
+        ));
+        assert!(is_request_body_too_large_error("payload too large"));
+        assert!(!is_request_body_too_large_error("rate_limit_exceeded"));
     }
 }

@@ -292,6 +292,26 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
         )
         .await;
     let _ = db
+        .collection::<mongodb::bson::Document>("mcp_change_logs")
+        .create_index(
+            IndexModel::builder()
+                .keys(doc! { "confirmed": 1, "created_at": -1 })
+                .build(),
+            None,
+        )
+        .await;
+    let _ = db
+        .collection::<mongodb::bson::Document>("mcp_change_logs")
+        .create_index(
+            IndexModel::builder().keys(doc! { "project_id": 1 }).build(),
+            None,
+        )
+        .await;
+    let _ = db
+        .collection::<mongodb::bson::Document>("mcp_change_logs")
+        .create_index(IndexModel::builder().keys(doc! { "path": 1 }).build(), None)
+        .await;
+    let _ = db
         .collection::<mongodb::bson::Document>("task_manager_tasks")
         .create_index(
             IndexModel::builder()

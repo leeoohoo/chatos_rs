@@ -158,6 +158,12 @@ pub fn extract_patch_diffs(patch: &str) -> HashMap<String, String> {
             i = next;
             continue;
         }
+        if let Some(path) = parse_loose_update_header(line) {
+            let (section, next) = collect_loose_patch_section(&lines, i);
+            map.insert(path, section);
+            i = next;
+            continue;
+        }
         if let Some(path) = line.strip_prefix("*** Add File: ") {
             let (key, section, next) = collect_patch_section(&lines, i + 1, path.trim());
             map.insert(key, section);
@@ -244,6 +250,23 @@ pub fn extract_patch_targets(patch: &str) -> Vec<PatchTarget> {
             });
             continue;
         }
+        if let Some(path) = parse_loose_update_header(line) {
+            i += 1;
+            while i < lines.len()
+                && !is_patch_end_marker(lines[i])
+                && parse_loose_update_header(lines[i]).is_none()
+            {
+                i += 1;
+            }
+            if i < lines.len() && is_patch_end_marker(lines[i]) {
+                i += 1;
+            }
+            targets.push(PatchTarget {
+                before_path: path.clone(),
+                after_path: path,
+            });
+            continue;
+        }
         i += 1;
     }
     targets
@@ -270,4 +293,42 @@ fn collect_patch_section(lines: &[&str], start: usize, path: &str) -> (String, S
     }
     let key = move_to.unwrap_or_else(|| path.to_string());
     (key, section.join("\n"), idx)
+}
+
+fn collect_loose_patch_section(lines: &[&str], start: usize) -> (String, usize) {
+    let mut section: Vec<String> = Vec::new();
+    let mut idx = start;
+    while idx < lines.len() {
+        let line = lines[idx];
+        if idx > start && parse_loose_update_header(line).is_some() {
+            break;
+        }
+        section.push(line.to_string());
+        idx += 1;
+        if is_patch_end_marker(line) {
+            break;
+        }
+    }
+    (section.join("\n"), idx)
+}
+
+fn parse_loose_update_header(line: &str) -> Option<String> {
+    let trimmed = line.trim();
+    if let Some(path) = trimmed.strip_prefix("Update File --- ") {
+        let path = path.trim();
+        if !path.is_empty() {
+            return Some(path.to_string());
+        }
+    }
+    if let Some(path) = trimmed.strip_prefix("Update File: ") {
+        let path = path.trim();
+        if !path.is_empty() {
+            return Some(path.to_string());
+        }
+    }
+    None
+}
+
+fn is_patch_end_marker(line: &str) -> bool {
+    matches!(line.trim(), "*** End Patch" | "End Patch")
 }

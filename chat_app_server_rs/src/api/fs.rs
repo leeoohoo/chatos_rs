@@ -1,4 +1,9 @@
-use axum::http::StatusCode;
+use axum::body::Body;
+use axum::http::{
+    header::{self, HeaderValue},
+    StatusCode,
+};
+use axum::response::Response;
 use axum::{
     extract::Query,
     routing::{get, post},
@@ -8,8 +13,11 @@ use base64::Engine;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::fs;
+use std::io::{Cursor, Write};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
+use walkdir::WalkDir;
+use zip::write::FileOptions;
 
 const MAX_PREVIEW_BYTES: u64 = 2 * 1024 * 1024;
 const DEFAULT_SEARCH_LIMIT: usize = 200;
@@ -39,12 +47,42 @@ struct FsMkdirRequest {
     name: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct FsCreateFileRequest {
+    parent_path: Option<String>,
+    name: Option<String>,
+    content: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FsDeleteRequest {
+    path: Option<String>,
+    recursive: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FsMoveRequest {
+    source_path: Option<String>,
+    target_parent_path: Option<String>,
+    target_name: Option<String>,
+    replace_existing: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FsDownloadQuery {
+    path: Option<String>,
+}
+
 pub fn router() -> Router {
     Router::new()
         .route("/api/fs/list", get(list_dirs))
         .route("/api/fs/entries", get(list_entries))
         .route("/api/fs/search", get(search_entries))
         .route("/api/fs/mkdir", post(create_dir))
+        .route("/api/fs/touch", post(create_file))
+        .route("/api/fs/delete", post(delete_entry))
+        .route("/api/fs/move", post(move_entry))
+        .route("/api/fs/download", get(download_entry))
         .route("/api/fs/read", get(read_file))
 }
 
@@ -135,6 +173,364 @@ async fn create_dir(Json(req): Json<FsMkdirRequest>) -> (StatusCode, Json<Value>
             "created": true
         })),
     )
+}
+
+async fn create_file(Json(req): Json<FsCreateFileRequest>) -> (StatusCode, Json<Value>) {
+    let parent_raw = req
+        .parent_path
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    if parent_raw.is_none() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "父目录不能为空" })),
+        );
+    }
+
+    let name_raw = req
+        .name
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    if name_raw.is_none() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "文件名称不能为空" })),
+        );
+    }
+
+    let name = name_raw.unwrap();
+    if !is_valid_entry_name(&name) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "文件名称不合法" })),
+        );
+    }
+
+    let parent = PathBuf::from(parent_raw.unwrap());
+    if !parent.exists() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "父目录不存在" })),
+        );
+    }
+    if !parent.is_dir() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "父路径不是目录" })),
+        );
+    }
+
+    let target = parent.join(&name);
+    if target.exists() {
+        if target.is_file() {
+            let size = fs::metadata(&target).map(|meta| meta.len()).unwrap_or(0);
+            return (
+                StatusCode::OK,
+                Json(json!({
+                    "path": target.to_string_lossy(),
+                    "parent": parent.to_string_lossy(),
+                    "name": name,
+                    "size": size,
+                    "created": false
+                })),
+            );
+        }
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "同名目录已存在" })),
+        );
+    }
+
+    let mut file = match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&target)
+    {
+        Ok(file) => file,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": err.to_string() })),
+            )
+        }
+    };
+
+    if let Some(content) = req.content {
+        if let Err(err) = file.write_all(content.as_bytes()) {
+            let _ = fs::remove_file(&target);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": err.to_string() })),
+            );
+        }
+    }
+
+    let size = fs::metadata(&target).map(|meta| meta.len()).unwrap_or(0);
+    (
+        StatusCode::CREATED,
+        Json(json!({
+            "path": target.to_string_lossy(),
+            "parent": parent.to_string_lossy(),
+            "name": name,
+            "size": size,
+            "created": true
+        })),
+    )
+}
+
+async fn delete_entry(Json(req): Json<FsDeleteRequest>) -> (StatusCode, Json<Value>) {
+    let raw = req
+        .path
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    if raw.is_none() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "路径不能为空" })),
+        );
+    }
+
+    let path = PathBuf::from(raw.unwrap());
+    if !path.exists() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "路径不存在" })),
+        );
+    }
+
+    let recursive = req.recursive.unwrap_or(false);
+    let is_dir = path.is_dir();
+
+    let result = if is_dir {
+        if recursive {
+            fs::remove_dir_all(&path)
+        } else {
+            fs::remove_dir(&path)
+        }
+    } else {
+        fs::remove_file(&path)
+    };
+
+    if let Err(err) = result {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": err.to_string() })),
+        );
+    }
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "path": path.to_string_lossy(),
+            "is_dir": is_dir,
+            "recursive": recursive,
+            "deleted": true
+        })),
+    )
+}
+
+async fn move_entry(Json(req): Json<FsMoveRequest>) -> (StatusCode, Json<Value>) {
+    let source_raw = req
+        .source_path
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    if source_raw.is_none() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "源路径不能为空" })),
+        );
+    }
+
+    let target_parent_raw = req
+        .target_parent_path
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    if target_parent_raw.is_none() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "目标目录不能为空" })),
+        );
+    }
+
+    let source_path = PathBuf::from(source_raw.unwrap());
+    if !source_path.exists() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "源路径不存在" })),
+        );
+    }
+
+    let target_parent = PathBuf::from(target_parent_raw.unwrap());
+    if !target_parent.exists() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "目标目录不存在" })),
+        );
+    }
+    if !target_parent.is_dir() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "目标路径不是目录" })),
+        );
+    }
+
+    let source_name = source_path
+        .file_name()
+        .and_then(|v| v.to_str())
+        .map(|v| v.to_string())
+        .filter(|v| !v.is_empty());
+    if source_name.is_none() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "源路径名称不合法" })),
+        );
+    }
+
+    let target_name = req
+        .target_name
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| source_name.unwrap());
+    if !is_valid_entry_name(&target_name) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "目标名称不合法" })),
+        );
+    }
+
+    let target_path = target_parent.join(&target_name);
+    let source_norm = source_path.to_string_lossy().to_string();
+    let target_norm = target_path.to_string_lossy().to_string();
+    if source_norm == target_norm {
+        return (
+            StatusCode::OK,
+            Json(json!({
+                "from_path": source_norm,
+                "to_path": target_norm,
+                "replaced": false,
+                "moved": false
+            })),
+        );
+    }
+
+    if source_path.is_dir() {
+        let source_canonical = match source_path.canonicalize() {
+            Ok(path) => path,
+            Err(err) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": err.to_string() })),
+                )
+            }
+        };
+        let target_parent_canonical = match target_parent.canonicalize() {
+            Ok(path) => path,
+            Err(err) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": err.to_string() })),
+                )
+            }
+        };
+        if target_parent_canonical.starts_with(&source_canonical) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "不支持把目录移动到其子目录中" })),
+            );
+        }
+    }
+
+    let replace_existing = req.replace_existing.unwrap_or(false);
+    let mut replaced = false;
+    if target_path.exists() {
+        if !replace_existing {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "目标目录已存在同名文件或目录" })),
+            );
+        }
+        let remove_result = if target_path.is_dir() {
+            fs::remove_dir_all(&target_path)
+        } else {
+            fs::remove_file(&target_path)
+        };
+        if let Err(err) = remove_result {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": format!("覆盖目标失败: {}", err) })),
+            );
+        }
+        replaced = true;
+    }
+
+    if let Err(err) = fs::rename(&source_path, &target_path) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": err.to_string() })),
+        );
+    }
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "from_path": source_norm,
+            "to_path": target_norm,
+            "name": target_name,
+            "replaced": replaced,
+            "is_dir": target_path.is_dir(),
+            "moved": true
+        })),
+    )
+}
+
+async fn download_entry(Query(query): Query<FsDownloadQuery>) -> Response {
+    let raw = query
+        .path
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    if raw.is_none() {
+        return json_error_response(StatusCode::BAD_REQUEST, "路径不能为空");
+    }
+
+    let path = PathBuf::from(raw.unwrap());
+    if !path.exists() {
+        return json_error_response(StatusCode::BAD_REQUEST, "路径不存在");
+    }
+
+    if path.is_file() {
+        let data = match fs::read(&path) {
+            Ok(data) => data,
+            Err(err) => {
+                return json_error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
+            }
+        };
+        let name = infer_download_name(&path);
+        let mime = mime_guess::from_path(&path).first_or_octet_stream();
+        return binary_download_response(data, mime.essence_str(), &name);
+    }
+
+    if path.is_dir() {
+        let zip_data = match zip_directory(&path) {
+            Ok(data) => data,
+            Err(err) => return json_error_response(StatusCode::INTERNAL_SERVER_ERROR, err),
+        };
+        let base_name = infer_download_name(&path);
+        let file_name = if base_name.ends_with(".zip") {
+            base_name
+        } else {
+            format!("{base_name}.zip")
+        };
+        return binary_download_response(zip_data, "application/zip", &file_name);
+    }
+
+    json_error_response(StatusCode::BAD_REQUEST, "路径既不是文件也不是目录")
 }
 
 async fn list_dirs(Query(query): Query<FsQuery>) -> (StatusCode, Json<Value>) {
@@ -609,6 +1005,133 @@ fn read_dir_entries(path: &Path, include_files: bool) -> Result<Vec<Value>, Stri
         an.to_lowercase().cmp(&bn.to_lowercase())
     });
     Ok(out)
+}
+
+fn is_valid_entry_name(name: &str) -> bool {
+    !(name == "."
+        || name == ".."
+        || name.contains('/')
+        || name.contains('\\')
+        || name.contains('\0'))
+}
+
+fn json_error_response(status: StatusCode, message: impl AsRef<str>) -> Response {
+    let body = json!({ "error": message.as_ref() });
+    let bytes =
+        serde_json::to_vec(&body).unwrap_or_else(|_| b"{\"error\":\"internal_error\"}".to_vec());
+    let mut response = Response::new(Body::from(bytes));
+    *response.status_mut() = status;
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json"),
+    );
+    response
+}
+
+fn binary_download_response(data: Vec<u8>, content_type: &str, file_name: &str) -> Response {
+    let mut response = Response::new(Body::from(data));
+    *response.status_mut() = StatusCode::OK;
+
+    let headers = response.headers_mut();
+    if let Ok(value) = HeaderValue::from_str(content_type) {
+        headers.insert(header::CONTENT_TYPE, value);
+    } else {
+        headers.insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/octet-stream"),
+        );
+    }
+
+    let disposition = build_content_disposition(file_name);
+    if let Ok(value) = HeaderValue::from_str(&disposition) {
+        headers.insert(header::CONTENT_DISPOSITION, value);
+    }
+
+    response
+}
+
+fn build_content_disposition(file_name: &str) -> String {
+    let fallback = sanitize_ascii_filename(file_name);
+    let encoded = urlencoding::encode(file_name);
+    format!("attachment; filename=\"{fallback}\"; filename*=UTF-8''{encoded}")
+}
+
+fn sanitize_ascii_filename(name: &str) -> String {
+    let mut out = String::new();
+    for ch in name.chars() {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_') {
+            out.push(ch);
+        } else {
+            out.push('_');
+        }
+    }
+    let trimmed = out.trim_matches('.').trim_matches('_').to_string();
+    if trimmed.is_empty() {
+        "download".to_string()
+    } else {
+        trimmed
+    }
+}
+
+fn infer_download_name(path: &Path) -> String {
+    let base = path
+        .file_name()
+        .and_then(|v| v.to_str())
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| "download".to_string());
+    base
+}
+
+fn zip_directory(path: &Path) -> Result<Vec<u8>, String> {
+    let root_name = infer_download_name(path);
+    let writer = Cursor::new(Vec::<u8>::new());
+    let mut zip = zip::ZipWriter::new(writer);
+    let dir_options = FileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated)
+        .unix_permissions(0o755);
+    let file_options = FileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated)
+        .unix_permissions(0o644);
+
+    let root_dir = format!("{}/", path_to_zip_name(Path::new(&root_name)));
+    zip.add_directory(root_dir.clone(), dir_options)
+        .map_err(|err| err.to_string())?;
+
+    for entry in WalkDir::new(path).follow_links(false) {
+        let entry = entry.map_err(|err| err.to_string())?;
+        let current = entry.path();
+        if current == path {
+            continue;
+        }
+        let relative = current.strip_prefix(path).map_err(|err| err.to_string())?;
+        let relative_zip_path = path_to_zip_name(relative);
+        if relative_zip_path.is_empty() {
+            continue;
+        }
+        let zip_path = format!("{root_name}/{relative_zip_path}");
+        if entry.file_type().is_dir() {
+            zip.add_directory(format!("{zip_path}/"), dir_options)
+                .map_err(|err| err.to_string())?;
+            continue;
+        }
+        if entry.file_type().is_file() {
+            zip.start_file(zip_path, file_options)
+                .map_err(|err| err.to_string())?;
+            let mut file = fs::File::open(current).map_err(|err| err.to_string())?;
+            std::io::copy(&mut file, &mut zip).map_err(|err| err.to_string())?;
+        }
+    }
+
+    let writer = zip.finish().map_err(|err| err.to_string())?;
+    Ok(writer.into_inner())
+}
+
+fn path_to_zip_name(path: &Path) -> String {
+    path.components()
+        .map(|component| component.as_os_str().to_string_lossy().to_string())
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 fn normalize_search_keyword(value: &str) -> String {

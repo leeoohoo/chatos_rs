@@ -43,7 +43,7 @@ export interface Session {
   pinned: boolean;
   archived: boolean;
   status?: 'active' | 'archiving' | 'archived' | string;
-  metadata?: string | null;
+  metadata?: Record<string, any> | string | null;
 }
 
 // 项目接口
@@ -127,13 +127,36 @@ export interface ChangeLogItem {
   serverName: string;
   path: string;
   action: string;
+  changeKind: 'create' | 'edit' | 'delete';
   bytes: number;
   sha256?: string | null;
   diff?: string | null;
   sessionId?: string | null;
   runId?: string | null;
+  confirmed: boolean;
+  confirmedAt?: string | null;
+  confirmedBy?: string | null;
   createdAt: string;
   sessionTitle?: string | null;
+}
+
+export interface ProjectChangeMark {
+  path: string;
+  relativePath: string;
+  kind: 'create' | 'edit' | 'delete';
+  lastChangeId: string;
+  updatedAt: string;
+}
+
+export interface ProjectChangeSummary {
+  fileMarks: ProjectChangeMark[];
+  deletedMarks: ProjectChangeMark[];
+  counts: {
+    create: number;
+    edit: number;
+    delete: number;
+    total: number;
+  };
 }
 
 // 系统上下文接口

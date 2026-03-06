@@ -67,6 +67,7 @@ impl AiClient {
         &self,
         session_id: Option<&str>,
         sub_agent_run_id: Option<&str>,
+        include_reasoning: bool,
     ) -> Vec<Value> {
         let mut mapped = Vec::new();
         let (merged_summary, _summary_count, history) = if let Some(run_id) = sub_agent_run_id {
@@ -101,6 +102,7 @@ impl AiClient {
                         .map(|v| v.to_string())
                         .unwrap_or_default();
                 }
+                content = cap_tool_content_for_input(content.as_str());
                 mapped.push(json!({"role": "tool", "tool_call_id": msg.tool_call_id.clone().unwrap_or_default(), "content": content}));
             } else {
                 let mut item = json!({"role": msg.role, "content": msg.content});
@@ -113,6 +115,20 @@ impl AiClient {
                     .and_then(|m| m.get("toolCalls").cloned())
                 {
                     item["tool_calls"] = tc;
+                }
+                if include_reasoning && msg.role == "assistant" {
+                    let has_tool_calls = item
+                        .get("tool_calls")
+                        .map(|value| !value.is_null())
+                        .unwrap_or(false);
+                    if has_tool_calls {
+                        item["reasoning_content"] =
+                            Value::String(msg.reasoning.clone().unwrap_or_default());
+                    } else if let Some(reasoning) = msg.reasoning.clone() {
+                        if !reasoning.trim().is_empty() {
+                            item["reasoning_content"] = Value::String(reasoning);
+                        }
+                    }
                 }
                 mapped.push(item);
             }
@@ -127,6 +143,7 @@ impl AiClient {
         iteration: i64,
         session_id: Option<&str>,
         sub_agent_run_id: Option<&str>,
+        include_reasoning: bool,
         messages: &mut Vec<Value>,
     ) {
         if (purpose != "chat" && sub_agent_run_id.is_none()) || iteration <= 0 {
@@ -141,7 +158,11 @@ impl AiClient {
             refreshed.push(json!({"role": "system", "content": prompt}));
         }
         let mapped = self
-            .load_summary_pending_messages_for_scope(session_id, sub_agent_run_id)
+            .load_summary_pending_messages_for_scope(
+                session_id,
+                sub_agent_run_id,
+                include_reasoning,
+            )
             .await;
         refreshed.extend(ensure_tool_responses(mapped));
         if refreshed != *messages {
@@ -185,6 +206,7 @@ impl AiClient {
                 .load_summary_pending_messages_for_scope(
                     session_id.as_deref(),
                     sub_agent_run_id.as_deref(),
+                    reasoning_enabled,
                 )
                 .await;
             history_messages = ensure_tool_responses(drop_duplicate_tail(mapped, &messages));
@@ -265,6 +287,7 @@ impl AiClient {
                 iteration,
                 session_id.as_deref(),
                 sub_agent_run_id.as_deref(),
+                reasoning_enabled,
                 &mut messages,
             )
             .await;
@@ -429,7 +452,11 @@ impl AiClient {
             new_messages.push(assistant_msg);
 
             for result in &tool_results {
-                new_messages.push(json!({"role": "tool", "tool_call_id": result.tool_call_id, "content": result.content}));
+                new_messages.push(json!({
+                    "role": "tool",
+                    "tool_call_id": result.tool_call_id,
+                    "content": cap_tool_content_for_input(result.content.as_str())
+                }));
             }
 
             messages = new_messages;
@@ -460,6 +487,53 @@ impl AiClient {
     }
 }
 
+fn tool_content_item_max_chars() -> usize {
+    std::env::var("AI_V2_TOOL_OUTPUT_MAX_CHARS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(8_000)
+}
+
+fn cap_tool_content_for_input(raw: &str) -> String {
+    truncate_text_keep_tail(raw, tool_content_item_max_chars())
+}
+
+fn truncate_text_keep_tail(raw: &str, max_chars: usize) -> String {
+    if max_chars == 0 {
+        return String::new();
+    }
+
+    let total = raw.chars().count();
+    if total <= max_chars {
+        return raw.to_string();
+    }
+
+    let marker = format!("[...truncated {} chars...]\n", total - max_chars);
+    let marker_chars = marker.chars().count();
+    if marker_chars >= max_chars {
+        return raw
+            .chars()
+            .rev()
+            .take(max_chars)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+    }
+
+    let keep_tail = max_chars - marker_chars;
+    let tail: String = raw
+        .chars()
+        .rev()
+        .take(keep_tail)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    format!("{}{}", marker, tail)
+}
+
 impl AiClientSettings for AiClient {
     fn apply_settings(&mut self, effective: &Value) {
         if let Some(v) = effective.get("MAX_ITERATIONS").and_then(|v| v.as_i64()) {
@@ -474,5 +548,24 @@ impl AiClientSettings for AiClient {
         {
             self.max_context_tokens = v;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cap_tool_content_for_input;
+
+    #[test]
+    fn cap_tool_content_for_input_truncates_large_text() {
+        let text = "a".repeat(20_000);
+        let truncated = cap_tool_content_for_input(text.as_str());
+        assert!(truncated.len() < text.len());
+        assert!(truncated.contains("truncated"));
+    }
+
+    #[test]
+    fn cap_tool_content_for_input_keeps_short_text() {
+        let text = "short output";
+        assert_eq!(cap_tool_content_for_input(text), text.to_string());
     }
 }

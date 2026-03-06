@@ -81,6 +81,29 @@ const getThemeColors = (theme: 'light' | 'dark') => {
   };
 };
 
+const toXtermTheme = (palette: ReturnType<typeof getThemeColors>) => ({
+  background: palette.background,
+  foreground: palette.foreground,
+  cursor: palette.cursor,
+  selectionBackground: palette.selection,
+  black: palette.black,
+  red: palette.red,
+  green: palette.green,
+  yellow: palette.yellow,
+  blue: palette.blue,
+  magenta: palette.magenta,
+  cyan: palette.cyan,
+  white: palette.white,
+  brightBlack: palette.brightBlack,
+  brightRed: palette.brightRed,
+  brightGreen: palette.brightGreen,
+  brightYellow: palette.brightYellow,
+  brightBlue: palette.brightBlue,
+  brightMagenta: palette.brightMagenta,
+  brightCyan: palette.brightCyan,
+  brightWhite: palette.brightWhite,
+});
+
 const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) => {
   const {
     currentRemoteConnection,
@@ -95,6 +118,9 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
   const terminalRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
+  const lastSnapshotRef = useRef('');
+  const lastConnectionIdRef = useRef<string | null>(null);
+  const paletteRef = useRef(getThemeColors(actualTheme));
 
   const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -138,28 +164,7 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
       lineHeight: 1.25,
       scrollback: 5000,
       convertEol: false,
-      theme: {
-        background: palette.background,
-        foreground: palette.foreground,
-        cursor: palette.cursor,
-        selectionBackground: palette.selection,
-        black: palette.black,
-        red: palette.red,
-        green: palette.green,
-        yellow: palette.yellow,
-        blue: palette.blue,
-        magenta: palette.magenta,
-        cyan: palette.cyan,
-        white: palette.white,
-        brightBlack: palette.brightBlack,
-        brightRed: palette.brightRed,
-        brightGreen: palette.brightGreen,
-        brightYellow: palette.brightYellow,
-        brightBlue: palette.brightBlue,
-        brightMagenta: palette.brightMagenta,
-        brightCyan: palette.brightCyan,
-        brightWhite: palette.brightWhite,
-      },
+      theme: toXtermTheme(paletteRef.current),
     });
 
     const fitAddon = new FitAddon();
@@ -198,6 +203,14 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
       fitAddonRef.current = null;
       term.dispose();
     };
+  }, []);
+
+  useEffect(() => {
+    paletteRef.current = palette;
+    const term = terminalRef.current;
+    if (term) {
+      term.options.theme = toXtermTheme(palette);
+    }
   }, [palette]);
 
   useEffect(() => {
@@ -205,12 +218,20 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
       setConnectionState('disconnected');
       setErrorMessage(null);
       setBusy(false);
+      lastConnectionIdRef.current = null;
+      lastSnapshotRef.current = '';
       return;
     }
 
     const term = terminalRef.current;
     if (!term) return;
-    term.reset();
+
+    const connectionChanged = lastConnectionIdRef.current !== currentRemoteConnection.id;
+    if (connectionChanged) {
+      term.reset();
+      lastSnapshotRef.current = '';
+      lastConnectionIdRef.current = currentRemoteConnection.id;
+    }
 
     const wsUrl = buildWsUrl(apiBaseUrl, `/remote-connections/${currentRemoteConnection.id}/ws`, accessToken);
     const ws = new WebSocket(wsUrl);
@@ -240,6 +261,10 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
           return;
         }
         if (payload?.type === 'snapshot' && typeof payload.data === 'string') {
+          if (payload.data === lastSnapshotRef.current) {
+            return;
+          }
+          lastSnapshotRef.current = payload.data;
           terminalRef.current?.reset();
           terminalRef.current?.write(payload.data);
           return;

@@ -17,6 +17,7 @@ import RemoteSftpPanel from './RemoteSftpPanel';
 import ApplicationsPanel from './ApplicationsPanel';
 import NotepadPanel from './NotepadPanel';
 import TaskDraftPanel from './TaskDraftPanel';
+import UiPromptPanel from './UiPromptPanel';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import TaskWorkbar, {
   type SessionSummaryWorkbarItem,
@@ -25,10 +26,24 @@ import TaskWorkbar, {
 import { apiClient as globalApiClient } from '../lib/api/client';
 import { cn } from '../lib/utils';
 import type { ChatInterfaceProps } from '../types';
-import type { TaskReviewDraft } from '../lib/store/types';
+import type { TaskReviewDraft, UiPromptPanelState, UiPromptResponsePayload } from '../lib/store/types';
 import { useAuthStore } from '../lib/auth/authStore';
 
 const SESSION_PAGE_SIZE = 30;
+
+interface UiPromptHistoryItem {
+  id: string;
+  sessionId: string;
+  conversationTurnId: string;
+  kind: string;
+  status: string;
+  title: string;
+  message: string;
+  prompt: any;
+  response: any;
+  createdAt: string;
+  updatedAt: string;
+}
 
 export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   className,
@@ -67,8 +82,11 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     abortCurrentConversation,
     sessionChatState = {},
     taskReviewPanelsBySession = {},
+    uiPromptPanelsBySession = {},
     upsertTaskReviewPanel,
     removeTaskReviewPanel,
+    upsertUiPromptPanel,
+    removeUiPromptPanel,
     // applications,  // 涓嶅啀鍦ㄦ缁勪欢涓娇鐢?
     // selectedApplicationId,  // 涓嶅啀鐢ㄤ簬鑷姩鏄剧ず
   } = useChatStoreFromContext();
@@ -130,6 +148,11 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [workbarActionLoadingTaskId, setWorkbarActionLoadingTaskId] = useState<string | null>(null);
   const [workbarSummaryActionLoadingKey, setWorkbarSummaryActionLoadingKey] = useState<string | null>(null);
   const [summaryPaneSessionId, setSummaryPaneSessionId] = useState<string | null>(null);
+  const [uiPromptHistoryOpen, setUiPromptHistoryOpen] = useState(false);
+  const [uiPromptHistoryItems, setUiPromptHistoryItems] = useState<UiPromptHistoryItem[]>([]);
+  const [uiPromptHistoryLoading, setUiPromptHistoryLoading] = useState(false);
+  const [uiPromptHistoryError, setUiPromptHistoryError] = useState<string | null>(null);
+  const [uiPromptHistoryLoadedSessionId, setUiPromptHistoryLoadedSessionId] = useState<string | null>(null);
 
   const activeTaskReviewPanel = useMemo(() => {
     if (!currentSession) {
@@ -141,6 +164,92 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     }
     return panels[0];
   }, [currentSession, taskReviewPanelsBySession]);
+
+  const activeUiPromptPanel = useMemo(() => {
+    if (!currentSession) {
+      return null;
+    }
+    const panels = uiPromptPanelsBySession[currentSession.id];
+    if (!Array.isArray(panels) || panels.length === 0) {
+      return null;
+    }
+    return panels[0];
+  }, [currentSession, uiPromptPanelsBySession]);
+
+  const toUiPromptPanelFromRecord = useCallback((record: any): UiPromptPanelState | null => {
+    const source = record?.prompt && typeof record.prompt === 'object' ? record.prompt : record;
+    const promptId = typeof source?.prompt_id === 'string' ? source.prompt_id.trim() : '';
+    const sessionId = typeof source?.session_id === 'string' ? source.session_id.trim() : '';
+    const conversationTurnId = typeof source?.conversation_turn_id === 'string'
+      ? source.conversation_turn_id.trim()
+      : '';
+    if (!promptId || !sessionId || !conversationTurnId) {
+      return null;
+    }
+
+    const kindRaw = String(source?.kind || 'kv').trim().toLowerCase();
+    const kind = kindRaw === 'choice' ? 'choice' : (kindRaw === 'mixed' ? 'mixed' : 'kv');
+
+    const payload = source?.payload && typeof source.payload === 'object' ? source.payload : {};
+    const fields = Array.isArray((payload as any).fields) ? (payload as any).fields : [];
+    const choice = (payload as any).choice && typeof (payload as any).choice === 'object'
+      ? (payload as any).choice
+      : undefined;
+
+    return {
+      promptId,
+      sessionId,
+      conversationTurnId,
+      toolCallId: typeof source?.tool_call_id === 'string' ? source.tool_call_id : null,
+      kind,
+      title: typeof source?.title === 'string' ? source.title : '',
+      message: typeof source?.message === 'string' ? source.message : '',
+      allowCancel: source?.allow_cancel !== false,
+      timeoutMs: typeof source?.timeout_ms === 'number' ? source.timeout_ms : undefined,
+      payload: { fields, choice },
+      submitting: false,
+      error: null,
+    };
+  }, []);
+
+  const normalizeUiPromptHistoryItem = useCallback((raw: any): UiPromptHistoryItem | null => {
+    if (!raw || typeof raw !== 'object') {
+      return null;
+    }
+
+    const promptId = typeof raw.id === 'string' ? raw.id.trim() : '';
+    const sessionId = typeof raw.session_id === 'string' ? raw.session_id.trim() : '';
+    const conversationTurnId = typeof raw.conversation_turn_id === 'string'
+      ? raw.conversation_turn_id.trim()
+      : '';
+    if (!promptId || !sessionId) {
+      return null;
+    }
+
+    const prompt = raw.prompt && typeof raw.prompt === 'object' ? raw.prompt : {};
+    const response = raw.response && typeof raw.response === 'object' ? raw.response : null;
+
+    const title = typeof (prompt as any).title === 'string'
+      ? (prompt as any).title
+      : '';
+    const message = typeof (prompt as any).message === 'string'
+      ? (prompt as any).message
+      : '';
+
+    return {
+      id: promptId,
+      sessionId,
+      conversationTurnId,
+      kind: String(raw.kind || ''),
+      status: String(raw.status || ''),
+      title,
+      message,
+      prompt,
+      response,
+      createdAt: String(raw.created_at || ''),
+      updatedAt: String(raw.updated_at || ''),
+    };
+  }, []);
 
   const activeConversationTurnId = useMemo(() => {
     if (!currentSession) {
@@ -193,6 +302,66 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     document.addEventListener('mousedown', onDocumentClick);
     return () => document.removeEventListener('mousedown', onDocumentClick);
   }, [showUserMenu]);
+
+  const currentSessionIdForUiPrompts = currentSession?.id || null;
+
+  useEffect(() => {
+    if (!currentSessionIdForUiPrompts || activePanel !== 'chat') {
+      return;
+    }
+
+    let cancelled = false;
+    void apiClient
+      .getPendingUiPrompts(currentSessionIdForUiPrompts, { limit: 50 })
+      .then((records) => {
+        if (cancelled || !Array.isArray(records)) {
+          return;
+        }
+        records.forEach((record) => {
+          const panel = toUiPromptPanelFromRecord(record);
+          if (panel) {
+            upsertUiPromptPanel(panel);
+          }
+        });
+      })
+      .catch((error) => {
+        console.warn('Failed to load pending ui prompts:', error);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activePanel, apiClient, currentSessionIdForUiPrompts, toUiPromptPanelFromRecord, upsertUiPromptPanel]);
+
+  const loadUiPromptHistory = useCallback(async (sessionId: string, force = false) => {
+    if (!sessionId) {
+      setUiPromptHistoryItems([]);
+      setUiPromptHistoryError(null);
+      setUiPromptHistoryLoadedSessionId(null);
+      return;
+    }
+
+    if (!force && uiPromptHistoryLoadedSessionId === sessionId && uiPromptHistoryItems.length > 0) {
+      return;
+    }
+
+    setUiPromptHistoryLoading(true);
+    setUiPromptHistoryError(null);
+    try {
+      const records = await apiClient.getUiPromptHistory(sessionId, { limit: 200 });
+      const normalized = Array.isArray(records)
+        ? records
+            .map((item) => normalizeUiPromptHistoryItem(item))
+            .filter((item): item is UiPromptHistoryItem => item !== null)
+        : [];
+      setUiPromptHistoryItems(normalized);
+      setUiPromptHistoryLoadedSessionId(sessionId);
+    } catch (error) {
+      setUiPromptHistoryError(error instanceof Error ? error.message : '交互确认记录加载失败');
+    } finally {
+      setUiPromptHistoryLoading(false);
+    }
+  }, [apiClient, normalizeUiPromptHistoryItem, uiPromptHistoryItems.length, uiPromptHistoryLoadedSessionId]);
 
   const isTaskMutationToolName = useCallback((name: unknown) => {
     const normalized = String(name || '').toLowerCase();
@@ -592,6 +761,32 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     return parsed.toLocaleString('zh-CN', { hour12: false });
   }, []);
 
+  const formatUiPromptStatus = useCallback((status: string) => {
+    const normalized = String(status || '').trim().toLowerCase();
+    if (normalized === 'ok') return '已提交';
+    if (normalized === 'canceled' || normalized === 'cancelled') return '已取消';
+    if (normalized === 'timeout') return '超时';
+    if (normalized === 'pending') return '待处理';
+    return normalized || '-';
+  }, []);
+
+  const uiPromptStatusClass = useCallback((status: string) => {
+    const normalized = String(status || '').trim().toLowerCase();
+    if (normalized === 'ok') {
+      return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-200';
+    }
+    if (normalized === 'canceled' || normalized === 'cancelled') {
+      return 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200';
+    }
+    if (normalized === 'timeout') {
+      return 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200';
+    }
+    if (normalized === 'pending') {
+      return 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-200';
+    }
+    return 'bg-muted text-muted-foreground';
+  }, []);
+
   const handleOpenSessionSummaryPane = useCallback((sessionId: string) => {
     if (!sessionId) {
       return;
@@ -857,12 +1052,17 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       setWorkbarSummariesError(null);
       setWorkbarHistoryLoadedSessionId(null);
       setWorkbarSummariesLoadedSessionId(null);
+      setUiPromptHistoryItems([]);
+      setUiPromptHistoryError(null);
+      setUiPromptHistoryLoadedSessionId(null);
+      setUiPromptHistoryOpen(false);
       return;
     }
 
     void loadCurrentTurnWorkbarTasks(currentSession.id, activeConversationTurnId);
     void loadHistoryWorkbarTasks(currentSession.id);
     void loadWorkbarSummaries(currentSession.id);
+    void loadUiPromptHistory(currentSession.id);
   }, [
     activeConversationTurnId,
     activePanel,
@@ -870,6 +1070,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     loadCurrentTurnWorkbarTasks,
     loadHistoryWorkbarTasks,
     loadWorkbarSummaries,
+    loadUiPromptHistory,
   ]);
 
   // 澶勭悊娑堟伅鍙戦€?
@@ -971,6 +1172,61 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       });
     }
   }, [activeTaskReviewPanel, apiClient, loadCurrentTurnWorkbarTasks, loadHistoryWorkbarTasks, loadWorkbarSummaries, removeTaskReviewPanel, upsertTaskReviewPanel]);
+
+  const handleUiPromptSubmit = useCallback(async (payload: UiPromptResponsePayload) => {
+    if (!activeUiPromptPanel) {
+      return;
+    }
+
+    const pendingPanel = {
+      ...activeUiPromptPanel,
+      submitting: true,
+      error: null,
+    };
+    upsertUiPromptPanel(pendingPanel);
+
+    try {
+      await apiClient.submitUiPromptResponse(activeUiPromptPanel.promptId, payload);
+      removeUiPromptPanel(activeUiPromptPanel.promptId, activeUiPromptPanel.sessionId);
+      await loadUiPromptHistory(activeUiPromptPanel.sessionId, true);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '交互确认提交失败';
+      upsertUiPromptPanel({
+        ...pendingPanel,
+        submitting: false,
+        error: message,
+      });
+    }
+  }, [activeUiPromptPanel, apiClient, loadUiPromptHistory, removeUiPromptPanel, upsertUiPromptPanel]);
+
+  const handleUiPromptCancel = useCallback(async () => {
+    if (!activeUiPromptPanel) {
+      return;
+    }
+
+    const pendingPanel = {
+      ...activeUiPromptPanel,
+      submitting: true,
+      error: null,
+    };
+    upsertUiPromptPanel(pendingPanel);
+
+    try {
+      await apiClient.submitUiPromptResponse(activeUiPromptPanel.promptId, {
+        status: 'canceled',
+        reason: 'user_cancelled',
+      });
+      removeUiPromptPanel(activeUiPromptPanel.promptId, activeUiPromptPanel.sessionId);
+      await loadUiPromptHistory(activeUiPromptPanel.sessionId, true);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '交互确认取消失败';
+      upsertUiPromptPanel({
+        ...pendingPanel,
+        submitting: false,
+        error: message,
+      });
+    }
+  }, [activeUiPromptPanel, apiClient, loadUiPromptHistory, removeUiPromptPanel, upsertUiPromptPanel]);
 
 
   if (showSystemContextEditor) {
@@ -1314,6 +1570,12 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                           void loadHistoryWorkbarTasks(currentSession.id);
                           void loadWorkbarSummaries(currentSession.id);
                         }}
+                        onOpenUiPromptHistory={() => {
+                          setUiPromptHistoryOpen(true);
+                          void loadUiPromptHistory(currentSession.id, true);
+                        }}
+                        uiPromptHistoryCount={uiPromptHistoryItems.length}
+                        uiPromptHistoryLoading={uiPromptHistoryLoading}
                         onCompleteTask={(task) => {
                           void handleWorkbarCompleteTask(task);
                         }}
@@ -1324,6 +1586,13 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                           void handleWorkbarEditTask(task);
                         }}
                       />
+                      {activeUiPromptPanel ? (
+                        <UiPromptPanel
+                          panel={activeUiPromptPanel}
+                          onSubmit={handleUiPromptSubmit}
+                          onCancel={handleUiPromptCancel}
+                        />
+                      ) : null}
                       {activeTaskReviewPanel ? (
                         <TaskDraftPanel
                           panel={activeTaskReviewPanel}
@@ -1361,6 +1630,95 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
         </div>
         
+        {uiPromptHistoryOpen ? (
+          <div className="fixed inset-0 z-50">
+            <button
+              type="button"
+              aria-label="关闭交互确认记录抽屉"
+              className="absolute inset-0 bg-black/35"
+              onClick={() => setUiPromptHistoryOpen(false)}
+            />
+            <div className="absolute right-0 top-0 h-full w-full max-w-xl border-l border-border bg-card shadow-xl">
+              <div className="flex h-full flex-col">
+                <div className="flex items-center justify-between border-b border-border px-4 py-3">
+                  <div>
+                    <div className="text-sm font-semibold text-foreground">交互确认记录</div>
+                    <div className="text-xs text-muted-foreground">
+                      当前会话：{uiPromptHistoryItems.length}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      className="rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground hover:bg-accent disabled:opacity-60 disabled:cursor-not-allowed"
+                      disabled={!currentSession || uiPromptHistoryLoading}
+                      onClick={() => {
+                        if (!currentSession) {
+                          return;
+                        }
+                        void loadUiPromptHistory(currentSession.id, true);
+                      }}
+                    >
+                      {uiPromptHistoryLoading ? '刷新中...' : '刷新'}
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground hover:bg-accent"
+                      onClick={() => setUiPromptHistoryOpen(false)}
+                    >
+                      关闭
+                    </button>
+                  </div>
+                </div>
+
+                <div className="custom-scrollbar flex-1 overflow-y-scroll px-3 py-3 [scrollbar-gutter:stable]">
+                  {uiPromptHistoryError ? (
+                    <div className="mb-3 rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs text-destructive">
+                      {uiPromptHistoryError}
+                    </div>
+                  ) : null}
+
+                  {uiPromptHistoryLoading && uiPromptHistoryItems.length === 0 ? (
+                    <div className="text-xs text-muted-foreground">交互确认记录加载中...</div>
+                  ) : null}
+
+                  {!uiPromptHistoryLoading && uiPromptHistoryItems.length === 0 ? (
+                    <div className="text-xs text-muted-foreground">暂无已处理的交互确认记录。</div>
+                  ) : null}
+
+                  {uiPromptHistoryItems.length > 0 ? (
+                    <div className="space-y-2">
+                      {uiPromptHistoryItems.map((item) => (
+                        <div key={item.id} className="rounded-lg border border-border bg-background/80 p-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="truncate text-sm font-medium text-foreground">
+                              {item.title || '未命名 Prompt'}
+                            </div>
+                            <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${uiPromptStatusClass(item.status)}`}>
+                              {formatUiPromptStatus(item.status)}
+                            </span>
+                          </div>
+                          {item.message ? (
+                            <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">{item.message}</div>
+                          ) : null}
+                          <div className="mt-1 text-[11px] text-muted-foreground">
+                            {`类型 ${item.kind || '-'} · 时间 ${formatSummaryCreatedAt(item.updatedAt || item.createdAt)}`}
+                          </div>
+                          {item.response ? (
+                            <pre className="custom-scrollbar mt-2 max-h-40 overflow-y-scroll rounded border border-border bg-background p-2 text-[11px] text-foreground [scrollbar-gutter:stable]">
+{JSON.stringify(item.response, null, 2)}
+                            </pre>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
         {/* MCP绠＄悊鍣?*/}
         {showMcpManager && (
           <McpManager onClose={() => setShowMcpManager(false)} />

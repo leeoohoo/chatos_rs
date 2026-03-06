@@ -34,11 +34,16 @@ interface TaskWorkbarProps {
   historyError?: string | null;
   onRefresh?: () => void;
   onOpenHistory?: () => void;
+  onOpenUiPromptHistory?: () => void;
+  uiPromptHistoryCount?: number;
+  uiPromptHistoryLoading?: boolean;
   onCompleteTask?: (task: TaskWorkbarItem) => void;
   onDeleteTask?: (task: TaskWorkbarItem) => void;
   onEditTask?: (task: TaskWorkbarItem) => void;
   actionLoadingTaskId?: string | null;
 }
+
+type HistoryFilter = 'all' | 'processed';
 
 const statusStyles: Record<TaskWorkbarItem['status'], string> = {
   todo: 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-100',
@@ -170,6 +175,9 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
   historyError = null,
   onRefresh,
   onOpenHistory,
+  onOpenUiPromptHistory,
+  uiPromptHistoryCount = 0,
+  uiPromptHistoryLoading = false,
   onCompleteTask,
   onDeleteTask,
   onEditTask,
@@ -177,12 +185,20 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
 }) => {
   const [expanded, setExpanded] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyFilter, setHistoryFilter] = useState<HistoryFilter>('all');
 
   const sortedTasks = useMemo(() => sortTasks(tasks), [tasks]);
   const sortedHistoryTasks = useMemo(
     () => sortTasks(historyTasks.length > 0 ? historyTasks : sortedTasks),
     [historyTasks, sortedTasks]
   );
+  const processedHistoryTasks = useMemo(
+    () => sortedHistoryTasks.filter((task) => task.status === 'done'),
+    [sortedHistoryTasks]
+  );
+  const visibleHistoryTasks = historyFilter === 'processed'
+    ? processedHistoryTasks
+    : sortedHistoryTasks;
 
   const currentTurnTasks = useMemo(() => {
     const normalizedCurrentTurnId = typeof currentTurnId === 'string' ? currentTurnId.trim() : '';
@@ -203,7 +219,8 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
     return fallbackSource.filter((task) => task.conversationTurnId.trim() === latestTurnId);
   }, [currentTurnId, sortedHistoryTasks, sortedTasks]);
 
-  const handleOpenHistory = () => {
+  const handleOpenHistory = (filter: HistoryFilter = 'all') => {
+    setHistoryFilter(filter);
     setHistoryOpen(true);
     onOpenHistory?.();
   };
@@ -231,14 +248,33 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
           </button>
 
           <div className="flex items-center gap-2">
-            {expanded ? (
+            {onOpenUiPromptHistory ? (
               <button
                 type="button"
-                className="rounded-md border border-border bg-background px-2 py-1 text-[11px] text-foreground hover:bg-accent"
-                onClick={handleOpenHistory}
+                className="rounded-md border border-border bg-background px-2 py-1 text-[11px] text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={onOpenUiPromptHistory}
+                disabled={uiPromptHistoryLoading}
               >
-                {'\u5c55\u793a\u66f4\u591a'}
+                {uiPromptHistoryLoading ? '记录加载中...' : `交互确认记录 ${uiPromptHistoryCount}`}
               </button>
+            ) : null}
+            {expanded ? (
+              <>
+                <button
+                  type="button"
+                  className="rounded-md border border-border bg-background px-2 py-1 text-[11px] text-foreground hover:bg-accent"
+                  onClick={() => handleOpenHistory('all')}
+                >
+                  {'历史任务'}
+                </button>
+                <button
+                  type="button"
+                  className="rounded-md border border-border bg-background px-2 py-1 text-[11px] text-foreground hover:bg-accent"
+                  onClick={() => handleOpenHistory('processed')}
+                >
+                  {'已处理'}
+                </button>
+              </>
             ) : null}
             {onRefresh ? (
               <button
@@ -306,7 +342,7 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
                 <div>
                   <div className="text-sm font-semibold text-foreground">{'\u5386\u53f2\u4efb\u52a1'}</div>
                   <div className="text-xs text-muted-foreground">
-                    {`\u5f53\u524d\u4f1a\u8bdd\uff1a${sortedHistoryTasks.length}`}
+                    {`全部 ${sortedHistoryTasks.length} · 已处理 ${processedHistoryTasks.length}`}
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -331,23 +367,50 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
               </div>
 
               <div className="flex-1 overflow-y-auto px-3 py-3">
+                <div className="mb-3 inline-flex rounded-md border border-border bg-background p-0.5">
+                  <button
+                    type="button"
+                    className={`rounded px-2.5 py-1 text-xs transition-colors ${
+                      historyFilter === 'all'
+                        ? 'bg-accent text-foreground'
+                        : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+                    }`}
+                    onClick={() => setHistoryFilter('all')}
+                  >
+                    全部
+                  </button>
+                  <button
+                    type="button"
+                    className={`rounded px-2.5 py-1 text-xs transition-colors ${
+                      historyFilter === 'processed'
+                        ? 'bg-accent text-foreground'
+                        : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+                    }`}
+                    onClick={() => setHistoryFilter('processed')}
+                  >
+                    已处理
+                  </button>
+                </div>
+
                 {historyError ? (
                   <div className="mb-2 rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-xs text-rose-700 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200">
                     {historyError}
                   </div>
                 ) : null}
 
-                {historyLoading || (isLoading && sortedHistoryTasks.length === 0) ? (
+                {historyLoading || (isLoading && visibleHistoryTasks.length === 0) ? (
                   <div className="text-xs text-muted-foreground">{'\u5386\u53f2\u4efb\u52a1\u52a0\u8f7d\u4e2d...'}</div>
                 ) : null}
 
-                {!historyLoading && sortedHistoryTasks.length === 0 ? (
-                  <div className="text-xs text-muted-foreground">{'\u6682\u65e0\u5386\u53f2\u4efb\u52a1\u3002'}</div>
+                {!historyLoading && visibleHistoryTasks.length === 0 ? (
+                  <div className="text-xs text-muted-foreground">
+                    {historyFilter === 'processed' ? '暂无已处理待办。' : '\u6682\u65e0\u5386\u53f2\u4efb\u52a1\u3002'}
+                  </div>
                 ) : null}
 
-                {sortedHistoryTasks.length > 0 ? (
+                {visibleHistoryTasks.length > 0 ? (
                   <div className="space-y-2">
-                    {sortedHistoryTasks.map((task) => (
+                    {visibleHistoryTasks.map((task) => (
                       <TaskCard
                         key={task.id}
                         task={task}

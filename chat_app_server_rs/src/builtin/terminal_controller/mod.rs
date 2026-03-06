@@ -37,6 +37,11 @@ struct Tool {
 
 type ToolHandler = Arc<dyn Fn(Value, Option<&str>) -> Result<Value, String> + Send + Sync>;
 
+const RECENT_LOGS_MAX_PER_TERMINAL_LIMIT: i64 = 50;
+const RECENT_LOGS_MAX_TERMINAL_LIMIT: u64 = 20;
+const RECENT_LOGS_PER_ENTRY_MAX_CHARS: usize = 1_500;
+const RECENT_LOGS_TOTAL_MAX_CHARS_PER_TERMINAL: usize = 16_000;
+
 #[derive(Clone)]
 struct BoundContext {
     root: PathBuf,
@@ -104,8 +109,8 @@ impl TerminalControllerService {
             json!({
                 "type": "object",
                 "properties": {
-                    "per_terminal_limit": { "type": "integer", "minimum": 1, "maximum": 200 },
-                    "terminal_limit": { "type": "integer", "minimum": 1, "maximum": 100 }
+                    "per_terminal_limit": { "type": "integer", "minimum": 1, "maximum": 50 },
+                    "terminal_limit": { "type": "integer", "minimum": 1, "maximum": 20 }
                 },
                 "additionalProperties": false
             }),
@@ -114,12 +119,12 @@ impl TerminalControllerService {
                     .get("per_terminal_limit")
                     .and_then(|v| v.as_i64())
                     .unwrap_or(10)
-                    .clamp(1, 200);
-                let terminal_limit = args
-                    .get("terminal_limit")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(20)
-                    .clamp(1, 100) as usize;
+                    .clamp(1, RECENT_LOGS_MAX_PER_TERMINAL_LIMIT);
+                let terminal_limit =
+                    args.get("terminal_limit")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(20)
+                        .clamp(1, RECENT_LOGS_MAX_TERMINAL_LIMIT) as usize;
                 let ctx = recent_logs_ctx.clone();
                 let result = block_on_result(async move {
                     get_recent_logs_with_context(ctx, per_terminal_limit, terminal_limit).await
@@ -277,6 +282,11 @@ async fn get_recent_logs_with_context(
     for terminal in selected {
         let logs =
             TerminalLogService::list_recent(terminal.id.as_str(), per_terminal_limit).await?;
+        let (compact_logs, truncation) = compact_recent_logs(
+            logs.as_slice(),
+            RECENT_LOGS_PER_ENTRY_MAX_CHARS,
+            RECENT_LOGS_TOTAL_MAX_CHARS_PER_TERMINAL,
+        );
         terminal_results.push(json!({
             "terminal_id": terminal.id,
             "terminal_name": terminal.name,
@@ -285,7 +295,16 @@ async fn get_recent_logs_with_context(
             "project_id": terminal.project_id,
             "last_active_at": terminal.last_active_at,
             "log_count": logs.len(),
-            "logs": logs
+            "returned_log_count": compact_logs.len(),
+            "truncated": truncation.truncated,
+            "truncation": {
+                "per_log_capped": truncation.per_log_capped,
+                "total_capped": truncation.total_capped,
+                "dropped_logs": truncation.dropped_logs,
+                "original_chars": truncation.original_chars,
+                "returned_chars": truncation.returned_chars
+            },
+            "logs": compact_logs
         }));
     }
 
@@ -311,6 +330,134 @@ struct OutputCapture {
     output: String,
     truncated: bool,
     finished_by: &'static str,
+}
+
+#[derive(Debug, Default)]
+struct LogTruncationStats {
+    truncated: bool,
+    per_log_capped: usize,
+    total_capped: bool,
+    dropped_logs: usize,
+    original_chars: usize,
+    returned_chars: usize,
+}
+
+fn compact_recent_logs(
+    logs: &[TerminalLog],
+    per_entry_max_chars: usize,
+    total_max_chars: usize,
+) -> (Vec<Value>, LogTruncationStats) {
+    let mut stats = LogTruncationStats::default();
+    if logs.is_empty() || total_max_chars == 0 {
+        stats.truncated = !logs.is_empty();
+        stats.total_capped = !logs.is_empty();
+        stats.dropped_logs = logs.len();
+        return (Vec::new(), stats);
+    }
+
+    let mut kept_rev: Vec<Value> = Vec::new();
+    let mut total_chars = 0usize;
+    let mut hit_total_limit = false;
+
+    for (index_from_newest, log) in logs.iter().rev().enumerate() {
+        let original_chars = log.content.chars().count();
+        stats.original_chars += original_chars;
+
+        let mut content = log.content.clone();
+        let mut entry_truncated = false;
+        if original_chars > per_entry_max_chars {
+            content = truncate_keep_tail(log.content.as_str(), per_entry_max_chars);
+            entry_truncated = true;
+            stats.per_log_capped += 1;
+        }
+
+        let content_chars = content.chars().count();
+        let remaining = total_max_chars.saturating_sub(total_chars);
+        if remaining == 0 {
+            hit_total_limit = true;
+            stats.dropped_logs = logs.len().saturating_sub(index_from_newest);
+            break;
+        }
+
+        if content_chars > remaining {
+            content = truncate_keep_tail(content.as_str(), remaining);
+            hit_total_limit = true;
+            stats.dropped_logs = logs
+                .len()
+                .saturating_sub(index_from_newest)
+                .saturating_sub(1);
+            kept_rev.push(json!({
+                "id": log.id,
+                "terminal_id": log.terminal_id,
+                "log_type": log.log_type,
+                "content": content,
+                "created_at": log.created_at,
+            }));
+            break;
+        }
+
+        total_chars += content_chars;
+        kept_rev.push(json!({
+            "id": log.id,
+            "terminal_id": log.terminal_id,
+            "log_type": log.log_type,
+            "content": content,
+            "created_at": log.created_at,
+        }));
+
+        if entry_truncated {
+            stats.truncated = true;
+        }
+    }
+
+    let mut kept = kept_rev;
+    kept.reverse();
+    stats.returned_chars = kept
+        .iter()
+        .map(|item| {
+            item.get("content")
+                .and_then(|value| value.as_str())
+                .map(|value| value.chars().count())
+                .unwrap_or(0)
+        })
+        .sum();
+    stats.total_capped = hit_total_limit;
+    stats.truncated = stats.truncated || hit_total_limit || stats.dropped_logs > 0;
+    (kept, stats)
+}
+
+fn truncate_keep_tail(input: &str, max_chars: usize) -> String {
+    if max_chars == 0 {
+        return String::new();
+    }
+    let total = input.chars().count();
+    if total <= max_chars {
+        return input.to_string();
+    }
+
+    let marker = format!("[...truncated {} chars...]\n", total - max_chars);
+    let marker_chars = marker.chars().count();
+    if marker_chars >= max_chars {
+        return input
+            .chars()
+            .rev()
+            .take(max_chars)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+    }
+
+    let keep_tail = max_chars - marker_chars;
+    let tail: String = input
+        .chars()
+        .rev()
+        .take(keep_tail)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    format!("{}{}", marker, tail)
 }
 
 async fn capture_command_output(

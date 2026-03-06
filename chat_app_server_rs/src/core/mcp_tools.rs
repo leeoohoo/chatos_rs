@@ -5,6 +5,7 @@ use std::sync::Arc;
 use serde::Serialize;
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tracing::warn;
 use uuid::Uuid;
 
 use crate::builtin::code_maintainer::{CodeMaintainerOptions, CodeMaintainerService};
@@ -12,6 +13,7 @@ use crate::builtin::notepad::{NotepadBuiltinService, NotepadOptions};
 use crate::builtin::sub_agent_router::{SubAgentRouterOptions, SubAgentRouterService};
 use crate::builtin::task_manager::{TaskManagerOptions, TaskManagerService};
 use crate::builtin::terminal_controller::{TerminalControllerOptions, TerminalControllerService};
+use crate::builtin::ui_prompter::{UiPrompterOptions, UiPrompterService};
 use crate::services::builtin_mcp::BuiltinMcpKind;
 use crate::services::mcp_loader::{McpBuiltinServer, McpStdioServer};
 use crate::utils::abort_registry;
@@ -116,6 +118,7 @@ pub enum BuiltinToolService {
     TaskManager(TaskManagerService),
     Notepad(NotepadBuiltinService),
     SubAgentRouter(SubAgentRouterService),
+    UiPrompter(UiPrompterService),
 }
 
 impl BuiltinToolService {
@@ -126,6 +129,7 @@ impl BuiltinToolService {
             Self::TaskManager(service) => service.list_tools(),
             Self::Notepad(service) => service.list_tools(),
             Self::SubAgentRouter(service) => service.list_tools(),
+            Self::UiPrompter(service) => service.list_tools(),
         }
     }
 
@@ -155,6 +159,13 @@ impl BuiltinToolService {
                 conversation_turn_id,
                 on_stream_chunk,
             ),
+            Self::UiPrompter(service) => service.call_tool(
+                name,
+                args,
+                session_id,
+                conversation_turn_id,
+                on_stream_chunk,
+            ),
         }
     }
 }
@@ -165,6 +176,7 @@ pub fn build_builtin_tool_service(server: &McpBuiltinServer) -> Result<BuiltinTo
             let service = CodeMaintainerService::new(CodeMaintainerOptions {
                 server_name: server.name.clone(),
                 root: std::path::PathBuf::from(&server.workspace_dir),
+                project_id: server.project_id.clone(),
                 allow_writes: false,
                 max_file_bytes: server.max_file_bytes,
                 max_write_bytes: server.max_write_bytes,
@@ -181,6 +193,7 @@ pub fn build_builtin_tool_service(server: &McpBuiltinServer) -> Result<BuiltinTo
             let service = CodeMaintainerService::new(CodeMaintainerOptions {
                 server_name: server.name.clone(),
                 root: std::path::PathBuf::from(&server.workspace_dir),
+                project_id: server.project_id.clone(),
                 allow_writes: server.allow_writes,
                 max_file_bytes: server.max_file_bytes,
                 max_write_bytes: server.max_write_bytes,
@@ -231,6 +244,13 @@ pub fn build_builtin_tool_service(server: &McpBuiltinServer) -> Result<BuiltinTo
                 run_id: None,
             })?;
             Ok(BuiltinToolService::SubAgentRouter(service))
+        }
+        BuiltinMcpKind::UiPrompter => {
+            let service = UiPrompterService::new(UiPrompterOptions {
+                server_name: server.name.clone(),
+                prompt_timeout_ms: crate::services::ui_prompt_manager::UI_PROMPT_TIMEOUT_MS_DEFAULT,
+            })?;
+            Ok(BuiltinToolService::UiPrompter(service))
         }
     }
 }
@@ -297,6 +317,10 @@ where
         let args = match parse_tool_args(args_val) {
             Ok(value) => value,
             Err(err) => {
+                warn!(
+                    "[MCP] parse tool args failed: tool={}, call_id={}, err={}",
+                    tool_name, call_id, err
+                );
                 push_tool_result(
                     &mut results,
                     ToolResult {
@@ -363,6 +387,10 @@ where
                 if err == "aborted" {
                     break;
                 }
+                warn!(
+                    "[MCP] tool execution failed: tool={}, call_id={}, err={}",
+                    tool_name, call_id, err
+                );
 
                 push_tool_result(
                     &mut results,
@@ -581,33 +609,71 @@ pub fn normalize_json_schema(schema: &Value) -> Value {
 }
 
 pub fn to_text(result: &Value) -> String {
-    if let Some(text) = result.as_str() {
-        return text.to_string();
-    }
-
-    if let Some(content) = result.get("content").and_then(|value| value.as_array()) {
+    let raw = if let Some(text) = result.as_str() {
+        text.to_string()
+    } else if let Some(content) = result.get("content").and_then(|value| value.as_array()) {
+        let mut extracted: Option<String> = None;
         for item in content {
             if item.get("type").and_then(|value| value.as_str()) != Some("text") {
                 continue;
             }
             if let Some(text) = item.get("text").and_then(|value| value.as_str()) {
-                return text.to_string();
+                extracted = Some(text.to_string());
+                break;
             }
             if let Some(value) = item.get("value").and_then(|value| value.as_str()) {
-                return value.to_string();
+                extracted = Some(value.to_string());
+                break;
             }
         }
+        extracted.unwrap_or_else(|| result.to_string())
+    } else if let Some(text) = result.get("text").and_then(|value| value.as_str()) {
+        text.to_string()
+    } else if let Some(value) = result.get("value").and_then(|value| value.as_str()) {
+        value.to_string()
+    } else {
+        result.to_string()
+    };
+
+    truncate_tool_text(raw.as_str(), tool_result_text_max_chars())
+}
+
+fn tool_result_text_max_chars() -> usize {
+    std::env::var("MCP_TOOL_RESULT_MAX_CHARS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(16_000)
+}
+
+fn truncate_tool_text(text: &str, max_chars: usize) -> String {
+    if max_chars == 0 {
+        return String::new();
     }
 
-    if let Some(text) = result.get("text").and_then(|value| value.as_str()) {
+    let total = text.chars().count();
+    if total <= max_chars {
         return text.to_string();
     }
 
-    if let Some(value) = result.get("value").and_then(|value| value.as_str()) {
-        return value.to_string();
+    let marker = format!("\n...[truncated {} chars]...\n", total - max_chars);
+    let marker_chars = marker.chars().count();
+    if marker_chars >= max_chars {
+        return text.chars().take(max_chars).collect();
     }
 
-    result.to_string()
+    let head_chars = ((max_chars - marker_chars) * 3 / 5).max(1);
+    let tail_chars = (max_chars - marker_chars).saturating_sub(head_chars);
+    let head: String = text.chars().take(head_chars).collect();
+    let tail: String = text
+        .chars()
+        .rev()
+        .take(tail_chars)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    format!("{}{}{}", head, marker, tail)
 }
 
 pub fn inject_sub_agent_router_args(args: Value, caller_model: Option<&str>) -> Value {
@@ -717,7 +783,8 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        build_function_tool_schema, normalize_json_schema, parse_tool_definition, ToolSchemaFormat,
+        build_function_tool_schema, normalize_json_schema, parse_tool_definition,
+        truncate_tool_text, ToolSchemaFormat,
     };
 
     #[test]
@@ -806,5 +873,15 @@ mod tests {
             .cloned()
             .unwrap_or_default();
         assert!(nested_required.contains(&json!("limit")));
+    }
+
+    #[test]
+    fn truncate_tool_text_keeps_head_and_tail() {
+        let input = format!("{}{}", "a".repeat(200), "z".repeat(200));
+        let out = truncate_tool_text(input.as_str(), 120);
+        assert!(out.chars().count() <= 120);
+        assert!(out.contains("truncated"));
+        assert!(out.starts_with("a"));
+        assert!(out.ends_with("z"));
     }
 }

@@ -1,4 +1,5 @@
 mod diff;
+mod edit;
 mod fs_ops;
 mod patch;
 mod storage;
@@ -10,6 +11,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use diff::{build_diff, extract_patch_diffs, extract_patch_targets, read_text_for_diff, DiffInput};
+use edit::{apply_edit_text, EditRequest};
 use fs_ops::FsOps;
 use patch::apply_patch;
 use storage::ChangeLogStore;
@@ -20,6 +22,7 @@ use crate::core::tool_io::text_result;
 pub struct CodeMaintainerOptions {
     pub server_name: String,
     pub root: PathBuf,
+    pub project_id: Option<String>,
     pub allow_writes: bool,
     pub max_file_bytes: i64,
     pub max_write_bytes: i64,
@@ -60,7 +63,8 @@ impl CodeMaintainerService {
         ensure_dir(&root)
             .map_err(|err| format!("create workspace dir {} failed: {}", root.display(), err))?;
 
-        let change_log = ChangeLogStore::new(&server_name, opts.db_path.clone())?;
+        let change_log =
+            ChangeLogStore::new(&server_name, opts.project_id.clone(), opts.db_path.clone())?;
         let change_log = Arc::new(Mutex::new(change_log));
 
         let fs_ops = FsOps::new(
@@ -103,11 +107,14 @@ impl CodeMaintainerService {
             let fs_ops = fs_ops.clone();
             service.register_tool(
                 "read_file_raw",
-                &format!("Return UTF-8 file content without line numbers.\n{workspace_note}"),
+                &format!(
+                    "Return UTF-8 file content.\nwith_line_numbers defaults to true; set false to skip structured numbered lines.\n{workspace_note}"
+                ),
                 json!({
                     "type": "object",
                     "properties": {
-                        "path": { "type": "string" }
+                        "path": { "type": "string" },
+                        "with_line_numbers": { "type": "boolean", "default": true }
                     },
                     "additionalProperties": false,
                     "required": ["path"]
@@ -117,13 +124,45 @@ impl CodeMaintainerService {
                         .get("path")
                         .and_then(|v| v.as_str())
                         .ok_or("path is required".to_string())?;
+                    let with_line_numbers = args
+                        .get("with_line_numbers")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(true);
                     let (path, size, sha256, content) = fs_ops.read_file_raw(path)?;
-                    Ok(text_result(json!({
+                    let normalized_lines: Vec<String> = content
+                        .split('\n')
+                        .map(|line| line.trim_end_matches('\r').to_string())
+                        .collect();
+                    let line_count = normalized_lines.len();
+                    let ends_with_newline = content.ends_with('\n');
+                    let numbered_lines = if with_line_numbers {
+                        Some(
+                            normalized_lines
+                                .iter()
+                                .enumerate()
+                                .map(|(idx, text)| {
+                                    json!({
+                                        "line": idx + 1,
+                                        "text": text
+                                    })
+                                })
+                                .collect::<Vec<Value>>(),
+                        )
+                    } else {
+                        None
+                    };
+                    let mut payload = json!({
                         "path": path,
                         "size_bytes": size,
                         "sha256": sha256,
+                        "line_count": line_count,
+                        "ends_with_newline": ends_with_newline,
                         "content": content
-                    })))
+                    });
+                    if let Some(lines) = numbered_lines {
+                        payload["numbered_lines"] = Value::Array(lines);
+                    }
+                    Ok(text_result(payload))
                 }),
             );
         }
@@ -269,6 +308,7 @@ impl CodeMaintainerService {
                         .and_then(|v| v.as_str())
                         .ok_or("content is required".to_string())?;
                     let target = fs_ops.resolve_path(path)?;
+                    let existed_before = target.exists();
                     let before_snapshot = read_text_for_diff(&target, max_file_bytes)
                         .unwrap_or_else(DiffInput::omitted);
                     let result = fs_ops.write_file(path, content)?;
@@ -280,6 +320,7 @@ impl CodeMaintainerService {
                         .log_change(
                             &result.path,
                             "write",
+                            if existed_before { "edit" } else { "create" },
                             result.bytes,
                             &result.sha256,
                             ctx.session_id,
@@ -287,6 +328,100 @@ impl CodeMaintainerService {
                             diff,
                         )?;
                     Ok(text_result(json!({ "result": result, "change": record })))
+                }),
+            );
+        }
+
+        if enable_write_tools {
+            let fs_ops = fs_ops.clone();
+            let change_log = change_log.clone();
+            service.register_tool(
+                "edit_file",
+                &format!(
+                    "Safely edit file content by replacing old_text with new_text.\nWhen old_text appears multiple times, you MUST provide more surrounding context (before_context / after_context, recommended 1-3 lines) or narrow start_line/end_line.\n{workspace_note}"
+                ),
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string" },
+                        "old_text": { "type": "string", "minLength": 1 },
+                        "new_text": { "type": "string" },
+                        "start_line": { "type": "integer", "minimum": 1 },
+                        "end_line": { "type": "integer", "minimum": 1 },
+                        "before_context": { "type": "string" },
+                        "after_context": { "type": "string" },
+                        "expected_matches": { "type": "integer", "minimum": 1 }
+                    },
+                    "additionalProperties": false,
+                    "required": ["path", "old_text", "new_text"]
+                }),
+                Arc::new(move |args, ctx| {
+                    let path = args
+                        .get("path")
+                        .and_then(|v| v.as_str())
+                        .ok_or("path is required".to_string())?;
+                    let old_text = args
+                        .get("old_text")
+                        .and_then(|v| v.as_str())
+                        .ok_or("old_text is required".to_string())?;
+                    let new_text = args
+                        .get("new_text")
+                        .and_then(|v| v.as_str())
+                        .ok_or("new_text is required".to_string())?;
+                    let start_line = args
+                        .get("start_line")
+                        .and_then(|v| v.as_u64())
+                        .map(|v| v as usize);
+                    let end_line = args
+                        .get("end_line")
+                        .and_then(|v| v.as_u64())
+                        .map(|v| v as usize);
+                    let before_context = args
+                        .get("before_context")
+                        .and_then(|v| v.as_str());
+                    let after_context = args
+                        .get("after_context")
+                        .and_then(|v| v.as_str());
+                    let expected_matches = args
+                        .get("expected_matches")
+                        .and_then(|v| v.as_u64())
+                        .map(|v| v as usize);
+
+                    let (_resolved_path, _size, _sha, content) = fs_ops.read_file_raw(path)?;
+                    let edit_result = apply_edit_text(
+                        &content,
+                        EditRequest {
+                            old_text,
+                            new_text,
+                            start_line,
+                            end_line,
+                            before_context,
+                            after_context,
+                            expected_matches,
+                        },
+                    )?;
+
+                    let updated_content = edit_result.content.clone();
+                    let write_result = fs_ops.write_file(path, &updated_content)?;
+                    let diff = build_diff(DiffInput::text(content), DiffInput::text(updated_content));
+                    let record = change_log
+                        .lock()
+                        .map_err(|_| "change log unavailable".to_string())?
+                        .log_change(
+                            &write_result.path,
+                            "edit_file",
+                            "edit",
+                            write_result.bytes,
+                            &write_result.sha256,
+                            ctx.session_id,
+                            ctx.run_id,
+                            diff,
+                        )?;
+                    Ok(text_result(json!({
+                        "result": write_result,
+                        "match": edit_result.info,
+                        "change": record
+                    })))
                 }),
             );
         }
@@ -321,6 +456,7 @@ impl CodeMaintainerService {
                         .and_then(|v| v.as_str())
                         .ok_or("content is required".to_string())?;
                     let target = fs_ops.resolve_path(path)?;
+                    let existed_before = target.exists();
                     let before_snapshot = read_text_for_diff(&target, max_file_bytes)
                         .unwrap_or_else(DiffInput::omitted);
                     let after_snapshot = if let Some(reason) = before_snapshot.reason.clone() {
@@ -338,6 +474,7 @@ impl CodeMaintainerService {
                         .log_change(
                             &result.path,
                             "append",
+                            if existed_before { "edit" } else { "create" },
                             result.bytes,
                             &result.sha256,
                             ctx.session_id,
@@ -380,13 +517,33 @@ impl CodeMaintainerService {
                     } else {
                         DiffInput::text(String::new())
                     };
-                    let deleted_path = fs_ops.delete_path(path)?;
+                    let delete_result = fs_ops.delete_path(path)?;
+                    let exists_after_delete = target.exists();
+                    if delete_result.deleted && exists_after_delete {
+                        return Err(format!(
+                            "Delete reported success but path still exists: {}",
+                            delete_result.path
+                        ));
+                    }
+                    if !delete_result.deleted {
+                        return Ok(text_result(json!({
+                            "result": {
+                                "path": delete_result.path,
+                                "deleted": false,
+                                "exists_after_delete": exists_after_delete,
+                                "already_absent": true
+                            },
+                            "message": "Path already absent. No file-system change was applied.",
+                            "hint": "Verify the exact path with list_dir before retrying delete."
+                        })));
+                    }
                     let diff = build_diff(before_snapshot, after_snapshot);
                     let record = change_log
                         .lock()
                         .map_err(|_| "change log unavailable".to_string())?
                         .log_change(
-                            &deleted_path,
+                            &delete_result.path,
+                            "delete",
                             "delete",
                             0,
                             "",
@@ -394,9 +551,15 @@ impl CodeMaintainerService {
                             ctx.run_id,
                             diff,
                         )?;
-                    Ok(text_result(
-                        json!({ "result": { "path": deleted_path }, "change": record }),
-                    ))
+                    Ok(text_result(json!({
+                        "result": {
+                            "path": delete_result.path,
+                            "deleted": true,
+                            "exists_after_delete": exists_after_delete,
+                            "already_absent": false
+                        },
+                        "change": record
+                    })))
                 }),
             );
         }
@@ -410,7 +573,7 @@ impl CodeMaintainerService {
             service.register_tool(
                 "apply_patch",
                 &format!(
-                    "Apply a patch to one or more files.\nPatch format uses *** Begin Patch / *** Update File / *** Add File / *** Delete File / *** End Patch.\n{}.\n{workspace_note}",
+                    "Apply a patch to one or more files.\nSupported format A (recommended): *** Begin Patch / *** Update File / *** Add File / *** Delete File / *** End Patch.\nSupported format B (stable text replace):\nUpdate File --- path/to/file\n<old content>\n+++ path/to/file\n<new content>\nEnd Patch\nFormat B requires old content to match uniquely in the file.\n{}.\n{workspace_note}",
                     writes_note
                 ),
                 json!({
@@ -442,13 +605,50 @@ impl CodeMaintainerService {
                         let store = change_log
                             .lock()
                             .map_err(|_| "change log unavailable".to_string())?;
-                        for path in result.updated.iter().chain(result.added.iter()) {
+                        for path in &result.updated {
                             let full_path = fs_ops.resolve_path(path)?;
                             let content = std::fs::read(&full_path).map_err(|err| err.to_string())?;
                             let hash = sha256_bytes(&content);
                             let before_snapshot = before_snapshots
                                 .remove(path)
-                                .unwrap_or_else(|| DiffInput::text(String::new()));
+                                .unwrap_or(DiffInput {
+                                    text: None,
+                                    reason: None,
+                                });
+                            let after_snapshot = read_text_for_diff(&full_path, max_file_bytes)
+                                .unwrap_or_else(DiffInput::omitted);
+                            let change_kind = if before_snapshot.text.is_none()
+                                && before_snapshot.reason.is_none()
+                            {
+                                "create"
+                            } else {
+                                "edit"
+                            };
+                            let diff = build_diff(before_snapshot, after_snapshot)
+                                .or_else(|| patch_diffs.get(path).cloned());
+                            store.log_change(
+                                path,
+                                "write",
+                                change_kind,
+                                content.len() as i64,
+                                &hash,
+                                ctx.session_id,
+                                ctx.run_id,
+                                diff,
+                            )?;
+                            hashes.push(json!({ "path": path, "sha256": hash }));
+                        }
+
+                        for path in &result.added {
+                            let full_path = fs_ops.resolve_path(path)?;
+                            let content = std::fs::read(&full_path).map_err(|err| err.to_string())?;
+                            let hash = sha256_bytes(&content);
+                            let before_snapshot = before_snapshots
+                                .remove(path)
+                                .unwrap_or(DiffInput {
+                                    text: None,
+                                    reason: None,
+                                });
                             let after_snapshot = read_text_for_diff(&full_path, max_file_bytes)
                                 .unwrap_or_else(DiffInput::omitted);
                             let diff = build_diff(before_snapshot, after_snapshot)
@@ -456,6 +656,7 @@ impl CodeMaintainerService {
                             store.log_change(
                                 path,
                                 "write",
+                                "create",
                                 content.len() as i64,
                                 &hash,
                                 ctx.session_id,
@@ -472,7 +673,16 @@ impl CodeMaintainerService {
                             let after_snapshot = DiffInput::text(String::new());
                             let diff = build_diff(before_snapshot, after_snapshot)
                                 .or_else(|| patch_diffs.get(path).cloned());
-                            store.log_change(path, "delete", 0, "", ctx.session_id, ctx.run_id, diff)?;
+                            store.log_change(
+                                path,
+                                "delete",
+                                "delete",
+                                0,
+                                "",
+                                ctx.session_id,
+                                ctx.run_id,
+                                diff,
+                            )?;
                         }
                     }
 

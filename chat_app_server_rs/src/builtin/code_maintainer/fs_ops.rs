@@ -21,6 +21,12 @@ pub struct FileEntry {
     pub mtime_ms: u128,
 }
 
+#[derive(Debug, serde::Serialize)]
+pub struct DeleteResult {
+    pub path: String,
+    pub deleted: bool,
+}
+
 impl FsOps {
     pub fn new(
         root: PathBuf,
@@ -39,7 +45,8 @@ impl FsOps {
     }
 
     pub fn resolve_path(&self, rel_path: &str) -> Result<PathBuf, String> {
-        let target = Path::new(rel_path);
+        let normalized = rel_path.replace('\\', "/");
+        let target = Path::new(&normalized);
         ensure_path_inside_root(&self.root, target)
     }
 
@@ -232,17 +239,34 @@ impl FsOps {
         })
     }
 
-    pub fn delete_path(&self, rel_path: &str) -> Result<String, String> {
+    pub fn delete_path(&self, rel_path: &str) -> Result<DeleteResult, String> {
         if !self.allow_writes {
             return Err("Writes are disabled.".to_string());
         }
         let target = self.resolve_path(rel_path)?;
         if target.is_dir() {
             fs::remove_dir_all(&target).map_err(|err| err.to_string())?;
-        } else if target.exists() {
-            fs::remove_file(&target).map_err(|err| err.to_string())?;
+            return Ok(DeleteResult {
+                path: rel_path.to_string(),
+                deleted: true,
+            });
         }
-        Ok(rel_path.to_string())
+
+        if let Ok(meta) = fs::symlink_metadata(&target) {
+            if meta.file_type().is_symlink() || meta.is_file() {
+                fs::remove_file(&target).map_err(|err| err.to_string())?;
+                return Ok(DeleteResult {
+                    path: rel_path.to_string(),
+                    deleted: true,
+                });
+            }
+            return Err("Target path is not a regular file or directory.".to_string());
+        }
+
+        Ok(DeleteResult {
+            path: rel_path.to_string(),
+            deleted: false,
+        })
     }
 }
 
@@ -258,4 +282,58 @@ pub struct WriteResult {
     pub bytes: i64,
     pub sha256: String,
     pub path: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FsOps;
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn make_temp_root() -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "code_maintainer_fs_ops_test_{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root).expect("create temp root");
+        root
+    }
+
+    #[test]
+    fn delete_file_is_idempotent_and_removed_from_list_dir() {
+        let root = make_temp_root();
+        let file_path = root.join("a.txt");
+        fs::write(&file_path, "hello").expect("write file");
+
+        let fs_ops = FsOps::new(root.clone(), true, 1024 * 1024, 1024 * 1024, 100);
+
+        let first = fs_ops.delete_path("a.txt").expect("first delete");
+        assert!(first.deleted);
+
+        let entries = fs_ops.list_dir(".", 100).expect("list dir after delete");
+        assert!(entries.iter().all(|entry| entry.name != "a.txt"));
+
+        let second = fs_ops.delete_path("a.txt").expect("second delete");
+        assert!(!second.deleted);
+
+        fs::remove_dir_all(&root).expect("cleanup temp root");
+    }
+
+    #[test]
+    fn delete_path_accepts_backslash_separator() {
+        let root = make_temp_root();
+        let nested = root.join("nested");
+        fs::create_dir_all(&nested).expect("create nested dir");
+        let file_path = nested.join("b.txt");
+        fs::write(&file_path, "hello").expect("write nested file");
+
+        let fs_ops = FsOps::new(root.clone(), true, 1024 * 1024, 1024 * 1024, 100);
+        let deleted = fs_ops
+            .delete_path("nested\\b.txt")
+            .expect("delete with backslash path");
+        assert!(deleted.deleted);
+        assert!(!file_path.exists());
+
+        fs::remove_dir_all(&root).expect("cleanup temp root");
+    }
 }

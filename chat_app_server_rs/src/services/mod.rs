@@ -10,6 +10,7 @@ pub mod summary;
 pub mod system_context_ai;
 pub mod task_manager;
 pub mod terminal_manager;
+pub mod ui_prompt_manager;
 pub mod user_settings;
 pub mod v2;
 pub mod v3;

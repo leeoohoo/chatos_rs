@@ -25,8 +25,9 @@ use self::input_transform::{
 use self::prev_context::{
     base_url_allows_prev, base_url_disallows_system_messages, is_context_length_exceeded_error,
     is_input_must_be_list_error, is_invalid_input_text_error, is_missing_tool_call_error,
-    is_system_messages_not_allowed_error, is_unsupported_previous_response_id_error,
-    reduce_history_limit, should_use_prev_id_for_next_turn,
+    is_request_body_too_large_error, is_system_messages_not_allowed_error,
+    is_unsupported_previous_response_id_error, reduce_history_limit,
+    should_use_prev_id_for_next_turn,
 };
 use self::tool_plan::{
     build_tool_call_execution_plan, build_tool_call_items, expand_tool_results_with_aliases,
@@ -579,10 +580,25 @@ impl AiClient {
                             stateless_context_items = Some(normalized_items);
                             continue;
                         }
-                        if is_context_length_exceeded_error(&err_msg) {
+                        let request_too_large = is_request_body_too_large_error(&err_msg);
+                        if request_too_large {
+                            if let Some(trimmed_input) =
+                                truncate_function_call_outputs_in_input(&input)
+                            {
+                                warn!(
+                                    "[AI_V3] request payload too large; retry with truncated function_call_output items"
+                                );
+                                use_prev_id = false;
+                                previous_response_id = None;
+                                stateless_context_items = trimmed_input.as_array().cloned();
+                                input = trimmed_input;
+                                continue;
+                            }
+                        }
+                        if is_context_length_exceeded_error(&err_msg) || request_too_large {
                             if let Some(next_limit) = reduce_history_limit(adaptive_history_limit) {
                                 warn!(
-                                    "[AI_V3] context length exceeded; reduce history_limit {} -> {}",
+                                    "[AI_V3] context/payload overflow; reduce history_limit {} -> {}",
                                     adaptive_history_limit,
                                     next_limit
                                 );
@@ -627,10 +643,23 @@ impl AiClient {
                 ai_response.reasoning.as_deref(),
                 ai_response.provider_error.as_ref(),
             ) {
-                if is_context_length_exceeded_error(&err) {
+                let request_too_large = is_request_body_too_large_error(&err);
+                if request_too_large {
+                    if let Some(trimmed_input) = truncate_function_call_outputs_in_input(&input) {
+                        warn!(
+                            "[AI_V3] failed response due to payload size; retry with truncated function_call_output items"
+                        );
+                        use_prev_id = false;
+                        previous_response_id = None;
+                        stateless_context_items = trimmed_input.as_array().cloned();
+                        input = trimmed_input;
+                        continue;
+                    }
+                }
+                if is_context_length_exceeded_error(&err) || request_too_large {
                     if let Some(next_limit) = reduce_history_limit(adaptive_history_limit) {
                         warn!(
-                            "[AI_V3] failed response due to context overflow; reduce history_limit {} -> {}",
+                            "[AI_V3] failed response due to context/payload overflow; reduce history_limit {} -> {}",
                             adaptive_history_limit,
                             next_limit
                         );
@@ -757,7 +786,7 @@ impl AiClient {
                     json!({
                         "type": "function_call_output",
                         "call_id": r.tool_call_id,
-                        "output": r.content
+                        "output": cap_tool_output_for_input(r.content.as_str())
                     })
                 })
                 .collect();
@@ -980,7 +1009,7 @@ impl AiClient {
                 if include_tool_items {
                     if let Some(call_id) = msg.tool_call_id.clone() {
                         if tool_call_ids.contains(&call_id) {
-                            let output = msg.content.clone();
+                            let output = cap_tool_output_for_input(msg.content.as_str());
                             items.push(json!({
                                 "type": "function_call_output",
                                 "call_id": call_id,
@@ -1009,6 +1038,87 @@ impl AiClient {
             items.len()
         );
         items
+    }
+}
+
+fn tool_output_item_max_chars() -> usize {
+    std::env::var("AI_V3_TOOL_OUTPUT_MAX_CHARS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(8_000)
+}
+
+fn cap_tool_output_for_input(raw: &str) -> String {
+    truncate_text_with_tail(raw, tool_output_item_max_chars())
+}
+
+fn truncate_text_with_tail(raw: &str, max_chars: usize) -> String {
+    if max_chars == 0 {
+        return String::new();
+    }
+
+    let total = raw.chars().count();
+    if total <= max_chars {
+        return raw.to_string();
+    }
+
+    let marker = format!("[...truncated {} chars...]\n", total - max_chars);
+    let marker_chars = marker.chars().count();
+    if marker_chars >= max_chars {
+        return raw
+            .chars()
+            .rev()
+            .take(max_chars)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+    }
+
+    let keep_tail = max_chars - marker_chars;
+    let tail: String = raw
+        .chars()
+        .rev()
+        .take(keep_tail)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    format!("{}{}", marker, tail)
+}
+
+fn truncate_function_call_outputs_in_input(input: &Value) -> Option<Value> {
+    let items = input.as_array()?;
+    let mut changed = false;
+    let mut mapped = Vec::with_capacity(items.len());
+
+    for item in items {
+        let mut cloned = item.clone();
+        let is_output_item =
+            cloned.get("type").and_then(|value| value.as_str()) == Some("function_call_output");
+        if is_output_item {
+            if let Some(object) = cloned.as_object_mut() {
+                if let Some(raw) = object
+                    .get("output")
+                    .and_then(|value| value.as_str())
+                    .map(|value| value.to_string())
+                {
+                    let truncated = cap_tool_output_for_input(raw.as_str());
+                    if truncated != raw {
+                        object.insert("output".to_string(), Value::String(truncated));
+                        changed = true;
+                    }
+                }
+            }
+        }
+        mapped.push(cloned);
+    }
+
+    if changed {
+        Some(Value::Array(mapped))
+    } else {
+        None
     }
 }
 
@@ -1149,7 +1259,10 @@ impl AiClientSettings for AiClient {
 mod tests {
     use serde_json::{json, Value};
 
-    use super::{response_content_to_text, rewrite_system_messages_to_user};
+    use super::{
+        response_content_to_text, rewrite_system_messages_to_user,
+        truncate_function_call_outputs_in_input,
+    };
 
     #[test]
     fn rewrites_system_and_developer_messages_to_user_role() {
@@ -1207,5 +1320,26 @@ mod tests {
 
         let output = rewrite_system_messages_to_user(&input, false);
         assert_eq!(input, output);
+    }
+
+    #[test]
+    fn truncates_large_function_call_output_items() {
+        let long_output = "a".repeat(20_000);
+        let input = json!([
+            {
+                "type": "function_call_output",
+                "call_id": "call_1",
+                "output": long_output
+            }
+        ]);
+
+        let truncated = truncate_function_call_outputs_in_input(&input).expect("should truncate");
+        let items = truncated.as_array().expect("array");
+        let text = items[0]
+            .get("output")
+            .and_then(|value| value.as_str())
+            .unwrap_or("");
+        assert!(text.len() < 20_000);
+        assert!(text.contains("truncated"));
     }
 }

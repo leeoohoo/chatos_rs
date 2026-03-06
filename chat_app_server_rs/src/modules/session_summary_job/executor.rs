@@ -48,6 +48,21 @@ impl SessionProcessOutcome {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TriggerKind {
+    MessageCountLimit,
+    TokenLimit,
+}
+
+impl TriggerKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            TriggerKind::MessageCountLimit => "message_count_limit",
+            TriggerKind::TokenLimit => "token_limit",
+        }
+    }
+}
+
 pub async fn process_session(
     session_id: &str,
     defaults: &SummaryJobDefaults,
@@ -71,14 +86,26 @@ pub async fn process_session(
     if pending.is_empty() {
         return Ok(SessionProcessOutcome::skipped("no_pending"));
     }
-    if pending.len() < message_limit {
+    let pending_tokens = estimate_messages_tokens(pending_to_summary_messages(&pending).as_slice());
+    let trigger_kind = if let Some(kind) = determine_trigger_kind(
+        pending.len(),
+        pending_tokens,
+        message_limit,
+        effective.token_limit,
+    ) {
+        kind
+    } else {
         return Ok(SessionProcessOutcome::skipped("threshold_not_met"));
-    }
+    };
 
     let selected_messages: Vec<Message> = pending.into_iter().take(message_limit).collect();
     if selected_messages.is_empty() {
         return Ok(SessionProcessOutcome::skipped("no_pending"));
     }
+    let partitioned =
+        partition_messages_by_token_limit(selected_messages.as_slice(), effective.token_limit);
+    let oversized_count = partitioned.oversized.len();
+    let oversized_ids_preview = summarize_message_ids_preview(partitioned.oversized.as_slice(), 5);
     let selected_tokens =
         estimate_messages_tokens(pending_to_summary_messages(&selected_messages).as_slice());
 
@@ -89,13 +116,65 @@ pub async fn process_session(
     // We already take fixed-count head messages; summarize each selected chunk fully.
     options.keep_last_n = 0;
 
-    let chunks = split_chunks_by_token_limit(selected_messages.as_slice(), effective.token_limit);
+    let chunks =
+        split_chunks_by_token_limit(partitioned.summarizable.as_slice(), effective.token_limit);
     let split_chunk_count = chunks.len();
-    let trigger_type = if chunks.len() > 1 {
-        "message_count_limit+token_limit_split".to_string()
-    } else {
-        "message_count_limit".to_string()
-    };
+    let trigger_type = build_trigger_type(trigger_kind, split_chunk_count > 1, oversized_count > 0);
+
+    if partitioned.summarizable.is_empty() {
+        let source_ids: Vec<String> = selected_messages
+            .iter()
+            .map(|item| item.id.clone())
+            .collect();
+        if source_ids.is_empty() {
+            return Ok(SessionProcessOutcome::skipped("no_source_messages"));
+        }
+        let source_start_message_id = source_ids.first().cloned();
+        let source_end_message_id = source_ids.last().cloned();
+        let summary_record = SessionSummaryV2::new(
+            session_id.to_string(),
+            build_oversized_only_summary_text(
+                oversized_count,
+                oversized_ids_preview.as_slice(),
+                effective.token_limit,
+            ),
+            model_name.clone(),
+            trigger_type.clone(),
+            source_start_message_id,
+            source_end_message_id,
+            source_ids.len() as i64,
+            selected_tokens,
+            "done".to_string(),
+            None,
+        );
+        let summary_id = summary_record.id.clone();
+        SessionSummaryV2Service::create(summary_record).await?;
+        let summarized_at = crate::core::time::now_rfc3339();
+        let marked = MessageService::mark_summarized(
+            session_id,
+            source_ids.as_slice(),
+            summary_id.as_str(),
+            summarized_at.as_str(),
+        )
+        .await?;
+        info!(
+            "[SESSION-SUMMARY-JOB] summarized oversized-only batch: session_id={} trigger={} selected_messages={} selected_tokens={} oversized_skipped_count={} oversized_skipped_ids_preview={} marked={} summary_id={}",
+            session_id,
+            trigger_type,
+            selected_messages.len(),
+            selected_tokens,
+            oversized_count,
+            oversized_ids_preview.join(","),
+            marked,
+            summary_id
+        );
+        return Ok(SessionProcessOutcome {
+            status: "summarized".to_string(),
+            trigger_type: Some(trigger_type),
+            summary_id: Some(summary_id),
+            marked_messages: marked,
+        });
+    }
 
     let previous_summary_context =
         load_recent_summary_context(session_id, PREVIOUS_SUMMARY_CONTEXT_LIMIT).await;
@@ -174,6 +253,12 @@ pub async fn process_session(
         }
     };
 
+    let final_summary_text = append_oversized_skip_note(
+        final_summary_text,
+        oversized_count,
+        oversized_ids_preview.as_slice(),
+    );
+
     let source_ids: Vec<String> = selected_messages
         .iter()
         .map(|item| item.id.clone())
@@ -209,12 +294,14 @@ pub async fn process_session(
     .await?;
 
     info!(
-        "[SESSION-SUMMARY-JOB] summarized session_id={} trigger={} selected_messages={} selected_tokens={} split_chunks={} marked={} summary_id={}",
+        "[SESSION-SUMMARY-JOB] summarized session_id={} trigger={} selected_messages={} selected_tokens={} split_chunks={} oversized_skipped_count={} oversized_skipped_ids_preview={} marked={} summary_id={}",
         session_id,
         trigger_type,
         selected_messages.len(),
         selected_tokens,
         split_chunk_count,
+        oversized_count,
+        oversized_ids_preview.join(","),
         marked,
         summary_id
     );
@@ -243,6 +330,123 @@ fn build_summary_options(config: &EffectiveSummaryJobConfig, model_name: &str) -
         bisect_min_messages: 4,
         retry_on_context_overflow: true,
     }
+}
+
+fn determine_trigger_kind(
+    pending_count: usize,
+    pending_tokens: i64,
+    message_limit: usize,
+    token_limit: i64,
+) -> Option<TriggerKind> {
+    if pending_count >= message_limit.max(1) {
+        return Some(TriggerKind::MessageCountLimit);
+    }
+    if token_limit > 0 && pending_tokens >= token_limit {
+        return Some(TriggerKind::TokenLimit);
+    }
+    None
+}
+
+#[derive(Debug, Clone, Default)]
+struct PartitionedMessages {
+    summarizable: Vec<Message>,
+    oversized: Vec<Message>,
+}
+
+fn build_trigger_type(
+    trigger_kind: TriggerKind,
+    split_by_token_limit: bool,
+    has_oversized_skipped: bool,
+) -> String {
+    let mut parts = vec![trigger_kind.as_str().to_string()];
+    if split_by_token_limit {
+        parts.push("token_limit_split".to_string());
+    }
+    if has_oversized_skipped {
+        parts.push("oversized_single_skipped".to_string());
+    }
+    parts.join("+")
+}
+
+fn partition_messages_by_token_limit(
+    messages: &[Message],
+    token_limit: i64,
+) -> PartitionedMessages {
+    if messages.is_empty() {
+        return PartitionedMessages::default();
+    }
+    if token_limit <= 0 {
+        return PartitionedMessages {
+            summarizable: messages.to_vec(),
+            oversized: Vec::new(),
+        };
+    }
+
+    let mut summarizable = Vec::new();
+    let mut oversized = Vec::new();
+    for message in messages {
+        let message_tokens = estimate_message_tokens_for_summary(message);
+        if message_tokens > token_limit {
+            oversized.push(message.clone());
+        } else {
+            summarizable.push(message.clone());
+        }
+    }
+
+    PartitionedMessages {
+        summarizable,
+        oversized,
+    }
+}
+
+fn estimate_message_tokens_for_summary(message: &Message) -> i64 {
+    estimate_messages_tokens([pending_to_summary_message(message)].as_slice())
+}
+
+fn summarize_message_ids_preview(messages: &[Message], max_count: usize) -> Vec<String> {
+    messages
+        .iter()
+        .take(max_count.max(1))
+        .map(|message| message.id.clone())
+        .collect()
+}
+
+fn build_oversized_only_summary_text(
+    oversized_count: usize,
+    oversized_ids_preview: &[String],
+    token_limit: i64,
+) -> String {
+    let ids = if oversized_ids_preview.is_empty() {
+        "none".to_string()
+    } else {
+        oversized_ids_preview.join(", ")
+    };
+
+    format!(
+        "本批次待总结消息中有 {} 条消息单条超过 token_limit={}，已跳过正文并标记为已总结。消息 ID 预览：{}。",
+        oversized_count, token_limit, ids
+    )
+}
+
+fn append_oversized_skip_note(
+    summary_text: String,
+    oversized_count: usize,
+    oversized_ids_preview: &[String],
+) -> String {
+    if oversized_count == 0 {
+        return summary_text;
+    }
+
+    let ids = if oversized_ids_preview.is_empty() {
+        "none".to_string()
+    } else {
+        oversized_ids_preview.join(", ")
+    };
+
+    format!(
+        "{}\n\n补充说明：有 {} 条超长消息未纳入本次总结正文（已标记为已总结），消息 ID 预览：{}。",
+        summary_text, oversized_count, ids
+    )
 }
 
 fn split_chunks_by_token_limit(messages: &[Message], token_limit: i64) -> Vec<Vec<Message>> {
@@ -279,35 +483,34 @@ fn split_chunks_by_token_limit(messages: &[Message], token_limit: i64) -> Vec<Ve
 }
 
 fn pending_to_summary_messages(messages: &[Message]) -> Vec<Value> {
-    messages
-        .iter()
-        .map(|message| {
-            let mut content = message.content.clone();
-            if content.trim().is_empty() {
-                if let Some(meta) = message.metadata.as_ref() {
-                    content = meta.to_string();
-                }
-            }
+    messages.iter().map(pending_to_summary_message).collect()
+}
 
-            let mut value = json!({
-                "id": message.id,
-                "created_at": message.created_at,
-                "role": message.role,
-                "content": content,
-            });
+fn pending_to_summary_message(message: &Message) -> Value {
+    let mut content = message.content.clone();
+    if content.trim().is_empty() {
+        if let Some(meta) = message.metadata.as_ref() {
+            content = meta.to_string();
+        }
+    }
 
-            if let Some(tool_call_id) = message.tool_call_id.as_ref() {
-                value["tool_call_id"] = Value::String(tool_call_id.clone());
-            }
-            if let Some(tool_calls) = message.tool_calls.as_ref() {
-                value["tool_calls"] = tool_calls.clone();
-            }
-            if let Some(reasoning) = message.reasoning.as_ref() {
-                value["reasoning"] = Value::String(reasoning.clone());
-            }
-            value
-        })
-        .collect()
+    let mut value = json!({
+        "id": message.id,
+        "created_at": message.created_at,
+        "role": message.role,
+        "content": content,
+    });
+
+    if let Some(tool_call_id) = message.tool_call_id.as_ref() {
+        value["tool_call_id"] = Value::String(tool_call_id.clone());
+    }
+    if let Some(tool_calls) = message.tool_calls.as_ref() {
+        value["tool_calls"] = tool_calls.clone();
+    }
+    if let Some(reasoning) = message.reasoning.as_ref() {
+        value["reasoning"] = Value::String(reasoning.clone());
+    }
+    value
 }
 
 async fn summarize_chunk_text(
@@ -623,4 +826,88 @@ fn content_to_text(content: &Value) -> String {
     }
 
     content.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{
+        append_oversized_skip_note, build_oversized_only_summary_text, build_trigger_type,
+        determine_trigger_kind, partition_messages_by_token_limit, TriggerKind,
+    };
+    use crate::models::message::Message;
+
+    fn test_message(id: &str, content: &str) -> Message {
+        Message {
+            id: id.to_string(),
+            session_id: "session_1".to_string(),
+            role: "tool".to_string(),
+            content: content.to_string(),
+            message_mode: None,
+            message_source: None,
+            summary: None,
+            tool_calls: None,
+            tool_call_id: Some(format!("call_{}", id)),
+            reasoning: None,
+            metadata: Some(json!({ "source": "test" })),
+            created_at: "2026-03-05T00:00:00Z".to_string(),
+        }
+    }
+
+    #[test]
+    fn partitions_oversized_messages() {
+        let messages = vec![
+            test_message("m1", &"a".repeat(200)),
+            test_message("m2", "ok"),
+        ];
+        let partition = partition_messages_by_token_limit(messages.as_slice(), 10);
+        assert_eq!(partition.oversized.len(), 1);
+        assert_eq!(partition.summarizable.len(), 1);
+        assert_eq!(partition.oversized[0].id, "m1");
+        assert_eq!(partition.summarizable[0].id, "m2");
+    }
+
+    #[test]
+    fn builds_trigger_type_with_suffixes() {
+        assert_eq!(
+            build_trigger_type(TriggerKind::MessageCountLimit, true, true),
+            "message_count_limit+token_limit_split+oversized_single_skipped"
+        );
+        assert_eq!(
+            build_trigger_type(TriggerKind::TokenLimit, false, false),
+            "token_limit"
+        );
+    }
+
+    #[test]
+    fn oversized_summary_text_contains_ids() {
+        let text =
+            build_oversized_only_summary_text(2, &["m1".to_string(), "m2".to_string()], 6000);
+        assert!(text.contains("2 条消息"));
+        assert!(text.contains("m1"));
+        assert!(text.contains("token_limit=6000"));
+    }
+
+    #[test]
+    fn appends_oversized_note_when_needed() {
+        let summary =
+            append_oversized_skip_note("基础总结".to_string(), 1, &["message_x".to_string()]);
+        assert!(summary.contains("基础总结"));
+        assert!(summary.contains("message_x"));
+        assert!(summary.contains("超长消息"));
+    }
+
+    #[test]
+    fn determine_trigger_kind_uses_count_then_token() {
+        assert_eq!(
+            determine_trigger_kind(8, 10, 8, 6000),
+            Some(TriggerKind::MessageCountLimit)
+        );
+        assert_eq!(
+            determine_trigger_kind(3, 6001, 8, 6000),
+            Some(TriggerKind::TokenLimit)
+        );
+        assert_eq!(determine_trigger_kind(3, 100, 8, 6000), None);
+    }
 }

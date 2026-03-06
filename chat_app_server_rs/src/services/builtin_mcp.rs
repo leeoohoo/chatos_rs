@@ -35,6 +35,11 @@ pub const SUB_AGENT_ROUTER_DISPLAY_NAME: &str = "Sub-Agent Router (Builtin)";
 pub const SUB_AGENT_ROUTER_SERVER_NAME: &str = "sub_agent_router";
 pub const SUB_AGENT_ROUTER_COMMAND: &str = "builtin:sub_agent_router";
 
+pub const UI_PROMPTER_MCP_ID: &str = "builtin_ui_prompter";
+pub const UI_PROMPTER_DISPLAY_NAME: &str = "UI Prompter (Builtin)";
+pub const UI_PROMPTER_SERVER_NAME: &str = "ui_prompter";
+pub const UI_PROMPTER_COMMAND: &str = "builtin:ui_prompter";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuiltinMcpKind {
     CodeMaintainerRead,
@@ -43,6 +48,7 @@ pub enum BuiltinMcpKind {
     TaskManager,
     Notepad,
     SubAgentRouter,
+    UiPrompter,
 }
 
 pub fn builtin_kind_by_id(id: &str) -> Option<BuiltinMcpKind> {
@@ -55,6 +61,7 @@ pub fn builtin_kind_by_id(id: &str) -> Option<BuiltinMcpKind> {
         TASK_MANAGER_MCP_ID => Some(BuiltinMcpKind::TaskManager),
         NOTEPAD_MCP_ID => Some(BuiltinMcpKind::Notepad),
         SUB_AGENT_ROUTER_MCP_ID => Some(BuiltinMcpKind::SubAgentRouter),
+        UI_PROMPTER_MCP_ID => Some(BuiltinMcpKind::UiPrompter),
         _ => None,
     }
 }
@@ -69,6 +76,7 @@ pub fn builtin_kind_by_command(command: &str) -> Option<BuiltinMcpKind> {
         TASK_MANAGER_COMMAND => Some(BuiltinMcpKind::TaskManager),
         NOTEPAD_COMMAND => Some(BuiltinMcpKind::Notepad),
         SUB_AGENT_ROUTER_COMMAND => Some(BuiltinMcpKind::SubAgentRouter),
+        UI_PROMPTER_COMMAND => Some(BuiltinMcpKind::UiPrompter),
         _ => None,
     }
 }
@@ -87,6 +95,7 @@ pub fn get_builtin_mcp_config(id: &str) -> Option<McpConfig> {
             Some(BuiltinMcpKind::TaskManager) => Some(task_manager_config()),
             Some(BuiltinMcpKind::Notepad) => Some(notepad_config()),
             Some(BuiltinMcpKind::SubAgentRouter) => Some(sub_agent_router_config()),
+            Some(BuiltinMcpKind::UiPrompter) => Some(ui_prompter_config()),
             _ => None,
         },
     }
@@ -100,6 +109,7 @@ pub fn list_builtin_mcp_configs() -> Vec<McpConfig> {
         task_manager_config(),
         notepad_config(),
         sub_agent_router_config(),
+        ui_prompter_config(),
     ]
 }
 
@@ -113,6 +123,7 @@ pub fn builtin_display_name(id: &str) -> Option<&'static str> {
         TASK_MANAGER_MCP_ID => Some(TASK_MANAGER_DISPLAY_NAME),
         NOTEPAD_MCP_ID => Some(NOTEPAD_DISPLAY_NAME),
         SUB_AGENT_ROUTER_MCP_ID => Some(SUB_AGENT_ROUTER_DISPLAY_NAME),
+        UI_PROMPTER_MCP_ID => Some(UI_PROMPTER_DISPLAY_NAME),
         _ => None,
     }
 }
@@ -227,6 +238,23 @@ fn sub_agent_router_config() -> McpConfig {
         command: SUB_AGENT_ROUTER_COMMAND.to_string(),
         r#type: "stdio".to_string(),
         args: Some(json!(["--name", SUB_AGENT_ROUTER_SERVER_NAME])),
+        env: None,
+        cwd: None,
+        user_id: None,
+        enabled: true,
+        created_at: now.clone(),
+        updated_at: now,
+    }
+}
+
+fn ui_prompter_config() -> McpConfig {
+    let now = crate::core::time::now_rfc3339();
+    McpConfig {
+        id: UI_PROMPTER_MCP_ID.to_string(),
+        name: UI_PROMPTER_SERVER_NAME.to_string(),
+        command: UI_PROMPTER_COMMAND.to_string(),
+        r#type: "stdio".to_string(),
+        args: Some(json!(["--name", UI_PROMPTER_SERVER_NAME])),
         env: None,
         cwd: None,
         user_id: None,
