@@ -2,6 +2,10 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
+import {
+  resolveRemoteConnectionErrorMessage,
+  resolveRemoteTerminalWsErrorMessage,
+} from '../lib/api/remoteConnectionErrors';
 import { useChatStoreFromContext, useChatApiClientFromContext } from '../lib/store/ChatStoreContext';
 import { apiClient as globalApiClient } from '../lib/api/client';
 import { useAuthStore } from '../lib/auth/authStore';
@@ -147,7 +151,7 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
       setConnectionState('disconnected');
       setBusy(false);
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : '断开连接失败');
+      setErrorMessage(resolveRemoteConnectionErrorMessage(error, '断开连接失败'));
     } finally {
       setDisconnecting(false);
     }
@@ -274,7 +278,7 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
           return;
         }
         if (payload?.type === 'error') {
-          setErrorMessage(typeof payload.error === 'string' ? payload.error : '远端终端错误');
+          setErrorMessage(resolveRemoteTerminalWsErrorMessage(payload, '远端终端错误'));
           return;
         }
       } catch {
@@ -286,6 +290,7 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
       if (socketRef.current !== ws) return;
       setConnectionState('error');
       setBusy(false);
+      setErrorMessage('远端终端连接异常，请重试');
     };
 
     ws.onclose = () => {

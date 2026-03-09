@@ -1,0 +1,199 @@
+import { useCallback } from 'react';
+import type {
+  TaskReviewDraft,
+  TaskReviewPanelState,
+  UiPromptPanelState,
+  UiPromptResponsePayload,
+} from '../../lib/store/types';
+
+interface UsePanelActionsArgs {
+  activeTaskReviewPanel: TaskReviewPanelState | null;
+  activeUiPromptPanel: UiPromptPanelState | null;
+  apiClient: any;
+  upsertTaskReviewPanel: (panel: TaskReviewPanelState) => void;
+  removeTaskReviewPanel: (reviewId: string, sessionId?: string) => void;
+  upsertUiPromptPanel: (panel: UiPromptPanelState) => void;
+  removeUiPromptPanel: (promptId: string, sessionId?: string) => void;
+  loadCurrentTurnWorkbarTasks: (sessionId: string, conversationTurnId?: string | null) => Promise<void>;
+  loadHistoryWorkbarTasks: (sessionId: string, force?: boolean) => Promise<void>;
+  loadWorkbarSummaries: (sessionId: string, force?: boolean) => Promise<void>;
+  loadUiPromptHistory: (sessionId: string, force?: boolean) => Promise<void>;
+}
+
+export function usePanelActions({
+  activeTaskReviewPanel,
+  activeUiPromptPanel,
+  apiClient,
+  upsertTaskReviewPanel,
+  removeTaskReviewPanel,
+  upsertUiPromptPanel,
+  removeUiPromptPanel,
+  loadCurrentTurnWorkbarTasks,
+  loadHistoryWorkbarTasks,
+  loadWorkbarSummaries,
+  loadUiPromptHistory,
+}: UsePanelActionsArgs) {
+  const handleTaskReviewConfirm = useCallback(async (drafts: TaskReviewDraft[]) => {
+    if (!activeTaskReviewPanel) {
+      return;
+    }
+
+    const pendingPanel = {
+      ...activeTaskReviewPanel,
+      drafts,
+      submitting: true,
+      error: null,
+    };
+    upsertTaskReviewPanel(pendingPanel);
+
+    try {
+      await apiClient.submitTaskReviewDecision(activeTaskReviewPanel.reviewId, {
+        action: 'confirm',
+        tasks: drafts.map((draft) => ({
+          title: draft.title,
+          details: draft.details,
+          priority: draft.priority,
+          status: draft.status,
+          tags: draft.tags,
+          due_at: draft.dueAt || undefined,
+        })),
+      });
+      removeTaskReviewPanel(activeTaskReviewPanel.reviewId, activeTaskReviewPanel.sessionId);
+      await Promise.all([
+        loadCurrentTurnWorkbarTasks(activeTaskReviewPanel.sessionId, activeTaskReviewPanel.conversationTurnId),
+        loadHistoryWorkbarTasks(activeTaskReviewPanel.sessionId, true),
+        loadWorkbarSummaries(activeTaskReviewPanel.sessionId, true),
+      ]);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '任务确认提交失败';
+      upsertTaskReviewPanel({
+        ...pendingPanel,
+        submitting: false,
+        error: message,
+      });
+    }
+  }, [
+    activeTaskReviewPanel,
+    apiClient,
+    loadCurrentTurnWorkbarTasks,
+    loadHistoryWorkbarTasks,
+    loadWorkbarSummaries,
+    removeTaskReviewPanel,
+    upsertTaskReviewPanel,
+  ]);
+
+  const handleTaskReviewCancel = useCallback(async () => {
+    if (!activeTaskReviewPanel) {
+      return;
+    }
+
+    const pendingPanel = {
+      ...activeTaskReviewPanel,
+      submitting: true,
+      error: null,
+    };
+    upsertTaskReviewPanel(pendingPanel);
+
+    try {
+      await apiClient.submitTaskReviewDecision(activeTaskReviewPanel.reviewId, {
+        action: 'cancel',
+        reason: 'user_cancelled',
+      });
+      removeTaskReviewPanel(activeTaskReviewPanel.reviewId, activeTaskReviewPanel.sessionId);
+      await Promise.all([
+        loadCurrentTurnWorkbarTasks(activeTaskReviewPanel.sessionId, activeTaskReviewPanel.conversationTurnId),
+        loadHistoryWorkbarTasks(activeTaskReviewPanel.sessionId, true),
+        loadWorkbarSummaries(activeTaskReviewPanel.sessionId, true),
+      ]);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '任务取消提交失败';
+      upsertTaskReviewPanel({
+        ...pendingPanel,
+        submitting: false,
+        error: message,
+      });
+    }
+  }, [
+    activeTaskReviewPanel,
+    apiClient,
+    loadCurrentTurnWorkbarTasks,
+    loadHistoryWorkbarTasks,
+    loadWorkbarSummaries,
+    removeTaskReviewPanel,
+    upsertTaskReviewPanel,
+  ]);
+
+  const handleUiPromptSubmit = useCallback(async (payload: UiPromptResponsePayload) => {
+    if (!activeUiPromptPanel) {
+      return;
+    }
+
+    const pendingPanel = {
+      ...activeUiPromptPanel,
+      submitting: true,
+      error: null,
+    };
+    upsertUiPromptPanel(pendingPanel);
+
+    try {
+      await apiClient.submitUiPromptResponse(activeUiPromptPanel.promptId, payload);
+      removeUiPromptPanel(activeUiPromptPanel.promptId, activeUiPromptPanel.sessionId);
+      await loadUiPromptHistory(activeUiPromptPanel.sessionId, true);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '交互确认提交失败';
+      upsertUiPromptPanel({
+        ...pendingPanel,
+        submitting: false,
+        error: message,
+      });
+    }
+  }, [
+    activeUiPromptPanel,
+    apiClient,
+    loadUiPromptHistory,
+    removeUiPromptPanel,
+    upsertUiPromptPanel,
+  ]);
+
+  const handleUiPromptCancel = useCallback(async () => {
+    if (!activeUiPromptPanel) {
+      return;
+    }
+
+    const pendingPanel = {
+      ...activeUiPromptPanel,
+      submitting: true,
+      error: null,
+    };
+    upsertUiPromptPanel(pendingPanel);
+
+    try {
+      await apiClient.submitUiPromptResponse(activeUiPromptPanel.promptId, {
+        status: 'canceled',
+        reason: 'user_cancelled',
+      });
+      removeUiPromptPanel(activeUiPromptPanel.promptId, activeUiPromptPanel.sessionId);
+      await loadUiPromptHistory(activeUiPromptPanel.sessionId, true);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '交互确认取消失败';
+      upsertUiPromptPanel({
+        ...pendingPanel,
+        submitting: false,
+        error: message,
+      });
+    }
+  }, [
+    activeUiPromptPanel,
+    apiClient,
+    loadUiPromptHistory,
+    removeUiPromptPanel,
+    upsertUiPromptPanel,
+  ]);
+
+  return {
+    handleTaskReviewConfirm,
+    handleTaskReviewCancel,
+    handleUiPromptSubmit,
+    handleUiPromptCancel,
+  };
+}

@@ -1,6 +1,12 @@
 // API客户端，用于连接后端服务
-import { buildQuery, guessFilenameFromPath, parseFilenameFromContentDisposition } from './client/shared';
+import * as accountApi from './client/account';
+import * as conversationApi from './client/conversation';
 import * as configsApi from './client/configs';
+import * as notepadApi from './client/notepad';
+import { ApiRequestError, guessFilenameFromPath, parseFilenameFromContentDisposition } from './client/shared';
+import * as streamApi from './client/stream';
+import * as summaryApi from './client/summary';
+import * as tasksApi from './client/tasks';
 import * as workspaceApi from './client/workspace';
 // 使用相对路径，让浏览器自动处理协议和域名
 const API_BASE_URL = '/api';
@@ -80,11 +86,16 @@ class ApiClient {
       }
 
       if (!response.ok) {
+        const errorCode = typeof parsedBody?.code === 'string' ? parsedBody.code : undefined;
         const errorMessage =
           (typeof parsedBody?.error === 'string' && parsedBody.error) ||
           (typeof parsedBody?.message === 'string' && parsedBody.message) ||
           `HTTP error! status: ${response.status}`;
-        throw new Error(errorMessage);
+        throw new ApiRequestError(errorMessage, {
+          status: response.status,
+          code: errorCode,
+          payload: parsedBody,
+        });
       }
 
       if (!text) {
@@ -96,6 +107,14 @@ class ApiClient {
       console.error(`API request failed: ${endpoint}`, error);
       throw error;
     }
+  }
+
+  private getStreamContext(): streamApi.StreamApiContext {
+    return {
+      baseUrl: this.baseUrl,
+      accessToken: this.accessToken,
+      applyRefreshedAccessToken: (response: Response) => this.applyRefreshedAccessToken(response),
+    };
   }
 
   // 会话相关API
@@ -383,9 +402,13 @@ class ApiClient {
     if (!response.ok) {
       const text = await response.text();
       let message = `HTTP error! status: ${response.status}`;
+      let code: string | undefined;
+      let payload: any = null;
       if (text) {
         try {
           const parsed = JSON.parse(text);
+          payload = parsed;
+          code = typeof parsed?.code === 'string' ? parsed.code : undefined;
           message =
             (typeof parsed?.error === 'string' && parsed.error) ||
             (typeof parsed?.message === 'string' && parsed.message) ||
@@ -394,7 +417,11 @@ class ApiClient {
           message = text;
         }
       }
-      throw new Error(message);
+      throw new ApiRequestError(message, {
+        status: response.status,
+        code,
+        payload,
+      });
     }
 
     const blob = await response.blob();
@@ -672,113 +699,19 @@ class ApiClient {
 
   // 会话详情和助手相关API (从index.ts合并)
   async getConversationDetails(conversationId: string) {
-    try {
-      const session = await this.request<any>(`/sessions/${conversationId}`);
-      return {
-        data: {
-          conversation: {
-            id: session.id,
-            title: session.title,
-            created_at: session.created_at,
-            updated_at: session.updated_at
-          }
-        }
-      };
-    } catch (error) {
-      console.error('Failed to get conversation details:', error);
-      // 返回默认值以保持兼容性
-      return {
-        data: {
-          conversation: {
-            id: conversationId,
-            title: 'Default Conversation',
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-          }
-        }
-      };
-    }
+    return conversationApi.getConversationDetails(this.requestFn, conversationId);
   }
 
   async getAssistant(_conversationId: string) {
-    try {
-      // 获取AI模型配置
-      const configs = await this.request<any[]>('/ai-model-configs');
-      const defaultConfig = configs.find((config: any) => config.enabled) || configs[0];
-      
-      if (!defaultConfig) {
-        throw new Error('No AI model configuration found');
-      }
-
-      return {
-        data: {
-          assistant: {
-            id: defaultConfig.id,
-            name: defaultConfig.name,
-            model_config: {
-              model_name: defaultConfig.model_name,
-              temperature: 0.7,
-              api_key: defaultConfig.api_key,
-              base_url: defaultConfig.base_url
-            }
-          }
-        }
-      };
-    } catch (error) {
-      console.error('Failed to get assistant:', error);
-      // 返回默认值以保持兼容性
-      return {
-        data: {
-          assistant: {
-            id: 'default-assistant',
-            name: 'AI Assistant',
-            model_config: {
-              model_name: 'gpt-3.5-turbo',
-              temperature: 0.7,
-              // 避免对 import.meta.env 的类型依赖以通过声明生成
-              api_key: '',
-              base_url: 'https://api.openai.com/v1'
-            }
-          }
-        }
-      };
-    }
+    return conversationApi.getAssistant(this.requestFn, _conversationId);
   }
 
   async getMcpServers(_conversationId?: string) {
-    try {
-      // 直接获取全局MCP配置，而不是基于会话的配置
-      const mcpConfigs = await this.request<any[]>('/mcp-configs');
-      // 只返回启用的MCP服务器，并转换数据格式
-      const enabledServers = mcpConfigs
-        .filter((config: any) => config.enabled)
-        .map((config: any) => ({
-          name: config.name,
-          url: config.command // 后端使用command字段存储URL
-        }));
-      return {
-        data: {
-          mcp_servers: enabledServers
-        }
-      };
-    } catch (error) {
-      console.error('Failed to get MCP servers:', error);
-      return {
-        data: {
-          mcp_servers: []
-        }
-      };
-    }
+    return conversationApi.getMcpServers(this.requestFn, _conversationId);
   }
 
   async getMcpConfigResource(configId: string): Promise<{ success: boolean; config: any; alias?: string }> {
-    try {
-      const res = await this.request<any>(`/mcp-configs/${configId}/resource/config`);
-      return res;
-    } catch (error) {
-      console.error('Failed to get MCP config resource:', error);
-      return { success: false, config: null } as any;
-    }
+    return conversationApi.getMcpConfigResource(this.requestFn, configId);
   }
 
   async getMcpConfigResourceByCommand(data: {
@@ -789,77 +722,19 @@ class ApiClient {
     cwd?: string | null;
     alias?: string | null;
   }): Promise<{ success: boolean; config: any; alias?: string }> {
-    try {
-      const res = await this.request<any>(`/mcp-configs/resource/config`, {
-        method: 'POST',
-        body: JSON.stringify(data),
-      });
-      return res;
-    } catch (error) {
-      console.error('Failed to get MCP config resource by command:', error);
-      return { success: false, config: null } as any;
-    }
+    return conversationApi.getMcpConfigResourceByCommand(this.requestFn, data);
   }
+
   async saveMessage(conversationId: string, message: any) {
-    try {
-      // 生成唯一ID
-      const messageId = message.id || `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      
-      const savedMessage = await this.request<any>(`/messages`, {
-        method: 'POST',
-        body: JSON.stringify({
-          id: messageId,
-          sessionId: conversationId,
-          role: message.role,
-          content: message.content,
-          toolCalls: message.tool_calls || null,
-          toolCallId: message.tool_call_id || null,
-          reasoning: message.reasoning || null,
-          metadata: message.metadata || null
-        })
-      });
-      
-      return {
-        data: {
-          message: savedMessage
-        }
-      };
-    } catch (error) {
-      console.error('Failed to save message:', error);
-      // 返回模拟数据以保持兼容性
-      return {
-        data: {
-          message: {
-            ...message,
-            id: Date.now().toString(),
-            created_at: new Date().toISOString()
-          }
-        }
-      };
-    }
+    return conversationApi.saveMessage(this.requestFn, conversationId, message);
   }
 
   async getMessages(conversationId: string, params: { limit?: number; offset?: number } = {}) {
-    try {
-      const query = buildQuery({ limit: params.limit, offset: params.offset });
-      const messages = await this.request<any[]>(`/sessions/${conversationId}/messages${query}`);
-      return {
-        data: {
-          messages: messages
-        }
-      };
-    } catch (error) {
-      console.error('Failed to get messages:', error);
-      return {
-        data: {
-          messages: []
-        }
-      };
-    }
+    return conversationApi.getMessages(this.requestFn, conversationId, params);
   }
 
   async addMessage(conversationId: string, message: any) {
-    return this.saveMessage(conversationId, message);
+    return conversationApi.addMessage(this.requestFn, conversationId, message);
   }
 
   // 流式聊天接口
@@ -872,46 +747,16 @@ class ApiClient {
     reasoningEnabled?: boolean,
     options?: { turnId?: string }
   ): Promise<ReadableStream> {
-    const useResponses = modelConfig?.supports_responses === true;
-    const url = `${this.baseUrl}/${useResponses ? 'agent_v3' : 'agent_v2'}/chat/stream`;
-    
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(this.accessToken ? { Authorization: `Bearer ${this.accessToken}` } : {}),
-      },
-      body: JSON.stringify({
-        session_id: sessionId,
-        content: content,
-        user_id: userId,
-        attachments: attachments || [],
-        reasoning_enabled: reasoningEnabled,
-        turn_id: options?.turnId,
-        ai_model_config: {
-          provider: modelConfig.provider,
-          model_name: modelConfig.model_name,
-          temperature: modelConfig.temperature || 0.7,
-          thinking_level: modelConfig.thinking_level,
-          api_key: modelConfig.api_key,
-          base_url: modelConfig.base_url,
-          supports_images: modelConfig.supports_images === true,
-          supports_reasoning: modelConfig.supports_reasoning === true,
-          supports_responses: modelConfig.supports_responses === true
-        }
-      }),
-    });
-    this.applyRefreshedAccessToken(response);
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-
-    if (!response.body) {
-      throw new Error('Response body is null');
-    }
-
-    return response.body;
+    return streamApi.streamChat(
+      this.getStreamContext(),
+      sessionId,
+      content,
+      modelConfig,
+      userId,
+      attachments,
+      reasoningEnabled,
+      options
+    );
   }
 
   async streamAgentChat(
@@ -923,64 +768,23 @@ class ApiClient {
     reasoningEnabled?: boolean,
     options?: { useResponses?: boolean; turnId?: string }
   ): Promise<ReadableStream> {
-    const useResponses = options?.useResponses === true;
-    const url = `${this.baseUrl}/${useResponses ? 'agent_v3/agents' : 'agents'}/chat/stream`;
-
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'text/event-stream',
-        ...(this.accessToken ? { Authorization: `Bearer ${this.accessToken}` } : {}),
-      },
-      body: JSON.stringify({
-        session_id: sessionId,
-        content: content,
-        agent_id: agentId,
-        user_id: userId,
-        attachments: attachments || [],
-        reasoning_enabled: reasoningEnabled,
-        turn_id: options?.turnId,
-      }),
-    });
-    this.applyRefreshedAccessToken(response);
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-
-    if (!response.body) {
-      throw new Error('Response body is null');
-    }
-
-    return response.body;
+    return streamApi.streamAgentChat(
+      this.getStreamContext(),
+      sessionId,
+      content,
+      agentId,
+      userId,
+      attachments,
+      reasoningEnabled,
+      options
+    );
   }
 
   async getTaskManagerTasks(
     sessionId: string,
     options?: { conversationTurnId?: string; includeDone?: boolean; limit?: number }
   ): Promise<any[]> {
-    if (!sessionId) {
-      return [];
-    }
-
-    const params = new URLSearchParams();
-    params.set('session_id', sessionId);
-    if (options?.conversationTurnId) {
-      params.set('conversation_turn_id', options.conversationTurnId);
-    }
-    if (options?.includeDone === true) {
-      params.set('include_done', 'true');
-    }
-    if (typeof options?.limit === 'number') {
-      params.set('limit', String(options.limit));
-    }
-
-    const result = await this.request<any>('/task-manager/tasks?' + params.toString());
-    if (Array.isArray(result)) {
-      return result;
-    }
-    return Array.isArray(result?.tasks) ? result.tasks : [];
+    return tasksApi.getTaskManagerTasks(this.requestFn, sessionId, options);
   }
 
   async updateTaskManagerTask(
@@ -995,109 +799,36 @@ class ApiClient {
       due_at?: string | null;
     }
   ): Promise<any> {
-    if (!sessionId) {
-      throw new Error('sessionId is required');
-    }
-    if (!taskId) {
-      throw new Error('taskId is required');
-    }
-
-    const params = new URLSearchParams();
-    params.set('session_id', sessionId);
-    return this.request<any>('/task-manager/tasks/' + encodeURIComponent(taskId) + '?' + params.toString(), {
-      method: 'PATCH',
-      body: JSON.stringify(payload),
-    });
+    return tasksApi.updateTaskManagerTask(this.requestFn, sessionId, taskId, payload);
   }
 
   async completeTaskManagerTask(sessionId: string, taskId: string): Promise<any> {
-    if (!sessionId) {
-      throw new Error('sessionId is required');
-    }
-    if (!taskId) {
-      throw new Error('taskId is required');
-    }
-
-    const params = new URLSearchParams();
-    params.set('session_id', sessionId);
-    return this.request<any>('/task-manager/tasks/' + encodeURIComponent(taskId) + '/complete?' + params.toString(), {
-      method: 'POST',
-      body: JSON.stringify({}),
-    });
+    return tasksApi.completeTaskManagerTask(this.requestFn, sessionId, taskId);
   }
 
   async deleteTaskManagerTask(sessionId: string, taskId: string): Promise<any> {
-    if (!sessionId) {
-      throw new Error('sessionId is required');
-    }
-    if (!taskId) {
-      throw new Error('taskId is required');
-    }
-
-    const params = new URLSearchParams();
-    params.set('session_id', sessionId);
-    return this.request<any>('/task-manager/tasks/' + encodeURIComponent(taskId) + '?' + params.toString(), {
-      method: 'DELETE',
-    });
+    return tasksApi.deleteTaskManagerTask(this.requestFn, sessionId, taskId);
   }
 
   async submitTaskReviewDecision(
     reviewId: string,
     payload: { action: 'confirm' | 'cancel'; tasks?: any[]; reason?: string }
   ): Promise<any> {
-    if (!reviewId) {
-      throw new Error('reviewId is required');
-    }
-
-    return this.request<any>(`/task-manager/reviews/${encodeURIComponent(reviewId)}/decision`, {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
+    return tasksApi.submitTaskReviewDecision(this.requestFn, reviewId, payload);
   }
 
   async getPendingUiPrompts(
     sessionId: string,
     options?: { limit?: number }
   ): Promise<any[]> {
-    if (!sessionId) {
-      return [];
-    }
-
-    const params = new URLSearchParams();
-    params.set('session_id', sessionId);
-    if (typeof options?.limit === 'number') {
-      params.set('limit', String(options.limit));
-    }
-
-    const result = await this.request<any>('/ui-prompts/pending?' + params.toString());
-    if (Array.isArray(result)) {
-      return result;
-    }
-    return Array.isArray(result?.prompts) ? result.prompts : [];
+    return tasksApi.getPendingUiPrompts(this.requestFn, sessionId, options);
   }
 
   async getUiPromptHistory(
     sessionId: string,
     options?: { limit?: number; includePending?: boolean }
   ): Promise<any[]> {
-    if (!sessionId) {
-      return [];
-    }
-
-    const params = new URLSearchParams();
-    params.set('session_id', sessionId);
-    if (typeof options?.limit === 'number') {
-      params.set('limit', String(options.limit));
-    }
-    if (options?.includePending === true) {
-      params.set('include_pending', 'true');
-    }
-
-    const result = await this.request<any>('/ui-prompts/history?' + params.toString());
-    if (Array.isArray(result)) {
-      return result;
-    }
-    return Array.isArray(result?.prompts) ? result.prompts : [];
+    return tasksApi.getUiPromptHistory(this.requestFn, sessionId, options);
   }
 
   async submitUiPromptResponse(
@@ -1109,47 +840,27 @@ class ApiClient {
       reason?: string;
     }
   ): Promise<any> {
-    if (!promptId) {
-      throw new Error('promptId is required');
-    }
-
-    return this.request<any>(`/ui-prompts/${encodeURIComponent(promptId)}/respond`, {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
+    return tasksApi.submitUiPromptResponse(this.requestFn, promptId, payload);
   }
 
   async notepadInit(): Promise<any> {
-    return this.request<any>('/notepad/init');
+    return notepadApi.notepadInit(this.requestFn);
   }
 
   async listNotepadFolders(): Promise<any> {
-    return this.request<any>('/notepad/folders');
+    return notepadApi.listNotepadFolders(this.requestFn);
   }
 
   async createNotepadFolder(payload: { folder: string }): Promise<any> {
-    return this.request<any>('/notepad/folders', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
+    return notepadApi.createNotepadFolder(this.requestFn, payload);
   }
 
   async renameNotepadFolder(payload: { from: string; to: string }): Promise<any> {
-    return this.request<any>('/notepad/folders', {
-      method: 'PATCH',
-      body: JSON.stringify(payload),
-    });
+    return notepadApi.renameNotepadFolder(this.requestFn, payload);
   }
 
   async deleteNotepadFolder(options: { folder: string; recursive?: boolean }): Promise<any> {
-    const params = new URLSearchParams();
-    params.set('folder', options.folder);
-    if (options.recursive === true) {
-      params.set('recursive', 'true');
-    }
-    return this.request<any>('/notepad/folders?' + params.toString(), {
-      method: 'DELETE',
-    });
+    return notepadApi.deleteNotepadFolder(this.requestFn, options);
   }
 
   async listNotepadNotes(options?: {
@@ -1160,27 +871,7 @@ class ApiClient {
     query?: string;
     limit?: number;
   }): Promise<any> {
-    const params = new URLSearchParams();
-    if (options?.folder) {
-      params.set('folder', options.folder);
-    }
-    if (typeof options?.recursive === 'boolean') {
-      params.set('recursive', options.recursive ? 'true' : 'false');
-    }
-    if (options?.tags && options.tags.length > 0) {
-      params.set('tags', options.tags.join(','));
-    }
-    if (options?.match) {
-      params.set('match', options.match);
-    }
-    if (options?.query) {
-      params.set('query', options.query);
-    }
-    if (typeof options?.limit === 'number') {
-      params.set('limit', String(options.limit));
-    }
-    const query = params.toString();
-    return this.request<any>(`/notepad/notes${query ? `?${query}` : ''}`);
+    return notepadApi.listNotepadNotes(this.requestFn, options);
   }
 
   async createNotepadNote(payload: {
@@ -1189,14 +880,11 @@ class ApiClient {
     content?: string;
     tags?: string[];
   }): Promise<any> {
-    return this.request<any>('/notepad/notes', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
+    return notepadApi.createNotepadNote(this.requestFn, payload);
   }
 
   async getNotepadNote(noteId: string): Promise<any> {
-    return this.request<any>(`/notepad/notes/${encodeURIComponent(noteId)}`);
+    return notepadApi.getNotepadNote(this.requestFn, noteId);
   }
 
   async updateNotepadNote(noteId: string, payload: {
@@ -1205,20 +893,15 @@ class ApiClient {
     folder?: string;
     tags?: string[];
   }): Promise<any> {
-    return this.request<any>(`/notepad/notes/${encodeURIComponent(noteId)}`, {
-      method: 'PATCH',
-      body: JSON.stringify(payload),
-    });
+    return notepadApi.updateNotepadNote(this.requestFn, noteId, payload);
   }
 
   async deleteNotepadNote(noteId: string): Promise<any> {
-    return this.request<any>(`/notepad/notes/${encodeURIComponent(noteId)}`, {
-      method: 'DELETE',
-    });
+    return notepadApi.deleteNotepadNote(this.requestFn, noteId);
   }
 
   async listNotepadTags(): Promise<any> {
-    return this.request<any>('/notepad/tags');
+    return notepadApi.listNotepadTags(this.requestFn);
   }
 
   async searchNotepadNotes(options: {
@@ -1230,32 +913,11 @@ class ApiClient {
     include_content?: boolean;
     limit?: number;
   }): Promise<any> {
-    const params = new URLSearchParams();
-    params.set('query', options.query);
-    if (options.folder) {
-      params.set('folder', options.folder);
-    }
-    if (typeof options.recursive === 'boolean') {
-      params.set('recursive', options.recursive ? 'true' : 'false');
-    }
-    if (options.tags && options.tags.length > 0) {
-      params.set('tags', options.tags.join(','));
-    }
-    if (options.match) {
-      params.set('match', options.match);
-    }
-    if (typeof options.include_content === 'boolean') {
-      params.set('include_content', options.include_content ? 'true' : 'false');
-    }
-    if (typeof options.limit === 'number') {
-      params.set('limit', String(options.limit));
-    }
-    return this.request<any>('/notepad/search?' + params.toString());
+    return notepadApi.searchNotepadNotes(this.requestFn, options);
   }
 
   async getSessionSummaryJobConfig(userId?: string): Promise<any> {
-    const params = userId ? `?user_id=${encodeURIComponent(userId)}` : '';
-    return this.request<any>(`/session-summary-job-config${params}`);
+    return summaryApi.getSessionSummaryJobConfig(this.requestFn, userId);
   }
 
   async updateSessionSummaryJobConfig(payload: {
@@ -1268,10 +930,7 @@ class ApiClient {
     target_summary_tokens?: number;
     job_interval_seconds?: number;
   }): Promise<any> {
-    return this.request<any>('/session-summary-job-config', {
-      method: 'PUT',
-      body: JSON.stringify(payload),
-    });
+    return summaryApi.updateSessionSummaryJobConfig(this.requestFn, payload);
   }
 
   async patchSessionSummaryJobConfig(payload: {
@@ -1284,61 +943,22 @@ class ApiClient {
     target_summary_tokens?: number;
     job_interval_seconds?: number;
   }): Promise<any> {
-    return this.request<any>('/session-summary-job-config', {
-      method: 'PATCH',
-      body: JSON.stringify(payload),
-    });
+    return summaryApi.patchSessionSummaryJobConfig(this.requestFn, payload);
   }
 
   async getSessionSummaries(
     sessionId: string,
     options?: { limit?: number; offset?: number }
   ): Promise<{ items: any[]; total: number; has_summary: boolean }> {
-    if (!sessionId) {
-      return { items: [], total: 0, has_summary: false };
-    }
-
-    const params = new URLSearchParams();
-    if (typeof options?.limit === 'number') {
-      params.set('limit', String(options.limit));
-    }
-    if (typeof options?.offset === 'number') {
-      params.set('offset', String(options.offset));
-    }
-    const query = params.toString();
-    const result = await this.request<any>(
-      `/sessions/${encodeURIComponent(sessionId)}/summaries${query ? `?${query}` : ''}`
-    );
-
-    return {
-      items: Array.isArray(result?.items) ? result.items : [],
-      total: typeof result?.total === 'number' ? result.total : 0,
-      has_summary: result?.has_summary === true,
-    };
+    return summaryApi.getSessionSummaries(this.requestFn, sessionId, options);
   }
 
   async deleteSessionSummary(sessionId: string, summaryId: string): Promise<any> {
-    if (!sessionId) {
-      throw new Error('sessionId is required');
-    }
-    if (!summaryId) {
-      throw new Error('summaryId is required');
-    }
-
-    return this.request<any>(
-      `/sessions/${encodeURIComponent(sessionId)}/summaries/${encodeURIComponent(summaryId)}`,
-      { method: 'DELETE' }
-    );
+    return summaryApi.deleteSessionSummary(this.requestFn, sessionId, summaryId);
   }
 
   async clearSessionSummaries(sessionId: string): Promise<any> {
-    if (!sessionId) {
-      throw new Error('sessionId is required');
-    }
-
-    return this.request<any>(`/sessions/${encodeURIComponent(sessionId)}/summaries`, {
-      method: 'DELETE',
-    });
+    return summaryApi.clearSessionSummaries(this.requestFn, sessionId);
   }
 
   async register(data: {
@@ -1346,46 +966,29 @@ class ApiClient {
     password: string;
     display_name?: string;
   }): Promise<any> {
-    return this.request<any>('/auth/register', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
+    return accountApi.register(this.requestFn, data);
   }
 
   async login(data: { email: string; password: string }): Promise<any> {
-    return this.request<any>('/auth/login', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
+    return accountApi.login(this.requestFn, data);
   }
 
   async getMe(): Promise<any> {
-    return this.request<any>('/auth/me');
+    return accountApi.getMe(this.requestFn);
   }
 
   // 停止聊天流
   async stopChat(sessionId: string, options?: { useResponses?: boolean }): Promise<any> {
-    const useResponses = options?.useResponses === true;
-    const path = useResponses ? '/agent_v3/chat/stop' : '/chat/stop';
-    return this.request<any>(path, {
-      method: 'POST',
-      body: JSON.stringify({
-        session_id: sessionId
-      }),
-    });
+    return streamApi.stopChat(this.requestFn, sessionId, options);
   }
 
   // User settings APIs
   async getUserSettings(userId?: string): Promise<any> {
-    const qs = userId ? `?user_id=${encodeURIComponent(userId)}` : '';
-    return this.request<any>(`/user-settings${qs}`);
+    return accountApi.getUserSettings(this.requestFn, userId);
   }
 
   async updateUserSettings(userId: string, settings: Record<string, any>): Promise<any> {
-    return this.request<any>(`/user-settings`, {
-      method: 'PUT',
-      body: JSON.stringify({ user_id: userId, settings })
-    });
+    return accountApi.updateUserSettings(this.requestFn, userId, settings);
   }
 }
 

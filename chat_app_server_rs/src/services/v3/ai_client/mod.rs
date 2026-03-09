@@ -14,20 +14,23 @@ use crate::services::v3::mcp_tool_execute::McpToolExecute;
 use crate::services::v3::message_manager::MessageManager;
 use crate::utils::abort_registry;
 
+mod compat;
 mod input_transform;
 mod prev_context;
+mod recovery_policy;
+mod stateless_context;
 mod tool_plan;
 
+use self::compat::{
+    cap_tool_output_for_input, log_usage_snapshot, rewrite_system_messages_to_user,
+    truncate_function_call_outputs_in_input,
+};
 use self::input_transform::{
     build_current_input_items, extract_raw_input, normalize_input_for_provider,
     normalize_input_to_text_value, to_message_item,
 };
 use self::prev_context::{
-    base_url_allows_prev, base_url_disallows_system_messages, is_context_length_exceeded_error,
-    is_input_must_be_list_error, is_invalid_input_text_error, is_missing_tool_call_error,
-    is_request_body_too_large_error, is_system_messages_not_allowed_error,
-    is_unsupported_previous_response_id_error, reduce_history_limit,
-    should_use_prev_id_for_next_turn,
+    base_url_allows_prev, base_url_disallows_system_messages, should_use_prev_id_for_next_turn,
 };
 use self::tool_plan::{
     build_tool_call_execution_plan, build_tool_call_items, expand_tool_results_with_aliases,
@@ -243,59 +246,6 @@ impl AiClient {
         result
     }
 
-    async fn maybe_refresh_stateless_context(
-        &self,
-        session_id: Option<&str>,
-        sub_agent_run_id: Option<&str>,
-        stable_prefix_mode: bool,
-        use_prev_id: bool,
-        raw_input: &Value,
-        force_text_content: bool,
-        history_limit: i64,
-        include_tool_items: bool,
-        stateless_context_items: &mut Option<Vec<Value>>,
-        input: &mut Value,
-    ) {
-        if !stable_prefix_mode || use_prev_id {
-            return;
-        }
-
-        if session_id.is_none() && sub_agent_run_id.is_none() {
-            return;
-        }
-
-        let current_items = build_current_input_items(raw_input, force_text_content);
-        let rebuilt = self
-            .build_stateless_items(
-                session_id.map(|value| value.to_string()),
-                history_limit,
-                stable_prefix_mode,
-                force_text_content,
-                &current_items,
-                include_tool_items,
-                sub_agent_run_id.map(|value| value.to_string()),
-            )
-            .await;
-        let previous_len = stateless_context_items
-            .as_ref()
-            .map(|items| items.len())
-            .unwrap_or(0);
-        let changed = stateless_context_items
-            .as_ref()
-            .map(|items| items != &rebuilt)
-            .unwrap_or(true);
-        if changed {
-            info!(
-                "[AI_V3] stateless context refreshed: old_items={}, new_items={}, history_limit={}",
-                previous_len,
-                rebuilt.len(),
-                history_limit
-            );
-            *stateless_context_items = Some(rebuilt.clone());
-            *input = Value::Array(rebuilt);
-        }
-    }
-
     async fn process_with_tools(
         &mut self,
         input: Value,
@@ -430,201 +380,28 @@ impl AiClient {
                     Err(err) => {
                         let err_msg = err.clone();
                         last_error = Some(err_msg.clone());
-                        if !no_system_messages && is_system_messages_not_allowed_error(&err_msg) {
-                            warn!(
-                                "[AI_V3] provider rejected system-role input; retry with user-role compatibility mode"
-                            );
-                            no_system_messages = true;
-                            if let Some(sid) = session_id.as_ref() {
-                                self.no_system_message_sessions.insert(sid.clone());
-                            }
+                        if self
+                            .try_recover_from_request_error(
+                                err_msg.as_str(),
+                                session_id.as_ref(),
+                                sub_agent_run_id.as_ref(),
+                                &raw_input,
+                                stable_prefix_mode,
+                                include_tool_items,
+                                pending_tool_calls.as_ref(),
+                                pending_tool_outputs.as_ref(),
+                                &mut use_prev_id,
+                                &mut can_use_prev_id,
+                                &mut force_text_content,
+                                &mut adaptive_history_limit,
+                                &mut previous_response_id,
+                                &mut no_system_messages,
+                                &mut stateless_context_items,
+                                &mut input,
+                            )
+                            .await
+                        {
                             continue;
-                        }
-                        if use_prev_id && is_unsupported_previous_response_id_error(&err_msg) {
-                            if let Some(sid) = session_id.as_ref() {
-                                self.prev_response_id_disabled_sessions.insert(sid.clone());
-                            }
-                            warn!("[AI_V3] previous_response_id unsupported; fallback to stateless mode");
-                            can_use_prev_id = false;
-                            let current_items =
-                                build_current_input_items(&raw_input, force_text_content);
-                            let stateless = self
-                                .build_stateless_items(
-                                    session_id.clone(),
-                                    adaptive_history_limit,
-                                    stable_prefix_mode,
-                                    force_text_content,
-                                    &current_items,
-                                    include_tool_items,
-                                    sub_agent_run_id.clone(),
-                                )
-                                .await;
-                            if !stateless.is_empty() {
-                                use_prev_id = false;
-                                previous_response_id = None;
-                                stateless_context_items = Some(stateless.clone());
-                                input = Value::Array(stateless);
-                                continue;
-                            }
-                        }
-                        if use_prev_id && is_missing_tool_call_error(&err_msg) {
-                            if let Some(sid) = session_id.as_ref() {
-                                self.prev_response_id_disabled_sessions.insert(sid.clone());
-                            }
-                            warn!(
-                                "[AI_V3] function_call_output missing matching tool call in previous response; fallback to stateless mode"
-                            );
-                            can_use_prev_id = false;
-                            let current_items =
-                                build_current_input_items(&raw_input, force_text_content);
-                            let mut stateless = if let Some(items) = stateless_context_items.clone()
-                            {
-                                items
-                            } else {
-                                self.build_stateless_items(
-                                    session_id.clone(),
-                                    adaptive_history_limit,
-                                    stable_prefix_mode,
-                                    force_text_content,
-                                    &current_items,
-                                    include_tool_items,
-                                    sub_agent_run_id.clone(),
-                                )
-                                .await
-                            };
-                            if include_tool_items {
-                                let mut call_ids: HashSet<String> = HashSet::new();
-                                let mut existing_call_ids: HashSet<String> = stateless
-                                    .iter()
-                                    .filter(|item| {
-                                        item.get("type").and_then(|v| v.as_str())
-                                            == Some("function_call")
-                                    })
-                                    .filter_map(|item| {
-                                        item.get("call_id")
-                                            .and_then(|v| v.as_str())
-                                            .map(|value| value.to_string())
-                                    })
-                                    .collect();
-                                let mut existing_output_ids: HashSet<String> = stateless
-                                    .iter()
-                                    .filter(|item| {
-                                        item.get("type").and_then(|v| v.as_str())
-                                            == Some("function_call_output")
-                                    })
-                                    .filter_map(|item| {
-                                        item.get("call_id")
-                                            .and_then(|v| v.as_str())
-                                            .map(|value| value.to_string())
-                                    })
-                                    .collect();
-                                if let Some(calls) = pending_tool_calls.as_ref() {
-                                    for c in calls {
-                                        if let Some(id) = c.get("call_id").and_then(|v| v.as_str())
-                                        {
-                                            if !id.is_empty() {
-                                                call_ids.insert(id.to_string());
-                                                if existing_call_ids.insert(id.to_string()) {
-                                                    stateless.push(c.clone());
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                if let Some(outputs) = pending_tool_outputs.as_ref() {
-                                    if call_ids.is_empty() {
-                                        // no matching tool calls -> skip outputs to avoid invalid input
-                                    } else {
-                                        for output in outputs {
-                                            let Some(id) = output
-                                                .get("call_id")
-                                                .and_then(|v| v.as_str())
-                                                .map(|value| value.to_string())
-                                            else {
-                                                continue;
-                                            };
-                                            if !call_ids.contains(id.as_str()) {
-                                                continue;
-                                            }
-                                            if existing_output_ids.insert(id) {
-                                                stateless.push(output.clone());
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            if !stateless.is_empty() {
-                                use_prev_id = false;
-                                previous_response_id = None;
-                                stateless_context_items = Some(stateless.clone());
-                                input = Value::Array(stateless);
-                                continue;
-                            }
-                        }
-                        if !force_text_content && is_invalid_input_text_error(&err_msg) {
-                            force_text_content = true;
-                            if let Some(sid) = session_id.as_ref() {
-                                self.force_text_content_sessions.insert(sid.clone());
-                            }
-                            input = normalize_input_to_text_value(&input);
-                            continue;
-                        }
-                        if is_input_must_be_list_error(&err_msg) {
-                            warn!("[AI_V3] provider requires list input; retry with message-list payload");
-                            let normalized_items = if let Some(items) = input.as_array() {
-                                items.clone()
-                            } else {
-                                build_current_input_items(&input, force_text_content)
-                            };
-                            input = Value::Array(normalized_items.clone());
-                            stateless_context_items = Some(normalized_items);
-                            continue;
-                        }
-                        let request_too_large = is_request_body_too_large_error(&err_msg);
-                        if request_too_large {
-                            if let Some(trimmed_input) =
-                                truncate_function_call_outputs_in_input(&input)
-                            {
-                                warn!(
-                                    "[AI_V3] request payload too large; retry with truncated function_call_output items"
-                                );
-                                use_prev_id = false;
-                                previous_response_id = None;
-                                stateless_context_items = trimmed_input.as_array().cloned();
-                                input = trimmed_input;
-                                continue;
-                            }
-                        }
-                        if is_context_length_exceeded_error(&err_msg) || request_too_large {
-                            if let Some(next_limit) = reduce_history_limit(adaptive_history_limit) {
-                                warn!(
-                                    "[AI_V3] context/payload overflow; reduce history_limit {} -> {}",
-                                    adaptive_history_limit,
-                                    next_limit
-                                );
-                                adaptive_history_limit = next_limit;
-                                can_use_prev_id = false;
-                                let current_items =
-                                    build_current_input_items(&raw_input, force_text_content);
-                                let stateless = self
-                                    .build_stateless_items(
-                                        session_id.clone(),
-                                        adaptive_history_limit,
-                                        stable_prefix_mode,
-                                        force_text_content,
-                                        &current_items,
-                                        include_tool_items,
-                                        sub_agent_run_id.clone(),
-                                    )
-                                    .await;
-                                if !stateless.is_empty() {
-                                    use_prev_id = false;
-                                    previous_response_id = None;
-                                    stateless_context_items = Some(stateless.clone());
-                                    input = Value::Array(stateless);
-                                    continue;
-                                }
-                            }
                         }
                         break;
                     }
@@ -643,49 +420,27 @@ impl AiClient {
                 ai_response.reasoning.as_deref(),
                 ai_response.provider_error.as_ref(),
             ) {
-                let request_too_large = is_request_body_too_large_error(&err);
-                if request_too_large {
-                    if let Some(trimmed_input) = truncate_function_call_outputs_in_input(&input) {
-                        warn!(
-                            "[AI_V3] failed response due to payload size; retry with truncated function_call_output items"
-                        );
-                        use_prev_id = false;
-                        previous_response_id = None;
-                        stateless_context_items = trimmed_input.as_array().cloned();
-                        input = trimmed_input;
-                        continue;
-                    }
-                }
-                if is_context_length_exceeded_error(&err) || request_too_large {
-                    if let Some(next_limit) = reduce_history_limit(adaptive_history_limit) {
-                        warn!(
-                            "[AI_V3] failed response due to context/payload overflow; reduce history_limit {} -> {}",
-                            adaptive_history_limit,
-                            next_limit
-                        );
-                        adaptive_history_limit = next_limit;
-                        can_use_prev_id = false;
-                        use_prev_id = false;
-                        previous_response_id = None;
-                        let current_items =
-                            build_current_input_items(&raw_input, force_text_content);
-                        let stateless = self
-                            .build_stateless_items(
-                                session_id.clone(),
-                                adaptive_history_limit,
-                                stable_prefix_mode,
-                                force_text_content,
-                                &current_items,
-                                include_tool_items,
-                                sub_agent_run_id.clone(),
-                            )
-                            .await;
-                        if !stateless.is_empty() {
-                            stateless_context_items = Some(stateless.clone());
-                            input = Value::Array(stateless);
-                            continue;
-                        }
-                    }
+                if self
+                    .try_recover_from_completion_error(
+                        err.as_str(),
+                        session_id.as_ref(),
+                        sub_agent_run_id.as_ref(),
+                        &raw_input,
+                        stable_prefix_mode,
+                        include_tool_items,
+                        pending_tool_calls.as_ref(),
+                        pending_tool_outputs.as_ref(),
+                        force_text_content,
+                        &mut adaptive_history_limit,
+                        &mut use_prev_id,
+                        &mut can_use_prev_id,
+                        &mut previous_response_id,
+                        &mut stateless_context_items,
+                        &mut input,
+                    )
+                    .await
+                {
+                    continue;
                 }
                 return Err(err);
             }
@@ -867,381 +622,6 @@ impl AiClient {
             iteration += 1;
         }
     }
-
-    async fn build_stateless_items(
-        &self,
-        session_id: Option<String>,
-        history_limit: i64,
-        stable_prefix_mode: bool,
-        force_text: bool,
-        current_input_items: &[Value],
-        include_tool_items: bool,
-        sub_agent_run_id: Option<String>,
-    ) -> Vec<Value> {
-        let mut items = Vec::new();
-        let summary_count;
-        let history_count;
-        let mut summary_context_used = false;
-        let mut tool_call_ids: HashSet<String> = HashSet::new();
-        let mut tool_output_ids: HashSet<String> = HashSet::new();
-        let context_data = if let Some(run_id) = sub_agent_run_id.as_ref() {
-            self.message_manager
-                .get_sub_agent_run_history_context(run_id, 2)
-                .await
-        } else if let Some(sid) = session_id.as_ref() {
-            self.message_manager.get_chat_history_context(sid, 2).await
-        } else {
-            (None, 0, Vec::new())
-        };
-
-        let use_full_pending_history = stable_prefix_mode && history_limit >= self.history_limit;
-        let (merged_summary, merged_summary_count, mut pending_history) = context_data;
-        summary_count = merged_summary_count;
-        if let Some(summary_text) = merged_summary {
-            summary_context_used = true;
-            items.push(to_message_item(
-                "system",
-                &Value::String(summary_text),
-                force_text,
-            ));
-        }
-        if !use_full_pending_history
-            && history_limit > 0
-            && pending_history.len() > history_limit as usize
-        {
-            let keep_from = pending_history.len() - history_limit as usize;
-            pending_history = pending_history.split_off(keep_from);
-        }
-        let history = pending_history;
-
-        history_count = history.len();
-
-        if include_tool_items {
-            for msg in &history {
-                if msg.role == "tool" {
-                    if let Some(call_id) = msg.tool_call_id.clone() {
-                        if !call_id.is_empty() {
-                            tool_output_ids.insert(call_id);
-                        }
-                    }
-                }
-            }
-        }
-
-        for msg in history {
-            if msg
-                .metadata
-                .as_ref()
-                .and_then(|m| m.get("type"))
-                .and_then(|v| v.as_str())
-                == Some("session_summary")
-            {
-                continue;
-            }
-
-            if msg.role == "user"
-                || msg.role == "assistant"
-                || msg.role == "system"
-                || msg.role == "developer"
-            {
-                items.push(to_message_item(
-                    &msg.role,
-                    &Value::String(msg.content.clone()),
-                    force_text,
-                ));
-                if include_tool_items {
-                    let mut tool_calls = msg.tool_calls.clone().or_else(|| {
-                        msg.metadata
-                            .as_ref()
-                            .and_then(|m| m.get("toolCalls").cloned())
-                    });
-                    if let Some(Value::String(s)) = tool_calls.clone() {
-                        if let Ok(v) = serde_json::from_str::<Value>(&s) {
-                            tool_calls = Some(v);
-                        }
-                    }
-                    if msg.role == "assistant" {
-                        if let Some(arr) = tool_calls.and_then(|v| v.as_array().cloned()) {
-                            for tc in arr {
-                                let call_id = tc
-                                    .get("id")
-                                    .and_then(|v| v.as_str())
-                                    .or_else(|| tc.get("call_id").and_then(|v| v.as_str()))
-                                    .unwrap_or("")
-                                    .to_string();
-                                if call_id.is_empty() {
-                                    continue;
-                                }
-                                if !tool_output_ids.contains(&call_id) {
-                                    continue;
-                                }
-                                let func = tc.get("function").cloned().unwrap_or(json!({}));
-                                let name = func
-                                    .get("name")
-                                    .and_then(|v| v.as_str())
-                                    .or_else(|| tc.get("name").and_then(|v| v.as_str()))
-                                    .unwrap_or("")
-                                    .to_string();
-                                let args = func
-                                    .get("arguments")
-                                    .cloned()
-                                    .or_else(|| tc.get("arguments").cloned())
-                                    .unwrap_or(Value::String("{}".to_string()));
-                                let args_str = if let Some(s) = args.as_str() {
-                                    s.to_string()
-                                } else {
-                                    args.to_string()
-                                };
-                                tool_call_ids.insert(call_id.clone());
-                                items.push(json!({
-                                    "type": "function_call",
-                                    "call_id": call_id,
-                                    "name": name,
-                                    "arguments": args_str
-                                }));
-                            }
-                        }
-                    }
-                }
-                continue;
-            }
-            if msg.role == "tool" {
-                if include_tool_items {
-                    if let Some(call_id) = msg.tool_call_id.clone() {
-                        if tool_call_ids.contains(&call_id) {
-                            let output = cap_tool_output_for_input(msg.content.as_str());
-                            items.push(json!({
-                                "type": "function_call_output",
-                                "call_id": call_id,
-                                "output": output
-                            }));
-                        }
-                    }
-                }
-            }
-        }
-
-        if let Some(last) = items.last() {
-            if last.get("type").and_then(|v| v.as_str()) == Some("message")
-                && last.get("role").and_then(|v| v.as_str()) == Some("user")
-            {
-                items.pop();
-            }
-        }
-        items.extend_from_slice(current_input_items);
-        info!(
-            "[AI_V3] stateless items built: stable_prefix_mode={}, summary_context_used={}, summaries={}, history_messages={}, total_items={}",
-            stable_prefix_mode,
-            summary_context_used,
-            summary_count,
-            history_count,
-            items.len()
-        );
-        items
-    }
-}
-
-fn tool_output_item_max_chars() -> usize {
-    std::env::var("AI_V3_TOOL_OUTPUT_MAX_CHARS")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(8_000)
-}
-
-fn cap_tool_output_for_input(raw: &str) -> String {
-    truncate_text_with_tail(raw, tool_output_item_max_chars())
-}
-
-fn truncate_text_with_tail(raw: &str, max_chars: usize) -> String {
-    if max_chars == 0 {
-        return String::new();
-    }
-
-    let total = raw.chars().count();
-    if total <= max_chars {
-        return raw.to_string();
-    }
-
-    let marker = format!("[...truncated {} chars...]\n", total - max_chars);
-    let marker_chars = marker.chars().count();
-    if marker_chars >= max_chars {
-        return raw
-            .chars()
-            .rev()
-            .take(max_chars)
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect();
-    }
-
-    let keep_tail = max_chars - marker_chars;
-    let tail: String = raw
-        .chars()
-        .rev()
-        .take(keep_tail)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect();
-    format!("{}{}", marker, tail)
-}
-
-fn truncate_function_call_outputs_in_input(input: &Value) -> Option<Value> {
-    let items = input.as_array()?;
-    let mut changed = false;
-    let mut mapped = Vec::with_capacity(items.len());
-
-    for item in items {
-        let mut cloned = item.clone();
-        let is_output_item =
-            cloned.get("type").and_then(|value| value.as_str()) == Some("function_call_output");
-        if is_output_item {
-            if let Some(object) = cloned.as_object_mut() {
-                if let Some(raw) = object
-                    .get("output")
-                    .and_then(|value| value.as_str())
-                    .map(|value| value.to_string())
-                {
-                    let truncated = cap_tool_output_for_input(raw.as_str());
-                    if truncated != raw {
-                        object.insert("output".to_string(), Value::String(truncated));
-                        changed = true;
-                    }
-                }
-            }
-        }
-        mapped.push(cloned);
-    }
-
-    if changed {
-        Some(Value::Array(mapped))
-    } else {
-        None
-    }
-}
-
-fn usage_value_i64(value: &Value, key: &str) -> Option<i64> {
-    value
-        .get(key)
-        .and_then(|item| item.as_i64().or_else(|| item.as_u64().map(|v| v as i64)))
-}
-
-fn usage_nested_i64(value: &Value, parent: &str, key: &str) -> Option<i64> {
-    value
-        .get(parent)
-        .and_then(|item| item.get(key))
-        .and_then(|item| item.as_i64().or_else(|| item.as_u64().map(|v| v as i64)))
-}
-
-fn log_usage_snapshot(purpose: &str, usage: Option<&Value>) {
-    let Some(usage) = usage else {
-        return;
-    };
-    let input_tokens = usage_value_i64(usage, "input_tokens")
-        .or_else(|| usage_value_i64(usage, "prompt_tokens"))
-        .unwrap_or(-1);
-    let output_tokens = usage_value_i64(usage, "output_tokens")
-        .or_else(|| usage_value_i64(usage, "completion_tokens"))
-        .unwrap_or(-1);
-    let cached_tokens = usage_nested_i64(usage, "input_tokens_details", "cached_tokens")
-        .or_else(|| usage_nested_i64(usage, "prompt_tokens_details", "cached_tokens"))
-        .unwrap_or(0);
-
-    info!(
-        "[AI_V3] usage snapshot: purpose={}, input_tokens={}, cached_tokens={}, output_tokens={}",
-        purpose, input_tokens, cached_tokens, output_tokens
-    );
-}
-
-fn rewrite_system_messages_to_user(input: &Value, force_text_content: bool) -> Value {
-    let Some(items) = input.as_array() else {
-        return input.clone();
-    };
-
-    let mut changed = false;
-    let mut mapped = Vec::with_capacity(items.len());
-
-    for item in items {
-        let item_type = item
-            .get("type")
-            .and_then(|value| value.as_str())
-            .unwrap_or("");
-        let role = item
-            .get("role")
-            .and_then(|value| value.as_str())
-            .unwrap_or("");
-
-        if item_type == "message" && (role == "system" || role == "developer") {
-            let content = response_content_to_text(item.get("content").unwrap_or(&Value::Null));
-            let label = if role == "developer" {
-                "开发者上下文"
-            } else {
-                "系统上下文"
-            };
-            let wrapped = if content.trim().is_empty() {
-                format!("【{}】", label)
-            } else {
-                format!("【{}】\n{}", label, content)
-            };
-            mapped.push(to_message_item(
-                "user",
-                &Value::String(wrapped),
-                force_text_content,
-            ));
-            changed = true;
-            continue;
-        }
-
-        mapped.push(item.clone());
-    }
-
-    if changed {
-        Value::Array(mapped)
-    } else {
-        input.clone()
-    }
-}
-
-fn response_content_to_text(content: &Value) -> String {
-    if let Some(text) = content.as_str() {
-        return text.to_string();
-    }
-
-    if let Some(array) = content.as_array() {
-        let mut output = Vec::new();
-        for part in array {
-            if let Some(text) = part.as_str() {
-                output.push(text.to_string());
-                continue;
-            }
-            if let Some(text) = part.get("text").and_then(|value| value.as_str()) {
-                output.push(text.to_string());
-                continue;
-            }
-            if let Some(text) = part.get("output_text").and_then(|value| value.as_str()) {
-                output.push(text.to_string());
-                continue;
-            }
-            output.push(part.to_string());
-        }
-        return output.join(
-            "
-",
-        );
-    }
-
-    if let Some(object) = content.as_object() {
-        if let Some(text) = object.get("text").and_then(|value| value.as_str()) {
-            return text.to_string();
-        }
-        if let Some(text) = object.get("output").and_then(|value| value.as_str()) {
-            return text.to_string();
-        }
-    }
-
-    content.to_string()
 }
 
 impl AiClientSettings for AiClient {
@@ -1257,89 +637,1031 @@ impl AiClientSettings for AiClient {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::{json, Value};
+    use std::collections::VecDeque;
+    use std::sync::Arc;
 
-    use super::{
-        response_content_to_text, rewrite_system_messages_to_user,
-        truncate_function_call_outputs_in_input,
+    use axum::{
+        extract::State,
+        http::{header, HeaderValue, StatusCode},
+        routing::post,
+        Json, Router,
     };
+    use serde_json::{json, Value};
+    use tokio::sync::Mutex;
 
-    #[test]
-    fn rewrites_system_and_developer_messages_to_user_role() {
-        let input = json!([
-            {
-                "type": "message",
-                "role": "system",
-                "content": [{"type":"input_text","text":"system prompt"}]
-            },
-            {
-                "type": "message",
-                "role": "developer",
-                "content": [{"type":"input_text","text":"developer notes"}]
-            },
-            {
-                "type": "message",
-                "role": "user",
-                "content": [{"type":"input_text","text":"hello"}]
-            }
-        ]);
+    use super::{AiClient, AiClientCallbacks};
+    use crate::services::v3::ai_request_handler::AiRequestHandler;
+    use crate::services::v3::mcp_tool_execute::McpToolExecute;
+    use crate::services::v3::message_manager::MessageManager;
 
-        let output = rewrite_system_messages_to_user(&input, false);
-        let arr = output.as_array().expect("array output");
-        assert_eq!(arr.len(), 3);
-        assert_eq!(
-            arr[0].get("role").and_then(|value| value.as_str()),
-            Some("user")
-        );
-        assert_eq!(
-            arr[1].get("role").and_then(|value| value.as_str()),
-            Some("user")
-        );
-        assert_eq!(
-            arr[2].get("role").and_then(|value| value.as_str()),
-            Some("user")
-        );
-
-        let first_text = response_content_to_text(arr[0].get("content").unwrap_or(&Value::Null));
-        let second_text = response_content_to_text(arr[1].get("content").unwrap_or(&Value::Null));
-        assert!(first_text.contains("系统上下文"));
-        assert!(first_text.contains("system prompt"));
-        assert!(second_text.contains("开发者上下文"));
-        assert!(second_text.contains("developer notes"));
+    #[derive(Clone)]
+    struct MockProviderState {
+        steps: Arc<Mutex<VecDeque<MockProviderStep>>>,
+        captured_payloads: Arc<Mutex<Vec<Value>>>,
     }
 
-    #[test]
-    fn keeps_input_unchanged_when_no_system_messages_exist() {
-        let input = json!([
-            {
-                "type": "message",
-                "role": "user",
-                "content": [{"type":"input_text","text":"hello"}]
-            }
-        ]);
-
-        let output = rewrite_system_messages_to_user(&input, false);
-        assert_eq!(input, output);
+    #[derive(Clone)]
+    struct MockProviderStep {
+        status: StatusCode,
+        content_type: &'static str,
+        body: String,
     }
 
-    #[test]
-    fn truncates_large_function_call_output_items() {
-        let long_output = "a".repeat(20_000);
-        let input = json!([
-            {
-                "type": "function_call_output",
-                "call_id": "call_1",
-                "output": long_output
+    impl MockProviderStep {
+        fn text(status: StatusCode, body: impl Into<String>) -> Self {
+            Self {
+                status,
+                content_type: "text/plain; charset=utf-8",
+                body: body.into(),
             }
-        ]);
+        }
 
-        let truncated = truncate_function_call_outputs_in_input(&input).expect("should truncate");
-        let items = truncated.as_array().expect("array");
-        let text = items[0]
-            .get("output")
-            .and_then(|value| value.as_str())
-            .unwrap_or("");
-        assert!(text.len() < 20_000);
-        assert!(text.contains("truncated"));
+        fn json(status: StatusCode, body: Value) -> Self {
+            Self {
+                status,
+                content_type: "application/json",
+                body: body.to_string(),
+            }
+        }
+
+        fn sse(events: Vec<Value>) -> Self {
+            let mut body = String::new();
+            for event in events {
+                body.push_str("data: ");
+                body.push_str(event.to_string().as_str());
+                body.push_str("\n\n");
+            }
+            body.push_str("data: [DONE]\n\n");
+            Self {
+                status: StatusCode::OK,
+                content_type: "text/event-stream",
+                body,
+            }
+        }
+    }
+
+    async fn mock_provider_handler(
+        State(state): State<MockProviderState>,
+        Json(payload): Json<Value>,
+    ) -> (StatusCode, [(header::HeaderName, HeaderValue); 1], String) {
+        state.captured_payloads.lock().await.push(payload);
+        let next = state.steps.lock().await.pop_front().unwrap_or_else(|| {
+            MockProviderStep::json(
+                StatusCode::OK,
+                json!({
+                    "id": "mock-default",
+                    "status": "completed",
+                    "output_text": "ok"
+                }),
+            )
+        });
+        (
+            next.status,
+            [(
+                header::CONTENT_TYPE,
+                HeaderValue::from_static(next.content_type),
+            )],
+            next.body,
+        )
+    }
+
+    async fn start_mock_provider(
+        steps: Vec<MockProviderStep>,
+    ) -> (String, Arc<Mutex<Vec<Value>>>, tokio::task::JoinHandle<()>) {
+        let state = MockProviderState {
+            steps: Arc::new(Mutex::new(steps.into_iter().collect())),
+            captured_payloads: Arc::new(Mutex::new(Vec::new())),
+        };
+        let captured = state.captured_payloads.clone();
+        let app = Router::new()
+            .route("/responses", post(mock_provider_handler))
+            .with_state(state);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind mock provider");
+        let addr = listener.local_addr().expect("read mock provider addr");
+        let handle = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        (format!("http://{addr}"), captured, handle)
+    }
+
+    fn build_test_client(base_url: String) -> AiClient {
+        let message_manager = MessageManager::new();
+        AiClient::new(
+            AiRequestHandler::new("test-key".to_string(), base_url, message_manager.clone()),
+            McpToolExecute::new(vec![], vec![], vec![]),
+            message_manager,
+        )
+    }
+
+    fn empty_callbacks() -> AiClientCallbacks {
+        AiClientCallbacks {
+            on_chunk: None,
+            on_thinking: None,
+            on_tools_start: None,
+            on_tools_stream: None,
+            on_tools_end: None,
+            on_context_summarized_start: None,
+            on_context_summarized_stream: None,
+            on_context_summarized_end: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn recovers_prev_id_then_completion_overflow_and_succeeds() {
+        let steps = vec![
+            MockProviderStep::text(
+                StatusCode::BAD_REQUEST,
+                "unsupported parameter: previous_response_id",
+            ),
+            MockProviderStep::json(
+                StatusCode::OK,
+                json!({
+                    "id": "resp_failed",
+                    "status": "failed",
+                    "error": { "message": "context_length_exceeded: input exceeds the context window" }
+                }),
+            ),
+            MockProviderStep::json(
+                StatusCode::OK,
+                json!({
+                    "id": "resp_ok",
+                    "status": "completed",
+                    "output_text": "final answer"
+                }),
+            ),
+        ];
+        let (base_url, captured, server) = start_mock_provider(steps).await;
+        let mut client = build_test_client(base_url);
+
+        let result = client
+            .process_with_tools(
+                Value::String("hello".to_string()),
+                Some("prev_resp_1".to_string()),
+                vec![],
+                None,
+                None,
+                "gpt-4o".to_string(),
+                "gpt".to_string(),
+                None,
+                0.7,
+                None,
+                empty_callbacks(),
+                false,
+                None,
+                "agent",
+                0,
+                true,
+                true,
+                Value::String("hello".to_string()),
+                8,
+                false,
+                false,
+                false,
+                None,
+                None,
+                None,
+            )
+            .await
+            .expect("process should recover and succeed");
+        server.abort();
+
+        assert_eq!(
+            result.get("content").and_then(|value| value.as_str()),
+            Some("final answer")
+        );
+
+        let requests = captured.lock().await.clone();
+        assert_eq!(requests.len(), 3);
+        assert!(requests[0].get("previous_response_id").is_some());
+        assert!(requests[1].get("previous_response_id").is_none());
+        assert!(requests[2].get("previous_response_id").is_none());
+        assert!(requests[1]
+            .get("input")
+            .map(|value| value.is_array())
+            .unwrap_or(false));
+        assert!(requests[2]
+            .get("input")
+            .map(|value| value.is_array())
+            .unwrap_or(false));
+    }
+
+    #[tokio::test]
+    async fn recovers_input_must_be_list_and_retries_with_list_payload() {
+        let steps = vec![
+            MockProviderStep::text(StatusCode::BAD_REQUEST, "input must be a list"),
+            MockProviderStep::json(
+                StatusCode::OK,
+                json!({
+                    "id": "resp_ok",
+                    "status": "completed",
+                    "output_text": "list retry success"
+                }),
+            ),
+        ];
+        let (base_url, captured, server) = start_mock_provider(steps).await;
+        let mut client = build_test_client(base_url);
+
+        let result = client
+            .process_with_tools(
+                Value::String("hello".to_string()),
+                None,
+                vec![],
+                None,
+                None,
+                "gpt-4o".to_string(),
+                "gpt".to_string(),
+                None,
+                0.7,
+                None,
+                empty_callbacks(),
+                false,
+                None,
+                "agent",
+                0,
+                false,
+                false,
+                Value::String("hello".to_string()),
+                8,
+                false,
+                false,
+                false,
+                None,
+                None,
+                None,
+            )
+            .await
+            .expect("process should recover input list constraint");
+        server.abort();
+
+        assert_eq!(
+            result.get("content").and_then(|value| value.as_str()),
+            Some("list retry success")
+        );
+
+        let requests = captured.lock().await.clone();
+        assert_eq!(requests.len(), 2);
+        assert!(requests[0]
+            .get("input")
+            .map(|value| value.is_string())
+            .unwrap_or(false));
+        assert!(requests[1]
+            .get("input")
+            .map(|value| value.is_array())
+            .unwrap_or(false));
+    }
+
+    #[tokio::test]
+    async fn recovers_missing_tool_call_output_with_pending_tool_items_merged() {
+        let steps = vec![
+            MockProviderStep::json(
+                StatusCode::OK,
+                json!({
+                    "id": "resp_tool_1",
+                    "status": "completed",
+                    "output": [{
+                        "type": "function_call",
+                        "call_id": "call_tool_1",
+                        "name": "demo_echo",
+                        "arguments": "{\"text\":\"hello\"}"
+                    }]
+                }),
+            ),
+            MockProviderStep::text(
+                StatusCode::BAD_REQUEST,
+                "No tool call found for function_call_output item",
+            ),
+            MockProviderStep::json(
+                StatusCode::OK,
+                json!({
+                    "id": "resp_tool_done",
+                    "status": "completed",
+                    "output_text": "tool recovery success"
+                }),
+            ),
+        ];
+        let (base_url, captured, server) = start_mock_provider(steps).await;
+        let mut client = build_test_client(base_url);
+
+        let result = client
+            .process_with_tools(
+                Value::String("hello".to_string()),
+                Some("prev_resp_seed".to_string()),
+                vec![json!({
+                    "type": "function",
+                    "name": "demo_echo",
+                    "description": "demo echo",
+                    "parameters": {
+                        "type": "object",
+                        "properties": { "text": { "type": "string" } },
+                        "required": ["text"],
+                        "additionalProperties": false
+                    }
+                })],
+                None,
+                None,
+                "gpt-4o".to_string(),
+                "gpt".to_string(),
+                None,
+                0.7,
+                None,
+                empty_callbacks(),
+                false,
+                None,
+                "agent",
+                0,
+                true,
+                true,
+                Value::String("hello".to_string()),
+                8,
+                false,
+                false,
+                false,
+                None,
+                None,
+                None,
+            )
+            .await
+            .expect("process should recover missing tool-call context");
+        server.abort();
+
+        assert_eq!(
+            result.get("content").and_then(|value| value.as_str()),
+            Some("tool recovery success")
+        );
+
+        let requests = captured.lock().await.clone();
+        assert_eq!(requests.len(), 3);
+
+        assert_eq!(
+            requests[0]
+                .get("previous_response_id")
+                .and_then(|value| value.as_str()),
+            Some("prev_resp_seed")
+        );
+        assert_eq!(
+            requests[1]
+                .get("previous_response_id")
+                .and_then(|value| value.as_str()),
+            Some("resp_tool_1")
+        );
+        assert!(requests[1]
+            .get("input")
+            .and_then(|value| value.as_array())
+            .map(|items| {
+                items.iter().all(|item| {
+                    item.get("type").and_then(|value| value.as_str())
+                        == Some("function_call_output")
+                })
+            })
+            .unwrap_or(false));
+
+        assert!(requests[2].get("previous_response_id").is_none());
+        assert!(requests[2]
+            .get("input")
+            .and_then(|value| value.as_array())
+            .map(|items| {
+                let has_call = items.iter().any(|item| {
+                    item.get("type").and_then(|value| value.as_str()) == Some("function_call")
+                        && item.get("call_id").and_then(|value| value.as_str())
+                            == Some("call_tool_1")
+                });
+                let has_output = items.iter().any(|item| {
+                    item.get("type").and_then(|value| value.as_str())
+                        == Some("function_call_output")
+                        && item.get("call_id").and_then(|value| value.as_str())
+                            == Some("call_tool_1")
+                });
+                has_call && has_output
+            })
+            .unwrap_or(false));
+    }
+
+    #[tokio::test]
+    async fn recovers_missing_tool_call_output_in_stream_mode_with_pending_items_merged() {
+        let first_stream_events = vec![json!({
+            "type": "response.completed",
+            "response": {
+                "id": "resp_stream_tool_1",
+                "status": "completed",
+                "output": [{
+                    "type": "function_call",
+                    "call_id": "call_stream_tool_1",
+                    "name": "demo_echo",
+                    "arguments": "{\"text\":\"hello\"}"
+                }]
+            }
+        })];
+        let third_stream_events = vec![
+            json!({ "type": "response.output_text.delta", "delta": "stream " }),
+            json!({ "type": "response.output_text.delta", "delta": "tool recovery success" }),
+            json!({
+                "type": "response.completed",
+                "response": {
+                    "id": "resp_stream_tool_done",
+                    "status": "completed",
+                    "output_text": "stream tool recovery success"
+                }
+            }),
+        ];
+        let steps = vec![
+            MockProviderStep::sse(first_stream_events),
+            MockProviderStep::text(
+                StatusCode::BAD_REQUEST,
+                "No tool call found for function_call_output item",
+            ),
+            MockProviderStep::sse(third_stream_events),
+        ];
+        let (base_url, captured, server) = start_mock_provider(steps).await;
+        let mut client = build_test_client(base_url);
+
+        let callbacks = AiClientCallbacks {
+            on_chunk: Some(Arc::new(|_chunk: String| {})),
+            on_thinking: None,
+            on_tools_start: None,
+            on_tools_stream: None,
+            on_tools_end: None,
+            on_context_summarized_start: None,
+            on_context_summarized_stream: None,
+            on_context_summarized_end: None,
+        };
+
+        let result = client
+            .process_with_tools(
+                Value::String("hello".to_string()),
+                Some("prev_resp_stream_seed".to_string()),
+                vec![json!({
+                    "type": "function",
+                    "name": "demo_echo",
+                    "description": "demo echo",
+                    "parameters": {
+                        "type": "object",
+                        "properties": { "text": { "type": "string" } },
+                        "required": ["text"],
+                        "additionalProperties": false
+                    }
+                })],
+                None,
+                None,
+                "gpt-4o".to_string(),
+                "gpt".to_string(),
+                None,
+                0.7,
+                None,
+                callbacks,
+                false,
+                None,
+                "agent",
+                0,
+                true,
+                true,
+                Value::String("hello".to_string()),
+                8,
+                false,
+                false,
+                false,
+                None,
+                None,
+                None,
+            )
+            .await
+            .expect("stream mode should recover missing tool-call context");
+        server.abort();
+
+        assert_eq!(
+            result.get("content").and_then(|value| value.as_str()),
+            Some("stream tool recovery success")
+        );
+
+        let requests = captured.lock().await.clone();
+        assert_eq!(requests.len(), 3);
+
+        assert_eq!(
+            requests[0]
+                .get("previous_response_id")
+                .and_then(|value| value.as_str()),
+            Some("prev_resp_stream_seed")
+        );
+        assert_eq!(
+            requests[1]
+                .get("previous_response_id")
+                .and_then(|value| value.as_str()),
+            Some("resp_stream_tool_1")
+        );
+        assert!(requests[0]
+            .get("stream")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false));
+        assert!(requests[1]
+            .get("stream")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false));
+        assert!(requests[2]
+            .get("stream")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false));
+
+        assert!(requests[2].get("previous_response_id").is_none());
+        assert!(requests[2]
+            .get("input")
+            .and_then(|value| value.as_array())
+            .map(|items| {
+                let has_call = items.iter().any(|item| {
+                    item.get("type").and_then(|value| value.as_str()) == Some("function_call")
+                        && item.get("call_id").and_then(|value| value.as_str())
+                            == Some("call_stream_tool_1")
+                });
+                let has_output = items.iter().any(|item| {
+                    item.get("type").and_then(|value| value.as_str())
+                        == Some("function_call_output")
+                        && item.get("call_id").and_then(|value| value.as_str())
+                            == Some("call_stream_tool_1")
+                });
+                has_call && has_output
+            })
+            .unwrap_or(false));
+    }
+
+    #[tokio::test]
+    async fn recovers_stream_response_failed_missing_tool_call_without_completed_event() {
+        let first_stream_events = vec![json!({
+            "type": "response.completed",
+            "response": {
+                "id": "resp_stream_failed_seed",
+                "status": "completed",
+                "output": [{
+                    "type": "function_call",
+                    "call_id": "call_stream_failed_1",
+                    "name": "demo_echo",
+                    "arguments": "{\"text\":\"hello\"}"
+                }]
+            }
+        })];
+        let second_stream_events = vec![json!({
+            "type": "response.failed",
+            "response": {
+                "id": "resp_stream_failed_mid",
+                "status": "failed",
+                "error": {
+                    "message": "No tool call found for function_call_output item"
+                }
+            }
+        })];
+        let third_stream_events = vec![json!({
+            "type": "response.completed",
+            "response": {
+                "id": "resp_stream_failed_done",
+                "status": "completed",
+                "output_text": "stream failed recovery success"
+            }
+        })];
+        let steps = vec![
+            MockProviderStep::sse(first_stream_events),
+            MockProviderStep::sse(second_stream_events),
+            MockProviderStep::sse(third_stream_events),
+        ];
+        let (base_url, captured, server) = start_mock_provider(steps).await;
+        let mut client = build_test_client(base_url);
+
+        let callbacks = AiClientCallbacks {
+            on_chunk: Some(Arc::new(|_chunk: String| {})),
+            on_thinking: None,
+            on_tools_start: None,
+            on_tools_stream: None,
+            on_tools_end: None,
+            on_context_summarized_start: None,
+            on_context_summarized_stream: None,
+            on_context_summarized_end: None,
+        };
+
+        let result = client
+            .process_with_tools(
+                Value::String("hello".to_string()),
+                Some("prev_resp_stream_failed".to_string()),
+                vec![json!({
+                    "type": "function",
+                    "name": "demo_echo",
+                    "description": "demo echo",
+                    "parameters": {
+                        "type": "object",
+                        "properties": { "text": { "type": "string" } },
+                        "required": ["text"],
+                        "additionalProperties": false
+                    }
+                })],
+                None,
+                None,
+                "gpt-4o".to_string(),
+                "gpt".to_string(),
+                None,
+                0.7,
+                None,
+                callbacks,
+                false,
+                None,
+                "agent",
+                0,
+                true,
+                true,
+                Value::String("hello".to_string()),
+                8,
+                false,
+                false,
+                false,
+                None,
+                None,
+                None,
+            )
+            .await
+            .expect("stream failed branch should recover missing tool-call context");
+        server.abort();
+
+        assert_eq!(
+            result.get("content").and_then(|value| value.as_str()),
+            Some("stream failed recovery success")
+        );
+
+        let requests = captured.lock().await.clone();
+        assert_eq!(requests.len(), 3);
+
+        assert_eq!(
+            requests[0]
+                .get("previous_response_id")
+                .and_then(|value| value.as_str()),
+            Some("prev_resp_stream_failed")
+        );
+        assert_eq!(
+            requests[1]
+                .get("previous_response_id")
+                .and_then(|value| value.as_str()),
+            Some("resp_stream_failed_seed")
+        );
+        assert!(requests[2].get("previous_response_id").is_none());
+
+        assert!(requests[1]
+            .get("input")
+            .and_then(|value| value.as_array())
+            .map(|items| {
+                items.iter().all(|item| {
+                    item.get("type").and_then(|value| value.as_str())
+                        == Some("function_call_output")
+                })
+            })
+            .unwrap_or(false));
+        assert!(requests[2]
+            .get("input")
+            .and_then(|value| value.as_array())
+            .map(|items| {
+                let has_call = items.iter().any(|item| {
+                    item.get("type").and_then(|value| value.as_str()) == Some("function_call")
+                        && item.get("call_id").and_then(|value| value.as_str())
+                            == Some("call_stream_failed_1")
+                });
+                let has_output = items.iter().any(|item| {
+                    item.get("type").and_then(|value| value.as_str())
+                        == Some("function_call_output")
+                        && item.get("call_id").and_then(|value| value.as_str())
+                            == Some("call_stream_failed_1")
+                });
+                has_call && has_output
+            })
+            .unwrap_or(false));
+    }
+
+    #[tokio::test]
+    async fn recovers_stream_error_and_failed_without_status_with_pending_items() {
+        let first_stream_events = vec![json!({
+            "type": "response.completed",
+            "response": {
+                "id": "resp_stream_mix_seed",
+                "status": "completed",
+                "output": [{
+                    "type": "function_call",
+                    "call_id": "call_stream_mix_1",
+                    "name": "demo_echo",
+                    "arguments": "{\"text\":\"hello\"}"
+                }]
+            }
+        })];
+        let second_stream_events = vec![
+            json!({
+                "type": "error",
+                "error": {
+                    "message": "No tool call found for function_call_output item"
+                }
+            }),
+            json!({
+                "type": "response.failed",
+                "response": {
+                    "id": "resp_stream_mix_mid"
+                }
+            }),
+        ];
+        let third_stream_events = vec![json!({
+            "type": "response.completed",
+            "response": {
+                "id": "resp_stream_mix_done",
+                "status": "completed",
+                "output_text": "stream mixed failure recovery success"
+            }
+        })];
+        let steps = vec![
+            MockProviderStep::sse(first_stream_events),
+            MockProviderStep::sse(second_stream_events),
+            MockProviderStep::sse(third_stream_events),
+        ];
+        let (base_url, captured, server) = start_mock_provider(steps).await;
+        let mut client = build_test_client(base_url);
+
+        let callbacks = AiClientCallbacks {
+            on_chunk: Some(Arc::new(|_chunk: String| {})),
+            on_thinking: None,
+            on_tools_start: None,
+            on_tools_stream: None,
+            on_tools_end: None,
+            on_context_summarized_start: None,
+            on_context_summarized_stream: None,
+            on_context_summarized_end: None,
+        };
+
+        let result = client
+            .process_with_tools(
+                Value::String("hello".to_string()),
+                Some("prev_resp_stream_mix".to_string()),
+                vec![json!({
+                    "type": "function",
+                    "name": "demo_echo",
+                    "description": "demo echo",
+                    "parameters": {
+                        "type": "object",
+                        "properties": { "text": { "type": "string" } },
+                        "required": ["text"],
+                        "additionalProperties": false
+                    }
+                })],
+                None,
+                None,
+                "gpt-4o".to_string(),
+                "gpt".to_string(),
+                None,
+                0.7,
+                None,
+                callbacks,
+                false,
+                None,
+                "agent",
+                0,
+                true,
+                true,
+                Value::String("hello".to_string()),
+                8,
+                false,
+                false,
+                false,
+                None,
+                None,
+                None,
+            )
+            .await
+            .expect("stream mixed failure branch should recover");
+        server.abort();
+
+        assert_eq!(
+            result.get("content").and_then(|value| value.as_str()),
+            Some("stream mixed failure recovery success")
+        );
+
+        let requests = captured.lock().await.clone();
+        assert_eq!(requests.len(), 3);
+
+        assert_eq!(
+            requests[0]
+                .get("previous_response_id")
+                .and_then(|value| value.as_str()),
+            Some("prev_resp_stream_mix")
+        );
+        assert_eq!(
+            requests[1]
+                .get("previous_response_id")
+                .and_then(|value| value.as_str()),
+            Some("resp_stream_mix_seed")
+        );
+        assert!(requests[2].get("previous_response_id").is_none());
+        assert!(requests[2]
+            .get("input")
+            .and_then(|value| value.as_array())
+            .map(|items| {
+                let has_call = items.iter().any(|item| {
+                    item.get("type").and_then(|value| value.as_str()) == Some("function_call")
+                        && item.get("call_id").and_then(|value| value.as_str())
+                            == Some("call_stream_mix_1")
+                });
+                let has_output = items.iter().any(|item| {
+                    item.get("type").and_then(|value| value.as_str())
+                        == Some("function_call_output")
+                        && item.get("call_id").and_then(|value| value.as_str())
+                            == Some("call_stream_mix_1")
+                });
+                has_call && has_output
+            })
+            .unwrap_or(false));
+    }
+
+    #[tokio::test]
+    async fn recovers_stream_with_second_tool_call_without_pending_duplication() {
+        let first_stream_events = vec![json!({
+            "type": "response.completed",
+            "response": {
+                "id": "resp_stream_round_1",
+                "status": "completed",
+                "output": [{
+                    "type": "function_call",
+                    "call_id": "call_stream_round_1",
+                    "name": "demo_echo",
+                    "arguments": "{\"text\":\"hello\"}"
+                }]
+            }
+        })];
+        let second_stream_events = vec![
+            json!({
+                "type": "error",
+                "error": {
+                    "message": "No tool call found for function_call_output item"
+                }
+            }),
+            json!({
+                "type": "response.failed",
+                "response": {
+                    "id": "resp_stream_round_fail"
+                }
+            }),
+        ];
+        let third_stream_events = vec![json!({
+            "type": "response.completed",
+            "response": {
+                "id": "resp_stream_round_2",
+                "status": "completed",
+                "output": [{
+                    "type": "function_call",
+                    "call_id": "call_stream_round_2",
+                    "name": "demo_echo",
+                    "arguments": "{\"text\":\"again\"}"
+                }]
+            }
+        })];
+        let fourth_stream_events = vec![json!({
+            "type": "response.completed",
+            "response": {
+                "id": "resp_stream_round_done",
+                "status": "completed",
+                "output_text": "stream round-trip success"
+            }
+        })];
+        let steps = vec![
+            MockProviderStep::sse(first_stream_events),
+            MockProviderStep::sse(second_stream_events),
+            MockProviderStep::sse(third_stream_events),
+            MockProviderStep::sse(fourth_stream_events),
+        ];
+        let (base_url, captured, server) = start_mock_provider(steps).await;
+        let mut client = build_test_client(base_url);
+
+        let callbacks = AiClientCallbacks {
+            on_chunk: Some(Arc::new(|_chunk: String| {})),
+            on_thinking: None,
+            on_tools_start: None,
+            on_tools_stream: None,
+            on_tools_end: None,
+            on_context_summarized_start: None,
+            on_context_summarized_stream: None,
+            on_context_summarized_end: None,
+        };
+
+        let result = client
+            .process_with_tools(
+                Value::String("hello".to_string()),
+                Some("prev_resp_stream_round_seed".to_string()),
+                vec![json!({
+                    "type": "function",
+                    "name": "demo_echo",
+                    "description": "demo echo",
+                    "parameters": {
+                        "type": "object",
+                        "properties": { "text": { "type": "string" } },
+                        "required": ["text"],
+                        "additionalProperties": false
+                    }
+                })],
+                None,
+                None,
+                "gpt-4o".to_string(),
+                "gpt".to_string(),
+                None,
+                0.7,
+                None,
+                callbacks,
+                false,
+                None,
+                "agent",
+                0,
+                true,
+                true,
+                Value::String("hello".to_string()),
+                8,
+                false,
+                false,
+                false,
+                None,
+                None,
+                None,
+            )
+            .await
+            .expect("stream should recover and continue with second tool call");
+        server.abort();
+
+        assert_eq!(
+            result.get("content").and_then(|value| value.as_str()),
+            Some("stream round-trip success")
+        );
+
+        let requests = captured.lock().await.clone();
+        assert_eq!(requests.len(), 4);
+
+        assert_eq!(
+            requests[1]
+                .get("previous_response_id")
+                .and_then(|value| value.as_str()),
+            Some("resp_stream_round_1")
+        );
+        assert!(requests[2].get("previous_response_id").is_none());
+        assert!(requests[3].get("previous_response_id").is_none());
+
+        assert!(requests[2]
+            .get("input")
+            .and_then(|value| value.as_array())
+            .map(|items| {
+                let call_1 = items
+                    .iter()
+                    .filter(|item| {
+                        item.get("type").and_then(|value| value.as_str()) == Some("function_call")
+                            && item.get("call_id").and_then(|value| value.as_str())
+                                == Some("call_stream_round_1")
+                    })
+                    .count();
+                let output_1 = items
+                    .iter()
+                    .filter(|item| {
+                        item.get("type").and_then(|value| value.as_str())
+                            == Some("function_call_output")
+                            && item.get("call_id").and_then(|value| value.as_str())
+                                == Some("call_stream_round_1")
+                    })
+                    .count();
+                call_1 == 1 && output_1 == 1
+            })
+            .unwrap_or(false));
+
+        assert!(requests[3]
+            .get("input")
+            .and_then(|value| value.as_array())
+            .map(|items| {
+                let call_1 = items
+                    .iter()
+                    .filter(|item| {
+                        item.get("type").and_then(|value| value.as_str()) == Some("function_call")
+                            && item.get("call_id").and_then(|value| value.as_str())
+                                == Some("call_stream_round_1")
+                    })
+                    .count();
+                let output_1 = items
+                    .iter()
+                    .filter(|item| {
+                        item.get("type").and_then(|value| value.as_str())
+                            == Some("function_call_output")
+                            && item.get("call_id").and_then(|value| value.as_str())
+                                == Some("call_stream_round_1")
+                    })
+                    .count();
+                let call_2 = items
+                    .iter()
+                    .filter(|item| {
+                        item.get("type").and_then(|value| value.as_str()) == Some("function_call")
+                            && item.get("call_id").and_then(|value| value.as_str())
+                                == Some("call_stream_round_2")
+                    })
+                    .count();
+                let output_2 = items
+                    .iter()
+                    .filter(|item| {
+                        item.get("type").and_then(|value| value.as_str())
+                            == Some("function_call_output")
+                            && item.get("call_id").and_then(|value| value.as_str())
+                                == Some("call_stream_round_2")
+                    })
+                    .count();
+                call_1 == 1 && output_1 == 1 && call_2 == 1 && output_2 == 1
+            })
+            .unwrap_or(false));
     }
 }

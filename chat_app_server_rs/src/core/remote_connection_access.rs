@@ -39,15 +39,15 @@ pub fn map_remote_connection_access_error(
     match err {
         RemoteConnectionAccessError::NotFound => (
             StatusCode::NOT_FOUND,
-            Json(json!({ "error": "远端连接不存在" })),
+            Json(json!({ "error": "远端连接不存在", "code": "remote_connection_not_found" })),
         ),
         RemoteConnectionAccessError::Forbidden => (
             StatusCode::FORBIDDEN,
-            Json(json!({ "error": "无权访问该远端连接" })),
+            Json(json!({ "error": "无权访问该远端连接", "code": "remote_connection_forbidden" })),
         ),
         RemoteConnectionAccessError::Internal(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": err })),
+            Json(json!({ "error": err, "code": "remote_connection_access_internal" })),
         ),
     }
 }

@@ -6,8 +6,10 @@ import type { Session, Project, FsEntry, Terminal, RemoteConnection } from '../t
 import ConfirmDialog from './ui/ConfirmDialog';
 import { useConfirmDialog } from '../hooks/useConfirmDialog';
 import { cn } from '../lib/utils';
+import { resolveRemoteConnectionErrorFeedback } from '../lib/api/remoteConnectionErrors';
 import { DirPickerDialog, KeyFilePickerDialog } from './sessionList/Pickers';
 import { RemoteConnectionModal } from './sessionList/RemoteConnectionModal';
+import { CreateProjectModal, CreateTerminalModal } from './sessionList/CreateResourceModals';
 import {
   ProjectSection,
   RemoteSection,
@@ -15,64 +17,19 @@ import {
   TerminalSection,
 } from './sessionList/Sections';
 import {
-  buildRemoteConnectionPayload,
   deriveNameFromPath,
   deriveParentPath,
+  formatTimeAgo,
   getKeyFilePickerTitle,
+  getSessionStatus,
   normalizeFsEntry,
 } from './sessionList/helpers';
+import { useRemoteConnectionForm } from './sessionList/useRemoteConnectionForm';
+import { useSessionSummaryStatus } from './sessionList/useSessionSummaryStatus';
 import type {
   DirPickerTarget,
-  HostKeyPolicy,
   KeyFilePickerTarget,
-  RemoteAuthType,
 } from './sessionList/helpers';
-
-// 简化的时间格式化函数
-const formatTimeAgo = (date: string | Date | undefined | null) => {
-  const now = new Date();
-  let past: Date;
-  
-  // 处理不同的日期格式
-  if (!date) {
-    return '时间未知';
-  }
-  
-  if (typeof date === 'string') {
-    // 处理数据库返回的时间格式 "YYYY-MM-DD HH:mm:ss"
-    // 将其转换为ISO格式以便正确解析
-    const isoString = date.replace(' ', 'T') + 'Z';
-    past = new Date(isoString);
-    
-    // 如果ISO格式解析失败，尝试直接解析原字符串
-    if (isNaN(past.getTime())) {
-      past = new Date(date);
-    }
-  } else {
-    past = date;
-  }
-  
-  // 检查日期是否有效
-  if (!past || isNaN(past.getTime())) {
-    return '时间未知';
-  }
-  
-  const diffInSeconds = Math.floor((now.getTime() - past.getTime()) / 1000);
-  
-  if (diffInSeconds < 60) return '刚刚';
-  if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}分钟前`;
-  if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}小时前`;
-  if (diffInSeconds < 2592000) return `${Math.floor(diffInSeconds / 86400)}天前`;
-  return past.toLocaleDateString('zh-CN');
-};
-
-const getSessionStatus = (session: Session): 'active' | 'archiving' | 'archived' => {
-  const rawStatus = typeof session.status === 'string' ? session.status.toLowerCase() : '';
-  if (rawStatus === 'archiving') return 'archiving';
-  if (rawStatus === 'archived') return 'archived';
-  if (session.archived) return 'archived';
-  return 'active';
-};
 
 interface SessionListProps {
   isOpen?: boolean;
@@ -148,8 +105,6 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [hasMoreLocked, setHasMoreLocked] = useState(false);
-  const [sessionHasSummaryMap, setSessionHasSummaryMap] = useState<Record<string, boolean>>({});
-  const checkingSummaryIdsRef = useRef<Set<string>>(new Set());
   const [sessionsExpanded, setSessionsExpanded] = useState(true);
   const [projectsExpanded, setProjectsExpanded] = useState(true);
   const [terminalsExpanded, setTerminalsExpanded] = useState(true);
@@ -165,29 +120,6 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
   const [terminalModalOpen, setTerminalModalOpen] = useState(false);
   const [terminalRoot, setTerminalRoot] = useState('');
   const [terminalError, setTerminalError] = useState<string | null>(null);
-
-  const [remoteModalOpen, setRemoteModalOpen] = useState(false);
-  const [remoteName, setRemoteName] = useState('');
-  const [remoteHost, setRemoteHost] = useState('');
-  const [remotePort, setRemotePort] = useState('22');
-  const [remoteUsername, setRemoteUsername] = useState('');
-  const [remoteAuthType, setRemoteAuthType] = useState<RemoteAuthType>('private_key');
-  const [remotePassword, setRemotePassword] = useState('');
-  const [remotePrivateKeyPath, setRemotePrivateKeyPath] = useState('');
-  const [remoteCertificatePath, setRemoteCertificatePath] = useState('');
-  const [remoteDefaultPath, setRemoteDefaultPath] = useState('');
-  const [remoteHostKeyPolicy, setRemoteHostKeyPolicy] = useState<HostKeyPolicy>('strict');
-  const [remoteJumpEnabled, setRemoteJumpEnabled] = useState(false);
-  const [remoteJumpHost, setRemoteJumpHost] = useState('');
-  const [remoteJumpPort, setRemoteJumpPort] = useState('22');
-  const [remoteJumpUsername, setRemoteJumpUsername] = useState('');
-  const [remoteJumpPrivateKeyPath, setRemoteJumpPrivateKeyPath] = useState('');
-  const [remoteJumpPassword, setRemoteJumpPassword] = useState('');
-  const [remoteError, setRemoteError] = useState<string | null>(null);
-  const [remoteSuccess, setRemoteSuccess] = useState<string | null>(null);
-  const [remoteTesting, setRemoteTesting] = useState(false);
-  const [remoteSaving, setRemoteSaving] = useState(false);
-  const [editingRemoteConnectionId, setEditingRemoteConnectionId] = useState<string | null>(null);
 
   const [keyFilePickerOpen, setKeyFilePickerOpen] = useState(false);
   const [keyFilePickerTarget, setKeyFilePickerTarget] = useState<KeyFilePickerTarget>('private_key');
@@ -213,6 +145,64 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
 
   const apiClientFromContext = useChatApiClientFromContext();
   const apiClient = apiClientFromContext || globalApiClient;
+
+  const {
+    remoteModalOpen,
+    setRemoteModalOpen,
+    remoteName,
+    setRemoteName,
+    remoteHost,
+    setRemoteHost,
+    remotePort,
+    setRemotePort,
+    remoteUsername,
+    setRemoteUsername,
+    remoteAuthType,
+    setRemoteAuthType,
+    remotePassword,
+    setRemotePassword,
+    remotePrivateKeyPath,
+    setRemotePrivateKeyPath,
+    remoteCertificatePath,
+    setRemoteCertificatePath,
+    remoteDefaultPath,
+    setRemoteDefaultPath,
+    remoteHostKeyPolicy,
+    setRemoteHostKeyPolicy,
+    remoteJumpEnabled,
+    setRemoteJumpEnabled,
+    remoteJumpHost,
+    setRemoteJumpHost,
+    remoteJumpPort,
+    setRemoteJumpPort,
+    remoteJumpUsername,
+    setRemoteJumpUsername,
+    remoteJumpPrivateKeyPath,
+    setRemoteJumpPrivateKeyPath,
+    remoteJumpPassword,
+    setRemoteJumpPassword,
+    remoteError,
+    remoteErrorAction,
+    remoteSuccess,
+    remoteTesting,
+    remoteSaving,
+    editingRemoteConnectionId,
+    openRemoteModal: openRemoteModalBase,
+    openEditRemoteModal,
+    handleTestRemoteConnection,
+    handleSaveRemoteConnection,
+    handleQuickTestRemoteConnection,
+  } = useRemoteConnectionForm({
+    apiClient,
+    createRemoteConnection,
+    updateRemoteConnection,
+  });
+
+  const { sessionHasSummaryMap } = useSessionSummaryStatus({
+    sessions,
+    apiClient,
+  });
+
   const didLoadProjectsRef = useRef(false);
   const didLoadTerminalsRef = useRef(false);
   const didLoadRemoteRef = useRef(false);
@@ -308,29 +298,8 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
   };
 
   const openRemoteModal = () => {
-    setEditingRemoteConnectionId(null);
-    setRemoteName('');
-    setRemoteHost('');
-    setRemotePort('22');
-    setRemoteUsername('');
-    setRemoteAuthType('private_key');
-    setRemotePassword('');
-    setRemotePrivateKeyPath('');
-    setRemoteCertificatePath('');
-    setRemoteDefaultPath('');
-    setRemoteHostKeyPolicy('strict');
-    setRemoteJumpEnabled(false);
-    setRemoteJumpHost('');
-    setRemoteJumpPort('22');
-    setRemoteJumpUsername('');
-    setRemoteJumpPrivateKeyPath('');
-    setRemoteJumpPassword('');
-    setRemoteError(null);
-    setRemoteSuccess(null);
-    setRemoteTesting(false);
-    setRemoteSaving(false);
     setKeyFilePickerOpen(false);
-    setRemoteModalOpen(true);
+    openRemoteModalBase();
   };
 
   const handleCreateProject = async () => {
@@ -359,113 +328,6 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     } catch (error) {
       setTerminalError(error instanceof Error ? error.message : '创建终端失败');
     }
-  };
-
-  const handleTestRemoteConnection = async () => {
-    const built = buildRemoteConnectionPayload({
-      name: remoteName,
-      host: remoteHost,
-      port: remotePort,
-      username: remoteUsername,
-      authType: remoteAuthType,
-      password: remotePassword,
-      privateKeyPath: remotePrivateKeyPath,
-      certificatePath: remoteCertificatePath,
-      defaultPath: remoteDefaultPath,
-      hostKeyPolicy: remoteHostKeyPolicy,
-      jumpEnabled: remoteJumpEnabled,
-      jumpHost: remoteJumpHost,
-      jumpPort: remoteJumpPort,
-      jumpUsername: remoteJumpUsername,
-      jumpPrivateKeyPath: remoteJumpPrivateKeyPath,
-      jumpPassword: remoteJumpPassword,
-    });
-    if ('error' in built) {
-      setRemoteError(built.error);
-      setRemoteSuccess(null);
-      return;
-    }
-    setRemoteTesting(true);
-    setRemoteError(null);
-    setRemoteSuccess(null);
-    try {
-      const result = await apiClient.testRemoteConnectionDraft(built.payload);
-      const remoteHostName = result?.remote_host ? ` (${result.remote_host})` : '';
-      setRemoteSuccess(`连接测试成功${remoteHostName}`);
-    } catch (error) {
-      setRemoteError(error instanceof Error ? error.message : '连接测试失败');
-    } finally {
-      setRemoteTesting(false);
-    }
-  };
-
-  const handleSaveRemoteConnection = async () => {
-    const built = buildRemoteConnectionPayload({
-      name: remoteName,
-      host: remoteHost,
-      port: remotePort,
-      username: remoteUsername,
-      authType: remoteAuthType,
-      password: remotePassword,
-      privateKeyPath: remotePrivateKeyPath,
-      certificatePath: remoteCertificatePath,
-      defaultPath: remoteDefaultPath,
-      hostKeyPolicy: remoteHostKeyPolicy,
-      jumpEnabled: remoteJumpEnabled,
-      jumpHost: remoteJumpHost,
-      jumpPort: remoteJumpPort,
-      jumpUsername: remoteJumpUsername,
-      jumpPrivateKeyPath: remoteJumpPrivateKeyPath,
-      jumpPassword: remoteJumpPassword,
-    });
-    if ('error' in built) {
-      setRemoteError(built.error);
-      setRemoteSuccess(null);
-      return;
-    }
-    setRemoteSaving(true);
-    setRemoteError(null);
-    setRemoteSuccess(null);
-    try {
-      if (editingRemoteConnectionId) {
-        const updated = await updateRemoteConnection(editingRemoteConnectionId, built.payload);
-        if (!updated) {
-          throw new Error('更新远端连接失败');
-        }
-      } else {
-        await createRemoteConnection(built.payload);
-      }
-      setRemoteModalOpen(false);
-    } catch (error) {
-      setRemoteError(error instanceof Error ? error.message : (editingRemoteConnectionId ? '更新远端连接失败' : '创建远端连接失败'));
-    } finally {
-      setRemoteSaving(false);
-    }
-  };
-
-  const openEditRemoteModal = (connection: RemoteConnection) => {
-    setEditingRemoteConnectionId(connection.id);
-    setRemoteName(connection.name || '');
-    setRemoteHost(connection.host || '');
-    setRemotePort(String(connection.port || 22));
-    setRemoteUsername(connection.username || '');
-    setRemoteAuthType(connection.authType || 'private_key');
-    setRemotePassword(connection.password || '');
-    setRemotePrivateKeyPath(connection.privateKeyPath || '');
-    setRemoteCertificatePath(connection.certificatePath || '');
-    setRemoteDefaultPath(connection.defaultRemotePath || '');
-    setRemoteHostKeyPolicy(connection.hostKeyPolicy || 'strict');
-    setRemoteJumpEnabled(Boolean(connection.jumpEnabled));
-    setRemoteJumpHost(connection.jumpHost || '');
-    setRemoteJumpPort(String(connection.jumpPort || 22));
-    setRemoteJumpUsername(connection.jumpUsername || '');
-    setRemoteJumpPrivateKeyPath(connection.jumpPrivateKeyPath || '');
-    setRemoteJumpPassword(connection.jumpPassword || '');
-    setRemoteError(null);
-    setRemoteSuccess(null);
-    setRemoteTesting(false);
-    setRemoteSaving(false);
-    setRemoteModalOpen(true);
   };
 
   const handleSelectProject = async (projectId: string) => {
@@ -498,16 +360,6 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
       await openRemoteSftp(connectionId);
     } catch (error) {
       console.error('Failed to open remote sftp:', error);
-    }
-  };
-
-  const handleQuickTestRemoteConnection = async (connection: RemoteConnection) => {
-    try {
-      await apiClient.testRemoteConnection(connection.id);
-      setRemoteSuccess(`连接测试成功 (${connection.name})`);
-      setRemoteError(null);
-    } catch (error) {
-      setRemoteError(error instanceof Error ? error.message : '连接测试失败');
     }
   };
 
@@ -607,7 +459,17 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
         try {
           await deleteRemoteConnection(connectionId);
         } catch (error) {
-          console.error('Failed to delete remote connection:', error);
+          const feedback = resolveRemoteConnectionErrorFeedback(error, '删除远端连接失败');
+          showConfirmDialog({
+            title: '删除失败',
+            message: feedback.message,
+            description: feedback.message,
+            detailsTitle: '建议操作',
+            detailsLines: feedback.action ? [feedback.action] : undefined,
+            confirmText: '知道了',
+            cancelText: '关闭',
+            type: 'info',
+          });
         }
       }
     });
@@ -857,110 +719,6 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
   }, [sessions.length, hasMoreLocked]);
 
   useEffect(() => {
-    const validIds = new Set(sessions.map((session: Session) => session.id));
-    checkingSummaryIdsRef.current.forEach((sessionId) => {
-      if (!validIds.has(sessionId)) {
-        checkingSummaryIdsRef.current.delete(sessionId);
-      }
-    });
-
-    setSessionHasSummaryMap((prev) => {
-      const next: Record<string, boolean> = {};
-      let changed = false;
-      Object.entries(prev).forEach(([sessionId, hasSummary]) => {
-        if (validIds.has(sessionId)) {
-          next[sessionId] = hasSummary;
-        } else {
-          changed = true;
-        }
-      });
-      return changed ? next : prev;
-    });
-  }, [sessions]);
-
-  const checkSessionSummaryStatus = useCallback(async (sessionIds: string[]) => {
-    const uniqueSessionIds = Array.from(new Set(
-      sessionIds
-        .map((sessionId) => String(sessionId || '').trim())
-        .filter((sessionId) => sessionId.length > 0)
-    ));
-    const pendingSessionIds = uniqueSessionIds.filter(
-      (sessionId) => !checkingSummaryIdsRef.current.has(sessionId)
-    );
-    if (pendingSessionIds.length === 0) {
-      return;
-    }
-
-    pendingSessionIds.forEach((sessionId) => checkingSummaryIdsRef.current.add(sessionId));
-    try {
-      const pairs = await Promise.all(
-        pendingSessionIds.map(async (sessionId) => {
-          try {
-            const payload = await apiClient.getSessionSummaries(sessionId, { limit: 1, offset: 0 });
-            const hasSummary = payload?.has_summary === true
-              || (Array.isArray(payload?.items) && payload.items.length > 0);
-            return { sessionId, hasSummary };
-          } catch (error) {
-            console.warn('Failed to detect session summary status:', sessionId, error);
-            return { sessionId, hasSummary: false };
-          }
-        })
-      );
-
-      setSessionHasSummaryMap((prev) => {
-        const next = { ...prev };
-        let changed = false;
-        pairs.forEach(({ sessionId, hasSummary }) => {
-          if (next[sessionId] !== hasSummary) {
-            next[sessionId] = hasSummary;
-            changed = true;
-          }
-        });
-        return changed ? next : prev;
-      });
-    } finally {
-      pendingSessionIds.forEach((sessionId) => checkingSummaryIdsRef.current.delete(sessionId));
-    }
-  }, [apiClient]);
-
-  useEffect(() => {
-    if (sessions.length === 0) {
-      return;
-    }
-
-    const unknownSessionIds = sessions
-      .filter((session: Session) => getSessionStatus(session) === 'active')
-      .map((session: Session) => session.id)
-      .filter((sessionId) => (
-        typeof sessionHasSummaryMap[sessionId] !== 'boolean'
-      ));
-    if (unknownSessionIds.length === 0) {
-      return;
-    }
-
-    void checkSessionSummaryStatus(unknownSessionIds);
-  }, [checkSessionSummaryStatus, sessionHasSummaryMap, sessions]);
-
-  useEffect(() => {
-    if (sessions.length === 0) {
-      return;
-    }
-
-    const sessionIds = sessions
-      .filter((session: Session) => getSessionStatus(session) === 'active')
-      .map((session: Session) => session.id);
-    if (sessionIds.length === 0) {
-      return;
-    }
-    void checkSessionSummaryStatus(sessionIds);
-
-    const timer = window.setInterval(() => {
-      void checkSessionSummaryStatus(sessionIds);
-    }, 30000);
-    return () => window.clearInterval(timer);
-  }, [checkSessionSummaryStatus, sessions]);
-
-  useEffect(() => {
     if (didLoadProjectsRef.current) return;
     didLoadProjectsRef.current = true;
     loadProjects();
@@ -1095,7 +853,10 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
             onOpenSftp={(connectionId) => {
               void handleOpenRemoteSftp(connectionId);
             }}
-            onEdit={openEditRemoteModal}
+            onEdit={(connection) => {
+              setKeyFilePickerOpen(false);
+              openEditRemoteModal(connection);
+            }}
             onTest={handleQuickTestRemoteConnection}
             onDelete={handleDeleteRemoteConnection}
             onToggleActionMenu={toggleActionMenu}
@@ -1105,129 +866,33 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
         </div>
       )}
 
-      {/* 项目创建弹窗 */}
-      {projectModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="fixed inset-0 bg-black/50" onClick={() => setProjectModalOpen(false)} />
-          <div className="relative bg-card border border-border rounded-lg shadow-xl w-[520px] p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-foreground">新增项目</h3>
-              <button
-                onClick={() => setProjectModalOpen(false)}
-                className="p-2 text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg transition-colors"
-              >
-                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-            <div className="space-y-4">
-              <div>
-                <label className="text-sm text-muted-foreground">项目目录</label>
-                <div className="mt-1 flex items-center gap-2">
-                  <input
-                    value={projectRoot}
-                    onChange={(e) => setProjectRoot(e.target.value)}
-                    className="flex-1 px-3 py-2 rounded border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                    placeholder="选择或输入本地目录路径"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => openDirPicker('project')}
-                    className="px-3 py-2 rounded bg-muted text-muted-foreground hover:bg-accent"
-                  >
-                    选择目录
-                  </button>
-                </div>
-              </div>
-              {projectRoot.trim() && (
-                <div className="text-xs text-muted-foreground">
-                  项目名称将默认使用：<span className="text-foreground">{deriveNameFromPath(projectRoot, 'Project')}</span>
-                </div>
-              )}
-              {projectError && (
-                <div className="text-xs text-destructive">{projectError}</div>
-              )}
-            </div>
-            <div className="mt-6 flex justify-end gap-2">
-              <button
-                onClick={() => setProjectModalOpen(false)}
-                className="px-3 py-2 rounded bg-muted text-muted-foreground hover:bg-accent"
-              >
-                取消
-              </button>
-              <button
-                onClick={handleCreateProject}
-                className="px-4 py-2 rounded bg-primary text-primary-foreground hover:bg-primary/90"
-              >
-                创建
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <CreateProjectModal
+        isOpen={projectModalOpen}
+        projectRoot={projectRoot}
+        projectError={projectError}
+        onClose={() => setProjectModalOpen(false)}
+        onProjectRootChange={setProjectRoot}
+        onOpenPicker={() => {
+          void openDirPicker('project');
+        }}
+        onCreate={() => {
+          void handleCreateProject();
+        }}
+      />
 
-      {/* 终端创建弹窗 */}
-      {terminalModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="fixed inset-0 bg-black/50" onClick={() => setTerminalModalOpen(false)} />
-          <div className="relative bg-card border border-border rounded-lg shadow-xl w-[520px] p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-foreground">新增终端</h3>
-              <button
-                onClick={() => setTerminalModalOpen(false)}
-                className="p-2 text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg transition-colors"
-              >
-                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-            <div className="space-y-4">
-              <div>
-                <label className="text-sm text-muted-foreground">终端目录</label>
-                <div className="mt-1 flex items-center gap-2">
-                  <input
-                    value={terminalRoot}
-                    onChange={(e) => setTerminalRoot(e.target.value)}
-                    className="flex-1 px-3 py-2 rounded border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                    placeholder="选择或输入本地目录路径"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => openDirPicker('terminal')}
-                    className="px-3 py-2 rounded bg-muted text-muted-foreground hover:bg-accent"
-                  >
-                    选择目录
-                  </button>
-                </div>
-              </div>
-              {terminalRoot.trim() && (
-                <div className="text-xs text-muted-foreground">
-                  终端名称将默认使用：<span className="text-foreground">{deriveNameFromPath(terminalRoot, 'Terminal')}</span>
-                </div>
-              )}
-              {terminalError && (
-                <div className="text-xs text-destructive">{terminalError}</div>
-              )}
-            </div>
-            <div className="mt-6 flex justify-end gap-2">
-              <button
-                onClick={() => setTerminalModalOpen(false)}
-                className="px-3 py-2 rounded bg-muted text-muted-foreground hover:bg-accent"
-              >
-                取消
-              </button>
-              <button
-                onClick={handleCreateTerminal}
-                className="px-4 py-2 rounded bg-primary text-primary-foreground hover:bg-primary/90"
-              >
-                创建
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <CreateTerminalModal
+        isOpen={terminalModalOpen}
+        terminalRoot={terminalRoot}
+        terminalError={terminalError}
+        onClose={() => setTerminalModalOpen(false)}
+        onTerminalRootChange={setTerminalRoot}
+        onOpenPicker={() => {
+          void openDirPicker('terminal');
+        }}
+        onCreate={() => {
+          void handleCreateTerminal();
+        }}
+      />
 
       {/* 远端连接创建弹窗 */}
       <RemoteConnectionModal
@@ -1250,6 +915,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
         remoteJumpPrivateKeyPath={remoteJumpPrivateKeyPath}
         remoteJumpPassword={remoteJumpPassword}
         remoteError={remoteError}
+        remoteErrorAction={remoteErrorAction}
         remoteSuccess={remoteSuccess}
         remoteTesting={remoteTesting}
         remoteSaving={remoteSaving}
@@ -1324,6 +990,10 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
         isOpen={dialogState.isOpen}
         title={dialogState.title}
         message={dialogState.message}
+        description={dialogState.description}
+        details={dialogState.details}
+        detailsTitle={dialogState.detailsTitle}
+        detailsLines={dialogState.detailsLines}
         confirmText={dialogState.confirmText}
         cancelText={dialogState.cancelText}
         type={dialogState.type}

@@ -1,4 +1,4 @@
-import type { FsEntry } from '../../types';
+import type { FsEntry, Session } from '../../types';
 
 export type RemoteAuthType = 'private_key' | 'private_key_cert' | 'password';
 export type HostKeyPolicy = 'strict' | 'accept_new';
@@ -42,6 +42,45 @@ export interface RemoteConnectionFormValues {
   jumpPrivateKeyPath: string;
   jumpPassword: string;
 }
+
+export const formatTimeAgo = (date: string | Date | undefined | null) => {
+  const now = new Date();
+  let past: Date;
+
+  if (!date) {
+    return '时间未知';
+  }
+
+  if (typeof date === 'string') {
+    const isoString = date.replace(' ', 'T') + 'Z';
+    past = new Date(isoString);
+    if (isNaN(past.getTime())) {
+      past = new Date(date);
+    }
+  } else {
+    past = date;
+  }
+
+  if (!past || isNaN(past.getTime())) {
+    return '时间未知';
+  }
+
+  const diffInSeconds = Math.floor((now.getTime() - past.getTime()) / 1000);
+
+  if (diffInSeconds < 60) return '刚刚';
+  if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}分钟前`;
+  if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}小时前`;
+  if (diffInSeconds < 2592000) return `${Math.floor(diffInSeconds / 86400)}天前`;
+  return past.toLocaleDateString('zh-CN');
+};
+
+export const getSessionStatus = (session: Session): 'active' | 'archiving' | 'archived' => {
+  const rawStatus = typeof session.status === 'string' ? session.status.toLowerCase() : '';
+  if (rawStatus === 'archiving') return 'archiving';
+  if (rawStatus === 'archived') return 'archived';
+  if (session.archived) return 'archived';
+  return 'active';
+};
 
 export const deriveNameFromPath = (path: string, fallback: string): string => {
   const trimmed = path.trim().replace(/[\\/]+$/, '');

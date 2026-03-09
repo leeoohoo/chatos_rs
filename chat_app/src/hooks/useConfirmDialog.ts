@@ -4,6 +4,10 @@ interface ConfirmDialogState {
   isOpen: boolean;
   title: string;
   message: string;
+  description?: string;
+  details?: string;
+  detailsTitle?: string;
+  detailsLines?: string[];
   confirmText?: string;
   cancelText?: string;
   type?: 'danger' | 'warning' | 'info';
@@ -24,6 +28,10 @@ export const useConfirmDialog = () => {
   const showConfirmDialog = useCallback((options: {
     title: string;
     message: string;
+    description?: string;
+    details?: string;
+    detailsTitle?: string;
+    detailsLines?: string[];
     confirmText?: string;
     cancelText?: string;
     type?: 'danger' | 'warning' | 'info';
@@ -34,6 +42,10 @@ export const useConfirmDialog = () => {
       isOpen: true,
       title: options.title,
       message: options.message,
+      description: options.description,
+      details: options.details,
+      detailsTitle: options.detailsTitle,
+      detailsLines: options.detailsLines,
       confirmText: options.confirmText || '确认',
       cancelText: options.cancelText || '取消',
       type: options.type || 'danger',

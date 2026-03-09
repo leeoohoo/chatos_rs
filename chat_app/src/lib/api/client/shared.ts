@@ -1,5 +1,20 @@
 export type QueryPrimitive = string | number | boolean | null | undefined;
 
+export class ApiRequestError extends Error {
+  readonly status: number;
+  readonly code?: string;
+  readonly payload?: any;
+
+  constructor(message: string, options?: { status?: number; code?: string; payload?: any }) {
+    super(message);
+    this.name = 'ApiRequestError';
+    this.status = options?.status ?? 0;
+    this.code = options?.code;
+    this.payload = options?.payload;
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
 export const buildQuery = (params: Record<string, QueryPrimitive>): string => {
   const search = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {

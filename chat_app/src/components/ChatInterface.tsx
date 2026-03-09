@@ -1,9 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useChatApiClientFromContext, useChatStoreFromContext } from '../lib/store/ChatStoreContext';
 import { MessageList } from './MessageList';
-import { InputArea } from './InputArea';
 import { SessionList } from './SessionList';
-import { ThemeToggle } from './ThemeToggle';
 import McpManager from './McpManager';
 import AiModelManager from './AiModelManager';
 import SystemContextEditor from './SystemContextEditor';
@@ -16,34 +14,32 @@ import RemoteSftpPanel from './RemoteSftpPanel';
 // 搴旂敤寮圭獥绠＄悊鍣ㄧ敱 ApplicationsPanel 鐩存帴鎵挎媴
 import ApplicationsPanel from './ApplicationsPanel';
 import NotepadPanel from './NotepadPanel';
-import TaskDraftPanel from './TaskDraftPanel';
-import UiPromptPanel from './UiPromptPanel';
-import { MarkdownRenderer } from './MarkdownRenderer';
-import TaskWorkbar, {
-  type SessionSummaryWorkbarItem,
-  type TaskWorkbarItem,
-} from './TaskWorkbar';
+import ChatComposerPanel from './chatInterface/ChatComposerPanel';
+import HeaderBar from './chatInterface/HeaderBar';
+import SummaryPane from './chatInterface/SummaryPane';
+import UiPromptHistoryDrawer from './chatInterface/UiPromptHistoryDrawer';
+import {
+  collectMessageToolCalls,
+  formatSummaryCreatedAt,
+  hasToolCallError,
+  normalizeWorkbarSummary,
+  normalizeWorkbarTask,
+  normalizeUiPromptHistoryItem,
+  selectLatestTurnTasks,
+  shouldRefreshForTaskMutationToolCall,
+  toUiPromptPanelFromRecord,
+  extractTaskIdsFromToolCall,
+} from './chatInterface/helpers';
+import { usePanelActions } from './chatInterface/usePanelActions';
+import { useWorkbarMutations } from './chatInterface/useWorkbarMutations';
+import type { UiPromptHistoryItem } from './chatInterface/types';
+import type { SessionSummaryWorkbarItem, TaskWorkbarItem } from './TaskWorkbar';
 import { apiClient as globalApiClient } from '../lib/api/client';
 import { cn } from '../lib/utils';
 import type { ChatInterfaceProps } from '../types';
-import type { TaskReviewDraft, UiPromptPanelState, UiPromptResponsePayload } from '../lib/store/types';
 import { useAuthStore } from '../lib/auth/authStore';
 
 const SESSION_PAGE_SIZE = 30;
-
-interface UiPromptHistoryItem {
-  id: string;
-  sessionId: string;
-  conversationTurnId: string;
-  kind: string;
-  status: string;
-  title: string;
-  message: string;
-  prompt: any;
-  response: any;
-  createdAt: string;
-  updatedAt: string;
-}
 
 export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   className,
@@ -131,8 +127,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [showApplicationsPanel, setShowApplicationsPanel] = useState(false);
   const [showNotepadPanel, setShowNotepadPanel] = useState(false);
   const [showUserSettings, setShowUserSettings] = useState(false);
-  const [showUserMenu, setShowUserMenu] = useState(false);
-  const userMenuRef = useRef<HTMLDivElement | null>(null);
   const didInitRef = useRef(false);
   const [workbarCurrentTurnTasks, setWorkbarCurrentTurnTasks] = useState<TaskWorkbarItem[]>([]);
   const [workbarHistoryTasks, setWorkbarHistoryTasks] = useState<TaskWorkbarItem[]>([]);
@@ -145,8 +139,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [workbarError, setWorkbarError] = useState<string | null>(null);
   const [workbarHistoryError, setWorkbarHistoryError] = useState<string | null>(null);
   const [workbarSummariesError, setWorkbarSummariesError] = useState<string | null>(null);
-  const [workbarActionLoadingTaskId, setWorkbarActionLoadingTaskId] = useState<string | null>(null);
-  const [workbarSummaryActionLoadingKey, setWorkbarSummaryActionLoadingKey] = useState<string | null>(null);
   const [summaryPaneSessionId, setSummaryPaneSessionId] = useState<string | null>(null);
   const [uiPromptHistoryOpen, setUiPromptHistoryOpen] = useState(false);
   const [uiPromptHistoryItems, setUiPromptHistoryItems] = useState<UiPromptHistoryItem[]>([]);
@@ -176,81 +168,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     return panels[0];
   }, [currentSession, uiPromptPanelsBySession]);
 
-  const toUiPromptPanelFromRecord = useCallback((record: any): UiPromptPanelState | null => {
-    const source = record?.prompt && typeof record.prompt === 'object' ? record.prompt : record;
-    const promptId = typeof source?.prompt_id === 'string' ? source.prompt_id.trim() : '';
-    const sessionId = typeof source?.session_id === 'string' ? source.session_id.trim() : '';
-    const conversationTurnId = typeof source?.conversation_turn_id === 'string'
-      ? source.conversation_turn_id.trim()
-      : '';
-    if (!promptId || !sessionId || !conversationTurnId) {
-      return null;
-    }
-
-    const kindRaw = String(source?.kind || 'kv').trim().toLowerCase();
-    const kind = kindRaw === 'choice' ? 'choice' : (kindRaw === 'mixed' ? 'mixed' : 'kv');
-
-    const payload = source?.payload && typeof source.payload === 'object' ? source.payload : {};
-    const fields = Array.isArray((payload as any).fields) ? (payload as any).fields : [];
-    const choice = (payload as any).choice && typeof (payload as any).choice === 'object'
-      ? (payload as any).choice
-      : undefined;
-
-    return {
-      promptId,
-      sessionId,
-      conversationTurnId,
-      toolCallId: typeof source?.tool_call_id === 'string' ? source.tool_call_id : null,
-      kind,
-      title: typeof source?.title === 'string' ? source.title : '',
-      message: typeof source?.message === 'string' ? source.message : '',
-      allowCancel: source?.allow_cancel !== false,
-      timeoutMs: typeof source?.timeout_ms === 'number' ? source.timeout_ms : undefined,
-      payload: { fields, choice },
-      submitting: false,
-      error: null,
-    };
-  }, []);
-
-  const normalizeUiPromptHistoryItem = useCallback((raw: any): UiPromptHistoryItem | null => {
-    if (!raw || typeof raw !== 'object') {
-      return null;
-    }
-
-    const promptId = typeof raw.id === 'string' ? raw.id.trim() : '';
-    const sessionId = typeof raw.session_id === 'string' ? raw.session_id.trim() : '';
-    const conversationTurnId = typeof raw.conversation_turn_id === 'string'
-      ? raw.conversation_turn_id.trim()
-      : '';
-    if (!promptId || !sessionId) {
-      return null;
-    }
-
-    const prompt = raw.prompt && typeof raw.prompt === 'object' ? raw.prompt : {};
-    const response = raw.response && typeof raw.response === 'object' ? raw.response : null;
-
-    const title = typeof (prompt as any).title === 'string'
-      ? (prompt as any).title
-      : '';
-    const message = typeof (prompt as any).message === 'string'
-      ? (prompt as any).message
-      : '';
-
-    return {
-      id: promptId,
-      sessionId,
-      conversationTurnId,
-      kind: String(raw.kind || ''),
-      status: String(raw.status || ''),
-      title,
-      message,
-      prompt,
-      response,
-      createdAt: String(raw.created_at || ''),
-      updatedAt: String(raw.updated_at || ''),
-    };
-  }, []);
-
   const activeConversationTurnId = useMemo(() => {
     if (!currentSession) {
       return null;
@@ -274,34 +191,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
   const handledTaskMutationKeysRef = useRef<Set<string>>(new Set());
 
-  const userDisplayName = useMemo(() => (
-    user?.display_name?.trim()
-    || user?.email?.trim()
-    || user?.id
-    || '当前用户'
-  ), [user]);
-  const userInitial = useMemo(() => (
-    userDisplayName.trim().charAt(0).toUpperCase() || 'U'
-  ), [userDisplayName]);
   const sessionSummaryPaneVisible = Boolean(
     activePanel === 'chat' && currentSession && summaryPaneSessionId === currentSession.id
   );
-
-  useEffect(() => {
-    if (!showUserMenu) {
-      return;
-    }
-
-    const onDocumentClick = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (showUserMenu && userMenuRef.current && !userMenuRef.current.contains(target)) {
-        setShowUserMenu(false);
-      }
-    };
-
-    document.addEventListener('mousedown', onDocumentClick);
-    return () => document.removeEventListener('mousedown', onDocumentClick);
-  }, [showUserMenu]);
 
   const currentSessionIdForUiPrompts = currentSession?.id || null;
 
@@ -331,7 +223,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [activePanel, apiClient, currentSessionIdForUiPrompts, toUiPromptPanelFromRecord, upsertUiPromptPanel]);
+  }, [activePanel, apiClient, currentSessionIdForUiPrompts, upsertUiPromptPanel]);
 
   const loadUiPromptHistory = useCallback(async (sessionId: string, force = false) => {
     if (!sessionId) {
@@ -361,232 +253,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     } finally {
       setUiPromptHistoryLoading(false);
     }
-  }, [apiClient, normalizeUiPromptHistoryItem, uiPromptHistoryItems.length, uiPromptHistoryLoadedSessionId]);
-
-  const isTaskMutationToolName = useCallback((name: unknown) => {
-    const normalized = String(name || '').toLowerCase();
-    if (!normalized) {
-      return false;
-    }
-
-    const taskScope = normalized.includes('task_manager') || normalized.includes('task');
-    if (!taskScope) {
-      return false;
-    }
-
-    return normalized.includes('add_task')
-      || normalized.includes('update_task')
-      || normalized.includes('complete_task')
-      || normalized.includes('delete_task');
-  }, []);
-
-  const collectMessageToolCalls = useCallback((message: any) => {
-    const topLevel = Array.isArray(message?.toolCalls) ? message.toolCalls : [];
-    const metadataLevel = Array.isArray(message?.metadata?.toolCalls)
-      ? message.metadata.toolCalls
-      : [];
-
-    const merged = [...metadataLevel, ...topLevel];
-    if (merged.length <= 1) {
-      return merged;
-    }
-
-    const seen = new Set<string>();
-    return merged.filter((toolCall: any, index: number) => {
-      const key = String(
-        toolCall?.id || toolCall?.tool_call_id || toolCall?.toolCallId || `${index}:${toolCall?.name || ''}`
-      );
-      if (seen.has(key)) {
-        return false;
-      }
-      seen.add(key);
-      return true;
-    });
-  }, []);
-
-  const shouldRefreshForTaskMutationToolCall = useCallback((toolCall: any) => {
-    if (isTaskMutationToolName(toolCall?.name)) {
-      return true;
-    }
-
-    const normalizedName = String(toolCall?.name || '').toLowerCase();
-    if (!normalizedName.includes('sub_agent')) {
-      return false;
-    }
-
-    const combinedOutput = [toolCall?.result, toolCall?.finalResult, toolCall?.streamLog]
-      .filter((value) => typeof value === 'string' && value.trim())
-      .map((value) => String(value).toLowerCase())
-      .join(' ');
-
-    if (!combinedOutput) {
-      return true;
-    }
-
-    return combinedOutput.includes('task_manager_builtin__')
-      || combinedOutput.includes('task_manager')
-      || combinedOutput.includes('add_task')
-      || combinedOutput.includes('update_task')
-      || combinedOutput.includes('complete_task')
-      || combinedOutput.includes('delete_task');
-  }, [isTaskMutationToolName]);
-
-  const hasToolCallError = useCallback((toolCall: any) => {
-    if (toolCall?.error === null || toolCall?.error === undefined) {
-      return false;
-    }
-    if (typeof toolCall.error === 'string') {
-      return toolCall.error.trim().length > 0;
-    }
-    return true;
-  }, []);
+  }, [apiClient, uiPromptHistoryItems.length, uiPromptHistoryLoadedSessionId]);
 
   const CURRENT_TURN_MUTATION_FALLBACK_LIMIT = 8;
-
-  const parseMaybeJsonValue = useCallback((value: unknown) => {
-    if (typeof value !== 'string') {
-      return value;
-    }
-
-    const trimmed = value.trim();
-    if (!trimmed) {
-      return null;
-    }
-
-    try {
-      return JSON.parse(trimmed);
-    } catch (_) {
-      return null;
-    }
-  }, []);
-
-  const collectTaskIdsFromToolResult = useCallback((value: unknown, collector: Set<string>, depth = 0) => {
-    if (!value || depth > 5) {
-      return;
-    }
-
-    if (Array.isArray(value)) {
-      value.forEach((item) => collectTaskIdsFromToolResult(item, collector, depth + 1));
-      return;
-    }
-
-    if (typeof value !== 'object') {
-      return;
-    }
-
-    const record = value as Record<string, unknown>;
-
-    const taskId = typeof record.task_id === 'string' ? record.task_id.trim() : '';
-    if (taskId) {
-      collector.add(taskId);
-    }
-
-    if (record.task && typeof record.task === 'object') {
-      const nestedTask = record.task as Record<string, unknown>;
-      const nestedId = typeof nestedTask.id === 'string' ? nestedTask.id.trim() : '';
-      if (nestedId) {
-        collector.add(nestedId);
-      }
-      collectTaskIdsFromToolResult(record.task, collector, depth + 1);
-    }
-
-    if (Array.isArray(record.tasks)) {
-      record.tasks.forEach((task) => {
-        if (task && typeof task === 'object') {
-          const taskIdValue = typeof (task as Record<string, unknown>).id === 'string'
-            ? (task as Record<string, unknown>).id as string
-            : '';
-          if (taskIdValue.trim()) {
-            collector.add(taskIdValue.trim());
-          }
-        }
-      });
-      collectTaskIdsFromToolResult(record.tasks, collector, depth + 1);
-    }
-
-    const looksLikeTask = typeof record.id === 'string'
-      && (typeof record.title === 'string' || typeof record.status === 'string');
-    if (looksLikeTask) {
-      collector.add((record.id as string).trim());
-    }
-
-    Object.values(record).forEach((child) => collectTaskIdsFromToolResult(child, collector, depth + 1));
-  }, []);
-
-  const extractTaskIdsFromToolCall = useCallback((toolCall: any) => {
-    const output = new Set<string>();
-
-    const candidates = [
-      toolCall?.result,
-      toolCall?.finalResult,
-      parseMaybeJsonValue(toolCall?.result),
-      parseMaybeJsonValue(toolCall?.finalResult),
-    ];
-
-    candidates.forEach((item) => collectTaskIdsFromToolResult(item, output));
-
-    return Array.from(output);
-  }, [collectTaskIdsFromToolResult, parseMaybeJsonValue]);
-
-  const normalizeWorkbarTask = useCallback((raw: any): TaskWorkbarItem => {
-    const statusRaw = String(raw?.status || 'todo').toLowerCase();
-    const status: TaskWorkbarItem['status'] =
-      statusRaw === 'doing' || statusRaw === 'blocked' || statusRaw === 'done'
-        ? statusRaw
-        : 'todo';
-
-    const priorityRaw = String(raw?.priority || 'medium').toLowerCase();
-    const priority: TaskWorkbarItem['priority'] =
-      priorityRaw === 'high' || priorityRaw === 'low' ? priorityRaw : 'medium';
-
-    const conversationTurnId = String(raw?.conversation_turn_id ?? raw?.conversationTurnId ?? '').trim();
-    const createdAt = String(raw?.created_at ?? raw?.createdAt ?? '');
-    const dueAtRaw = raw?.due_at ?? raw?.dueAt;
-
-    return {
-      id: String(raw?.id || '').trim(),
-      title: String(raw?.title || ''),
-      details: String(raw?.details || raw?.description || ''),
-      status,
-      priority,
-      conversationTurnId,
-      createdAt,
-      dueAt: dueAtRaw ? String(dueAtRaw) : null,
-      tags: Array.isArray(raw?.tags)
-        ? raw.tags
-            .map((tag: any) => String(tag).trim())
-            .filter((tag: string) => tag.length > 0)
-        : [],
-    };
-  }, []);
-
-  const normalizeWorkbarSummary = useCallback((raw: any): SessionSummaryWorkbarItem => ({
-    id: String(raw?.id || '').trim(),
-    summaryText: String(raw?.summary_text ?? raw?.summaryText ?? ''),
-    summaryModel: String(raw?.summary_model ?? raw?.summaryModel ?? ''),
-    triggerType: String(raw?.trigger_type ?? raw?.triggerType ?? ''),
-    sourceMessageCount: Number(raw?.source_message_count ?? raw?.sourceMessageCount ?? 0),
-    sourceEstimatedTokens: Number(raw?.source_estimated_tokens ?? raw?.sourceEstimatedTokens ?? 0),
-    createdAt: String(raw?.created_at ?? raw?.createdAt ?? ''),
-    status: typeof raw?.status === 'string' ? raw.status : undefined,
-    errorMessage: typeof raw?.error_message === 'string'
-      ? raw.error_message
-      : (typeof raw?.errorMessage === 'string' ? raw.errorMessage : null),
-  }), []);
-
-  const selectLatestTurnTasks = useCallback((tasks: TaskWorkbarItem[]) => {
-    if (tasks.length === 0) {
-      return [];
-    }
-
-    const latestTaskWithTurn = tasks.find((task) => task.conversationTurnId.trim().length > 0);
-    if (!latestTaskWithTurn) {
-      return tasks.slice(0, 8);
-    }
-
-    const latestTurnId = latestTaskWithTurn.conversationTurnId.trim();
-    return tasks.filter((task) => task.conversationTurnId.trim() === latestTurnId);
-  }, []);
 
   const currentTurnMutationTaskIds = useMemo(() => {
     if (!currentSession || !activeConversationTurnId) {
@@ -629,12 +298,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     return Array.from(ids);
   }, [
     activeConversationTurnId,
-    collectMessageToolCalls,
     currentSession,
-    extractTaskIdsFromToolCall,
-    hasToolCallError,
     messages,
-    shouldRefreshForTaskMutationToolCall,
   ]);
 
   const mergedCurrentTurnTasks = useMemo(() => {
@@ -695,7 +360,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     } finally {
       setWorkbarLoading(false);
     }
-  }, [apiClient, normalizeWorkbarTask, selectLatestTurnTasks]);
+  }, [apiClient]);
 
   const loadHistoryWorkbarTasks = useCallback(async (sessionId: string, force = false) => {
     if (!sessionId) {
@@ -723,7 +388,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     } finally {
       setWorkbarHistoryLoading(false);
     }
-  }, [apiClient, normalizeWorkbarTask, workbarHistoryLoadedSessionId, workbarHistoryTasks.length]);
+  }, [apiClient, workbarHistoryLoadedSessionId, workbarHistoryTasks.length]);
 
   const loadWorkbarSummaries = useCallback(async (sessionId: string, force = false) => {
     if (!sessionId) {
@@ -751,41 +416,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     } finally {
       setWorkbarSummariesLoading(false);
     }
-  }, [apiClient, normalizeWorkbarSummary, workbarSummariesLoadedSessionId]);
-
-  const formatSummaryCreatedAt = useCallback((value: string) => {
-    const parsed = new Date(value);
-    if (Number.isNaN(parsed.getTime())) {
-      return value || '-';
-    }
-    return parsed.toLocaleString('zh-CN', { hour12: false });
-  }, []);
-
-  const formatUiPromptStatus = useCallback((status: string) => {
-    const normalized = String(status || '').trim().toLowerCase();
-    if (normalized === 'ok') return '已提交';
-    if (normalized === 'canceled' || normalized === 'cancelled') return '已取消';
-    if (normalized === 'timeout') return '超时';
-    if (normalized === 'pending') return '待处理';
-    return normalized || '-';
-  }, []);
-
-  const uiPromptStatusClass = useCallback((status: string) => {
-    const normalized = String(status || '').trim().toLowerCase();
-    if (normalized === 'ok') {
-      return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-200';
-    }
-    if (normalized === 'canceled' || normalized === 'cancelled') {
-      return 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200';
-    }
-    if (normalized === 'timeout') {
-      return 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200';
-    }
-    if (normalized === 'pending') {
-      return 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-200';
-    }
-    return 'bg-muted text-muted-foreground';
-  }, []);
+  }, [apiClient, workbarSummariesLoadedSessionId]);
 
   const handleOpenSessionSummaryPane = useCallback((sessionId: string) => {
     if (!sessionId) {
@@ -852,183 +483,28 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     void refreshWorkbarTasks();
   }, [
     activePanel,
-    collectMessageToolCalls,
     currentSession,
-    hasToolCallError,
     messages,
     refreshWorkbarTasks,
-    shouldRefreshForTaskMutationToolCall,
   ]);
 
-  const withWorkbarTaskMutation = useCallback(async (taskId: string, action: () => Promise<void>) => {
-    setWorkbarActionLoadingTaskId(taskId);
-    setWorkbarError(null);
-    try {
-      await action();
-      await refreshWorkbarTasks();
-    } catch (error) {
-      setWorkbarError(error instanceof Error ? error.message : '任务操作失败');
-    } finally {
-      setWorkbarActionLoadingTaskId(null);
-    }
-  }, [refreshWorkbarTasks]);
-
-  const withWorkbarSummaryMutation = useCallback(async (
-    sessionId: string,
-    actionKey: string,
-    action: () => Promise<void>
-  ) => {
-    if (!sessionId) {
-      return;
-    }
-
-    setWorkbarSummaryActionLoadingKey(actionKey);
-    setWorkbarSummariesError(null);
-    try {
-      await action();
-      await loadWorkbarSummaries(sessionId, true);
-    } catch (error) {
-      setWorkbarSummariesError(error instanceof Error ? error.message : '会话总结操作失败');
-    } finally {
-      setWorkbarSummaryActionLoadingKey(null);
-    }
-  }, [loadWorkbarSummaries]);
-
-  const handleWorkbarCompleteTask = useCallback(async (task: TaskWorkbarItem) => {
-    if (!currentSession) {
-      return;
-    }
-    await withWorkbarTaskMutation(task.id, async () => {
-      await apiClient.completeTaskManagerTask(currentSession.id, task.id);
-    });
-  }, [apiClient, currentSession, withWorkbarTaskMutation]);
-
-  const handleWorkbarDeleteTask = useCallback(async (task: TaskWorkbarItem) => {
-    if (!currentSession) {
-      return;
-    }
-    if (typeof window !== 'undefined') {
-      const confirmed = window.confirm('Delete task "' + task.title + '"?');
-      if (!confirmed) {
-        return;
-      }
-    }
-
-    await withWorkbarTaskMutation(task.id, async () => {
-      await apiClient.deleteTaskManagerTask(currentSession.id, task.id);
-    });
-  }, [apiClient, currentSession, withWorkbarTaskMutation]);
-
-  const handleWorkbarEditTask = useCallback(async (task: TaskWorkbarItem) => {
-    if (!currentSession || typeof window === 'undefined') {
-      return;
-    }
-
-    const nextTitleRaw = window.prompt('Task title', task.title);
-    if (nextTitleRaw === null) {
-      return;
-    }
-    const nextDetailsRaw = window.prompt('Task details (optional)', task.details || '');
-    if (nextDetailsRaw === null) {
-      return;
-    }
-    const nextPriorityRaw = window.prompt('Priority (high/medium/low)', task.priority);
-    if (nextPriorityRaw === null) {
-      return;
-    }
-    const nextStatusRaw = window.prompt('Status (todo/doing/blocked/done)', task.status);
-    if (nextStatusRaw === null) {
-      return;
-    }
-    const nextDueAtRaw = window.prompt('Due time (empty string to clear)', task.dueAt || '');
-    if (nextDueAtRaw === null) {
-      return;
-    }
-
-    const allowedPriority: Array<TaskWorkbarItem['priority']> = ['high', 'medium', 'low'];
-    const allowedStatus: Array<TaskWorkbarItem['status']> = ['todo', 'doing', 'blocked', 'done'];
-    const nextPriority = nextPriorityRaw.trim().toLowerCase() as TaskWorkbarItem['priority'];
-    const nextStatus = nextStatusRaw.trim().toLowerCase() as TaskWorkbarItem['status'];
-
-    if (!allowedPriority.includes(nextPriority)) {
-      setWorkbarError('Priority must be high / medium / low');
-      return;
-    }
-    if (!allowedStatus.includes(nextStatus)) {
-      setWorkbarError('Status must be todo / doing / blocked / done');
-      return;
-    }
-
-    const nextTitle = nextTitleRaw.trim();
-    const nextDetails = nextDetailsRaw.trim();
-    const nextDueAt = nextDueAtRaw.trim();
-
-    const payload: {
-      title?: string;
-      details?: string;
-      priority?: TaskWorkbarItem['priority'];
-      status?: TaskWorkbarItem['status'];
-      due_at?: string | null;
-    } = {};
-
-    if (nextTitle && nextTitle !== task.title) {
-      payload.title = nextTitle;
-    }
-    if (nextDetails !== task.details) {
-      payload.details = nextDetails;
-    }
-    if (nextPriority !== task.priority) {
-      payload.priority = nextPriority;
-    }
-    if (nextStatus !== task.status) {
-      payload.status = nextStatus;
-    }
-
-    const currentDueAt = (task.dueAt || '').trim();
-    if (nextDueAt !== currentDueAt) {
-      payload.due_at = nextDueAt || null;
-    }
-
-    if (Object.keys(payload).length === 0) {
-      return;
-    }
-
-    await withWorkbarTaskMutation(task.id, async () => {
-      await apiClient.updateTaskManagerTask(currentSession.id, task.id, payload);
-    });
-  }, [apiClient, currentSession, withWorkbarTaskMutation]);
-
-  const handleDeleteWorkbarSummary = useCallback(async (summary: SessionSummaryWorkbarItem) => {
-    if (!currentSession) {
-      return;
-    }
-    if (typeof window !== 'undefined') {
-      const confirmed = window.confirm('确认删除这条会话总结吗？相关消息会重新进入待总结队列。');
-      if (!confirmed) {
-        return;
-      }
-    }
-
-    await withWorkbarSummaryMutation(currentSession.id, `delete:${summary.id}`, async () => {
-      await apiClient.deleteSessionSummary(currentSession.id, summary.id);
-    });
-  }, [apiClient, currentSession, withWorkbarSummaryMutation]);
-
-  const handleClearWorkbarSummaries = useCallback(async () => {
-    if (!currentSession || workbarSummaries.length === 0) {
-      return;
-    }
-    if (typeof window !== 'undefined') {
-      const confirmed = window.confirm('确认清空当前会话的所有总结吗？相关消息会重新进入待总结队列。');
-      if (!confirmed) {
-        return;
-      }
-    }
-
-    await withWorkbarSummaryMutation(currentSession.id, 'clear-all', async () => {
-      await apiClient.clearSessionSummaries(currentSession.id);
-    });
-  }, [apiClient, currentSession, withWorkbarSummaryMutation, workbarSummaries.length]);
+  const {
+    workbarActionLoadingTaskId,
+    workbarSummaryActionLoadingKey,
+    handleWorkbarCompleteTask,
+    handleWorkbarDeleteTask,
+    handleWorkbarEditTask,
+    handleDeleteWorkbarSummary,
+    handleClearWorkbarSummaries,
+  } = useWorkbarMutations({
+    apiClient,
+    currentSessionId: currentSession?.id ?? null,
+    workbarSummariesLength: workbarSummaries.length,
+    refreshWorkbarTasks,
+    loadWorkbarSummaries,
+    setWorkbarError,
+    setWorkbarSummariesError,
+  });
 
   // 鍒濆鍖栧姞杞戒細璇濄€丄I妯″瀷鍜屾櫤鑳戒綋閰嶇疆
   useEffect(() => {
@@ -1099,134 +575,24 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       });
   }, [toggleTurnProcess]);
 
-  const handleTaskReviewConfirm = useCallback(async (drafts: TaskReviewDraft[]) => {
-    if (!activeTaskReviewPanel) {
-      return;
-    }
-
-    const pendingPanel = {
-      ...activeTaskReviewPanel,
-      drafts,
-      submitting: true,
-      error: null,
-    };
-    upsertTaskReviewPanel(pendingPanel);
-
-    try {
-      await apiClient.submitTaskReviewDecision(activeTaskReviewPanel.reviewId, {
-        action: 'confirm',
-        tasks: drafts.map((draft) => ({
-          title: draft.title,
-          details: draft.details,
-          priority: draft.priority,
-          status: draft.status,
-          tags: draft.tags,
-          due_at: draft.dueAt || undefined,
-        })),
-      });
-      removeTaskReviewPanel(activeTaskReviewPanel.reviewId, activeTaskReviewPanel.sessionId);
-      await Promise.all([
-        loadCurrentTurnWorkbarTasks(activeTaskReviewPanel.sessionId, activeTaskReviewPanel.conversationTurnId),
-        loadHistoryWorkbarTasks(activeTaskReviewPanel.sessionId, true),
-        loadWorkbarSummaries(activeTaskReviewPanel.sessionId, true),
-      ]);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : '任务确认提交失败';
-      upsertTaskReviewPanel({
-        ...pendingPanel,
-        submitting: false,
-        error: message,
-      });
-    }
-  }, [activeTaskReviewPanel, apiClient, loadCurrentTurnWorkbarTasks, loadHistoryWorkbarTasks, loadWorkbarSummaries, removeTaskReviewPanel, upsertTaskReviewPanel]);
-
-  const handleTaskReviewCancel = useCallback(async () => {
-    if (!activeTaskReviewPanel) {
-      return;
-    }
-
-    const pendingPanel = {
-      ...activeTaskReviewPanel,
-      submitting: true,
-      error: null,
-    };
-    upsertTaskReviewPanel(pendingPanel);
-
-    try {
-      await apiClient.submitTaskReviewDecision(activeTaskReviewPanel.reviewId, {
-        action: 'cancel',
-        reason: 'user_cancelled',
-      });
-      removeTaskReviewPanel(activeTaskReviewPanel.reviewId, activeTaskReviewPanel.sessionId);
-      await Promise.all([
-        loadCurrentTurnWorkbarTasks(activeTaskReviewPanel.sessionId, activeTaskReviewPanel.conversationTurnId),
-        loadHistoryWorkbarTasks(activeTaskReviewPanel.sessionId, true),
-        loadWorkbarSummaries(activeTaskReviewPanel.sessionId, true),
-      ]);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : '任务取消提交失败';
-      upsertTaskReviewPanel({
-        ...pendingPanel,
-        submitting: false,
-        error: message,
-      });
-    }
-  }, [activeTaskReviewPanel, apiClient, loadCurrentTurnWorkbarTasks, loadHistoryWorkbarTasks, loadWorkbarSummaries, removeTaskReviewPanel, upsertTaskReviewPanel]);
-
-  const handleUiPromptSubmit = useCallback(async (payload: UiPromptResponsePayload) => {
-    if (!activeUiPromptPanel) {
-      return;
-    }
-
-    const pendingPanel = {
-      ...activeUiPromptPanel,
-      submitting: true,
-      error: null,
-    };
-    upsertUiPromptPanel(pendingPanel);
-
-    try {
-      await apiClient.submitUiPromptResponse(activeUiPromptPanel.promptId, payload);
-      removeUiPromptPanel(activeUiPromptPanel.promptId, activeUiPromptPanel.sessionId);
-      await loadUiPromptHistory(activeUiPromptPanel.sessionId, true);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : '交互确认提交失败';
-      upsertUiPromptPanel({
-        ...pendingPanel,
-        submitting: false,
-        error: message,
-      });
-    }
-  }, [activeUiPromptPanel, apiClient, loadUiPromptHistory, removeUiPromptPanel, upsertUiPromptPanel]);
-
-  const handleUiPromptCancel = useCallback(async () => {
-    if (!activeUiPromptPanel) {
-      return;
-    }
-
-    const pendingPanel = {
-      ...activeUiPromptPanel,
-      submitting: true,
-      error: null,
-    };
-    upsertUiPromptPanel(pendingPanel);
-
-    try {
-      await apiClient.submitUiPromptResponse(activeUiPromptPanel.promptId, {
-        status: 'canceled',
-        reason: 'user_cancelled',
-      });
-      removeUiPromptPanel(activeUiPromptPanel.promptId, activeUiPromptPanel.sessionId);
-      await loadUiPromptHistory(activeUiPromptPanel.sessionId, true);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : '交互确认取消失败';
-      upsertUiPromptPanel({
-        ...pendingPanel,
-        submitting: false,
-        error: message,
-      });
-    }
-  }, [activeUiPromptPanel, apiClient, loadUiPromptHistory, removeUiPromptPanel, upsertUiPromptPanel]);
+  const {
+    handleTaskReviewConfirm,
+    handleTaskReviewCancel,
+    handleUiPromptSubmit,
+    handleUiPromptCancel,
+  } = usePanelActions({
+    activeTaskReviewPanel,
+    activeUiPromptPanel,
+    apiClient,
+    upsertTaskReviewPanel,
+    removeTaskReviewPanel,
+    upsertUiPromptPanel,
+    removeUiPromptPanel,
+    loadCurrentTurnWorkbarTasks,
+    loadHistoryWorkbarTasks,
+    loadWorkbarSummaries,
+    loadUiPromptHistory,
+  });
 
 
   if (showSystemContextEditor) {
@@ -1240,134 +606,20 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       'flex flex-col h-screen bg-background text-foreground',
       className
     )}>
-      {/* 澶撮儴 - 鍖呭惈浼氳瘽鎸夐挳鍜屼富棰樺垏鎹?*/}
-      <div className="flex items-center justify-between p-4 bg-card border-b border-border">
-        <div className="flex items-center space-x-3">
-          <button
-            onClick={toggleSidebar}
-            className="p-2 text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg transition-colors"
-            title={sidebarOpen ? '收起会话列表' : '展开会话列表'}
-          >
-            <svg className={`w-5 h-5 transition-transform ${sidebarOpen ? '' : 'rotate-180'}`} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15 18L9 12l6-6" />
-            </svg>
-          </button>
-          
-          {headerTitle && (
-            <div className="flex-1 min-w-0">
-              <h1 className="text-lg font-semibold text-foreground truncate">
-                {headerTitle}
-              </h1>
-            </div>
-          )}
-        </div>
-        
-        <div className="flex items-center space-x-2">
-          <button
-            onClick={() => setShowNotepadPanel(true)}
-            className="p-2 text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg transition-colors"
-            title="打开记事本"
-          >
-            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-              <path d="M7 3h10a2 2 0 0 1 2 2v14l-3-2-3 2-3-2-3 2V5a2 2 0 0 1 2-2z" strokeWidth="1.8" />
-            </svg>
-          </button>
-          <button
-            onClick={() => setShowApplicationsPanel(true)}
-            className="p-2 text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg transition-colors"
-            title="打开应用列表"
-          >
-            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-              <path d="M4 5h6v14H4z" strokeWidth="2" />
-              <path d="M12 5h8v14h-8z" strokeWidth="2" />
-            </svg>
-          </button>
-          <ThemeToggle />
-          <div className="relative" ref={userMenuRef}>
-            <button
-              onClick={() => {
-                setShowUserMenu((prev) => !prev);
-              }}
-              className="flex items-center gap-2 pl-2 pr-3 py-1.5 text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg transition-colors"
-              title="当前用户"
-            >
-              <span className="w-6 h-6 rounded-full bg-primary/15 text-primary text-xs font-semibold flex items-center justify-center">
-                {userInitial}
-              </span>
-              <span className="text-sm max-w-[140px] truncate">
-                {userDisplayName}
-              </span>
-            </button>
-            {showUserMenu && (
-              <div className="absolute right-0 mt-2 w-64 bg-popover border border-border rounded-lg shadow-lg z-50 py-1">
-                <div className="px-3 py-2 border-b border-border">
-                  <div className="text-sm font-medium text-foreground truncate">
-                    {user?.display_name?.trim() || '未设置昵称'}
-                  </div>
-                  <div className="text-xs text-muted-foreground truncate mt-0.5">
-                    {user?.email || user?.id}
-                  </div>
-                </div>
-                <button
-                  onClick={() => {
-                    setShowUserMenu(false);
-                    setShowMcpManager(true);
-                  }}
-                  className="w-full text-left px-3 py-2 text-sm hover:bg-accent"
-                >
-                  MCP 服务管理
-                </button>
-                <button
-                  onClick={() => {
-                    setShowUserMenu(false);
-                    setShowAgentManager(true);
-                  }}
-                  className="w-full text-left px-3 py-2 text-sm hover:bg-accent"
-                >
-                  智能体管理
-                </button>
-                <button
-                  onClick={() => {
-                    setShowUserMenu(false);
-                    setShowAiModelManager(true);
-                  }}
-                  className="w-full text-left px-3 py-2 text-sm hover:bg-accent"
-                >
-                  AI 模型管理
-                </button>
-                <button
-                  onClick={() => {
-                    setShowUserMenu(false);
-                    setShowSystemContextEditor(true);
-                  }}
-                  className="w-full text-left px-3 py-2 text-sm hover:bg-accent"
-                >
-                  系统上下文设置
-                </button>
-                <button
-                  onClick={() => {
-                    setShowUserMenu(false);
-                    setShowUserSettings(true);
-                  }}
-                  className="w-full text-left px-3 py-2 text-sm hover:bg-accent"
-                >
-                  用户参数设置
-                </button>
-                <div className="my-1 border-t border-border" />
-                <button
-                  onClick={() => {
-                    setShowUserMenu(false);
-                    logout();
-                  }}
-                  className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-accent"
-                >
-                  退出登录
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
+      <HeaderBar
+        headerTitle={headerTitle}
+        sidebarOpen={sidebarOpen}
+        onToggleSidebar={toggleSidebar}
+        onOpenNotepad={() => setShowNotepadPanel(true)}
+        onOpenApplications={() => setShowApplicationsPanel(true)}
+        onOpenMcpManager={() => setShowMcpManager(true)}
+        onOpenAgentManager={() => setShowAgentManager(true)}
+        onOpenAiModelManager={() => setShowAiModelManager(true)}
+        onOpenSystemContextEditor={() => setShowSystemContextEditor(true)}
+        onOpenUserSettings={() => setShowUserSettings(true)}
+        onLogout={logout}
+        user={user}
+      />
 
           {/* 閿欒鎻愮ず */}
           {error && (
@@ -1416,108 +668,32 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                   <div className="flex-1 overflow-hidden">
                     {currentSession ? (
                       sessionSummaryPaneVisible ? (
-                        <div className="h-full min-h-0 flex flex-col overflow-hidden">
-                          <div className="basis-[42%] min-h-[170px] bg-card/40 flex flex-col overflow-hidden">
-                            <div className="px-3 py-2 border-b border-border flex items-center justify-between gap-2">
-                              <div className="min-w-0">
-                                <div className="text-sm font-medium truncate">会话总结</div>
-                                <div className="text-[11px] text-muted-foreground truncate">{currentSession.title}</div>
-                              </div>
-                              <div className="flex items-center gap-2 shrink-0">
-                                {workbarSummaries.length > 0 && (
-                                  <button
-                                    type="button"
-                                    className="px-2 py-1 text-xs rounded border border-border hover:bg-accent disabled:opacity-60 disabled:cursor-not-allowed"
-                                    disabled={workbarSummaryActionLoadingKey !== null}
-                                    onClick={() => {
-                                      void handleClearWorkbarSummaries();
-                                    }}
-                                  >
-                                    {workbarSummaryActionLoadingKey === 'clear-all' ? '清空中...' : '清空所有总结'}
-                                  </button>
-                                )}
-                                <button
-                                  type="button"
-                                  className="px-2 py-1 text-xs rounded border border-border hover:bg-accent disabled:opacity-60 disabled:cursor-not-allowed"
-                                  disabled={workbarSummaryActionLoadingKey !== null || workbarSummariesLoading}
-                                  onClick={() => {
-                                    void loadWorkbarSummaries(currentSession.id, true);
-                                  }}
-                                >
-                                  刷新
-                                </button>
-                                <button
-                                  type="button"
-                                  className="px-2 py-1 text-xs rounded border border-border hover:bg-accent"
-                                  onClick={() => setSummaryPaneSessionId(null)}
-                                >
-                                  关闭
-                                </button>
-                              </div>
-                            </div>
-                            <div
-                              className="flex-1 min-h-0 overflow-y-auto px-3 py-3 space-y-3"
-                              style={{ overscrollBehavior: 'contain' }}
-                            >
-                              {workbarSummariesLoading ? (
-                                <div className="text-xs text-muted-foreground">总结加载中...</div>
-                              ) : workbarSummariesError ? (
-                                <div className="text-xs text-destructive">{workbarSummariesError}</div>
-                              ) : workbarSummaries.length === 0 ? (
-                                <div className="text-xs text-muted-foreground">当前会话暂无总结。</div>
-                              ) : (
-                                workbarSummaries.map((summary) => (
-                                  <div key={summary.id} className="rounded-lg border border-border bg-background/80 p-3">
-                                    <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
-                                      <span className="truncate">{summary.triggerType || '-'}</span>
-                                      <div className="flex items-center gap-2 shrink-0">
-                                        <span className="shrink-0">{formatSummaryCreatedAt(summary.createdAt)}</span>
-                                        <button
-                                          type="button"
-                                          className="rounded border border-border px-1.5 py-0.5 text-[10px] text-foreground hover:bg-accent disabled:opacity-60 disabled:cursor-not-allowed"
-                                          disabled={workbarSummaryActionLoadingKey !== null}
-                                          onClick={() => {
-                                            void handleDeleteWorkbarSummary(summary);
-                                          }}
-                                        >
-                                          {workbarSummaryActionLoadingKey === `delete:${summary.id}` ? '删除中...' : '删除'}
-                                        </button>
-                                      </div>
-                                    </div>
-                                    <div className="mt-1 text-[11px] text-muted-foreground">
-                                      {`消息 ${summary.sourceMessageCount} · 估算 ${summary.sourceEstimatedTokens} tok`}
-                                    </div>
-                                    {summary.status && summary.status !== 'done' && (
-                                      <div className="mt-1 text-[11px] text-amber-600">
-                                        {summary.errorMessage || summary.status}
-                                      </div>
-                                    )}
-                                    <div className="mt-2 text-sm leading-6">
-                                      <MarkdownRenderer content={summary.summaryText || '(空总结)'} />
-                                    </div>
-                                  </div>
-                                ))
-                              )}
-                            </div>
-                          </div>
-                          <div className="relative shrink-0 px-3 py-1.5 bg-card/20">
-                            <div className="h-[2px] rounded-full bg-gradient-to-r from-transparent via-sky-400/95 to-transparent shadow-[0_0_16px_rgba(56,189,248,0.95)]" />
-                            <div className="pointer-events-none absolute inset-x-0 top-0 h-full bg-gradient-to-b from-sky-400/10 via-transparent to-transparent" />
-                          </div>
-                          <div className="flex-1 min-h-0 overflow-hidden">
-                            <MessageList
-                              key={`messages-${currentSession?.id || 'none'}-summary`}
-                              sessionId={currentSession?.id}
-                              messages={messages}
-                              isLoading={chatIsLoading}
-                              isStreaming={chatIsStreaming}
-                              hasMore={hasMoreMessages}
-                              onLoadMore={handleLoadMore}
-                              onToggleTurnProcess={handleToggleTurnProcess}
-                              customRenderer={customRenderer}
-                            />
-                          </div>
-                        </div>
+                        <SummaryPane
+                          sessionId={currentSession.id}
+                          sessionTitle={currentSession.title}
+                          messages={messages}
+                          isLoading={chatIsLoading}
+                          isStreaming={chatIsStreaming}
+                          hasMore={hasMoreMessages}
+                          onLoadMore={handleLoadMore}
+                          onToggleTurnProcess={handleToggleTurnProcess}
+                          customRenderer={customRenderer}
+                          summaries={workbarSummaries}
+                          summariesLoading={workbarSummariesLoading}
+                          summariesError={workbarSummariesError}
+                          actionLoadingKey={workbarSummaryActionLoadingKey}
+                          onClearAll={() => {
+                            void handleClearWorkbarSummaries();
+                          }}
+                          onRefresh={() => {
+                            void loadWorkbarSummaries(currentSession.id, true);
+                          }}
+                          onClose={() => setSummaryPaneSessionId(null)}
+                          onDeleteSummary={(summary) => {
+                            void handleDeleteWorkbarSummary(summary);
+                          }}
+                          formatCreatedAt={formatSummaryCreatedAt}
+                        />
                       ) : (
                         <MessageList
                           key={`messages-${currentSession?.id || 'none'}-chat`}
@@ -1553,75 +729,61 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
                   {/* 杈撳叆鍖哄煙 */}
                   {currentSession && activePanel === 'chat' && (
-                    <div className="border-t border-border">
-                      <TaskWorkbar
-                        tasks={mergedCurrentTurnTasks}
-                        historyTasks={workbarHistoryTasks}
-                        currentTurnId={activeConversationTurnId}
-                        isLoading={workbarLoading}
-                        historyLoading={workbarHistoryLoading}
-                        error={workbarError}
-                        historyError={workbarHistoryError}
-                        actionLoadingTaskId={workbarActionLoadingTaskId}
-                        onRefresh={() => {
-                          void refreshWorkbarTasks();
-                        }}
-                        onOpenHistory={() => {
-                          void loadHistoryWorkbarTasks(currentSession.id);
-                          void loadWorkbarSummaries(currentSession.id);
-                        }}
-                        onOpenUiPromptHistory={() => {
-                          setUiPromptHistoryOpen(true);
-                          void loadUiPromptHistory(currentSession.id, true);
-                        }}
-                        uiPromptHistoryCount={uiPromptHistoryItems.length}
-                        uiPromptHistoryLoading={uiPromptHistoryLoading}
-                        onCompleteTask={(task) => {
-                          void handleWorkbarCompleteTask(task);
-                        }}
-                        onDeleteTask={(task) => {
-                          void handleWorkbarDeleteTask(task);
-                        }}
-                        onEditTask={(task) => {
-                          void handleWorkbarEditTask(task);
-                        }}
-                      />
-                      {activeUiPromptPanel ? (
-                        <UiPromptPanel
-                          panel={activeUiPromptPanel}
-                          onSubmit={handleUiPromptSubmit}
-                          onCancel={handleUiPromptCancel}
-                        />
-                      ) : null}
-                      {activeTaskReviewPanel ? (
-                        <TaskDraftPanel
-                          panel={activeTaskReviewPanel}
-                          onConfirm={handleTaskReviewConfirm}
-                          onCancel={handleTaskReviewCancel}
-                        />
-                      ) : null}
-                      <InputArea
-                        onSend={handleMessageSend}
-                        onStop={abortCurrentConversation}
-                        disabled={chatIsLoading || chatIsStreaming}
-                        isStreaming={chatIsStreaming}
-                        placeholder="输入消息..."
-                        allowAttachments={true}
-                        supportedFileTypes={supportedFileTypes}
-                        reasoningSupported={supportsReasoning}
-                        reasoningEnabled={chatConfig?.reasoningEnabled === true}
-                        onReasoningToggle={(enabled) => updateChatConfig({ reasoningEnabled: enabled })}
-                        showModelSelector={true}
-                        selectedModelId={selectedModelId}
-                        availableModels={aiModelConfigs}
-                        onModelChange={setSelectedModel}
-                        selectedAgentId={selectedAgentId}
-                        availableAgents={agents}
-                        onAgentChange={setSelectedAgent}
-                        availableProjects={projects}
-                        currentProject={currentProject}
-                      />
-                    </div>
+                    <ChatComposerPanel
+                      sessionId={currentSession.id}
+                      mergedCurrentTurnTasks={mergedCurrentTurnTasks}
+                      workbarHistoryTasks={workbarHistoryTasks}
+                      activeConversationTurnId={activeConversationTurnId}
+                      workbarLoading={workbarLoading}
+                      workbarHistoryLoading={workbarHistoryLoading}
+                      workbarError={workbarError}
+                      workbarHistoryError={workbarHistoryError}
+                      workbarActionLoadingTaskId={workbarActionLoadingTaskId}
+                      onRefreshWorkbarTasks={() => {
+                        void refreshWorkbarTasks();
+                      }}
+                      onOpenHistory={(sessionId) => {
+                        void loadHistoryWorkbarTasks(sessionId);
+                        void loadWorkbarSummaries(sessionId);
+                      }}
+                      onOpenUiPromptHistory={(sessionId) => {
+                        setUiPromptHistoryOpen(true);
+                        void loadUiPromptHistory(sessionId, true);
+                      }}
+                      uiPromptHistoryCount={uiPromptHistoryItems.length}
+                      uiPromptHistoryLoading={uiPromptHistoryLoading}
+                      onCompleteTask={(task) => {
+                        void handleWorkbarCompleteTask(task);
+                      }}
+                      onDeleteTask={(task) => {
+                        void handleWorkbarDeleteTask(task);
+                      }}
+                      onEditTask={(task) => {
+                        void handleWorkbarEditTask(task);
+                      }}
+                      activeUiPromptPanel={activeUiPromptPanel}
+                      onUiPromptSubmit={handleUiPromptSubmit}
+                      onUiPromptCancel={handleUiPromptCancel}
+                      activeTaskReviewPanel={activeTaskReviewPanel}
+                      onTaskReviewConfirm={handleTaskReviewConfirm}
+                      onTaskReviewCancel={handleTaskReviewCancel}
+                      onSend={handleMessageSend}
+                      onStop={abortCurrentConversation}
+                      inputDisabled={chatIsLoading || chatIsStreaming}
+                      isStreaming={chatIsStreaming}
+                      supportedFileTypes={supportedFileTypes}
+                      reasoningSupported={supportsReasoning}
+                      reasoningEnabled={chatConfig?.reasoningEnabled === true}
+                      onReasoningToggle={(enabled) => updateChatConfig({ reasoningEnabled: enabled })}
+                      selectedModelId={selectedModelId}
+                      availableModels={aiModelConfigs}
+                      onModelChange={setSelectedModel}
+                      selectedAgentId={selectedAgentId}
+                      availableAgents={agents}
+                      onAgentChange={setSelectedAgent}
+                      availableProjects={projects}
+                      currentProject={currentProject}
+                    />
                   )}
                 </div>
               </div>
@@ -1630,94 +792,21 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
         </div>
         
-        {uiPromptHistoryOpen ? (
-          <div className="fixed inset-0 z-50">
-            <button
-              type="button"
-              aria-label="关闭交互确认记录抽屉"
-              className="absolute inset-0 bg-black/35"
-              onClick={() => setUiPromptHistoryOpen(false)}
-            />
-            <div className="absolute right-0 top-0 h-full w-full max-w-xl border-l border-border bg-card shadow-xl">
-              <div className="flex h-full flex-col">
-                <div className="flex items-center justify-between border-b border-border px-4 py-3">
-                  <div>
-                    <div className="text-sm font-semibold text-foreground">交互确认记录</div>
-                    <div className="text-xs text-muted-foreground">
-                      当前会话：{uiPromptHistoryItems.length}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      className="rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground hover:bg-accent disabled:opacity-60 disabled:cursor-not-allowed"
-                      disabled={!currentSession || uiPromptHistoryLoading}
-                      onClick={() => {
-                        if (!currentSession) {
-                          return;
-                        }
-                        void loadUiPromptHistory(currentSession.id, true);
-                      }}
-                    >
-                      {uiPromptHistoryLoading ? '刷新中...' : '刷新'}
-                    </button>
-                    <button
-                      type="button"
-                      className="rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground hover:bg-accent"
-                      onClick={() => setUiPromptHistoryOpen(false)}
-                    >
-                      关闭
-                    </button>
-                  </div>
-                </div>
-
-                <div className="custom-scrollbar flex-1 overflow-y-scroll px-3 py-3 [scrollbar-gutter:stable]">
-                  {uiPromptHistoryError ? (
-                    <div className="mb-3 rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs text-destructive">
-                      {uiPromptHistoryError}
-                    </div>
-                  ) : null}
-
-                  {uiPromptHistoryLoading && uiPromptHistoryItems.length === 0 ? (
-                    <div className="text-xs text-muted-foreground">交互确认记录加载中...</div>
-                  ) : null}
-
-                  {!uiPromptHistoryLoading && uiPromptHistoryItems.length === 0 ? (
-                    <div className="text-xs text-muted-foreground">暂无已处理的交互确认记录。</div>
-                  ) : null}
-
-                  {uiPromptHistoryItems.length > 0 ? (
-                    <div className="space-y-2">
-                      {uiPromptHistoryItems.map((item) => (
-                        <div key={item.id} className="rounded-lg border border-border bg-background/80 p-3">
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="truncate text-sm font-medium text-foreground">
-                              {item.title || '未命名 Prompt'}
-                            </div>
-                            <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${uiPromptStatusClass(item.status)}`}>
-                              {formatUiPromptStatus(item.status)}
-                            </span>
-                          </div>
-                          {item.message ? (
-                            <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">{item.message}</div>
-                          ) : null}
-                          <div className="mt-1 text-[11px] text-muted-foreground">
-                            {`类型 ${item.kind || '-'} · 时间 ${formatSummaryCreatedAt(item.updatedAt || item.createdAt)}`}
-                          </div>
-                          {item.response ? (
-                            <pre className="custom-scrollbar mt-2 max-h-40 overflow-y-scroll rounded border border-border bg-background p-2 text-[11px] text-foreground [scrollbar-gutter:stable]">
-{JSON.stringify(item.response, null, 2)}
-                            </pre>
-                          ) : null}
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-            </div>
-          </div>
-        ) : null}
+        <UiPromptHistoryDrawer
+          open={uiPromptHistoryOpen}
+          items={uiPromptHistoryItems}
+          loading={uiPromptHistoryLoading}
+          error={uiPromptHistoryError}
+          refreshDisabled={!currentSession || uiPromptHistoryLoading}
+          onRefresh={() => {
+            if (!currentSession) {
+              return;
+            }
+            void loadUiPromptHistory(currentSession.id, true);
+          }}
+          onClose={() => setUiPromptHistoryOpen(false)}
+          formatCreatedAt={formatSummaryCreatedAt}
+        />
 
         {/* MCP绠＄悊鍣?*/}
         {showMcpManager && (

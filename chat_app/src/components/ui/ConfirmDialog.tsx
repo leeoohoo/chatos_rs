@@ -4,6 +4,10 @@ interface ConfirmDialogProps {
   isOpen: boolean;
   title: string;
   message: string;
+  description?: string;
+  details?: string;
+  detailsTitle?: string;
+  detailsLines?: string[];
   confirmText?: string;
   cancelText?: string;
   onConfirm: () => void;
@@ -15,6 +19,10 @@ const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   isOpen,
   title,
   message,
+  description,
+  details,
+  detailsTitle = '详情/建议操作',
+  detailsLines,
   confirmText = '确认',
   cancelText = '取消',
   onConfirm,
@@ -22,6 +30,12 @@ const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   type = 'danger'
 }) => {
   if (!isOpen) return null;
+  const normalizedDetailLines = (detailsLines || [])
+    .map((line) => (line || '').trim())
+    .filter((line) => line.length > 0);
+  const detailBlocks = normalizedDetailLines.length > 0
+    ? normalizedDetailLines
+    : (details && details.trim().length > 0 ? [details.trim()] : []);
 
   const getConfirmButtonStyle = () => {
     switch (type) {
@@ -42,9 +56,22 @@ const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
           <h3 className="text-lg font-medium text-foreground mb-2">
             {title}
           </h3>
-          <p className="text-muted-foreground text-sm mb-6">
-            {message}
+          <p className="text-muted-foreground text-sm mb-3">
+            {description || message}
           </p>
+          {detailBlocks.length > 0 && (
+            <div className="mb-6 rounded border border-border bg-muted/40 px-3 py-2 text-xs text-foreground/80 whitespace-pre-wrap">
+              <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-foreground/70">
+                {detailsTitle}
+              </div>
+              <div className="space-y-1">
+                {detailBlocks.map((line, index) => (
+                  <div key={`${line}-${index}`}>{line}</div>
+                ))}
+              </div>
+            </div>
+          )}
+          {detailBlocks.length === 0 && <div className="mb-6" />}
 
           {/* 按钮区域 */}
           <div className="flex gap-3">
