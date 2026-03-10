@@ -9,6 +9,35 @@ import {
 import type { SessionAiSelection } from '../types';
 import { debugLog, generateId } from '@/lib/utils';
 
+const SESSION_MESSAGES_CACHE_TTL_MS = 45_000;
+const SESSION_MESSAGES_CACHE_MAX_ENTRIES = 16;
+type SessionMessagesCacheEntry = {
+  fetchedAt: number;
+  messages: any[];
+};
+const sessionMessagesPageCache = new Map<string, SessionMessagesCacheEntry>();
+
+const createPerfMeasureStopper = (measureName: string): (() => number | null) => {
+  if (typeof performance === 'undefined' || typeof performance.mark !== 'function' || typeof performance.measure !== 'function') {
+    return () => null;
+  }
+
+  const startMark = `${measureName}:start`;
+  const endMark = `${measureName}:end`;
+  performance.mark(startMark);
+
+  return () => {
+    performance.mark(endMark);
+    performance.measure(measureName, startMark, endMark);
+    const entries = performance.getEntriesByName(measureName);
+    const duration = entries.length > 0 ? entries[entries.length - 1].duration : null;
+    performance.clearMarks(startMark);
+    performance.clearMarks(endMark);
+    performance.clearMeasures(measureName);
+    return duration;
+  };
+};
+
 const cloneStreamingMessageDraft = <T,>(value: T): T => {
   try {
     if (typeof structuredClone === 'function') {
@@ -22,6 +51,37 @@ const cloneStreamingMessageDraft = <T,>(value: T): T => {
     return JSON.parse(JSON.stringify(value));
   } catch {
     return value;
+  }
+};
+
+const readSessionMessagesCache = (sessionId: string): any[] | null => {
+  const cached = sessionMessagesPageCache.get(sessionId);
+  if (!cached) {
+    return null;
+  }
+  if (Date.now() - cached.fetchedAt > SESSION_MESSAGES_CACHE_TTL_MS) {
+    sessionMessagesPageCache.delete(sessionId);
+    return null;
+  }
+
+  // refresh LRU order
+  sessionMessagesPageCache.delete(sessionId);
+  sessionMessagesPageCache.set(sessionId, cached);
+  return cloneStreamingMessageDraft(cached.messages);
+};
+
+const writeSessionMessagesCache = (sessionId: string, messages: any[]) => {
+  sessionMessagesPageCache.set(sessionId, {
+    fetchedAt: Date.now(),
+    messages: cloneStreamingMessageDraft(messages),
+  });
+
+  while (sessionMessagesPageCache.size > SESSION_MESSAGES_CACHE_MAX_ENTRIES) {
+    const oldestKey = sessionMessagesPageCache.keys().next().value;
+    if (!oldestKey) {
+      break;
+    }
+    sessionMessagesPageCache.delete(oldestKey);
   }
 };
 
@@ -307,6 +367,7 @@ export function createSessionActions({
           state.error = null;
         });
 
+        sessionMessagesPageCache.delete(formattedSession.id);
         localStorage.setItem(`lastSessionId_${userId}_${projectId}`, formattedSession.id);
         debugLog('🔍 保存新创建的会话ID到 localStorage:', formattedSession.id);
 
@@ -321,6 +382,8 @@ export function createSessionActions({
     },
 
     selectSession: async (sessionId: string) => {
+      const selectStartedAt = Date.now();
+      const stopPerfMeasure = createPerfMeasureStopper(`store.selectSession.${sessionId}.${selectStartedAt}`);
       const beforeSelect = get();
       const previousSessionId = beforeSelect.currentSessionId;
       const sameSessionState = beforeSelect.sessionChatState?.[sessionId];
@@ -341,9 +404,17 @@ export function createSessionActions({
           state.error = null;
         });
 
-        const session = await fetchSession(client, sessionId);
+        const cachedMessages = readSessionMessagesCache(sessionId);
+        const [session, messages] = await Promise.all([
+          fetchSession(client, sessionId),
+          cachedMessages
+            ? Promise.resolve(cachedMessages)
+            : fetchSessionMessages(client, sessionId, { limit: 50, offset: 0 }),
+        ]);
+        if (!cachedMessages) {
+          writeSessionMessagesCache(sessionId, messages);
+        }
         const sessionAiSelectionFromMetadata = readSessionAiSelectionFromMetadata(session?.metadata);
-        const messages = await fetchSessionMessages(client, sessionId, { limit: 50, offset: 0 });
         const stateSnapshot = get();
         const snapshotChatState = stateSnapshot.sessionChatState?.[sessionId];
         const localStreamingMessage = snapshotChatState?.streamingMessageId
@@ -494,8 +565,29 @@ export function createSessionActions({
           localStorage.setItem(`lastSessionId_${userId}_${projectId}`, sessionId);
           debugLog('🔍 保存会话ID到 localStorage:', sessionId);
         }
+        const latestMessagesForSession = (get().messages || []).filter((message: any) => message?.sessionId === sessionId);
+        if (latestMessagesForSession.length > 0) {
+          writeSessionMessagesCache(sessionId, latestMessagesForSession);
+        } else {
+          writeSessionMessagesCache(sessionId, messages);
+        }
+        debugLog('[Store] selectSession completed', {
+          sessionId,
+          previousSessionId,
+          messageCount: messages.length,
+          cacheHit: Boolean(cachedMessages),
+          perfMs: stopPerfMeasure() ?? null,
+          elapsedMs: Date.now() - selectStartedAt,
+        });
       } catch (error) {
         console.error('Failed to select session:', error);
+        debugLog('[Store] selectSession failed', {
+          sessionId,
+          previousSessionId,
+          perfMs: stopPerfMeasure() ?? null,
+          elapsedMs: Date.now() - selectStartedAt,
+          error: error instanceof Error ? error.message : String(error),
+        });
         set((state: any) => {
           state.error = error instanceof Error ? error.message : 'Failed to select session';
           state.isLoading = false;
@@ -597,6 +689,7 @@ export function createSessionActions({
             state.activePanel = state.currentProjectId ? 'project' : 'chat';
           }
         });
+        sessionMessagesPageCache.delete(sessionId);
       } catch (error) {
         console.error('Failed to delete session:', error);
         set((state: any) => {

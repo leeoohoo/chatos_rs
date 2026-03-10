@@ -507,7 +507,6 @@ export function createMessageActions({ set, get, client }: Deps) {
 
     updateMessage: async (messageId: string, _updates: Partial<Message>) => {
       try {
-        console.warn('updateMessage not implemented yet');
         const updatedMessage = null;
 
         set((state: any) => {
@@ -526,8 +525,6 @@ export function createMessageActions({ set, get, client }: Deps) {
 
     deleteMessage: async (messageId: string) => {
       try {
-        console.warn('deleteMessage not implemented yet');
-
         set((state: any) => {
           state.messages = state.messages.filter((m: any) => m.id !== messageId);
         });

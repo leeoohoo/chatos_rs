@@ -190,14 +190,12 @@ const TreeTable: React.FC<{ data: any }> = ({ data }) => {
 
 interface ToolCallRendererProps {
   toolCall: ToolCall;
-  allMessages?: Message[];
   toolResultById?: Map<string, Message>;
   className?: string;
 }
 
 export const ToolCallRenderer: React.FC<ToolCallRendererProps> = ({
   toolCall,
-  allMessages = [],
   toolResultById,
   className,
 }) => {
@@ -220,16 +218,8 @@ export const ToolCallRenderer: React.FC<ToolCallRendererProps> = ({
   };
 
   const toolResultMessage = useMemo(() => {
-    const direct = toolResultById?.get(String(toolCall.id));
-    if (direct) return direct;
-    return allMessages.find(msg => {
-      if (msg.role !== 'tool') return false;
-      // 同时检查顶层和metadata中的tool_call_id（兼容不同格式）
-      const topLevelId = (msg as any).tool_call_id || (msg as any).toolCallId;
-      const metadataId = msg.metadata?.tool_call_id || msg.metadata?.toolCallId;
-      return topLevelId === toolCall.id || metadataId === toolCall.id;
-    });
-  }, [allMessages, toolCall.id, toolResultById]);
+    return toolResultById?.get(String(toolCall.id));
+  }, [toolCall.id, toolResultById]);
 
   // 优先使用toolCall.result，如果没有则使用tool消息的内容
   const result = toolCall.result || toolResultMessage?.content;
@@ -295,8 +285,7 @@ export const ToolCallRenderer: React.FC<ToolCallRendererProps> = ({
     if (typeof toolCall.arguments === 'string') {
       try {
         return JSON.parse(toolCall.arguments);
-      } catch (e) {
-        console.warn('Failed to parse tool arguments:', toolCall.arguments, e);
+      } catch {
         return {};
       }
     }

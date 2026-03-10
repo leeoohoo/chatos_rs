@@ -1,4 +1,4 @@
-import {create} from 'zustand';
+import { createWithEqualityFn } from 'zustand/traditional';
 import {immer} from 'zustand/middleware/immer';
 import {persist} from 'zustand/middleware';
 import {apiClient} from '../api/client';
@@ -44,7 +44,7 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
     // 获取userId的统一函数
     const getUserIdParam = () => userId;
     
-    return create<ChatState & ChatActions>()(
+    return createWithEqualityFn<ChatState & ChatActions>()(
         immer(
             persist(
                     (set, get) => {

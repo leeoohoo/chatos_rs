@@ -584,6 +584,7 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
 
     let indexes = vec![
         "CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id)",
+        "CREATE INDEX IF NOT EXISTS idx_messages_session_created_at ON messages(session_id, created_at)",
         "CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at)",
         "CREATE INDEX IF NOT EXISTS idx_messages_message_mode ON messages(message_mode)",
         "CREATE INDEX IF NOT EXISTS idx_messages_message_source ON messages(message_source)",
@@ -633,6 +634,7 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
         "CREATE INDEX IF NOT EXISTS idx_remote_connections_user_id ON remote_connections(user_id)",
         "CREATE INDEX IF NOT EXISTS idx_remote_connections_host ON remote_connections(host)",
         "CREATE INDEX IF NOT EXISTS idx_terminal_logs_terminal_id ON terminal_logs(terminal_id)",
+        "CREATE INDEX IF NOT EXISTS idx_terminal_logs_terminal_created_at ON terminal_logs(terminal_id, created_at)",
         "CREATE INDEX IF NOT EXISTS idx_terminal_logs_created_at ON terminal_logs(created_at)",
         "CREATE INDEX IF NOT EXISTS idx_session_mcp_servers_session_id ON session_mcp_servers(session_id)",
         "CREATE INDEX IF NOT EXISTS idx_mcp_config_profiles_mcp_config_id ON mcp_config_profiles(mcp_config_id)",

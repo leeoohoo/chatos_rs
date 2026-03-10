@@ -6,7 +6,7 @@ import {
   resolveRemoteConnectionErrorMessage,
   resolveRemoteTerminalWsErrorMessage,
 } from '../lib/api/remoteConnectionErrors';
-import { useChatStoreFromContext, useChatApiClientFromContext } from '../lib/store/ChatStoreContext';
+import { useChatStoreSelector, useChatApiClientFromContext } from '../lib/store/ChatStoreContext';
 import { apiClient as globalApiClient } from '../lib/api/client';
 import { useAuthStore } from '../lib/auth/authStore';
 import { useTheme } from '../hooks/useTheme';
@@ -17,6 +17,26 @@ interface RemoteTerminalViewProps {
 }
 
 type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'error';
+
+const closeWebSocketSafely = (socket: WebSocket | null | undefined) => {
+  if (!socket) {
+    return;
+  }
+  if (socket.readyState === WebSocket.OPEN) {
+    socket.close();
+    return;
+  }
+  if (socket.readyState === WebSocket.CONNECTING) {
+    const closeOnOpen = () => {
+      try {
+        socket.close();
+      } catch {
+        // ignore
+      }
+    };
+    socket.addEventListener('open', closeOnOpen, { once: true });
+  }
+};
 
 const buildWsUrl = (baseUrl: string, path: string, accessToken?: string | null) => {
   const cleanedBase = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
@@ -109,10 +129,8 @@ const toXtermTheme = (palette: ReturnType<typeof getThemeColors>) => ({
 });
 
 const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) => {
-  const {
-    currentRemoteConnection,
-    openRemoteSftp,
-  } = useChatStoreFromContext();
+  const currentRemoteConnection = useChatStoreSelector((state) => state.currentRemoteConnection);
+  const openRemoteSftp = useChatStoreSelector((state) => state.openRemoteSftp);
   const apiClientFromContext = useChatApiClientFromContext();
   const client = apiClientFromContext || globalApiClient;
   const { accessToken } = useAuthStore();
@@ -146,7 +164,7 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
       const active = socketRef.current;
       if (active) {
         socketRef.current = null;
-        active.close();
+        closeWebSocketSafely(active);
       }
       setConnectionState('disconnected');
       setBusy(false);
@@ -303,7 +321,7 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
       if (socketRef.current === ws) {
         socketRef.current = null;
       }
-      ws.close();
+      closeWebSocketSafely(ws);
     };
   }, [currentRemoteConnection?.id, apiBaseUrl, accessToken, connectSeq]);
 

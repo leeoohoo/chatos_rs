@@ -349,7 +349,8 @@ const isDev =
   (import.meta as any).env.DEV === true;
 
 export const debugLog = (...args: any[]) => {
-  if (isDev) {
-    console.log(...args);
+  if (!isDev) {
+    return;
   }
+  void args;
 };

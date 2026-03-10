@@ -16,12 +16,15 @@ interface SummaryPaneProps {
   customRenderer?: ChatInterfaceProps['customRenderer'];
   summaries: SessionSummaryWorkbarItem[];
   summariesLoading: boolean;
+  summariesLoadingMore: boolean;
+  summariesHasMore: boolean;
   summariesError: string | null;
   actionLoadingKey: string | null;
   onClearAll: () => void;
   onRefresh: () => void;
   onClose: () => void;
   onDeleteSummary: (summary: SessionSummaryWorkbarItem) => void;
+  onLoadMoreSummaries: () => void;
   formatCreatedAt: (value: string) => string;
 }
 
@@ -37,12 +40,15 @@ const SummaryPane: React.FC<SummaryPaneProps> = ({
   customRenderer,
   summaries,
   summariesLoading,
+  summariesLoadingMore,
+  summariesHasMore,
   summariesError,
   actionLoadingKey,
   onClearAll,
   onRefresh,
   onClose,
   onDeleteSummary,
+  onLoadMoreSummaries,
   formatCreatedAt,
 }) => (
   <div className="h-full min-h-0 flex flex-col overflow-hidden">
@@ -91,37 +97,49 @@ const SummaryPane: React.FC<SummaryPaneProps> = ({
         ) : summaries.length === 0 ? (
           <div className="text-xs text-muted-foreground">当前会话暂无总结。</div>
         ) : (
-          summaries.map((summary) => (
-            <div key={summary.id} className="rounded-lg border border-border bg-background/80 p-3">
-              <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
-                <span className="truncate">{summary.triggerType || '-'}</span>
-                <div className="flex items-center gap-2 shrink-0">
-                  <span className="shrink-0">{formatCreatedAt(summary.createdAt)}</span>
-                  <button
-                    type="button"
-                    className="rounded border border-border px-1.5 py-0.5 text-[10px] text-foreground hover:bg-accent disabled:opacity-60 disabled:cursor-not-allowed"
-                    disabled={actionLoadingKey !== null}
-                    onClick={() => {
-                      onDeleteSummary(summary);
-                    }}
-                  >
-                    {actionLoadingKey === `delete:${summary.id}` ? '删除中...' : '删除'}
-                  </button>
+          <>
+            {summaries.map((summary) => (
+              <div key={summary.id} className="rounded-lg border border-border bg-background/80 p-3">
+                <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                  <span className="truncate">{summary.triggerType || '-'}</span>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="shrink-0">{formatCreatedAt(summary.createdAt)}</span>
+                    <button
+                      type="button"
+                      className="rounded border border-border px-1.5 py-0.5 text-[10px] text-foreground hover:bg-accent disabled:opacity-60 disabled:cursor-not-allowed"
+                      disabled={actionLoadingKey !== null}
+                      onClick={() => {
+                        onDeleteSummary(summary);
+                      }}
+                    >
+                      {actionLoadingKey === `delete:${summary.id}` ? '删除中...' : '删除'}
+                    </button>
+                  </div>
+                </div>
+                <div className="mt-1 text-[11px] text-muted-foreground">
+                  {`消息 ${summary.sourceMessageCount} · 估算 ${summary.sourceEstimatedTokens} tok`}
+                </div>
+                {summary.status && summary.status !== 'done' ? (
+                  <div className="mt-1 text-[11px] text-amber-600">
+                    {summary.errorMessage || summary.status}
+                  </div>
+                ) : null}
+                <div className="mt-2 text-sm leading-6">
+                  <MarkdownRenderer content={summary.summaryText || '(空总结)'} />
                 </div>
               </div>
-              <div className="mt-1 text-[11px] text-muted-foreground">
-                {`消息 ${summary.sourceMessageCount} · 估算 ${summary.sourceEstimatedTokens} tok`}
-              </div>
-              {summary.status && summary.status !== 'done' ? (
-                <div className="mt-1 text-[11px] text-amber-600">
-                  {summary.errorMessage || summary.status}
-                </div>
-              ) : null}
-              <div className="mt-2 text-sm leading-6">
-                <MarkdownRenderer content={summary.summaryText || '(空总结)'} />
-              </div>
-            </div>
-          ))
+            ))}
+            {summariesHasMore ? (
+              <button
+                type="button"
+                className="w-full rounded border border-border px-3 py-1.5 text-xs hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={summariesLoadingMore || actionLoadingKey !== null}
+                onClick={onLoadMoreSummaries}
+              >
+                {summariesLoadingMore ? '加载中...' : '加载更多总结'}
+              </button>
+            ) : null}
+          </>
         )}
       </div>
     </div>

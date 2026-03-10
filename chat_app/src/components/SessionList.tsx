@@ -1,5 +1,6 @@
 import React, { useCallback, useState, useEffect, useRef } from 'react';
-import { useChatStoreFromContext, useChatApiClientFromContext } from '../lib/store/ChatStoreContext';
+import { shallow } from 'zustand/shallow';
+import { useChatStoreContext, useChatApiClientFromContext } from '../lib/store/ChatStoreContext';
 import { useChatStore } from '../lib/store';
 import { apiClient as globalApiClient } from '../lib/api/client';
 import type { Session, Project, FsEntry, Terminal, RemoteConnection } from '../types';
@@ -53,15 +54,15 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     onSelectSession,
     summaryOpenSessionId = null,
   } = props;
-  // 尝试从Context获取store（如果可用）
-  let contextStore = null;
+  // 尝试从Context获取store hook（如果可用）
+  let contextStoreHook: typeof useChatStore | null = null;
   try {
-    contextStore = useChatStoreFromContext();
+    contextStoreHook = useChatStoreContext();
   } catch (error) {
-    // 如果Context不可用，contextStore保持为null
+    // 如果Context不可用，contextStoreHook保持为null
   }
   
-  const storeToUse = store ? store() : contextStore;
+  const storeToUse = store || contextStoreHook;
   
   if (!storeToUse) {
     throw new Error('SessionList must be used within a ChatStoreProvider or receive a store prop');
@@ -98,7 +99,38 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     selectRemoteConnection,
     deleteRemoteConnection,
     openRemoteSftp,
-  } = storeToUse;
+  } = storeToUse((state) => ({
+    sessions: state.sessions,
+    currentSession: state.currentSession,
+    createSession: state.createSession,
+    selectSession: state.selectSession,
+    deleteSession: state.deleteSession,
+    updateSession: state.updateSession,
+    loadSessions: state.loadSessions,
+    sessionChatState: state.sessionChatState,
+    taskReviewPanelsBySession: state.taskReviewPanelsBySession,
+    uiPromptPanelsBySession: state.uiPromptPanelsBySession,
+    projects: state.projects,
+    currentProject: state.currentProject,
+    loadProjects: state.loadProjects,
+    createProject: state.createProject,
+    selectProject: state.selectProject,
+    deleteProject: state.deleteProject,
+    terminals: state.terminals,
+    currentTerminal: state.currentTerminal,
+    loadTerminals: state.loadTerminals,
+    createTerminal: state.createTerminal,
+    selectTerminal: state.selectTerminal,
+    deleteTerminal: state.deleteTerminal,
+    remoteConnections: state.remoteConnections,
+    currentRemoteConnection: state.currentRemoteConnection,
+    loadRemoteConnections: state.loadRemoteConnections,
+    createRemoteConnection: state.createRemoteConnection,
+    updateRemoteConnection: state.updateRemoteConnection,
+    selectRemoteConnection: state.selectRemoteConnection,
+    deleteRemoteConnection: state.deleteRemoteConnection,
+    openRemoteSftp: state.openRemoteSftp,
+  }), shallow);
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
   const [isRefreshing, setIsRefreshing] = useState(false);

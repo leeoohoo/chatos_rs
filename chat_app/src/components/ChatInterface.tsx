@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useChatApiClientFromContext, useChatStoreFromContext } from '../lib/store/ChatStoreContext';
+import { shallow } from 'zustand/shallow';
+import { useChatApiClientFromContext, useChatStoreSelector } from '../lib/store/ChatStoreContext';
 import { MessageList } from './MessageList';
 import { SessionList } from './SessionList';
 import McpManager from './McpManager';
@@ -40,6 +41,43 @@ import type { ChatInterfaceProps } from '../types';
 import { useAuthStore } from '../lib/auth/authStore';
 
 const SESSION_PAGE_SIZE = 30;
+const WORKBAR_SUMMARY_PAGE_SIZE = 50;
+
+const appendUniqueSummaries = (
+  current: SessionSummaryWorkbarItem[],
+  incoming: SessionSummaryWorkbarItem[]
+): SessionSummaryWorkbarItem[] => {
+  if (incoming.length === 0) {
+    return current;
+  }
+
+  const merged = [...current];
+  const indexById = new Map<string, number>();
+  merged.forEach((item, index) => {
+    if (item.id) {
+      indexById.set(item.id, index);
+    }
+  });
+
+  for (const nextItem of incoming) {
+    const summaryId = nextItem.id.trim();
+    if (!summaryId) {
+      merged.push(nextItem);
+      continue;
+    }
+
+    const existingIndex = indexById.get(summaryId);
+    if (typeof existingIndex === 'number') {
+      merged[existingIndex] = nextItem;
+      continue;
+    }
+
+    indexById.set(summaryId, merged.length);
+    merged.push(nextItem);
+  }
+
+  return merged;
+};
 
 export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   className,
@@ -85,7 +123,43 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     removeUiPromptPanel,
     // applications,  // 涓嶅啀鍦ㄦ缁勪欢涓娇鐢?
     // selectedApplicationId,  // 涓嶅啀鐢ㄤ簬鑷姩鏄剧ず
-  } = useChatStoreFromContext();
+  } = useChatStoreSelector((state) => ({
+    currentSession: state.currentSession,
+    currentProject: state.currentProject,
+    currentTerminal: state.currentTerminal,
+    currentRemoteConnection: state.currentRemoteConnection,
+    projects: state.projects,
+    activePanel: state.activePanel,
+    messages: state.messages,
+    hasMoreMessages: state.hasMoreMessages,
+    error: state.error,
+    loadSessions: state.loadSessions,
+    loadProjects: state.loadProjects,
+    loadMoreMessages: state.loadMoreMessages,
+    toggleTurnProcess: state.toggleTurnProcess,
+    sendMessage: state.sendMessage,
+    clearError: state.clearError,
+    sidebarOpen: state.sidebarOpen,
+    toggleSidebar: state.toggleSidebar,
+    aiModelConfigs: state.aiModelConfigs,
+    selectedModelId: state.selectedModelId,
+    setSelectedModel: state.setSelectedModel,
+    loadAiModelConfigs: state.loadAiModelConfigs,
+    agents: state.agents,
+    selectedAgentId: state.selectedAgentId,
+    setSelectedAgent: state.setSelectedAgent,
+    loadAgents: state.loadAgents,
+    chatConfig: state.chatConfig,
+    updateChatConfig: state.updateChatConfig,
+    abortCurrentConversation: state.abortCurrentConversation,
+    sessionChatState: state.sessionChatState,
+    taskReviewPanelsBySession: state.taskReviewPanelsBySession,
+    uiPromptPanelsBySession: state.uiPromptPanelsBySession,
+    upsertTaskReviewPanel: state.upsertTaskReviewPanel,
+    removeTaskReviewPanel: state.removeTaskReviewPanel,
+    upsertUiPromptPanel: state.upsertUiPromptPanel,
+    removeUiPromptPanel: state.removeUiPromptPanel,
+  }), shallow);
 
   const apiClientFromContext = useChatApiClientFromContext();
   const apiClient = useMemo(() => apiClientFromContext || globalApiClient, [apiClientFromContext]);
@@ -134,8 +208,10 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [workbarLoading, setWorkbarLoading] = useState(false);
   const [workbarHistoryLoading, setWorkbarHistoryLoading] = useState(false);
   const [workbarSummaries, setWorkbarSummaries] = useState<SessionSummaryWorkbarItem[]>([]);
+  const [workbarSummariesTotal, setWorkbarSummariesTotal] = useState(0);
   const [workbarSummariesLoadedSessionId, setWorkbarSummariesLoadedSessionId] = useState<string | null>(null);
   const [workbarSummariesLoading, setWorkbarSummariesLoading] = useState(false);
+  const [workbarSummariesLoadingMore, setWorkbarSummariesLoadingMore] = useState(false);
   const [workbarError, setWorkbarError] = useState<string | null>(null);
   const [workbarHistoryError, setWorkbarHistoryError] = useState<string | null>(null);
   const [workbarSummariesError, setWorkbarSummariesError] = useState<string | null>(null);
@@ -194,6 +270,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const sessionSummaryPaneVisible = Boolean(
     activePanel === 'chat' && currentSession && summaryPaneSessionId === currentSession.id
   );
+  const summariesHasMore = workbarSummaries.length < workbarSummariesTotal;
 
   const currentSessionIdForUiPrompts = currentSession?.id || null;
 
@@ -216,9 +293,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
           }
         });
       })
-      .catch((error) => {
-        console.warn('Failed to load pending ui prompts:', error);
-      });
+      .catch(() => {});
 
     return () => {
       cancelled = true;
@@ -393,8 +468,10 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const loadWorkbarSummaries = useCallback(async (sessionId: string, force = false) => {
     if (!sessionId) {
       setWorkbarSummaries([]);
+      setWorkbarSummariesTotal(0);
       setWorkbarSummariesLoadedSessionId(null);
       setWorkbarSummariesError(null);
+      setWorkbarSummariesLoadingMore(false);
       return;
     }
 
@@ -403,13 +480,19 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     }
 
     setWorkbarSummariesLoading(true);
+    setWorkbarSummariesLoadingMore(false);
     setWorkbarSummariesError(null);
     try {
-      const payload = await apiClient.getSessionSummaries(sessionId, { limit: 50, offset: 0 });
+      const payload = await apiClient.getSessionSummaries(sessionId, {
+        limit: WORKBAR_SUMMARY_PAGE_SIZE,
+        offset: 0,
+      });
       const items = Array.isArray(payload?.items)
         ? payload.items.map(normalizeWorkbarSummary)
         : [];
       setWorkbarSummaries(items);
+      const total = typeof payload?.total === 'number' ? payload.total : items.length;
+      setWorkbarSummariesTotal(Math.max(total, items.length));
       setWorkbarSummariesLoadedSessionId(sessionId);
     } catch (error) {
       setWorkbarSummariesError(error instanceof Error ? error.message : '会话总结加载失败');
@@ -417,6 +500,47 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       setWorkbarSummariesLoading(false);
     }
   }, [apiClient, workbarSummariesLoadedSessionId]);
+
+  const loadMoreWorkbarSummaries = useCallback(async (sessionId: string) => {
+    if (!sessionId || workbarSummariesLoading || workbarSummariesLoadingMore) {
+      return;
+    }
+    if (workbarSummariesLoadedSessionId !== sessionId) {
+      await loadWorkbarSummaries(sessionId, true);
+      return;
+    }
+    if (workbarSummaries.length >= workbarSummariesTotal) {
+      return;
+    }
+
+    const offset = workbarSummaries.length;
+    setWorkbarSummariesLoadingMore(true);
+    setWorkbarSummariesError(null);
+    try {
+      const payload = await apiClient.getSessionSummaries(sessionId, {
+        limit: WORKBAR_SUMMARY_PAGE_SIZE,
+        offset,
+      });
+      const items = Array.isArray(payload?.items)
+        ? payload.items.map(normalizeWorkbarSummary)
+        : [];
+      setWorkbarSummaries((previous) => appendUniqueSummaries(previous, items));
+      const total = typeof payload?.total === 'number' ? payload.total : workbarSummariesTotal;
+      setWorkbarSummariesTotal(Math.max(total, offset + items.length));
+    } catch (error) {
+      setWorkbarSummariesError(error instanceof Error ? error.message : '会话总结加载失败');
+    } finally {
+      setWorkbarSummariesLoadingMore(false);
+    }
+  }, [
+    apiClient,
+    loadWorkbarSummaries,
+    workbarSummaries.length,
+    workbarSummariesLoadedSessionId,
+    workbarSummariesLoading,
+    workbarSummariesLoadingMore,
+    workbarSummariesTotal,
+  ]);
 
   const handleOpenSessionSummaryPane = useCallback((sessionId: string) => {
     if (!sessionId) {
@@ -523,11 +647,13 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       setWorkbarCurrentTurnTasks([]);
       setWorkbarHistoryTasks([]);
       setWorkbarSummaries([]);
+      setWorkbarSummariesTotal(0);
       setWorkbarError(null);
       setWorkbarHistoryError(null);
       setWorkbarSummariesError(null);
       setWorkbarHistoryLoadedSessionId(null);
       setWorkbarSummariesLoadedSessionId(null);
+      setWorkbarSummariesLoadingMore(false);
       setUiPromptHistoryItems([]);
       setUiPromptHistoryError(null);
       setUiPromptHistoryLoadedSessionId(null);
@@ -680,6 +806,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                           customRenderer={customRenderer}
                           summaries={workbarSummaries}
                           summariesLoading={workbarSummariesLoading}
+                          summariesLoadingMore={workbarSummariesLoadingMore}
+                          summariesHasMore={summariesHasMore}
                           summariesError={workbarSummariesError}
                           actionLoadingKey={workbarSummaryActionLoadingKey}
                           onClearAll={() => {
@@ -691,6 +819,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                           onClose={() => setSummaryPaneSessionId(null)}
                           onDeleteSummary={(summary) => {
                             void handleDeleteWorkbarSummary(summary);
+                          }}
+                          onLoadMoreSummaries={() => {
+                            void loadMoreWorkbarSummaries(currentSession.id);
                           }}
                           formatCreatedAt={formatSummaryCreatedAt}
                         />

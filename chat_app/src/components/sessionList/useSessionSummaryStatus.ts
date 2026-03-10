@@ -56,8 +56,7 @@ export const useSessionSummaryStatus = ({ sessions, apiClient }: UseSessionSumma
             const hasSummary = payload?.has_summary === true
               || (Array.isArray(payload?.items) && payload.items.length > 0);
             return { sessionId, hasSummary };
-          } catch (error) {
-            console.warn('Failed to detect session summary status:', sessionId, error);
+          } catch {
             return { sessionId, hasSummary: false };
           }
         })

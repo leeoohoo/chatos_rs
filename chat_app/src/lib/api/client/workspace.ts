@@ -84,12 +84,13 @@ export const deleteSession = (request: ApiRequestFn, id: string): Promise<any> =
 export const getSessionMessages = (
   request: ApiRequestFn,
   sessionId: string,
-  params?: { limit?: number; offset?: number; compact?: boolean }
+  params?: { limit?: number; offset?: number; compact?: boolean; strategy?: string }
 ): Promise<any[]> => {
   const query = buildQuery({
     limit: params?.limit,
     offset: params?.offset,
     compact: params?.compact,
+    strategy: params?.strategy,
   });
   return request<any[]>(`/sessions/${sessionId}/messages${query}`);
 };
@@ -202,11 +203,12 @@ export const deleteTerminal = (request: ApiRequestFn, id: string): Promise<any> 
 export const listTerminalLogs = (
   request: ApiRequestFn,
   terminalId: string,
-  params?: { limit?: number; offset?: number }
+  params?: { limit?: number; offset?: number; before?: string }
 ): Promise<any[]> => {
   const query = buildQuery({
     limit: params?.limit,
     offset: params?.offset,
+    before: params?.before,
   });
   return request<any[]>(`/terminals/${terminalId}/history${query}`);
 };

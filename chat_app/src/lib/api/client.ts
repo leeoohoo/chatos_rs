@@ -145,7 +145,10 @@ class ApiClient {
     return workspaceApi.deleteSession(this.requestFn, id);
   }
 
-  async getSessionMessages(sessionId: string, params?: { limit?: number; offset?: number; compact?: boolean }): Promise<any[]> {
+  async getSessionMessages(
+    sessionId: string,
+    params?: { limit?: number; offset?: number; compact?: boolean; strategy?: string },
+  ): Promise<any[]> {
     return workspaceApi.getSessionMessages(this.requestFn, sessionId, params);
   }
 
@@ -215,7 +218,7 @@ class ApiClient {
 
   async listTerminalLogs(
     terminalId: string,
-    params?: { limit?: number; offset?: number }
+    params?: { limit?: number; offset?: number; before?: string }
   ): Promise<any[]> {
     return workspaceApi.listTerminalLogs(this.requestFn, terminalId, params);
   }

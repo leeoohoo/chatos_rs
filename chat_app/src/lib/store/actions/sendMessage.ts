@@ -616,8 +616,6 @@ export function createSendMessageHandler({
               parsed = JSON.parse(data);
               parseFailureCount = 0;
             } catch (parseError) {
-              const preview = data.length > 400 ? `${data.slice(0, 400)}...` : data;
-              console.warn('解析流式数据失败:', parseError, 'dataPreview:', preview);
               parseFailureCount += 1;
               if (parseFailureCount >= 5) {
                 const detail = parseError instanceof Error ? parseError.message : String(parseError);
@@ -806,7 +804,6 @@ export function createSendMessageHandler({
                       const toolCallId = result.tool_call_id || result.id || result.toolCallId;
 
                       if (!toolCallId) {
-                        console.warn('⚠️ 工具结果缺少工具调用ID:', result);
                         return;
                       }
 
@@ -968,7 +965,6 @@ export function createSendMessageHandler({
                     const toolCallId = data.toolCallId || data.tool_call_id || data.id;
 
                     if (!toolCallId) {
-                      console.warn('⚠️ 工具流式数据缺少工具调用ID:', data);
                       return;
                     }
 

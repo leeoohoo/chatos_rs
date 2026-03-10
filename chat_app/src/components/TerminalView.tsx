@@ -2,12 +2,12 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
-import { useChatStoreFromContext, useChatApiClientFromContext } from '../lib/store/ChatStoreContext';
+import { useChatStoreSelector, useChatApiClientFromContext } from '../lib/store/ChatStoreContext';
 import { apiClient } from '../lib/api/client';
 import { useAuthStore } from '../lib/auth/authStore';
 import { normalizeTerminalLog } from '../lib/store/helpers/terminals';
 import { useTheme } from '../hooks/useTheme';
-import { cn } from '../lib/utils';
+import { cn, debugLog } from '../lib/utils';
 import type { TerminalLog } from '../types';
 import {
   MAX_COMMAND_HISTORY,
@@ -36,14 +36,163 @@ interface TerminalViewProps {
 
 type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'error';
 type HistoryState = 'idle' | 'loading' | 'ready' | 'error';
-const TERMINAL_HISTORY_PAGE_SIZE = 800;
-const TERMINAL_HISTORY_MAX_LIMIT = 5000;
+const TERMINAL_HISTORY_INITIAL_LIMIT = 240;
+const TERMINAL_HISTORY_PAGE_SIZE = 600;
+const TERMINAL_HISTORY_MAX_LIMIT = 3000;
+const TERMINAL_HISTORY_TAIL_ONLY_HINT = '已预载更早历史，终端窗口保持实时 tail 模式以确保流畅。';
+
+const closeWebSocketSafely = (socket: WebSocket | null | undefined) => {
+  if (!socket) {
+    return;
+  }
+  if (socket.readyState === WebSocket.OPEN) {
+    socket.close();
+    return;
+  }
+  if (socket.readyState === WebSocket.CONNECTING) {
+    const closeOnOpen = () => {
+      try {
+        socket.close();
+      } catch {
+        // ignore
+      }
+    };
+    socket.addEventListener('open', closeOnOpen, { once: true });
+  }
+};
+
+type ParsedCommandHistory = {
+  commands: CommandHistoryItem[];
+  outputState: CommandHistoryParseState;
+  nextSequence: number;
+  outputLogs: TerminalLog[];
+};
+
+const parseCommandHistoryFromLogs = (
+  logs: TerminalLog[],
+  startSequence: number,
+): ParsedCommandHistory => {
+  const outputLogs: TerminalLog[] = [];
+  const commandLogs: TerminalLog[] = [];
+  const inputLogs: TerminalLog[] = [];
+
+  for (const log of logs) {
+    if (log.logType === 'command') {
+      commandLogs.push(log);
+      continue;
+    }
+    if (log.logType === 'input') {
+      inputLogs.push(log);
+      continue;
+    }
+    if (log.logType === 'output' || log.logType === 'system') {
+      outputLogs.push(log);
+    }
+  }
+
+  let seq = startSequence;
+  const parsedCommands: CommandHistoryItem[] = [];
+
+  if (commandLogs.length > 0) {
+    for (const log of commandLogs) {
+      const normalizedCommand = normalizeCommandForCompare(log.content);
+      if (!canCommandBeUsed(normalizedCommand)) {
+        continue;
+      }
+      parsedCommands.push({
+        id: `cmd-${seq++}`,
+        command: normalizedCommand,
+        createdAt: normalizeLogTimestamp(log.createdAt),
+      });
+    }
+  }
+
+  let inputState = createInitialInputCommandParseState();
+
+  if (parsedCommands.length === 0) {
+    for (const log of inputLogs) {
+      const parsed = parseInputChunkForCommands(log.content, inputState);
+      inputState = parsed.nextState;
+      if (parsed.commands.length === 0) {
+        continue;
+      }
+
+      const createdAt = normalizeLogTimestamp(log.createdAt);
+      for (const command of parsed.commands) {
+        const normalizedCommand = normalizeCommandForCompare(command);
+        if (!canCommandBeUsed(normalizedCommand)) {
+          continue;
+        }
+
+        parsedCommands.push({
+          id: `cmd-${seq++}`,
+          command: normalizedCommand,
+          createdAt,
+        });
+      }
+    }
+  }
+
+  const outputDerivedCommands: CommandHistoryItem[] = [];
+  let outputState = createInitialCommandHistoryParseState();
+
+  for (const log of outputLogs) {
+    const parsed = parseOutputChunkForCommands(log.content, outputState);
+    outputState = parsed.nextState;
+
+    if (commandLogs.length > 0 || parsed.commands.length === 0) {
+      continue;
+    }
+
+    const createdAt = normalizeLogTimestamp(log.createdAt);
+    for (const command of parsed.commands) {
+      const normalizedOutputCommand = normalizeCommandForCompare(command);
+      if (!canCommandBeUsed(normalizedOutputCommand)) {
+        continue;
+      }
+
+      outputDerivedCommands.push({
+        id: `cmd-${seq++}`,
+        command: normalizedOutputCommand,
+        createdAt,
+      });
+
+      if (parsedCommands.length === 0) {
+        continue;
+      }
+
+      const searchStart = Math.max(0, parsedCommands.length - 10);
+      for (let i = parsedCommands.length - 1; i >= searchStart; i -= 1) {
+        const baseCommand = parsedCommands[i].command;
+        if (canOutputCommandCorrectInput(baseCommand, normalizedOutputCommand)
+          && normalizedOutputCommand.length > normalizeCommandForCompare(baseCommand).length
+        ) {
+          parsedCommands[i] = {
+            ...parsedCommands[i],
+            command: normalizedOutputCommand,
+            createdAt,
+          };
+          break;
+        }
+      }
+    }
+  }
+
+  if (commandLogs.length === 0 && parsedCommands.length === 0 && outputDerivedCommands.length > 0) {
+    parsedCommands.push(...outputDerivedCommands);
+  }
+
+  return {
+    commands: parsedCommands,
+    outputState,
+    nextSequence: seq,
+    outputLogs,
+  };
+};
 
 export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
-  const {
-    currentTerminal,
-    loadTerminals,
-  } = useChatStoreFromContext();
+  const currentTerminal = useChatStoreSelector((state) => state.currentTerminal);
+  const loadTerminals = useChatStoreSelector((state) => state.loadTerminals);
   const apiClientFromContext = useChatApiClientFromContext();
   const { actualTheme } = useTheme();
   const terminalRef = useRef<XTerm | null>(null);
@@ -57,20 +206,26 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
   const outputParseStateRef = useRef<CommandHistoryParseState>(createInitialCommandHistoryParseState());
   const commandSeqRef = useRef(0);
   const historyLoadSeqRef = useRef(0);
+  const historyLoadedCountRef = useRef(0);
+  const historyLoadedIdsRef = useRef<Set<string>>(new Set());
+  const historyBeforeCursorRef = useRef<string | null>(null);
   const replayingHistoryRef = useRef(false);
   const pendingOutputChunksRef = useRef<string[]>([]);
   const loadHistoryRef = useRef<((limit: number, mode: 'initial' | 'more') => Promise<void>) | null>(null);
   const themeColorsRef = useRef(getThemeColors(actualTheme));
   const commandHistoryCacheRef = useRef<Record<string, CommandHistoryItem[]>>({});
+  const terminalOpenStartedAtRef = useRef<number | null>(null);
+  const terminalFirstOutputLoggedRef = useRef(false);
 
   const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected');
   const [historyState, setHistoryState] = useState<HistoryState>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [connectSeq, setConnectSeq] = useState(0);
   const [commandHistory, setCommandHistory] = useState<CommandHistoryItem[]>([]);
-  const [historyLogLimit, setHistoryLogLimit] = useState(TERMINAL_HISTORY_PAGE_SIZE);
+  const [historyLogLimit, setHistoryLogLimit] = useState(0);
   const [canLoadMoreHistory, setCanLoadMoreHistory] = useState(false);
   const [historyBusy, setHistoryBusy] = useState(false);
+  const [historyModeHint, setHistoryModeHint] = useState<string | null>(null);
 
   const client = apiClientFromContext ?? apiClient;
   const apiBaseUrl = client.getBaseUrl();
@@ -178,14 +333,20 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
     const cachedHistory = commandHistoryCacheRef.current[currentTerminal.id] ?? [];
     setCommandHistory(cachedHistory);
     pendingOutputChunksRef.current = [];
+    historyLoadedCountRef.current = 0;
+    historyLoadedIdsRef.current = new Set();
+    historyBeforeCursorRef.current = null;
     replayingHistoryRef.current = false;
-    setHistoryLogLimit(TERMINAL_HISTORY_PAGE_SIZE);
+    setHistoryLogLimit(0);
     setCanLoadMoreHistory(false);
     setHistoryBusy(false);
+    setHistoryModeHint(null);
     setHistoryState('loading');
     setConnectionState('disconnected');
     setErrorMessage(null);
     inputForwardEnabledRef.current = false;
+    terminalOpenStartedAtRef.current = Date.now();
+    terminalFirstOutputLoggedRef.current = false;
 
     const term = new XTerm({
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
@@ -263,151 +424,89 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
       inputForwardEnabledRef.current = false;
 
       try {
-        const logs = await client.listTerminalLogs(currentTerminal.id, { limit, offset: 0 });
+        const requestLimit = Math.max(1, Math.min(limit, TERMINAL_HISTORY_MAX_LIMIT));
+        const requestBefore = mode === 'more' ? historyBeforeCursorRef.current : null;
+        if (mode === 'more' && !requestBefore) {
+          setCanLoadMoreHistory(false);
+          setHistoryBusy(false);
+          return;
+        }
+        const logs = await client.listTerminalLogs(currentTerminal.id, {
+          limit: requestLimit,
+          ...(requestBefore ? { before: requestBefore } : {}),
+        });
         if (cancelled || !isCurrentRequest() || terminalRef.current !== term) {
           return;
         }
 
         const normalized = Array.isArray(logs) ? logs.map(normalizeTerminalLog) : [];
+        const uniqueLogs = normalized.filter((log) => {
+          if (historyLoadedIdsRef.current.has(log.id)) {
+            return false;
+          }
+          historyLoadedIdsRef.current.add(log.id);
+          return true;
+        });
+        if (uniqueLogs.length > 0) {
+          historyBeforeCursorRef.current = normalizeLogTimestamp(uniqueLogs[0].createdAt);
+          historyLoadedCountRef.current = Math.min(
+            TERMINAL_HISTORY_MAX_LIMIT,
+            historyLoadedCountRef.current + uniqueLogs.length,
+          );
+        }
+        const reachedHistoryMax = historyLoadedCountRef.current >= TERMINAL_HISTORY_MAX_LIMIT;
         setCanLoadMoreHistory(
-          normalized.length >= limit && limit < TERMINAL_HISTORY_MAX_LIMIT
+          normalized.length >= requestLimit
+          && !reachedHistoryMax
+          && Boolean(historyBeforeCursorRef.current),
         );
-
-        const outputLogs: TerminalLog[] = [];
-        const commandLogs: TerminalLog[] = [];
-        const inputLogs: TerminalLog[] = [];
-        for (const log of normalized) {
-          if (log.logType === 'command') {
-            commandLogs.push(log);
-          } else if (log.logType === 'input') {
-            inputLogs.push(log);
-          } else if (log.logType === 'output' || log.logType === 'system') {
-            outputLogs.push(log);
-          }
-        }
-
-        const outputContent = outputLogs.map((log: TerminalLog) => log.content).join('');
-        replayingHistoryRef.current = true;
-        pendingOutputChunksRef.current = [];
-        term.reset();
-        await writeToTerminalInChunks(term, outputContent);
-
-        if (cancelled || !isCurrentRequest() || terminalRef.current !== term) {
-          return;
-        }
-
-        const parsedCommands: CommandHistoryItem[] = [];
-
-        if (commandLogs.length > 0) {
-          for (const log of commandLogs) {
-            const normalizedCommand = normalizeCommandForCompare(log.content);
-            if (!canCommandBeUsed(normalizedCommand)) {
-              continue;
-            }
-            parsedCommands.push({
-              id: `cmd-${commandSeqRef.current++}`,
-              command: normalizedCommand,
-              createdAt: normalizeLogTimestamp(log.createdAt),
-            });
-          }
-        }
-
-        let inputState = createInitialInputCommandParseState();
-
-        if (parsedCommands.length === 0) {
-          for (const log of inputLogs) {
-            const parsed = parseInputChunkForCommands(log.content, inputState);
-            inputState = parsed.nextState;
-            if (parsed.commands.length === 0) {
-              continue;
-            }
-
-            const createdAt = normalizeLogTimestamp(log.createdAt);
-            for (const command of parsed.commands) {
-              const normalizedCommand = normalizeCommandForCompare(command);
-              if (!canCommandBeUsed(normalizedCommand)) {
-                continue;
-              }
-
-              parsedCommands.push({
-                id: `cmd-${commandSeqRef.current++}`,
-                command: normalizedCommand,
-                createdAt,
-              });
-            }
-          }
-        }
-
-        const outputDerivedCommands: CommandHistoryItem[] = [];
-        let parseState = createInitialCommandHistoryParseState();
-
-        for (const log of outputLogs) {
-          const parsed = parseOutputChunkForCommands(log.content, parseState);
-          parseState = parsed.nextState;
-
-          if (commandLogs.length > 0 || parsed.commands.length === 0) {
-            continue;
-          }
-
-          const createdAt = normalizeLogTimestamp(log.createdAt);
-          for (const command of parsed.commands) {
-            const normalizedOutputCommand = normalizeCommandForCompare(command);
-            if (!canCommandBeUsed(normalizedOutputCommand)) {
-              continue;
-            }
-
-            outputDerivedCommands.push({
-              id: `cmd-${commandSeqRef.current++}`,
-              command: normalizedOutputCommand,
-              createdAt,
-            });
-
-            if (parsedCommands.length === 0) {
-              continue;
-            }
-
-            const searchStart = Math.max(0, parsedCommands.length - 10);
-            for (let i = parsedCommands.length - 1; i >= searchStart; i -= 1) {
-              const baseCommand = parsedCommands[i].command;
-              if (canOutputCommandCorrectInput(baseCommand, normalizedOutputCommand)
-                && normalizedOutputCommand.length > normalizeCommandForCompare(baseCommand).length
-              ) {
-                parsedCommands[i] = {
-                  ...parsedCommands[i],
-                  command: normalizedOutputCommand,
-                  createdAt,
-                };
-                break;
-              }
-            }
-          }
-        }
-
-        if (commandLogs.length === 0 && parsedCommands.length === 0 && outputDerivedCommands.length > 0) {
-          parsedCommands.push(...outputDerivedCommands);
-        }
+        const parsedHistory = parseCommandHistoryFromLogs(uniqueLogs, commandSeqRef.current);
+        commandSeqRef.current = parsedHistory.nextSequence;
 
         inputParseStateRef.current = createInitialInputCommandParseState();
-        outputParseStateRef.current = parseState;
         const cachedHistory = commandHistoryCacheRef.current[currentTerminal.id] ?? [];
-        const mergedHistory = mergeCommandHistory(parsedCommands, cachedHistory);
+        const mergedHistory = mergeCommandHistory(parsedHistory.commands, cachedHistory);
         setCommandHistory(mergedHistory);
         commandHistoryCacheRef.current[currentTerminal.id] = mergedHistory;
 
-        const pendingChunks = pendingOutputChunksRef.current;
-        pendingOutputChunksRef.current = [];
-        if (pendingChunks.length > 0) {
-          for (const chunk of pendingChunks) {
-            await writeToTerminal(term, chunk);
-            const parsed = parseOutputChunkForCommands(chunk, outputParseStateRef.current);
-            outputParseStateRef.current = parsed.nextState;
-            appendCommands(parsed.commands, new Date().toISOString(), 'correct');
+        if (mode === 'initial') {
+          replayingHistoryRef.current = true;
+          pendingOutputChunksRef.current = [];
+          term.reset();
+          for (const log of parsedHistory.outputLogs) {
+            await writeToTerminalInChunks(term, log.content);
           }
+
+          if (cancelled || !isCurrentRequest() || terminalRef.current !== term) {
+            return;
+          }
+
+          outputParseStateRef.current = parsedHistory.outputState;
+          const pendingChunks = pendingOutputChunksRef.current;
+          pendingOutputChunksRef.current = [];
+          if (pendingChunks.length > 0) {
+            for (const chunk of pendingChunks) {
+              await writeToTerminal(term, chunk);
+              const parsed = parseOutputChunkForCommands(chunk, outputParseStateRef.current);
+              outputParseStateRef.current = parsed.nextState;
+              appendCommands(parsed.commands, new Date().toISOString(), 'correct');
+            }
+          }
+          setHistoryModeHint(null);
+        } else if (uniqueLogs.length > 0) {
+          setHistoryModeHint(TERMINAL_HISTORY_TAIL_ONLY_HINT);
         }
 
         replayingHistoryRef.current = false;
-        setHistoryLogLimit(limit);
+        setHistoryLogLimit(historyLoadedCountRef.current);
         setHistoryState('ready');
+        if (mode === 'initial' && terminalOpenStartedAtRef.current) {
+          debugLog('[Perf] terminal history ready', {
+            terminalId: currentTerminal.id,
+            elapsedMs: Date.now() - terminalOpenStartedAtRef.current,
+            loadedLogs: historyLoadedCountRef.current,
+          });
+        }
       } catch (error) {
         if (cancelled || !isCurrentRequest()) {
           return;
@@ -430,7 +529,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
     };
 
     loadHistoryRef.current = loadHistory;
-    void loadHistory(TERMINAL_HISTORY_PAGE_SIZE, 'initial');
+    void loadHistory(TERMINAL_HISTORY_INITIAL_LIMIT, 'initial');
 
     return () => {
       cancelled = true;
@@ -439,7 +538,10 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
       loadHistoryRef.current = null;
       replayingHistoryRef.current = false;
       pendingOutputChunksRef.current = [];
-      socketRef.current?.close();
+      historyLoadedCountRef.current = 0;
+      historyLoadedIdsRef.current = new Set();
+      historyBeforeCursorRef.current = null;
+      closeWebSocketSafely(socketRef.current);
       socketRef.current = null;
       dataHandlerRef.current?.dispose();
       dataHandlerRef.current = null;
@@ -489,6 +591,18 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
             pendingOutputChunksRef.current.push(outputData);
             return;
           }
+          if (
+            !terminalFirstOutputLoggedRef.current
+            && terminalOpenStartedAtRef.current
+            && typeof outputData === 'string'
+            && outputData.length > 0
+          ) {
+            terminalFirstOutputLoggedRef.current = true;
+            debugLog('[Perf] terminal first realtime output', {
+              terminalId: currentTerminal.id,
+              elapsedMs: Date.now() - terminalOpenStartedAtRef.current,
+            });
+          }
           terminalRef.current?.write(outputData);
 
           const parsed = parseOutputChunkForCommands(outputData, outputParseStateRef.current);
@@ -506,7 +620,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
           setConnectionState('error');
         }
       } catch (err) {
-        console.warn('terminal ws message parse failed', err);
+        void err;
       }
     };
 
@@ -532,7 +646,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
       if (socketRef.current === ws) {
         socketRef.current = null;
       }
-      ws.close();
+      closeWebSocketSafely(ws);
     };
   }, [currentTerminal?.id, historyState, apiBaseUrl, accessToken, connectSeq, loadTerminals]);
 
@@ -574,11 +688,12 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
               if (!currentTerminal?.id) {
                 return;
               }
-              const nextLimit = Math.min(historyLogLimit + TERMINAL_HISTORY_PAGE_SIZE, TERMINAL_HISTORY_MAX_LIMIT);
-              if (nextLimit <= historyLogLimit) {
+              const remaining = TERMINAL_HISTORY_MAX_LIMIT - historyLogLimit;
+              if (remaining <= 0) {
                 return;
               }
-              void loadHistoryRef.current?.(nextLimit, 'more');
+              const pageSize = Math.min(TERMINAL_HISTORY_PAGE_SIZE, remaining);
+              void loadHistoryRef.current?.(pageSize, 'more');
             }}
             className="rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
           >
@@ -596,6 +711,9 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
 
       {historyState === 'loading' && (
         <div className="px-4 py-2 text-xs text-muted-foreground">加载历史记录中...</div>
+      )}
+      {historyModeHint && !errorMessage && (
+        <div className="px-4 py-2 text-xs text-muted-foreground">{historyModeHint}</div>
       )}
       {errorMessage && (
         <div className="px-4 py-2 text-xs text-destructive">{errorMessage}</div>

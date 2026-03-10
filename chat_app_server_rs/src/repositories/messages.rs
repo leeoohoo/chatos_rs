@@ -4,7 +4,7 @@ use sqlx::Row;
 use std::collections::HashSet;
 
 use crate::core::mongo_cursor::{
-    apply_offset_limit, collect_map_sorted_asc, collect_map_sorted_desc,
+    collect_and_map, collect_map_sorted_asc,
 };
 use crate::core::sql_query::append_limit_offset_clause;
 use crate::models::message::{Message, MessageRow};
@@ -194,19 +194,28 @@ pub async fn get_messages_by_session(
     with_db(
         |db| {
             let session_id = session_id.to_string();
+            let limit = limit;
+            let offset = offset;
             Box::pin(async move {
+                if matches!(limit, Some(value) if value <= 0) {
+                    return Ok(Vec::new());
+                }
+
+                let mut options = mongodb::options::FindOptions::builder()
+                    .sort(doc! { "created_at": 1 })
+                    .build();
+                if offset > 0 {
+                    options.skip = Some(offset as u64);
+                }
+                if let Some(value) = limit {
+                    options.limit = Some(value);
+                }
                 let cursor = db
                     .collection::<Document>("messages")
-                    .find(doc! { "session_id": session_id }, None)
+                    .find(doc! { "session_id": session_id }, options)
                     .await
                     .map_err(|e| e.to_string())?;
-                let mut messages: Vec<Message> =
-                    collect_map_sorted_asc(cursor, normalize_from_doc, |m| m.created_at.as_str())
-                        .await?;
-                if let Some(l) = limit {
-                    messages = apply_offset_limit(messages, offset, Some(l));
-                }
-                Ok(messages)
+                collect_and_map(cursor, normalize_from_doc).await
             })
         },
         |pool| {
@@ -239,16 +248,22 @@ pub async fn get_recent_messages_by_session(
     with_db(
         |db| {
             let session_id = session_id.to_string();
+            let limit = limit.max(1);
+            let offset = offset.max(0);
             Box::pin(async move {
+                let mut options = mongodb::options::FindOptions::builder()
+                    .sort(doc! { "created_at": -1 })
+                    .limit(Some(limit))
+                    .build();
+                if offset > 0 {
+                    options.skip = Some(offset as u64);
+                }
                 let cursor = db
                     .collection::<Document>("messages")
-                    .find(doc! { "session_id": session_id }, None)
+                    .find(doc! { "session_id": session_id }, options)
                     .await
                     .map_err(|e| e.to_string())?;
-                let messages: Vec<Message> =
-                    collect_map_sorted_desc(cursor, normalize_from_doc, |m| m.created_at.as_str())
-                        .await?;
-                let mut out = apply_offset_limit(messages, offset, Some(limit));
+                let mut out: Vec<Message> = collect_and_map(cursor, normalize_from_doc).await?;
                 out.reverse();
                 Ok(out)
             })
@@ -291,10 +306,7 @@ pub async fn get_messages_by_session_after(
                     .find(doc! { "session_id": session_id, "created_at": { "$gt": after_created_at } }, options)
                     .await
                     .map_err(|e| e.to_string())?;
-                let messages: Vec<Message> =
-                    collect_map_sorted_asc(cursor, normalize_from_doc, |m| m.created_at.as_str())
-                        .await?;
-                Ok(messages)
+                collect_and_map(cursor, normalize_from_doc).await
             })
         },
         |pool| {

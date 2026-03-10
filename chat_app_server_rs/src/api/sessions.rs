@@ -74,6 +74,7 @@ struct PageQuery {
     limit: Option<String>,
     offset: Option<String>,
     compact: Option<String>,
+    strategy: Option<String>,
 }
 
 pub fn router() -> Router {
@@ -364,7 +365,20 @@ async fn get_session_messages(
     let limit = parse_positive_limit(query.limit);
     let offset = parse_non_negative_offset(query.offset);
     let compact = parse_bool_query_flag(query.compact);
-    let result = fetch_session_messages_for_display(&session_id, limit, offset, compact).await;
+    let compact_recent_strategy = query
+        .strategy
+        .as_deref()
+        .map(str::trim)
+        .map(|value| !value.eq_ignore_ascii_case("v1"))
+        .unwrap_or(true);
+    let result = fetch_session_messages_for_display(
+        &session_id,
+        limit,
+        offset,
+        compact,
+        compact_recent_strategy,
+    )
+    .await;
 
     match result {
         Ok(list) => {

@@ -29,6 +29,9 @@ const clampPanelWidth = (width: number, maxWidth: number = getMaxPanelWidth()): 
 const normalizeTurnId = (value: unknown): string => (
   typeof value === 'string' ? value.trim() : ''
 );
+const normalizeMetaId = (value: unknown): string => (
+  typeof value === 'string' ? value.trim() : ''
+);
 
 const buildFallbackProcessMessage = (
   finalAssistantMessage: Message | null,
@@ -321,6 +324,22 @@ export const TurnProcessDrawer: React.FC<TurnProcessDrawerProps> = ({
     }
     return map;
   }, [messages]);
+  const assistantToolCallsById = useMemo(() => {
+    const map = new Map<string, any>();
+    for (const message of messages || []) {
+      if (message.role !== 'assistant') continue;
+      const topLevel = Array.isArray((message as any).toolCalls) ? (message as any).toolCalls : [];
+      const metadataLevel = Array.isArray(message.metadata?.toolCalls) ? message.metadata.toolCalls : [];
+      [...metadataLevel, ...topLevel].forEach((toolCall: any) => {
+        const id = normalizeMetaId(toolCall?.id);
+        if (!id || map.has(id)) {
+          return;
+        }
+        map.set(id, toolCall);
+      });
+    }
+    return map;
+  }, [messages]);
 
   const historyProcess = userMessage?.metadata?.historyProcess as any;
   const historyToolCount = Number(historyProcess?.toolCallCount || 0);
@@ -382,8 +401,8 @@ export const TurnProcessDrawer: React.FC<TurnProcessDrawerProps> = ({
                   message={message}
                   isStreaming={false}
                   renderContext="process_drawer"
-                  allMessages={messages}
                   toolResultById={toolResultById}
+                  assistantToolCallsById={assistantToolCallsById}
                 />
               ))}
             </div>
