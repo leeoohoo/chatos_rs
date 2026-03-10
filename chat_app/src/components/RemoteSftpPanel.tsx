@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useChatApiClientFromContext, useChatStoreFromContext } from '../lib/store/ChatStoreContext';
 import { apiClient as globalApiClient } from '../lib/api/client';
+import { resolveRemoteSftpErrorMessage } from '../lib/api/remoteConnectionErrors';
 import { cn } from '../lib/utils';
 import type { FsEntry } from '../types';
 
@@ -147,7 +148,7 @@ const RemoteSftpPanel: React.FC<RemoteSftpPanelProps> = ({ className }) => {
       setLocalEntries(entries);
       setLocalRoots(roots);
     } catch (err: any) {
-      setError(err?.message || '读取本地目录失败');
+      setError(resolveRemoteSftpErrorMessage(err, '读取本地目录失败'));
     } finally {
       setLoadingLocal(false);
     }
@@ -164,7 +165,7 @@ const RemoteSftpPanel: React.FC<RemoteSftpPanelProps> = ({ className }) => {
       setRemoteParent(data?.parent ?? null);
       setRemoteEntries(entries);
     } catch (err: any) {
-      setError(err?.message || '读取远端目录失败');
+      setError(resolveRemoteSftpErrorMessage(err, '读取远端目录失败'));
     } finally {
       setLoadingRemote(false);
     }
@@ -254,7 +255,7 @@ const RemoteSftpPanel: React.FC<RemoteSftpPanelProps> = ({ className }) => {
         } catch (err: any) {
           stopTransferPolling();
           setTransfering(false);
-          setError(err?.message || '查询传输进度失败');
+          setError(resolveRemoteSftpErrorMessage(err, '查询传输进度失败'));
         } finally {
           transferPollingBusyRef.current = false;
         }
@@ -262,7 +263,7 @@ const RemoteSftpPanel: React.FC<RemoteSftpPanelProps> = ({ className }) => {
     } catch (err: any) {
       setTransfering(false);
       setTransferStatus(null);
-      setError(err?.message || '启动传输失败');
+      setError(resolveRemoteSftpErrorMessage(err, '启动传输失败'));
     }
   }, [client, currentRemoteConnectionId, loadLocal, loadRemote, stopTransferPolling]);
 
@@ -312,7 +313,7 @@ const RemoteSftpPanel: React.FC<RemoteSftpPanelProps> = ({ className }) => {
       setMessage(null);
       setError(null);
     } catch (err: any) {
-      setError(err?.message || '取消传输失败');
+      setError(resolveRemoteSftpErrorMessage(err, '取消传输失败'));
     }
   }, [client, currentRemoteConnectionId, transferStatus?.id, transfering]);
 
@@ -374,7 +375,7 @@ const RemoteSftpPanel: React.FC<RemoteSftpPanelProps> = ({ className }) => {
       setMessage(`已创建目录: ${trimmedName}`);
       await loadRemote(remotePath);
     } catch (err: any) {
-      setError(err?.message || '创建目录失败');
+      setError(resolveRemoteSftpErrorMessage(err, '创建目录失败'));
     } finally {
       setRemoteActionLoading(false);
     }
@@ -411,7 +412,7 @@ const RemoteSftpPanel: React.FC<RemoteSftpPanelProps> = ({ className }) => {
       setSelectedRemote(null);
       await loadRemote(remotePath);
     } catch (err: any) {
-      setError(err?.message || '重命名失败');
+      setError(resolveRemoteSftpErrorMessage(err, '重命名失败'));
     } finally {
       setRemoteActionLoading(false);
     }
@@ -441,7 +442,7 @@ const RemoteSftpPanel: React.FC<RemoteSftpPanelProps> = ({ className }) => {
       setSelectedRemote(null);
       await loadRemote(remotePath);
     } catch (err: any) {
-      setError(err?.message || '删除失败');
+      setError(resolveRemoteSftpErrorMessage(err, '删除失败'));
     } finally {
       setRemoteActionLoading(false);
     }

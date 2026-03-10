@@ -65,6 +65,14 @@ impl TerminalLogService {
         repo::list_terminal_logs_recent(terminal_id, limit).await
     }
 
+    pub async fn list_before(
+        terminal_id: &str,
+        before_created_at: &str,
+        limit: i64,
+    ) -> Result<Vec<TerminalLog>, String> {
+        repo::list_terminal_logs_before(terminal_id, before_created_at, limit).await
+    }
+
     pub async fn delete_by_terminal(terminal_id: &str) -> Result<(), String> {
         repo::delete_terminal_logs(terminal_id).await
     }

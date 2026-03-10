@@ -280,9 +280,15 @@ pub fn send_cancelled_event(sender: &SseSender) {
 }
 
 pub fn send_error_event(sender: &SseSender, error: &str) {
-    sender.send_json(
-        &json!({ "type": Events::ERROR, "timestamp": crate::core::time::now_rfc3339(), "data": { "error": error } }),
-    );
+    sender.send_json(&json!({
+        "type": Events::ERROR,
+        "timestamp": crate::core::time::now_rfc3339(),
+        "message": error,
+        "data": {
+            "error": error,
+            "message": error
+        }
+    }));
 }
 
 pub fn handle_chat_result(

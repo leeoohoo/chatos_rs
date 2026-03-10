@@ -13,7 +13,7 @@ mod utils;
 use std::net::SocketAddr;
 
 use tokio::signal;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 #[tokio::main]
 async fn main() {
@@ -30,6 +30,12 @@ async fn main() {
     if let Err(err) = logger::init_logger(cfg) {
         eprintln!("Failed to init logger: {err}");
         std::process::exit(1);
+    }
+
+    if let Err(err) =
+        core::remote_connection_error_codes::export_remote_connection_error_code_catalog_doc()
+    {
+        warn!("Failed to export remote connection error code catalog: {err}");
     }
 
     // Initialize DB

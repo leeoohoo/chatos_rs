@@ -131,6 +131,15 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
         )
         .await;
     let _ = db
+        .collection::<mongodb::bson::Document>("messages")
+        .create_index(
+            IndexModel::builder()
+                .keys(doc! { "session_id": 1, "created_at": 1 })
+                .build(),
+            None,
+        )
+        .await;
+    let _ = db
         .collection::<mongodb::bson::Document>("session_summaries")
         .create_index(
             IndexModel::builder().keys(doc! { "session_id": 1 }).build(),
@@ -389,6 +398,15 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
         .create_index(
             IndexModel::builder()
                 .keys(doc! { "terminal_id": 1 })
+                .build(),
+            None,
+        )
+        .await;
+    let _ = db
+        .collection::<mongodb::bson::Document>("terminal_logs")
+        .create_index(
+            IndexModel::builder()
+                .keys(doc! { "terminal_id": 1, "created_at": 1 })
                 .build(),
             None,
         )

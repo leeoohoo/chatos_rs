@@ -1,5 +1,7 @@
 mod paths;
 mod store;
+mod store_lock;
+mod store_normalize;
 mod types;
 
 use std::collections::HashSet;

@@ -2,6 +2,7 @@
 name = "chat_app_server_rs"
 version = "0.1.0"
 edition = "2021"
+default-run = "chat_app_server_rs"
 
 [dependencies]
 axum = { version = "0.7", features = ["json", "macros", "ws"] }

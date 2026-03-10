@@ -496,6 +496,7 @@ export const fetchSessionMessages = async (
     limit,
     offset,
     compact: true,
+    strategy: 'v2',
   });
 
   const normalized = ensureCompactHistoryShape(normalizeRawMessages(rawMessages, sessionId));

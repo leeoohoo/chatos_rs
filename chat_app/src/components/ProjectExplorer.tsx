@@ -1,5 +1,4 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import hljs from 'highlight.js';
 import { apiClient as globalApiClient } from '../lib/api/client';
 import { useChatApiClientFromContext } from '../lib/store/ChatStoreContext';
 import type {
@@ -8,9 +7,28 @@ import type {
   FsReadResult,
   ChangeLogItem,
   ProjectChangeSummary,
-  ProjectChangeMark,
 } from '../types';
-import { cn, formatFileSize } from '../lib/utils';
+import { cn } from '../lib/utils';
+import {
+  CHANGE_KIND_PRIORITY,
+  EMPTY_CHANGE_SUMMARY,
+  isProjectChangeSummaryEqual,
+  normalizeChangeLog,
+  normalizeChangeKind,
+  normalizeEntry,
+  normalizeFile,
+  normalizeProjectChangeSummary,
+} from './projectExplorer/utils';
+import type { ChangeKind } from './projectExplorer/utils';
+import { ChangeLogPanel } from './projectExplorer/ChangeLogPanels';
+import {
+  EntryContextMenu,
+  MoveConflictModal,
+} from './projectExplorer/Overlays';
+import type { MoveConflictState } from './projectExplorer/Overlays';
+import { ProjectPreviewPane } from './projectExplorer/PreviewPane';
+import { ProjectTreePane } from './projectExplorer/TreePane';
+import { useProjectTreeActions } from './projectExplorer/useProjectTreeActions';
 
 interface ProjectExplorerProps {
   project: Project | null;
@@ -22,260 +40,6 @@ interface ExplorerContextMenuState {
   y: number;
   entry: FsEntry;
 }
-
-interface MoveConflictState {
-  sourcePath: string;
-  targetDirPath: string;
-  sourceName: string;
-  renameTo: string;
-}
-
-type ChangeKind = 'create' | 'edit' | 'delete';
-
-const normalizeEntry = (raw: any): FsEntry => ({
-  name: raw?.name ?? '',
-  path: raw?.path ?? '',
-  isDir: raw?.is_dir ?? raw?.isDir ?? false,
-  size: raw?.size ?? null,
-  modifiedAt: raw?.modified_at ?? raw?.modifiedAt ?? null,
-});
-
-const normalizeFile = (raw: any): FsReadResult => ({
-  path: raw?.path ?? '',
-  name: raw?.name ?? '',
-  size: raw?.size ?? 0,
-  contentType: raw?.content_type ?? raw?.contentType ?? 'application/octet-stream',
-  isBinary: raw?.is_binary ?? raw?.isBinary ?? false,
-  modifiedAt: raw?.modified_at ?? raw?.modifiedAt ?? null,
-  content: raw?.content ?? '',
-});
-
-const normalizeChangeLog = (raw: any): ChangeLogItem => ({
-  id: raw?.id ?? '',
-  serverName: raw?.server_name ?? raw?.serverName ?? '',
-  path: raw?.path ?? '',
-  action: raw?.action ?? '',
-  changeKind: raw?.change_kind ?? raw?.changeKind ?? (raw?.action === 'delete' ? 'delete' : 'edit'),
-  bytes: raw?.bytes ?? 0,
-  sha256: raw?.sha256 ?? null,
-  diff: raw?.diff ?? null,
-  sessionId: raw?.session_id ?? raw?.sessionId ?? null,
-  runId: raw?.run_id ?? raw?.runId ?? null,
-  confirmed: Boolean(raw?.confirmed),
-  confirmedAt: raw?.confirmed_at ?? raw?.confirmedAt ?? null,
-  confirmedBy: raw?.confirmed_by ?? raw?.confirmedBy ?? null,
-  createdAt: raw?.created_at ?? raw?.createdAt ?? '',
-  sessionTitle: raw?.session_title ?? raw?.sessionTitle ?? null,
-});
-
-const normalizeChangeKind = (value: any): ChangeKind => {
-  const kind = String(value ?? '').trim().toLowerCase();
-  if (kind === 'create') return 'create';
-  if (kind === 'delete') return 'delete';
-  return 'edit';
-};
-
-const normalizeProjectChangeMark = (raw: any): ProjectChangeMark => ({
-  path: raw?.path ?? '',
-  relativePath: raw?.relative_path ?? raw?.relativePath ?? '',
-  kind: normalizeChangeKind(raw?.kind),
-  lastChangeId: raw?.last_change_id ?? raw?.lastChangeId ?? '',
-  updatedAt: raw?.updated_at ?? raw?.updatedAt ?? '',
-});
-
-const areChangeMarksEqual = (left: ProjectChangeMark[], right: ProjectChangeMark[]): boolean => {
-  if (left.length !== right.length) return false;
-  for (let i = 0; i < left.length; i += 1) {
-    const a = left[i];
-    const b = right[i];
-    if (
-      a.path !== b.path ||
-      a.relativePath !== b.relativePath ||
-      a.kind !== b.kind ||
-      a.lastChangeId !== b.lastChangeId ||
-      a.updatedAt !== b.updatedAt
-    ) {
-      return false;
-    }
-  }
-  return true;
-};
-
-const EMPTY_CHANGE_SUMMARY: ProjectChangeSummary = {
-  fileMarks: [],
-  deletedMarks: [],
-  counts: {
-    create: 0,
-    edit: 0,
-    delete: 0,
-    total: 0,
-  },
-};
-
-const normalizeProjectChangeSummary = (raw: any): ProjectChangeSummary => {
-  const fileMarks = Array.isArray(raw?.file_marks ?? raw?.fileMarks)
-    ? (raw?.file_marks ?? raw?.fileMarks).map(normalizeProjectChangeMark)
-    : [];
-  const deletedMarks = Array.isArray(raw?.deleted_marks ?? raw?.deletedMarks)
-    ? (raw?.deleted_marks ?? raw?.deletedMarks).map(normalizeProjectChangeMark)
-    : [];
-  const countsRaw = raw?.counts ?? {};
-  const create = Number(countsRaw?.create ?? 0);
-  const edit = Number(countsRaw?.edit ?? 0);
-  const del = Number(countsRaw?.delete ?? 0);
-  const total = Number(countsRaw?.total ?? create + edit + del);
-  return {
-    fileMarks,
-    deletedMarks,
-    counts: {
-      create: Number.isFinite(create) ? create : 0,
-      edit: Number.isFinite(edit) ? edit : 0,
-      delete: Number.isFinite(del) ? del : 0,
-      total: Number.isFinite(total) ? total : 0,
-    },
-  };
-};
-
-const isProjectChangeSummaryEqual = (
-  left: ProjectChangeSummary,
-  right: ProjectChangeSummary
-): boolean => {
-  if (
-    left.counts.create !== right.counts.create ||
-    left.counts.edit !== right.counts.edit ||
-    left.counts.delete !== right.counts.delete ||
-    left.counts.total !== right.counts.total
-  ) {
-    return false;
-  }
-  return (
-    areChangeMarksEqual(left.fileMarks, right.fileMarks)
-    && areChangeMarksEqual(left.deletedMarks, right.deletedMarks)
-  );
-};
-
-const CHANGE_KIND_COLOR_CLASS: Record<ChangeKind, string> = {
-  create: 'bg-emerald-500',
-  edit: 'bg-amber-500',
-  delete: 'bg-rose-500',
-};
-
-const CHANGE_KIND_TEXT_CLASS: Record<ChangeKind, string> = {
-  create: 'text-emerald-600 dark:text-emerald-400',
-  edit: 'text-amber-600 dark:text-amber-400',
-  delete: 'text-rose-600 dark:text-rose-400',
-};
-
-const CHANGE_KIND_ROW_CLASS: Record<ChangeKind, string> = {
-  create: 'border-l-2 border-emerald-500 bg-emerald-500/10',
-  edit: 'border-l-2 border-amber-500 bg-amber-500/10',
-  delete: 'border-l-2 border-rose-500 bg-rose-500/10',
-};
-
-const CHANGE_KIND_LABEL: Record<ChangeKind, string> = {
-  create: '新增',
-  edit: '编辑',
-  delete: '删除',
-};
-
-const CHANGE_KIND_PRIORITY: Record<ChangeKind, number> = {
-  create: 2,
-  edit: 1,
-  delete: 3,
-};
-
-const EXT_LANGUAGE_MAP: Record<string, string> = {
-  rs: 'rust',
-  toml: 'toml',
-  lock: 'toml',
-  md: 'markdown',
-  txt: 'plaintext',
-  json: 'json',
-  yml: 'yaml',
-  yaml: 'yaml',
-  xml: 'xml',
-  html: 'xml',
-  htm: 'xml',
-  vue: 'vue',
-  svelte: 'svelte',
-  astro: 'astro',
-  css: 'css',
-  scss: 'scss',
-  less: 'less',
-  js: 'javascript',
-  jsx: 'javascript',
-  ts: 'typescript',
-  tsx: 'typescript',
-  mjs: 'javascript',
-  cjs: 'javascript',
-  py: 'python',
-  go: 'go',
-  java: 'java',
-  kt: 'kotlin',
-  swift: 'swift',
-  c: 'c',
-  cc: 'cpp',
-  cpp: 'cpp',
-  h: 'cpp',
-  hpp: 'cpp',
-  cs: 'csharp',
-  php: 'php',
-  rb: 'ruby',
-  sh: 'bash',
-  bash: 'bash',
-  zsh: 'bash',
-  ps1: 'powershell',
-  bat: 'dos',
-  sql: 'sql',
-  ini: 'ini',
-  conf: 'ini',
-  env: 'ini',
-  log: 'plaintext',
-  gradle: 'gradle',
-  properties: 'ini',
-  cfg: 'ini',
-  proto: 'protobuf',
-  graphql: 'graphql',
-  dart: 'dart',
-  lua: 'lua',
-  r: 'r',
-  m: 'objectivec',
-  mm: 'objectivec',
-  scala: 'scala',
-  cmake: 'cmake',
-  make: 'makefile',
-  dockerfile: 'dockerfile',
-};
-
-const getHighlightLanguage = (filename: string): string | null => {
-  const lower = filename.toLowerCase();
-  if (lower === 'dockerfile') return hljs.getLanguage('dockerfile') ? 'dockerfile' : null;
-  if (lower === 'makefile') return hljs.getLanguage('makefile') ? 'makefile' : null;
-  if (lower === 'cmakelists.txt') return hljs.getLanguage('cmake') ? 'cmake' : null;
-  const parts = lower.split('.');
-  if (parts.length < 2) return null;
-  const ext = parts[parts.length - 1];
-  const lang = EXT_LANGUAGE_MAP[ext];
-  if (!lang) return null;
-  return hljs.getLanguage(lang) ? lang : null;
-};
-
-const escapeHtml = (value: string) => (
-  value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
-);
-
-const isValidEntryName = (name: string): boolean => (
-  name !== '.' &&
-  name !== '..' &&
-  !name.includes('/') &&
-  !name.includes('\\') &&
-  !name.includes('\0')
-);
 
 export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, className }) => {
   const apiClientFromContext = useChatApiClientFromContext();
@@ -710,361 +474,49 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     });
   }, [keyToPath, normalizePath]);
 
-  const handleCreateDirectory = useCallback(async (dirPathOverride?: string) => {
-    const targetDirPath = dirPathOverride || selectedDirPath;
-    if (!targetDirPath) {
-      setActionError('请先选择一个目录');
-      return;
-    }
-    const rawName = window.prompt('请输入新目录名称');
-    if (rawName === null) return;
-    const name = rawName.trim();
-    if (!name) {
-      setActionError('目录名称不能为空');
-      return;
-    }
-    if (!isValidEntryName(name)) {
-      setActionError('目录名称不合法');
-      return;
-    }
-
-    setActionLoading(true);
-    setActionError(null);
-    setActionMessage(null);
-    setMoveConflict(null);
-    try {
-      await client.createFsDirectory(targetDirPath, name);
-      setExpandedPaths((prev) => {
-        const next = new Set(prev);
-        next.add(toExpandedKey(targetDirPath));
-        return next;
-      });
-      await loadEntries(targetDirPath);
-      setActionMessage(`已创建目录：${name}`);
-    } catch (err: any) {
-      setActionError(err?.message || '创建目录失败');
-    } finally {
-      setActionLoading(false);
-    }
-  }, [client, loadEntries, selectedDirPath, toExpandedKey]);
-
-  const handleCreateFile = useCallback(async (dirPathOverride?: string) => {
-    const targetDirPath = dirPathOverride || selectedDirPath;
-    if (!targetDirPath) {
-      setActionError('请先选择一个目录');
-      return;
-    }
-    const rawName = window.prompt('请输入新文件名称');
-    if (rawName === null) return;
-    const name = rawName.trim();
-    if (!name) {
-      setActionError('文件名称不能为空');
-      return;
-    }
-    if (!isValidEntryName(name)) {
-      setActionError('文件名称不合法');
-      return;
-    }
-
-    setActionLoading(true);
-    setActionError(null);
-    setActionMessage(null);
-    try {
-      const data = await client.createFsFile(targetDirPath, name, '');
-      const createdPath = typeof data?.path === 'string' ? data.path.trim() : '';
-      setExpandedPaths((prev) => {
-        const next = new Set(prev);
-        next.add(toExpandedKey(targetDirPath));
-        return next;
-      });
-      await loadEntries(targetDirPath);
-      setActionMessage(`已创建文件：${name}`);
-      if (createdPath) {
-        await openFile({
-          name,
-          path: createdPath,
-          isDir: false,
-          size: 0,
-          modifiedAt: null,
-        });
-      }
-    } catch (err: any) {
-      setActionError(err?.message || '创建文件失败');
-    } finally {
-      setActionLoading(false);
-    }
-  }, [client, loadEntries, openFile, selectedDirPath, toExpandedKey]);
-
-  const handleDeleteSelected = useCallback(async (entryOverride?: FsEntry) => {
-    const targetEntry = entryOverride || selectedEntry;
-    if (!targetEntry) {
-      setActionError('请先选择要删除的文件或目录');
-      return;
-    }
-    const targetIsRoot = !!project?.rootPath
-      && normalizePath(targetEntry.path) === normalizePath(project.rootPath);
-    if (targetIsRoot) {
-      setActionError('不支持删除项目根目录');
-      return;
-    }
-
-    const confirmed = window.confirm(
-      targetEntry.isDir
-        ? `确认删除目录 "${targetEntry.name}" 吗？将递归删除其全部内容。`
-        : `确认删除文件 "${targetEntry.name}" 吗？`
-    );
-    if (!confirmed) return;
-
-    setActionLoading(true);
-    setActionError(null);
-    setActionMessage(null);
-    try {
-      await client.deleteFsEntry(targetEntry.path, targetEntry.isDir);
-      pruneDeletedPath(targetEntry.path);
-      if (selectedFile?.path && normalizePath(selectedFile.path) === normalizePath(targetEntry.path)) {
-        setSelectedFile(null);
-      }
-
-      const fallbackPath = getParentPath(targetEntry.path) || project?.rootPath || null;
-      setSelectedPath(fallbackPath);
-      if (fallbackPath) {
-        await loadEntries(fallbackPath);
-      }
-      setActionMessage(`已删除：${targetEntry.name}`);
-    } catch (err: any) {
-      setActionError(err?.message || '删除失败');
-    } finally {
-      setActionLoading(false);
-    }
-  }, [
+  const {
+    handleCreateDirectory,
+    handleCreateFile,
+    handleDeleteSelected,
+    handleDownloadSelected,
+    handleRefresh,
+    handleConfirmCurrentChanges,
+    handleConfirmAllChanges,
+    handleMoveEntryByDrop,
+    handleMoveConflictCancel,
+    handleMoveConflictOverwrite,
+    handleMoveConflictRename,
+  } = useProjectTreeActions({
     client,
-    getParentPath,
-    loadEntries,
-    normalizePath,
-    project?.rootPath,
-    pruneDeletedPath,
+    selectedDirPath,
     selectedEntry,
-    selectedFile?.path,
-  ]);
-
-  const handleDownloadSelected = useCallback(async (entryOverride?: FsEntry) => {
-    const targetEntry = entryOverride || selectedEntry;
-    if (!targetEntry) {
-      setActionError('请先选择要下载的文件或目录');
-      return;
-    }
-    if (typeof document === 'undefined') {
-      setActionError('当前环境不支持下载');
-      return;
-    }
-
-    setActionLoading(true);
-    setActionError(null);
-    setActionMessage(null);
-    try {
-      const { blob, filename } = await client.downloadFsEntry(targetEntry.path);
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = filename || targetEntry.name || 'download';
-      anchor.style.display = 'none';
-      document.body.appendChild(anchor);
-      anchor.click();
-      document.body.removeChild(anchor);
-      URL.revokeObjectURL(url);
-      setActionMessage(`开始下载：${anchor.download}`);
-    } catch (err: any) {
-      setActionError(err?.message || '下载失败');
-    } finally {
-      setActionLoading(false);
-    }
-  }, [client, selectedEntry]);
-
-  const handleRefresh = useCallback(async () => {
-    if (!actionReloadPath) return;
-    setActionLoading(true);
-    setActionError(null);
-    setActionMessage(null);
-    try {
-      await loadEntries(actionReloadPath);
-      await loadChangeSummary();
-      setActionMessage('目录已刷新');
-    } catch (err: any) {
-      setActionError(err?.message || '刷新失败');
-    } finally {
-      setActionLoading(false);
-    }
-  }, [actionReloadPath, loadChangeSummary, loadEntries]);
-
-  const handleConfirmCurrentChanges = useCallback(async () => {
-    if (!project?.id) return;
-    if (!selectedPath) {
-      setActionError('请先选择要确认的文件或目录');
-      return;
-    }
-    if (!hasPendingChangesForPath(selectedPath)) {
-      setActionError('当前项没有未确认变更');
-      return;
-    }
-
-    setActionLoading(true);
-    setActionError(null);
-    setActionMessage(null);
-    try {
-      const result = await client.confirmProjectChanges(project.id, {
-        mode: 'paths',
-        paths: [selectedPath],
-      });
-      await loadChangeSummary();
-      const confirmed = Number(result?.confirmed ?? 0);
-      if (Number.isFinite(confirmed) && confirmed > 0) {
-        setActionMessage(`已确认当前项变更（${confirmed} 条）`);
-      } else {
-        setActionMessage('当前项没有可确认的变更');
-      }
-    } catch (err: any) {
-      setActionError(err?.message || '确认当前项变更失败');
-    } finally {
-      setActionLoading(false);
-    }
-  }, [client, hasPendingChangesForPath, loadChangeSummary, project?.id, selectedPath]);
-
-  const handleConfirmAllChanges = useCallback(async () => {
-    if (!project?.id) return;
-
-    setActionLoading(true);
-    setActionError(null);
-    setActionMessage(null);
-    try {
-      const result = await client.confirmProjectChanges(project.id, { mode: 'all' });
-      await loadChangeSummary();
-      const confirmed = Number(result?.confirmed ?? 0);
-      if (Number.isFinite(confirmed) && confirmed > 0) {
-        setActionMessage(`已确认全部变更（${confirmed} 条）`);
-      } else {
-        setActionMessage('暂无可确认的变更');
-      }
-    } catch (err: any) {
-      setActionError(err?.message || '确认全部变更失败');
-    } finally {
-      setActionLoading(false);
-    }
-  }, [client, loadChangeSummary, project?.id]);
-
-  const applyMoveResult = useCallback(async (
-    sourcePath: string,
-    targetDirPath: string,
-    result: any,
-    movedLabel: string
-  ) => {
-    const movedPath = typeof result?.to_path === 'string' ? result.to_path : '';
-    if (!movedPath) {
-      throw new Error('移动成功，但返回路径为空');
-    }
-    const nextExpanded = replaceExpandedPathPrefix(sourcePath, movedPath);
-    nextExpanded.add(toExpandedKey(targetDirPath));
-    setExpandedPaths(nextExpanded);
-    setSelectedPath(movedPath);
-    setSelectedFile(null);
-    await reloadTreeWithExpanded(nextExpanded);
-    setActionMessage(`已移动：${movedLabel}`);
-  }, [reloadTreeWithExpanded, replaceExpandedPathPrefix, toExpandedKey]);
-
-  const executeMoveEntry = useCallback(async (
-    sourcePath: string,
-    targetDirPath: string,
-    movedLabel: string,
-    options?: { targetName?: string; replaceExisting?: boolean }
-  ) => {
-    const result = await client.moveFsEntry(sourcePath, targetDirPath, options);
-    await applyMoveResult(sourcePath, targetDirPath, result, movedLabel);
-    return result;
-  }, [applyMoveResult, client]);
-
-  const handleMoveEntryByDrop = useCallback(async (sourcePath: string, targetDirPath: string) => {
-    clearDragExpandTimer();
-    clearDragAutoScroll();
-    if (!canDropToDirectory(sourcePath, targetDirPath)) return;
-    const sourceEntry = findEntryByPath(sourcePath);
-    if (!sourceEntry) {
-      setActionError('拖拽源文件不存在');
-      return;
-    }
-
-    setActionLoading(true);
-    setActionError(null);
-    setActionMessage(null);
-    try {
-      try {
-        await executeMoveEntry(sourcePath, targetDirPath, sourceEntry.name);
-      } catch (err: any) {
-        const message = String(err?.message || '');
-        if (!message.includes('已存在同名')) {
-          throw err;
-        }
-        setMoveConflict({
-          sourcePath,
-          targetDirPath,
-          sourceName: sourceEntry.name,
-          renameTo: `${sourceEntry.name}_copy`,
-        });
-        setActionMessage('目标已存在同名项，请选择处理方式');
-      }
-    } catch (err: any) {
-      setActionError(err?.message || '移动失败');
-    } finally {
-      setActionLoading(false);
-    }
-  }, [canDropToDirectory, clearDragAutoScroll, clearDragExpandTimer, executeMoveEntry, findEntryByPath]);
-
-  const handleMoveConflictCancel = useCallback(() => {
-    setMoveConflict(null);
-    setActionMessage('已取消移动');
-  }, []);
-
-  const handleMoveConflictOverwrite = useCallback(async () => {
-    if (!moveConflict) return;
-    setActionLoading(true);
-    setActionError(null);
-    try {
-      await executeMoveEntry(
-        moveConflict.sourcePath,
-        moveConflict.targetDirPath,
-        moveConflict.sourceName,
-        { replaceExisting: true }
-      );
-      setActionMessage(`已覆盖并移动：${moveConflict.sourceName}`);
-      setMoveConflict(null);
-    } catch (err: any) {
-      setActionError(err?.message || '覆盖移动失败');
-    } finally {
-      setActionLoading(false);
-    }
-  }, [executeMoveEntry, moveConflict]);
-
-  const handleMoveConflictRename = useCallback(async () => {
-    if (!moveConflict) return;
-    const renamed = moveConflict.renameTo.trim();
-    if (!renamed || !isValidEntryName(renamed)) {
-      setActionError('新名称不合法');
-      return;
-    }
-    setActionLoading(true);
-    setActionError(null);
-    try {
-      await executeMoveEntry(
-        moveConflict.sourcePath,
-        moveConflict.targetDirPath,
-        renamed,
-        { targetName: renamed }
-      );
-      setMoveConflict(null);
-    } catch (err: any) {
-      setActionError(err?.message || '重命名移动失败');
-    } finally {
-      setActionLoading(false);
-    }
-  }, [executeMoveEntry, moveConflict]);
+    selectedFilePath: selectedFile?.path || null,
+    selectedPath,
+    projectRootPath: project?.rootPath,
+    projectId: project?.id,
+    actionReloadPath,
+    normalizePath,
+    getParentPath,
+    toExpandedKey,
+    loadEntries,
+    loadChangeSummary,
+    hasPendingChangesForPath,
+    pruneDeletedPath,
+    replaceExpandedPathPrefix,
+    reloadTreeWithExpanded,
+    canDropToDirectory,
+    findEntryByPath,
+    clearDragExpandTimer,
+    clearDragAutoScroll,
+    setExpandedPaths,
+    setSelectedPath,
+    setSelectedFile,
+    setActionLoading,
+    setActionError,
+    setActionMessage,
+    setMoveConflict,
+    openFile,
+  });
 
   const handleDragStart = useCallback((event: React.DragEvent, entry: FsEntry) => {
     if (!entry.path) return;
@@ -1304,348 +756,10 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     }
   }, [changeLogs, selectedLogId]);
 
-  const isEntryVisible = useCallback((entryPath: string): boolean => {
-    if (!showOnlyChanged) return true;
-    return aggregatedChangeKindByPath.has(normalizePath(entryPath));
-  }, [aggregatedChangeKindByPath, normalizePath, showOnlyChanged]);
-
-  const visibleRootEntryCount = useMemo(() => {
-    if (!project?.rootPath) return 0;
-    const rootEntries = entriesMap[project.rootPath] || [];
-    return rootEntries.filter((entry) => isEntryVisible(entry.path)).length;
-  }, [entriesMap, isEntryVisible, project?.rootPath]);
-
-  const renderEntries = (path: string, depth: number): React.ReactNode => {
-    const entries = (entriesMap[path] || []).filter((entry) => isEntryVisible(entry.path));
-    if (!entries.length) {
-      return null;
-    }
-    return entries.map((entry) => {
-      const entryKey = toExpandedKey(entry.path);
-      const normalizedEntryPath = normalizePath(entry.path);
-      const isActive = selectedPath ? normalizePath(selectedPath) === normalizedEntryPath : false;
-      const isDragging = draggingEntryPath ? normalizePath(draggingEntryPath) === normalizedEntryPath : false;
-      const isDropTarget = entry.isDir && dropTargetDirPath
-        ? normalizePath(dropTargetDirPath) === normalizedEntryPath
-        : false;
-      const entryChangeKind = aggregatedChangeKindByPath.get(normalizedEntryPath);
-      return (
-        <div key={entry.path}>
-          <button
-            type="button"
-            onClick={() => (entry.isDir ? toggleDir(entry) : openFile(entry))}
-            onContextMenu={(event) => openEntryContextMenu(event, entry)}
-            draggable
-            onDragStart={(event) => handleDragStart(event, entry)}
-            onDragEnd={handleDragEnd}
-            onDragOver={(event) => {
-              if (!entry.isDir) return;
-              const sourcePath = draggingEntryPath || event.dataTransfer.getData('text/plain');
-              if (!sourcePath || !canDropToDirectory(sourcePath, entry.path)) return;
-              event.preventDefault();
-              event.dataTransfer.dropEffect = 'move';
-            }}
-            onDragEnter={(event) => {
-              if (!entry.isDir) return;
-              const sourcePath = draggingEntryPath || event.dataTransfer.getData('text/plain');
-              if (!sourcePath || !canDropToDirectory(sourcePath, entry.path)) return;
-              event.preventDefault();
-              setDropTargetDirPath(entry.path);
-              scheduleDragExpand(entry.path);
-            }}
-            onDragLeave={(event) => {
-              if (!entry.isDir) return;
-              const nextTarget = event.relatedTarget as Node | null;
-              if (nextTarget && (event.currentTarget as HTMLElement).contains(nextTarget)) {
-                return;
-              }
-              cancelDragExpandIfMatches(entry.path);
-              clearDragAutoScroll();
-              setDropTargetDirPath(prev => (
-                prev && normalizePath(prev) === normalizePath(entry.path) ? null : prev
-              ));
-            }}
-            onDrop={(event) => {
-              if (!entry.isDir) return;
-              const sourcePath = draggingEntryPath || event.dataTransfer.getData('text/plain');
-              if (!sourcePath) return;
-              if (!canDropToDirectory(sourcePath, entry.path)) return;
-              event.preventDefault();
-              event.stopPropagation();
-              cancelDragExpandIfMatches(entry.path);
-              clearDragAutoScroll();
-              setDropTargetDirPath(null);
-              setDraggingEntryPath(null);
-              void handleMoveEntryByDrop(sourcePath, entry.path);
-            }}
-            className={cn(
-              'min-w-full w-max grid grid-cols-[12px_auto_64px] items-center gap-2 py-1.5 pr-2 text-left rounded hover:bg-accent transition-colors',
-              entryChangeKind && CHANGE_KIND_ROW_CLASS[entryChangeKind],
-              isActive && 'bg-accent',
-              isDragging && 'opacity-50',
-              isDropTarget && 'ring-1 ring-blue-500 bg-blue-500/10'
-            )}
-            style={{ paddingLeft: 12 + depth * 14 }}
-          >
-            <span className="text-xs text-muted-foreground w-3 shrink-0">
-              {entry.isDir ? (expandedPaths.has(entryKey) ? '▾' : '▸') : ''}
-            </span>
-            <span
-              className={cn(
-                'text-sm whitespace-nowrap inline-flex items-center gap-1',
-                entry.isDir ? 'text-foreground' : 'text-muted-foreground',
-                entryChangeKind && CHANGE_KIND_TEXT_CLASS[entryChangeKind]
-              )}
-            >
-              {entry.name}
-              {entryChangeKind && (
-                <span
-                  className={cn('inline-block h-2 w-2 rounded-full', CHANGE_KIND_COLOR_CLASS[entryChangeKind])}
-                  title={`未确认${CHANGE_KIND_LABEL[entryChangeKind]}变更`}
-                />
-              )}
-            </span>
-            <span className="text-[11px] text-muted-foreground text-right tabular-nums whitespace-nowrap">
-              {!entry.isDir && entry.size != null ? formatFileSize(entry.size) : ''}
-            </span>
-          </button>
-          {entry.isDir && expandedPaths.has(entryKey) && renderEntries(entry.path, depth + 1)}
-        </div>
-      );
-    });
-  };
-
   const selectedLog = useMemo(
     () => (selectedLogId ? changeLogs.find(log => log.id === selectedLogId) || null : null),
     [changeLogs, selectedLogId]
   );
-
-  const preview = useMemo(() => {
-    if (loadingFile) {
-      return <div className="p-4 text-sm text-muted-foreground">加载文件中...</div>;
-    }
-    if (!selectedFile) {
-      if (selectedPath && !selectedEntry) {
-        return (
-          <div className="p-4 text-sm text-muted-foreground">
-            该路径已删除或不存在，当前仅支持查看变更记录。
-          </div>
-        );
-      }
-      return <div className="p-4 text-sm text-muted-foreground">请选择文件以预览</div>;
-    }
-    const isImage = selectedFile.contentType.startsWith('image/');
-    if (isImage && selectedFile.isBinary) {
-      const src = `data:${selectedFile.contentType};base64,${selectedFile.content}`;
-      return (
-        <div className="p-4 overflow-auto h-full">
-          <img src={src} alt={selectedFile.name} className="max-w-full max-h-full rounded border border-border" />
-        </div>
-      );
-    }
-    if (!selectedFile.isBinary) {
-      const language = getHighlightLanguage(selectedFile.name);
-      let highlighted = '';
-      try {
-        if (language) {
-          highlighted = hljs.highlight(selectedFile.content, { language }).value;
-        } else {
-          highlighted = hljs.highlightAuto(selectedFile.content).value;
-        }
-      } catch {
-        highlighted = escapeHtml(selectedFile.content);
-      }
-      const lines = highlighted.split(/\r?\n/);
-      return (
-        <div className="h-full overflow-auto bg-muted/30">
-          <div className="flex min-h-full text-sm">
-            <div className="shrink-0 py-4 pr-3 pl-2 border-r border-border text-right text-muted-foreground select-none">
-              {lines.map((_, idx) => (
-                <div key={idx} className="leading-5">
-                  {idx + 1}
-                </div>
-              ))}
-            </div>
-            <div className="flex-1 min-w-0 py-4 pl-3 pr-4 hljs">
-              {lines.map((line, idx) => (
-                <div
-                  key={idx}
-                  className="leading-5 font-mono whitespace-pre w-full"
-                  dangerouslySetInnerHTML={{ __html: line || '&nbsp;' }}
-                />
-              ))}
-            </div>
-          </div>
-        </div>
-      );
-    }
-    const downloadHref = `data:${selectedFile.contentType};base64,${selectedFile.content}`;
-    return (
-      <div className="p-4 text-sm text-muted-foreground space-y-2">
-        <div>该文件为二进制内容，暂不支持直接预览。</div>
-        <a
-          href={downloadHref}
-          download={selectedFile.name || 'file'}
-          className="inline-flex items-center px-3 py-1.5 rounded bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
-        >
-          下载文件
-        </a>
-      </div>
-    );
-  }, [selectedEntry, selectedFile, selectedPath, loadingFile]);
-
-  const parseUnifiedDiff = useCallback((diffText: string) => {
-    const lines = diffText.split(/\r?\n/);
-    const parsed: Array<{ type: 'meta' | 'hunk' | 'add' | 'del' | 'context'; oldLine?: number | null; newLine?: number | null; text: string }> = [];
-    let oldLine = 0;
-    let newLine = 0;
-    let inHunk = false;
-    const hunkRegex = /^@@\s+-(\d+)(?:,(\d+))?\s+\+(\d+)(?:,(\d+))?\s+@@/;
-    for (const line of lines) {
-      const hunkMatch = hunkRegex.exec(line);
-      if (hunkMatch) {
-        oldLine = parseInt(hunkMatch[1], 10);
-        newLine = parseInt(hunkMatch[3], 10);
-        inHunk = true;
-        parsed.push({ type: 'hunk', text: line });
-        continue;
-      }
-      if (!inHunk) {
-        parsed.push({ type: 'meta', text: line });
-        continue;
-      }
-      if (line.startsWith('+++') || line.startsWith('---')) {
-        parsed.push({ type: 'meta', text: line });
-        continue;
-      }
-      if (line.startsWith('+')) {
-        parsed.push({ type: 'add', oldLine: null, newLine, text: line });
-        newLine += 1;
-        continue;
-      }
-      if (line.startsWith('-')) {
-        parsed.push({ type: 'del', oldLine, newLine: null, text: line });
-        oldLine += 1;
-        continue;
-      }
-      if (line.startsWith('\\')) {
-        parsed.push({ type: 'meta', text: line });
-        continue;
-      }
-      parsed.push({ type: 'context', oldLine, newLine, text: line });
-      oldLine += 1;
-      newLine += 1;
-    }
-    return parsed;
-  }, []);
-
-  const renderDiffRows = useCallback((diffText: string) => {
-    const rows = parseUnifiedDiff(diffText);
-    if (!rows.length) {
-      return <div className="text-muted-foreground">该记录没有 diff 内容</div>;
-    }
-    return (
-      <div className="font-mono text-xs">
-        {rows.map((row, idx) => {
-          let lineClass = 'text-foreground';
-          if (row.type === 'hunk' || row.type === 'meta') {
-            lineClass = 'text-muted-foreground';
-          } else if (row.type === 'add') {
-            lineClass = 'text-emerald-600 dark:text-emerald-400';
-          } else if (row.type === 'del') {
-            lineClass = 'text-rose-600 dark:text-rose-400';
-          }
-          return (
-            <div key={`${idx}-${row.text}`} className={cn('grid grid-cols-[3rem_3rem_1fr] gap-2 leading-5', lineClass)}>
-              <div className="text-right pr-2 text-muted-foreground">
-                {row.oldLine ?? ''}
-              </div>
-              <div className="text-right pr-2 text-muted-foreground">
-                {row.newLine ?? ''}
-              </div>
-              <div className="whitespace-pre">
-                {row.text === '' ? ' ' : row.text}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    );
-  }, [parseUnifiedDiff]);
-
-  const diffPanel = useMemo(() => {
-    if (!selectedLog) return null;
-    const title = selectedLog.sessionTitle || selectedLog.sessionId || '未知会话';
-    const time = selectedLog.createdAt ? new Date(selectedLog.createdAt).toLocaleString() : '';
-    const kind = normalizeChangeKind(selectedLog.changeKind);
-    return (
-      <div className="border-b border-border bg-muted/30 max-h-64 overflow-hidden flex flex-col">
-        <div className="px-4 py-2 text-xs font-medium text-foreground flex items-center gap-2">
-          <span>变更内容</span>
-          <span className="text-muted-foreground">{selectedLog.action}</span>
-          <span className={CHANGE_KIND_TEXT_CLASS[kind]}>{CHANGE_KIND_LABEL[kind]}</span>
-          <span className="text-muted-foreground ml-auto">{time}</span>
-        </div>
-        <div className="px-4 pb-3 text-xs overflow-auto min-h-0">
-          <div className="text-[11px] text-muted-foreground mb-2 truncate" title={title}>
-            会话：{title}
-          </div>
-          {selectedLog.diff ? renderDiffRows(selectedLog.diff) : (
-            <div className="text-muted-foreground">该记录没有 diff 内容</div>
-          )}
-        </div>
-      </div>
-    );
-  }, [selectedLog, renderDiffRows]);
-
-  const changeLogPanel = useMemo(() => {
-    if (!selectedPath) {
-      return <div className="px-4 py-3 text-xs text-muted-foreground">请选择文件或目录以查看变更记录</div>;
-    }
-    if (loadingLogs) {
-      return <div className="px-4 py-3 text-xs text-muted-foreground">加载变更记录中...</div>;
-    }
-    if (logsError) {
-      return <div className="px-4 py-3 text-xs text-destructive">{logsError}</div>;
-    }
-    if (!changeLogs.length) {
-      return <div className="px-4 py-3 text-xs text-muted-foreground">暂无变更记录</div>;
-    }
-    return (
-      <div className="divide-y divide-border">
-        {changeLogs.map((log) => {
-          const isSelected = selectedLogId === log.id;
-          const title = log.sessionTitle || log.sessionId || '未知会话';
-          const time = log.createdAt ? new Date(log.createdAt).toLocaleString() : '';
-          const kind = normalizeChangeKind(log.changeKind);
-          return (
-            <button
-              key={log.id}
-              type="button"
-              onClick={() => setSelectedLogId(prev => (prev === log.id ? null : log.id))}
-              className={cn(
-                'w-full px-4 py-2 text-xs text-left hover:bg-accent transition-colors',
-                isSelected && 'bg-accent'
-              )}
-            >
-              <div className="flex items-center gap-2">
-                <span className="text-muted-foreground w-3">{isSelected ? '▾' : '▸'}</span>
-                <span className="font-medium text-foreground">{log.action}</span>
-                <span className={cn('font-medium', CHANGE_KIND_TEXT_CLASS[kind])}>
-                  {CHANGE_KIND_LABEL[kind]}
-                </span>
-                <span className="text-muted-foreground">{formatFileSize(log.bytes || 0)}</span>
-                <span className="text-muted-foreground ml-auto">{time}</span>
-              </div>
-              <div className="text-[11px] text-muted-foreground truncate" title={title}>
-                会话：{title}
-              </div>
-            </button>
-          );
-        })}
-      </div>
-    );
-  }, [selectedPath, loadingLogs, logsError, changeLogs, selectedLogId]);
 
   if (!project) {
     return (
@@ -1657,270 +771,75 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
 
   return (
     <div ref={containerRef} className={cn('flex h-full overflow-hidden', className)}>
-      <div className="border-r border-border bg-card flex flex-col shrink-0" style={{ width: treeWidth }}>
-        <div
-          className={cn(
-            'px-3 py-2 border-b border-border space-y-2',
-            dropTargetDirPath && project.rootPath && normalizePath(dropTargetDirPath) === normalizePath(project.rootPath)
-              ? 'ring-1 ring-blue-500 bg-blue-500/10'
-              : ''
-          )}
-          onContextMenu={(event) => {
-            if (projectRootEntry) {
-              openEntryContextMenu(event, projectRootEntry);
-            }
-          }}
-          onDragOver={(event) => {
-            const sourcePath = draggingEntryPath || event.dataTransfer.getData('text/plain');
-            if (!sourcePath || !project.rootPath) return;
-            if (!canDropToDirectory(sourcePath, project.rootPath)) return;
-            event.preventDefault();
-            event.dataTransfer.dropEffect = 'move';
-          }}
-          onDragEnter={(event) => {
-            const sourcePath = draggingEntryPath || event.dataTransfer.getData('text/plain');
-            if (!sourcePath || !project.rootPath) return;
-            if (!canDropToDirectory(sourcePath, project.rootPath)) return;
-            event.preventDefault();
-            clearDragExpandTimer();
-            clearDragAutoScroll();
-            setDropTargetDirPath(project.rootPath);
-          }}
-          onDragLeave={(event) => {
-            const nextTarget = event.relatedTarget as Node | null;
-            if (nextTarget && (event.currentTarget as HTMLElement).contains(nextTarget)) {
-              return;
-            }
-            if (project.rootPath) {
-              const normalizedRoot = normalizePath(project.rootPath);
-              setDropTargetDirPath(prev => (
-                prev && normalizePath(prev) === normalizedRoot ? null : prev
-              ));
-            }
-          }}
-          onDrop={(event) => {
-            const sourcePath = draggingEntryPath || event.dataTransfer.getData('text/plain');
-            if (!sourcePath || !project.rootPath) return;
-            if (!canDropToDirectory(sourcePath, project.rootPath)) return;
-            event.preventDefault();
-            event.stopPropagation();
-            clearDragExpandTimer();
-            clearDragAutoScroll();
-            setDropTargetDirPath(null);
-            setDraggingEntryPath(null);
-            void handleMoveEntryByDrop(sourcePath, project.rootPath);
-          }}
-        >
-          <div className="text-xs text-muted-foreground">项目目录</div>
-          <div className="text-sm font-medium text-foreground truncate" title={project.rootPath}>
-            {project.name}
-          </div>
-          <div className="text-[11px] text-muted-foreground truncate" title={project.rootPath}>
-            {project.rootPath}
-          </div>
-          <div className="text-[11px] text-muted-foreground truncate" title={selectedEntry?.path || ''}>
-            当前选择：{selectedEntry ? selectedEntry.path : '未选择'}
-          </div>
-          <button
-            type="button"
-            onClick={(event) => {
-              event.stopPropagation();
-              void selectProjectRoot();
-            }}
-            className="text-[11px] text-blue-600 hover:underline text-left"
-          >
-            选中项目根目录
-          </button>
-          <div className="text-[11px] text-muted-foreground flex items-center gap-3">
-            <span className="inline-flex items-center gap-1">
-              <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" />
-              新增 {changeSummary.counts.create}
-            </span>
-            <span className="inline-flex items-center gap-1">
-              <span className="inline-block h-2 w-2 rounded-full bg-amber-500" />
-              编辑 {changeSummary.counts.edit}
-            </span>
-            <span className="inline-flex items-center gap-1">
-              <span className="inline-block h-2 w-2 rounded-full bg-rose-500" />
-              删除 {changeSummary.counts.delete}
-            </span>
-          </div>
-          <div className="flex flex-wrap gap-1">
-            <button
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation();
-                if (!project.rootPath) return;
-                void handleCreateDirectory(project.rootPath);
-              }}
-              disabled={!project.rootPath || actionLoading}
-              className="rounded border border-blue-500/40 px-2 py-1 text-[11px] text-blue-700 hover:bg-blue-500/10 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              根目录新建目录
-            </button>
-            <button
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation();
-                if (!project.rootPath) return;
-                void handleCreateFile(project.rootPath);
-              }}
-              disabled={!project.rootPath || actionLoading}
-              className="rounded border border-blue-500/40 px-2 py-1 text-[11px] text-blue-700 hover:bg-blue-500/10 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              根目录新建文件
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                void handleRefresh();
-              }}
-              disabled={!actionReloadPath || actionLoading}
-              className="rounded border border-border px-2 py-1 text-[11px] hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              刷新
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                void handleConfirmCurrentChanges();
-              }}
-              disabled={!canConfirmCurrent || actionLoading}
-              className="rounded border border-amber-500/40 px-2 py-1 text-[11px] text-amber-700 hover:bg-amber-500/10 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              确认当前项
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                void handleConfirmAllChanges();
-              }}
-              disabled={changeSummary.counts.total <= 0 || actionLoading}
-              className="rounded border border-emerald-500/40 px-2 py-1 text-[11px] text-emerald-700 hover:bg-emerald-500/10 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              确认全部变更
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setShowOnlyChanged((prev) => !prev);
-              }}
-              className={cn(
-                'rounded border px-2 py-1 text-[11px] disabled:opacity-50 disabled:cursor-not-allowed',
-                showOnlyChanged
-                  ? 'border-emerald-500/50 text-emerald-700 bg-emerald-500/10 hover:bg-emerald-500/20'
-                  : 'border-border hover:bg-accent'
-              )}
-            >
-              {showOnlyChanged ? '显示全部' : '仅看变更'}
-            </button>
-          </div>
-          <div className="text-[11px] text-muted-foreground">
-            目录/文件的新建、下载、删除请右键对应项操作
-          </div>
-          {loadingSummary && (
-            <div className="text-[11px] text-muted-foreground">正在加载变更标记...</div>
-          )}
-          {summaryError && (
-            <div className="text-[11px] text-destructive truncate" title={summaryError}>
-              {summaryError}
-            </div>
-          )}
-          {actionMessage && (
-            <div className="text-[11px] text-emerald-600 truncate" title={actionMessage}>
-              {actionMessage}
-            </div>
-          )}
-          {actionError && (
-            <div className="text-[11px] text-destructive truncate" title={actionError}>
-              {actionError}
-            </div>
-          )}
-        </div>
-        <div
-          ref={treeScrollRef}
-          className="flex-1 overflow-y-auto overflow-x-auto py-2"
-          onDragOver={(event) => {
-            if (!draggingEntryPath) return;
-            const container = treeScrollRef.current;
-            if (!container) return;
-            const rect = container.getBoundingClientRect();
-            const threshold = Math.max(28, Math.min(64, rect.height / 3));
-            let velocity = 0;
-
-            if (event.clientY < rect.top + threshold) {
-              const ratio = (rect.top + threshold - event.clientY) / threshold;
-              velocity = -Math.max(4, Math.round(22 * ratio));
-            } else if (event.clientY > rect.bottom - threshold) {
-              const ratio = (event.clientY - (rect.bottom - threshold)) / threshold;
-              velocity = Math.max(4, Math.round(22 * ratio));
-            }
-
-            if (velocity !== 0) {
-              event.preventDefault();
-              startDragAutoScroll(velocity);
-            } else {
-              clearDragAutoScroll();
-            }
-          }}
-          onDragLeave={(event) => {
-            const nextTarget = event.relatedTarget as Node | null;
-            if (nextTarget && (event.currentTarget as HTMLElement).contains(nextTarget)) {
-              return;
-            }
-            clearDragAutoScroll();
-          }}
-          onDrop={() => {
-            clearDragAutoScroll();
-          }}
-        >
-          {renderEntries(project.rootPath, 0)}
-          {changeSummary.deletedMarks.length > 0 && (
-            <div className="mt-2 border-t border-border/70">
-              <div className="px-3 py-2 text-[11px] font-medium text-rose-600 dark:text-rose-400">
-                已删除（未确认）
-              </div>
-              <div className="space-y-0.5 pb-2">
-                {changeSummary.deletedMarks.map((mark) => {
-                  const normalizedMarkPath = normalizePath(mark.path);
-                  const isActive = selectedPath ? normalizePath(selectedPath) === normalizedMarkPath : false;
-                  return (
-                    <button
-                      key={mark.lastChangeId || mark.path}
-                      type="button"
-                      onClick={() => {
-                        setSelectedPath(mark.path);
-                        setSelectedFile(null);
-                      }}
-                      className={cn(
-                        'min-w-full w-max grid grid-cols-[12px_auto_64px] items-center gap-2 py-1.5 pr-2 text-left rounded hover:bg-accent transition-colors',
-                        isActive && 'bg-accent'
-                      )}
-                      style={{ paddingLeft: 12 + 14 }}
-                    >
-                      <span className="text-xs text-rose-500 w-3 shrink-0">•</span>
-                      <span className={cn('text-sm whitespace-nowrap truncate', CHANGE_KIND_TEXT_CLASS.delete)}>
-                        {mark.relativePath || mark.path}
-                      </span>
-                      <span className="text-[11px] text-muted-foreground text-right tabular-nums whitespace-nowrap">
-                        已删除
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-          {loadingPaths.has(project.rootPath) && (
-            <div className="px-3 py-2 text-xs text-muted-foreground">加载中...</div>
-          )}
-          {!loadingPaths.has(project.rootPath) && visibleRootEntryCount === 0 && (
-            <div className="px-3 py-2 text-xs text-muted-foreground">
-              {showOnlyChanged ? '暂无未确认变更文件' : '目录为空'}
-            </div>
-          )}
-        </div>
-      </div>
+      <ProjectTreePane
+        project={project}
+        treeWidth={treeWidth}
+        treeScrollRef={treeScrollRef}
+        entriesMap={entriesMap}
+        expandedPaths={expandedPaths}
+        loadingPaths={loadingPaths}
+        selectedPath={selectedPath}
+        selectedEntry={selectedEntry}
+        draggingEntryPath={draggingEntryPath}
+        dropTargetDirPath={dropTargetDirPath}
+        actionLoading={actionLoading}
+        actionReloadPath={actionReloadPath}
+        canConfirmCurrent={canConfirmCurrent}
+        showOnlyChanged={showOnlyChanged}
+        changeSummary={changeSummary}
+        loadingSummary={loadingSummary}
+        summaryError={summaryError}
+        actionMessage={actionMessage}
+        actionError={actionError}
+        aggregatedChangeKindByPath={aggregatedChangeKindByPath}
+        normalizePath={normalizePath}
+        toExpandedKey={toExpandedKey}
+        canDropToDirectory={canDropToDirectory}
+        onSelectProjectRoot={() => {
+          void selectProjectRoot();
+        }}
+        onToggleShowOnlyChanged={() => {
+          setShowOnlyChanged((prev) => !prev);
+        }}
+        onCreateDirectoryAtRoot={() => {
+          void handleCreateDirectory(project.rootPath);
+        }}
+        onCreateFileAtRoot={() => {
+          void handleCreateFile(project.rootPath);
+        }}
+        onRefresh={() => {
+          void handleRefresh();
+        }}
+        onConfirmCurrent={() => {
+          void handleConfirmCurrentChanges();
+        }}
+        onConfirmAll={() => {
+          void handleConfirmAllChanges();
+        }}
+        onOpenContextMenu={openEntryContextMenu}
+        onSelectDeletedPath={(path) => {
+          setSelectedPath(path);
+          setSelectedFile(null);
+        }}
+        onToggleDir={(entry) => {
+          void toggleDir(entry);
+        }}
+        onOpenFile={(entry) => {
+          void openFile(entry);
+        }}
+        onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
+        onSetDropTargetDirPath={setDropTargetDirPath}
+        onSetDraggingEntryPath={setDraggingEntryPath}
+        onMoveEntryByDrop={(sourcePath, targetDirPath) => {
+          void handleMoveEntryByDrop(sourcePath, targetDirPath);
+        }}
+        onScheduleDragExpand={scheduleDragExpand}
+        onCancelDragExpandIfMatches={cancelDragExpandIfMatches}
+        onClearDragExpandTimer={clearDragExpandTimer}
+        onStartDragAutoScroll={startDragAutoScroll}
+        onClearDragAutoScroll={clearDragAutoScroll}
+      />
       <div
         className={cn('w-1 cursor-col-resize bg-border/60 hover:bg-border', isResizing && 'bg-border')}
         onMouseDown={(event) => {
@@ -1930,165 +849,67 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
         }}
       />
       <div className="flex-1 flex overflow-hidden">
-        <div className="flex-1 flex flex-col overflow-hidden">
-          <div className="px-4 py-2 border-b border-border bg-card flex items-center justify-between">
-            <div className="min-w-0">
-              <div className="text-sm font-medium text-foreground truncate">
-                {selectedFile?.name || (selectedPath ? '文件预览（当前项不可预览）' : '文件预览')}
-              </div>
-              <div className="text-[11px] text-muted-foreground truncate">
-                {selectedFile?.path || selectedPath || '请选择文件'}
-              </div>
-            </div>
-            {selectedFile && (
-              <div className="text-[11px] text-muted-foreground">
-                {formatFileSize(selectedFile.size)}
-              </div>
-            )}
-          </div>
-          <div className="flex-1 overflow-hidden flex flex-col">
-            {diffPanel}
-            <div className="flex-1 min-h-0 overflow-hidden">
-              {error ? (
-                <div className="p-4 text-sm text-destructive">{error}</div>
-              ) : (
-                preview
-              )}
-            </div>
-          </div>
-        </div>
+        <ProjectPreviewPane
+          selectedFile={selectedFile}
+          selectedPath={selectedPath}
+          selectedEntry={selectedEntry}
+          loadingFile={loadingFile}
+          error={error}
+          selectedLog={selectedLog}
+        />
         {(loadingLogs || logsError || changeLogs.length > 0) && (
           <div className="w-72 border-l border-border bg-card/60 flex flex-col overflow-hidden">
             <div className="px-4 py-2 text-xs font-medium text-foreground border-b border-border">变更记录</div>
             <div className="flex-1 min-h-0 overflow-auto">
-              {changeLogPanel}
+              <ChangeLogPanel
+                selectedPath={selectedPath}
+                loadingLogs={loadingLogs}
+                logsError={logsError}
+                changeLogs={changeLogs}
+                selectedLogId={selectedLogId}
+                onToggleLog={(logId) => {
+                  setSelectedLogId((prev) => (prev === logId ? null : logId));
+                }}
+              />
             </div>
           </div>
         )}
       </div>
-      {moveConflict && (
-        <div
-          className="fixed inset-0 z-[90] bg-black/35 flex items-center justify-center p-4"
-          onClick={() => {
-            if (!actionLoading) {
-              handleMoveConflictCancel();
-            }
-          }}
-        >
-          <div
-            className="w-full max-w-md rounded-lg border border-border bg-card p-4 shadow-xl"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="text-sm font-medium text-foreground">目标目录存在同名项</div>
-            <div className="mt-2 text-xs text-muted-foreground">
-              将 {moveConflict.sourceName} 移动到目标目录时发生冲突，请选择处理方式。
-            </div>
-            <div className="mt-3 space-y-1.5">
-              <label className="text-xs text-muted-foreground">重命名后移动</label>
-              <input
-                value={moveConflict.renameTo}
-                onChange={(event) => {
-                  const value = event.target.value;
-                  setMoveConflict((prev) => (prev ? { ...prev, renameTo: value } : prev));
-                }}
-                className="w-full h-9 rounded border border-input bg-background px-2 text-sm"
-                placeholder="请输入新名称"
-              />
-            </div>
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={handleMoveConflictCancel}
-                disabled={actionLoading}
-                className="px-3 py-1.5 text-xs rounded border border-border hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  void handleMoveConflictOverwrite();
-                }}
-                disabled={actionLoading}
-                className="px-3 py-1.5 text-xs rounded border border-amber-500/50 text-amber-700 hover:bg-amber-500/10 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                覆盖后移动
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  void handleMoveConflictRename();
-                }}
-                disabled={actionLoading}
-                className="px-3 py-1.5 text-xs rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                重命名后移动
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-      {contextMenu && contextMenuStyle && (
-        <div
-          className="fixed z-[80] w-56 rounded-md border border-border bg-popover text-popover-foreground shadow-lg p-1"
-          style={contextMenuStyle}
-          onClick={(event) => event.stopPropagation()}
-          onContextMenu={(event) => event.preventDefault()}
-        >
-          <div className="px-2 py-1 text-[11px] text-muted-foreground truncate">
-            {contextMenu.entry.isDir ? '目录' : '文件'}：{contextMenu.entry.path}
-          </div>
-          {contextMenu.entry.isDir && (
-            <button
-              type="button"
-              onClick={() => {
-                const targetPath = contextMenu.entry.path;
-                setContextMenu(null);
-                void handleCreateDirectory(targetPath);
-              }}
-              className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent"
-            >
-              新建目录
-            </button>
-          )}
-          {contextMenu.entry.isDir && (
-            <button
-              type="button"
-              onClick={() => {
-                const targetPath = contextMenu.entry.path;
-                setContextMenu(null);
-                void handleCreateFile(targetPath);
-              }}
-              className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent"
-            >
-              新建文件
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={() => {
-              const targetEntry = contextMenu.entry;
-              setContextMenu(null);
-              void handleDownloadSelected(targetEntry);
-            }}
-            className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent"
-          >
-            下载
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              const targetEntry = contextMenu.entry;
-              setContextMenu(null);
-              void handleDeleteSelected(targetEntry);
-            }}
-            disabled={isContextRootEntry}
-            className="w-full text-left px-2 py-1.5 text-sm rounded text-destructive hover:bg-destructive/10 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            删除
-          </button>
-        </div>
-      )}
+      <MoveConflictModal
+        moveConflict={moveConflict}
+        actionLoading={actionLoading}
+        onCancel={handleMoveConflictCancel}
+        onRenameChange={(value) => {
+          setMoveConflict((prev) => (prev ? { ...prev, renameTo: value } : prev));
+        }}
+        onOverwrite={() => {
+          void handleMoveConflictOverwrite(moveConflict);
+        }}
+        onRename={() => {
+          void handleMoveConflictRename(moveConflict);
+        }}
+      />
+      <EntryContextMenu
+        contextMenu={contextMenu}
+        contextMenuStyle={contextMenuStyle}
+        isContextRootEntry={isContextRootEntry}
+        onCreateDirectory={(path) => {
+          setContextMenu(null);
+          void handleCreateDirectory(path);
+        }}
+        onCreateFile={(path) => {
+          setContextMenu(null);
+          void handleCreateFile(path);
+        }}
+        onDownload={(entry) => {
+          setContextMenu(null);
+          void handleDownloadSelected(entry);
+        }}
+        onDelete={(entry) => {
+          setContextMenu(null);
+          void handleDeleteSelected(entry);
+        }}
+      />
     </div>
   );
 };

@@ -1,4 +1,5 @@
 import React, { createContext, useContext, ReactNode } from 'react';
+import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { useChatStore } from './index';
 import { createChatStoreWithBackend } from './createChatStoreWithBackend';
 import type { ChatStore as ChatStoreHook, ChatState, ChatActions } from './createChatStoreWithBackend';
@@ -68,6 +69,14 @@ export const useChatStoreContext = (): ChatStore => {
 export const useChatStoreFromContext = (): ChatState & ChatActions => {
   const store = useChatStoreContext();
   return store();
+};
+
+export const useChatStoreSelector = <T,>(
+  selector: (state: ChatState & ChatActions) => T,
+  equalityFn?: (left: T, right: T) => boolean,
+): T => {
+  const store = useChatStoreContext();
+  return useStoreWithEqualityFn(store, selector, equalityFn);
 };
 
 // 新增：导出当前运行环境（userId、projectId）

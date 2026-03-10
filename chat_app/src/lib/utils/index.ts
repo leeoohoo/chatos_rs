@@ -147,7 +147,7 @@ export function debounce<T extends (...args: any[]) => any>(
   func: T,
   wait: number
 ): (...args: Parameters<T>) => void {
-  let timeout: number;
+  let timeout: ReturnType<typeof setTimeout>;
   return (...args: Parameters<T>) => {
     clearTimeout(timeout);
     timeout = setTimeout(() => func(...args), wait);
@@ -349,7 +349,8 @@ const isDev =
   (import.meta as any).env.DEV === true;
 
 export const debugLog = (...args: any[]) => {
-  if (isDev) {
-    console.log(...args);
+  if (!isDev) {
+    return;
   }
+  void args;
 };

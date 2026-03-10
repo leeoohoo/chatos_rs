@@ -413,6 +413,7 @@ pub(super) fn apply_stream_event(state: &mut StreamState, event: &Value) -> Stre
                 }
             }
         } else if event_type == "response.failed" {
+            state.finish_reason = Some("failed".to_string());
             if let Some(response) = event.get("response") {
                 state.response_obj = Some(response.clone());
                 if let Some(error_obj) = response.get("error") {
@@ -640,6 +641,7 @@ mod tests {
         let _ = apply_stream_event(&mut state, &event);
 
         assert_eq!(state.response_id.as_deref(), Some("resp_fail"));
+        assert_eq!(state.finish_reason.as_deref(), Some("failed"));
         assert_eq!(
             state
                 .provider_error
@@ -647,6 +649,33 @@ mod tests {
                 .and_then(|value| value.get("code"))
                 .and_then(|value| value.as_str()),
             Some("context_length_exceeded")
+        );
+    }
+
+    #[test]
+    fn apply_stream_event_marks_failed_finish_reason_without_status() {
+        let mut state = StreamState::default();
+        let event = json!({
+            "type": "response.failed",
+            "response": {
+                "id": "resp_failed_no_status",
+                "error": {
+                    "message": "No tool call found for function_call_output item"
+                }
+            }
+        });
+
+        let _ = apply_stream_event(&mut state, &event);
+
+        assert_eq!(state.response_id.as_deref(), Some("resp_failed_no_status"));
+        assert_eq!(state.finish_reason.as_deref(), Some("failed"));
+        assert_eq!(
+            state
+                .provider_error
+                .as_ref()
+                .and_then(|value| value.get("message"))
+                .and_then(|value| value.as_str()),
+            Some("No tool call found for function_call_output item")
         );
     }
 

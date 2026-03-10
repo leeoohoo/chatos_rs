@@ -1,0 +1,296 @@
+import { useCallback, useState } from 'react';
+
+import { resolveRemoteConnectionErrorFeedback } from '../../lib/api/remoteConnectionErrors';
+import type { RemoteConnection } from '../../types';
+import type { HostKeyPolicy, RemoteAuthType } from './helpers';
+import { buildRemoteConnectionPayload } from './helpers';
+
+interface UseRemoteConnectionFormOptions {
+  apiClient: any;
+  createRemoteConnection: (payload: any) => Promise<any>;
+  updateRemoteConnection: (id: string, payload: any) => Promise<any>;
+}
+
+export const useRemoteConnectionForm = ({
+  apiClient,
+  createRemoteConnection,
+  updateRemoteConnection,
+}: UseRemoteConnectionFormOptions) => {
+  const [remoteModalOpen, setRemoteModalOpen] = useState(false);
+  const [remoteName, setRemoteName] = useState('');
+  const [remoteHost, setRemoteHost] = useState('');
+  const [remotePort, setRemotePort] = useState('22');
+  const [remoteUsername, setRemoteUsername] = useState('');
+  const [remoteAuthType, setRemoteAuthType] = useState<RemoteAuthType>('private_key');
+  const [remotePassword, setRemotePassword] = useState('');
+  const [remotePrivateKeyPath, setRemotePrivateKeyPath] = useState('');
+  const [remoteCertificatePath, setRemoteCertificatePath] = useState('');
+  const [remoteDefaultPath, setRemoteDefaultPath] = useState('');
+  const [remoteHostKeyPolicy, setRemoteHostKeyPolicy] = useState<HostKeyPolicy>('strict');
+  const [remoteJumpEnabled, setRemoteJumpEnabled] = useState(false);
+  const [remoteJumpHost, setRemoteJumpHost] = useState('');
+  const [remoteJumpPort, setRemoteJumpPort] = useState('22');
+  const [remoteJumpUsername, setRemoteJumpUsername] = useState('');
+  const [remoteJumpPrivateKeyPath, setRemoteJumpPrivateKeyPath] = useState('');
+  const [remoteJumpPassword, setRemoteJumpPassword] = useState('');
+  const [remoteError, setRemoteError] = useState<string | null>(null);
+  const [remoteErrorAction, setRemoteErrorAction] = useState<string | null>(null);
+  const [remoteSuccess, setRemoteSuccess] = useState<string | null>(null);
+  const [remoteTesting, setRemoteTesting] = useState(false);
+  const [remoteSaving, setRemoteSaving] = useState(false);
+  const [editingRemoteConnectionId, setEditingRemoteConnectionId] = useState<string | null>(null);
+
+  const applyRemoteErrorFeedback = useCallback((error: unknown, fallback: string) => {
+    const feedback = resolveRemoteConnectionErrorFeedback(error, fallback);
+    setRemoteError(feedback.message);
+    setRemoteErrorAction(feedback.action ?? null);
+  }, []);
+
+  const openRemoteModal = useCallback(() => {
+    setEditingRemoteConnectionId(null);
+    setRemoteName('');
+    setRemoteHost('');
+    setRemotePort('22');
+    setRemoteUsername('');
+    setRemoteAuthType('private_key');
+    setRemotePassword('');
+    setRemotePrivateKeyPath('');
+    setRemoteCertificatePath('');
+    setRemoteDefaultPath('');
+    setRemoteHostKeyPolicy('strict');
+    setRemoteJumpEnabled(false);
+    setRemoteJumpHost('');
+    setRemoteJumpPort('22');
+    setRemoteJumpUsername('');
+    setRemoteJumpPrivateKeyPath('');
+    setRemoteJumpPassword('');
+    setRemoteError(null);
+    setRemoteErrorAction(null);
+    setRemoteSuccess(null);
+    setRemoteTesting(false);
+    setRemoteSaving(false);
+    setRemoteModalOpen(true);
+  }, []);
+
+  const openEditRemoteModal = useCallback((connection: RemoteConnection) => {
+    setEditingRemoteConnectionId(connection.id);
+    setRemoteName(connection.name || '');
+    setRemoteHost(connection.host || '');
+    setRemotePort(String(connection.port || 22));
+    setRemoteUsername(connection.username || '');
+    setRemoteAuthType(connection.authType || 'private_key');
+    setRemotePassword(connection.password || '');
+    setRemotePrivateKeyPath(connection.privateKeyPath || '');
+    setRemoteCertificatePath(connection.certificatePath || '');
+    setRemoteDefaultPath(connection.defaultRemotePath || '');
+    setRemoteHostKeyPolicy(connection.hostKeyPolicy || 'strict');
+    setRemoteJumpEnabled(Boolean(connection.jumpEnabled));
+    setRemoteJumpHost(connection.jumpHost || '');
+    setRemoteJumpPort(String(connection.jumpPort || 22));
+    setRemoteJumpUsername(connection.jumpUsername || '');
+    setRemoteJumpPrivateKeyPath(connection.jumpPrivateKeyPath || '');
+    setRemoteJumpPassword(connection.jumpPassword || '');
+    setRemoteError(null);
+    setRemoteErrorAction(null);
+    setRemoteSuccess(null);
+    setRemoteTesting(false);
+    setRemoteSaving(false);
+    setRemoteModalOpen(true);
+  }, []);
+
+  const handleTestRemoteConnection = useCallback(async () => {
+    const built = buildRemoteConnectionPayload({
+      name: remoteName,
+      host: remoteHost,
+      port: remotePort,
+      username: remoteUsername,
+      authType: remoteAuthType,
+      password: remotePassword,
+      privateKeyPath: remotePrivateKeyPath,
+      certificatePath: remoteCertificatePath,
+      defaultPath: remoteDefaultPath,
+      hostKeyPolicy: remoteHostKeyPolicy,
+      jumpEnabled: remoteJumpEnabled,
+      jumpHost: remoteJumpHost,
+      jumpPort: remoteJumpPort,
+      jumpUsername: remoteJumpUsername,
+      jumpPrivateKeyPath: remoteJumpPrivateKeyPath,
+      jumpPassword: remoteJumpPassword,
+    });
+    if ('error' in built) {
+      setRemoteError(built.error);
+      setRemoteErrorAction(null);
+      setRemoteSuccess(null);
+      return;
+    }
+    setRemoteTesting(true);
+    setRemoteError(null);
+    setRemoteErrorAction(null);
+    setRemoteSuccess(null);
+    try {
+      const result = await apiClient.testRemoteConnectionDraft(built.payload);
+      const remoteHostName = result?.remote_host ? ` (${result.remote_host})` : '';
+      setRemoteSuccess(`连接测试成功${remoteHostName}`);
+      setRemoteErrorAction(null);
+    } catch (error) {
+      applyRemoteErrorFeedback(error, '连接测试失败');
+    } finally {
+      setRemoteTesting(false);
+    }
+  }, [
+    applyRemoteErrorFeedback,
+    apiClient,
+    remoteName,
+    remoteHost,
+    remotePort,
+    remoteUsername,
+    remoteAuthType,
+    remotePassword,
+    remotePrivateKeyPath,
+    remoteCertificatePath,
+    remoteDefaultPath,
+    remoteHostKeyPolicy,
+    remoteJumpEnabled,
+    remoteJumpHost,
+    remoteJumpPort,
+    remoteJumpUsername,
+    remoteJumpPrivateKeyPath,
+    remoteJumpPassword,
+  ]);
+
+  const handleSaveRemoteConnection = useCallback(async () => {
+    const built = buildRemoteConnectionPayload({
+      name: remoteName,
+      host: remoteHost,
+      port: remotePort,
+      username: remoteUsername,
+      authType: remoteAuthType,
+      password: remotePassword,
+      privateKeyPath: remotePrivateKeyPath,
+      certificatePath: remoteCertificatePath,
+      defaultPath: remoteDefaultPath,
+      hostKeyPolicy: remoteHostKeyPolicy,
+      jumpEnabled: remoteJumpEnabled,
+      jumpHost: remoteJumpHost,
+      jumpPort: remoteJumpPort,
+      jumpUsername: remoteJumpUsername,
+      jumpPrivateKeyPath: remoteJumpPrivateKeyPath,
+      jumpPassword: remoteJumpPassword,
+    });
+    if ('error' in built) {
+      setRemoteError(built.error);
+      setRemoteErrorAction(null);
+      setRemoteSuccess(null);
+      return;
+    }
+    setRemoteSaving(true);
+    setRemoteError(null);
+    setRemoteErrorAction(null);
+    setRemoteSuccess(null);
+    try {
+      if (editingRemoteConnectionId) {
+        const updated = await updateRemoteConnection(editingRemoteConnectionId, built.payload);
+        if (!updated) {
+          throw new Error('更新远端连接失败');
+        }
+      } else {
+        await createRemoteConnection(built.payload);
+      }
+      setRemoteModalOpen(false);
+      setRemoteErrorAction(null);
+    } catch (error) {
+      applyRemoteErrorFeedback(
+        error,
+        editingRemoteConnectionId ? '更新远端连接失败' : '创建远端连接失败',
+      );
+    } finally {
+      setRemoteSaving(false);
+    }
+  }, [
+    applyRemoteErrorFeedback,
+    createRemoteConnection,
+    editingRemoteConnectionId,
+    remoteName,
+    remoteHost,
+    remotePort,
+    remoteUsername,
+    remoteAuthType,
+    remotePassword,
+    remotePrivateKeyPath,
+    remoteCertificatePath,
+    remoteDefaultPath,
+    remoteHostKeyPolicy,
+    remoteJumpEnabled,
+    remoteJumpHost,
+    remoteJumpPort,
+    remoteJumpUsername,
+    remoteJumpPrivateKeyPath,
+    remoteJumpPassword,
+    updateRemoteConnection,
+  ]);
+
+  const handleQuickTestRemoteConnection = useCallback(async (connection: RemoteConnection) => {
+    try {
+      await apiClient.testRemoteConnection(connection.id);
+      setRemoteSuccess(`连接测试成功 (${connection.name})`);
+      setRemoteError(null);
+      setRemoteErrorAction(null);
+    } catch (error) {
+      applyRemoteErrorFeedback(error, '连接测试失败');
+    }
+  }, [apiClient, applyRemoteErrorFeedback]);
+
+  return {
+    remoteModalOpen,
+    setRemoteModalOpen,
+    remoteName,
+    setRemoteName,
+    remoteHost,
+    setRemoteHost,
+    remotePort,
+    setRemotePort,
+    remoteUsername,
+    setRemoteUsername,
+    remoteAuthType,
+    setRemoteAuthType,
+    remotePassword,
+    setRemotePassword,
+    remotePrivateKeyPath,
+    setRemotePrivateKeyPath,
+    remoteCertificatePath,
+    setRemoteCertificatePath,
+    remoteDefaultPath,
+    setRemoteDefaultPath,
+    remoteHostKeyPolicy,
+    setRemoteHostKeyPolicy,
+    remoteJumpEnabled,
+    setRemoteJumpEnabled,
+    remoteJumpHost,
+    setRemoteJumpHost,
+    remoteJumpPort,
+    setRemoteJumpPort,
+    remoteJumpUsername,
+    setRemoteJumpUsername,
+    remoteJumpPrivateKeyPath,
+    setRemoteJumpPrivateKeyPath,
+    remoteJumpPassword,
+    setRemoteJumpPassword,
+    remoteError,
+    remoteErrorAction,
+    setRemoteError,
+    setRemoteErrorAction,
+    remoteSuccess,
+    setRemoteSuccess,
+    remoteTesting,
+    setRemoteTesting,
+    remoteSaving,
+    setRemoteSaving,
+    editingRemoteConnectionId,
+    setEditingRemoteConnectionId,
+    openRemoteModal,
+    openEditRemoteModal,
+    handleTestRemoteConnection,
+    handleSaveRemoteConnection,
+    handleQuickTestRemoteConnection,
+  };
+};

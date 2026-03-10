@@ -164,7 +164,7 @@ const AgentManager: React.FC<AgentManagerProps> = ({ onClose, store: externalSto
         }
         await new Promise<void>((resolve) => setTimeout(resolve, 250));
       } catch (err) {
-        console.warn('刷新智能体列表失败，重试中…', err);
+        void err;
         await new Promise<void>((resolve) => setTimeout(resolve, 250));
       }
     }

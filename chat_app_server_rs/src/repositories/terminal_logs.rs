@@ -1,6 +1,6 @@
 use mongodb::bson::{doc, Bson, Document};
 
-use crate::core::mongo_cursor::{collect_and_map, collect_map_sorted_desc};
+use crate::core::mongo_cursor::collect_and_map;
 use crate::core::sql_query::append_limit_offset_clause;
 use crate::models::terminal_log::{TerminalLog, TerminalLogRow};
 use crate::repositories::db::{doc_from_pairs, to_doc, with_db};
@@ -105,9 +105,7 @@ pub async fn list_terminal_logs_recent(
                     .find(doc! { "terminal_id": terminal_id }, options)
                     .await
                     .map_err(|e| e.to_string())?;
-                let mut out: Vec<TerminalLog> =
-                    collect_map_sorted_desc(cursor, normalize_doc, |item| item.created_at.as_str())
-                        .await?;
+                let mut out: Vec<TerminalLog> = collect_and_map(cursor, normalize_doc).await?;
                 out.reverse();
                 Ok(out)
             })
@@ -119,6 +117,62 @@ pub async fn list_terminal_logs_recent(
                     "SELECT id, terminal_id, type as log_type, content, created_at FROM terminal_logs WHERE terminal_id = ? ORDER BY created_at DESC LIMIT ?",
                 )
                 .bind(&terminal_id)
+                .bind(capped_limit)
+                .fetch_all(pool)
+                .await
+                .map_err(|e| e.to_string())?;
+                let mut logs: Vec<TerminalLog> = rows.into_iter().map(|r| r.to_log()).collect();
+                logs.reverse();
+                Ok(logs)
+            })
+        },
+    )
+    .await
+}
+
+pub async fn list_terminal_logs_before(
+    terminal_id: &str,
+    before_created_at: &str,
+    limit: i64,
+) -> Result<Vec<TerminalLog>, String> {
+    let capped_limit = limit.max(1);
+    with_db(
+        |db| {
+            let terminal_id = terminal_id.to_string();
+            let before_created_at = before_created_at.to_string();
+            Box::pin(async move {
+                let options = mongodb::options::FindOptions::builder()
+                    .sort(doc! { "created_at": -1 })
+                    .limit(Some(capped_limit))
+                    .build();
+                let cursor = db
+                    .collection::<Document>("terminal_logs")
+                    .find(
+                        doc! {
+                            "terminal_id": terminal_id,
+                            "created_at": { "$lt": before_created_at },
+                        },
+                        options,
+                    )
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let mut out: Vec<TerminalLog> = collect_and_map(cursor, normalize_doc).await?;
+                out.reverse();
+                Ok(out)
+            })
+        },
+        |pool| {
+            let terminal_id = terminal_id.to_string();
+            let before_created_at = before_created_at.to_string();
+            Box::pin(async move {
+                let rows = sqlx::query_as::<_, TerminalLogRow>(
+                    "SELECT id, terminal_id, type as log_type, content, created_at \
+                     FROM terminal_logs \
+                     WHERE terminal_id = ? AND created_at < ? \
+                     ORDER BY created_at DESC LIMIT ?",
+                )
+                .bind(&terminal_id)
+                .bind(&before_created_at)
                 .bind(capped_limit)
                 .fetch_all(pool)
                 .await

@@ -1,5 +1,8 @@
 use serde_json::{json, Value};
+use std::time::Duration;
+use tokio::time::sleep;
 use tracing::info;
+use tracing::warn;
 
 use crate::config::Config;
 use crate::services::ai_common::{
@@ -297,6 +300,8 @@ impl AiClient {
             let mut resp = None;
             let mut last_err: Option<String> = None;
             let mut token_limit_compacted = false;
+            let max_transient_retries = 5usize;
+            let mut transient_retry_count = 0usize;
             loop {
                 let attempt = self
                     .ai_request_handler
@@ -337,6 +342,31 @@ impl AiClient {
                                 api_messages = compacted;
                                 continue;
                             }
+                        }
+                        if is_transient_transport_or_parse_error(&err) {
+                            let retry_kind = if is_response_parse_error(&err) {
+                                "响应解析异常"
+                            } else {
+                                "网络波动"
+                            };
+                            if transient_retry_count < max_transient_retries {
+                                transient_retry_count += 1;
+                                let backoff_ms = 150_u64 * transient_retry_count as u64;
+                                warn!(
+                                    "[AI_V2] transient {} detected; retry {}/{} after {}ms: {}",
+                                    retry_kind,
+                                    transient_retry_count,
+                                    max_transient_retries,
+                                    backoff_ms,
+                                    err
+                                );
+                                sleep(Duration::from_millis(backoff_ms)).await;
+                                continue;
+                            }
+                            last_err = Some(format!(
+                                "AI 请求失败：{}，已重试 {} 次，最后错误：{}",
+                                retry_kind, max_transient_retries, err
+                            ));
                         }
                         break;
                     }
@@ -487,6 +517,45 @@ impl AiClient {
     }
 }
 
+fn is_response_parse_error(err: &str) -> bool {
+    let message = err.to_lowercase();
+    message.contains("invalid json response")
+        || message.contains("stream response parse failed")
+        || message.contains("error decoding response body")
+        || message.contains("unexpected end of json input")
+        || message.contains("eof while parsing")
+}
+
+fn is_transient_network_error(err: &str) -> bool {
+    let message = err.to_lowercase();
+    message.contains("error sending request for url")
+        || message.contains("connection closed before message completed")
+        || message.contains("connection reset")
+        || message.contains("broken pipe")
+        || message.contains("connection refused")
+        || message.contains("network is unreachable")
+        || message.contains("unexpected eof")
+        || message.contains("timed out")
+        || message.contains("timeout")
+        || message.contains("dns error")
+        || message.contains("temporary failure in name resolution")
+        || message.contains("failed to lookup address information")
+        || message.contains("status 408")
+        || message.contains("status 502")
+        || message.contains("status 503")
+        || message.contains("status 504")
+        || message.contains("status 522")
+        || message.contains("status 523")
+        || message.contains("status 524")
+        || message.contains("engine_overloaded_error")
+        || message.contains("currently overloaded, please try again later")
+        || message.contains("server is currently overloaded")
+}
+
+fn is_transient_transport_or_parse_error(err: &str) -> bool {
+    is_transient_network_error(err) || is_response_parse_error(err)
+}
+
 fn tool_content_item_max_chars() -> usize {
     std::env::var("AI_V2_TOOL_OUTPUT_MAX_CHARS")
         .ok()
@@ -553,7 +622,10 @@ impl AiClientSettings for AiClient {
 
 #[cfg(test)]
 mod tests {
-    use super::cap_tool_content_for_input;
+    use super::{
+        cap_tool_content_for_input, is_response_parse_error, is_transient_network_error,
+        is_transient_transport_or_parse_error,
+    };
 
     #[test]
     fn cap_tool_content_for_input_truncates_large_text() {
@@ -567,5 +639,43 @@ mod tests {
     fn cap_tool_content_for_input_keeps_short_text() {
         let text = "short output";
         assert_eq!(cap_tool_content_for_input(text), text.to_string());
+    }
+
+    #[test]
+    fn detects_response_parse_errors() {
+        assert!(is_response_parse_error(
+            "invalid JSON response (status 200): expected value"
+        ));
+        assert!(is_response_parse_error(
+            "stream response parse failed: no valid SSE events parsed from provider"
+        ));
+        assert!(!is_response_parse_error("status 401: unauthorized"));
+    }
+
+    #[test]
+    fn detects_transient_network_errors() {
+        assert!(is_transient_network_error(
+            "error sending request for url (https://api.openai.com/v1/chat/completions)"
+        ));
+        assert!(is_transient_network_error(
+            "status 503: service unavailable"
+        ));
+        assert!(is_transient_network_error(
+            "{\"error\":{\"message\":\"The engine is currently overloaded, please try again later\",\"type\":\"engine_overloaded_error\"}}"
+        ));
+        assert!(!is_transient_network_error("status 401: invalid api key"));
+    }
+
+    #[test]
+    fn combines_transient_network_and_parse_detection() {
+        assert!(is_transient_transport_or_parse_error(
+            "error decoding response body: unexpected eof"
+        ));
+        assert!(is_transient_transport_or_parse_error(
+            "status 504: gateway timeout"
+        ));
+        assert!(!is_transient_transport_or_parse_error(
+            "status 400: invalid_request_error"
+        ));
     }
 }

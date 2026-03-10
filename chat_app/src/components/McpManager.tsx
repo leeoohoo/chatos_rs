@@ -5,49 +5,15 @@ import { McpConfig } from '../types';
 import ConfirmDialog from './ui/ConfirmDialog';
 import { useConfirmDialog } from '../hooks/useConfirmDialog';
 import { apiClient } from '../lib/api/client';
-
-// 服务器图标组件
-const ServerIcon = () => (
-  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01" />
-  </svg>
-);
-
-// 关闭图标组件
-const XMarkIcon = () => (
-  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-  </svg>
-);
-
-// 加号图标组件
-const PlusIcon = () => (
-  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-  </svg>
-);
-
-// 删除图标组件
-const TrashIcon = () => (
-  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-  </svg>
-);
-
-// 编辑图标组件
-const EditIcon = () => (
-  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-  </svg>
-);
-
-// 设置图标组件
-const SettingsIcon = () => (
-  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317a1 1 0 011.35-.936l.094.047 1.2.6a1 1 0 00.894 0l1.2-.6a1 1 0 011.444.89l.006.099v1.36a1 1 0 00.292.707l.962.963a1 1 0 01.083 1.32l-.083.094-.962.963a1 1 0 00-.292.707v1.36a1 1 0 01-1.45.894l-.094-.047-1.2-.6a1 1 0 00-.894 0l-1.2.6a1 1 0 01-1.444-.89l-.006-.099v-1.36a1 1 0 00-.292-.707l-.962-.963a1 1 0 01-.083-1.32l.083-.094.962-.963a1 1 0 00.292-.707v-1.36z" />
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10.5a1.5 1.5 0 110 3 1.5 1.5 0 010-3z" />
-  </svg>
-);
+import BuiltinSettingsModal from './mcpManager/BuiltinSettingsModal';
+import {
+  EditIcon,
+  PlusIcon,
+  ServerIcon,
+  SettingsIcon,
+  TrashIcon,
+  XMarkIcon,
+} from './mcpManager/icons';
 
 interface McpManagerProps {
   onClose?: () => void;
@@ -63,18 +29,14 @@ interface McpFormData {
 }
 
 const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }) => {
-  // 尝试使用外部传入的store，如果没有则尝试使用Context，最后回退到默认store
   let storeData;
-  
+
   if (externalStore) {
-    // 使用外部传入的store
     storeData = externalStore();
   } else {
-    // 尝试使用Context store，如果失败则使用默认store
     try {
       storeData = useChatStoreFromContext();
     } catch (error) {
-      // 如果Context不可用，使用默认store
       storeData = useChatStore();
     }
   }
@@ -92,12 +54,9 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
     argsInput: ''
   });
 
-  // stdio 资源配置相关状态
   const [configLoading, setConfigLoading] = useState<boolean>(false);
   const [configError, setConfigError] = useState<string | null>(null);
   const [dynamicConfig, setDynamicConfig] = useState<Record<string, any>>({});
-
-  // 内置 MCP 设置面板状态
   const [settingsConfig, setSettingsConfig] = useState<McpConfig | null>(null);
   const [settingsLoading, setSettingsLoading] = useState<boolean>(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
@@ -957,528 +916,70 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
         </div>
       </div>
 
-      {settingsConfig && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="w-full max-w-6xl max-h-[92vh] overflow-hidden rounded-xl border border-border bg-card shadow-2xl">
-            <div className="flex items-center justify-between border-b px-5 py-3">
-              <div>
-                <h3 className="text-base font-semibold text-foreground">内置 MCP 设置</h3>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {(settingsConfig as any)?.display_name || settingsConfig.name}
-                </p>
-              </div>
-              <button
-                type="button"
-                className="p-2 text-muted-foreground hover:text-foreground"
-                onClick={closeBuiltinSettings}
-              >
-                <XMarkIcon />
-              </button>
-            </div>
-
-            <div className="p-6 space-y-5 overflow-auto max-h-[calc(92vh-70px)]">
-              {settingsLoading ? (
-                <div className="text-sm text-muted-foreground">加载中...</div>
-              ) : (
-                <>
-                  {settingsSummary && (
-                    <div className="rounded-lg border border-border bg-muted/40 p-4 space-y-2">
-                      <div className="text-xs text-muted-foreground">当前路径</div>
-                      <div className="text-xs font-mono break-all">root: {settingsSummary?.paths?.root || '—'}</div>
-                      <div className="text-xs font-mono break-all">agents: {settingsSummary?.paths?.registry || '—'}</div>
-                      <div className="text-xs font-mono break-all">skills: {settingsSummary?.paths?.marketplace || '—'}</div>
-                      <div className="text-xs font-mono break-all">git-cache: {settingsSummary?.paths?.git_cache_root || '—'}</div>
-                      <div className="text-xs font-mono break-all">mcp-permissions: {settingsSummary?.paths?.mcp_permissions || '—'}</div>
-                      <div className="text-xs text-muted-foreground pt-1">
-                        已导入 agents: {settingsSummary?.counts?.agents ?? 0}（registry: {settingsSummary?.counts?.registry_agents ?? 0} / marketplace: {settingsSummary?.counts?.marketplace_agents ?? 0}），plugins: {settingsSummary?.counts?.plugins ?? 0}，skills条目: {settingsSummary?.counts?.skills_entries ?? 0}，可安装插件: {settingsSummary?.counts?.installable_plugins ?? 0}
-                      </div>
-                    </div>
-                  )}
-
-                  {settingsError && (
-                    <div className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-600">
-                      {settingsError}
-                    </div>
-                  )}
-
-                  {settingsNotice && (
-                    <div className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-600">
-                      {settingsNotice}
-                    </div>
-                  )}
-
-                  {settingsSummary && (
-                    <div className="space-y-4">
-                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
-                        <div className="rounded-lg border border-border bg-muted/20 p-3">
-                          <div className="text-xs text-muted-foreground">Agents</div>
-                          <div className="mt-1 text-lg font-semibold text-foreground">{settingsSummary?.counts?.agents ?? 0}</div>
-                          <div className="text-[11px] text-muted-foreground">
-                            registry: {settingsSummary?.counts?.registry_agents ?? 0} / marketplace: {settingsSummary?.counts?.marketplace_agents ?? 0}
-                          </div>
-                        </div>
-                        <div className="rounded-lg border border-border bg-muted/20 p-3">
-                          <div className="text-xs text-muted-foreground">Skills</div>
-                          <div className="mt-1 text-lg font-semibold text-foreground">{settingsSummary?.counts?.skills_entries ?? 0}</div>
-                          <div className="text-[11px] text-muted-foreground">total entries from skills/marketplace</div>
-                        </div>
-                        <div className="rounded-lg border border-border bg-muted/20 p-3">
-                          <div className="text-xs text-muted-foreground">Plugins</div>
-                          <div className="mt-1 text-lg font-semibold text-foreground">{settingsSummary?.counts?.plugins ?? 0}</div>
-                          <div className="text-[11px] text-muted-foreground">
-                            installable: {settingsSummary?.counts?.installable_plugins ?? 0} / discoverable skills: {settingsSummary?.counts?.discovered_skills ?? 0}
-                          </div>
-                          <div className="text-[11px] text-muted-foreground">
-                            registry: {settingsSummary?.valid?.registry ? 'ok' : 'invalid'} / marketplace: {settingsSummary?.valid?.marketplace ? 'ok' : 'invalid'}
-                          </div>
-                        </div>
-                        <div className="rounded-lg border border-border bg-muted/20 p-3">
-                          <div className="text-xs text-muted-foreground">MCP Permissions</div>
-                          <div className="mt-1 text-lg font-semibold text-foreground">
-                            {settingsMcpEnabledIds.length}/{settingsMcpOptions.length}
-                          </div>
-                          <div className="text-[11px] text-muted-foreground">
-                            {settingsMcpConfigured ? 'customized' : 'default(all enabled)'}
-                          </div>
-                          <div className="text-[11px] text-muted-foreground">
-                            {settingsMcpUpdatedAt ? `updated: ${settingsMcpUpdatedAt}` : 'not saved yet'}
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="rounded-lg border border-border bg-muted/20 p-1">
-                        <div className="grid grid-cols-1 gap-1 sm:grid-cols-4">
-                          <button
-                            type="button"
-                            onClick={() => setSettingsTab('mcp')}
-                            className={`rounded-md px-3 py-2 text-xs font-medium transition-colors ${settingsTab === 'mcp' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:bg-background/50 hover:text-foreground'}`}
-                          >
-                            MCP 权限
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setSettingsTab('overview')}
-                            className={`rounded-md px-3 py-2 text-xs font-medium transition-colors ${settingsTab === 'overview' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:bg-background/50 hover:text-foreground'}`}
-                          >
-                            已导入内容
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setSettingsTab('git')}
-                            className={`rounded-md px-3 py-2 text-xs font-medium transition-colors ${settingsTab === 'git' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:bg-background/50 hover:text-foreground'}`}
-                          >
-                            第一步：Git 导入
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setSettingsTab('marketplace')}
-                            className={`rounded-md px-3 py-2 text-xs font-medium transition-colors ${settingsTab === 'marketplace' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:bg-background/50 hover:text-foreground'}`}
-                          >
-                            第二步：安装插件
-                          </button>
-                        </div>
-                      </div>
-
-                      {settingsTab === 'mcp' && (
-                        <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-4">
-                          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                            <div>
-                              <div className="text-sm font-medium text-foreground">Sub-agent 可用 MCP</div>
-                              <div className="text-xs text-muted-foreground mt-1">
-                                这里控制 sub-agent 在执行时允许访问的 MCP（不包含它自己）。
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <button
-                                type="button"
-                                onClick={enableAllMcpPermissions}
-                                disabled={settingsMcpSaving || settingsMcpLoading || settingsMcpOptions.length === 0}
-                                className="px-2.5 py-1.5 text-xs rounded-md border border-border bg-background hover:bg-background/80 disabled:opacity-50 disabled:cursor-not-allowed"
-                              >
-                                全选
-                              </button>
-                              <button
-                                type="button"
-                                onClick={clearAllMcpPermissions}
-                                disabled={settingsMcpSaving || settingsMcpLoading || settingsMcpOptions.length === 0}
-                                className="px-2.5 py-1.5 text-xs rounded-md border border-border bg-background hover:bg-background/80 disabled:opacity-50 disabled:cursor-not-allowed"
-                              >
-                                全不选
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => { void handleSaveMcpPermissions(); }}
-                                disabled={settingsMcpSaving || settingsMcpLoading}
-                                className="px-3 py-1.5 text-xs rounded-md bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                              >
-                                {settingsMcpSaving ? '保存中...' : '保存权限'}
-                              </button>
-                            </div>
-                          </div>
-
-                          <div className="rounded-md border border-border/60 bg-background/60 p-3 space-y-2">
-                            <div className="text-xs font-medium text-foreground">Sub-agent 系统提示词</div>
-                            <select
-                              value={settingsSelectedSystemContextId}
-                              onChange={(event) => setSettingsSelectedSystemContextId(event.target.value)}
-                              className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
-                            >
-                              <option value="">不使用额外系统提示词</option>
-                              {settingsSystemContextOptions.map((item: any) => (
-                                <option key={item.id} value={item.id}>
-                                  {item.name || item.id}{item.is_active ? '（当前激活）' : ''}
-                                </option>
-                              ))}
-                            </select>
-                            <div className="text-[11px] text-muted-foreground">
-                              执行 sub-agent 时会先注入该系统提示词，再执行 sub-agent 自身提示词。
-                            </div>
-                          </div>
-
-                          <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
-                            <input
-                              type="text"
-                              value={settingsMcpSearch}
-                              onChange={(event) => setSettingsMcpSearch(event.target.value)}
-                              placeholder="搜索 MCP 名称 / ID / 工具前缀（不区分大小写）"
-                              className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring lg:col-span-2"
-                            />
-                            <div className="h-10 rounded-md border border-border/60 bg-background/60 px-3 text-xs text-muted-foreground flex items-center justify-between">
-                              <span>已选择</span>
-                              <span>{settingsMcpEnabledIds.length}/{settingsMcpOptions.length}</span>
-                            </div>
-                          </div>
-
-                          {settingsMcpLoading ? (
-                            <div className="rounded-md border border-border/60 bg-background/60 px-3 py-4 text-xs text-muted-foreground">
-                              正在加载 MCP 权限列表...
-                            </div>
-                          ) : filteredSettingsMcpOptions.length === 0 ? (
-                            <div className="rounded-md border border-border/60 bg-background/60 px-3 py-4 text-xs text-muted-foreground">
-                              没有匹配的 MCP。
-                            </div>
-                          ) : (
-                            <div className="max-h-[52vh] space-y-2 overflow-auto pr-1">
-                              {filteredSettingsMcpOptions.map((item: any) => {
-                                const id = String(item?.id || '');
-                                const enabled = settingsMcpEnabledSet.has(id);
-                                const builtin = Boolean(item?.builtin);
-                                const configEnabled = item?.config_enabled !== false;
-                                const displayName = item?.display_name || item?.name || id;
-                                const toolPrefix = item?.tool_prefix || '';
-                                return (
-                                  <label
-                                    key={id}
-                                    className="flex items-start gap-3 rounded-md border border-border/60 bg-background/70 px-3 py-2 cursor-pointer"
-                                  >
-                                    <input
-                                      type="checkbox"
-                                      checked={enabled}
-                                      onChange={(event) => toggleMcpPermissionOption(id, event.target.checked)}
-                                      className="mt-0.5 h-4 w-4 rounded border-border"
-                                    />
-                                    <div className="min-w-0 flex-1">
-                                      <div className="flex items-center gap-2">
-                                        <div className="text-sm text-foreground truncate">{displayName}</div>
-                                        <span className={`rounded px-1.5 py-0.5 text-[10px] ${builtin ? 'bg-sky-500/10 text-sky-600' : 'bg-violet-500/10 text-violet-600'}`}>
-                                          {builtin ? 'builtin' : 'custom'}
-                                        </span>
-                                        {!configEnabled && (
-                                          <span className="rounded px-1.5 py-0.5 text-[10px] bg-amber-500/10 text-amber-600">
-                                            config disabled
-                                          </span>
-                                        )}
-                                      </div>
-                                      <div className="mt-0.5 text-[11px] text-muted-foreground break-all">id: {id}</div>
-                                      <div className="text-[11px] text-muted-foreground break-all">tool prefix: {toolPrefix || '—'}</div>
-                                    </div>
-                                  </label>
-                                );
-                              })}
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      {settingsTab === 'overview' && (
-                        <div className="space-y-4">
-                          <div className="rounded-lg border border-border bg-muted/20 p-4">
-                            <div className="flex items-center justify-between">
-                              <div className="text-sm font-medium text-foreground">Plugins Summary</div>
-                              <div className="text-xs text-muted-foreground">{settingsPlugins.length}</div>
-                            </div>
-                            <div className="mt-3 max-h-44 space-y-2 overflow-auto pr-1">
-                              {settingsPlugins.length === 0 ? (
-                                <div className="text-xs text-muted-foreground">No plugin metadata found</div>
-                              ) : (
-                                settingsPlugins.map((plugin: any, idx: number) => (
-                                  <div key={`${plugin?.source || plugin?.name || 'plugin'}-${idx}`} className="rounded-md border border-border/60 bg-background/60 px-2 py-1.5">
-                                    <div className="text-xs text-foreground truncate">{plugin?.name || plugin?.source || 'plugin'}</div>
-                                    <div className="mt-0.5 text-[11px] text-muted-foreground truncate">
-                                      source: {plugin?.source || 'unknown'} | installed A/S/C: {plugin?.counts?.agents?.installed ?? plugin?.agents ?? 0}/{plugin?.counts?.skills?.installed ?? plugin?.skills ?? 0}/{plugin?.counts?.commands?.installed ?? plugin?.commands ?? 0}
-                                    </div>
-                                    <div className="text-[11px] text-muted-foreground truncate">
-                                      discoverable A/S/C: {plugin?.counts?.agents?.discoverable ?? 0}/{plugin?.counts?.skills?.discoverable ?? 0}/{plugin?.counts?.commands?.discoverable ?? 0}
-                                    </div>
-                                  </div>
-                                ))
-                              )}
-                            </div>
-                          </div>
-
-                          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-                            <div className="rounded-lg border border-border bg-muted/20 p-4">
-                              <div className="flex items-center justify-between">
-                                <div className="text-sm font-medium text-foreground">Imported Agents</div>
-                                <div className="text-xs text-muted-foreground">{settingsAgents.length}</div>
-                              </div>
-                              <div className="mt-3 max-h-56 space-y-2 overflow-auto pr-1">
-                                {settingsAgents.length === 0 ? (
-                                  <div className="text-xs text-muted-foreground">No agent data（先到 Marketplace 安装插件）</div>
-                                ) : (
-                                  settingsAgents.map((agent: any, idx: number) => (
-                                    <div key={`${agent?.id || agent?.path || 'agent'}-${idx}`} className="rounded-md border border-border/60 bg-background/60 px-2 py-1.5">
-                                      <div className="flex items-start justify-between gap-2">
-                                        <div className="text-xs text-foreground truncate">{agent?.name || agent?.id || agent?.path || 'Unnamed Agent'}</div>
-                                        <span className={`rounded px-1.5 py-0.5 text-[10px] ${agent?.kind === 'marketplace' ? 'bg-indigo-500/10 text-indigo-600' : 'bg-emerald-500/10 text-emerald-600'}`}>
-                                          {agent?.kind === 'marketplace' ? 'marketplace' : 'registry'}
-                                        </span>
-                                      </div>
-                                      <div className="mt-0.5 text-[11px] text-muted-foreground truncate">
-                                        {agent?.kind === 'marketplace'
-                                          ? `${agent?.plugin || 'plugin'} | ${agent?.path || ''}`
-                                          : `id: ${agent?.id || ''}${agent?.category ? ` | ${agent?.category}` : ''}`}
-                                      </div>
-                                    </div>
-                                  ))
-                                )}
-                              </div>
-                            </div>
-
-                            <div className="rounded-lg border border-border bg-muted/20 p-4">
-                              <div className="flex items-center justify-between">
-                                <div className="text-sm font-medium text-foreground">Imported Skills</div>
-                                <div className="text-xs text-muted-foreground">{settingsSkills.length}</div>
-                              </div>
-                              <div className="mt-3 max-h-56 space-y-2 overflow-auto pr-1">
-                                {settingsSkills.length === 0 ? (
-                                  <div className="text-xs text-muted-foreground">No skill data（先到 Marketplace 安装插件）</div>
-                                ) : (
-                                  settingsSkills.map((skill: any, idx: number) => (
-                                    <div key={`${skill?.id || skill?.path || 'skill'}-${idx}`} className="rounded-md border border-border/60 bg-background/60 px-2 py-1.5">
-                                      <div className="text-xs text-foreground truncate">{skill?.name || skill?.path || 'Unnamed Skill'}</div>
-                                      <div className="mt-0.5 text-[11px] text-muted-foreground truncate">
-                                        {(skill?.plugin || 'plugin') + (skill?.path ? ` | ${skill.path}` : '')}
-                                      </div>
-                                    </div>
-                                  ))
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-
-                      {settingsTab === 'marketplace' && (
-                        <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-4">
-                          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                            <div>
-                              <div className="text-sm font-medium text-foreground">Marketplace 插件安装</div>
-                              <div className="text-xs text-muted-foreground mt-1">
-                                先 Git 导入，再在这里安装插件，安装后会自动写入 agents / skills / commands。
-                              </div>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => { void handleInstallAllPlugins(); }}
-                              disabled={settingsSubmitting !== null}
-                              className="px-3 py-1.5 text-xs rounded-md bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                            >
-                              {settingsSubmitting === 'plugin_all' ? 'Installing...' : 'Install All Plugins'}
-                            </button>
-                          </div>
-
-                          <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
-                            <input
-                              type="text"
-                              value={settingsPluginSearch}
-                              onChange={(event) => setSettingsPluginSearch(event.target.value)}
-                              placeholder="搜索插件名称 / source（不区分大小写）"
-                              className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring lg:col-span-2"
-                            />
-                            <select
-                              value={settingsPluginFilter}
-                              onChange={(event) => setSettingsPluginFilter(event.target.value as 'all' | 'installed' | 'pending')}
-                              className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
-                            >
-                              <option value="all">全部</option>
-                              <option value="installed">已安装</option>
-                              <option value="pending">待安装</option>
-                            </select>
-                          </div>
-
-                          <div className="rounded-md border border-border/60 bg-background/50 p-3 text-xs text-muted-foreground">
-                            当前可安装插件: {settingsSummary?.counts?.installable_plugins ?? 0} / 可发现 agents: {settingsSummary?.counts?.discovered_agents ?? 0} / skills: {settingsSummary?.counts?.discovered_skills ?? 0} / commands: {settingsSummary?.counts?.discovered_commands ?? 0}
-                          </div>
-
-                          <div className="max-h-[54vh] space-y-2 overflow-auto pr-1">
-                            {filteredSettingsPlugins.length === 0 ? (
-                              <div className="rounded-md border border-border/60 bg-background/60 px-3 py-2 text-xs text-muted-foreground">
-                                没有匹配的插件。
-                              </div>
-                            ) : (
-                              filteredSettingsPlugins.map((plugin: any, idx: number) => {
-                                const installed = isPluginInstalled(plugin);
-                                const exists = plugin?.exists !== false;
-                                const discoverableTotal = pluginDiscoverableTotal(plugin);
-                                const installedTotal = pluginInstalledTotal(plugin);
-                                const discoverableAgents = Number(plugin?.counts?.agents?.discoverable ?? 0);
-                                const discoverableSkills = Number(plugin?.counts?.skills?.discoverable ?? 0);
-                                const discoverableCommands = Number(plugin?.counts?.commands?.discoverable ?? 0);
-                                const installedAgents = Number(plugin?.counts?.agents?.installed ?? plugin?.agents ?? 0);
-                                const installedSkills = Number(plugin?.counts?.skills?.installed ?? plugin?.skills ?? 0);
-                                const installedCommands = Number(plugin?.counts?.commands?.installed ?? plugin?.commands ?? 0);
-                                const source = String(plugin?.source || '');
-                                const canInstall = exists && discoverableTotal > 0;
-
-                                return (
-                                  <div
-                                    key={`${source || plugin?.name || 'plugin'}-${idx}`}
-                                    className="rounded-md border border-border/60 bg-background/70 px-3 py-2"
-                                  >
-                                    <div className="flex items-start justify-between gap-3">
-                                      <div className="min-w-0 flex-1">
-                                        <div className="flex items-center gap-2">
-                                          <div className="text-sm text-foreground truncate">{plugin?.name || source || 'plugin'}</div>
-                                          <span
-                                            className={`rounded px-1.5 py-0.5 text-[10px] ${installed ? 'bg-emerald-500/10 text-emerald-600' : 'bg-amber-500/10 text-amber-600'}`}
-                                          >
-                                            {installed ? 'installed' : 'pending'}
-                                          </span>
-                                          {!exists && (
-                                            <span className="rounded px-1.5 py-0.5 text-[10px] bg-red-500/10 text-red-600">
-                                              source missing
-                                            </span>
-                                          )}
-                                        </div>
-                                        <div className="mt-0.5 text-[11px] text-muted-foreground break-all">{source || 'unknown source'}</div>
-                                        <div className="mt-1 text-[11px] text-muted-foreground">
-                                          installed A/S/C: {installedAgents}/{installedSkills}/{installedCommands}（total: {installedTotal}）
-                                        </div>
-                                        <div className="text-[11px] text-muted-foreground">
-                                          discoverable A/S/C: {discoverableAgents}/{discoverableSkills}/{discoverableCommands}（total: {discoverableTotal}）
-                                        </div>
-                                      </div>
-                                      <button
-                                        type="button"
-                                        onClick={() => { void handleInstallPlugin(source); }}
-                                        disabled={settingsSubmitting !== null || !canInstall}
-                                        className="shrink-0 px-2.5 py-1.5 text-[11px] rounded-md bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                                      >
-                                        {settingsSubmitting === 'plugin' ? 'Installing...' : installed ? 'Reinstall' : 'Install'}
-                                      </button>
-                                    </div>
-                                  </div>
-                                );
-                              })
-                            )}
-                          </div>
-                        </div>
-                      )}
-
-                      {settingsTab === 'git' && (
-                        <div className="rounded-lg border border-border bg-muted/25 p-4 space-y-4">
-                          <div className="space-y-1">
-                            <div className="text-base font-semibold text-foreground">Import agents and skills from Git</div>
-                            <div className="text-xs text-muted-foreground">Auto-detects subagents.json/agents.json and marketplace.json/skills.json.</div>
-                          </div>
-
-                          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-                            <input
-                              type="text"
-                              value={gitRepositoryInput}
-                              onChange={(event) => setGitRepositoryInput(event.target.value)}
-                              placeholder="Repository URL, e.g. https://github.com/org/repo.git"
-                              className="lg:col-span-2 h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
-                            />
-                            <input
-                              type="text"
-                              value={gitBranchInput}
-                              onChange={(event) => setGitBranchInput(event.target.value)}
-                              placeholder="Branch (optional, default branch if empty)"
-                              className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
-                            />
-                            <input
-                              type="text"
-                              value={gitAgentsPathInput}
-                              onChange={(event) => setGitAgentsPathInput(event.target.value)}
-                              placeholder="agents file path (optional)"
-                              className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
-                            />
-                            <input
-                              type="text"
-                              value={gitSkillsPathInput}
-                              onChange={(event) => setGitSkillsPathInput(event.target.value)}
-                              placeholder="skills/marketplace file path (optional)"
-                              className="lg:col-span-2 h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
-                            />
-                          </div>
-
-                          <div className="rounded-md border border-border/60 bg-background/50 p-3 text-xs text-muted-foreground space-y-1">
-                            <div className="font-medium text-foreground">Auto-detection rules</div>
-                            <div>agents: subagents.json ? agents.json</div>
-                            <div>skills: marketplace.json ? skills.json</div>
-                            <div>If your repo layout is custom, fill the path fields above.</div>
-                          </div>
-
-                          <button
-                            type="button"
-                            onClick={() => { void handleImportFromGit(); }}
-                            disabled={settingsSubmitting !== null}
-                            className="px-4 py-2 text-sm rounded-md bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                            {settingsSubmitting === 'git' ? 'Importing...' : 'Import from Git'}
-                          </button>
-
-                          {lastGitImportResult && (
-                            <div className="rounded-md border border-border bg-background/70 p-3 space-y-3">
-                              <div className="text-xs font-medium text-foreground">Last Git import result</div>
-                              <div className="grid grid-cols-1 gap-2 lg:grid-cols-2 text-[11px] text-muted-foreground">
-                                <div className="font-mono break-all">repo: {lastGitImportResult?.repository || '?'}</div>
-                                <div className="font-mono break-all">branch: {lastGitImportResult?.branch || 'default'}</div>
-                                <div className="font-mono break-all lg:col-span-2">repo-path: {lastGitImportResult?.repo_path || '?'}</div>
-                                <div className="font-mono break-all">agents-file: {lastGitImportResult?.files?.agents || 'not found'}</div>
-                                <div className="font-mono break-all">skills-file: {lastGitImportResult?.files?.skills || 'not found'}</div>
-                              </div>
-                              <div className="text-[11px] text-muted-foreground">
-                                imported.agents: {String(!!lastGitImportResult?.imported?.agents)} | imported.skills: {String(!!lastGitImportResult?.imported?.skills)} | plugins copied: {lastGitImportResult?.results?.plugins?.copied ?? 0} | plugins skipped: {lastGitImportResult?.results?.plugins?.skipped ?? 0}
-                              </div>
-                              {lastGitPluginDetails.length > 0 && (
-                                <div className="max-h-40 overflow-auto space-y-1 pr-1">
-                                  {lastGitPluginDetails.map((item: any, idx: number) => (
-                                    <div key={`${item?.source || 'plugin'}-${idx}`} className="rounded border border-border/60 bg-muted/20 px-2 py-1 text-[11px] text-muted-foreground">
-                                      <span className={item?.ok ? 'text-emerald-600' : 'text-amber-600'}>{item?.ok ? 'ok' : 'skip'}</span>
-                                      {' | '}
-                                      {item?.source || '(empty source)'}
-                                      {item?.dest ? ` -> ${item.dest}` : ''}
-                                      {item?.reason ? ` (${item.reason})` : ''}
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+      <BuiltinSettingsModal
+        state={{
+          settingsConfig,
+          settingsLoading,
+          settingsSummary,
+          settingsError,
+          settingsNotice,
+          settingsMcpEnabledIds,
+          settingsMcpOptions,
+          settingsMcpConfigured,
+          settingsMcpUpdatedAt,
+          settingsTab,
+          settingsMcpSaving,
+          settingsMcpLoading,
+          settingsSelectedSystemContextId,
+          settingsSystemContextOptions,
+          settingsMcpSearch,
+          filteredSettingsMcpOptions,
+          settingsMcpEnabledSet,
+          settingsPlugins,
+          settingsAgents,
+          settingsSkills,
+          settingsSubmitting,
+          settingsPluginSearch,
+          settingsPluginFilter,
+          filteredSettingsPlugins,
+          gitRepositoryInput,
+          gitBranchInput,
+          gitAgentsPathInput,
+          gitSkillsPathInput,
+          lastGitImportResult,
+          lastGitPluginDetails,
+        }}
+        actions={{
+          onClose: closeBuiltinSettings,
+          onSettingsTabChange: setSettingsTab,
+          onEnableAllMcpPermissions: enableAllMcpPermissions,
+          onClearAllMcpPermissions: clearAllMcpPermissions,
+          onSaveMcpPermissions: () => {
+            void handleSaveMcpPermissions();
+          },
+          onSettingsSelectedSystemContextIdChange: setSettingsSelectedSystemContextId,
+          onSettingsMcpSearchChange: setSettingsMcpSearch,
+          onToggleMcpPermissionOption: toggleMcpPermissionOption,
+          onInstallAllPlugins: () => {
+            void handleInstallAllPlugins();
+          },
+          onSettingsPluginSearchChange: setSettingsPluginSearch,
+          onSettingsPluginFilterChange: setSettingsPluginFilter,
+          onInstallPlugin: (source: string) => {
+            void handleInstallPlugin(source);
+          },
+          isPluginInstalled,
+          pluginDiscoverableTotal,
+          pluginInstalledTotal,
+          onGitRepositoryInputChange: setGitRepositoryInput,
+          onGitBranchInputChange: setGitBranchInput,
+          onGitAgentsPathInputChange: setGitAgentsPathInput,
+          onGitSkillsPathInputChange: setGitSkillsPathInput,
+          onImportFromGit: () => {
+            void handleImportFromGit();
+          },
+        }}
+      />
 
       {/* 确认对话框 */}
       <ConfirmDialog

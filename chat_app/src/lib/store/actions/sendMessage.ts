@@ -1,300 +1,18 @@
 import type { Message } from '../../../types';
 import type ApiClient from '../../api/client';
-import type {
-  TaskReviewDraft,
-  TaskReviewPanelState,
-  UiPromptChoice,
-  UiPromptField,
-  UiPromptKind,
-  UiPromptPanelState,
-} from '../types';
 import { debugLog } from '@/lib/utils';
-
-const TASK_CREATE_REVIEW_REQUIRED_EVENT = 'task_create_review_required';
-const UI_PROMPT_REQUIRED_EVENT = 'ui_prompt_required';
-
-const createInternalId = (prefix: string) => {
-  const randomPart =
-    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-      ? crypto.randomUUID().replace(/-/g, '')
-      : Date.now().toString() + '_' + Math.random().toString(36).slice(2, 10);
-  return prefix + '_' + randomPart;
-};
-
-const normalizeTaskPriority = (value: unknown): TaskReviewDraft['priority'] => {
-  const normalized = String(value ?? '').trim().toLowerCase();
-  if (normalized === 'high') return 'high';
-  if (normalized === 'low') return 'low';
-  return 'medium';
-};
-
-const normalizeTaskStatus = (value: unknown): TaskReviewDraft['status'] => {
-  const normalized = String(value ?? '').trim().toLowerCase();
-  if (normalized === 'doing') return 'doing';
-  if (normalized === 'blocked') return 'blocked';
-  if (normalized === 'done') return 'done';
-  return 'todo';
-};
-
-const parseTaskTags = (value: unknown): string[] => {
-  const source = Array.isArray(value)
-    ? value
-    : typeof value === 'string'
-      ? value.split(',')
-      : [];
-
-  const seen = new Set<string>();
-  const tags: string[] = [];
-  source.forEach((item) => {
-    const tag = String(item ?? '').trim();
-    if (!tag || seen.has(tag)) {
-      return;
-    }
-    seen.add(tag);
-    tags.push(tag);
-  });
-  return tags;
-};
-
-const toTaskReviewDraft = (raw: any, index: number): TaskReviewDraft => {
-  const title = String(raw?.title ?? '').trim();
-  const details = String(raw?.details ?? raw?.description ?? '').trim();
-  const dueRaw = raw?.due_at ?? raw?.dueAt;
-  const dueAt = typeof dueRaw === 'string' ? dueRaw.trim() : '';
-
-  return {
-    id: typeof raw?.id === 'string' && raw.id.trim() ? raw.id : createInternalId('draft' + (index + 1)),
-    title,
-    details,
-    priority: normalizeTaskPriority(raw?.priority),
-    status: normalizeTaskStatus(raw?.status),
-    tags: parseTaskTags(raw?.tags),
-    dueAt: dueAt || null,
-  };
-};
-
-const extractTaskReviewPanelFromToolStream = (
-  streamPayload: any,
-  fallbackSessionId: string,
-  fallbackTurnId: string
-): TaskReviewPanelState | null => {
-  const rawContent = typeof streamPayload?.content === 'string' ? streamPayload.content.trim() : '';
-  if (!rawContent) {
-    return null;
-  }
-
-  let parsedChunk: any = null;
-  try {
-    parsedChunk = JSON.parse(rawContent);
-  } catch (_) {
-    return null;
-  }
-
-  if (parsedChunk?.event !== TASK_CREATE_REVIEW_REQUIRED_EVENT) {
-    return null;
-  }
-
-  const payload = parsedChunk?.data ?? {};
-  const reviewId = typeof payload?.review_id === 'string' ? payload.review_id.trim() : '';
-  if (!reviewId) {
-    return null;
-  }
-
-  const payloadSessionId = typeof payload?.session_id === 'string' ? payload.session_id.trim() : '';
-  const sessionId = payloadSessionId || fallbackSessionId;
-
-  const payloadTurnId = typeof payload?.conversation_turn_id === 'string'
-    ? payload.conversation_turn_id.trim()
-    : '';
-  const conversationTurnId = payloadTurnId || fallbackTurnId;
-
-  const rawDraftTasks = Array.isArray(payload?.draft_tasks) ? payload.draft_tasks : [];
-  const drafts = rawDraftTasks.map((task: any, index: number) => toTaskReviewDraft(task, index));
-
-  return {
-    reviewId,
-    sessionId,
-    conversationTurnId,
-    drafts,
-    timeoutMs: typeof payload?.timeout_ms === 'number' ? payload.timeout_ms : undefined,
-    submitting: false,
-    error: null,
-  };
-};
-
-const normalizeUiPromptKind = (value: unknown): UiPromptKind => {
-  const normalized = String(value ?? '').trim().toLowerCase();
-  if (normalized === 'choice') return 'choice';
-  if (normalized === 'mixed') return 'mixed';
-  return 'kv';
-};
-
-const normalizeUiPromptFields = (value: unknown): UiPromptField[] => {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  return value
-    .map((item) => {
-      const key = String(item?.key ?? '').trim();
-      if (!key) {
-        return null;
-      }
-      return {
-        key,
-        label: typeof item?.label === 'string' ? item.label : '',
-        description: typeof item?.description === 'string' ? item.description : '',
-        placeholder: typeof item?.placeholder === 'string' ? item.placeholder : '',
-        default: typeof item?.default === 'string' ? item.default : '',
-        required: item?.required === true,
-        multiline: item?.multiline === true,
-        secret: item?.secret === true,
-      } satisfies UiPromptField;
-    })
-    .filter(Boolean) as UiPromptField[];
-};
-
-const normalizeUiPromptChoice = (value: unknown): UiPromptChoice | undefined => {
-  if (!value || typeof value !== 'object') {
-    return undefined;
-  }
-
-  const optionsRaw = Array.isArray((value as any).options) ? (value as any).options : [];
-  const options = optionsRaw
-    .map((item: any) => {
-      const optionValue = String(item?.value ?? '').trim();
-      if (!optionValue) {
-        return null;
-      }
-      return {
-        value: optionValue,
-        label: typeof item?.label === 'string' ? item.label : '',
-        description: typeof item?.description === 'string' ? item.description : '',
-      };
-    })
-    .filter(Boolean) as UiPromptChoice['options'];
-
-  if (options.length === 0) {
-    return undefined;
-  }
-
-  const multiple = (value as any).multiple === true;
-  const minRaw = Number((value as any).min_selections ?? (multiple ? 0 : 0));
-  const maxRaw = Number((value as any).max_selections ?? (multiple ? options.length : 1));
-  const minSelections = Number.isFinite(minRaw) ? Math.max(0, Math.floor(minRaw)) : 0;
-  const maxSelections = Number.isFinite(maxRaw)
-    ? Math.max(0, Math.floor(maxRaw))
-    : (multiple ? options.length : 1);
-
-  return {
-    multiple,
-    options,
-    default: (value as any).default,
-    min_selections: Math.min(minSelections, maxSelections),
-    max_selections: maxSelections,
-  };
-};
-
-const extractUiPromptPanelFromToolStream = (
-  streamPayload: any,
-  fallbackSessionId: string,
-  fallbackTurnId: string
-): UiPromptPanelState | null => {
-  const rawContent = typeof streamPayload?.content === 'string' ? streamPayload.content.trim() : '';
-  if (!rawContent) {
-    return null;
-  }
-
-  let parsedChunk: any = null;
-  try {
-    parsedChunk = JSON.parse(rawContent);
-  } catch (_) {
-    return null;
-  }
-
-  if (parsedChunk?.event !== UI_PROMPT_REQUIRED_EVENT) {
-    return null;
-  }
-
-  const payload = parsedChunk?.data ?? {};
-  const promptId = typeof payload?.prompt_id === 'string' ? payload.prompt_id.trim() : '';
-  if (!promptId) {
-    return null;
-  }
-
-  const payloadSessionId = typeof payload?.session_id === 'string' ? payload.session_id.trim() : '';
-  const sessionId = payloadSessionId || fallbackSessionId;
-  const payloadTurnId = typeof payload?.conversation_turn_id === 'string'
-    ? payload.conversation_turn_id.trim()
-    : '';
-  const conversationTurnId = payloadTurnId || fallbackTurnId;
-  const kind = normalizeUiPromptKind(payload?.kind);
-  const shape = payload?.payload && typeof payload.payload === 'object' ? payload.payload : {};
-  const fields = normalizeUiPromptFields((shape as any).fields);
-  const choice = normalizeUiPromptChoice((shape as any).choice);
-
-  return {
-    promptId,
-    sessionId,
-    conversationTurnId,
-    toolCallId: typeof streamPayload?.tool_call_id === 'string'
-      ? streamPayload.tool_call_id
-      : (typeof streamPayload?.toolCallId === 'string' ? streamPayload.toolCallId : null),
-    kind,
-    title: typeof payload?.title === 'string' ? payload.title : '',
-    message: typeof payload?.message === 'string' ? payload.message : '',
-    allowCancel: payload?.allow_cancel !== false,
-    timeoutMs: typeof payload?.timeout_ms === 'number' ? payload.timeout_ms : undefined,
-    payload: {
-      fields,
-      choice,
-    },
-    submitting: false,
-    error: null,
-  };
-};
-
-const cloneStreamingMessageDraft = <T,>(value: T): T => {
-  try {
-    if (typeof structuredClone === 'function') {
-      return structuredClone(value);
-    }
-  } catch {
-    // ignore and fallback to JSON clone
-  }
-
-  try {
-    return JSON.parse(JSON.stringify(value));
-  } catch {
-    return value;
-  }
-};
-
-const joinStreamingText = (current: string, chunk: string): string => {
-  if (!chunk) return current;
-  if (!current) return chunk;
-
-  // 兼容部分模型返回累计快照、部分模型返回增量。
-  if (chunk.startsWith(current)) return chunk;
-  if (current.startsWith(chunk)) return current;
-  if (current.includes(chunk)) return current;
-  if (chunk.includes(current)) return chunk;
-
-  const maxOverlap = Math.min(current.length, chunk.length);
-  for (let overlap = maxOverlap; overlap >= 8; overlap -= 1) {
-    if (current.slice(-overlap) === chunk.slice(0, overlap)) {
-      return `${current}${chunk.slice(overlap)}`;
-    }
-  }
-
-  return `${current}${chunk}`;
-};
-
-const normalizeStreamedText = (value: string): string => {
-  if (!value) return value;
-  return value
-    .replace(/\r\n?/g, '\n')
-    .replace(/\n{6,}/g, '\n\n\n\n');
-};
+import { prepareAttachmentsForStreaming } from './sendMessage/attachments';
+import { createInternalId } from './sendMessage/internalId';
+import { extractSseDataEvents } from './sendMessage/sse';
+import {
+  cloneStreamingMessageDraft,
+  joinStreamingText,
+  normalizeStreamedText,
+} from './sendMessage/streamText';
+import {
+  extractTaskReviewPanelFromToolStream,
+  extractUiPromptPanelFromToolStream,
+} from './sendMessage/toolPanels';
 
 // 工厂函数：创建 sendMessage 处理器，注入依赖以便于在 store 外部维护
 export function createSendMessageHandler({
@@ -356,6 +74,153 @@ export function createSendMessageHandler({
     }
 
     const conversationTurnId = createInternalId('turn');
+    let streamedTextBuffer = '';
+    let tempAssistantMessage: any = {
+      id: '',
+      sessionId: currentSessionId,
+      role: 'assistant' as const,
+      content: '',
+      status: 'streaming' as const,
+      createdAt: new Date(),
+      metadata: {},
+    };
+    const tryParseJsonObject = (raw: string): Record<string, any> | null => {
+      const trimmed = raw.trim();
+      if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) {
+        return null;
+      }
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          return parsed as Record<string, any>;
+        }
+      } catch {
+        return null;
+      }
+      return null;
+    };
+
+    const resolveNestedErrorDetails = (
+      candidate: unknown,
+      depth = 0,
+    ): { message?: string; code?: string } => {
+      if (depth > 4 || candidate === null || candidate === undefined) {
+        return {};
+      }
+
+      if (candidate instanceof Error) {
+        return resolveNestedErrorDetails(candidate.message, depth + 1);
+      }
+
+      if (typeof candidate === 'string') {
+        const trimmed = candidate.trim();
+        if (!trimmed) {
+          return {};
+        }
+        const parsed = tryParseJsonObject(trimmed);
+        if (parsed) {
+          const fromParsed = resolveNestedErrorDetails(parsed, depth + 1);
+          if (fromParsed.message || fromParsed.code) {
+            return fromParsed;
+          }
+        }
+        return { message: trimmed };
+      }
+
+      if (typeof candidate !== 'object') {
+        return {};
+      }
+
+      const raw = candidate as Record<string, any>;
+      const directMessage = typeof raw.message === 'string' ? raw.message.trim() : '';
+      const directCode = typeof raw.code === 'string'
+        ? raw.code.trim()
+        : (typeof raw.type === 'string' ? raw.type.trim() : '');
+
+      if (directMessage) {
+        return {
+          message: directMessage,
+          code: directCode || undefined,
+        };
+      }
+
+      const nestedCandidates = [raw.error, raw.data, raw.details];
+      for (const nested of nestedCandidates) {
+        const resolved = resolveNestedErrorDetails(nested, depth + 1);
+        if (resolved.message || resolved.code) {
+          if (!resolved.code && directCode) {
+            return { ...resolved, code: directCode };
+          }
+          return resolved;
+        }
+      }
+
+      return directCode ? { code: directCode } : {};
+    };
+
+    const resolveStreamErrorPayload = (payload: any): { message: string; code?: string } => {
+      const directCode = typeof payload?.code === 'string'
+        ? payload.code.trim()
+        : (typeof payload?.data?.code === 'string' ? payload.data.code.trim() : '');
+
+      const candidates = [
+        payload?.message,
+        payload?.error,
+        payload?.data?.message,
+        payload?.data?.error,
+      ];
+
+      for (const candidate of candidates) {
+        const resolved = resolveNestedErrorDetails(candidate);
+        if (resolved.message) {
+          return {
+            message: resolved.message,
+            code: directCode || resolved.code,
+          };
+        }
+      }
+
+      const fallbackResolved = resolveNestedErrorDetails(payload);
+      if (fallbackResolved.message) {
+        return {
+          message: fallbackResolved.message,
+          code: directCode || fallbackResolved.code,
+        };
+      }
+
+      return {
+        message: 'Stream error',
+        code: directCode || fallbackResolved.code,
+      };
+    };
+
+    const resolveReadableErrorMessage = (inputError: unknown): string => {
+      const nested = resolveNestedErrorDetails(inputError);
+      if (typeof nested.message === 'string' && nested.message.trim().length > 0) {
+        return nested.message.trim();
+      }
+      if (inputError instanceof Error && inputError.message.trim().length > 0) {
+        return inputError.message.trim();
+      }
+      if (typeof inputError === 'string' && inputError.trim().length > 0) {
+        return inputError.trim();
+      }
+      if (inputError && typeof inputError === 'object') {
+        const maybeMessage = (inputError as any).message;
+        if (typeof maybeMessage === 'string' && maybeMessage.trim().length > 0) {
+          return maybeMessage.trim();
+        }
+      }
+      return '请求失败，请稍后重试';
+    };
+
+    const formatAssistantFailureContent = (reason: string, existingContent: string): string => {
+      const normalizedReason = reason.trim().length > 0 ? reason.trim() : '请求失败，请稍后重试';
+      if (existingContent.trim().length > 0) {
+        return `${existingContent.trim()}\n\n[请求失败] ${normalizedReason}`;
+      }
+      return `请求失败：${normalizedReason}`;
+    };
 
     try {
       const activeModelConfig = selectedAgent
@@ -364,66 +229,10 @@ export function createSendMessageHandler({
       const supportsImages = activeModelConfig?.supports_images === true;
       const supportsReasoning = activeModelConfig?.supports_reasoning === true || !!activeModelConfig?.thinking_level;
       const reasoningEnabled = supportsReasoning && (chatConfig?.reasoningEnabled === true || !!activeModelConfig?.thinking_level);
-      const safeAttachments = Array.isArray(attachments)
-        ? (supportsImages ? attachments : attachments.filter((f: any) => !(f && typeof f.type === 'string' && f.type.startsWith('image/'))))
-        : [];
-
-      // 预处理附件：生成前端展示对象和发送给后端的精简对象
-      const readFileAsDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result));
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-      });
-      const readFileAsText = (file: File) => new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result));
-        reader.onerror = reject;
-        reader.readAsText(file);
-      });
-
-      const makePreviewAttachment = async (file: File) => {
-        const isImage = file.type.startsWith('image/');
-        const isAudio = file.type.startsWith('audio/');
-        const url = isImage || isAudio ? await readFileAsDataUrl(file) : URL.createObjectURL(file);
-        return {
-          id: `att_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-          messageId: 'temp',
-          type: isImage ? 'image' : (isAudio ? 'audio' : 'file'),
-          name: file.name,
-          url,
-          size: file.size,
-          mimeType: file.type,
-          createdAt: new Date(),
-        };
-      };
-
-      const makeApiAttachment = async (file: File) => {
-        const isImage = file.type.startsWith('image/');
-        const isText = file.type.startsWith('text/') || file.type === 'application/json';
-        const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
-        const isDocx = file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || /\.docx$/i.test(file.name);
-        const MAX_EMBED = 5 * 1024 * 1024; // 5MB 上限，超出不内联内容
-
-        if (isImage) {
-          const dataUrl = await readFileAsDataUrl(file);
-          return { name: file.name, mimeType: file.type, size: file.size, type: 'image', dataUrl };
-        }
-        if (isText) {
-          const text = await readFileAsText(file);
-          return { name: file.name, mimeType: file.type, size: file.size, type: 'file', text };
-        }
-        if ((isPdf || isDocx) && file.size <= MAX_EMBED) {
-          // 小体积 docx/pdf 以内联 base64，由后端负责抽取正文
-          const dataUrl = await readFileAsDataUrl(file);
-          return { name: file.name, mimeType: isPdf ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', size: file.size, type: 'file', dataUrl };
-        }
-        // 其他或超限：仅元数据
-        return { name: file.name, mimeType: file.type, size: file.size, type: 'file' };
-      };
-
-      const previewAttachments = await Promise.all((safeAttachments || []).map(makePreviewAttachment));
-      const apiAttachments = await Promise.all((safeAttachments || []).map(makeApiAttachment));
+      const { previewAttachments, apiAttachments } = await prepareAttachmentsForStreaming(
+        attachments,
+        supportsImages,
+      );
 
       // 创建用户消息（仅前端展示，不立即保存数据库）
       const userMessageTime = new Date();
@@ -493,7 +302,7 @@ export function createSendMessageHandler({
 
       // 创建临时的助手消息用于UI显示，但不保存到数据库
       const assistantMessageTime = new Date(userMessageTime.getTime() + 1);
-      const tempAssistantMessage = {
+      tempAssistantMessage = {
         id: `temp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         sessionId: currentSessionId,
         role: 'assistant' as const,
@@ -615,46 +424,7 @@ export function createSendMessageHandler({
       const decoder = new TextDecoder();
       let buffer = '';
       let sawDone = false;
-      let streamedTextBuffer = '';
-
-      const extractSseDataEvents = (source: string) => {
-        const events: string[] = [];
-        let cursor = 0;
-
-        while (cursor < source.length) {
-          const crlfIdx = source.indexOf('\r\n\r\n', cursor);
-          const lfIdx = source.indexOf('\n\n', cursor);
-
-          if (crlfIdx === -1 && lfIdx === -1) {
-            break;
-          }
-
-          let boundary = -1;
-          let separatorLength = 0;
-          if (crlfIdx !== -1 && (lfIdx === -1 || crlfIdx < lfIdx)) {
-            boundary = crlfIdx;
-            separatorLength = 4;
-          } else {
-            boundary = lfIdx;
-            separatorLength = 2;
-          }
-
-          const rawEvent = source.slice(cursor, boundary);
-          cursor = boundary + separatorLength;
-
-          const dataLines = rawEvent
-            .split(/\r?\n/)
-            .map((line) => line.trimStart())
-            .filter((line) => line.startsWith('data:'))
-            .map((line) => line.slice(5).trimStart());
-
-          if (dataLines.length > 0) {
-            events.push(dataLines.join('\n').trim());
-          }
-        }
-
-        return { events, rest: source.slice(cursor) };
-      };
+      let parseFailureCount = 0;
 
       const ensureStreamingMessage = (state: any) => {
         let message = state.messages.find((m: any) => m.id === tempAssistantMessage.id);
@@ -841,18 +611,28 @@ export function createSendMessageHandler({
                 break;
               }
 
+            let parsed: any;
             try {
-                const parsed = JSON.parse(data);
+              parsed = JSON.parse(data);
+              parseFailureCount = 0;
+            } catch (parseError) {
+              parseFailureCount += 1;
+              if (parseFailureCount >= 5) {
+                const detail = parseError instanceof Error ? parseError.message : String(parseError);
+                throw new Error(`流式响应解析失败（已重试 5 次）: ${detail}`);
+              }
+              continue;
+            }
 
-                // 兼容后端以字符串形式发送的 [DONE]
-                if (typeof parsed === 'string' && parsed === '[DONE]') {
-                  debugLog('✅ 收到完成信号');
-                  sawDone = true;
-                  break;
-                }
+            // 兼容后端以字符串形式发送的 [DONE]
+            if (typeof parsed === 'string' && parsed === '[DONE]') {
+              debugLog('✅ 收到完成信号');
+              sawDone = true;
+              break;
+            }
 
-                // 处理后端发送的数据格式
-                if (parsed.type === 'chunk') {
+            // 处理后端发送的数据格式
+            if (parsed.type === 'chunk') {
                   // 后端发送格式: {type: 'chunk', content: '...', accumulated: '...'}
                   if (parsed.content) {
                     const contentStr =
@@ -864,7 +644,7 @@ export function createSendMessageHandler({
                     appendTextToStreamingMessage(contentStr);
                   }
 
-                } else if (parsed.type === 'thinking') {
+            } else if (parsed.type === 'thinking') {
                   // 新增类型：模型的思考过程（与正文分离，可折叠显示，灰色字体）
                   if (parsed.content) {
                     set((state: any) => {
@@ -908,7 +688,7 @@ export function createSendMessageHandler({
                       persistStreamingMessageDraft(state, message);
                     });
                   }
-                } else if (parsed.type === 'content') {
+            } else if (parsed.type === 'content') {
                   // 兼容旧格式: {type: 'content', content: '...'}
                   const contentStr =
                     typeof parsed.content === 'string'
@@ -918,7 +698,7 @@ export function createSendMessageHandler({
                       : parsed.content || '';
                   appendTextToStreamingMessage(contentStr);
 
-                } else if (parsed.type === 'tools_start') {
+            } else if (parsed.type === 'tools_start') {
                   // 处理工具调用事件
                   debugLog('🔧 收到工具调用:', parsed.data);
                   debugLog('🔧 工具调用数据类型:', typeof parsed.data, '是否为数组:', Array.isArray(parsed.data));
@@ -1001,7 +781,7 @@ export function createSendMessageHandler({
                     (message as any).updatedAt = new Date();
                     persistStreamingMessageDraft(state, message);
                   });
-                } else if (parsed.type === 'tools_end') {
+            } else if (parsed.type === 'tools_end') {
                   // 处理工具结果事件
                   debugLog('🔧 收到工具结果:', parsed.data);
                   debugLog('🔧 工具结果数据类型:', typeof parsed.data);
@@ -1024,7 +804,6 @@ export function createSendMessageHandler({
                       const toolCallId = result.tool_call_id || result.id || result.toolCallId;
 
                       if (!toolCallId) {
-                        console.warn('⚠️ 工具结果缺少工具调用ID:', result);
                         return;
                       }
 
@@ -1086,7 +865,7 @@ export function createSendMessageHandler({
                     (message as any).updatedAt = new Date();
                     persistStreamingMessageDraft(state, message);
                   });
-                } else if (parsed.type === 'tools_stream') {
+            } else if (parsed.type === 'tools_stream') {
                   // 处理工具流式返回内容
                   debugLog('🔧 收到工具流式数据:', parsed.data);
                   const data = parsed.data;
@@ -1186,7 +965,6 @@ export function createSendMessageHandler({
                     const toolCallId = data.toolCallId || data.tool_call_id || data.id;
 
                     if (!toolCallId) {
-                      console.warn('⚠️ 工具流式数据缺少工具调用ID:', data);
                       return;
                     }
 
@@ -1243,9 +1021,14 @@ export function createSendMessageHandler({
                       persistStreamingMessageDraft(state, message);
                     }
                   });
-                } else if (parsed.type === 'error') {
-                  throw new Error(parsed.message || parsed.data?.message || 'Stream error');
-                } else if (parsed.type === 'cancelled') {
+            } else if (parsed.type === 'error') {
+              const streamError = resolveStreamErrorPayload(parsed);
+              throw new Error(
+                typeof streamError.code === 'string' && streamError.code.trim().length > 0
+                  ? `[${streamError.code}] ${streamError.message}`
+                  : streamError.message
+              );
+            } else if (parsed.type === 'cancelled') {
                   // 标记当前消息中的工具调用为已取消，避免一直处于等待中
                   set((state: any) => {
                     const message = ensureStreamingMessage(state);
@@ -1267,26 +1050,25 @@ export function createSendMessageHandler({
                   debugLog('⚠️ 流式会话已被取消');
                   sawDone = true;
                   break;
-                } else if (parsed.type === 'done') {
+            } else if (parsed.type === 'done') {
                   debugLog('✅ 收到完成信号');
                   sawDone = true;
                   break;
-                } else if (parsed.type === 'complete') {
+            } else if (parsed.type === 'complete') {
                   const finalContent = parsed?.result?.content;
                   if (typeof finalContent === 'string' && finalContent.length > 0) {
                     applyCompleteContent(finalContent);
                   }
                   sawDone = true;
                   break;
-                }
-            } catch (parseError) {
-                const preview = data.length > 400 ? `${data.slice(0, 400)}...` : data;
-                console.warn('解析流式数据失败:', parseError, 'dataPreview:', preview);
-              }
             }
+          }
 
           if (done) {
             debugLog('✅ 流式响应完成');
+            if (!sawDone) {
+              throw new Error('流式响应在完成前中断，请稍后重试');
+            }
             break;
           }
 
@@ -1302,7 +1084,7 @@ export function createSendMessageHandler({
           const currentDraft = state.sessionStreamingMessageDrafts?.[currentSessionId];
           if (currentDraft) {
             const finalizedDraft = cloneStreamingMessageDraft(currentDraft);
-            const finalizedStatus = sawDone ? 'completed' : ((finalizedDraft as any)?.status || 'streaming');
+            const finalizedStatus = sawDone ? 'completed' : 'error';
             (finalizedDraft as any).status = finalizedStatus;
             const existingIndex = state.messages.findIndex((m: any) => m.id === tempAssistantMessage.id);
             const shouldWriteToCurrentMessages = existingIndex !== -1 || state.currentSessionId === currentSessionId;
@@ -1331,38 +1113,65 @@ export function createSendMessageHandler({
 
       debugLog('✅ 消息发送完成');
     } catch (error) {
-      console.error('❌ 发送消息失败:', error);
+      const readableError = resolveReadableErrorMessage(error);
+      console.error('❌ 发送消息失败:', readableError, error);
 
-      // 移除临时消息并显示错误
       set((state: any) => {
+        const existingAssistantIndex = tempAssistantId
+          ? state.messages.findIndex((m: any) => m.id === tempAssistantId)
+          : -1;
+        const currentDraft = state.sessionStreamingMessageDrafts?.[currentSessionId];
+        const baseAssistant = existingAssistantIndex !== -1
+          ? state.messages[existingAssistantIndex]
+          : (currentDraft ? cloneStreamingMessageDraft(currentDraft) : {
+              ...tempAssistantMessage,
+              content: streamedTextBuffer,
+              metadata: {
+                ...(tempAssistantMessage.metadata || {}),
+                contentSegments: [{ content: streamedTextBuffer, type: 'text' as const }],
+                currentSegmentIndex: 0,
+              },
+            });
+        const failureContent = formatAssistantFailureContent(
+          readableError,
+          typeof baseAssistant?.content === 'string' ? baseAssistant.content : streamedTextBuffer,
+        );
+        const nextMetadata = {
+          ...(baseAssistant?.metadata || {}),
+          contentSegments: [{ content: failureContent, type: 'text' as const }],
+          currentSegmentIndex: 0,
+          requestError: readableError,
+        };
+        const failureAssistantMessage = {
+          ...baseAssistant,
+          role: 'assistant' as const,
+          status: 'error' as const,
+          content: failureContent,
+          metadata: nextMetadata,
+          updatedAt: new Date(),
+        };
+
+        if (existingAssistantIndex !== -1) {
+          state.messages[existingAssistantIndex] = failureAssistantMessage;
+        } else if (state.currentSessionId === currentSessionId) {
+          state.messages.push(failureAssistantMessage);
+        }
+
         if (state.sessionStreamingMessageDrafts) {
           state.sessionStreamingMessageDrafts[currentSessionId] = null;
         }
-        if (state.currentSessionId === currentSessionId) {
-          if (tempAssistantId) {
-            const assistantIndex = state.messages.findIndex((m: any) => m.id === tempAssistantId);
-            if (assistantIndex !== -1) {
-              state.messages.splice(assistantIndex, 1);
-            }
-          }
-          if (tempUserId) {
-            const userIndex = state.messages.findIndex((m: any) => m.id === tempUserId);
-            if (userIndex !== -1) {
-              state.messages.splice(userIndex, 1);
-            }
-          }
-        }
+
         const prev = state.sessionChatState[currentSessionId] || { isLoading: false, isStreaming: false, streamingMessageId: null };
         state.sessionChatState[currentSessionId] = { ...prev, isLoading: false, isStreaming: false, streamingMessageId: null };
         if (state.currentSessionId === currentSessionId) {
           state.isLoading = false;
           state.isStreaming = false;
           state.streamingMessageId = null;
-          state.error = error instanceof Error ? error.message : 'Failed to send message';
+          state.error = readableError;
         }
       });
 
-      throw error;
+      throw new Error(readableError);
     }
   };
 }

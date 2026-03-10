@@ -45,8 +45,7 @@ export const fetchSession = async (client: ApiClient, sessionId: string): Promis
     const session = await client.getSession(sessionId);
     if (!session) return null;
     return normalizeSession(session);
-  } catch (error) {
-    console.warn('Failed to fetch session:', error);
+  } catch {
     return null;
   }
 };

@@ -85,6 +85,45 @@ pub(super) fn is_request_body_too_large_error(err: &str) -> bool {
         || message.contains("payload too large")
 }
 
+pub(super) fn is_response_parse_error(err: &str) -> bool {
+    let message = err.to_lowercase();
+    message.contains("invalid json response")
+        || message.contains("stream response parse failed")
+        || message.contains("error decoding response body")
+        || message.contains("unexpected end of json input")
+        || message.contains("eof while parsing")
+}
+
+pub(super) fn is_transient_network_error(err: &str) -> bool {
+    let message = err.to_lowercase();
+    message.contains("error sending request for url")
+        || message.contains("connection closed before message completed")
+        || message.contains("connection reset")
+        || message.contains("broken pipe")
+        || message.contains("connection refused")
+        || message.contains("network is unreachable")
+        || message.contains("unexpected eof")
+        || message.contains("timed out")
+        || message.contains("timeout")
+        || message.contains("dns error")
+        || message.contains("temporary failure in name resolution")
+        || message.contains("failed to lookup address information")
+        || message.contains("status 408")
+        || message.contains("status 502")
+        || message.contains("status 503")
+        || message.contains("status 504")
+        || message.contains("status 522")
+        || message.contains("status 523")
+        || message.contains("status 524")
+        || message.contains("engine_overloaded_error")
+        || message.contains("currently overloaded, please try again later")
+        || message.contains("server is currently overloaded")
+}
+
+pub(super) fn is_transient_transport_or_parse_error(err: &str) -> bool {
+    is_transient_network_error(err) || is_response_parse_error(err)
+}
+
 pub(super) fn reduce_history_limit(limit: i64) -> Option<i64> {
     if limit <= 1 {
         return None;
@@ -97,8 +136,10 @@ pub(super) fn reduce_history_limit(limit: i64) -> Option<i64> {
 mod tests {
     use super::{
         base_url_disallows_system_messages, is_context_length_exceeded_error,
-        is_request_body_too_large_error, is_system_messages_not_allowed_error,
-        reduce_history_limit, should_use_prev_id_for_next_turn,
+        is_request_body_too_large_error, is_response_parse_error,
+        is_system_messages_not_allowed_error, is_transient_network_error,
+        is_transient_transport_or_parse_error, reduce_history_limit,
+        should_use_prev_id_for_next_turn,
     };
 
     #[test]
@@ -158,5 +199,44 @@ mod tests {
         ));
         assert!(is_request_body_too_large_error("payload too large"));
         assert!(!is_request_body_too_large_error("rate_limit_exceeded"));
+    }
+
+    #[test]
+    fn detects_response_parse_errors() {
+        assert!(is_response_parse_error(
+            "invalid JSON response (status 200): expected value at line 1 column 1"
+        ));
+        assert!(is_response_parse_error(
+            "stream response parse failed: no valid events parsed"
+        ));
+        assert!(!is_response_parse_error("status 401: unauthorized"));
+    }
+
+    #[test]
+    fn detects_transient_network_errors() {
+        assert!(is_transient_network_error(
+            "error sending request for url (https://api.openai.com/v1/responses)"
+        ));
+        assert!(is_transient_network_error(
+            "status 503: service unavailable"
+        ));
+        assert!(is_transient_network_error(
+            "{\"error\":{\"message\":\"The engine is currently overloaded, please try again later\",\"type\":\"engine_overloaded_error\"}}"
+        ));
+        assert!(is_transient_network_error("request timed out"));
+        assert!(!is_transient_network_error("status 401: invalid api key"));
+    }
+
+    #[test]
+    fn combines_transient_network_and_parse_detection() {
+        assert!(is_transient_transport_or_parse_error(
+            "invalid JSON response (status 200): expected value"
+        ));
+        assert!(is_transient_transport_or_parse_error(
+            "status 504: gateway timeout"
+        ));
+        assert!(!is_transient_transport_or_parse_error(
+            "status 400: invalid_request_error"
+        ));
     }
 }

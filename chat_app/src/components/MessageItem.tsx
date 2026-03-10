@@ -7,13 +7,11 @@ import type { Message, Attachment, ToolCall } from '../types';
 
 interface ToolCallTimelineProps {
   toolCalls: ToolCall[];
-  allMessages: Message[];
   toolResultById?: Map<string, Message>;
 }
 
 const ToolCallTimeline: React.FC<ToolCallTimelineProps> = ({
   toolCalls,
-  allMessages,
   toolResultById,
 }) => {
   const [expanded, setExpanded] = useState(false);
@@ -23,13 +21,7 @@ const ToolCallTimeline: React.FC<ToolCallTimelineProps> = ({
     if (toolCall.result !== undefined && toolCall.result !== null) return toolCall.result;
     const direct = toolResultById?.get(String(toolCall.id));
     if (direct?.content !== undefined && direct?.content !== null) return direct.content;
-    const fallback = allMessages.find(msg => {
-      if (msg.role !== 'tool') return false;
-      const topLevelId = (msg as any).tool_call_id || (msg as any).toolCallId;
-      const metadataId = msg.metadata?.tool_call_id || msg.metadata?.toolCallId;
-      return topLevelId === toolCall.id || metadataId === toolCall.id;
-    });
-    return fallback?.content;
+    return undefined;
   };
 
   const getToolStatus = (toolCall: ToolCall) => {
@@ -50,7 +42,7 @@ const ToolCallTimeline: React.FC<ToolCallTimelineProps> = ({
     if (hasError) return 'error';
     if (allDone) return 'success';
     return 'pending';
-  }, [toolCalls, allMessages, toolResultById]);
+  }, [toolCalls, toolResultById]);
 
   const summaryNames = useMemo(() => {
     const names = toolCalls.map(tc => tc?.name).filter(Boolean);
@@ -116,7 +108,6 @@ const ToolCallTimeline: React.FC<ToolCallTimelineProps> = ({
                 <div className="flex-1">
                   <ToolCallRenderer
                     toolCall={toolCall}
-                    allMessages={allMessages}
                     toolResultById={toolResultById}
                   />
                 </div>
@@ -147,7 +138,6 @@ interface MessageItemProps {
   onDelete?: (messageId: string) => void;
   onToggleTurnProcess?: (userMessageId: string) => void;
   renderContext?: 'chat' | 'process_drawer';
-  allMessages?: Message[]; // 添加所有消息的引用
   derivedProcessStatsByUserId?: Map<string, DerivedProcessStats>;
   toolResultById?: Map<string, Message>;
   assistantToolCallsById?: Map<string, ToolCall>;
@@ -158,6 +148,7 @@ interface MessageItemProps {
     renderMessage?: (message: Message) => React.ReactNode;
     renderAttachment?: (attachment: Attachment) => React.ReactNode;
   };
+  linkedUserExpandedForAssistant?: boolean;
 }
 
 const MessageItemComponent: React.FC<MessageItemProps> = ({
@@ -168,11 +159,11 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
   onDelete,
   onToggleTurnProcess,
   renderContext = 'chat',
-  allMessages = [],
   derivedProcessStatsByUserId,
   toolResultById,
   assistantToolCallsById,
   customRenderer,
+  linkedUserExpandedForAssistant,
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(message.content);
@@ -214,102 +205,10 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
       return emptyDerivedStats;
     }
 
-    const precomputed = derivedProcessStatsByUserId?.get(message.id);
-    if (precomputed) {
-      return precomputed;
-    }
-
-    const finalAssistantMessageId = normalizeMetaId(message.metadata?.historyProcess?.finalAssistantMessageId);
-    const userTurnId = normalizeMetaId(
-      message.metadata?.conversation_turn_id || message.metadata?.historyProcess?.turnId,
-    );
-    const linkedProcessAssistants = allMessages.filter((candidate) => (
-      candidate.role === 'assistant'
-      && (
-        candidate.metadata?.historyProcessUserMessageId === message.id
-        || (userTurnId && candidate.metadata?.historyProcessTurnId === userTurnId)
-      )
-      && candidate.metadata?.historyProcessPlaceholder !== true
-    ));
-
-    const finalAssistantForUser = allMessages.find((candidate) => (
-      candidate.role === 'assistant' && (
-        !candidate.metadata?.historyProcessUserMessageId
-        && !candidate.metadata?.historyProcessTurnId
-        && (
-          (finalAssistantMessageId && candidate.id === finalAssistantMessageId)
-          || candidate.metadata?.historyFinalForUserMessageId === message.id
-          || (userTurnId && (
-            candidate.metadata?.historyFinalForTurnId === userTurnId
-            || candidate.metadata?.conversation_turn_id === userTurnId
-          ))
-        )
-      )
-    ));
-
-    const assistantPool = [...linkedProcessAssistants];
-    if (finalAssistantForUser && !assistantPool.some((candidate) => candidate.id === finalAssistantForUser.id)) {
-      assistantPool.push(finalAssistantForUser);
-    }
-
-    if (assistantPool.length === 0) {
-      return emptyDerivedStats;
-    }
-
-    let hasStreamingAssistant = false;
-    let thinkingCount = 0;
-    const toolCallIds = new Set<string>();
-
-    assistantPool.forEach((assistantMessage) => {
-      if (assistantMessage.status === 'streaming') {
-        hasStreamingAssistant = true;
-      }
-
-      const toolCalls = Array.isArray(assistantMessage.metadata?.toolCalls)
-        ? assistantMessage.metadata.toolCalls
-        : [];
-      toolCalls.forEach((toolCall: any) => {
-        const id = normalizeMetaId(toolCall?.id);
-        if (id) {
-          toolCallIds.add(id);
-        }
-      });
-
-      const segments = Array.isArray(assistantMessage.metadata?.contentSegments)
-        ? assistantMessage.metadata.contentSegments
-        : [];
-      segments.forEach((segment: any) => {
-        if (segment?.type === 'tool_call') {
-          const id = normalizeMetaId(segment?.toolCallId);
-          if (id) {
-            toolCallIds.add(id);
-          }
-          return;
-        }
-        if (
-          segment?.type === 'thinking'
-          && typeof segment?.content === 'string'
-          && segment.content.trim().length > 0
-        ) {
-          thinkingCount += 1;
-        }
-      });
-    });
-
-    return {
-      hasProcess: toolCallIds.size > 0 || thinkingCount > 0 || linkedProcessAssistants.length > 0,
-      hasStreamingAssistant,
-      toolCallCount: toolCallIds.size,
-      thinkingCount,
-      processMessageCount: linkedProcessAssistants.length,
-    };
+    return derivedProcessStatsByUserId?.get(message.id) || emptyDerivedStats;
   }, [
-    allMessages,
     isUser,
     message.id,
-    message.metadata?.conversation_turn_id,
-    message.metadata?.historyProcess?.finalAssistantMessageId,
-    message.metadata?.historyProcess?.turnId,
     derivedProcessStatsByUserId,
   ]);
 
@@ -340,46 +239,11 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
     && Boolean(message.metadata?.historyProcessUserMessageId || message.metadata?.historyProcessTurnId)
   );
   const linkedUserExpandedForFinalAssistant = useMemo(() => {
-    if (!isAssistant || isProcessAssistant) {
-      return false;
+    if (typeof linkedUserExpandedForAssistant === 'boolean') {
+      return linkedUserExpandedForAssistant;
     }
-
-    const linkedUserMessageId = normalizeMetaId(message.metadata?.historyFinalForUserMessageId);
-    const linkedTurnId = normalizeMetaId(
-      message.metadata?.historyFinalForTurnId || message.metadata?.conversation_turn_id,
-    );
-
-    const linkedUser = allMessages.find((candidate) => {
-      if (candidate.role !== 'user') {
-        return false;
-      }
-      if (linkedUserMessageId && candidate.id === linkedUserMessageId) {
-        return true;
-      }
-      const candidateFinalAssistantId = normalizeMetaId(
-        candidate.metadata?.historyProcess?.finalAssistantMessageId,
-      );
-      if (candidateFinalAssistantId && candidateFinalAssistantId === message.id) {
-        return true;
-      }
-      if (!linkedTurnId) {
-        return false;
-      }
-      const candidateTurnId = normalizeMetaId(
-        candidate.metadata?.conversation_turn_id || candidate.metadata?.historyProcess?.turnId,
-      );
-      return candidateTurnId === linkedTurnId;
-    });
-
-    return linkedUser?.metadata?.historyProcess?.expanded === true;
-  }, [
-    allMessages,
-    isAssistant,
-    isProcessAssistant,
-    message.metadata?.conversation_turn_id,
-    message.metadata?.historyFinalForTurnId,
-    message.metadata?.historyFinalForUserMessageId,
-  ]);
+    return false;
+  }, [linkedUserExpandedForAssistant]);
 
   const isTurnLinkedAssistant = (
     isAssistant
@@ -629,7 +493,6 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
                         <ToolCallTimeline
                           key={`tool-group-${index}`}
                           toolCalls={groupedToolCalls}
-                          allMessages={allMessages}
                           toolResultById={toolResultById}
                         />
                       );
@@ -715,7 +578,6 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
                     <div className="space-y-0.5">
                       <ToolCallTimeline
                         toolCalls={toolCalls as ToolCall[]}
-                        allMessages={allMessages}
                         toolResultById={toolResultById}
                       />
                      </div>
@@ -778,103 +640,15 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
 
 // 使用memo优化性能，只在关键props变化时重新渲染
 export const MessageItem = memo(MessageItemComponent, (prevProps, nextProps) => {
-  const getTime = (value: unknown): number => {
-    if (!value) return 0;
-    if (value instanceof Date) return value.getTime();
-    const parsed = new Date(value as any).getTime();
-    return Number.isNaN(parsed) ? 0 : parsed;
-  };
-
-  const summarizeValue = (value: unknown): string => {
-    if (value === null || value === undefined) return "";
-    if (typeof value === "string") {
-      if (!value) return "";
-      const head = value.slice(0, 24);
-      const tail = value.slice(-24);
-      return `${value.length}:${head}:${tail}`;
-    }
-    try {
-      const raw = JSON.stringify(value);
-      if (!raw) return "";
-      return `${raw.length}:${raw.slice(0, 24)}:${raw.slice(-24)}`;
-    } catch {
-      return String(value);
-    }
-  };
-
-  const getToolCalls = (message: Message): any[] => {
-    const topLevel = (message as any).toolCalls;
-    if (Array.isArray(topLevel) && topLevel.length > 0) return topLevel;
-    const fromMeta = message.metadata?.toolCalls;
-    return Array.isArray(fromMeta) ? fromMeta : [];
-  };
-
-  const getToolCallsKey = (message: Message): string => {
-    const toolCalls = getToolCalls(message);
-    if (toolCalls.length === 0) return "";
-    return toolCalls
-      .map((toolCall: any) => {
-        const id = String(toolCall?.id ?? "");
-        const name = String(toolCall?.name ?? "");
-        const completed = toolCall?.completed === true ? "1" : "0";
-        const error = summarizeValue(toolCall?.error ?? "");
-        const streamLog = summarizeValue(toolCall?.streamLog ?? toolCall?.stream_log ?? "");
-        const finalResult = summarizeValue(toolCall?.finalResult ?? toolCall?.final_result ?? "");
-        const result = summarizeValue(toolCall?.result ?? "");
-        const args = summarizeValue(toolCall?.arguments ?? toolCall?.args ?? "");
-        return `${id}~${name}~${completed}~${error}~${streamLog}~${finalResult}~${result}~${args}`;
-      })
-      .join("|");
-  };
-
-  const getContentSegmentsKey = (meta?: Message["metadata"]): string => {
-    const segments = meta?.contentSegments;
-    if (!Array.isArray(segments) || segments.length === 0) return "";
-    return segments
-      .map((segment: any, index: number) => {
-        const type = String(segment?.type ?? "");
-        const toolCallId = String(segment?.toolCallId ?? "");
-        const content = summarizeValue(segment?.content ?? "");
-        return `${index}:${type}:${toolCallId}:${content}`;
-      })
-      .join("|");
-  };
-
-  const getMetaKey = (meta?: Message["metadata"]): string => {
-    if (!meta) return "";
-    const attachmentsLen = meta.attachments?.length ?? 0;
-    const summary = meta.summary ?? "";
-    const model = meta.model ?? "";
-    const hidden = (meta as any).hidden ? "1" : "0";
-    const currentSegmentIndex = String(meta.currentSegmentIndex ?? "");
-    const contentSegmentsKey = getContentSegmentsKey(meta);
-    const process = (meta as any).historyProcess || {};
-    const processKey = `${process.hasProcess ? '1' : '0'}:${process.toolCallCount ?? 0}:${process.thinkingCount ?? 0}:${process.expanded ? '1' : '0'}:${process.loading ? '1' : '0'}:${process.loaded ? '1' : '0'}`;
-    const processUserId = String((meta as any).historyProcessUserMessageId ?? "");
-    const processPlaceholder = (meta as any).historyProcessPlaceholder ? "1" : "0";
-    const processLoaded = (meta as any).historyProcessLoaded ? "1" : "0";
-    const processExpanded = (meta as any).historyProcessExpanded ? "1" : "0";
-    const finalForUser = String((meta as any).historyFinalForUserMessageId ?? "");
-    return `${attachmentsLen}|${summary}|${model}|${hidden}|${currentSegmentIndex}|${contentSegmentsKey}|${processKey}|${processUserId}|${processPlaceholder}|${processLoaded}|${processExpanded}|${finalForUser}`;
-  };
-
-  // 比较关键属性
   return (
-    prevProps.message.id === nextProps.message.id &&
-    prevProps.message.content === nextProps.message.content &&
-    prevProps.message.rawContent === nextProps.message.rawContent &&
-    getTime(prevProps.message.createdAt) === getTime(nextProps.message.createdAt) &&
-    prevProps.message.status === nextProps.message.status &&
-    prevProps.message.tokensUsed === nextProps.message.tokensUsed &&
-    getTime(prevProps.message.updatedAt) === getTime(nextProps.message.updatedAt) &&
+    prevProps.message === nextProps.message &&
     prevProps.isLast === nextProps.isLast &&
     prevProps.isStreaming === nextProps.isStreaming &&
     (prevProps.renderContext ?? 'chat') === (nextProps.renderContext ?? 'chat') &&
     (prevProps.processSignal ?? "") === (nextProps.processSignal ?? "") &&
     (prevProps.toolCallLookupKey ?? "") === (nextProps.toolCallLookupKey ?? "") &&
-    getMetaKey(prevProps.message.metadata) === getMetaKey(nextProps.message.metadata) &&
-    getToolCallsKey(prevProps.message) === getToolCallsKey(nextProps.message) &&
-    (prevProps.toolResultKey ?? "") === (nextProps.toolResultKey ?? "")
+    (prevProps.toolResultKey ?? "") === (nextProps.toolResultKey ?? "") &&
+    (prevProps.linkedUserExpandedForAssistant ?? null) === (nextProps.linkedUserExpandedForAssistant ?? null)
   );
 });
 

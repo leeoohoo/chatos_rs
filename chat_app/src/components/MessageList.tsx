@@ -345,6 +345,65 @@ export const MessageList: React.FC<MessageListProps> = ({
       processSignalByUserMessageId: signalMap,
     };
   }, [messages]);
+  const linkedUserExpandedByAssistantId = useMemo(() => {
+    const userExpandedById = new Map<string, boolean>();
+    const turnExpandedById = new Map<string, boolean>();
+    const finalAssistantExpandedById = new Map<string, boolean>();
+
+    for (const message of messages || []) {
+      if (message.role !== 'user') {
+        continue;
+      }
+      const expanded = message.metadata?.historyProcess?.expanded === true;
+      userExpandedById.set(message.id, expanded);
+
+      const turnId = normalizeTurnId(
+        (message as any)?.metadata?.conversation_turn_id
+        || (message as any)?.metadata?.historyProcess?.turnId,
+      );
+      if (turnId) {
+        turnExpandedById.set(turnId, expanded);
+      }
+
+      const finalAssistantId = normalizeMetaId(
+        (message as any)?.metadata?.historyProcess?.finalAssistantMessageId,
+      );
+      if (finalAssistantId) {
+        finalAssistantExpandedById.set(finalAssistantId, expanded);
+      }
+    }
+
+    const expandedByAssistantId = new Map<string, boolean>();
+    for (const message of messages || []) {
+      if (message.role !== 'assistant') {
+        continue;
+      }
+      const metadata = (message as any)?.metadata || {};
+      if (metadata.historyProcessUserMessageId || metadata.historyProcessTurnId) {
+        continue;
+      }
+
+      const linkedUserMessageId = normalizeMetaId(metadata.historyFinalForUserMessageId);
+      if (linkedUserMessageId && userExpandedById.has(linkedUserMessageId)) {
+        expandedByAssistantId.set(message.id, userExpandedById.get(linkedUserMessageId) === true);
+        continue;
+      }
+
+      const linkedTurnId = normalizeTurnId(
+        metadata.historyFinalForTurnId || metadata.conversation_turn_id,
+      );
+      if (linkedTurnId && turnExpandedById.has(linkedTurnId)) {
+        expandedByAssistantId.set(message.id, turnExpandedById.get(linkedTurnId) === true);
+        continue;
+      }
+
+      if (finalAssistantExpandedById.has(message.id)) {
+        expandedByAssistantId.set(message.id, finalAssistantExpandedById.get(message.id) === true);
+      }
+    }
+
+    return expandedByAssistantId;
+  }, [messages]);
 
   useEffect(() => {
     pendingSessionInitialScrollRef.current = true;
@@ -624,10 +683,10 @@ export const MessageList: React.FC<MessageListProps> = ({
             onEdit={onMessageEdit}
             onDelete={onMessageDelete}
             onToggleTurnProcess={onToggleTurnProcess}
-            allMessages={messages}
             derivedProcessStatsByUserId={derivedProcessStatsByUserId}
             toolResultById={toolResultById}
             assistantToolCallsById={assistantToolCallById}
+            linkedUserExpandedForAssistant={linkedUserExpandedByAssistantId.get(message.id)}
             toolResultKey={toolResultKeyByMessageId.get(message.id) || ''}
             toolCallLookupKey={toolCallLookupKeyByMessageId.get(message.id) || ''}
             processSignal={processSignalByUserMessageId.get(message.id) || ''}

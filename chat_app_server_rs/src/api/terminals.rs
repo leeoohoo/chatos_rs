@@ -10,7 +10,9 @@ use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::Path as FsPath;
+use std::time::Instant;
 use tokio::sync::mpsc;
+use tracing::debug;
 
 use crate::core::auth::AuthUser;
 use crate::core::terminal_access::{ensure_owned_terminal, map_terminal_access_error};
@@ -38,6 +40,7 @@ struct CreateTerminalRequest {
 struct TerminalLogQuery {
     limit: Option<i64>,
     offset: Option<i64>,
+    before: Option<String>,
 }
 
 const DEFAULT_TERMINAL_HISTORY_LIMIT: i64 = 1200;
@@ -187,16 +190,49 @@ async fn list_terminal_logs(
     }
     let limit = normalize_history_limit(query.limit);
     let offset = normalize_history_offset(query.offset);
+    let before = normalize_history_before(query.before);
+    let before_for_log = before.clone().unwrap_or_default();
+    let started_at = Instant::now();
 
-    match list_terminal_logs_recent_page(id.as_str(), limit, offset).await {
-        Ok(list) => (
-            StatusCode::OK,
-            Json(serde_json::to_value(list).unwrap_or(Value::Null)),
-        ),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": err })),
-        ),
+    let result = if let Some(before) = before.as_deref() {
+        list_terminal_logs_before_page(id.as_str(), limit, before).await
+    } else {
+        list_terminal_logs_recent_page(id.as_str(), limit, offset).await
+    };
+
+    match result {
+        Ok(list) => {
+            debug!(
+                target: "perf",
+                "terminal_history_fetch terminal_id={} limit={} offset={} before={} rows={} elapsed_ms={}",
+                id,
+                limit,
+                offset,
+                before_for_log,
+                list.len(),
+                started_at.elapsed().as_millis()
+            );
+            (
+                StatusCode::OK,
+                Json(serde_json::to_value(list).unwrap_or(Value::Null)),
+            )
+        }
+        Err(err) => {
+            debug!(
+                target: "perf",
+                "terminal_history_fetch terminal_id={} limit={} offset={} before={} error=true elapsed_ms={} err={}",
+                id,
+                limit,
+                offset,
+                before_for_log,
+                started_at.elapsed().as_millis(),
+                err
+            );
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": err })),
+            )
+        }
     }
 }
 
@@ -208,6 +244,14 @@ fn normalize_history_limit(limit: Option<i64>) -> i64 {
 
 fn normalize_history_offset(offset: Option<i64>) -> i64 {
     offset.unwrap_or(0).max(0)
+}
+
+fn normalize_history_before(before: Option<String>) -> Option<String> {
+    before
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string())
 }
 
 async fn list_terminal_logs_recent_page(
@@ -224,6 +268,14 @@ async fn list_terminal_logs_recent_page(
     }
 
     Ok(logs)
+}
+
+async fn list_terminal_logs_before_page(
+    terminal_id: &str,
+    limit: i64,
+    before_created_at: &str,
+) -> Result<Vec<TerminalLog>, String> {
+    TerminalLogService::list_before(terminal_id, before_created_at, limit).await
 }
 
 async fn terminal_ws(

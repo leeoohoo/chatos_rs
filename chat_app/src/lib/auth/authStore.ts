@@ -1,4 +1,4 @@
-import { create } from 'zustand';
+import { createWithEqualityFn } from 'zustand/traditional';
 import { persist } from 'zustand/middleware';
 import { apiClient } from '@/lib/api/client';
 
@@ -34,7 +34,7 @@ function extractErrorMessage(error: unknown): string {
 
 let tokenRefreshListenerRegistered = false;
 
-export const useAuthStore = create<AuthState>()(
+export const useAuthStore = createWithEqualityFn<AuthState>()(
   persist(
     (set, get) => {
       if (!tokenRefreshListenerRegistered) {

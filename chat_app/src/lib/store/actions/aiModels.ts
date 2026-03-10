@@ -121,9 +121,7 @@ export function createAiModelActions({ set, get, client, getUserIdParam }: { set
       if (sessionIdToPersist) {
         void client
           .updateSession(sessionIdToPersist, { metadata: metadataToPersist })
-          .catch((error) => {
-            console.warn('Failed to persist selected model to session metadata:', error);
-          });
+          .catch(() => {});
       }
     },
   };
