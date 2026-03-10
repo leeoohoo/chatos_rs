@@ -74,6 +74,39 @@ export function createSendMessageHandler({
     }
 
     const conversationTurnId = createInternalId('turn');
+    let streamedTextBuffer = '';
+    let tempAssistantMessage: any = {
+      id: '',
+      sessionId: currentSessionId,
+      role: 'assistant' as const,
+      content: '',
+      status: 'streaming' as const,
+      createdAt: new Date(),
+      metadata: {},
+    };
+    const resolveReadableErrorMessage = (inputError: unknown): string => {
+      if (inputError instanceof Error && inputError.message.trim().length > 0) {
+        return inputError.message.trim();
+      }
+      if (typeof inputError === 'string' && inputError.trim().length > 0) {
+        return inputError.trim();
+      }
+      if (inputError && typeof inputError === 'object') {
+        const maybeMessage = (inputError as any).message;
+        if (typeof maybeMessage === 'string' && maybeMessage.trim().length > 0) {
+          return maybeMessage.trim();
+        }
+      }
+      return '请求失败，请稍后重试';
+    };
+
+    const formatAssistantFailureContent = (reason: string, existingContent: string): string => {
+      const normalizedReason = reason.trim().length > 0 ? reason.trim() : '请求失败，请稍后重试';
+      if (existingContent.trim().length > 0) {
+        return `${existingContent.trim()}\n\n[请求失败] ${normalizedReason}`;
+      }
+      return `请求失败：${normalizedReason}`;
+    };
 
     try {
       const activeModelConfig = selectedAgent
@@ -155,7 +188,7 @@ export function createSendMessageHandler({
 
       // 创建临时的助手消息用于UI显示，但不保存到数据库
       const assistantMessageTime = new Date(userMessageTime.getTime() + 1);
-      const tempAssistantMessage = {
+      tempAssistantMessage = {
         id: `temp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         sessionId: currentSessionId,
         role: 'assistant' as const,
@@ -277,7 +310,7 @@ export function createSendMessageHandler({
       const decoder = new TextDecoder();
       let buffer = '';
       let sawDone = false;
-      let streamedTextBuffer = '';
+      let parseFailureCount = 0;
 
       const ensureStreamingMessage = (state: any) => {
         let message = state.messages.find((m: any) => m.id === tempAssistantMessage.id);
@@ -464,18 +497,30 @@ export function createSendMessageHandler({
                 break;
               }
 
+            let parsed: any;
             try {
-                const parsed = JSON.parse(data);
+              parsed = JSON.parse(data);
+              parseFailureCount = 0;
+            } catch (parseError) {
+              const preview = data.length > 400 ? `${data.slice(0, 400)}...` : data;
+              console.warn('解析流式数据失败:', parseError, 'dataPreview:', preview);
+              parseFailureCount += 1;
+              if (parseFailureCount >= 5) {
+                const detail = parseError instanceof Error ? parseError.message : String(parseError);
+                throw new Error(`流式响应解析失败（已重试 5 次）: ${detail}`);
+              }
+              continue;
+            }
 
-                // 兼容后端以字符串形式发送的 [DONE]
-                if (typeof parsed === 'string' && parsed === '[DONE]') {
-                  debugLog('✅ 收到完成信号');
-                  sawDone = true;
-                  break;
-                }
+            // 兼容后端以字符串形式发送的 [DONE]
+            if (typeof parsed === 'string' && parsed === '[DONE]') {
+              debugLog('✅ 收到完成信号');
+              sawDone = true;
+              break;
+            }
 
-                // 处理后端发送的数据格式
-                if (parsed.type === 'chunk') {
+            // 处理后端发送的数据格式
+            if (parsed.type === 'chunk') {
                   // 后端发送格式: {type: 'chunk', content: '...', accumulated: '...'}
                   if (parsed.content) {
                     const contentStr =
@@ -487,7 +532,7 @@ export function createSendMessageHandler({
                     appendTextToStreamingMessage(contentStr);
                   }
 
-                } else if (parsed.type === 'thinking') {
+            } else if (parsed.type === 'thinking') {
                   // 新增类型：模型的思考过程（与正文分离，可折叠显示，灰色字体）
                   if (parsed.content) {
                     set((state: any) => {
@@ -531,7 +576,7 @@ export function createSendMessageHandler({
                       persistStreamingMessageDraft(state, message);
                     });
                   }
-                } else if (parsed.type === 'content') {
+            } else if (parsed.type === 'content') {
                   // 兼容旧格式: {type: 'content', content: '...'}
                   const contentStr =
                     typeof parsed.content === 'string'
@@ -541,7 +586,7 @@ export function createSendMessageHandler({
                       : parsed.content || '';
                   appendTextToStreamingMessage(contentStr);
 
-                } else if (parsed.type === 'tools_start') {
+            } else if (parsed.type === 'tools_start') {
                   // 处理工具调用事件
                   debugLog('🔧 收到工具调用:', parsed.data);
                   debugLog('🔧 工具调用数据类型:', typeof parsed.data, '是否为数组:', Array.isArray(parsed.data));
@@ -624,7 +669,7 @@ export function createSendMessageHandler({
                     (message as any).updatedAt = new Date();
                     persistStreamingMessageDraft(state, message);
                   });
-                } else if (parsed.type === 'tools_end') {
+            } else if (parsed.type === 'tools_end') {
                   // 处理工具结果事件
                   debugLog('🔧 收到工具结果:', parsed.data);
                   debugLog('🔧 工具结果数据类型:', typeof parsed.data);
@@ -709,7 +754,7 @@ export function createSendMessageHandler({
                     (message as any).updatedAt = new Date();
                     persistStreamingMessageDraft(state, message);
                   });
-                } else if (parsed.type === 'tools_stream') {
+            } else if (parsed.type === 'tools_stream') {
                   // 处理工具流式返回内容
                   debugLog('🔧 收到工具流式数据:', parsed.data);
                   const data = parsed.data;
@@ -866,9 +911,19 @@ export function createSendMessageHandler({
                       persistStreamingMessageDraft(state, message);
                     }
                   });
-                } else if (parsed.type === 'error') {
-                  throw new Error(parsed.message || parsed.data?.message || 'Stream error');
-                } else if (parsed.type === 'cancelled') {
+            } else if (parsed.type === 'error') {
+              const errorMessage = parsed?.message
+                || parsed?.error
+                || parsed?.data?.message
+                || parsed?.data?.error
+                || 'Stream error';
+              const errorCode = parsed?.code || parsed?.data?.code;
+              throw new Error(
+                typeof errorCode === 'string' && errorCode.trim().length > 0
+                  ? `[${errorCode}] ${errorMessage}`
+                  : errorMessage
+              );
+            } else if (parsed.type === 'cancelled') {
                   // 标记当前消息中的工具调用为已取消，避免一直处于等待中
                   set((state: any) => {
                     const message = ensureStreamingMessage(state);
@@ -890,26 +945,25 @@ export function createSendMessageHandler({
                   debugLog('⚠️ 流式会话已被取消');
                   sawDone = true;
                   break;
-                } else if (parsed.type === 'done') {
+            } else if (parsed.type === 'done') {
                   debugLog('✅ 收到完成信号');
                   sawDone = true;
                   break;
-                } else if (parsed.type === 'complete') {
+            } else if (parsed.type === 'complete') {
                   const finalContent = parsed?.result?.content;
                   if (typeof finalContent === 'string' && finalContent.length > 0) {
                     applyCompleteContent(finalContent);
                   }
                   sawDone = true;
                   break;
-                }
-            } catch (parseError) {
-                const preview = data.length > 400 ? `${data.slice(0, 400)}...` : data;
-                console.warn('解析流式数据失败:', parseError, 'dataPreview:', preview);
-              }
             }
+          }
 
           if (done) {
             debugLog('✅ 流式响应完成');
+            if (!sawDone) {
+              throw new Error('流式响应在完成前中断，请稍后重试');
+            }
             break;
           }
 
@@ -925,7 +979,7 @@ export function createSendMessageHandler({
           const currentDraft = state.sessionStreamingMessageDrafts?.[currentSessionId];
           if (currentDraft) {
             const finalizedDraft = cloneStreamingMessageDraft(currentDraft);
-            const finalizedStatus = sawDone ? 'completed' : ((finalizedDraft as any)?.status || 'streaming');
+            const finalizedStatus = sawDone ? 'completed' : 'error';
             (finalizedDraft as any).status = finalizedStatus;
             const existingIndex = state.messages.findIndex((m: any) => m.id === tempAssistantMessage.id);
             const shouldWriteToCurrentMessages = existingIndex !== -1 || state.currentSessionId === currentSessionId;
@@ -954,38 +1008,65 @@ export function createSendMessageHandler({
 
       debugLog('✅ 消息发送完成');
     } catch (error) {
-      console.error('❌ 发送消息失败:', error);
+      const readableError = resolveReadableErrorMessage(error);
+      console.error('❌ 发送消息失败:', readableError, error);
 
-      // 移除临时消息并显示错误
       set((state: any) => {
+        const existingAssistantIndex = tempAssistantId
+          ? state.messages.findIndex((m: any) => m.id === tempAssistantId)
+          : -1;
+        const currentDraft = state.sessionStreamingMessageDrafts?.[currentSessionId];
+        const baseAssistant = existingAssistantIndex !== -1
+          ? state.messages[existingAssistantIndex]
+          : (currentDraft ? cloneStreamingMessageDraft(currentDraft) : {
+              ...tempAssistantMessage,
+              content: streamedTextBuffer,
+              metadata: {
+                ...(tempAssistantMessage.metadata || {}),
+                contentSegments: [{ content: streamedTextBuffer, type: 'text' as const }],
+                currentSegmentIndex: 0,
+              },
+            });
+        const failureContent = formatAssistantFailureContent(
+          readableError,
+          typeof baseAssistant?.content === 'string' ? baseAssistant.content : streamedTextBuffer,
+        );
+        const nextMetadata = {
+          ...(baseAssistant?.metadata || {}),
+          contentSegments: [{ content: failureContent, type: 'text' as const }],
+          currentSegmentIndex: 0,
+          requestError: readableError,
+        };
+        const failureAssistantMessage = {
+          ...baseAssistant,
+          role: 'assistant' as const,
+          status: 'error' as const,
+          content: failureContent,
+          metadata: nextMetadata,
+          updatedAt: new Date(),
+        };
+
+        if (existingAssistantIndex !== -1) {
+          state.messages[existingAssistantIndex] = failureAssistantMessage;
+        } else if (state.currentSessionId === currentSessionId) {
+          state.messages.push(failureAssistantMessage);
+        }
+
         if (state.sessionStreamingMessageDrafts) {
           state.sessionStreamingMessageDrafts[currentSessionId] = null;
         }
-        if (state.currentSessionId === currentSessionId) {
-          if (tempAssistantId) {
-            const assistantIndex = state.messages.findIndex((m: any) => m.id === tempAssistantId);
-            if (assistantIndex !== -1) {
-              state.messages.splice(assistantIndex, 1);
-            }
-          }
-          if (tempUserId) {
-            const userIndex = state.messages.findIndex((m: any) => m.id === tempUserId);
-            if (userIndex !== -1) {
-              state.messages.splice(userIndex, 1);
-            }
-          }
-        }
+
         const prev = state.sessionChatState[currentSessionId] || { isLoading: false, isStreaming: false, streamingMessageId: null };
         state.sessionChatState[currentSessionId] = { ...prev, isLoading: false, isStreaming: false, streamingMessageId: null };
         if (state.currentSessionId === currentSessionId) {
           state.isLoading = false;
           state.isStreaming = false;
           state.streamingMessageId = null;
-          state.error = error instanceof Error ? error.message : 'Failed to send message';
+          state.error = readableError;
         }
       });
 
-      throw error;
+      throw new Error(readableError);
     }
   };
 }

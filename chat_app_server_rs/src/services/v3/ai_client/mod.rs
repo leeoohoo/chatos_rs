@@ -1,7 +1,9 @@
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::Duration;
 
 use serde_json::{json, Value};
+use tokio::time::sleep;
 use tracing::info;
 use tracing::warn;
 
@@ -30,7 +32,8 @@ use self::input_transform::{
     normalize_input_to_text_value, to_message_item,
 };
 use self::prev_context::{
-    base_url_allows_prev, base_url_disallows_system_messages, should_use_prev_id_for_next_turn,
+    base_url_allows_prev, base_url_disallows_system_messages, is_response_parse_error,
+    is_transient_transport_or_parse_error, should_use_prev_id_for_next_turn,
 };
 use self::tool_plan::{
     build_tool_call_execution_plan, build_tool_call_items, expand_tool_results_with_aliases,
@@ -327,8 +330,16 @@ impl AiClient {
 
             let mut ai_response = None;
             let mut last_error: Option<String> = None;
+            let max_transient_retries = 5usize;
+            let mut transient_retry_count = 0usize;
+            let mut request_attempt_guard = 0usize;
+            let max_request_attempts = max_transient_retries + 12;
 
-            for _attempt in 0..3 {
+            loop {
+                request_attempt_guard += 1;
+                if request_attempt_guard > max_request_attempts {
+                    break;
+                }
                 let request_input = if no_system_messages {
                     rewrite_system_messages_to_user(&input, force_text_content)
                 } else {
@@ -402,6 +413,31 @@ impl AiClient {
                             .await
                         {
                             continue;
+                        }
+                        if is_transient_transport_or_parse_error(err_msg.as_str()) {
+                            let retry_kind = if is_response_parse_error(err_msg.as_str()) {
+                                "响应解析异常"
+                            } else {
+                                "网络波动"
+                            };
+                            if transient_retry_count < max_transient_retries {
+                                transient_retry_count += 1;
+                                let backoff_ms = 150_u64 * transient_retry_count as u64;
+                                warn!(
+                                    "[AI_V3] transient {} detected; retry {}/{} after {}ms: {}",
+                                    retry_kind,
+                                    transient_retry_count,
+                                    max_transient_retries,
+                                    backoff_ms,
+                                    err_msg
+                                );
+                                sleep(Duration::from_millis(backoff_ms)).await;
+                                continue;
+                            }
+                            last_error = Some(format!(
+                                "AI 请求失败：{}，已重试 {} 次，最后错误：{}",
+                                retry_kind, max_transient_retries, err_msg
+                            ));
                         }
                         break;
                     }
@@ -1663,5 +1699,186 @@ mod tests {
                 call_1 == 1 && output_1 == 1 && call_2 == 1 && output_2 == 1
             })
             .unwrap_or(false));
+    }
+
+    #[tokio::test]
+    async fn retries_parse_errors_five_times_then_succeeds() {
+        let mut steps = Vec::new();
+        for _ in 0..5 {
+            steps.push(MockProviderStep::text(StatusCode::OK, "not-json"));
+        }
+        steps.push(MockProviderStep::json(
+            StatusCode::OK,
+            json!({
+                "id": "resp_retry_parse_ok",
+                "status": "completed",
+                "output_text": "retry parse success"
+            }),
+        ));
+
+        let (base_url, captured, server) = start_mock_provider(steps).await;
+        let mut client = build_test_client(base_url);
+
+        let result = client
+            .process_with_tools(
+                Value::String("hello".to_string()),
+                None,
+                vec![],
+                None,
+                None,
+                "gpt-4o".to_string(),
+                "gpt".to_string(),
+                None,
+                0.7,
+                None,
+                empty_callbacks(),
+                false,
+                None,
+                "chat",
+                0,
+                false,
+                true,
+                Value::String("hello".to_string()),
+                8,
+                true,
+                false,
+                true,
+                None,
+                None,
+                None,
+            )
+            .await
+            .expect("should succeed after parse retries");
+        server.abort();
+
+        assert_eq!(
+            result.get("content").and_then(|value| value.as_str()),
+            Some("retry parse success")
+        );
+
+        let requests = captured.lock().await.clone();
+        assert_eq!(requests.len(), 6);
+    }
+
+    #[tokio::test]
+    async fn fails_after_five_network_retries_with_explicit_message() {
+        let mut steps = Vec::new();
+        for _ in 0..6 {
+            steps.push(MockProviderStep::text(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "temporary upstream outage",
+            ));
+        }
+
+        let (base_url, captured, server) = start_mock_provider(steps).await;
+        let mut client = build_test_client(base_url);
+
+        let err = client
+            .process_with_tools(
+                Value::String("hello".to_string()),
+                None,
+                vec![],
+                None,
+                None,
+                "gpt-4o".to_string(),
+                "gpt".to_string(),
+                None,
+                0.7,
+                None,
+                empty_callbacks(),
+                false,
+                None,
+                "chat",
+                0,
+                false,
+                true,
+                Value::String("hello".to_string()),
+                8,
+                true,
+                false,
+                true,
+                None,
+                None,
+                None,
+            )
+            .await
+            .expect_err("should fail after retry budget exhausted");
+        server.abort();
+
+        assert!(err.contains("已重试 5 次"), "{err}");
+        assert!(err.contains("网络波动"), "{err}");
+
+        let requests = captured.lock().await.clone();
+        assert_eq!(requests.len(), 6);
+    }
+
+    #[tokio::test]
+    async fn retries_stream_parse_failure_and_then_succeeds() {
+        let first_stream_events: Vec<Value> = vec![];
+        let second_stream_events = vec![json!({
+            "type": "response.completed",
+            "response": {
+                "id": "resp_stream_retry_parse",
+                "status": "completed",
+                "output_text": "stream parse retry success"
+            }
+        })];
+        let steps = vec![
+            MockProviderStep::sse(first_stream_events),
+            MockProviderStep::sse(second_stream_events),
+        ];
+        let (base_url, captured, server) = start_mock_provider(steps).await;
+        let mut client = build_test_client(base_url);
+
+        let callbacks = AiClientCallbacks {
+            on_chunk: Some(Arc::new(|_chunk: String| {})),
+            on_thinking: None,
+            on_tools_start: None,
+            on_tools_stream: None,
+            on_tools_end: None,
+            on_context_summarized_start: None,
+            on_context_summarized_stream: None,
+            on_context_summarized_end: None,
+        };
+
+        let result = client
+            .process_with_tools(
+                Value::String("hello".to_string()),
+                None,
+                vec![],
+                None,
+                None,
+                "gpt-4o".to_string(),
+                "gpt".to_string(),
+                None,
+                0.7,
+                None,
+                callbacks,
+                false,
+                None,
+                "chat",
+                0,
+                false,
+                true,
+                Value::String("hello".to_string()),
+                8,
+                true,
+                false,
+                true,
+                None,
+                None,
+                None,
+            )
+            .await
+            .expect("stream parse retry should succeed");
+        server.abort();
+
+        assert_eq!(
+            result.get("content").and_then(|value| value.as_str()),
+            Some("stream parse retry success")
+        );
+
+        let requests = captured.lock().await.clone();
+        assert_eq!(requests.len(), 2);
     }
 }

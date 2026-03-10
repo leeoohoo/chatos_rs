@@ -1,3 +1,4 @@
+use crate::core::remote_connection_error_codes::remote_sftp_codes;
 use crate::models::remote_connection::RemoteConnection;
 use ssh2::{OpenFlags, OpenType};
 use std::fmt::{Display, Formatter};
@@ -25,11 +26,11 @@ pub(super) enum RemoteTransferErrorCode {
 impl RemoteTransferErrorCode {
     pub(super) fn as_api_code(self) -> &'static str {
         match self {
-            Self::AuthFailed => "remote_auth_failed",
-            Self::PathNotFound => "remote_path_not_found",
-            Self::PermissionDenied => "remote_permission_denied",
-            Self::NetworkDisconnected => "remote_network_disconnected",
-            Self::Protocol => "remote_error",
+            Self::AuthFailed => remote_sftp_codes::REMOTE_AUTH_FAILED,
+            Self::PathNotFound => remote_sftp_codes::REMOTE_PATH_NOT_FOUND,
+            Self::PermissionDenied => remote_sftp_codes::REMOTE_PERMISSION_DENIED,
+            Self::NetworkDisconnected => remote_sftp_codes::REMOTE_NETWORK_DISCONNECTED,
+            Self::Protocol => remote_sftp_codes::REMOTE_ERROR,
         }
     }
 }
@@ -652,6 +653,8 @@ pub(super) async fn run_scp_download_typed(
 
 #[cfg(test)]
 mod tests {
+    use crate::core::remote_connection_error_codes::remote_sftp_codes;
+
     use super::{RemoteTransferErrorCode, TransferJobError};
 
     #[test]
@@ -738,5 +741,29 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn maps_remote_transfer_error_codes_to_api_codes() {
+        assert_eq!(
+            RemoteTransferErrorCode::AuthFailed.as_api_code(),
+            remote_sftp_codes::REMOTE_AUTH_FAILED
+        );
+        assert_eq!(
+            RemoteTransferErrorCode::PathNotFound.as_api_code(),
+            remote_sftp_codes::REMOTE_PATH_NOT_FOUND
+        );
+        assert_eq!(
+            RemoteTransferErrorCode::PermissionDenied.as_api_code(),
+            remote_sftp_codes::REMOTE_PERMISSION_DENIED
+        );
+        assert_eq!(
+            RemoteTransferErrorCode::NetworkDisconnected.as_api_code(),
+            remote_sftp_codes::REMOTE_NETWORK_DISCONNECTED
+        );
+        assert_eq!(
+            RemoteTransferErrorCode::Protocol.as_api_code(),
+            remote_sftp_codes::REMOTE_ERROR
+        );
     }
 }

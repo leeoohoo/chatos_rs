@@ -6,6 +6,31 @@ export interface StreamApiContext {
   applyRefreshedAccessToken: (response: Response) => void;
 }
 
+const buildStreamHttpError = async (response: Response): Promise<Error> => {
+  const status = response.status;
+  const raw = await response.text().catch(() => '');
+  if (!raw) {
+    return new Error(`HTTP ${status}: 请求失败`);
+  }
+
+  try {
+    const payload = JSON.parse(raw);
+    const code = typeof payload?.code === 'string' ? payload.code : '';
+    const message = payload?.error || payload?.message || raw;
+    if (typeof message === 'string' && message.trim().length > 0) {
+      if (code) {
+        return new Error(`[${code}] HTTP ${status}: ${message.trim()}`);
+      }
+      return new Error(`HTTP ${status}: ${message.trim()}`);
+    }
+  } catch {
+    // ignore JSON parse error and fallback to raw text
+  }
+
+  const compact = raw.trim().length > 0 ? raw.trim() : '请求失败';
+  return new Error(`HTTP ${status}: ${compact}`);
+};
+
 export const streamChat = async (
   context: StreamApiContext,
   sessionId: string,
@@ -48,7 +73,7 @@ export const streamChat = async (
   context.applyRefreshedAccessToken(response);
 
   if (!response.ok) {
-    throw new Error(`HTTP error! status: ${response.status}`);
+    throw await buildStreamHttpError(response);
   }
 
   if (!response.body) {
@@ -91,7 +116,7 @@ export const streamAgentChat = async (
   context.applyRefreshedAccessToken(response);
 
   if (!response.ok) {
-    throw new Error(`HTTP error! status: ${response.status}`);
+    throw await buildStreamHttpError(response);
   }
 
   if (!response.body) {

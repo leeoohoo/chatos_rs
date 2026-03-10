@@ -1,17 +1,47 @@
-import { describe, expect, it } from 'vitest';
+import { execSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { beforeAll, describe, expect, it } from 'vitest';
 
 import { ApiRequestError } from './client/shared';
-import backendErrorCodes from '../../../../chat_app_server_rs/docs/remote_connection_error_codes.json';
 import {
   REMOTE_CONNECTION_ERROR_CODE_ACTIONS,
   REMOTE_CONNECTION_ERROR_CODE_MESSAGES,
+  REMOTE_SFTP_ERROR_CODE_ACTIONS,
+  REMOTE_SFTP_ERROR_CODE_MESSAGES,
   formatRemoteConnectionErrorFeedback,
   resolveRemoteConnectionErrorFeedback,
   resolveRemoteConnectionErrorMessage,
+  resolveRemoteSftpErrorFeedback,
   resolveRemoteTerminalWsErrorFeedback,
 } from './remoteConnectionErrors';
 
+interface BackendErrorCodes {
+  remote_connection_codes: string[];
+  remote_sftp_codes: string[];
+}
+
+const currentFilePath = fileURLToPath(import.meta.url);
+const currentDirPath = path.dirname(currentFilePath);
+const backendDirPath = path.resolve(currentDirPath, '../../../../chat_app_server_rs');
+const backendCodesDocPath = path.resolve(
+  backendDirPath,
+  'docs/remote_connection_error_codes.json',
+);
+let backendErrorCodes: BackendErrorCodes;
+
 describe('remoteConnectionErrors mapping', () => {
+  beforeAll(() => {
+    execSync('cargo run -q --bin export_remote_connection_error_codes', {
+      cwd: backendDirPath,
+      stdio: 'pipe',
+    });
+    backendErrorCodes = JSON.parse(
+      readFileSync(backendCodesDocPath, 'utf8'),
+    ) as BackendErrorCodes;
+  });
+
   it('maps ApiRequestError code to message and action', () => {
     const error = new ApiRequestError('permission denied', {
       code: 'auth_failed',
@@ -102,15 +132,38 @@ describe('remoteConnectionErrors mapping', () => {
   });
 
   it('keeps frontend mapping aligned with backend exported code catalog', () => {
-    const backendCodes = backendErrorCodes.remote_connection_codes;
-    const missingMessageCodes = backendCodes.filter(
+    const backendConnectionCodes = backendErrorCodes.remote_connection_codes;
+    const missingConnectionMessageCodes = backendConnectionCodes.filter(
       (code) => !Object.prototype.hasOwnProperty.call(REMOTE_CONNECTION_ERROR_CODE_MESSAGES, code),
     );
-    const missingActionCodes = backendCodes.filter(
+    const missingConnectionActionCodes = backendConnectionCodes.filter(
       (code) => !Object.prototype.hasOwnProperty.call(REMOTE_CONNECTION_ERROR_CODE_ACTIONS, code),
     );
 
-    expect(missingMessageCodes).toEqual([]);
-    expect(missingActionCodes).toEqual([]);
+    expect(missingConnectionMessageCodes).toEqual([]);
+    expect(missingConnectionActionCodes).toEqual([]);
+
+    const backendSftpCodes = backendErrorCodes.remote_sftp_codes;
+    const missingSftpMessageCodes = backendSftpCodes.filter(
+      (code) => !Object.prototype.hasOwnProperty.call(REMOTE_SFTP_ERROR_CODE_MESSAGES, code),
+    );
+    const missingSftpActionCodes = backendSftpCodes.filter(
+      (code) => !Object.prototype.hasOwnProperty.call(REMOTE_SFTP_ERROR_CODE_ACTIONS, code),
+    );
+
+    expect(missingSftpMessageCodes).toEqual([]);
+    expect(missingSftpActionCodes).toEqual([]);
+  });
+
+  it('maps sftp error code to message and action', () => {
+    const error = new ApiRequestError('remote disconnected', {
+      code: 'remote_network_disconnected',
+      status: 408,
+    });
+    const feedback = resolveRemoteSftpErrorFeedback(error, '传输失败');
+
+    expect(feedback.code).toBe('remote_network_disconnected');
+    expect(feedback.message).toContain('远端网络连接中断');
+    expect(feedback.action).toContain('网络稳定性');
   });
 });

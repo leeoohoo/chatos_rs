@@ -12,6 +12,7 @@ use crate::core::auth::AuthUser;
 use crate::core::remote_connection_access::{
     ensure_owned_remote_connection, map_remote_connection_access_error,
 };
+use crate::core::remote_connection_error_codes::remote_sftp_codes;
 use crate::core::validation::normalize_non_empty;
 use crate::models::remote_connection::{RemoteConnection, RemoteConnectionService};
 
@@ -83,7 +84,7 @@ enum RemoteSftpApiError {
 
 impl RemoteSftpApiError {
     fn bad_request(error: impl Into<String>) -> Self {
-        Self::bad_request_with_code("bad_request", error)
+        Self::bad_request_with_code(remote_sftp_codes::BAD_REQUEST, error)
     }
 
     fn bad_request_with_code(code: &'static str, error: impl Into<String>) -> Self {
@@ -108,7 +109,7 @@ impl RemoteSftpApiError {
     }
 
     fn remote_error(error: impl Into<String>) -> Self {
-        Self::bad_request_with_code("remote_error", error)
+        Self::bad_request_with_code(remote_sftp_codes::REMOTE_ERROR, error)
     }
 
     fn into_response(self) -> (StatusCode, Json<Value>) {
@@ -133,12 +134,14 @@ impl From<TransferJobError> for RemoteSftpApiError {
     fn from(value: TransferJobError) -> Self {
         match value {
             TransferJobError::Cancelled => {
-                Self::bad_request_with_code("transfer_cancelled", "传输已取消")
+                Self::bad_request_with_code(remote_sftp_codes::TRANSFER_CANCELLED, "传输已取消")
             }
             TransferJobError::Timeout(message) => {
-                Self::request_timeout_with_code("timeout", message)
+                Self::request_timeout_with_code(remote_sftp_codes::TIMEOUT, message)
             }
-            TransferJobError::Io(message) => Self::bad_request_with_code("local_io_error", message),
+            TransferJobError::Io(message) => {
+                Self::bad_request_with_code(remote_sftp_codes::LOCAL_IO_ERROR, message)
+            }
             TransferJobError::Remote { code, message } => {
                 if code == RemoteTransferErrorCode::NetworkDisconnected {
                     Self::request_timeout_with_code(code.as_api_code(), message)
@@ -157,7 +160,7 @@ fn require_non_empty_field(
 ) -> Result<String, RemoteSftpApiError> {
     normalize_non_empty(value).ok_or_else(|| {
         RemoteSftpApiError::bad_request_with_code(
-            "invalid_argument",
+            remote_sftp_codes::INVALID_ARGUMENT,
             format!("{field_name} 不能为空"),
         )
     })
@@ -167,7 +170,7 @@ fn ensure_local_target_parent_dir_exists(local_path: &str) -> Result<(), RemoteS
     if let Some(parent) = FsPath::new(local_path).parent() {
         if !parent.exists() || !parent.is_dir() {
             return Err(RemoteSftpApiError::bad_request_with_code(
-                "invalid_path",
+                remote_sftp_codes::INVALID_PATH,
                 "本地目标目录不存在",
             ));
         }
@@ -178,7 +181,7 @@ fn ensure_local_target_parent_dir_exists(local_path: &str) -> Result<(), RemoteS
 fn validate_mkdir_name(name: &str) -> Result<(), RemoteSftpApiError> {
     if name == "." || name == ".." || name.contains('/') || name.contains('\\') {
         return Err(RemoteSftpApiError::bad_request_with_code(
-            "invalid_directory_name",
+            remote_sftp_codes::INVALID_DIRECTORY_NAME,
             "目录名不合法",
         ));
     }
@@ -187,7 +190,7 @@ fn validate_mkdir_name(name: &str) -> Result<(), RemoteSftpApiError> {
 
 fn map_remote_listing_error(error: String) -> RemoteSftpApiError {
     if error.contains("目录不存在") {
-        return RemoteSftpApiError::bad_request_with_code("invalid_path", error);
+        return RemoteSftpApiError::bad_request_with_code(remote_sftp_codes::INVALID_PATH, error);
     }
     RemoteSftpApiError::remote_error(error)
 }
@@ -244,7 +247,7 @@ pub(super) async fn upload_file_to_remote(
     let local = FsPath::new(&local_path);
     if !local.exists() || !local.is_file() {
         return RemoteSftpApiError::bad_request_with_code(
-            "invalid_path",
+            remote_sftp_codes::INVALID_PATH,
             "本地文件不存在或不是文件",
         )
         .into_response();
@@ -304,8 +307,11 @@ pub(super) async fn start_sftp_transfer(
     let direction = match normalize_transfer_direction(req.direction) {
         Ok(v) => v,
         Err(err) => {
-            return RemoteSftpApiError::bad_request_with_code("invalid_argument", err)
-                .into_response()
+            return RemoteSftpApiError::bad_request_with_code(
+                remote_sftp_codes::INVALID_ARGUMENT,
+                err,
+            )
+            .into_response()
         }
     };
 
@@ -321,12 +327,15 @@ pub(super) async fn start_sftp_transfer(
     if direction == "upload" {
         let source = FsPath::new(local_path.as_str());
         if !source.exists() {
-            return RemoteSftpApiError::bad_request_with_code("invalid_path", "本地路径不存在")
-                .into_response();
+            return RemoteSftpApiError::bad_request_with_code(
+                remote_sftp_codes::INVALID_PATH,
+                "本地路径不存在",
+            )
+            .into_response();
         }
         if !source.is_file() && !source.is_dir() {
             return RemoteSftpApiError::bad_request_with_code(
-                "invalid_path",
+                remote_sftp_codes::INVALID_PATH,
                 "本地路径必须是文件或目录",
             )
             .into_response();
@@ -390,8 +399,11 @@ pub(super) async fn get_sftp_transfer_status(
             StatusCode::OK,
             Json(serde_json::to_value(status).unwrap_or(Value::Null)),
         ),
-        None => RemoteSftpApiError::not_found_with_code("transfer_not_found", "传输任务不存在")
-            .into_response(),
+        None => RemoteSftpApiError::not_found_with_code(
+            remote_sftp_codes::TRANSFER_NOT_FOUND,
+            "传输任务不存在",
+        )
+        .into_response(),
     }
 }
 
@@ -409,7 +421,7 @@ pub(super) async fn cancel_sftp_transfer(
         .request_cancel_for_connection(transfer_id.as_str(), connection.id.as_str());
     if !accepted {
         return RemoteSftpApiError::bad_request_with_code(
-            "transfer_not_active",
+            remote_sftp_codes::TRANSFER_NOT_ACTIVE,
             "传输任务不存在或已结束",
         )
         .into_response();
@@ -420,8 +432,11 @@ pub(super) async fn cancel_sftp_transfer(
             StatusCode::OK,
             Json(serde_json::to_value(status).unwrap_or(Value::Null)),
         ),
-        None => RemoteSftpApiError::not_found_with_code("transfer_not_found", "传输任务不存在")
-            .into_response(),
+        None => RemoteSftpApiError::not_found_with_code(
+            remote_sftp_codes::TRANSFER_NOT_FOUND,
+            "传输任务不存在",
+        )
+        .into_response(),
     }
 }
 
@@ -625,6 +640,8 @@ mod tests {
     use serde_json::json;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    use crate::core::remote_connection_error_codes::remote_sftp_codes;
+
     use super::{
         ensure_local_target_parent_dir_exists, require_non_empty_field, validate_mkdir_name,
         RemoteSftpApiError, RemoteTransferErrorCode, TransferJobError,
@@ -636,16 +653,25 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(
             body.0,
-            json!({ "error": "invalid path", "code": "bad_request" })
+            json!({ "error": "invalid path", "code": remote_sftp_codes::BAD_REQUEST })
         );
     }
 
     #[test]
     fn maps_not_found_error_to_response() {
-        let (status, body) =
-            RemoteSftpApiError::not_found_with_code("not_found", "not found").into_response();
+        let (status, body) = RemoteSftpApiError::not_found_with_code(
+            remote_sftp_codes::TRANSFER_NOT_FOUND,
+            "not found",
+        )
+        .into_response();
         assert_eq!(status, StatusCode::NOT_FOUND);
-        assert_eq!(body.0, json!({ "error": "not found", "code": "not_found" }));
+        assert_eq!(
+            body.0,
+            json!({
+                "error": "not found",
+                "code": remote_sftp_codes::TRANSFER_NOT_FOUND
+            })
+        );
     }
 
     #[test]
@@ -656,7 +682,7 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(
             body.0,
-            json!({ "error": "upload failed", "code": "bad_request" })
+            json!({ "error": "upload failed", "code": remote_sftp_codes::BAD_REQUEST })
         );
     }
 
@@ -666,7 +692,10 @@ mod tests {
             RemoteSftpApiError::from(TransferJobError::Timeout("上传超时".to_string()))
                 .into_response();
         assert_eq!(status, StatusCode::REQUEST_TIMEOUT);
-        assert_eq!(body.0, json!({ "error": "上传超时", "code": "timeout" }));
+        assert_eq!(
+            body.0,
+            json!({ "error": "上传超时", "code": remote_sftp_codes::TIMEOUT })
+        );
     }
 
     #[test]
@@ -679,7 +708,10 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(
             body.0,
-            json!({ "error": "SSH 认证失败", "code": "remote_auth_failed" })
+            json!({
+                "error": "SSH 认证失败",
+                "code": remote_sftp_codes::REMOTE_AUTH_FAILED
+            })
         );
     }
 
@@ -693,7 +725,10 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(
             body.0,
-            json!({ "error": "远端路径不存在", "code": "remote_path_not_found" })
+            json!({
+                "error": "远端路径不存在",
+                "code": remote_sftp_codes::REMOTE_PATH_NOT_FOUND
+            })
         );
     }
 
@@ -707,7 +742,10 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(
             body.0,
-            json!({ "error": "远端权限不足", "code": "remote_permission_denied" })
+            json!({
+                "error": "远端权限不足",
+                "code": remote_sftp_codes::REMOTE_PERMISSION_DENIED
+            })
         );
     }
 
@@ -721,7 +759,10 @@ mod tests {
         assert_eq!(status, StatusCode::REQUEST_TIMEOUT);
         assert_eq!(
             body.0,
-            json!({ "error": "远端连接中断", "code": "remote_network_disconnected" })
+            json!({
+                "error": "远端连接中断",
+                "code": remote_sftp_codes::REMOTE_NETWORK_DISCONNECTED
+            })
         );
     }
 
@@ -735,7 +776,7 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(
             body.0,
-            json!({ "error": "远端协议错误", "code": "remote_error" })
+            json!({ "error": "远端协议错误", "code": remote_sftp_codes::REMOTE_ERROR })
         );
     }
 
@@ -746,7 +787,10 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(
             body.0,
-            json!({ "error": "local_path 不能为空", "code": "invalid_argument" })
+            json!({
+                "error": "local_path 不能为空",
+                "code": remote_sftp_codes::INVALID_ARGUMENT
+            })
         );
     }
 
@@ -757,7 +801,10 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(
             body.0,
-            json!({ "error": "remote_path 不能为空", "code": "invalid_argument" })
+            json!({
+                "error": "remote_path 不能为空",
+                "code": remote_sftp_codes::INVALID_ARGUMENT
+            })
         );
     }
 
@@ -777,7 +824,10 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(
             body.0,
-            json!({ "error": "本地目标目录不存在", "code": "invalid_path" })
+            json!({
+                "error": "本地目标目录不存在",
+                "code": remote_sftp_codes::INVALID_PATH
+            })
         );
     }
 
@@ -789,7 +839,10 @@ mod tests {
             assert_eq!(status, StatusCode::BAD_REQUEST);
             assert_eq!(
                 body.0,
-                json!({ "error": "目录名不合法", "code": "invalid_directory_name" })
+                json!({
+                    "error": "目录名不合法",
+                    "code": remote_sftp_codes::INVALID_DIRECTORY_NAME
+                })
             );
         }
     }

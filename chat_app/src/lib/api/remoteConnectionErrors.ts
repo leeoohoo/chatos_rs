@@ -52,6 +52,40 @@ export const REMOTE_CONNECTION_ERROR_CODE_ACTIONS: Record<string, string> = {
   remote_connection_delete_failed: '请确认连接未被占用后重试；若持续失败请检查服务端日志。',
 };
 
+export const REMOTE_SFTP_ERROR_CODE_MESSAGES: Record<string, string> = {
+  bad_request: '请求参数不合法',
+  invalid_argument: '请求参数不合法',
+  invalid_path: '路径不存在或不可访问',
+  invalid_directory_name: '目录名称不合法',
+  transfer_not_found: '传输任务不存在',
+  transfer_not_active: '传输任务不存在或已结束',
+  transfer_cancelled: '传输已取消',
+  timeout: '操作超时，请稍后重试',
+  local_io_error: '本地文件读写失败',
+  remote_auth_failed: '远端认证失败',
+  remote_path_not_found: '远端路径不存在',
+  remote_permission_denied: '远端权限不足',
+  remote_network_disconnected: '远端网络连接中断',
+  remote_error: '远端连接或协议错误',
+};
+
+export const REMOTE_SFTP_ERROR_CODE_ACTIONS: Record<string, string> = {
+  bad_request: '请检查传输方向、路径参数与请求体字段是否完整。',
+  invalid_argument: '请检查传输方向、路径参数与请求体字段是否完整。',
+  invalid_path: '请确认本地/远端路径存在且当前账号有访问权限。',
+  invalid_directory_name: '目录名不能为 . 或 ..，且不能包含路径分隔符。',
+  transfer_not_found: '请刷新任务状态后重试，避免使用已过期的传输任务 ID。',
+  transfer_not_active: '该任务已结束或不存在，请重新发起新的传输任务。',
+  transfer_cancelled: '如果是误取消，请重新发起传输。',
+  timeout: '请检查网络连通性和远端负载，必要时稍后重试。',
+  local_io_error: '请检查本地磁盘空间、文件权限与目标路径可写性。',
+  remote_auth_failed: '请检查远端连接认证信息（用户名、密钥或密码）后重试。',
+  remote_path_not_found: '请确认远端路径真实存在，注意大小写与软链接路径。',
+  remote_permission_denied: '请确认远端账号对目标路径具备读写权限。',
+  remote_network_disconnected: '请检查远端网络稳定性、跳板链路和 SSH 会话状态。',
+  remote_error: '建议先重试一次；若持续失败请查看后端 SFTP/SSH 日志。',
+};
+
 const DETAIL_REQUIRED_CODES = new Set<string>([
   'remote_connection_access_internal',
   'remote_connection_create_failed',
@@ -60,6 +94,14 @@ const DETAIL_REQUIRED_CODES = new Set<string>([
   'remote_connection_delete_failed',
   'connectivity_test_failed',
   'remote_terminal_error',
+]);
+
+const SFTP_DETAIL_REQUIRED_CODES = new Set<string>([
+  'timeout',
+  'local_io_error',
+  'remote_auth_failed',
+  'remote_network_disconnected',
+  'remote_error',
 ]);
 
 export interface RemoteConnectionErrorFeedback {
@@ -75,6 +117,12 @@ const normalizeRawMessage = (value: unknown, fallback: string): string => {
   if (value instanceof Error && value.message.trim().length > 0) {
     return value.message.trim();
   }
+  if (value && typeof value === 'object' && typeof (value as any).message === 'string') {
+    const text = (value as any).message.trim();
+    if (text.length > 0) {
+      return text;
+    }
+  }
   return fallback;
 };
 
@@ -84,6 +132,17 @@ const resolveCodeLabel = (code: string, raw: string): string => {
     return raw;
   }
   if (DETAIL_REQUIRED_CODES.has(code)) {
+    return `${mapped}: ${raw}`;
+  }
+  return mapped;
+};
+
+const resolveSftpCodeLabel = (code: string, raw: string): string => {
+  const mapped = REMOTE_SFTP_ERROR_CODE_MESSAGES[code];
+  if (!mapped) {
+    return raw;
+  }
+  if (SFTP_DETAIL_REQUIRED_CODES.has(code)) {
     return `${mapped}: ${raw}`;
   }
   return mapped;
@@ -149,5 +208,27 @@ export const resolveRemoteTerminalWsErrorMessage = (
   fallback = '远端终端错误',
 ): string => {
   const feedback = resolveRemoteTerminalWsErrorFeedback(payload, fallback);
+  return formatRemoteConnectionErrorFeedback(feedback);
+};
+
+export const resolveRemoteSftpErrorFeedback = (
+  error: unknown,
+  fallback: string,
+): RemoteConnectionErrorFeedback => {
+  const code = extractErrorCode(error);
+  const raw = normalizeRawMessage(error, fallback);
+  const message = resolveSftpCodeLabel(code, raw);
+  const action = REMOTE_SFTP_ERROR_CODE_ACTIONS[code];
+  if (action) {
+    return { code, message, action };
+  }
+  return { code, message };
+};
+
+export const resolveRemoteSftpErrorMessage = (
+  error: unknown,
+  fallback: string,
+): string => {
+  const feedback = resolveRemoteSftpErrorFeedback(error, fallback);
   return formatRemoteConnectionErrorFeedback(feedback);
 };

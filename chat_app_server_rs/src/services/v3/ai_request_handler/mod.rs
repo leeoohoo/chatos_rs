@@ -290,13 +290,15 @@ impl AiRequestHandler {
                 "[AI_V3] stream request failed: status={}, error={}",
                 status, err_text
             );
-            return Err(text);
+            return Err(format!("status {}: {}", status, err_text));
         }
 
         let stream = resp.bytes_stream();
         let mut stream_state = StreamState::default();
+        let mut parsed_event_count: usize = 0;
 
         consume_sse_stream(stream, token.clone(), |v| {
+            parsed_event_count += 1;
             let payload = apply_stream_event(&mut stream_state, &v);
             if let Some(chunk) = payload.chunk {
                 if let Some(cb) = &callbacks.on_chunk {
@@ -310,6 +312,18 @@ impl AiRequestHandler {
             }
         })
         .await?;
+
+        let parsed_empty_response = parsed_event_count == 0
+            && stream_state.response_obj.is_none()
+            && stream_state.full_content.trim().is_empty()
+            && stream_state.reasoning.trim().is_empty()
+            && stream_state.provider_error.is_none();
+        if parsed_empty_response {
+            return Err(
+                "stream response parse failed: no valid SSE events parsed from provider"
+                    .to_string(),
+            );
+        }
 
         let response_val = stream_state
             .response_obj

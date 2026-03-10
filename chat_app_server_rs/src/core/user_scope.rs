@@ -3,13 +3,14 @@ use axum::Json;
 use serde_json::{json, Value};
 
 use crate::core::auth::AuthUser;
+use crate::core::remote_connection_error_codes::remote_connection_codes;
 
 fn user_scope_forbidden_response() -> (StatusCode, Json<Value>) {
     (
         StatusCode::FORBIDDEN,
         Json(json!({
             "error": "user_id 与登录用户不一致",
-            "code": "user_scope_forbidden"
+            "code": remote_connection_codes::USER_SCOPE_FORBIDDEN
         })),
     )
 }
@@ -48,6 +49,7 @@ mod tests {
 
     use super::{ensure_user_id_matches, resolve_user_id};
     use crate::core::auth::AuthUser;
+    use crate::core::remote_connection_error_codes::remote_connection_codes;
 
     fn mock_auth_user() -> AuthUser {
         AuthUser {
@@ -66,7 +68,7 @@ mod tests {
             err.1 .0,
             json!({
                 "error": "user_id 与登录用户不一致",
-                "code": "user_scope_forbidden"
+                "code": remote_connection_codes::USER_SCOPE_FORBIDDEN
             })
         );
     }

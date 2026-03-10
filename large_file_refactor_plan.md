@@ -497,3 +497,78 @@
 1. 将 `remote_connection_error_codes.json` 的维护改为“后端枚举/常量自动导出”，避免手工清单漂移。
 2. 为 `ConfirmDialog` 增补组件级单测，覆盖 `details/detailsLines/detailsTitle` 的优先级与渲染回退逻辑。
 3. 将后端 `remote_sftp_codes` 也接入前端对齐校验（当前只强约束了 `remote_connection_codes`）。
+
+61. `chat_app_server_rs/src/services/v3/ai_client/mod.rs` + `prev_context.rs` + `ai_request_handler/mod.rs`（阶段记录 AW）  
+   修复 MCP/工具链路“无疾而终”核心问题，补齐模型请求失败可见性与重试策略：
+   - `AiClient` 主请求循环新增“网络波动/响应解析异常”重试策略：最多重试 5 次（退避），超过预算后返回明确中文错误（包含“已重试 5 次”和最后错误）。
+   - `prev_context.rs` 新增 `is_transient_network_error` / `is_response_parse_error` / `is_transient_transport_or_parse_error`，将可重试错误判定从散落字符串判断收敛为策略函数。
+   - `AiRequestHandler::handle_stream_request` 对 provider 非 2xx 统一返回 `status + error`；新增“无有效 SSE 事件”解析失败检测，避免空响应被误判为成功。
+   - 新增回归测试：
+     - `retries_parse_errors_five_times_then_succeeds`
+     - `fails_after_five_network_retries_with_explicit_message`
+     - `retries_stream_parse_failure_and_then_succeeds`
+
+62. `chat_app/src/lib/store/actions/sendMessage.ts` + `chat_app/src/lib/api/client/stream.ts` + `chat_app_server_rs/src/core/chat_stream.rs`（阶段记录 AX）  
+   前端/流事件层补齐失败展示，避免静默中断：
+   - `sendMessage.ts` 修复 SSE `error` 事件取值（支持 `message/error/data.message/data.error`），不再丢失后端真实错误原因。
+   - SSE JSON 解析失败不再无限吞掉：累计到 5 次后直接失败并展示原因。
+   - 流在未收到 `done/complete` 前断开时明确报错（`流式响应在完成前中断`），并将临时助手消息收敛为 `status=error` 与可读失败文案，而不是静默移除。
+   - `stream.ts` 非 2xx 时解析后端 `{error, code}`，抛出带状态码/业务码的可读错误。
+   - `chat_stream.rs` 的 `error` SSE 事件补充顶层 `message` 与 `data.message`，兼容不同前端解析路径。
+
+63. 本轮验证（阶段记录 AY）  
+   执行并通过：
+   - `cargo fmt`
+   - `cargo check -q`
+   - `cargo test -q services::v3::ai_client::tests:: -- --nocapture`（10 passed）
+   - `cargo test -q services::v3::ai_client::prev_context::tests:: -- --nocapture`（10 passed）
+   - `cargo test -q services::v3::ai_request_handler::parser::tests:: -- --nocapture`（9 passed）
+   - `npm run -s type-check`（`chat_app`）
+   - `npx vitest run src/lib/api/remoteConnectionErrors.test.ts`（7 tests）
+
+64. `chat_app/src/lib/store/actions/sendMessage.ts` + `chat_app_server_rs/src/services/v2/*`（阶段记录 AZ）  
+   针对线上日志 `type=error, data.error=\"error decoding response body\"` 的补强修复：
+   - `sendMessage.ts` 将“JSON 解析失败”和“后端 error 事件”分离处理，避免把真实后端错误误归类为“解析流式数据失败”。
+   - `sendMessage.ts` 对 `parsed.type === "error"` 直接按后端错误失败，不再进入解析失败计数分支；确保用户看到的错误原因与后端一致。
+   - `services/v2/ai_request_handler/mod.rs` 对流式 4xx/5xx 错误统一为 `status + error`，并新增“无有效 SSE 事件”解析失败检测。
+   - `services/v2/ai_client/mod.rs` 增加与 v3 一致的“网络波动/响应解析异常”最多 5 次重试（退避），超过预算返回明确中文错误。
+   - `services/v2/ai_client/mod.rs` 新增判定函数单测（network/parse/transient 组合）。
+
+65. 补充验证（阶段记录 BA）  
+   执行并通过：
+   - `npm run -s type-check`（`chat_app`）
+   - `cargo fmt`
+   - `cargo check -q`
+   - `cargo test -q services::v2::ai_client::tests:: -- --nocapture`（5 passed）
+   - `cargo test -q services::v2::ai_request_handler::tests:: -- --nocapture`（2 passed）
+   - `cargo test -q services::v3::ai_client::tests:: -- --nocapture`（10 passed）
+   - `cargo test -q services::v3::ai_client::prev_context::tests:: -- --nocapture`（10 passed）
+
+66. `chat_app_server_rs/src/core/remote_connection_error_codes.rs` + `src/bin/export_remote_connection_error_codes.rs` + `src/api/remote_connections*.rs`（阶段记录 BB）  
+   远端连接错误码改为后端常量单一来源并接入自动导出：
+   - 新增 `core::remote_connection_error_codes` 作为 `remote_connection_codes` / `remote_sftp_codes` 常量来源，并提供 JSON 导出函数。
+   - 新增导出入口 `src/bin/export_remote_connection_error_codes.rs`，支持前端测试前自动生成 `docs/remote_connection_error_codes.json`。
+   - `main.rs` 启动时尝试导出 catalog（失败仅告警，不阻断服务）。
+   - `api/remote_connections.rs`、`api/remote_connections/remote_sftp.rs`、`api/remote_connections/transfer_helpers.rs` 去除错误码字符串字面量，统一使用常量。
+   - `transfer_helpers` 新增 `as_api_code` 映射测试，确保 typed remote 错误码与 API code 保持一致。
+
+67. `chat_app/src/lib/api/remoteConnectionErrors.ts` + `remoteConnectionErrors.test.ts` + `RemoteSftpPanel.tsx` + `components/ui/ConfirmDialog.test.tsx`（阶段记录 BC）  
+   前端错误映射和组件回归补齐：
+   - `remoteConnectionErrors.ts` 新增 `REMOTE_SFTP_ERROR_CODE_MESSAGES/ACTIONS` 与 `resolveRemoteSftpErrorFeedback/Message`，统一 SFTP 错误映射范式。
+   - `RemoteSftpPanel.tsx` 移除本地 SFTP 映射表，统一复用 `resolveRemoteSftpErrorMessage`，减少重复逻辑。
+   - `remoteConnectionErrors.test.ts` 改为测试前执行 `cargo run -q --bin export_remote_connection_error_codes` 并读取后端导出 JSON，校验：
+     - `remote_connection_codes` 全量有 `message/action` 映射；
+     - `remote_sftp_codes` 也全量有 `message/action` 映射（新增强约束）。
+   - 新增 `ConfirmDialog.test.tsx`，覆盖 `details/detailsLines/detailsTitle` 的优先级、默认值、自定义标题与 `description -> message` 回退逻辑。
+
+68. 本轮验证（阶段记录 BD）  
+   执行并通过：
+   - `cargo fmt`（`chat_app_server_rs`）
+   - `cargo check -q`（`chat_app_server_rs`）
+   - `cargo test -q core::remote_connection_error_codes::tests::`
+   - `cargo test -q remote_connections::tests::`
+   - `cargo test -q remote_sftp::tests::`
+   - `cargo test -q transfer_helpers::tests::`
+   - `npm run -s type-check`（`chat_app`）
+   - `npx vitest run src/lib/api/remoteConnectionErrors.test.ts`（8 tests）
+   - `npx vitest run src/components/ui/ConfirmDialog.test.tsx`（5 tests）

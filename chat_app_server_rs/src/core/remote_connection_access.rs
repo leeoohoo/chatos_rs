@@ -3,6 +3,7 @@ use axum::Json;
 use serde_json::{json, Value};
 
 use crate::core::auth::AuthUser;
+use crate::core::remote_connection_error_codes::remote_connection_codes;
 use crate::models::remote_connection::{RemoteConnection, RemoteConnectionService};
 
 #[derive(Debug)]
@@ -39,15 +40,24 @@ pub fn map_remote_connection_access_error(
     match err {
         RemoteConnectionAccessError::NotFound => (
             StatusCode::NOT_FOUND,
-            Json(json!({ "error": "远端连接不存在", "code": "remote_connection_not_found" })),
+            Json(json!({
+                "error": "远端连接不存在",
+                "code": remote_connection_codes::REMOTE_CONNECTION_NOT_FOUND
+            })),
         ),
         RemoteConnectionAccessError::Forbidden => (
             StatusCode::FORBIDDEN,
-            Json(json!({ "error": "无权访问该远端连接", "code": "remote_connection_forbidden" })),
+            Json(json!({
+                "error": "无权访问该远端连接",
+                "code": remote_connection_codes::REMOTE_CONNECTION_FORBIDDEN
+            })),
         ),
         RemoteConnectionAccessError::Internal(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": err, "code": "remote_connection_access_internal" })),
+            Json(json!({
+                "error": err,
+                "code": remote_connection_codes::REMOTE_CONNECTION_ACCESS_INTERNAL
+            })),
         ),
     }
 }

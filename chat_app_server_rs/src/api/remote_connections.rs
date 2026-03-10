@@ -21,6 +21,7 @@ use crate::core::auth::AuthUser;
 use crate::core::remote_connection_access::{
     ensure_owned_remote_connection, map_remote_connection_access_error,
 };
+use crate::core::remote_connection_error_codes::remote_connection_codes;
 use crate::core::user_scope::resolve_user_id;
 use crate::models::remote_connection::{RemoteConnection, RemoteConnectionService};
 
@@ -171,32 +172,50 @@ fn remote_connectivity_error_status_and_code(error: &str) -> (StatusCode, &'stat
     let normalized = error.to_lowercase();
 
     if normalized.contains("主机指纹与 known_hosts 记录不匹配") {
-        return (StatusCode::BAD_REQUEST, "host_key_mismatch");
+        return (
+            StatusCode::BAD_REQUEST,
+            remote_connection_codes::HOST_KEY_MISMATCH,
+        );
     }
     if normalized.contains("主机指纹未受信任") {
-        return (StatusCode::BAD_REQUEST, "host_key_untrusted");
+        return (
+            StatusCode::BAD_REQUEST,
+            remote_connection_codes::HOST_KEY_UNTRUSTED,
+        );
     }
     if normalized.contains("主机指纹校验失败")
         || normalized.contains("不支持的主机公钥类型")
         || normalized.contains("known_hosts")
     {
-        return (StatusCode::BAD_REQUEST, "host_key_verification_failed");
+        return (
+            StatusCode::BAD_REQUEST,
+            remote_connection_codes::HOST_KEY_VERIFICATION_FAILED,
+        );
     }
     if normalized.contains("认证失败")
         || normalized.contains("authentication failed")
         || normalized.contains("auth fail")
         || normalized.contains("permission denied (publickey")
     {
-        return (StatusCode::UNAUTHORIZED, "auth_failed");
+        return (
+            StatusCode::UNAUTHORIZED,
+            remote_connection_codes::AUTH_FAILED,
+        );
     }
     if normalized.contains("解析远端地址失败")
         || normalized.contains("解析跳板机地址失败")
         || normalized.contains("name or service not known")
     {
-        return (StatusCode::BAD_GATEWAY, "dns_resolve_failed");
+        return (
+            StatusCode::BAD_GATEWAY,
+            remote_connection_codes::DNS_RESOLVE_FAILED,
+        );
     }
     if normalized.contains("timed out") || normalized.contains("超时") {
-        return (StatusCode::REQUEST_TIMEOUT, "network_timeout");
+        return (
+            StatusCode::REQUEST_TIMEOUT,
+            remote_connection_codes::NETWORK_TIMEOUT,
+        );
     }
     if normalized.contains("network is unreachable")
         || normalized.contains("no route to host")
@@ -206,10 +225,16 @@ fn remote_connectivity_error_status_and_code(error: &str) -> (StatusCode, &'stat
         || normalized.contains("连接远端失败")
         || normalized.contains("连接跳板机失败")
     {
-        return (StatusCode::BAD_GATEWAY, "network_unreachable");
+        return (
+            StatusCode::BAD_GATEWAY,
+            remote_connection_codes::NETWORK_UNREACHABLE,
+        );
     }
 
-    (StatusCode::BAD_REQUEST, "connectivity_test_failed")
+    (
+        StatusCode::BAD_REQUEST,
+        remote_connection_codes::CONNECTIVITY_TEST_FAILED,
+    )
 }
 
 fn remote_connectivity_error_response(error: String) -> (StatusCode, Json<Value>) {
@@ -221,55 +246,55 @@ fn remote_terminal_error_code(error: &str) -> &'static str {
     let normalized = error.to_lowercase();
 
     if normalized.contains("主机指纹与 known_hosts 记录不匹配") {
-        return "host_key_mismatch";
+        return remote_connection_codes::HOST_KEY_MISMATCH;
     }
     if normalized.contains("主机指纹未受信任") {
-        return "host_key_untrusted";
+        return remote_connection_codes::HOST_KEY_UNTRUSTED;
     }
     if normalized.contains("主机指纹校验失败")
         || normalized.contains("不支持的主机公钥类型")
         || normalized.contains("known_hosts")
     {
-        return "host_key_verification_failed";
+        return remote_connection_codes::HOST_KEY_VERIFICATION_FAILED;
     }
     if normalized.contains("open pty failed")
         || normalized.contains("clone reader failed")
         || normalized.contains("take writer failed")
         || normalized.contains("request pty failed")
     {
-        return "terminal_init_failed";
+        return remote_connection_codes::TERMINAL_INIT_FAILED;
     }
     if normalized.contains("write failed")
         || normalized.contains("flush failed")
         || normalized.contains("terminal input channel closed")
         || normalized.contains("writer lock failed")
     {
-        return "terminal_input_failed";
+        return remote_connection_codes::TERMINAL_INPUT_FAILED;
     }
     if normalized.contains("resize failed")
         || normalized.contains("terminal resize channel closed")
         || normalized.contains("master lock failed")
         || normalized.contains("master missing")
     {
-        return "terminal_resize_failed";
+        return remote_connection_codes::TERMINAL_RESIZE_FAILED;
     }
     if normalized.contains("invalid ws message") {
-        return "invalid_ws_message";
+        return remote_connection_codes::INVALID_WS_MESSAGE;
     }
     if normalized.contains("auth")
         || normalized.contains("permission denied")
         || normalized.contains("认证失败")
     {
-        return "auth_failed";
+        return remote_connection_codes::AUTH_FAILED;
     }
     if normalized.contains("解析远端地址失败")
         || normalized.contains("解析跳板机地址失败")
         || normalized.contains("name or service not known")
     {
-        return "dns_resolve_failed";
+        return remote_connection_codes::DNS_RESOLVE_FAILED;
     }
     if normalized.contains("timed out") || normalized.contains("超时") {
-        return "network_timeout";
+        return remote_connection_codes::NETWORK_TIMEOUT;
     }
     if normalized.contains("network is unreachable")
         || normalized.contains("no route to host")
@@ -277,10 +302,10 @@ fn remote_terminal_error_code(error: &str) -> &'static str {
         || normalized.contains("broken pipe")
         || normalized.contains("connection refused")
     {
-        return "network_unreachable";
+        return remote_connection_codes::NETWORK_UNREACHABLE;
     }
 
-    "remote_terminal_error"
+    remote_connection_codes::REMOTE_TERMINAL_ERROR
 }
 
 fn ws_error_output(error: impl Into<String>) -> WsOutput {
@@ -389,13 +414,16 @@ async fn create_remote_connection(
         Err(err) => {
             return (
                 StatusCode::BAD_REQUEST,
-                error_payload(err, "invalid_argument"),
+                error_payload(err, remote_connection_codes::INVALID_ARGUMENT),
             );
         }
     };
 
     if let Err(err) = RemoteConnectionService::create(normalized.clone()).await {
-        return internal_error_response("remote_connection_create_failed", err);
+        return internal_error_response(
+            remote_connection_codes::REMOTE_CONNECTION_CREATE_FAILED,
+            err,
+        );
     }
 
     let saved = RemoteConnectionService::get_by_id(&normalized.id)
@@ -424,7 +452,7 @@ async fn test_remote_connection_draft(
         Err(err) => {
             return (
                 StatusCode::BAD_REQUEST,
-                error_payload(err, "invalid_argument"),
+                error_payload(err, remote_connection_codes::INVALID_ARGUMENT),
             );
         }
     };
@@ -463,13 +491,16 @@ async fn update_remote_connection(
         Err(err) => {
             return (
                 StatusCode::BAD_REQUEST,
-                error_payload(err, "invalid_argument"),
+                error_payload(err, remote_connection_codes::INVALID_ARGUMENT),
             );
         }
     };
 
     if let Err(err) = RemoteConnectionService::update(&id, &normalized).await {
-        return internal_error_response("remote_connection_update_failed", err);
+        return internal_error_response(
+            remote_connection_codes::REMOTE_CONNECTION_UPDATE_FAILED,
+            err,
+        );
     }
 
     match RemoteConnectionService::get_by_id(&id).await {
@@ -479,9 +510,14 @@ async fn update_remote_connection(
         ),
         Ok(None) => (
             StatusCode::NOT_FOUND,
-            error_payload("远端连接不存在", "remote_connection_not_found"),
+            error_payload(
+                "远端连接不存在",
+                remote_connection_codes::REMOTE_CONNECTION_NOT_FOUND,
+            ),
         ),
-        Err(err) => internal_error_response("remote_connection_fetch_failed", err),
+        Err(err) => {
+            internal_error_response(remote_connection_codes::REMOTE_CONNECTION_FETCH_FAILED, err)
+        }
     }
 }
 
@@ -501,7 +537,10 @@ async fn delete_remote_connection(
             StatusCode::OK,
             Json(serde_json::json!({ "success": true, "message": "远端连接已删除" })),
         ),
-        Err(err) => internal_error_response("remote_connection_delete_failed", err),
+        Err(err) => internal_error_response(
+            remote_connection_codes::REMOTE_CONNECTION_DELETE_FAILED,
+            err,
+        ),
     }
 }
 
@@ -877,6 +916,7 @@ mod tests {
         remote_connectivity_error_status_and_code, remote_terminal_error_code, ws_error_output,
         WsOutput,
     };
+    use crate::core::remote_connection_error_codes::remote_connection_codes;
 
     #[test]
     fn maps_connectivity_host_key_mismatch_error_code() {
@@ -884,7 +924,7 @@ mod tests {
             "主机指纹与 known_hosts 记录不匹配，请核对服务器后重试",
         );
         assert_eq!(status, StatusCode::BAD_REQUEST);
-        assert_eq!(code, "host_key_mismatch");
+        assert_eq!(code, remote_connection_codes::HOST_KEY_MISMATCH);
     }
 
     #[test]
@@ -892,7 +932,7 @@ mod tests {
         let (status, code) =
             remote_connectivity_error_status_and_code("连接远端失败: connection timed out");
         assert_eq!(status, StatusCode::REQUEST_TIMEOUT);
-        assert_eq!(code, "network_timeout");
+        assert_eq!(code, remote_connection_codes::NETWORK_TIMEOUT);
     }
 
     #[test]
@@ -901,14 +941,14 @@ mod tests {
         assert_eq!(status, StatusCode::UNAUTHORIZED);
         assert_eq!(
             body.0,
-            json!({ "error": "SSH 认证失败", "code": "auth_failed" })
+            json!({ "error": "SSH 认证失败", "code": remote_connection_codes::AUTH_FAILED })
         );
     }
 
     #[test]
     fn maps_remote_terminal_invalid_ws_message_code() {
         let code = remote_terminal_error_code("invalid ws message: expected value");
-        assert_eq!(code, "invalid_ws_message");
+        assert_eq!(code, remote_connection_codes::INVALID_WS_MESSAGE);
     }
 
     #[test]
@@ -916,7 +956,7 @@ mod tests {
         let payload = ws_error_output("write failed: broken pipe");
         match payload {
             WsOutput::Error { error, code } => {
-                assert_eq!(code, "terminal_input_failed");
+                assert_eq!(code, remote_connection_codes::TERMINAL_INPUT_FAILED);
                 assert_eq!(error, "write failed: broken pipe");
             }
             _ => panic!("expected ws error payload"),
@@ -925,12 +965,17 @@ mod tests {
 
     #[test]
     fn emits_internal_error_payload_with_code() {
-        let (status, body) =
-            internal_error_response("remote_connection_delete_failed", "delete failed");
+        let (status, body) = internal_error_response(
+            remote_connection_codes::REMOTE_CONNECTION_DELETE_FAILED,
+            "delete failed",
+        );
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(
             body.0,
-            json!({ "error": "delete failed", "code": "remote_connection_delete_failed" })
+            json!({
+                "error": "delete failed",
+                "code": remote_connection_codes::REMOTE_CONNECTION_DELETE_FAILED
+            })
         );
     }
 }
