@@ -84,7 +84,121 @@ export function createSendMessageHandler({
       createdAt: new Date(),
       metadata: {},
     };
+    const tryParseJsonObject = (raw: string): Record<string, any> | null => {
+      const trimmed = raw.trim();
+      if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) {
+        return null;
+      }
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          return parsed as Record<string, any>;
+        }
+      } catch {
+        return null;
+      }
+      return null;
+    };
+
+    const resolveNestedErrorDetails = (
+      candidate: unknown,
+      depth = 0,
+    ): { message?: string; code?: string } => {
+      if (depth > 4 || candidate === null || candidate === undefined) {
+        return {};
+      }
+
+      if (candidate instanceof Error) {
+        return resolveNestedErrorDetails(candidate.message, depth + 1);
+      }
+
+      if (typeof candidate === 'string') {
+        const trimmed = candidate.trim();
+        if (!trimmed) {
+          return {};
+        }
+        const parsed = tryParseJsonObject(trimmed);
+        if (parsed) {
+          const fromParsed = resolveNestedErrorDetails(parsed, depth + 1);
+          if (fromParsed.message || fromParsed.code) {
+            return fromParsed;
+          }
+        }
+        return { message: trimmed };
+      }
+
+      if (typeof candidate !== 'object') {
+        return {};
+      }
+
+      const raw = candidate as Record<string, any>;
+      const directMessage = typeof raw.message === 'string' ? raw.message.trim() : '';
+      const directCode = typeof raw.code === 'string'
+        ? raw.code.trim()
+        : (typeof raw.type === 'string' ? raw.type.trim() : '');
+
+      if (directMessage) {
+        return {
+          message: directMessage,
+          code: directCode || undefined,
+        };
+      }
+
+      const nestedCandidates = [raw.error, raw.data, raw.details];
+      for (const nested of nestedCandidates) {
+        const resolved = resolveNestedErrorDetails(nested, depth + 1);
+        if (resolved.message || resolved.code) {
+          if (!resolved.code && directCode) {
+            return { ...resolved, code: directCode };
+          }
+          return resolved;
+        }
+      }
+
+      return directCode ? { code: directCode } : {};
+    };
+
+    const resolveStreamErrorPayload = (payload: any): { message: string; code?: string } => {
+      const directCode = typeof payload?.code === 'string'
+        ? payload.code.trim()
+        : (typeof payload?.data?.code === 'string' ? payload.data.code.trim() : '');
+
+      const candidates = [
+        payload?.message,
+        payload?.error,
+        payload?.data?.message,
+        payload?.data?.error,
+      ];
+
+      for (const candidate of candidates) {
+        const resolved = resolveNestedErrorDetails(candidate);
+        if (resolved.message) {
+          return {
+            message: resolved.message,
+            code: directCode || resolved.code,
+          };
+        }
+      }
+
+      const fallbackResolved = resolveNestedErrorDetails(payload);
+      if (fallbackResolved.message) {
+        return {
+          message: fallbackResolved.message,
+          code: directCode || fallbackResolved.code,
+        };
+      }
+
+      return {
+        message: 'Stream error',
+        code: directCode || fallbackResolved.code,
+      };
+    };
+
     const resolveReadableErrorMessage = (inputError: unknown): string => {
+      const nested = resolveNestedErrorDetails(inputError);
+      if (typeof nested.message === 'string' && nested.message.trim().length > 0) {
+        return nested.message.trim();
+      }
       if (inputError instanceof Error && inputError.message.trim().length > 0) {
         return inputError.message.trim();
       }
@@ -912,16 +1026,11 @@ export function createSendMessageHandler({
                     }
                   });
             } else if (parsed.type === 'error') {
-              const errorMessage = parsed?.message
-                || parsed?.error
-                || parsed?.data?.message
-                || parsed?.data?.error
-                || 'Stream error';
-              const errorCode = parsed?.code || parsed?.data?.code;
+              const streamError = resolveStreamErrorPayload(parsed);
               throw new Error(
-                typeof errorCode === 'string' && errorCode.trim().length > 0
-                  ? `[${errorCode}] ${errorMessage}`
-                  : errorMessage
+                typeof streamError.code === 'string' && streamError.code.trim().length > 0
+                  ? `[${streamError.code}] ${streamError.message}`
+                  : streamError.message
               );
             } else if (parsed.type === 'cancelled') {
                   // 标记当前消息中的工具调用为已取消，避免一直处于等待中

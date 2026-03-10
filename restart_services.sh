@@ -71,7 +71,7 @@ stop_from_port() {
 
 start_backend() {
   echo "[INFO] 启动后端..."
-  nohup bash -lc "cd \"$BACKEND_DIR\" && cargo run" >"$BACKEND_LOG_FILE" 2>&1 &
+  nohup bash -lc "cd \"$BACKEND_DIR\" && cargo run --bin chat_app_server_rs" >"$BACKEND_LOG_FILE" 2>&1 &
   echo $! >"$BACKEND_PID_FILE"
 }
 

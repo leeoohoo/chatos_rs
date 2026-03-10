@@ -547,6 +547,9 @@ fn is_transient_network_error(err: &str) -> bool {
         || message.contains("status 522")
         || message.contains("status 523")
         || message.contains("status 524")
+        || message.contains("engine_overloaded_error")
+        || message.contains("currently overloaded, please try again later")
+        || message.contains("server is currently overloaded")
 }
 
 fn is_transient_transport_or_parse_error(err: &str) -> bool {
@@ -656,6 +659,9 @@ mod tests {
         ));
         assert!(is_transient_network_error(
             "status 503: service unavailable"
+        ));
+        assert!(is_transient_network_error(
+            "{\"error\":{\"message\":\"The engine is currently overloaded, please try again later\",\"type\":\"engine_overloaded_error\"}}"
         ));
         assert!(!is_transient_network_error("status 401: invalid api key"));
     }
