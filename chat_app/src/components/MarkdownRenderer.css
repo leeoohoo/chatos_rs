@@ -362,6 +362,78 @@
     opacity: 0;
 }
 
+/* ===== Mermaid 图表样式 ===== */
+.markdown-renderer .mermaid-block {
+    margin: 10px 0;
+    border-radius: 8px;
+    border: 1px solid var(--md-border);
+    overflow: hidden;
+    background: var(--md-bg);
+}
+
+.markdown-renderer .mermaid-header {
+    background-color: var(--md-secondary-bg);
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--md-secondary-text);
+    border-bottom: 1px solid var(--md-border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.markdown-renderer .mermaid-language {
+    text-transform: lowercase;
+    letter-spacing: 0.01em;
+}
+
+.markdown-renderer .mermaid-content {
+    padding: 10px;
+    background: var(--md-bg);
+}
+
+.markdown-renderer .mermaid-loading {
+    margin-bottom: 8px;
+    font-size: 12px;
+    color: var(--md-secondary-text);
+    animation: pulse 2s infinite;
+}
+
+.markdown-renderer .mermaid-diagram {
+    overflow-x: auto;
+    padding: 8px;
+    border: 1px solid var(--md-border);
+    border-radius: 6px;
+    background: var(--md-secondary-bg);
+    min-height: 48px;
+}
+
+.markdown-renderer .mermaid-diagram svg {
+    display: block;
+    height: auto;
+    max-width: 100%;
+    margin: 0 auto;
+}
+
+.markdown-renderer .mermaid-fallback {
+    display: none;
+    margin-top: 8px;
+}
+
+.markdown-renderer .mermaid-block.mermaid-rendered .mermaid-loading {
+    display: none;
+}
+
+.markdown-renderer .mermaid-block.mermaid-error .mermaid-diagram {
+    display: none;
+}
+
+.markdown-renderer .mermaid-block.mermaid-error .mermaid-fallback {
+    display: block;
+}
+
 /* ===== 引用样式 ===== */
 .markdown-renderer blockquote {
     margin: 0 0 16px 0;

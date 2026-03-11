@@ -45,6 +45,8 @@ struct TerminalLogQuery {
 
 const DEFAULT_TERMINAL_HISTORY_LIMIT: i64 = 1200;
 const MAX_TERMINAL_HISTORY_LIMIT: i64 = 5000;
+const WS_DEFAULT_SNAPSHOT_LINES: usize = 500;
+const WS_MAX_SNAPSHOT_LINES: usize = 10_000;
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
@@ -55,6 +57,8 @@ enum WsInput {
     Command { command: String },
     #[serde(rename = "resize")]
     Resize { cols: u16, rows: u16 },
+    #[serde(rename = "snapshot")]
+    Snapshot { lines: Option<usize> },
     #[serde(rename = "ping")]
     Ping,
 }
@@ -64,10 +68,15 @@ enum WsInput {
 enum WsOutput {
     #[serde(rename = "output")]
     Output { data: String },
+    #[serde(rename = "snapshot")]
+    Snapshot { data: String },
     #[serde(rename = "exit")]
     Exit { code: i32 },
     #[serde(rename = "state")]
-    State { busy: bool },
+    State {
+        busy: bool,
+        snapshot_paging: bool,
+    },
     #[serde(rename = "error")]
     Error { error: String },
     #[serde(rename = "pong")]
@@ -333,6 +342,34 @@ async fn handle_terminal_socket(id: String, mut socket: WebSocket) {
         None => return,
     };
 
+    let snapshot = session.output_snapshot_tail_lines(WS_DEFAULT_SNAPSHOT_LINES);
+    if !snapshot.is_empty() {
+        if socket
+            .send(Message::Text(
+                serde_json::to_string(&WsOutput::Snapshot { data: snapshot })
+                    .unwrap_or_default(),
+            ))
+            .await
+            .is_err()
+        {
+            return;
+        }
+    }
+
+    if socket
+        .send(Message::Text(
+            serde_json::to_string(&WsOutput::State {
+                busy: session.is_busy(),
+                snapshot_paging: true,
+            })
+            .unwrap_or_default(),
+        ))
+        .await
+        .is_err()
+    {
+        return;
+    }
+
     let mut rx = session.subscribe();
     let (ws_sender, mut ws_receiver) = socket.split();
     let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Message>();
@@ -353,7 +390,10 @@ async fn handle_terminal_socket(id: String, mut socket: WebSocket) {
                 let payload = match evt {
                     TerminalEvent::Output(data) => WsOutput::Output { data },
                     TerminalEvent::Exit(code) => WsOutput::Exit { code },
-                    TerminalEvent::State(busy) => WsOutput::State { busy },
+                    TerminalEvent::State(busy) => WsOutput::State {
+                        busy,
+                        snapshot_paging: true,
+                    },
                 };
                 let text = serde_json::to_string(&payload).unwrap_or_default();
                 if out_tx.send(Message::Text(text)).is_err() {
@@ -391,6 +431,15 @@ async fn handle_terminal_socket(id: String, mut socket: WebSocket) {
                             let _ = session.resize(cols, rows);
                         }
                     }
+                    Ok(WsInput::Snapshot { lines }) => {
+                        let requested = lines.unwrap_or(WS_DEFAULT_SNAPSHOT_LINES);
+                        let normalized = requested.clamp(1, WS_MAX_SNAPSHOT_LINES);
+                        let snapshot = session.output_snapshot_tail_lines(normalized);
+                        let _ = out_tx.send(Message::Text(
+                            serde_json::to_string(&WsOutput::Snapshot { data: snapshot })
+                                .unwrap_or_default(),
+                        ));
+                    }
                     Ok(WsInput::Ping) => {
                         let _ = out_tx.send(Message::Text(
                             serde_json::to_string(&WsOutput::Pong {
@@ -400,7 +449,11 @@ async fn handle_terminal_socket(id: String, mut socket: WebSocket) {
                         ));
                     }
                     Err(_) => {
-                        if !text.trim().is_empty() {
+                        let trimmed = text.trim();
+                        if trimmed.starts_with('{') && trimmed.ends_with('}') {
+                            continue;
+                        }
+                        if !trimmed.is_empty() {
                             let _ = session.write_input(&text);
                             let log = TerminalLog::new(id.clone(), "input".to_string(), text);
                             let _ = TerminalLogService::create(log).await;
