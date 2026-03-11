@@ -1082,6 +1082,7 @@ export function createSendMessageHandler({
         // 更新状态，结束流式传输
         set((state: any) => {
           const currentDraft = state.sessionStreamingMessageDrafts?.[currentSessionId];
+          let backgroundFinalizedDraft: any = null;
           if (currentDraft) {
             const finalizedDraft = cloneStreamingMessageDraft(currentDraft);
             const finalizedStatus = sawDone ? 'completed' : 'error';
@@ -1095,10 +1096,13 @@ export function createSendMessageHandler({
               };
             } else if (shouldWriteToCurrentMessages) {
               state.messages.push(finalizedDraft);
+            } else {
+              // 会话不在前台时，保留最终草稿，避免切回后短时间内看不到消息
+              backgroundFinalizedDraft = finalizedDraft;
             }
           }
           if (state.sessionStreamingMessageDrafts) {
-            state.sessionStreamingMessageDrafts[currentSessionId] = null;
+            state.sessionStreamingMessageDrafts[currentSessionId] = backgroundFinalizedDraft;
           }
 
           const prev = state.sessionChatState[currentSessionId] || { isLoading: false, isStreaming: false, streamingMessageId: null };
@@ -1158,7 +1162,11 @@ export function createSendMessageHandler({
         }
 
         if (state.sessionStreamingMessageDrafts) {
-          state.sessionStreamingMessageDrafts[currentSessionId] = null;
+          state.sessionStreamingMessageDrafts[currentSessionId] = (
+            existingAssistantIndex !== -1 || state.currentSessionId === currentSessionId
+          )
+            ? null
+            : cloneStreamingMessageDraft(failureAssistantMessage);
         }
 
         const prev = state.sessionChatState[currentSessionId] || { isLoading: false, isStreaming: false, streamingMessageId: null };

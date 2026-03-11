@@ -503,6 +503,44 @@ export function createSessionActions({
             }
           }
 
+          if (draftMessage && typeof draftMessage === 'object') {
+            const draftClone = cloneStreamingMessageDraft(draftMessage);
+            const draftId = typeof (draftClone as any)?.id === 'string' ? (draftClone as any).id : '';
+            const draftIndex = draftId
+              ? nextMessages.findIndex((m: any) => m?.id === draftId)
+              : -1;
+
+            if (draftIndex === -1) {
+              nextMessages = [...nextMessages, draftClone];
+            } else {
+              const existing = nextMessages[draftIndex] || {};
+              const existingTime = new Date((existing as any)?.updatedAt || (existing as any)?.createdAt || 0).getTime();
+              const draftTime = new Date((draftClone as any)?.updatedAt || (draftClone as any)?.createdAt || 0).getTime();
+              const existingContentLength = typeof (existing as any)?.content === 'string'
+                ? (existing as any).content.length
+                : 0;
+              const draftContentLength = typeof (draftClone as any)?.content === 'string'
+                ? (draftClone as any).content.length
+                : 0;
+              const shouldReplaceWithDraft = Boolean(
+                chatState?.isStreaming
+                || draftTime > existingTime
+                || draftContentLength > existingContentLength
+                || (existing as any)?.status !== (draftClone as any)?.status
+              );
+              if (shouldReplaceWithDraft) {
+                nextMessages[draftIndex] = {
+                  ...existing,
+                  ...draftClone,
+                };
+              }
+            }
+
+            if (!chatState?.isStreaming && state.sessionStreamingMessageDrafts) {
+              state.sessionStreamingMessageDrafts[sessionId] = null;
+            }
+          }
+
           ensureSessionTurnMaps(state, sessionId);
 
           nextMessages = applyTurnProcessCache(

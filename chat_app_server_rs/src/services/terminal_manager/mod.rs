@@ -6,6 +6,7 @@ mod shell_path;
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -27,6 +28,9 @@ use self::prompt_parser::{
     extract_prompt_cwd, infer_prompt_cwd_from_context, is_prompt_line, strip_ansi,
 };
 
+const TERMINAL_SNAPSHOT_LIMIT_BYTES: usize = 2 * 1024 * 1024;
+const TERMINAL_SNAPSHOT_MAX_LINES: usize = 10_000;
+
 #[derive(Debug, Clone)]
 pub enum TerminalEvent {
     Output(String),
@@ -34,11 +38,81 @@ pub enum TerminalEvent {
     State(bool),
 }
 
+#[derive(Debug, Default)]
+struct OutputHistory {
+    chunks: VecDeque<String>,
+    total_bytes: usize,
+    total_lines: usize,
+}
+
+impl OutputHistory {
+    fn chunk_line_count(chunk: &str) -> usize {
+        chunk.as_bytes().iter().filter(|b| **b == b'\n').count()
+    }
+
+    fn push(&mut self, chunk: String) {
+        if chunk.is_empty() {
+            return;
+        }
+        let chunk_lines = Self::chunk_line_count(chunk.as_str());
+        self.total_bytes += chunk.len();
+        self.total_lines += chunk_lines;
+        self.chunks.push_back(chunk);
+
+        while self.total_bytes > TERMINAL_SNAPSHOT_LIMIT_BYTES
+            || self.total_lines > TERMINAL_SNAPSHOT_MAX_LINES
+        {
+            let Some(removed) = self.chunks.pop_front() else {
+                self.total_bytes = 0;
+                self.total_lines = 0;
+                break;
+            };
+            self.total_bytes = self.total_bytes.saturating_sub(removed.len());
+            self.total_lines = self
+                .total_lines
+                .saturating_sub(Self::chunk_line_count(removed.as_str()));
+        }
+    }
+
+    fn snapshot(&self) -> String {
+        if self.chunks.is_empty() {
+            return String::new();
+        }
+        let mut output = String::with_capacity(self.total_bytes);
+        for chunk in self.chunks.iter() {
+            output.push_str(chunk.as_str());
+        }
+        output
+    }
+
+    fn snapshot_tail_lines(&self, max_lines: usize) -> String {
+        if max_lines == 0 {
+            return String::new();
+        }
+        let full = self.snapshot();
+        if full.is_empty() {
+            return full;
+        }
+
+        let mut newline_seen = 0usize;
+        for idx in (0..full.len()).rev() {
+            if full.as_bytes()[idx] == b'\n' {
+                newline_seen += 1;
+                if newline_seen > max_lines {
+                    return full[idx + 1..].to_string();
+                }
+            }
+        }
+        full
+    }
+}
+
 pub struct TerminalSession {
     pub id: String,
     sender: broadcast::Sender<TerminalEvent>,
     writer: Mutex<Box<dyn Write + Send>>,
     master: Mutex<Box<dyn MasterPty + Send>>,
+    output_history: Mutex<OutputHistory>,
     root_cwd: PathBuf,
     current_cwd: Mutex<PathBuf>,
     input_line: Mutex<String>,
@@ -89,6 +163,7 @@ impl TerminalSession {
             sender,
             writer: Mutex::new(writer),
             master: Mutex::new(pair.master),
+            output_history: Mutex::new(OutputHistory::default()),
             root_cwd: root_cwd.clone(),
             current_cwd: Mutex::new(root_cwd),
             input_line: Mutex::new(String::new()),
@@ -115,17 +190,14 @@ impl TerminalSession {
                     Ok(0) => break,
                     Ok(n) => {
                         let text = String::from_utf8_lossy(&buf[..n]).to_string();
-                        let _ = session_clone
-                            .sender
-                            .send(TerminalEvent::Output(text.clone()));
-                        session_clone.mark_output();
+                        session_clone.append_and_emit_output(text.clone());
 
                         let cleaned = strip_ansi(&text);
+                        let mut saw_prompt = false;
                         if !cleaned.is_empty() {
                             line_buffer.push_str(&cleaned);
                             let mut parts = line_buffer.split('\n').collect::<Vec<_>>();
                             let tail = parts.pop().unwrap_or("");
-                            let mut saw_prompt = false;
                             for line in parts.iter() {
                                 session_clone.sync_current_cwd_from_prompt_line(line);
                                 if is_prompt_line(line) {
@@ -145,7 +217,8 @@ impl TerminalSession {
                         output_log_buffer.push_str(&text);
                         let should_flush = !output_log_buffer.is_empty()
                             && (output_log_buffer.len() >= 8 * 1024
-                                || last_flush.elapsed() >= flush_interval);
+                                || last_flush.elapsed() >= flush_interval
+                                || saw_prompt);
 
                         if should_flush {
                             spawn_terminal_output_persist(
@@ -181,6 +254,13 @@ impl TerminalSession {
 
     pub fn subscribe(&self) -> broadcast::Receiver<TerminalEvent> {
         self.sender.subscribe()
+    }
+
+    pub fn output_snapshot_tail_lines(&self, max_lines: usize) -> String {
+        match self.output_history.lock() {
+            Ok(history) => history.snapshot_tail_lines(max_lines.min(TERMINAL_SNAPSHOT_MAX_LINES)),
+            Err(_) => String::new(),
+        }
     }
 
     pub fn write_input(&self, data: &str) -> Result<(), String> {
@@ -306,7 +386,15 @@ impl TerminalSession {
 
     fn emit_guard_output(&self, message: &str) {
         let output = format!("\r\n{message}\r\n");
+        self.append_and_emit_output(output);
+    }
+
+    fn append_and_emit_output(&self, output: String) {
+        if let Ok(mut history) = self.output_history.lock() {
+            history.push(output.clone());
+        }
         let _ = self.sender.send(TerminalEvent::Output(output));
+        self.mark_output();
     }
 
     fn sync_current_cwd_from_prompt_line(&self, line: &str) {
