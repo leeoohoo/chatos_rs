@@ -4,7 +4,9 @@ import { apiClient } from '@/lib/api/client';
 
 export interface AuthUser {
   id: string;
-  email: string;
+  username?: string;
+  email?: string | null;
+  role?: string;
   display_name?: string | null;
   status?: string;
   created_at?: string;
@@ -19,8 +21,7 @@ interface AuthState {
   loading: boolean;
   error: string | null;
   bootstrap: () => Promise<void>;
-  login: (email: string, password: string) => Promise<void>;
-  register: (email: string, password: string, displayName?: string) => Promise<void>;
+  login: (username: string, password: string) => Promise<void>;
   logout: () => void;
   clearError: () => void;
 }
@@ -30,6 +31,26 @@ function extractErrorMessage(error: unknown): string {
     return error.message;
   }
   return '请求失败，请稍后重试';
+}
+
+function normalizeAuthUser(input: any): AuthUser | null {
+  if (!input || typeof input !== 'object') {
+    return null;
+  }
+  const id =
+    String(input.id || input.user_id || input.username || input.email || '').trim();
+  if (!id) {
+    return null;
+  }
+  return {
+    ...input,
+    id,
+    username: String(input.username || input.user_id || id).trim() || id,
+    email:
+      typeof input.email === 'string' && input.email.trim()
+        ? input.email.trim()
+        : String(input.username || input.user_id || id),
+  } as AuthUser;
 }
 
 let tokenRefreshListenerRegistered = false;
@@ -70,7 +91,7 @@ export const useAuthStore = createWithEqualityFn<AuthState>()(
           set({ loading: true, error: null });
           try {
             const resp = await apiClient.getMe();
-            const user = resp?.user || null;
+            const user = normalizeAuthUser(resp?.user);
             if (!user?.id) {
               throw new Error('登录状态已失效');
             }
@@ -87,41 +108,14 @@ export const useAuthStore = createWithEqualityFn<AuthState>()(
           }
         },
 
-        login: async (email: string, password: string) => {
+        login: async (username: string, password: string) => {
           set({ loading: true, error: null });
           try {
-            const resp = await apiClient.login({ email, password });
+            const resp = await apiClient.login({ username, password });
             const token = resp?.access_token as string | undefined;
-            const user = resp?.user as AuthUser | undefined;
+            const user = normalizeAuthUser(resp?.user);
             if (!token || !user?.id) {
               throw new Error('登录失败：返回数据不完整');
-            }
-            apiClient.setAccessToken(token);
-            set({
-              accessToken: token,
-              user,
-              initialized: true,
-              loading: false,
-              error: null,
-            });
-          } catch (error) {
-            set({ loading: false, error: extractErrorMessage(error) });
-            throw error;
-          }
-        },
-
-        register: async (email: string, password: string, displayName?: string) => {
-          set({ loading: true, error: null });
-          try {
-            const resp = await apiClient.register({
-              email,
-              password,
-              display_name: displayName || undefined,
-            });
-            const token = resp?.access_token as string | undefined;
-            const user = resp?.user as AuthUser | undefined;
-            if (!token || !user?.id) {
-              throw new Error('注册失败：返回数据不完整');
             }
             apiClient.setAccessToken(token);
             set({

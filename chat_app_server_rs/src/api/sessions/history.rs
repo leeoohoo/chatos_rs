@@ -371,6 +371,14 @@ fn build_compact_history_messages(messages: Vec<Message>) -> Vec<Message> {
     compact
 }
 
+pub(super) fn compact_messages_for_display(
+    messages: Vec<Message>,
+    limit: Option<i64>,
+    offset: i64,
+) -> Vec<Message> {
+    apply_recent_offset_limit(build_compact_history_messages(messages), limit, offset)
+}
+
 fn apply_recent_offset_limit(
     messages: Vec<Message>,
     limit: Option<i64>,
@@ -470,7 +478,8 @@ async fn fetch_compact_messages_from_recent_window(
 
     loop {
         attempts = attempts.saturating_add(1);
-        let recent_messages = MessageService::get_recent_by_session(session_id, window_limit, 0).await?;
+        let recent_messages =
+            MessageService::get_recent_by_session(session_id, window_limit, 0).await?;
         let compact_messages = build_compact_history_messages(recent_messages);
         let enough_items = required_count
             .map(|needed| compact_messages.len() >= needed)

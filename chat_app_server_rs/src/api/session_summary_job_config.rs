@@ -11,6 +11,7 @@ use crate::core::user_scope::resolve_user_id;
 use crate::models::session_summary_job_config::{
     SessionSummaryJobConfig, SessionSummaryJobConfigService,
 };
+use crate::services::memory_server_client;
 
 #[derive(Debug, Deserialize)]
 struct UserQuery {
@@ -50,6 +51,22 @@ async fn get_config(auth: AuthUser, Query(query): Query<UserQuery>) -> (StatusCo
         Err(err) => return err,
     };
     let defaults = crate::modules::session_summary_job::types::SummaryJobDefaults::from_env();
+
+    if memory_server_client::remote_only_enabled() {
+        return match memory_server_client::get_summary_job_config(&user_id).await {
+            Ok(config) => (
+                StatusCode::OK,
+                Json(to_json(normalize_config(
+                    map_memory_summary_job_config(config),
+                    &defaults,
+                ))),
+            ),
+            Err(err) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "获取会话总结配置失败", "detail": err})),
+            ),
+        };
+    }
 
     match SessionSummaryJobConfigService::get_by_user(&user_id).await {
         Ok(Some(config)) => {
@@ -105,6 +122,38 @@ async fn upsert_config(auth: AuthUser, req: SummaryJobConfigRequest) -> (StatusC
     };
     let defaults = crate::modules::session_summary_job::types::SummaryJobDefaults::from_env();
 
+    let message_count_limit = message_count_limit.or(round_limit);
+
+    if memory_server_client::remote_only_enabled() {
+        let req_body = memory_server_client::UpsertSummaryJobConfigRequestDto {
+            user_id: user_id.clone(),
+            enabled,
+            summary_model_config_id: summary_model_config_id.map(|model_id| {
+                model_id
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+            }),
+            token_limit,
+            round_limit: message_count_limit,
+            target_summary_tokens,
+            job_interval_seconds,
+        };
+
+        return match memory_server_client::upsert_summary_job_config(&req_body).await {
+            Ok(saved) => (
+                StatusCode::OK,
+                Json(to_json(normalize_config(
+                    map_memory_summary_job_config(saved),
+                    &defaults,
+                ))),
+            ),
+            Err(err) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "保存会话总结配置失败", "detail": err})),
+            ),
+        };
+    }
+
     let mut config = match SessionSummaryJobConfigService::get_by_user(&user_id).await {
         Ok(Some(current)) => current,
         Ok(None) => default_config_for_user(&user_id, &defaults),
@@ -127,7 +176,6 @@ async fn upsert_config(auth: AuthUser, req: SummaryJobConfigRequest) -> (StatusC
     if let Some(token_limit) = token_limit {
         config.token_limit = token_limit;
     }
-    let message_count_limit = message_count_limit.or(round_limit);
     if let Some(round_limit) = message_count_limit {
         config.round_limit = round_limit;
     }
@@ -226,4 +274,19 @@ fn normalize_config(
         MIN_JOB_INTERVAL_SECONDS,
     );
     config
+}
+
+fn map_memory_summary_job_config(
+    source: memory_server_client::SummaryJobConfigDto,
+) -> SessionSummaryJobConfig {
+    SessionSummaryJobConfig {
+        user_id: source.user_id,
+        enabled: source.enabled == 1,
+        summary_model_config_id: source.summary_model_config_id,
+        token_limit: source.token_limit,
+        round_limit: source.round_limit,
+        target_summary_tokens: source.target_summary_tokens,
+        job_interval_seconds: source.job_interval_seconds,
+        updated_at: source.updated_at,
+    }
 }

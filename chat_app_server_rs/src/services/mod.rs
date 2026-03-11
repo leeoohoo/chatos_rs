@@ -3,6 +3,7 @@ pub mod ai_prompt_tool;
 pub mod builtin_mcp;
 pub mod llm_prompt_runner;
 pub mod mcp_loader;
+pub mod memory_server_client;
 pub(crate) mod message_manager_common;
 pub mod notepad;
 pub mod session_title;

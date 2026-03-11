@@ -73,10 +73,7 @@ enum WsOutput {
     #[serde(rename = "exit")]
     Exit { code: i32 },
     #[serde(rename = "state")]
-    State {
-        busy: bool,
-        snapshot_paging: bool,
-    },
+    State { busy: bool, snapshot_paging: bool },
     #[serde(rename = "error")]
     Error { error: String },
     #[serde(rename = "pong")]
@@ -346,8 +343,7 @@ async fn handle_terminal_socket(id: String, mut socket: WebSocket) {
     if !snapshot.is_empty() {
         if socket
             .send(Message::Text(
-                serde_json::to_string(&WsOutput::Snapshot { data: snapshot })
-                    .unwrap_or_default(),
+                serde_json::to_string(&WsOutput::Snapshot { data: snapshot }).unwrap_or_default(),
             ))
             .await
             .is_err()

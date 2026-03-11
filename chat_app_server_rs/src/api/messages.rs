@@ -14,6 +14,7 @@ use crate::core::messages::{
 use crate::core::pagination::{parse_non_negative_offset, parse_positive_limit};
 use crate::core::session_access::{ensure_owned_session, map_session_access_error};
 use crate::models::message::MessageService;
+use crate::services::memory_server_client;
 
 #[derive(Debug, Deserialize)]
 struct MessagesQuery {
@@ -60,7 +61,12 @@ async fn list_messages(
     }
     let limit = parse_positive_limit(query.limit);
     let offset = parse_non_negative_offset(query.offset);
-    match MessageService::get_by_session(&session_id, limit, offset).await {
+    let result = if memory_server_client::remote_only_enabled() {
+        memory_server_client::list_messages(&session_id, limit, offset, true).await
+    } else {
+        MessageService::get_by_session(&session_id, limit, offset).await
+    };
+    match result {
         Ok(messages) => {
             let out: Vec<Value> = messages
                 .into_iter()
@@ -123,7 +129,13 @@ async fn create_message(
 }
 
 async fn get_message(auth: AuthUser, Path(id): Path<String>) -> (StatusCode, Json<Value>) {
-    match MessageService::get_by_id(&id).await {
+    let result = if memory_server_client::remote_only_enabled() {
+        memory_server_client::get_message_by_id(&id).await
+    } else {
+        MessageService::get_by_id(&id).await
+    };
+
+    match result {
         Ok(Some(msg)) => {
             if let Err(err) = ensure_owned_session(&msg.session_id, &auth).await {
                 return map_session_access_error(err);
@@ -145,7 +157,13 @@ async fn get_message(auth: AuthUser, Path(id): Path<String>) -> (StatusCode, Jso
 }
 
 async fn delete_message(auth: AuthUser, Path(id): Path<String>) -> (StatusCode, Json<Value>) {
-    let message = match MessageService::get_by_id(&id).await {
+    let load_result = if memory_server_client::remote_only_enabled() {
+        memory_server_client::get_message_by_id(&id).await
+    } else {
+        MessageService::get_by_id(&id).await
+    };
+
+    let message = match load_result {
         Ok(Some(msg)) => msg,
         Ok(None) => {
             return (
@@ -163,7 +181,16 @@ async fn delete_message(auth: AuthUser, Path(id): Path<String>) -> (StatusCode, 
     if let Err(err) = ensure_owned_session(&message.session_id, &auth).await {
         return map_session_access_error(err);
     }
-    match MessageService::delete(&id).await {
+    let delete_result = if memory_server_client::remote_only_enabled() {
+        match memory_server_client::delete_message(&id).await {
+            Ok(true) => Ok(()),
+            Ok(false) => Err("消息不存在".to_string()),
+            Err(err) => Err(err),
+        }
+    } else {
+        MessageService::delete(&id).await
+    };
+    match delete_result {
         Ok(_) => (
             StatusCode::OK,
             Json(serde_json::json!({"success": true, "message": "消息已删除"})),

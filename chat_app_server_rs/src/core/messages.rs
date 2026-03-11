@@ -2,6 +2,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::models::message::{Message, MessageService};
+use crate::services::memory_server_client;
 use crate::services::session_title::maybe_rename_session_title;
 
 #[derive(Debug, Clone, Default)]
@@ -72,7 +73,11 @@ pub async fn create_message_and_maybe_rename(message: Message) -> Result<Message
     let role = message.role.clone();
     let content = message.content.clone();
 
-    let saved = MessageService::create(message).await?;
+    let saved = if memory_server_client::remote_only_enabled() {
+        memory_server_client::upsert_message(&message).await?
+    } else {
+        MessageService::create(message).await?
+    };
     if role == "user" {
         let _ = maybe_rename_session_title(&session_id, &content, 30).await;
     }

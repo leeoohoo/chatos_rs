@@ -1,0 +1,261 @@
+import axios from 'axios';
+
+import type {
+  AiModelConfig,
+  JobRun,
+  Message,
+  SummaryGraphEdge,
+  SummaryGraphNode,
+  RollupJobConfig,
+  Session,
+  SessionSummary,
+  SummaryJobConfig,
+  SummaryLevelItem,
+} from '../types';
+
+const baseURL =
+  import.meta.env.VITE_MEMORY_API_BASE ?? 'http://localhost:7080/api/memory/v1';
+
+const client = axios.create({
+  baseURL,
+  timeout: 30000,
+});
+
+client.interceptors.request.use((config) => {
+  const authToken = localStorage.getItem('memory_auth_token');
+  if (authToken) {
+    config.headers.Authorization = `Bearer ${authToken}`;
+  }
+  return config;
+});
+
+client.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const payload = error?.response?.data;
+    const detail =
+      typeof payload?.detail === 'string'
+        ? payload.detail
+        : typeof payload?.error === 'string'
+          ? payload.error
+          : typeof payload?.message === 'string'
+            ? payload.message
+            : null;
+
+    if (detail) {
+      return Promise.reject(new Error(detail));
+    }
+    if (error instanceof Error) {
+      return Promise.reject(error);
+    }
+    return Promise.reject(new Error('request failed'));
+  },
+);
+
+export const api = {
+  async login(username: string, password: string): Promise<{ token: string; user_id: string; role: string }> {
+    const { data } = await client.post('/auth/login', { username, password });
+    return data;
+  },
+
+  async me(): Promise<{ user_id: string; role: string }> {
+    const { data } = await client.get('/auth/me');
+    return data;
+  },
+
+  async listSessions(userId?: string): Promise<Session[]> {
+    const { data } = await client.get('/sessions', {
+      params: { user_id: userId, limit: 100, offset: 0 },
+    });
+    return data.items ?? [];
+  },
+
+  async createSession(userId: string, title?: string): Promise<Session> {
+    const { data } = await client.post('/sessions', {
+      user_id: userId,
+      title,
+    });
+    return data;
+  },
+
+  async listMessages(sessionId: string): Promise<Message[]> {
+    const { data } = await client.get(`/sessions/${sessionId}/messages`, {
+      params: { limit: 200, offset: 0, order: 'asc' },
+    });
+    return data.items ?? [];
+  },
+
+  async createMessage(
+    sessionId: string,
+    payload: { role: string; content: string; message_source?: string },
+  ): Promise<Message> {
+    const { data } = await client.post(`/sessions/${sessionId}/messages`, payload);
+    return data;
+  },
+
+  async listSummaries(sessionId: string): Promise<SessionSummary[]> {
+    const { data } = await client.get(`/sessions/${sessionId}/summaries`, {
+      params: { limit: 200, offset: 0 },
+    });
+    return data.items ?? [];
+  },
+
+  async listSummaryLevels(sessionId: string): Promise<SummaryLevelItem[]> {
+    const { data } = await client.get(`/sessions/${sessionId}/summaries/levels`);
+    return data.items ?? [];
+  },
+
+  async getSummaryGraph(
+    sessionId: string,
+  ): Promise<{ nodes: SummaryGraphNode[]; edges: SummaryGraphEdge[] }> {
+    const { data } = await client.get(`/sessions/${sessionId}/summaries/graph`);
+    return {
+      nodes: data.nodes ?? [],
+      edges: data.edges ?? [],
+    };
+  },
+
+  async listModelConfigs(userId: string): Promise<AiModelConfig[]> {
+    const { data } = await client.get('/configs/models', { params: { user_id: userId } });
+    return data.items ?? [];
+  },
+
+  async createModelConfig(payload: {
+    user_id: string;
+    name: string;
+    provider: string;
+    model: string;
+    base_url?: string;
+    api_key?: string;
+    supports_images?: boolean;
+    supports_reasoning?: boolean;
+    supports_responses?: boolean;
+    temperature?: number;
+    thinking_level?: string;
+    enabled?: boolean;
+  }): Promise<AiModelConfig> {
+    const { data } = await client.post('/configs/models', payload);
+    return data;
+  },
+
+  async updateModelConfig(
+    modelId: string,
+    payload: {
+      user_id: string;
+      name: string;
+      provider: string;
+      model: string;
+      base_url?: string;
+      api_key?: string;
+      supports_images?: boolean;
+      supports_reasoning?: boolean;
+      supports_responses?: boolean;
+      temperature?: number;
+      thinking_level?: string;
+      enabled?: boolean;
+    },
+  ): Promise<AiModelConfig> {
+    const { data } = await client.patch(`/configs/models/${modelId}`, payload);
+    return data;
+  },
+
+  async deleteModelConfig(modelId: string): Promise<boolean> {
+    const { data } = await client.delete(`/configs/models/${modelId}`);
+    return Boolean(data?.success);
+  },
+
+  async testModelConfig(modelId: string): Promise<{ ok: boolean; output?: string; error?: string }> {
+    const { data } = await client.post(`/configs/models/${modelId}/test`);
+    return data;
+  },
+
+  async getSummaryJobConfig(userId: string): Promise<SummaryJobConfig> {
+    const { data } = await client.get('/configs/summary-job', { params: { user_id: userId } });
+    return data;
+  },
+
+  async saveSummaryJobConfig(payload: Partial<SummaryJobConfig> & { user_id: string }) {
+    const req = {
+      user_id: payload.user_id,
+      enabled:
+        payload.enabled === undefined
+          ? undefined
+          : typeof payload.enabled === 'number'
+            ? payload.enabled === 1
+            : Boolean(payload.enabled),
+      summary_model_config_id: payload.summary_model_config_id,
+      token_limit: payload.token_limit,
+      round_limit: payload.round_limit,
+      target_summary_tokens: payload.target_summary_tokens,
+      job_interval_seconds: payload.job_interval_seconds,
+      max_sessions_per_tick: payload.max_sessions_per_tick,
+    };
+    const { data } = await client.put('/configs/summary-job', req);
+    return data;
+  },
+
+  async getRollupJobConfig(userId: string): Promise<RollupJobConfig> {
+    const { data } = await client.get('/configs/summary-rollup-job', {
+      params: { user_id: userId },
+    });
+    return data;
+  },
+
+  async saveRollupJobConfig(payload: Partial<RollupJobConfig> & { user_id: string }) {
+    const req = {
+      user_id: payload.user_id,
+      enabled:
+        payload.enabled === undefined
+          ? undefined
+          : typeof payload.enabled === 'number'
+            ? payload.enabled === 1
+            : Boolean(payload.enabled),
+      summary_model_config_id: payload.summary_model_config_id,
+      token_limit: payload.token_limit,
+      round_limit: payload.round_limit,
+      target_summary_tokens: payload.target_summary_tokens,
+      job_interval_seconds: payload.job_interval_seconds,
+      keep_raw_level0_count: payload.keep_raw_level0_count,
+      max_level: payload.max_level,
+      max_sessions_per_tick: payload.max_sessions_per_tick,
+    };
+    const { data } = await client.put('/configs/summary-rollup-job', req);
+    return data;
+  },
+
+  async runSummaryOnce(userId: string, sessionId?: string) {
+    const { data } = await client.post('/jobs/summary/run-once', {
+      user_id: userId,
+      session_id: sessionId,
+    });
+    return data;
+  },
+
+  async runRollupOnce(userId: string) {
+    const { data } = await client.post('/jobs/summary-rollup/run-once', {
+      user_id: userId,
+    });
+    return data;
+  },
+
+  async listJobRuns(): Promise<JobRun[]> {
+    const { data } = await client.get('/jobs/runs', {
+      params: { limit: 200 },
+    });
+    return data.items ?? [];
+  },
+
+  async getJobStats(): Promise<Record<string, Record<string, number>>> {
+    const { data } = await client.get('/jobs/stats');
+    return data.stats ?? {};
+  },
+
+  async composeContext(sessionId: string) {
+    const { data } = await client.post('/context/compose', {
+      session_id: sessionId,
+      summary_limit: 3,
+      include_raw_messages: true,
+    });
+    return data;
+  },
+};

@@ -5,7 +5,6 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
-use tokio::task;
 use uuid::Uuid;
 
 use crate::core::agent_access::{ensure_owned_agent, map_agent_access_error};
@@ -17,6 +16,7 @@ use crate::core::chat_stream::{
 use crate::core::user_scope::{ensure_and_set_user_id, resolve_user_id};
 use crate::models::agent::Agent;
 use crate::repositories::agents as agents_repo;
+use crate::services::memory_server_client;
 use crate::services::v2::agent::{load_model_config_for_agent, run_chat};
 use crate::utils::abort_registry;
 use crate::utils::attachments;
@@ -349,7 +349,7 @@ async fn chat_stream(
     }
     abort_registry::reset(&session_id);
     let (sse, sender) = sse_channel();
-    task::spawn(stream_agent_chat(sender, req));
+    memory_server_client::spawn_with_current_access_token(stream_agent_chat(sender, req));
     Ok(sse)
 }
 

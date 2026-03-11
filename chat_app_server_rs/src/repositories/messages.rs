@@ -3,9 +3,7 @@ use serde_json::Value;
 use sqlx::Row;
 use std::collections::HashSet;
 
-use crate::core::mongo_cursor::{
-    collect_and_map, collect_map_sorted_asc,
-};
+use crate::core::mongo_cursor::{collect_and_map, collect_map_sorted_asc};
 use crate::core::sql_query::append_limit_offset_clause;
 use crate::models::message::{Message, MessageRow};
 use crate::repositories::db::{doc_from_pairs, get_db_sync, to_doc, with_db};

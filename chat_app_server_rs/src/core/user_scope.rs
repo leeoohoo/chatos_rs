@@ -54,7 +54,7 @@ mod tests {
     fn mock_auth_user() -> AuthUser {
         AuthUser {
             user_id: "user-1".to_string(),
-            email: "user-1@example.com".to_string(),
+            role: "user".to_string(),
         }
     }
 

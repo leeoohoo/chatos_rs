@@ -6,7 +6,6 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
-use tokio::task;
 
 use crate::config::Config;
 use crate::core::ai_model_config::resolve_chat_model_config;
@@ -21,6 +20,7 @@ use crate::core::chat_stream::{
 use crate::core::mcp_runtime::load_mcp_servers_by_selection;
 use crate::core::user_scope::{ensure_and_set_user_id, resolve_user_id};
 use crate::models::message::MessageService;
+use crate::services::memory_server_client;
 use crate::services::user_settings::{apply_settings_to_ai_client, get_effective_user_settings};
 use crate::services::v2::ai_server::{AiServer, ChatOptions};
 use crate::services::v2::mcp_tool_execute::McpToolExecute;
@@ -90,7 +90,9 @@ async fn agent_chat_stream(
     abort_registry::reset(&session_id);
     let (sse, sender) = sse_channel();
 
-    task::spawn(stream_chat_v2(sender, req, false, true, false));
+    memory_server_client::spawn_with_current_access_token(stream_chat_v2(
+        sender, req, false, true, false,
+    ));
 
     Ok(sse)
 }
@@ -119,9 +121,13 @@ async fn agent_chat_stream_simple(
     abort_registry::reset(&session_id);
     let (sse, sender) = sse_channel();
     if req.agent_id.is_some() {
-        task::spawn(stream_chat_v2_agent(sender, req, false));
+        memory_server_client::spawn_with_current_access_token(stream_chat_v2_agent(
+            sender, req, false,
+        ));
     } else {
-        task::spawn(stream_chat_v2(sender, req, true, false, true));
+        memory_server_client::spawn_with_current_access_token(stream_chat_v2(
+            sender, req, true, false, true,
+        ));
     }
     Ok(sse)
 }
@@ -169,7 +175,11 @@ async fn agent_status() -> Json<Value> {
 }
 
 async fn reset_session(Path(session_id): Path<String>) -> Json<Value> {
-    let _ = MessageService::delete_by_session(&session_id).await;
+    if memory_server_client::remote_only_enabled() {
+        let _ = memory_server_client::delete_messages_by_session(&session_id).await;
+    } else {
+        let _ = MessageService::delete_by_session(&session_id).await;
+    }
     Json(json!({"success": true, "message": "会话重置成功", "session_id": session_id}))
 }
 

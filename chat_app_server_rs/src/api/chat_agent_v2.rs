@@ -2,7 +2,6 @@ use axum::http::StatusCode;
 use axum::{routing::post, Json, Router};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use tokio::task;
 
 use crate::config::Config;
 use crate::core::ai_model_config::resolve_chat_model_config;
@@ -13,6 +12,7 @@ use crate::core::chat_stream::{
     build_v2_callbacks, handle_chat_result, send_error_event, send_start_event,
 };
 use crate::core::user_scope::ensure_and_set_user_id;
+use crate::services::memory_server_client;
 use crate::services::user_settings::{apply_settings_to_ai_client, get_effective_user_settings};
 use crate::services::v2::agent::{load_model_config_for_agent, run_chat};
 use crate::services::v2::ai_server::{AiServer, ChatOptions};
@@ -61,9 +61,11 @@ async fn chat_stream(
     abort_registry::reset(&session_id);
     let (sse, sender) = sse_channel();
     if req.agent_id.is_some() {
-        task::spawn(stream_chat_v2_agent(sender, req));
+        memory_server_client::spawn_with_current_access_token(stream_chat_v2_agent(
+            sender, req,
+        ));
     } else {
-        task::spawn(stream_chat_v2(sender, req));
+        memory_server_client::spawn_with_current_access_token(stream_chat_v2(sender, req));
     }
     Ok(sse)
 }

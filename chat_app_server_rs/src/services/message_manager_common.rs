@@ -8,10 +8,11 @@ use tracing::error;
 use crate::core::mcp_tools::ToolResult;
 use crate::models::message::{Message, MessageService};
 use crate::models::session_summary::{SessionSummary, SessionSummaryService};
-use crate::models::session_summary_v2::SessionSummaryV2Service;
+use crate::models::session_summary_v2::{SessionSummaryV2, SessionSummaryV2Service};
 use crate::models::sub_agent_run_message::{SubAgentRunMessage, SubAgentRunMessageService};
 use crate::models::sub_agent_run_summary::SubAgentRunSummaryService;
 use crate::services::ai_common::build_tool_result_metadata;
+use crate::services::memory_server_client;
 
 #[derive(Debug, Default, Clone)]
 struct Stats {
@@ -72,7 +73,7 @@ impl MessageManagerCore {
         message.message_source = message_source;
         message.metadata = metadata;
 
-        let saved = MessageService::create(message).await?;
+        let saved = self.persist_message(message).await?;
         self.cache_message(saved.clone());
         Ok(saved)
     }
@@ -100,7 +101,7 @@ impl MessageManagerCore {
         message.metadata = metadata;
         message.tool_calls = tool_calls;
 
-        let saved = MessageService::create(message).await?;
+        let saved = self.persist_message(message).await?;
         self.cache_message(saved.clone());
         Ok(saved)
     }
@@ -124,7 +125,7 @@ impl MessageManagerCore {
         message.message_source = message_source;
         message.metadata = metadata;
 
-        let saved = MessageService::create(message).await?;
+        let saved = self.persist_message(message).await?;
         self.cache_message(saved.clone());
         Ok(saved)
     }
@@ -145,12 +146,31 @@ impl MessageManagerCore {
         }
     }
 
+    async fn persist_message(&self, message: Message) -> Result<Message, String> {
+        if memory_server_client::remote_only_enabled() {
+            memory_server_client::upsert_message(&message).await
+        } else {
+            MessageService::create(message).await
+        }
+    }
+
     pub(crate) async fn get_session_messages(
         &self,
         session_id: &str,
         limit: Option<i64>,
     ) -> Vec<Message> {
-        let result = if let Some(value) = limit {
+        let result = if memory_server_client::remote_only_enabled() {
+            if let Some(value) = limit {
+                memory_server_client::list_messages(session_id, Some(value), 0, false)
+                    .await
+                    .map(|mut items| {
+                        items.reverse();
+                        items
+                    })
+            } else {
+                memory_server_client::list_messages(session_id, None, 0, true).await
+            }
+        } else if let Some(value) = limit {
             MessageService::get_recent_by_session(session_id, value, 0).await
         } else {
             MessageService::get_by_session(session_id, None, 0).await
@@ -176,6 +196,57 @@ impl MessageManagerCore {
         summary_limit: Option<i64>,
         filter_empty_summaries: bool,
     ) -> (Vec<SessionSummary>, Vec<Message>) {
+        if memory_server_client::remote_only_enabled() {
+            let mut summaries =
+                match memory_server_client::list_summaries(session_id, summary_limit, 0).await {
+                    Ok(items) => items.into_iter().map(map_summary_v2_to_v1).collect(),
+                    Err(err) => {
+                        error!("get_session_summaries remote failed: {}", err);
+                        Vec::new()
+                    }
+                };
+
+            if filter_empty_summaries {
+                summaries.retain(|summary| !summary.summary_text.trim().is_empty());
+            }
+
+            if summaries.is_empty() {
+                let messages = self.get_session_messages(session_id, limit).await;
+                return (Vec::new(), messages);
+            }
+
+            let mut messages =
+                match memory_server_client::list_messages(session_id, None, 0, true).await {
+                    Ok(items) => items,
+                    Err(err) => {
+                        error!("get_session_history_with_summaries remote failed: {}", err);
+                        Vec::new()
+                    }
+                };
+
+            if let Some(last_message_id) = summaries
+                .last()
+                .and_then(|summary| summary.last_message_id.clone())
+            {
+                if let Some(last_idx) = messages
+                    .iter()
+                    .position(|message| message.id == last_message_id)
+                {
+                    messages = messages.into_iter().skip(last_idx + 1).collect();
+                }
+            }
+
+            if let Some(v) = limit {
+                if v > 0 && messages.len() > v as usize {
+                    messages = messages[messages.len() - v as usize..].to_vec();
+                }
+            }
+
+            let mut state = self.state.lock();
+            state.stats.messages_retrieved += messages.len();
+            return (summaries, messages);
+        }
+
         let mut summaries =
             match SessionSummaryService::list_by_session(session_id, summary_limit).await {
                 Ok(items) => items,
@@ -223,6 +294,25 @@ impl MessageManagerCore {
         session_id: &str,
         summary_limit: usize,
     ) -> ChatHistoryContext {
+        match try_get_chat_history_context_from_memory_server(session_id, summary_limit).await {
+            Ok(Some(context)) => return context,
+            Ok(None) => {}
+            Err(err) => {
+                error!(
+                    "get_chat_history_context memory_server failed: session_id={} error={}",
+                    session_id, err
+                );
+            }
+        }
+
+        if memory_server_client::remote_only_enabled() {
+            return ChatHistoryContext {
+                merged_summary: None,
+                summary_count: 0,
+                messages: self.get_session_messages(session_id, None).await,
+            };
+        }
+
         let target_summary_limit = summary_limit.max(1);
         let fetch_summary_limit = (target_summary_limit as i64).saturating_mul(10).max(10);
         let mut recent_summary_texts: Vec<String> = Vec::new();
@@ -394,7 +484,13 @@ impl MessageManagerCore {
             return Some(cached);
         }
 
-        match MessageService::get_by_id(message_id).await {
+        let result = if memory_server_client::remote_only_enabled() {
+            memory_server_client::get_message_by_id(message_id).await
+        } else {
+            MessageService::get_by_id(message_id).await
+        };
+
+        match result {
             Ok(Some(message)) => {
                 self.cache_message(message.clone());
 
@@ -460,6 +556,44 @@ impl MessageManagerCore {
 
         state.recent_messages.insert(message.id.clone(), message);
         state.stats.messages_saved += 1;
+    }
+}
+
+async fn try_get_chat_history_context_from_memory_server(
+    session_id: &str,
+    summary_limit: usize,
+) -> Result<Option<ChatHistoryContext>, String> {
+    if !memory_server_client::context_enabled() {
+        return Ok(None);
+    }
+
+    let payload = memory_server_client::compose_context(session_id, summary_limit).await?;
+    Ok(Some(ChatHistoryContext {
+        merged_summary: payload.0,
+        summary_count: payload.1,
+        messages: payload.2,
+    }))
+}
+
+fn map_summary_v2_to_v1(source: SessionSummaryV2) -> SessionSummary {
+    SessionSummary {
+        id: source.id,
+        session_id: source.session_id,
+        summary_text: source.summary_text,
+        summary_prompt: None,
+        model: Some(source.summary_model),
+        temperature: None,
+        target_summary_tokens: None,
+        keep_last_n: None,
+        message_count: Some(source.source_message_count),
+        approx_tokens: Some(source.source_estimated_tokens),
+        first_message_id: source.source_start_message_id,
+        last_message_id: source.source_end_message_id,
+        first_message_created_at: None,
+        last_message_created_at: None,
+        metadata: None,
+        created_at: source.created_at,
+        updated_at: source.updated_at,
     }
 }
 
