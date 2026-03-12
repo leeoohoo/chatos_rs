@@ -20,7 +20,7 @@
 ```bash
 cd backend
 cp .env.example .env
-cargo run
+cargo run --bin memory_server
 ```
 
 Server default address: `http://localhost:7080`

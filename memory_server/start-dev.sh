@@ -117,7 +117,7 @@ prepare() {
 
 start_backend() {
   echo "[INFO] 启动 backend..."
-  nohup bash -lc "cd \"$BACKEND_DIR\" && if [[ -f .env ]]; then set -a; source .env; set +a; fi; cargo run" >"$BACKEND_LOG_FILE" 2>&1 &
+  nohup bash -lc "cd \"$BACKEND_DIR\" && if [[ -f .env ]]; then set -a; source .env; set +a; fi; cargo run --bin memory_server" >"$BACKEND_LOG_FILE" 2>&1 &
   echo $! >"$BACKEND_PID_FILE"
 }
 
