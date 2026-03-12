@@ -55,3 +55,10 @@ body {
   overflow: auto;
   background: #fbfcfd;
 }
+
+.memory-tree-wrap {
+  border: 1px solid var(--memory-border);
+  border-radius: 10px;
+  padding: 8px;
+  background: #fbfcfd;
+}

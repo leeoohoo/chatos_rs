@@ -5,6 +5,7 @@ import type { ColumnsType } from 'antd/es/table';
 import { api } from '../api/client';
 import { useI18n } from '../i18n';
 import type { Session } from '../types';
+import { SessionDetailPage } from './SessionDetailPage';
 
 interface SessionsPageProps {
   filterUserId?: string;
@@ -26,6 +27,7 @@ export function SessionsPage({
   const [title, setTitle] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [detailSessionId, setDetailSessionId] = useState<string | undefined>(undefined);
   const normalizedFilterUserId = filterUserId?.trim() || undefined;
 
   const load = async () => {
@@ -110,6 +112,15 @@ export function SessionsPage({
     },
   ];
 
+  if (detailSessionId) {
+    return (
+      <SessionDetailPage
+        sessionId={detailSessionId}
+        onBack={() => setDetailSessionId(undefined)}
+      />
+    );
+  }
+
   return (
     <Card
       title={t('sessions.title')}
@@ -147,7 +158,10 @@ export function SessionsPage({
           record.id === selectedSessionId ? 'memory-row-selected' : ''
         }
         onRow={(record) => ({
-          onClick: () => onSelectSession(record.id),
+          onClick: () => {
+            onSelectSession(record.id);
+            setDetailSessionId(record.id);
+          },
           style: { cursor: 'pointer' },
         })}
       />

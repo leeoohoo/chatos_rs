@@ -2,10 +2,8 @@ import {
   ApiOutlined,
   BarChartOutlined,
   DatabaseOutlined,
-  FileTextOutlined,
   HistoryOutlined,
   LogoutOutlined,
-  NodeIndexOutlined,
   SettingOutlined,
   UserOutlined,
 } from '@ant-design/icons';
@@ -34,9 +32,7 @@ import { DashboardPage } from './pages/DashboardPage';
 import { JobConfigsPage } from './pages/JobConfigsPage';
 import { JobRunsPage } from './pages/JobRunsPage';
 import { ModelConfigsPage } from './pages/ModelConfigsPage';
-import { SessionDetailPage } from './pages/SessionDetailPage';
 import { SessionsPage } from './pages/SessionsPage';
-import { SummaryLevelsPage } from './pages/SummaryLevelsPage';
 
 const { Sider, Header, Content } = Layout;
 const { Title, Text } = Typography;
@@ -44,8 +40,6 @@ const { Title, Text } = Typography;
 type TabKey =
   | 'dashboard'
   | 'sessions'
-  | 'sessionDetail'
-  | 'summaryLevels'
   | 'models'
   | 'jobConfigs'
   | 'jobRuns';
@@ -95,8 +89,6 @@ function Shell() {
     () => [
       { key: 'dashboard', icon: <BarChartOutlined />, label: t('nav.dashboard') },
       { key: 'sessions', icon: <DatabaseOutlined />, label: t('nav.sessions') },
-      { key: 'sessionDetail', icon: <FileTextOutlined />, label: t('nav.sessionDetail') },
-      { key: 'summaryLevels', icon: <NodeIndexOutlined />, label: t('nav.summaryLevels') },
       { key: 'models', icon: <ApiOutlined />, label: t('nav.models') },
       { key: 'jobConfigs', icon: <SettingOutlined />, label: t('nav.jobConfigs') },
       ...(isAdmin
@@ -217,9 +209,6 @@ function Shell() {
                     onChange={(value) => setLang(value as 'zh-CN' | 'en-US')}
                   />
                 </Space>
-                <Text type="secondary">
-                  {t('top.selectedSession')}: {selectedSessionId || t('top.none')}
-                </Text>
               </Header>
               <Content className="page-shell">
                 {tab === 'dashboard' && <DashboardPage />}
@@ -232,8 +221,6 @@ function Shell() {
                     onSelectSession={setSelectedSessionId}
                   />
                 )}
-                {tab === 'sessionDetail' && <SessionDetailPage sessionId={selectedSessionId} />}
-                {tab === 'summaryLevels' && <SummaryLevelsPage sessionId={selectedSessionId} />}
                 {tab === 'models' && <ModelConfigsPage userId={scopeUserId} />}
                 {tab === 'jobConfigs' && (
                   <JobConfigsPage userId={scopeUserId} selectedSessionId={selectedSessionId} />
