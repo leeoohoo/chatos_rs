@@ -1,13 +1,33 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sqlx::FromRow;
 
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+fn default_active() -> String {
+    "active".to_string()
+}
+
+fn default_pending() -> String {
+    "pending".to_string()
+}
+
+fn default_done() -> String {
+    "done".to_string()
+}
+
+fn default_i64_0() -> i64 {
+    0
+}
+
+fn default_i64_1() -> i64 {
+    1
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
     pub id: String,
     pub user_id: String,
     pub project_id: Option<String>,
     pub title: Option<String>,
+    #[serde(default = "default_active")]
     pub status: String,
     pub created_at: String,
     pub updated_at: String,
@@ -27,24 +47,6 @@ pub struct UpdateSessionRequest {
     pub status: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
-pub struct MessageRow {
-    pub id: String,
-    pub session_id: String,
-    pub role: String,
-    pub content: String,
-    pub message_mode: Option<String>,
-    pub message_source: Option<String>,
-    pub tool_calls: Option<String>,
-    pub tool_call_id: Option<String>,
-    pub reasoning: Option<String>,
-    pub metadata: Option<String>,
-    pub summary_status: String,
-    pub summary_id: Option<String>,
-    pub summarized_at: Option<String>,
-    pub created_at: String,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
     pub id: String,
@@ -57,35 +59,11 @@ pub struct Message {
     pub tool_call_id: Option<String>,
     pub reasoning: Option<String>,
     pub metadata: Option<Value>,
+    #[serde(default = "default_pending")]
     pub summary_status: String,
     pub summary_id: Option<String>,
     pub summarized_at: Option<String>,
     pub created_at: String,
-}
-
-impl From<MessageRow> for Message {
-    fn from(value: MessageRow) -> Self {
-        Self {
-            id: value.id,
-            session_id: value.session_id,
-            role: value.role,
-            content: value.content,
-            message_mode: value.message_mode,
-            message_source: value.message_source,
-            tool_calls: value
-                .tool_calls
-                .and_then(|v| serde_json::from_str::<Value>(&v).ok()),
-            tool_call_id: value.tool_call_id,
-            reasoning: value.reasoning,
-            metadata: value
-                .metadata
-                .and_then(|v| serde_json::from_str::<Value>(&v).ok()),
-            summary_status: value.summary_status,
-            summary_id: value.summary_id,
-            summarized_at: value.summarized_at,
-            created_at: value.created_at,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -105,7 +83,7 @@ pub struct BatchCreateMessagesRequest {
     pub messages: Vec<CreateMessageRequest>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionSummary {
     pub id: String,
     pub session_id: String,
@@ -114,11 +92,16 @@ pub struct SessionSummary {
     pub trigger_type: String,
     pub source_start_message_id: Option<String>,
     pub source_end_message_id: Option<String>,
+    #[serde(default = "default_i64_0")]
     pub source_message_count: i64,
+    #[serde(default = "default_i64_0")]
     pub source_estimated_tokens: i64,
+    #[serde(default = "default_done")]
     pub status: String,
     pub error_message: Option<String>,
+    #[serde(default = "default_i64_0")]
     pub level: i64,
+    #[serde(default = "default_pending")]
     pub rollup_status: String,
     pub rollup_summary_id: Option<String>,
     pub rolled_up_at: Option<String>,
@@ -141,7 +124,7 @@ pub struct CreateSummaryInput {
     pub level: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiModelConfig {
     pub id: String,
     pub user_id: String,
@@ -150,11 +133,15 @@ pub struct AiModelConfig {
     pub model: String,
     pub base_url: Option<String>,
     pub api_key: Option<String>,
+    #[serde(default = "default_i64_0")]
     pub supports_images: i64,
+    #[serde(default = "default_i64_0")]
     pub supports_reasoning: i64,
+    #[serde(default = "default_i64_0")]
     pub supports_responses: i64,
     pub temperature: Option<f64>,
     pub thinking_level: Option<String>,
+    #[serde(default = "default_i64_1")]
     pub enabled: i64,
     pub created_at: String,
     pub updated_at: String,
@@ -177,9 +164,10 @@ pub struct UpsertAiModelConfigRequest {
     pub enabled: Option<bool>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SummaryJobConfig {
     pub user_id: String,
+    #[serde(default = "default_i64_1")]
     pub enabled: i64,
     pub summary_model_config_id: Option<String>,
     pub token_limit: i64,
@@ -202,9 +190,10 @@ pub struct UpsertSummaryJobConfigRequest {
     pub max_sessions_per_tick: Option<i64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SummaryRollupJobConfig {
     pub user_id: String,
+    #[serde(default = "default_i64_1")]
     pub enabled: i64,
     pub summary_model_config_id: Option<String>,
     pub token_limit: i64,
@@ -231,7 +220,7 @@ pub struct UpsertSummaryRollupJobConfigRequest {
     pub max_sessions_per_tick: Option<i64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JobRun {
     pub id: String,
     pub job_type: String,

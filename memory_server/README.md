@@ -9,7 +9,7 @@
 
 ## Structure
 
-- `backend/`: Rust server (Axum + SQLite + workers)
+- `backend/`: Rust server (Axum + MongoDB + workers)
 - `frontend/`: React console (Vite)
 - `memory_server_architecture_plan.md`: full architecture/design doc
 
@@ -24,6 +24,13 @@ cargo run
 ```
 
 Server default address: `http://localhost:7080`
+
+MongoDB env:
+
+```bash
+MEMORY_SERVER_MONGODB_URI=mongodb://admin:admin@127.0.0.1:27018/admin
+MEMORY_SERVER_MONGODB_DATABASE=memory_server
+```
 
 Health endpoint:
 
@@ -76,6 +83,24 @@ Default runtime/log path:
 ```text
 /tmp/memory_server_dev/backend.log
 /tmp/memory_server_dev/frontend.log
+```
+
+## SQLite -> Mongo Migration
+
+One-time migration command:
+
+```bash
+cd backend
+cargo run --bin migrate_sqlite_to_mongo -- \
+  --sqlite data/memory_server.db \
+  --mongo-uri mongodb://admin:admin@127.0.0.1:27018/admin \
+  --mongo-db memory_server
+```
+
+If you want to clear target collections first:
+
+```bash
+cargo run --bin migrate_sqlite_to_mongo -- --drop-target
 ```
 
 ## Key APIs

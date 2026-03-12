@@ -53,6 +53,7 @@ function Shell() {
   const { lang, setLang, t } = useI18n();
   const [tab, setTab] = useState<TabKey>('dashboard');
   const [selectedSessionId, setSelectedSessionId] = useState<string | undefined>(undefined);
+  const [selectedSessionUserId, setSelectedSessionUserId] = useState<string | undefined>(undefined);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [bootLoading, setBootLoading] = useState(true);
   const [loginLoading, setLoginLoading] = useState(false);
@@ -117,6 +118,7 @@ function Shell() {
     localStorage.removeItem('memory_auth_token');
     setAuthUser(null);
     setSelectedSessionId(undefined);
+    setSelectedSessionUserId(undefined);
     setTab('dashboard');
   };
 
@@ -218,12 +220,23 @@ function Shell() {
                     currentUserId={scopeUserId}
                     isAdmin={Boolean(isAdmin)}
                     selectedSessionId={selectedSessionId}
-                    onSelectSession={setSelectedSessionId}
+                    onSelectSession={(sessionId, sessionUserId) => {
+                      setSelectedSessionId(sessionId);
+                      setSelectedSessionUserId(sessionUserId);
+                    }}
                   />
                 )}
                 {tab === 'models' && <ModelConfigsPage userId={scopeUserId} />}
                 {tab === 'jobConfigs' && (
-                  <JobConfigsPage userId={scopeUserId} selectedSessionId={selectedSessionId} />
+                  <JobConfigsPage
+                    userId={
+                      isAdmin
+                        ? selectedSessionUserId || adminSessionFilter.trim() || scopeUserId
+                        : scopeUserId
+                    }
+                    isAdmin={Boolean(isAdmin)}
+                    selectedSessionId={selectedSessionId}
+                  />
                 )}
                 {tab === 'jobRuns' && isAdmin && <JobRunsPage />}
               </Content>

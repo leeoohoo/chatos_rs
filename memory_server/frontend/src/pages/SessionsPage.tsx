@@ -12,7 +12,7 @@ interface SessionsPageProps {
   currentUserId: string;
   isAdmin: boolean;
   selectedSessionId?: string;
-  onSelectSession: (sessionId: string) => void;
+  onSelectSession: (sessionId: string, sessionUserId: string) => void;
 }
 
 export function SessionsPage({
@@ -42,7 +42,7 @@ export function SessionsPage({
       const items = await api.listSessions(scopeUserId);
       setSessions(items);
       if (!selectedSessionId && items.length > 0) {
-        onSelectSession(items[0].id);
+        onSelectSession(items[0].id, items[0].user_id);
       }
     } catch (err) {
       setError((err as Error).message);
@@ -68,7 +68,7 @@ export function SessionsPage({
       const created = await api.createSession(createUserId, title.trim() || undefined);
       setTitle('');
       await load();
-      onSelectSession(created.id);
+      onSelectSession(created.id, created.user_id);
     } catch (err) {
       setError((err as Error).message);
     }
@@ -159,7 +159,7 @@ export function SessionsPage({
         }
         onRow={(record) => ({
           onClick: () => {
-            onSelectSession(record.id);
+            onSelectSession(record.id, record.user_id);
             setDetailSessionId(record.id);
           },
           style: { cursor: 'pointer' },

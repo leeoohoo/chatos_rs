@@ -5,6 +5,7 @@ import {
   Card,
   Col,
   Form,
+  Input,
   InputNumber,
   Row,
   Select,
@@ -19,11 +20,13 @@ import type { RollupJobConfig, SummaryJobConfig } from '../types';
 
 interface JobConfigsPageProps {
   userId: string;
+  isAdmin: boolean;
   selectedSessionId?: string;
 }
 
-export function JobConfigsPage({ userId, selectedSessionId }: JobConfigsPageProps) {
+export function JobConfigsPage({ userId, isAdmin, selectedSessionId }: JobConfigsPageProps) {
   const { t } = useI18n();
+  const [targetUserId, setTargetUserId] = useState(userId);
   const [summaryCfg, setSummaryCfg] = useState<SummaryJobConfig | null>(null);
   const [rollupCfg, setRollupCfg] = useState<RollupJobConfig | null>(null);
   const [modelOptions, setModelOptions] = useState<Array<{ label: string; value: string }>>([]);
@@ -31,7 +34,11 @@ export function JobConfigsPage({ userId, selectedSessionId }: JobConfigsPageProp
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
-  const disabled = useMemo(() => !userId.trim(), [userId]);
+  useEffect(() => {
+    setTargetUserId(userId);
+  }, [userId]);
+
+  const disabled = useMemo(() => !targetUserId.trim(), [targetUserId]);
 
   const load = async () => {
     if (disabled) {
@@ -44,10 +51,11 @@ export function JobConfigsPage({ userId, selectedSessionId }: JobConfigsPageProp
     setLoading(true);
     setError(null);
     try {
+      const uid = targetUserId.trim();
       const [s, r, models] = await Promise.all([
-        api.getSummaryJobConfig(userId),
-        api.getRollupJobConfig(userId),
-        api.listModelConfigs(userId),
+        api.getSummaryJobConfig(uid),
+        api.getRollupJobConfig(uid),
+        api.listModelConfigs(uid),
       ]);
       setSummaryCfg(s);
       setRollupCfg(r);
@@ -67,7 +75,7 @@ export function JobConfigsPage({ userId, selectedSessionId }: JobConfigsPageProp
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userId]);
+  }, [targetUserId]);
 
   const saveSummary = async () => {
     if (!summaryCfg) {
@@ -76,7 +84,10 @@ export function JobConfigsPage({ userId, selectedSessionId }: JobConfigsPageProp
     setError(null);
     setMessage(null);
     try {
-      const saved = await api.saveSummaryJobConfig(summaryCfg);
+      const saved = await api.saveSummaryJobConfig({
+        ...summaryCfg,
+        user_id: targetUserId.trim(),
+      });
       setSummaryCfg(saved);
       setMessage(t('jobConfigs.saved'));
     } catch (err) {
@@ -91,7 +102,10 @@ export function JobConfigsPage({ userId, selectedSessionId }: JobConfigsPageProp
     setError(null);
     setMessage(null);
     try {
-      const saved = await api.saveRollupJobConfig(rollupCfg);
+      const saved = await api.saveRollupJobConfig({
+        ...rollupCfg,
+        user_id: targetUserId.trim(),
+      });
       setRollupCfg(saved);
       setMessage(t('jobConfigs.saved'));
     } catch (err) {
@@ -103,7 +117,7 @@ export function JobConfigsPage({ userId, selectedSessionId }: JobConfigsPageProp
     setError(null);
     setMessage(null);
     try {
-      const data = await api.runSummaryOnce(userId, selectedSessionId);
+      const data = await api.runSummaryOnce(targetUserId.trim(), selectedSessionId);
       setMessage(JSON.stringify(data));
     } catch (err) {
       setError((err as Error).message);
@@ -114,7 +128,7 @@ export function JobConfigsPage({ userId, selectedSessionId }: JobConfigsPageProp
     setError(null);
     setMessage(null);
     try {
-      const data = await api.runRollupOnce(userId);
+      const data = await api.runRollupOnce(targetUserId.trim());
       setMessage(JSON.stringify(data));
     } catch (err) {
       setError((err as Error).message);
@@ -155,6 +169,22 @@ export function JobConfigsPage({ userId, selectedSessionId }: JobConfigsPageProp
           </Space>
         }
       >
+        {isAdmin && (
+          <Alert
+            type="info"
+            showIcon
+            message={`${t('top.userId')}: ${targetUserId || '-'}`}
+            style={{ marginBottom: 12 }}
+          />
+        )}
+        {isAdmin && (
+          <Input
+            value={targetUserId}
+            onChange={(e) => setTargetUserId(e.target.value)}
+            placeholder={t('top.userFilter')}
+            style={{ marginBottom: 12, maxWidth: 320 }}
+          />
+        )}
         {disabled && (
           <Alert type="warning" showIcon message={t('sessions.needUserId')} style={{ marginBottom: 12 }} />
         )}

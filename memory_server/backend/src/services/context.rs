@@ -1,8 +1,7 @@
 use std::collections::BTreeSet;
 use std::collections::HashSet;
 
-use sqlx::SqlitePool;
-
+use crate::db::Db;
 use crate::models::{ComposeContextMeta, ComposeContextRequest, ComposeContextResponse, SessionSummary};
 use crate::repositories::{messages, summaries};
 
@@ -12,7 +11,7 @@ const TOP_SUMMARY_COUNT: usize = 2;
 const LEVEL0_SUMMARY_COUNT: usize = 2;
 
 pub async fn compose_context(
-    pool: &SqlitePool,
+    pool: &Db,
     req: ComposeContextRequest,
 ) -> Result<ComposeContextResponse, String> {
     // Keep request summary_limit only as a scan multiplier for compatibility.

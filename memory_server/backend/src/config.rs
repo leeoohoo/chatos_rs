@@ -4,7 +4,8 @@ use std::env;
 pub struct AppConfig {
     pub host: String,
     pub port: u16,
-    pub database_url: String,
+    pub mongodb_uri: String,
+    pub mongodb_database: String,
     pub service_token: Option<String>,
     pub auth_secret: String,
     pub auth_token_ttl_hours: i64,
@@ -25,8 +26,13 @@ impl AppConfig {
             .and_then(|v| v.parse::<u16>().ok())
             .unwrap_or(7080);
 
-        let database_url = env::var("MEMORY_SERVER_DATABASE_URL")
-            .unwrap_or_else(|_| "sqlite://data/memory_server.db".to_string());
+        let mongodb_uri = env::var("MEMORY_SERVER_MONGODB_URI")
+            .ok()
+            .or_else(|| env::var("MEMORY_SERVER_DATABASE_URL").ok())
+            .unwrap_or_else(|| "mongodb://127.0.0.1:27017".to_string());
+
+        let mongodb_database = env::var("MEMORY_SERVER_MONGODB_DATABASE")
+            .unwrap_or_else(|_| "memory_server".to_string());
 
         let service_token = env::var("MEMORY_SERVER_SERVICE_TOKEN")
             .ok()
@@ -84,7 +90,8 @@ impl AppConfig {
         Self {
             host,
             port,
-            database_url,
+            mongodb_uri,
+            mongodb_database,
             service_token,
             auth_secret,
             auth_token_ttl_hours,

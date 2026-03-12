@@ -1,6 +1,9 @@
-use sqlx::SqlitePool;
+use futures_util::TryStreamExt;
+use mongodb::bson::doc;
+use mongodb::options::FindOptions;
 use uuid::Uuid;
 
+use crate::db::Db;
 use crate::models::{
     AiModelConfig, SummaryJobConfig, SummaryRollupJobConfig, UpsertAiModelConfigRequest,
     UpsertSummaryJobConfigRequest, UpsertSummaryRollupJobConfigRequest,
@@ -8,132 +11,161 @@ use crate::models::{
 
 use super::{auth::ADMIN_USER_ID, now_rfc3339};
 
-pub async fn list_model_configs(pool: &SqlitePool, user_id: &str) -> Result<Vec<AiModelConfig>, String> {
-    sqlx::query_as::<_, AiModelConfig>(
-        "SELECT * FROM ai_model_configs WHERE user_id = ? ORDER BY updated_at DESC",
-    )
-    .bind(user_id)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| e.to_string())
+fn model_collection(db: &Db) -> mongodb::Collection<AiModelConfig> {
+    db.collection::<AiModelConfig>("ai_model_configs")
 }
 
-pub async fn get_model_config_by_id(pool: &SqlitePool, id: &str) -> Result<Option<AiModelConfig>, String> {
-    sqlx::query_as::<_, AiModelConfig>("SELECT * FROM ai_model_configs WHERE id = ?")
-        .bind(id)
-        .fetch_optional(pool)
+fn summary_job_collection(db: &Db) -> mongodb::Collection<SummaryJobConfig> {
+    db.collection::<SummaryJobConfig>("summary_job_configs")
+}
+
+fn summary_rollup_collection(db: &Db) -> mongodb::Collection<SummaryRollupJobConfig> {
+    db.collection::<SummaryRollupJobConfig>("summary_rollup_job_configs")
+}
+
+pub async fn list_model_configs(db: &Db, user_id: &str) -> Result<Vec<AiModelConfig>, String> {
+    let options = FindOptions::builder().sort(doc! {"updated_at": -1}).build();
+    let cursor = model_collection(db)
+        .find(doc! {"user_id": user_id})
+        .with_options(options)
+        .await
+        .map_err(|e| e.to_string())?;
+    cursor.try_collect().await.map_err(|e| e.to_string())
+}
+
+pub async fn get_model_config_by_id(db: &Db, id: &str) -> Result<Option<AiModelConfig>, String> {
+    model_collection(db)
+        .find_one(doc! {"id": id})
         .await
         .map_err(|e| e.to_string())
 }
 
 pub async fn create_model_config(
-    pool: &SqlitePool,
+    db: &Db,
     req: UpsertAiModelConfigRequest,
 ) -> Result<AiModelConfig, String> {
-    let id = Uuid::new_v4().to_string();
     let now = now_rfc3339();
+    let model = AiModelConfig {
+        id: Uuid::new_v4().to_string(),
+        user_id: req.user_id,
+        name: req.name,
+        provider: req.provider,
+        model: req.model,
+        base_url: req.base_url,
+        api_key: req.api_key,
+        supports_images: if req.supports_images.unwrap_or(false) { 1 } else { 0 },
+        supports_reasoning: if req.supports_reasoning.unwrap_or(false) {
+            1
+        } else {
+            0
+        },
+        supports_responses: if req.supports_responses.unwrap_or(false) {
+            1
+        } else {
+            0
+        },
+        temperature: req.temperature,
+        thinking_level: req.thinking_level,
+        enabled: if req.enabled.unwrap_or(true) { 1 } else { 0 },
+        created_at: now.clone(),
+        updated_at: now,
+    };
 
-    sqlx::query(
-        "INSERT INTO ai_model_configs (id, user_id, name, provider, model, base_url, api_key, supports_images, supports_reasoning, supports_responses, temperature, thinking_level, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    )
-    .bind(&id)
-    .bind(req.user_id)
-    .bind(req.name)
-    .bind(req.provider)
-    .bind(req.model)
-    .bind(req.base_url)
-    .bind(req.api_key)
-    .bind(if req.supports_images.unwrap_or(false) { 1 } else { 0 })
-    .bind(if req.supports_reasoning.unwrap_or(false) { 1 } else { 0 })
-    .bind(if req.supports_responses.unwrap_or(false) { 1 } else { 0 })
-    .bind(req.temperature)
-    .bind(req.thinking_level)
-    .bind(if req.enabled.unwrap_or(true) { 1 } else { 0 })
-    .bind(&now)
-    .bind(&now)
-    .execute(pool)
-    .await
-    .map_err(|e| e.to_string())?;
+    model_collection(db)
+        .insert_one(model.clone())
+        .await
+        .map_err(|e| e.to_string())?;
 
-    get_model_config_by_id(pool, &id)
-        .await?
-        .ok_or_else(|| "created model config not found".to_string())
+    Ok(model)
 }
 
 pub async fn update_model_config(
-    pool: &SqlitePool,
+    db: &Db,
     id: &str,
     req: UpsertAiModelConfigRequest,
 ) -> Result<Option<AiModelConfig>, String> {
-    let existing = get_model_config_by_id(pool, id).await?;
+    let existing = get_model_config_by_id(db, id).await?;
     let Some(existing) = existing else {
         return Ok(None);
     };
 
-    let now = now_rfc3339();
+    let updated = AiModelConfig {
+        id: existing.id,
+        user_id: req.user_id,
+        name: req.name,
+        provider: req.provider,
+        model: req.model,
+        base_url: req.base_url.or(existing.base_url),
+        api_key: req.api_key.or(existing.api_key),
+        supports_images: if req.supports_images.unwrap_or(existing.supports_images == 1) {
+            1
+        } else {
+            0
+        },
+        supports_reasoning: if req
+            .supports_reasoning
+            .unwrap_or(existing.supports_reasoning == 1)
+        {
+            1
+        } else {
+            0
+        },
+        supports_responses: if req
+            .supports_responses
+            .unwrap_or(existing.supports_responses == 1)
+        {
+            1
+        } else {
+            0
+        },
+        temperature: req.temperature.or(existing.temperature),
+        thinking_level: req.thinking_level.or(existing.thinking_level),
+        enabled: if req.enabled.unwrap_or(existing.enabled == 1) {
+            1
+        } else {
+            0
+        },
+        created_at: existing.created_at,
+        updated_at: now_rfc3339(),
+    };
 
-    sqlx::query(
-        "UPDATE ai_model_configs SET user_id = ?, name = ?, provider = ?, model = ?, base_url = ?, api_key = ?, supports_images = ?, supports_reasoning = ?, supports_responses = ?, temperature = ?, thinking_level = ?, enabled = ?, updated_at = ? WHERE id = ?",
-    )
-    .bind(req.user_id)
-    .bind(req.name)
-    .bind(req.provider)
-    .bind(req.model)
-    .bind(req.base_url.or(existing.base_url))
-    .bind(req.api_key.or(existing.api_key))
-    .bind(if req.supports_images.unwrap_or(existing.supports_images == 1) {
-        1
-    } else {
-        0
-    })
-    .bind(if req
-        .supports_reasoning
-        .unwrap_or(existing.supports_reasoning == 1)
-    {
-        1
-    } else {
-        0
-    })
-    .bind(if req.supports_responses.unwrap_or(existing.supports_responses == 1) {
-        1
-    } else {
-        0
-    })
-    .bind(req.temperature.or(existing.temperature))
-    .bind(req.thinking_level.or(existing.thinking_level))
-    .bind(if req.enabled.unwrap_or(existing.enabled == 1) {
-        1
-    } else {
-        0
-    })
-    .bind(now)
-    .bind(id)
-    .execute(pool)
-    .await
-    .map_err(|e| e.to_string())?;
-
-    get_model_config_by_id(pool, id).await
-}
-
-pub async fn delete_model_config(pool: &SqlitePool, id: &str) -> Result<bool, String> {
-    let result = sqlx::query("DELETE FROM ai_model_configs WHERE id = ?")
-        .bind(id)
-        .execute(pool)
+    model_collection(db)
+        .replace_one(doc! {"id": id}, updated.clone())
         .await
         .map_err(|e| e.to_string())?;
-    Ok(result.rows_affected() > 0)
+
+    Ok(Some(updated))
 }
 
-pub async fn get_summary_job_config(
-    pool: &SqlitePool,
-    user_id: &str,
-) -> Result<SummaryJobConfig, String> {
-    if let Some(cfg) = fetch_summary_job_config(pool, user_id).await? {
+pub async fn delete_model_config(db: &Db, id: &str) -> Result<bool, String> {
+    let result = model_collection(db)
+        .delete_one(doc! {"id": id})
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(result.deleted_count > 0)
+}
+
+fn default_summary_job_config(user_id: &str) -> SummaryJobConfig {
+    SummaryJobConfig {
+        user_id: user_id.to_string(),
+        enabled: 1,
+        summary_model_config_id: None,
+        token_limit: 6000,
+        round_limit: 8,
+        target_summary_tokens: 700,
+        job_interval_seconds: 30,
+        max_sessions_per_tick: 50,
+        updated_at: now_rfc3339(),
+    }
+}
+
+pub async fn get_summary_job_config(db: &Db, user_id: &str) -> Result<SummaryJobConfig, String> {
+    if let Some(cfg) = fetch_summary_job_config(db, user_id).await? {
         return Ok(cfg);
     }
 
     if user_id != ADMIN_USER_ID {
-        if let Some(admin_cfg) = fetch_summary_job_config(pool, ADMIN_USER_ID).await? {
+        if let Some(admin_cfg) = fetch_summary_job_config(db, ADMIN_USER_ID).await? {
             return Ok(SummaryJobConfig {
                 user_id: user_id.to_string(),
                 enabled: admin_cfg.enabled,
@@ -148,41 +180,49 @@ pub async fn get_summary_job_config(
         }
     }
 
-    create_default_summary_job_config(pool, user_id).await?;
-    sqlx::query_as::<_, SummaryJobConfig>("SELECT * FROM summary_job_configs WHERE user_id = ?")
-        .bind(user_id)
-        .fetch_one(pool)
+    create_default_summary_job_config(db, user_id).await?;
+    fetch_summary_job_config(db, user_id)
+        .await?
+        .ok_or_else(|| "summary job config create failed".to_string())
+}
+
+async fn fetch_summary_job_config(db: &Db, user_id: &str) -> Result<Option<SummaryJobConfig>, String> {
+    summary_job_collection(db)
+        .find_one(doc! {"user_id": user_id})
         .await
         .map_err(|e| e.to_string())
 }
 
-async fn fetch_summary_job_config(
-    pool: &SqlitePool,
-    user_id: &str,
-) -> Result<Option<SummaryJobConfig>, String> {
-    sqlx::query_as::<_, SummaryJobConfig>("SELECT * FROM summary_job_configs WHERE user_id = ?")
-        .bind(user_id)
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| e.to_string())
-}
-
-async fn create_default_summary_job_config(pool: &SqlitePool, user_id: &str) -> Result<(), String> {
-    let now = now_rfc3339();
-    sqlx::query("INSERT INTO summary_job_configs (user_id, enabled, summary_model_config_id, token_limit, round_limit, target_summary_tokens, job_interval_seconds, max_sessions_per_tick, updated_at) VALUES (?, 1, NULL, 6000, 8, 700, 30, 50, ?)")
-        .bind(user_id)
-        .bind(&now)
-        .execute(pool)
+async fn create_default_summary_job_config(db: &Db, user_id: &str) -> Result<(), String> {
+    let cfg = default_summary_job_config(user_id);
+    summary_job_collection(db)
+        .update_one(
+            doc! {"user_id": user_id},
+            doc! {
+                "$setOnInsert": {
+                    "user_id": &cfg.user_id,
+                    "enabled": cfg.enabled,
+                    "summary_model_config_id": cfg.summary_model_config_id,
+                    "token_limit": cfg.token_limit,
+                    "round_limit": cfg.round_limit,
+                    "target_summary_tokens": cfg.target_summary_tokens,
+                    "job_interval_seconds": cfg.job_interval_seconds,
+                    "max_sessions_per_tick": cfg.max_sessions_per_tick,
+                    "updated_at": cfg.updated_at,
+                }
+            },
+        )
+        .upsert(true)
         .await
         .map_err(|e| e.to_string())?;
     Ok(())
 }
 
 pub async fn upsert_summary_job_config(
-    pool: &SqlitePool,
+    db: &Db,
     req: UpsertSummaryJobConfigRequest,
 ) -> Result<SummaryJobConfig, String> {
-    let mut current = get_summary_job_config(pool, req.user_id.as_str()).await?;
+    let mut current = get_summary_job_config(db, req.user_id.as_str()).await?;
 
     if let Some(v) = req.enabled {
         current.enabled = if v { 1 } else { 0 };
@@ -208,33 +248,41 @@ pub async fn upsert_summary_job_config(
 
     current.updated_at = now_rfc3339();
 
-    sqlx::query("INSERT INTO summary_job_configs (user_id, enabled, summary_model_config_id, token_limit, round_limit, target_summary_tokens, job_interval_seconds, max_sessions_per_tick, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET enabled = excluded.enabled, summary_model_config_id = excluded.summary_model_config_id, token_limit = excluded.token_limit, round_limit = excluded.round_limit, target_summary_tokens = excluded.target_summary_tokens, job_interval_seconds = excluded.job_interval_seconds, max_sessions_per_tick = excluded.max_sessions_per_tick, updated_at = excluded.updated_at")
-        .bind(&current.user_id)
-        .bind(current.enabled)
-        .bind(&current.summary_model_config_id)
-        .bind(current.token_limit)
-        .bind(current.round_limit)
-        .bind(current.target_summary_tokens)
-        .bind(current.job_interval_seconds)
-        .bind(current.max_sessions_per_tick)
-        .bind(&current.updated_at)
-        .execute(pool)
+    summary_job_collection(db)
+        .replace_one(doc! {"user_id": &current.user_id}, current.clone())
+        .upsert(true)
         .await
         .map_err(|e| e.to_string())?;
 
     Ok(current)
 }
 
+fn default_summary_rollup_job_config(user_id: &str) -> SummaryRollupJobConfig {
+    SummaryRollupJobConfig {
+        user_id: user_id.to_string(),
+        enabled: 1,
+        summary_model_config_id: None,
+        token_limit: 6000,
+        round_limit: 50,
+        target_summary_tokens: 700,
+        job_interval_seconds: 60,
+        keep_raw_level0_count: 5,
+        max_level: 4,
+        max_sessions_per_tick: 50,
+        updated_at: now_rfc3339(),
+    }
+}
+
 pub async fn get_summary_rollup_job_config(
-    pool: &SqlitePool,
+    db: &Db,
     user_id: &str,
 ) -> Result<SummaryRollupJobConfig, String> {
-    if let Some(cfg) = fetch_summary_rollup_job_config(pool, user_id).await? {
+    if let Some(cfg) = fetch_summary_rollup_job_config(db, user_id).await? {
         return Ok(cfg);
     }
 
     if user_id != ADMIN_USER_ID {
-        if let Some(admin_cfg) = fetch_summary_rollup_job_config(pool, ADMIN_USER_ID).await? {
+        if let Some(admin_cfg) = fetch_summary_rollup_job_config(db, ADMIN_USER_ID).await? {
             return Ok(SummaryRollupJobConfig {
                 user_id: user_id.to_string(),
                 enabled: admin_cfg.enabled,
@@ -251,48 +299,54 @@ pub async fn get_summary_rollup_job_config(
         }
     }
 
-    create_default_summary_rollup_job_config(pool, user_id).await?;
-    sqlx::query_as::<_, SummaryRollupJobConfig>(
-        "SELECT * FROM summary_rollup_job_configs WHERE user_id = ?",
-    )
-    .bind(user_id)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| e.to_string())
+    create_default_summary_rollup_job_config(db, user_id).await?;
+    fetch_summary_rollup_job_config(db, user_id)
+        .await?
+        .ok_or_else(|| "summary rollup job config create failed".to_string())
 }
 
 async fn fetch_summary_rollup_job_config(
-    pool: &SqlitePool,
+    db: &Db,
     user_id: &str,
 ) -> Result<Option<SummaryRollupJobConfig>, String> {
-    sqlx::query_as::<_, SummaryRollupJobConfig>(
-        "SELECT * FROM summary_rollup_job_configs WHERE user_id = ?",
-    )
-    .bind(user_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| e.to_string())
+    summary_rollup_collection(db)
+        .find_one(doc! {"user_id": user_id})
+        .await
+        .map_err(|e| e.to_string())
 }
 
-async fn create_default_summary_rollup_job_config(
-    pool: &SqlitePool,
-    user_id: &str,
-) -> Result<(), String> {
-    let now = now_rfc3339();
-    sqlx::query("INSERT INTO summary_rollup_job_configs (user_id, enabled, summary_model_config_id, token_limit, round_limit, target_summary_tokens, job_interval_seconds, keep_raw_level0_count, max_level, max_sessions_per_tick, updated_at) VALUES (?, 1, NULL, 6000, 50, 700, 60, 5, 4, 50, ?)")
-        .bind(user_id)
-        .bind(&now)
-        .execute(pool)
+async fn create_default_summary_rollup_job_config(db: &Db, user_id: &str) -> Result<(), String> {
+    let cfg = default_summary_rollup_job_config(user_id);
+    summary_rollup_collection(db)
+        .update_one(
+            doc! {"user_id": user_id},
+            doc! {
+                "$setOnInsert": {
+                    "user_id": &cfg.user_id,
+                    "enabled": cfg.enabled,
+                    "summary_model_config_id": cfg.summary_model_config_id,
+                    "token_limit": cfg.token_limit,
+                    "round_limit": cfg.round_limit,
+                    "target_summary_tokens": cfg.target_summary_tokens,
+                    "job_interval_seconds": cfg.job_interval_seconds,
+                    "keep_raw_level0_count": cfg.keep_raw_level0_count,
+                    "max_level": cfg.max_level,
+                    "max_sessions_per_tick": cfg.max_sessions_per_tick,
+                    "updated_at": cfg.updated_at,
+                }
+            },
+        )
+        .upsert(true)
         .await
         .map_err(|e| e.to_string())?;
     Ok(())
 }
 
 pub async fn upsert_summary_rollup_job_config(
-    pool: &SqlitePool,
+    db: &Db,
     req: UpsertSummaryRollupJobConfigRequest,
 ) -> Result<SummaryRollupJobConfig, String> {
-    let mut current = get_summary_rollup_job_config(pool, req.user_id.as_str()).await?;
+    let mut current = get_summary_rollup_job_config(db, req.user_id.as_str()).await?;
 
     if let Some(v) = req.enabled {
         current.enabled = if v { 1 } else { 0 };
@@ -324,19 +378,9 @@ pub async fn upsert_summary_rollup_job_config(
 
     current.updated_at = now_rfc3339();
 
-    sqlx::query("INSERT INTO summary_rollup_job_configs (user_id, enabled, summary_model_config_id, token_limit, round_limit, target_summary_tokens, job_interval_seconds, keep_raw_level0_count, max_level, max_sessions_per_tick, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET enabled = excluded.enabled, summary_model_config_id = excluded.summary_model_config_id, token_limit = excluded.token_limit, round_limit = excluded.round_limit, target_summary_tokens = excluded.target_summary_tokens, job_interval_seconds = excluded.job_interval_seconds, keep_raw_level0_count = excluded.keep_raw_level0_count, max_level = excluded.max_level, max_sessions_per_tick = excluded.max_sessions_per_tick, updated_at = excluded.updated_at")
-        .bind(&current.user_id)
-        .bind(current.enabled)
-        .bind(&current.summary_model_config_id)
-        .bind(current.token_limit)
-        .bind(current.round_limit)
-        .bind(current.target_summary_tokens)
-        .bind(current.job_interval_seconds)
-        .bind(current.keep_raw_level0_count)
-        .bind(current.max_level)
-        .bind(current.max_sessions_per_tick)
-        .bind(&current.updated_at)
-        .execute(pool)
+    summary_rollup_collection(db)
+        .replace_one(doc! {"user_id": &current.user_id}, current.clone())
+        .upsert(true)
         .await
         .map_err(|e| e.to_string())?;
 

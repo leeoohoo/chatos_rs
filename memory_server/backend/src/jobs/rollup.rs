@@ -1,7 +1,11 @@
-use sqlx::SqlitePool;
+use std::sync::Arc;
+
+use tokio::sync::Semaphore;
+use tokio::task::JoinSet;
 use tracing::{info, warn};
 
 use crate::ai::AiClient;
+use crate::db::Db;
 use crate::models::{AiModelConfig, CreateSummaryInput, SessionSummary};
 use crate::repositories::{auth::ADMIN_USER_ID, configs, jobs, summaries};
 use crate::services::summarizer::{
@@ -24,7 +28,7 @@ struct RollupBatchSelection {
     trigger_reason: &'static str,
 }
 
-pub async fn run_once(pool: &SqlitePool, ai: &AiClient, user_id: &str) -> Result<RollupRunResult, String> {
+pub async fn run_once(pool: &Db, ai: &AiClient, user_id: &str) -> Result<RollupRunResult, String> {
     let config = configs::get_summary_rollup_job_config(pool, user_id).await?;
     if config.enabled != 1 {
         return Ok(RollupRunResult {
@@ -58,34 +62,82 @@ pub async fn run_once(pool: &SqlitePool, ai: &AiClient, user_id: &str) -> Result
         failed_sessions: 0,
     };
 
+    if session_ids.is_empty() {
+        return Ok(out);
+    }
+
+    let concurrency = resolve_session_concurrency(
+        config.max_sessions_per_tick,
+        "MEMORY_SERVER_ROLLUP_SESSION_CONCURRENCY",
+        3,
+    );
+    info!(
+        "[MEMORY-SUMMARY-ROLLUP] run_once user_id={} sessions={} concurrency={}",
+        user_id,
+        session_ids.len(),
+        concurrency
+    );
+
+    out.processed_sessions = session_ids.len();
+    let semaphore = Arc::new(Semaphore::new(concurrency));
+    let mut join_set = JoinSet::new();
+
     for session_id in session_ids {
-        out.processed_sessions += 1;
-        match process_session(
-            pool,
-            ai,
-            session_id.as_str(),
-            &model_name,
-            model_cfg.as_ref(),
-            config.round_limit,
-            config.token_limit,
-            config.target_summary_tokens,
-            config.keep_raw_level0_count,
-            config.max_level,
-        )
-        .await
-        {
-            Ok((generated, marked)) => {
+        let permit = semaphore
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|err| err.to_string())?;
+        let pool = pool.clone();
+        let ai = ai.clone();
+        let model_name = model_name.clone();
+        let model_cfg = model_cfg.clone();
+        let round_limit = config.round_limit;
+        let token_limit = config.token_limit;
+        let target_summary_tokens = config.target_summary_tokens;
+        let keep_raw_level0_count = config.keep_raw_level0_count;
+        let max_level = config.max_level;
+
+        join_set.spawn(async move {
+            let _permit = permit;
+            let result = process_session(
+                &pool,
+                &ai,
+                session_id.as_str(),
+                &model_name,
+                model_cfg.as_ref(),
+                round_limit,
+                token_limit,
+                target_summary_tokens,
+                keep_raw_level0_count,
+                max_level,
+            )
+            .await;
+            (session_id, result)
+        });
+    }
+
+    while let Some(joined) = join_set.join_next().await {
+        match joined {
+            Ok((_session_id, Ok((generated, marked)))) => {
                 if generated > 0 {
                     out.rolled_up_sessions += 1;
                 }
                 out.generated_summaries += generated;
                 out.marked_summaries += marked;
             }
-            Err(err) => {
+            Ok((session_id, Err(err))) => {
                 out.failed_sessions += 1;
                 warn!(
                     "[MEMORY-SUMMARY-ROLLUP] process failed: session_id={} error={}",
                     session_id, err
+                );
+            }
+            Err(err) => {
+                out.failed_sessions += 1;
+                warn!(
+                    "[MEMORY-SUMMARY-ROLLUP] process join failed: user_id={} error={}",
+                    user_id, err
                 );
             }
         }
@@ -94,8 +146,18 @@ pub async fn run_once(pool: &SqlitePool, ai: &AiClient, user_id: &str) -> Result
     Ok(out)
 }
 
+fn resolve_session_concurrency(max_sessions_per_tick: i64, env_key: &str, default_limit: usize) -> usize {
+    let configured = std::env::var(env_key)
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(default_limit.max(1));
+    let cap = max_sessions_per_tick.max(1) as usize;
+    configured.min(cap).max(1)
+}
+
 async fn process_session(
-    pool: &SqlitePool,
+    pool: &Db,
     ai: &AiClient,
     session_id: &str,
     model_name: &str,
@@ -276,7 +338,7 @@ async fn process_session(
     Ok((1, marked))
 }
 
-async fn finish_failed_job_run(pool: &SqlitePool, job_run_id: &str, error_message: &str) {
+async fn finish_failed_job_run(pool: &Db, job_run_id: &str, error_message: &str) {
     if let Err(err) = jobs::finish_job_run(pool, job_run_id, "failed", 0, Some(error_message)).await
     {
         warn!(
@@ -287,7 +349,7 @@ async fn finish_failed_job_run(pool: &SqlitePool, job_run_id: &str, error_messag
 }
 
 async fn select_rollup_batch(
-    pool: &SqlitePool,
+    pool: &Db,
     session_id: &str,
     round_limit: i64,
     token_limit: i64,
@@ -340,7 +402,7 @@ async fn select_rollup_batch(
 }
 
 async fn resolve_model_config(
-    pool: &SqlitePool,
+    pool: &Db,
     user_id: &str,
     model_config_id: Option<&str>,
 ) -> Result<Option<AiModelConfig>, String> {

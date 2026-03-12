@@ -1,39 +1,45 @@
-use sqlx::SqlitePool;
+use futures_util::TryStreamExt;
+use mongodb::bson::{doc, Bson};
+use mongodb::options::FindOptions;
 use uuid::Uuid;
 
-use crate::models::{CreateMessageRequest, Message, MessageRow};
+use crate::db::Db;
+use crate::models::{CreateMessageRequest, Message};
 
 use super::now_rfc3339;
 
+fn collection(db: &Db) -> mongodb::Collection<Message> {
+    db.collection::<Message>("messages")
+}
+
 pub async fn create_message(
-    pool: &SqlitePool,
+    db: &Db,
     session_id: &str,
     req: CreateMessageRequest,
 ) -> Result<Message, String> {
-    let id = Uuid::new_v4().to_string();
-    let now = now_rfc3339();
+    let message = Message {
+        id: Uuid::new_v4().to_string(),
+        session_id: session_id.to_string(),
+        role: req.role,
+        content: req.content,
+        message_mode: req.message_mode,
+        message_source: req.message_source,
+        tool_calls: req.tool_calls,
+        tool_call_id: req.tool_call_id,
+        reasoning: req.reasoning,
+        metadata: req.metadata,
+        summary_status: "pending".to_string(),
+        summary_id: None,
+        summarized_at: None,
+        created_at: now_rfc3339(),
+    };
 
-    sqlx::query(
-        "INSERT INTO messages (id, session_id, role, content, message_mode, message_source, tool_calls, tool_call_id, reasoning, metadata, summary_status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
-    )
-    .bind(&id)
-    .bind(session_id)
-    .bind(req.role)
-    .bind(req.content)
-    .bind(req.message_mode)
-    .bind(req.message_source)
-    .bind(req.tool_calls.map(|v| v.to_string()))
-    .bind(req.tool_call_id)
-    .bind(req.reasoning)
-    .bind(req.metadata.map(|v| v.to_string()))
-    .bind(&now)
-    .execute(pool)
-    .await
-    .map_err(|e| e.to_string())?;
+    collection(db)
+        .insert_one(message.clone())
+        .await
+        .map_err(|e| e.to_string())?;
 
-    get_message_by_id(pool, &id)
-        .await?
-        .ok_or_else(|| "created message not found".to_string())
+    Ok(message)
 }
 
 #[derive(Debug, Clone)]
@@ -51,157 +57,141 @@ pub struct SyncMessageInput {
 }
 
 pub async fn upsert_message_sync(
-    pool: &SqlitePool,
+    db: &Db,
     session_id: &str,
     input: SyncMessageInput,
 ) -> Result<Message, String> {
-    sqlx::query(
-        "INSERT INTO messages (id, session_id, role, content, message_mode, message_source, tool_calls, tool_call_id, reasoning, metadata, summary_status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?) ON CONFLICT(id) DO UPDATE SET session_id = excluded.session_id, role = excluded.role, content = excluded.content, message_mode = excluded.message_mode, message_source = excluded.message_source, tool_calls = excluded.tool_calls, tool_call_id = excluded.tool_call_id, reasoning = excluded.reasoning, metadata = excluded.metadata, created_at = excluded.created_at",
-    )
-    .bind(&input.message_id)
-    .bind(session_id)
-    .bind(input.role)
-    .bind(input.content)
-    .bind(input.message_mode)
-    .bind(input.message_source)
-    .bind(input.tool_calls_json)
-    .bind(input.tool_call_id)
-    .bind(input.reasoning)
-    .bind(input.metadata_json)
-    .bind(input.created_at)
-    .execute(pool)
-    .await
-    .map_err(|e| e.to_string())?;
+    let tool_calls = input
+        .tool_calls_json
+        .and_then(|v| serde_json::from_str::<serde_json::Value>(v.as_str()).ok());
+    let metadata = input
+        .metadata_json
+        .and_then(|v| serde_json::from_str::<serde_json::Value>(v.as_str()).ok());
+    let tool_calls_bson = tool_calls
+        .as_ref()
+        .and_then(|v| mongodb::bson::to_bson(v).ok())
+        .unwrap_or(Bson::Null);
+    let metadata_bson = metadata
+        .as_ref()
+        .and_then(|v| mongodb::bson::to_bson(v).ok())
+        .unwrap_or(Bson::Null);
 
-    get_message_by_id(pool, input.message_id.as_str())
+    collection(db)
+        .update_one(
+            doc! {"id": &input.message_id},
+            doc! {
+                "$set": {
+                    "session_id": session_id,
+                    "role": &input.role,
+                    "content": &input.content,
+                    "message_mode": input.message_mode,
+                    "message_source": input.message_source,
+                    "tool_calls": tool_calls_bson,
+                    "tool_call_id": input.tool_call_id,
+                    "reasoning": input.reasoning,
+                    "metadata": metadata_bson,
+                    "created_at": input.created_at,
+                },
+                "$setOnInsert": {
+                    "id": &input.message_id,
+                    "summary_status": "pending",
+                    "summary_id": Bson::Null,
+                    "summarized_at": Bson::Null,
+                }
+            },
+        )
+        .upsert(true)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    get_message_by_id(db, input.message_id.as_str())
         .await?
         .ok_or_else(|| "upserted message not found".to_string())
 }
 
 pub async fn batch_create_messages(
-    pool: &SqlitePool,
+    db: &Db,
     session_id: &str,
     requests: Vec<CreateMessageRequest>,
 ) -> Result<Vec<Message>, String> {
-    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
-    let mut created_ids = Vec::with_capacity(requests.len());
+    let mut out = Vec::with_capacity(requests.len());
     for req in requests {
-        let id = Uuid::new_v4().to_string();
-        let now = now_rfc3339();
-        sqlx::query(
-            "INSERT INTO messages (id, session_id, role, content, message_mode, message_source, tool_calls, tool_call_id, reasoning, metadata, summary_status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
-        )
-        .bind(&id)
-        .bind(session_id)
-        .bind(req.role)
-        .bind(req.content)
-        .bind(req.message_mode)
-        .bind(req.message_source)
-        .bind(req.tool_calls.map(|v| v.to_string()))
-        .bind(req.tool_call_id)
-        .bind(req.reasoning)
-        .bind(req.metadata.map(|v| v.to_string()))
-        .bind(&now)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| e.to_string())?;
-        created_ids.push(id);
-    }
-    tx.commit().await.map_err(|e| e.to_string())?;
-
-    let mut out = Vec::new();
-    for id in created_ids {
-        if let Some(item) = get_message_by_id(pool, id.as_str()).await? {
-            out.push(item);
-        }
+        out.push(create_message(db, session_id, req).await?);
     }
     Ok(out)
 }
 
-pub async fn get_message_by_id(pool: &SqlitePool, message_id: &str) -> Result<Option<Message>, String> {
-    let row = sqlx::query_as::<_, MessageRow>("SELECT * FROM messages WHERE id = ?")
-        .bind(message_id)
-        .fetch_optional(pool)
+pub async fn get_message_by_id(db: &Db, message_id: &str) -> Result<Option<Message>, String> {
+    collection(db)
+        .find_one(doc! {"id": message_id})
         .await
-        .map_err(|e| e.to_string())?;
-
-    Ok(row.map(Into::into))
+        .map_err(|e| e.to_string())
 }
 
-pub async fn delete_message_by_id(pool: &SqlitePool, message_id: &str) -> Result<bool, String> {
-    let result = sqlx::query("DELETE FROM messages WHERE id = ?")
-        .bind(message_id)
-        .execute(pool)
+pub async fn delete_message_by_id(db: &Db, message_id: &str) -> Result<bool, String> {
+    let result = collection(db)
+        .delete_one(doc! {"id": message_id})
         .await
         .map_err(|e| e.to_string())?;
-    Ok(result.rows_affected() > 0)
+    Ok(result.deleted_count > 0)
 }
 
-pub async fn delete_messages_by_session(
-    pool: &SqlitePool,
-    session_id: &str,
-) -> Result<i64, String> {
-    let result = sqlx::query("DELETE FROM messages WHERE session_id = ?")
-        .bind(session_id)
-        .execute(pool)
+pub async fn delete_messages_by_session(db: &Db, session_id: &str) -> Result<i64, String> {
+    let result = collection(db)
+        .delete_many(doc! {"session_id": session_id})
         .await
         .map_err(|e| e.to_string())?;
-    Ok(result.rows_affected() as i64)
+    Ok(result.deleted_count as i64)
 }
 
 pub async fn list_messages_by_session(
-    pool: &SqlitePool,
+    db: &Db,
     session_id: &str,
     limit: i64,
     offset: i64,
     asc: bool,
 ) -> Result<Vec<Message>, String> {
-    let order = if asc { "ASC" } else { "DESC" };
-    let sql = format!(
-        "SELECT * FROM messages WHERE session_id = ? ORDER BY created_at {} LIMIT ? OFFSET ?",
-        order
-    );
+    let sort_order = if asc { 1 } else { -1 };
+    let options = FindOptions::builder()
+        .sort(doc! {"created_at": sort_order})
+        .limit(Some(limit.max(1).min(2000)))
+        .skip(Some(offset.max(0) as u64))
+        .build();
 
-    let rows = sqlx::query_as::<_, MessageRow>(&sql)
-        .bind(session_id)
-        .bind(limit.max(1).min(2000))
-        .bind(offset.max(0))
-        .fetch_all(pool)
+    let cursor = collection(db)
+        .find(doc! {"session_id": session_id})
+        .with_options(options)
         .await
         .map_err(|e| e.to_string())?;
 
-    Ok(rows.into_iter().map(Into::into).collect())
+    cursor.try_collect().await.map_err(|e| e.to_string())
 }
 
 pub async fn list_pending_messages(
-    pool: &SqlitePool,
+    db: &Db,
     session_id: &str,
     limit: Option<i64>,
 ) -> Result<Vec<Message>, String> {
-    let rows = if let Some(v) = limit {
-        sqlx::query_as::<_, MessageRow>(
-            "SELECT * FROM messages WHERE session_id = ? AND summary_status = 'pending' ORDER BY created_at ASC LIMIT ?",
-        )
-        .bind(session_id)
-        .bind(v.max(1))
-        .fetch_all(pool)
-        .await
-        .map_err(|e| e.to_string())?
+    let options = if let Some(v) = limit {
+        FindOptions::builder()
+            .sort(doc! {"created_at": 1})
+            .limit(Some(v.max(1)))
+            .build()
     } else {
-        sqlx::query_as::<_, MessageRow>(
-            "SELECT * FROM messages WHERE session_id = ? AND summary_status = 'pending' ORDER BY created_at ASC",
-        )
-        .bind(session_id)
-        .fetch_all(pool)
-        .await
-        .map_err(|e| e.to_string())?
+        FindOptions::builder().sort(doc! {"created_at": 1}).build()
     };
 
-    Ok(rows.into_iter().map(Into::into).collect())
+    let cursor = collection(db)
+        .find(doc! {"session_id": session_id, "summary_status": "pending"})
+        .with_options(options)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    cursor.try_collect().await.map_err(|e| e.to_string())
 }
 
 pub async fn mark_messages_summarized(
-    pool: &SqlitePool,
+    db: &Db,
     session_id: &str,
     message_ids: &[String],
     summary_id: &str,
@@ -211,35 +201,56 @@ pub async fn mark_messages_summarized(
     }
 
     let now = now_rfc3339();
-    let placeholders = vec!["?"; message_ids.len()].join(", ");
-    let sql = format!(
-        "UPDATE messages SET summary_status = 'summarized', summary_id = ?, summarized_at = ? WHERE session_id = ? AND id IN ({})",
-        placeholders
-    );
+    let result = collection(db)
+        .update_many(
+            doc! {
+                "session_id": session_id,
+                "id": {"$in": message_ids.to_vec()},
+            },
+            doc! {
+                "$set": {
+                    "summary_status": "summarized",
+                    "summary_id": summary_id,
+                    "summarized_at": &now,
+                }
+            },
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
-    let mut q = sqlx::query(&sql)
-        .bind(summary_id)
-        .bind(&now)
-        .bind(session_id);
-    for id in message_ids {
-        q = q.bind(id);
-    }
-
-    let result = q.execute(pool).await.map_err(|e| e.to_string())?;
-    Ok(result.rows_affected() as usize)
+    Ok(result.modified_count as usize)
 }
 
 pub async fn list_session_ids_with_pending_messages_by_user(
-    pool: &SqlitePool,
+    db: &Db,
     user_id: &str,
     limit: i64,
 ) -> Result<Vec<String>, String> {
-    sqlx::query_scalar::<_, String>(
-        "SELECT m.session_id FROM messages m JOIN sessions s ON s.id = m.session_id WHERE m.summary_status = 'pending' AND s.status = 'active' AND s.user_id = ? GROUP BY m.session_id ORDER BY MIN(m.created_at) ASC LIMIT ?",
-    )
-    .bind(user_id)
-    .bind(limit.max(1).min(5000))
-    .fetch_all(pool)
-    .await
-    .map_err(|e| e.to_string())
+    let pipeline = vec![
+        doc! {"$match": {"summary_status": "pending"}},
+        doc! {"$lookup": {
+            "from": "sessions",
+            "localField": "session_id",
+            "foreignField": "id",
+            "as": "session"
+        }},
+        doc! {"$unwind": "$session"},
+        doc! {"$match": {"session.user_id": user_id, "session.status": "active"}},
+        doc! {"$group": {"_id": "$session_id", "min_created_at": {"$min": "$created_at"}}},
+        doc! {"$sort": {"min_created_at": 1}},
+        doc! {"$limit": limit.max(1).min(5000)},
+        doc! {"$project": {"_id": 0, "session_id": "$_id"}},
+    ];
+
+    let cursor = db
+        .collection::<mongodb::bson::Document>("messages")
+        .aggregate(pipeline)
+        .await
+        .map_err(|e| e.to_string())?;
+    let docs: Vec<mongodb::bson::Document> = cursor.try_collect().await.map_err(|e| e.to_string())?;
+
+    Ok(docs
+        .into_iter()
+        .filter_map(|doc| doc.get_str("session_id").ok().map(|v| v.to_string()))
+        .collect())
 }
