@@ -20,29 +20,22 @@ pub struct AppConfig {
 
 impl AppConfig {
     pub fn from_env() -> Self {
-        let host = env::var("MEMORY_SERVER_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
+        let host = env_text("MEMORY_SERVER_HOST").unwrap_or_else(|| "0.0.0.0".to_string());
         let port = env::var("MEMORY_SERVER_PORT")
             .ok()
-            .and_then(|v| v.parse::<u16>().ok())
+            .and_then(|v| v.trim().parse::<u16>().ok())
             .unwrap_or(7080);
 
-        let mongodb_uri = env::var("MEMORY_SERVER_MONGODB_URI")
-            .ok()
-            .or_else(|| env::var("MEMORY_SERVER_DATABASE_URL").ok())
+        let mongodb_uri = env_text("MEMORY_SERVER_MONGODB_URI")
+            .or_else(|| env_text("MEMORY_SERVER_DATABASE_URL"))
             .unwrap_or_else(|| "mongodb://127.0.0.1:27017".to_string());
 
-        let mongodb_database = env::var("MEMORY_SERVER_MONGODB_DATABASE")
-            .unwrap_or_else(|_| "memory_server".to_string());
+        let mongodb_database =
+            env_text("MEMORY_SERVER_MONGODB_DATABASE").unwrap_or_else(|| "memory_server".to_string());
 
-        let service_token = env::var("MEMORY_SERVER_SERVICE_TOKEN")
-            .ok()
-            .map(|v| v.trim().to_string())
-            .filter(|v| !v.is_empty());
+        let service_token = env_text("MEMORY_SERVER_SERVICE_TOKEN");
 
-        let auth_secret = env::var("MEMORY_SERVER_AUTH_SECRET")
-            .ok()
-            .map(|v| v.trim().to_string())
-            .filter(|v| !v.is_empty())
+        let auth_secret = env_text("MEMORY_SERVER_AUTH_SECRET")
             .unwrap_or_else(|| "memory_server_dev_change_me".to_string());
 
         let auth_token_ttl_hours = env::var("MEMORY_SERVER_AUTH_TOKEN_TTL_HOURS")
@@ -62,15 +55,11 @@ impl AppConfig {
             .unwrap_or(90)
             .max(15);
 
-        let openai_api_key = env::var("MEMORY_SERVER_OPENAI_API_KEY")
-            .ok()
-            .or_else(|| env::var("OPENAI_API_KEY").ok())
-            .map(|v| v.trim().to_string())
-            .filter(|v| !v.is_empty());
+        let openai_api_key =
+            env_text("MEMORY_SERVER_OPENAI_API_KEY").or_else(|| env_text("OPENAI_API_KEY"));
 
-        let openai_base_url = env::var("MEMORY_SERVER_OPENAI_BASE_URL")
-            .ok()
-            .or_else(|| env::var("OPENAI_BASE_URL").ok())
+        let openai_base_url = env_text("MEMORY_SERVER_OPENAI_BASE_URL")
+            .or_else(|| env_text("OPENAI_BASE_URL"))
             .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
 
         let openai_model = env::var("MEMORY_SERVER_OPENAI_MODEL")
@@ -104,4 +93,11 @@ impl AppConfig {
             allow_local_summary_fallback,
         }
     }
+}
+
+fn env_text(key: &str) -> Option<String> {
+    env::var(key)
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
 }

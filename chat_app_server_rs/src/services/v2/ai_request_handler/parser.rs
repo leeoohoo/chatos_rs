@@ -102,7 +102,7 @@ pub(super) fn apply_stream_event(
             .and_then(extract_text_from_value)
             .filter(|value| !value.is_empty())
         {
-            state.full_content.push_str(content.as_str());
+            state.full_content = join_stream_text(state.full_content.as_str(), content.as_str());
             payload.chunk = Some(content);
         }
 
@@ -113,7 +113,7 @@ pub(super) fn apply_stream_event(
                     .or_else(|| delta.get("reasoning")),
             );
             if !reasoning_piece.is_empty() {
-                state.reasoning.push_str(&reasoning_piece);
+                state.reasoning = join_stream_text(state.reasoning.as_str(), reasoning_piece.as_str());
                 payload.thinking = Some(reasoning_piece);
             }
         }
@@ -130,7 +130,7 @@ pub(super) fn apply_stream_event(
     if let Some(message) = choice.get("message") {
         if let Some(content) = extract_message_text(message) {
             if !content.is_empty() {
-                state.full_content.push_str(content.as_str());
+                state.full_content = join_stream_text(state.full_content.as_str(), content.as_str());
                 payload.chunk = Some(content);
             }
         }
@@ -142,7 +142,7 @@ pub(super) fn apply_stream_event(
                     .or_else(|| message.get("reasoning")),
             );
             if !reasoning_piece.is_empty() {
-                state.reasoning.push_str(&reasoning_piece);
+                state.reasoning = join_stream_text(state.reasoning.as_str(), reasoning_piece.as_str());
                 payload.thinking = Some(reasoning_piece);
             }
         }
@@ -159,6 +159,38 @@ pub(super) fn apply_stream_event(
     }
 
     payload
+}
+
+fn join_stream_text(current: &str, chunk: &str) -> String {
+    if chunk.is_empty() {
+        return current.to_string();
+    }
+    if current.is_empty() {
+        return chunk.to_string();
+    }
+
+    // Providers are inconsistent: some return deltas, some return cumulative snapshots.
+    if chunk.starts_with(current) {
+        return chunk.to_string();
+    }
+    if current.starts_with(chunk) {
+        return current.to_string();
+    }
+    if current.contains(chunk) {
+        return current.to_string();
+    }
+    if chunk.contains(current) {
+        return chunk.to_string();
+    }
+
+    let max_overlap = std::cmp::min(current.len(), chunk.len());
+    for overlap in (8..=max_overlap).rev() {
+        if current[current.len() - overlap..] == chunk[..overlap] {
+            return format!("{}{}", current, &chunk[overlap..]);
+        }
+    }
+
+    format!("{}{}", current, chunk)
 }
 
 fn extract_message_text(message: &Value) -> Option<String> {
@@ -366,5 +398,30 @@ mod tests {
 
         assert_eq!(payload.chunk.as_deref(), Some("hello"));
         assert_eq!(state.full_content, "hello");
+    }
+
+    #[test]
+    fn apply_stream_event_merges_snapshot_style_delta_without_duplication() {
+        let mut state = StreamState::default();
+
+        let first = json!({
+            "choices": [{
+                "delta": {
+                    "content": "严"
+                }
+            }]
+        });
+        let second = json!({
+            "choices": [{
+                "delta": {
+                    "content": "严格式说：不是“真并行”。"
+                }
+            }]
+        });
+
+        let _ = apply_stream_event(&mut state, &first, false);
+        let _ = apply_stream_event(&mut state, &second, false);
+
+        assert_eq!(state.full_content, "严格式说：不是“真并行”。");
     }
 }

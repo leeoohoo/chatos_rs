@@ -365,7 +365,7 @@ pub(super) fn apply_stream_event(state: &mut StreamState, event: &Value) -> Stre
         if event_type == "response.output_text.delta" {
             if let Some(delta) = event.get("delta").and_then(extract_text_delta) {
                 if !delta.is_empty() {
-                    state.full_content.push_str(&delta);
+                    state.full_content = join_stream_text(state.full_content.as_str(), delta.as_str());
                     state.sent_any_chunk = true;
                     payload.chunk = Some(delta);
                 }
@@ -387,7 +387,8 @@ pub(super) fn apply_stream_event(state: &mut StreamState, event: &Value) -> Stre
             }
         } else if let Some(reasoning_delta) = extract_reasoning_event_text(event_type, event) {
             if !reasoning_delta.is_empty() {
-                state.reasoning.push_str(&reasoning_delta);
+                state.reasoning =
+                    join_stream_text(state.reasoning.as_str(), reasoning_delta.as_str());
                 payload.thinking = Some(reasoning_delta);
             }
         } else if event_type == "response.completed" {
@@ -396,7 +397,8 @@ pub(super) fn apply_stream_event(state: &mut StreamState, event: &Value) -> Stre
                 if state.full_content.is_empty() {
                     let extracted = extract_output_text(response);
                     if !extracted.is_empty() {
-                        state.full_content.push_str(&extracted);
+                        state.full_content =
+                            join_stream_text(state.full_content.as_str(), extracted.as_str());
                         state.sent_any_chunk = true;
                         payload.chunk = Some(extracted);
                     }
@@ -406,7 +408,8 @@ pub(super) fn apply_stream_event(state: &mut StreamState, event: &Value) -> Stre
                 if state.full_content.is_empty() {
                     let extracted = extract_output_text(event);
                     if !extracted.is_empty() {
-                        state.full_content.push_str(&extracted);
+                        state.full_content =
+                            join_stream_text(state.full_content.as_str(), extracted.as_str());
                         state.sent_any_chunk = true;
                         payload.chunk = Some(extracted);
                     }
@@ -457,7 +460,8 @@ pub(super) fn apply_stream_event(state: &mut StreamState, event: &Value) -> Stre
         if state.full_content.is_empty() {
             let extracted = extract_output_text(event);
             if !extracted.is_empty() {
-                state.full_content.push_str(&extracted);
+                state.full_content =
+                    join_stream_text(state.full_content.as_str(), extracted.as_str());
                 state.sent_any_chunk = true;
                 payload.chunk = Some(extracted);
             }
@@ -501,6 +505,38 @@ pub(super) fn apply_stream_event(state: &mut StreamState, event: &Value) -> Stre
     }
 
     payload
+}
+
+fn join_stream_text(current: &str, chunk: &str) -> String {
+    if chunk.is_empty() {
+        return current.to_string();
+    }
+    if current.is_empty() {
+        return chunk.to_string();
+    }
+
+    // Providers are inconsistent: some return deltas, some return cumulative snapshots.
+    if chunk.starts_with(current) {
+        return chunk.to_string();
+    }
+    if current.starts_with(chunk) {
+        return current.to_string();
+    }
+    if current.contains(chunk) {
+        return current.to_string();
+    }
+    if chunk.contains(current) {
+        return chunk.to_string();
+    }
+
+    let max_overlap = std::cmp::min(current.len(), chunk.len());
+    for overlap in (8..=max_overlap).rev() {
+        if current[current.len() - overlap..] == chunk[..overlap] {
+            return format!("{}{}", current, &chunk[overlap..]);
+        }
+    }
+
+    format!("{}{}", current, chunk)
 }
 
 #[cfg(test)]
@@ -621,6 +657,25 @@ mod tests {
         assert!(state.sent_any_chunk);
         assert_eq!(state.response_id.as_deref(), Some("resp_1"));
         assert!(state.usage.is_some());
+    }
+
+    #[test]
+    fn apply_stream_event_merges_snapshot_style_delta_without_duplication() {
+        let mut state = StreamState::default();
+
+        let first = json!({
+            "type": "response.output_text.delta",
+            "delta": {"text": "严"},
+        });
+        let second = json!({
+            "type": "response.output_text.delta",
+            "delta": {"text": "严格式说：不是“真并行”。"},
+        });
+
+        let _ = apply_stream_event(&mut state, &first);
+        let _ = apply_stream_event(&mut state, &second);
+
+        assert_eq!(state.full_content, "严格式说：不是“真并行”。");
     }
 
     #[test]
