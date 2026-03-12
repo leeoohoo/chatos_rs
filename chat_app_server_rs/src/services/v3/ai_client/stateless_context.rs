@@ -71,26 +71,28 @@ impl AiClient {
         sub_agent_run_id: Option<String>,
     ) -> Vec<Value> {
         let mut items = Vec::new();
-        let summary_count;
+        let memory_summary_count;
         let history_count;
-        let mut summary_context_used = false;
+        let mut memory_summary_used = false;
         let mut tool_call_ids: HashSet<String> = HashSet::new();
         let mut tool_output_ids: HashSet<String> = HashSet::new();
         let context_data = if let Some(run_id) = sub_agent_run_id.as_ref() {
             self.message_manager
-                .get_sub_agent_run_history_context(run_id, 2)
+                .get_memory_sub_agent_run_history_context(run_id, 2)
                 .await
         } else if let Some(sid) = session_id.as_ref() {
-            self.message_manager.get_chat_history_context(sid, 2).await
+            self.message_manager
+                .get_memory_chat_history_context(sid, 2)
+                .await
         } else {
             (None, 0, Vec::new())
         };
 
         let use_full_pending_history = stable_prefix_mode && history_limit >= self.history_limit;
         let (merged_summary, merged_summary_count, mut pending_history) = context_data;
-        summary_count = merged_summary_count;
+        memory_summary_count = merged_summary_count;
         if let Some(summary_text) = merged_summary {
-            summary_context_used = true;
+            memory_summary_used = true;
             items.push(to_message_item(
                 "system",
                 &Value::String(summary_text),
@@ -222,10 +224,10 @@ impl AiClient {
         }
         items.extend_from_slice(current_input_items);
         info!(
-            "[AI_V3] stateless items built: stable_prefix_mode={}, summary_context_used={}, summaries={}, history_messages={}, total_items={}",
+            "[AI_V3] stateless items built: stable_prefix_mode={}, memory_summary_used={}, summaries={}, history_messages={}, total_items={}",
             stable_prefix_mode,
-            summary_context_used,
-            summary_count,
+            memory_summary_used,
+            memory_summary_count,
             history_count,
             items.len()
         );

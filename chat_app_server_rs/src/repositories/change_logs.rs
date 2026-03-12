@@ -10,6 +10,7 @@ use sqlx::Row;
 use crate::core::mongo_cursor::collect_documents;
 use crate::core::sql_query::append_limit_offset_clause;
 use crate::repositories::db::with_db;
+use crate::services::memory_server_client;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ChangeLogItem {
@@ -62,6 +63,42 @@ pub struct ProjectChangeSummary {
     pub file_marks: Vec<ProjectChangeMark>,
     pub deleted_marks: Vec<ProjectChangeMark>,
     pub counts: ProjectChangeCounts,
+}
+
+#[derive(Debug, Clone, Default)]
+struct SessionMetaLite {
+    title: Option<String>,
+    project_id: Option<String>,
+}
+
+async fn load_session_meta_map(session_ids: &HashSet<String>) -> HashMap<String, SessionMetaLite> {
+    let mut out: HashMap<String, SessionMetaLite> = HashMap::new();
+    if session_ids.is_empty() {
+        return out;
+    }
+
+    for session_id in session_ids {
+        match memory_server_client::get_session_by_id(session_id).await {
+            Ok(Some(session)) => {
+                let title = session.title.trim().to_string();
+                let project_id = session
+                    .project_id
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty());
+                out.insert(
+                    session_id.clone(),
+                    SessionMetaLite {
+                        title: if title.is_empty() { None } else { Some(title) },
+                        project_id,
+                    },
+                );
+            }
+            Ok(None) => {}
+            Err(_) => {}
+        }
+    }
+
+    out
 }
 
 pub async fn list_project_change_logs(
@@ -124,23 +161,11 @@ pub async fn list_project_change_logs(
 
                 let mut session_titles: HashMap<String, String> = HashMap::new();
                 if !session_ids.is_empty() {
-                    let missing_sessions: Vec<Bson> = session_ids
-                        .into_iter()
-                        .map(Bson::String)
-                        .collect();
-                    let title_cursor = db
-                        .collection::<Document>("sessions")
-                        .find(doc! { "id": { "$in": missing_sessions } }, None)
-                        .await
-                        .map_err(|e| e.to_string())?;
-                    let title_docs = collect_documents(title_cursor).await?;
-                    for doc in title_docs {
-                        let id = doc.get_str("id").unwrap_or("").trim().to_string();
-                        if id.is_empty() {
-                            continue;
+                    let session_meta_map = load_session_meta_map(&session_ids).await;
+                    for (session_id, meta) in session_meta_map {
+                        if let Some(title) = meta.title {
+                            session_titles.insert(session_id, title);
                         }
-                        let title = doc.get_str("title").unwrap_or("").to_string();
-                        session_titles.insert(id, title);
                     }
                 }
 
@@ -185,9 +210,8 @@ pub async fn list_project_change_logs(
                 }
 
                 let mut query = format!(
-                    "SELECT c.id, c.server_name, c.project_id, c.path, c.action, c.change_kind, c.bytes, c.sha256, c.diff, c.session_id, c.run_id, c.confirmed, c.confirmed_at, c.confirmed_by, c.created_at, s.title as session_title \
+                    "SELECT c.id, c.server_name, c.project_id, c.path, c.action, c.change_kind, c.bytes, c.sha256, c.diff, c.session_id, c.run_id, c.confirmed, c.confirmed_at, c.confirmed_by, c.created_at \
                     FROM mcp_change_logs c \
-                    LEFT JOIN sessions s ON s.id = c.session_id \
                     WHERE {}",
                     where_parts.join(" OR "),
                 );
@@ -210,6 +234,7 @@ pub async fn list_project_change_logs(
 
                 let rows = q.fetch_all(pool).await.map_err(|e| e.to_string())?;
                 let mut out = Vec::new();
+                let mut session_ids: HashSet<String> = HashSet::new();
                 for row in rows {
                     let id: String = row.try_get("id").unwrap_or_default();
                     let server_name: String = row.try_get("server_name").unwrap_or_default();
@@ -222,13 +247,19 @@ pub async fn list_project_change_logs(
                     let bytes: i64 = row.try_get("bytes").unwrap_or(0);
                     let sha256: Option<String> = row.try_get("sha256").ok();
                     let diff: Option<String> = row.try_get("diff").ok();
-                    let session_id: Option<String> = row.try_get("session_id").ok();
+                    let session_id = row
+                        .try_get::<Option<String>, _>("session_id")
+                        .unwrap_or(None)
+                        .map(|value| value.trim().to_string())
+                        .filter(|value| !value.is_empty());
+                    if let Some(sid) = session_id.as_ref() {
+                        session_ids.insert(sid.clone());
+                    }
                     let run_id: Option<String> = row.try_get("run_id").ok();
                     let confirmed_raw: Option<i64> = row.try_get("confirmed").ok();
                     let confirmed_at: Option<String> = row.try_get("confirmed_at").ok();
                     let confirmed_by: Option<String> = row.try_get("confirmed_by").ok();
                     let created_at: String = row.try_get("created_at").unwrap_or_default();
-                    let session_title: Option<String> = row.try_get("session_title").ok();
                     out.push(ChangeLogItem {
                         id,
                         server_name,
@@ -245,8 +276,19 @@ pub async fn list_project_change_logs(
                         confirmed_at,
                         confirmed_by,
                         created_at,
-                        session_title,
+                        session_title: None,
                     });
+                }
+                if !session_ids.is_empty() {
+                    let session_meta_map = load_session_meta_map(&session_ids).await;
+                    for item in &mut out {
+                        let Some(session_id) = item.session_id.as_ref() else {
+                            continue;
+                        };
+                        if let Some(meta) = session_meta_map.get(session_id) {
+                            item.session_title = meta.title.clone();
+                        }
+                    }
                 }
                 Ok(out)
             })
@@ -338,20 +380,11 @@ pub async fn list_unconfirmed_project_changes(
 
                 let mut session_projects: HashMap<String, String> = HashMap::new();
                 if !session_ids.is_empty() {
-                    let ids: Vec<Bson> = session_ids.into_iter().map(Bson::String).collect();
-                    let session_cursor = db
-                        .collection::<Document>("sessions")
-                        .find(doc! { "id": { "$in": ids } }, None)
-                        .await
-                        .map_err(|e| e.to_string())?;
-                    let session_docs = collect_documents(session_cursor).await?;
-                    for doc in session_docs {
-                        let session_id = doc.get_str("id").unwrap_or("").trim().to_string();
-                        let project_id = doc.get_str("project_id").unwrap_or("").trim().to_string();
-                        if session_id.is_empty() || project_id.is_empty() {
-                            continue;
+                    let session_meta_map = load_session_meta_map(&session_ids).await;
+                    for (session_id, meta) in session_meta_map {
+                        if let Some(project_id) = meta.project_id {
+                            session_projects.insert(session_id, project_id);
                         }
-                        session_projects.insert(session_id, project_id);
                     }
                 }
 
@@ -413,15 +446,27 @@ pub async fn list_unconfirmed_project_changes(
             let project_root = project_root.clone();
             Box::pin(async move {
                 let rows = sqlx::query(
-                    r#"SELECT c.id, c.project_id, c.path, c.action, c.change_kind, c.created_at, c.session_id, s.project_id AS session_project_id
+                    r#"SELECT c.id, c.project_id, c.path, c.action, c.change_kind, c.created_at, c.session_id
                     FROM mcp_change_logs c
-                    LEFT JOIN sessions s ON s.id = c.session_id
                     WHERE COALESCE(c.confirmed, 0) = 0
                     ORDER BY c.created_at DESC"#,
                 )
                 .fetch_all(pool)
                 .await
                 .map_err(|e| e.to_string())?;
+
+                let mut session_ids: HashSet<String> = HashSet::new();
+                for row in &rows {
+                    let session_id = row
+                        .try_get::<Option<String>, _>("session_id")
+                        .unwrap_or(None)
+                        .map(|value| value.trim().to_string())
+                        .filter(|value| !value.is_empty());
+                    if let Some(sid) = session_id {
+                        session_ids.insert(sid);
+                    }
+                }
+                let session_meta_map = load_session_meta_map(&session_ids).await;
 
                 let mut out: Vec<ProjectScopedChangeRecord> = Vec::new();
                 for row in rows {
@@ -440,10 +485,13 @@ pub async fn list_unconfirmed_project_changes(
                     }
                     let session_id: Option<String> = row
                         .try_get::<Option<String>, _>("session_id")
-                        .unwrap_or(None);
-                    let session_project_id: Option<String> = row
-                        .try_get::<Option<String>, _>("session_project_id")
-                        .unwrap_or(None);
+                        .unwrap_or(None)
+                        .map(|value| value.trim().to_string())
+                        .filter(|value| !value.is_empty());
+                    let session_project_id = session_id
+                        .as_ref()
+                        .and_then(|sid| session_meta_map.get(sid))
+                        .and_then(|meta| meta.project_id.as_deref());
                     let action: String = row.try_get("action").unwrap_or_default();
                     let kind_raw: Option<String> = row.try_get("change_kind").ok();
                     let kind = normalize_change_kind(kind_raw.as_deref(), action.as_str());
@@ -451,7 +499,7 @@ pub async fn list_unconfirmed_project_changes(
                     if !should_include_record(
                         &project_id,
                         record_project_id.as_deref(),
-                        session_project_id.as_deref(),
+                        session_project_id,
                         session_id.as_deref(),
                         &raw_path,
                         &kind,

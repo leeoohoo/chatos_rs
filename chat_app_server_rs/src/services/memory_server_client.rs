@@ -104,14 +104,6 @@ pub struct UpsertSummaryJobConfigRequestDto {
     pub job_interval_seconds: Option<i64>,
 }
 
-pub fn remote_only_enabled() -> bool {
-    Config::get().memory_server_remote_only
-}
-
-pub fn context_enabled() -> bool {
-    Config::get().memory_server_context_enabled || remote_only_enabled()
-}
-
 pub async fn with_access_token_scope<T, Fut>(access_token: Option<String>, future: Fut) -> T
 where
     Fut: Future<Output = T>,
@@ -423,7 +415,7 @@ pub async fn clear_summaries(session_id: &str) -> Result<i64, String> {
 
 pub async fn compose_context(
     session_id: &str,
-    summary_limit: usize,
+    memory_summary_limit: usize,
 ) -> Result<(Option<String>, usize, Vec<Message>), String> {
     let req = MEMORY_SERVER_HTTP
         .post(build_url("/context/compose").as_str())
@@ -432,7 +424,7 @@ pub async fn compose_context(
         ))
         .json(&serde_json::json!({
             "session_id": session_id,
-            "summary_limit": summary_limit.max(1),
+            "summary_limit": memory_summary_limit.max(1),
             "include_raw_messages": true
         }));
 

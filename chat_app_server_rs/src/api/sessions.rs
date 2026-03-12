@@ -6,7 +6,6 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::Value;
-use tracing::warn;
 use uuid::Uuid;
 
 use crate::core::auth::AuthUser;
@@ -17,17 +16,14 @@ use crate::core::pagination::{parse_non_negative_offset, parse_positive_limit};
 use crate::core::session_access::{ensure_owned_session, map_session_access_error};
 use crate::core::user_scope::resolve_user_id;
 use crate::core::validation::normalize_non_empty;
-use crate::models::message::MessageService;
-use crate::models::session::{Session, SessionService};
 use crate::models::session_mcp_server::SessionMcpServer;
-use crate::models::session_summary_v2::SessionSummaryV2Service;
 use crate::repositories::session_mcp_servers as session_mcp_repo;
 use crate::services::memory_server_client;
 
 mod history;
 use history::{
-    build_turn_process_messages, compact_messages_for_display, fetch_session_messages_for_display,
-    find_user_index_by_turn_id, parse_bool_query_flag,
+    build_turn_process_messages, compact_messages_for_display, find_user_index_by_turn_id,
+    parse_bool_query_flag,
 };
 
 #[derive(Debug, Deserialize)]
@@ -107,11 +103,11 @@ pub fn router() -> Router {
         )
         .route(
             "/api/sessions/:session_id/summaries",
-            get(get_session_summaries).delete(clear_session_summaries),
+            get(list_session_memory_summaries).delete(clear_session_memory_summaries),
         )
         .route(
             "/api/sessions/:session_id/summaries/:summary_id",
-            delete(delete_session_summary),
+            delete(delete_session_memory_summary),
         )
 }
 
@@ -152,31 +148,9 @@ async fn list_sessions(
         })
         .unwrap_or(false);
 
-    if memory_server_client::remote_only_enabled() {
-        let result = memory_server_client::list_sessions(
-            Some(user_id.as_str()),
-            project_id.as_deref(),
-            limit,
-            offset,
-            include_archived,
-            include_archiving,
-        )
-        .await;
-        return match result {
-            Ok(list) => (
-                StatusCode::OK,
-                Json(serde_json::to_value(list).unwrap_or(Value::Null)),
-            ),
-            Err(err) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": err})),
-            ),
-        };
-    }
-
-    let result = SessionService::get_by_user_project(
-        Some(user_id),
-        project_id,
+    let result = memory_server_client::list_sessions(
+        Some(user_id.as_str()),
+        project_id.as_deref(),
         limit,
         offset,
         include_archived,
@@ -218,35 +192,17 @@ async fn create_session(
         );
     };
 
-    if memory_server_client::remote_only_enabled() {
-        return match memory_server_client::create_session(user_id, title, project_id).await {
-            Ok(saved) => (
-                StatusCode::CREATED,
-                Json(serde_json::to_value(saved).unwrap_or(Value::Null)),
-            ),
-            Err(err) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": err})),
-            ),
-        };
-    }
-
-    let session = Session::new(title, description, metadata, Some(user_id), project_id);
-    if let Err(err) = SessionService::create(session.clone()).await {
-        return (
+    let _ = (description, metadata);
+    match memory_server_client::create_session(user_id, title, project_id).await {
+        Ok(saved) => (
+            StatusCode::CREATED,
+            Json(serde_json::to_value(saved).unwrap_or(Value::Null)),
+        ),
+        Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": err})),
-        );
+        ),
     }
-    let saved = SessionService::get_by_id(&session.id)
-        .await
-        .ok()
-        .flatten()
-        .unwrap_or(session);
-    (
-        StatusCode::CREATED,
-        Json(serde_json::to_value(saved).unwrap_or(Value::Null)),
-    )
 }
 
 async fn get_session(auth: AuthUser, Path(id): Path<String>) -> (StatusCode, Json<Value>) {
@@ -268,34 +224,8 @@ async fn update_session(
         return map_session_access_error(err);
     }
 
-    if memory_server_client::remote_only_enabled() {
-        return match memory_server_client::update_session(&id, req.title.clone(), None).await {
-            Ok(Some(session)) => (
-                StatusCode::OK,
-                Json(serde_json::to_value(session).unwrap_or(Value::Null)),
-            ),
-            Ok(None) => (StatusCode::OK, Json(Value::Null)),
-            Err(err) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": err})),
-            ),
-        };
-    }
-
-    if let Err(err) = SessionService::update(
-        &id,
-        req.title.clone(),
-        req.description.clone(),
-        req.metadata.clone(),
-    )
-    .await
-    {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": err})),
-        );
-    }
-    match SessionService::get_by_id(&id).await {
+    let _ = (req.description, req.metadata);
+    match memory_server_client::update_session(&id, req.title.clone(), None).await {
         Ok(Some(session)) => (
             StatusCode::OK,
             Json(serde_json::to_value(session).unwrap_or(Value::Null)),
@@ -313,39 +243,15 @@ async fn delete_session(auth: AuthUser, Path(id): Path<String>) -> (StatusCode, 
         return map_session_access_error(err);
     }
 
-    if memory_server_client::remote_only_enabled() {
-        return match memory_server_client::delete_session(&id).await {
-            Ok(true) => (
-                StatusCode::OK,
-                Json(serde_json::json!({"success": true, "message": "会话已归档"})),
-            ),
-            Ok(false) => (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({"error": "会话不存在"})),
-            ),
-            Err(err) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": err})),
-            ),
-        };
-    }
-
-    match SessionService::delete(&id).await {
-        Ok(_) => {
-            let session_id = id.clone();
-            tokio::spawn(async move {
-                if let Err(err) = SessionService::process_archive(&session_id).await {
-                    warn!(
-                        "[SESSION-ARCHIVE] async archive failed: session_id={} error={}",
-                        session_id, err
-                    );
-                }
-            });
-            (
-                StatusCode::ACCEPTED,
-                Json(serde_json::json!({"success": true, "message": "会话已进入归档队列"})),
-            )
-        }
+    match memory_server_client::delete_session(&id).await {
+        Ok(true) => (
+            StatusCode::OK,
+            Json(serde_json::json!({"success": true, "message": "会话已归档"})),
+        ),
+        Ok(false) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "会话不存在"})),
+        ),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": err})),
@@ -433,63 +339,6 @@ async fn get_session_messages(
         return map_session_access_error(err);
     }
 
-    if memory_server_client::remote_only_enabled() {
-        let limit = parse_positive_limit(query.limit);
-        let offset = parse_non_negative_offset(query.offset);
-        let compact = parse_bool_query_flag(query.compact);
-        let compact_recent_strategy = query
-            .strategy
-            .as_deref()
-            .map(str::trim)
-            .map(|value| !value.eq_ignore_ascii_case("v1"))
-            .unwrap_or(true);
-
-        let result = if compact {
-            if compact_recent_strategy {
-                let window = limit.unwrap_or(400).max(1).saturating_mul(8).min(5000);
-                match memory_server_client::list_messages(&session_id, Some(window), 0, false).await
-                {
-                    Ok(mut messages) => {
-                        messages.reverse();
-                        Ok(compact_messages_for_display(messages, limit, offset))
-                    }
-                    Err(_) => memory_server_client::list_messages(&session_id, None, 0, true)
-                        .await
-                        .map(|messages| compact_messages_for_display(messages, limit, offset)),
-                }
-            } else {
-                memory_server_client::list_messages(&session_id, None, 0, true)
-                    .await
-                    .map(|messages| compact_messages_for_display(messages, limit, offset))
-            }
-        } else if let Some(v) = limit {
-            memory_server_client::list_messages(&session_id, Some(v), offset, false)
-                .await
-                .map(|mut messages| {
-                    messages.reverse();
-                    messages
-                })
-        } else {
-            memory_server_client::list_messages(&session_id, None, 0, true).await
-        };
-
-        return match result {
-            Ok(list) => {
-                let out: Vec<Value> = list
-                    .into_iter()
-                    .map(|message| {
-                        serde_json::to_value(MessageOut::from(message)).unwrap_or(Value::Null)
-                    })
-                    .collect();
-                (StatusCode::OK, Json(Value::Array(out)))
-            }
-            Err(err) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": "Failed to get session messages", "detail": err})),
-            ),
-        };
-    }
-
     let limit = parse_positive_limit(query.limit);
     let offset = parse_non_negative_offset(query.offset);
     let compact = parse_bool_query_flag(query.compact);
@@ -499,24 +348,45 @@ async fn get_session_messages(
         .map(str::trim)
         .map(|value| !value.eq_ignore_ascii_case("v1"))
         .unwrap_or(true);
-    let result = fetch_session_messages_for_display(
-        &session_id,
-        limit,
-        offset,
-        compact,
-        compact_recent_strategy,
-    )
-    .await;
+
+    let result = if compact {
+        if compact_recent_strategy {
+            let window = limit.unwrap_or(400).max(1).saturating_mul(8).min(5000);
+            match memory_server_client::list_messages(&session_id, Some(window), 0, false).await {
+                Ok(mut messages) => {
+                    messages.reverse();
+                    Ok(compact_messages_for_display(messages, limit, offset))
+                }
+                Err(_) => memory_server_client::list_messages(&session_id, None, 0, true)
+                    .await
+                    .map(|messages| compact_messages_for_display(messages, limit, offset)),
+            }
+        } else {
+            memory_server_client::list_messages(&session_id, None, 0, true)
+                .await
+                .map(|messages| compact_messages_for_display(messages, limit, offset))
+        }
+    } else if let Some(v) = limit {
+        memory_server_client::list_messages(&session_id, Some(v), offset, false)
+            .await
+            .map(|mut messages| {
+                messages.reverse();
+                messages
+            })
+    } else {
+        memory_server_client::list_messages(&session_id, None, 0, true).await
+    };
 
     match result {
         Ok(list) => {
             let out: Vec<Value> = list
                 .into_iter()
-                .map(|message| {
-                    serde_json::to_value(MessageOut::from(message)).unwrap_or(Value::Null)
-                })
+                .map(|message| serde_json::to_value(MessageOut::from(message)).unwrap_or(Value::Null))
                 .collect();
-            (StatusCode::OK, Json(Value::Array(out)))
+            (
+                StatusCode::OK,
+                Json(Value::Array(out)),
+            )
         }
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -532,11 +402,7 @@ async fn get_session_turn_process_messages(
     if let Err(err) = ensure_owned_session(&session_id, &auth).await {
         return map_session_access_error(err);
     }
-    let result = if memory_server_client::remote_only_enabled() {
-        memory_server_client::list_messages(&session_id, None, 0, true).await
-    } else {
-        MessageService::get_by_session(&session_id, None, 0).await
-    };
+    let result = memory_server_client::list_messages(&session_id, None, 0, true).await;
 
     match result {
         Ok(messages) => {
@@ -574,11 +440,7 @@ async fn get_session_turn_process_messages_by_turn(
     if let Err(err) = ensure_owned_session(&session_id, &auth).await {
         return map_session_access_error(err);
     }
-    let result = if memory_server_client::remote_only_enabled() {
-        memory_server_client::list_messages(&session_id, None, 0, true).await
-    } else {
-        MessageService::get_by_session(&session_id, None, 0).await
-    };
+    let result = memory_server_client::list_messages(&session_id, None, 0, true).await;
 
     match result {
         Ok(messages) => {
@@ -604,7 +466,7 @@ async fn get_session_turn_process_messages_by_turn(
     }
 }
 
-async fn get_session_summaries(
+async fn list_session_memory_summaries(
     auth: AuthUser,
     Path(session_id): Path<String>,
     Query(query): Query<PageQuery>,
@@ -615,28 +477,8 @@ async fn get_session_summaries(
     let limit = parse_positive_limit(query.limit).or(Some(20));
     let offset = parse_non_negative_offset(query.offset);
 
-    if memory_server_client::remote_only_enabled() {
-        let items = match memory_server_client::list_summaries(&session_id, limit, offset).await {
-            Ok(list) => list,
-            Err(err) => {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({"error": "获取会话总结失败", "detail": err})),
-                )
-            }
-        };
-        let total = items.len() as i64;
-        return (
-            StatusCode::OK,
-            Json(serde_json::json!({
-                "items": items,
-                "total": total,
-                "has_summary": total > 0
-            })),
-        );
-    }
-
-    let items = match SessionSummaryV2Service::list_by_session(&session_id, limit, offset).await {
+    let memory_summaries =
+        match memory_server_client::list_summaries(&session_id, limit, offset).await {
         Ok(list) => list,
         Err(err) => {
             return (
@@ -646,27 +488,19 @@ async fn get_session_summaries(
         }
     };
 
-    let total = match SessionSummaryV2Service::count_by_session(&session_id).await {
-        Ok(value) => value,
-        Err(err) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": "获取会话总结失败", "detail": err})),
-            )
-        }
-    };
+    let total = memory_summaries.len() as i64;
 
     (
         StatusCode::OK,
         Json(serde_json::json!({
-            "items": items,
+            "items": memory_summaries,
             "total": total,
             "has_summary": total > 0
         })),
     )
 }
 
-async fn delete_session_summary(
+async fn delete_session_memory_summary(
     auth: AuthUser,
     Path((session_id, summary_id)): Path<(String, String)>,
 ) -> (StatusCode, Json<Value>) {
@@ -674,73 +508,29 @@ async fn delete_session_summary(
         return map_session_access_error(err);
     }
 
-    if memory_server_client::remote_only_enabled() {
-        return match memory_server_client::delete_summary(&session_id, &summary_id).await {
-            Ok(true) => (
-                StatusCode::OK,
-                Json(serde_json::json!({
-                    "success": true,
-                    "session_id": session_id,
-                    "summary_id": summary_id,
-                    "deleted_summaries": 1,
-                    "reset_messages": 0
-                })),
-            ),
-            Ok(false) => (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({"error": "会话总结不存在"})),
-            ),
-            Err(err) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": "删除会话总结失败", "detail": err})),
-            ),
-        };
-    }
-
-    let deleted = match SessionSummaryV2Service::delete_by_id(&session_id, &summary_id).await {
-        Ok(value) => value,
-        Err(err) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": "删除会话总结失败", "detail": err})),
-            )
-        }
-    };
-
-    if !deleted {
-        return (
+    match memory_server_client::delete_summary(&session_id, &summary_id).await {
+        Ok(true) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "success": true,
+                "session_id": session_id,
+                "summary_id": summary_id,
+                "deleted_summaries": 1,
+                "reset_messages": 0
+            })),
+        ),
+        Ok(false) => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": "会话总结不存在"})),
-        );
+        ),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": "删除会话总结失败", "detail": err})),
+        ),
     }
-
-    let reset_messages = match MessageService::reset_summary_by_summary_id(&session_id, &summary_id)
-        .await
-    {
-        Ok(value) => value,
-        Err(err) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(
-                    serde_json::json!({"error": "删除会话总结成功，但重置消息总结状态失败", "detail": err}),
-                ),
-            )
-        }
-    };
-
-    (
-        StatusCode::OK,
-        Json(serde_json::json!({
-            "success": true,
-            "session_id": session_id,
-            "summary_id": summary_id,
-            "deleted_summaries": 1,
-            "reset_messages": reset_messages
-        })),
-    )
 }
 
-async fn clear_session_summaries(
+async fn clear_session_memory_summaries(
     auth: AuthUser,
     Path(session_id): Path<String>,
 ) -> (StatusCode, Json<Value>) {
@@ -748,45 +538,12 @@ async fn clear_session_summaries(
         return map_session_access_error(err);
     }
 
-    if memory_server_client::remote_only_enabled() {
-        let deleted_count = match memory_server_client::clear_summaries(&session_id).await {
-            Ok(value) => value,
-            Err(err) => {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({"error": "清空会话总结失败", "detail": err})),
-                )
-            }
-        };
-        return (
-            StatusCode::OK,
-            Json(serde_json::json!({
-                "success": true,
-                "session_id": session_id,
-                "deleted_summaries": deleted_count,
-                "reset_messages": 0
-            })),
-        );
-    }
-
-    let deleted_count = match SessionSummaryV2Service::delete_by_session(&session_id).await {
+    let deleted_count = match memory_server_client::clear_summaries(&session_id).await {
         Ok(value) => value,
         Err(err) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({"error": "清空会话总结失败", "detail": err})),
-            )
-        }
-    };
-
-    let reset_messages = match MessageService::reset_summary_by_session(&session_id).await {
-        Ok(value) => value,
-        Err(err) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(
-                    serde_json::json!({"error": "清空会话总结成功，但重置消息总结状态失败", "detail": err}),
-                ),
             )
         }
     };
@@ -797,7 +554,7 @@ async fn clear_session_summaries(
             "success": true,
             "session_id": session_id,
             "deleted_summaries": deleted_count,
-            "reset_messages": reset_messages
+            "reset_messages": 0
         })),
     )
 }

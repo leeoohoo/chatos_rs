@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+use std::collections::HashSet;
 
 use sqlx::SqlitePool;
 
@@ -7,15 +8,18 @@ use crate::repositories::{messages, summaries};
 
 const DEFAULT_SUMMARY_LIMIT: usize = 3;
 const DEFAULT_KEEP_RAW_LEVEL0_COUNT: usize = 5;
+const TOP_SUMMARY_COUNT: usize = 2;
+const LEVEL0_SUMMARY_COUNT: usize = 2;
 
 pub async fn compose_context(
     pool: &SqlitePool,
     req: ComposeContextRequest,
 ) -> Result<ComposeContextResponse, String> {
+    // Keep request summary_limit only as a scan multiplier for compatibility.
     let summary_limit = req.summary_limit.unwrap_or(DEFAULT_SUMMARY_LIMIT).max(1).min(20);
     let include_raw = req.include_raw_messages.unwrap_or(true);
 
-    let mut summary_records = summaries::list_summaries(
+    let summary_records = summaries::list_summaries(
         pool,
         req.session_id.as_str(),
         None,
@@ -26,14 +30,35 @@ pub async fn compose_context(
     )
     .await?;
 
-    // Prioritize higher level summaries, then newer summaries in same level.
-    summary_records.sort_by(|a, b| {
+    // Rule:
+    // 1) top_part: highest 2 summaries by (level desc, created_at desc)
+    // 2) level0_part: latest 2 summaries from level=0
+    // 3) merge + dedupe by summary id
+    let mut by_level_desc = summary_records.clone();
+    by_level_desc.sort_by(|a, b| {
         b.level
             .cmp(&a.level)
             .then_with(|| b.created_at.cmp(&a.created_at))
     });
+    let top_part: Vec<SessionSummary> = by_level_desc.into_iter().take(TOP_SUMMARY_COUNT).collect();
 
-    let selected: Vec<SessionSummary> = summary_records.into_iter().take(summary_limit).collect();
+    let mut level0_records: Vec<SessionSummary> = summary_records
+        .into_iter()
+        .filter(|s| s.level == 0)
+        .collect();
+    level0_records.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    let level0_part: Vec<SessionSummary> = level0_records
+        .into_iter()
+        .take(LEVEL0_SUMMARY_COUNT)
+        .collect();
+
+    let mut selected: Vec<SessionSummary> = Vec::new();
+    let mut seen_ids: HashSet<String> = HashSet::new();
+    for item in top_part.into_iter().chain(level0_part.into_iter()) {
+        if seen_ids.insert(item.id.clone()) {
+            selected.push(item);
+        }
+    }
 
     let mut merge_order = selected.clone();
     merge_order.sort_by(|a, b| a.created_at.cmp(&b.created_at));

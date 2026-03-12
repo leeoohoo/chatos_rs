@@ -572,24 +572,8 @@ async fn sync_message(
         Ok(v) => v,
         Err(err) => return err,
     };
-    if !auth.is_admin() {
-        return (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"})));
-    }
-
-    match sessions::get_session_by_id(&state.pool, session_id.as_str()).await {
-        Ok(Some(_)) => {}
-        Ok(None) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({"error": "session not found"})),
-            )
-        }
-        Err(err) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "load session failed", "detail": err})),
-            )
-        }
+    if let Err(err) = ensure_session_access(state.as_ref(), &auth, session_id.as_str()).await {
+        return err;
     }
 
     let created_at = req

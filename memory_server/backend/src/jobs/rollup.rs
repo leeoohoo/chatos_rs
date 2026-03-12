@@ -17,6 +17,13 @@ pub struct RollupRunResult {
     pub failed_sessions: usize,
 }
 
+#[derive(Debug, Clone)]
+struct RollupBatchSelection {
+    level: i64,
+    selected: Vec<SessionSummary>,
+    trigger_reason: &'static str,
+}
+
 pub async fn run_once(pool: &SqlitePool, ai: &AiClient, user_id: &str) -> Result<RollupRunResult, String> {
     let config = configs::get_summary_rollup_job_config(pool, user_id).await?;
     if config.enabled != 1 {
@@ -103,14 +110,18 @@ async fn process_session(
         pool,
         session_id,
         round_limit.max(1),
+        token_limit.max(500),
         keep_raw_level0_count.max(0),
         max_level.max(1),
     )
     .await?;
 
-    let Some((level, selected)) = selection else {
+    let Some(selection) = selection else {
         return Ok((0, 0));
     };
+    let level = selection.level;
+    let selected = selection.selected;
+    let trigger_reason = selection.trigger_reason;
 
     let target_level = level + 1;
 
@@ -133,11 +144,12 @@ async fn process_session(
         .sum::<i64>();
 
     let trigger = format!("rollup_level_{}_to_{}", level, target_level);
+    let trigger_with_reason = format!("{}+{}", trigger, trigger_reason);
     let job_run = jobs::create_job_run(
         pool,
         "summary_rollup",
         Some(session_id),
-        Some(trigger.as_str()),
+        Some(trigger_with_reason.as_str()),
         selected.len() as i64,
     )
     .await?;
@@ -196,7 +208,7 @@ async fn process_session(
         merged
     };
 
-    let mut trigger_type = trigger.clone();
+    let mut trigger_type = trigger_with_reason;
     if !oversized.is_empty() {
         trigger_type.push_str("+oversized_single_skipped");
     }
@@ -278,9 +290,10 @@ async fn select_rollup_batch(
     pool: &SqlitePool,
     session_id: &str,
     round_limit: i64,
+    token_limit: i64,
     keep_raw_level0_count: i64,
     max_level: i64,
-) -> Result<Option<(i64, Vec<SessionSummary>)>, String> {
+) -> Result<Option<RollupBatchSelection>, String> {
     for level in 0..max_level {
         let mut candidates = summaries::list_done_pending_rollup_summaries_by_level_no_limit(pool, session_id, level).await?;
         if level == 0 && keep_raw_level0_count > 0 {
@@ -292,9 +305,34 @@ async fn select_rollup_batch(
             }
         }
 
+        if candidates.is_empty() {
+            continue;
+        }
+
         if candidates.len() as i64 >= round_limit {
-            let selected: Vec<SessionSummary> = candidates.into_iter().take(round_limit as usize).collect();
-            return Ok(Some((level, selected)));
+            let selected: Vec<SessionSummary> = candidates
+                .iter()
+                .take(round_limit as usize)
+                .cloned()
+                .collect();
+            return Ok(Some(RollupBatchSelection {
+                level,
+                selected,
+                trigger_reason: "message_count_limit",
+            }));
+        }
+
+        let token_sum = candidates
+            .iter()
+            .map(summary_to_rollup_block)
+            .map(|text| estimate_tokens_text(text.as_str()))
+            .sum::<i64>();
+        if token_sum >= token_limit {
+            return Ok(Some(RollupBatchSelection {
+                level,
+                selected: candidates,
+                trigger_reason: "token_limit",
+            }));
         }
     }
 

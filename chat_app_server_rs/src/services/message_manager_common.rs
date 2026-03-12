@@ -6,9 +6,8 @@ use serde_json::Value;
 use tracing::error;
 
 use crate::core::mcp_tools::ToolResult;
-use crate::models::message::{Message, MessageService};
-use crate::models::session_summary::{SessionSummary, SessionSummaryService};
-use crate::models::session_summary_v2::{SessionSummaryV2, SessionSummaryV2Service};
+use crate::models::message::Message;
+use crate::models::session_summary_v2::SessionSummaryV2;
 use crate::models::sub_agent_run_message::{SubAgentRunMessage, SubAgentRunMessageService};
 use crate::models::sub_agent_run_summary::SubAgentRunSummaryService;
 use crate::services::ai_common::build_tool_result_metadata;
@@ -147,11 +146,7 @@ impl MessageManagerCore {
     }
 
     async fn persist_message(&self, message: Message) -> Result<Message, String> {
-        if memory_server_client::remote_only_enabled() {
-            memory_server_client::upsert_message(&message).await
-        } else {
-            MessageService::create(message).await
-        }
+        memory_server_client::upsert_message(&message).await
     }
 
     pub(crate) async fn get_session_messages(
@@ -159,21 +154,15 @@ impl MessageManagerCore {
         session_id: &str,
         limit: Option<i64>,
     ) -> Vec<Message> {
-        let result = if memory_server_client::remote_only_enabled() {
-            if let Some(value) = limit {
-                memory_server_client::list_messages(session_id, Some(value), 0, false)
-                    .await
-                    .map(|mut items| {
-                        items.reverse();
-                        items
-                    })
-            } else {
-                memory_server_client::list_messages(session_id, None, 0, true).await
-            }
-        } else if let Some(value) = limit {
-            MessageService::get_recent_by_session(session_id, value, 0).await
+        let result = if let Some(value) = limit {
+            memory_server_client::list_messages(session_id, Some(value), 0, false)
+                .await
+                .map(|mut items| {
+                    items.reverse();
+                    items
+                })
         } else {
-            MessageService::get_by_session(session_id, None, 0).await
+            memory_server_client::list_messages(session_id, None, 0, true).await
         };
 
         match result {
@@ -189,72 +178,26 @@ impl MessageManagerCore {
         }
     }
 
-    pub(crate) async fn get_session_history_with_summaries(
+    pub(crate) async fn get_session_memory_history(
         &self,
         session_id: &str,
         limit: Option<i64>,
-        summary_limit: Option<i64>,
+        memory_summary_limit: Option<i64>,
         filter_empty_summaries: bool,
-    ) -> (Vec<SessionSummary>, Vec<Message>) {
-        if memory_server_client::remote_only_enabled() {
-            let mut summaries =
-                match memory_server_client::list_summaries(session_id, summary_limit, 0).await {
-                    Ok(items) => items.into_iter().map(map_summary_v2_to_v1).collect(),
-                    Err(err) => {
-                        error!("get_session_summaries remote failed: {}", err);
-                        Vec::new()
-                    }
-                };
-
-            if filter_empty_summaries {
-                summaries.retain(|summary| !summary.summary_text.trim().is_empty());
+    ) -> (Vec<SessionSummaryV2>, Vec<Message>) {
+        let mut summaries = match memory_server_client::list_summaries(
+            session_id,
+            memory_summary_limit,
+            0,
+        )
+        .await
+        {
+            Ok(items) => items,
+            Err(err) => {
+                error!("list_summaries from memory_server failed: {}", err);
+                Vec::new()
             }
-
-            if summaries.is_empty() {
-                let messages = self.get_session_messages(session_id, limit).await;
-                return (Vec::new(), messages);
-            }
-
-            let mut messages =
-                match memory_server_client::list_messages(session_id, None, 0, true).await {
-                    Ok(items) => items,
-                    Err(err) => {
-                        error!("get_session_history_with_summaries remote failed: {}", err);
-                        Vec::new()
-                    }
-                };
-
-            if let Some(last_message_id) = summaries
-                .last()
-                .and_then(|summary| summary.last_message_id.clone())
-            {
-                if let Some(last_idx) = messages
-                    .iter()
-                    .position(|message| message.id == last_message_id)
-                {
-                    messages = messages.into_iter().skip(last_idx + 1).collect();
-                }
-            }
-
-            if let Some(v) = limit {
-                if v > 0 && messages.len() > v as usize {
-                    messages = messages[messages.len() - v as usize..].to_vec();
-                }
-            }
-
-            let mut state = self.state.lock();
-            state.stats.messages_retrieved += messages.len();
-            return (summaries, messages);
-        }
-
-        let mut summaries =
-            match SessionSummaryService::list_by_session(session_id, summary_limit).await {
-                Ok(items) => items,
-                Err(err) => {
-                    error!("get_session_summaries failed: {}", err);
-                    Vec::new()
-                }
-            };
+        };
 
         if filter_empty_summaries {
             summaries.retain(|summary| !summary.summary_text.trim().is_empty());
@@ -265,137 +208,67 @@ impl MessageManagerCore {
             return (Vec::new(), messages);
         }
 
-        let last = summaries.last().cloned();
-        let messages_result = if let Some(last_summary) = last {
-            if let Some(cutoff) = last_summary.last_message_created_at.clone() {
-                MessageService::get_by_session_after(session_id, &cutoff, limit).await
-            } else {
-                MessageService::get_by_session(session_id, limit, 0).await
-            }
-        } else {
-            MessageService::get_by_session(session_id, limit, 0).await
-        };
-
-        match messages_result {
-            Ok(messages) => {
-                let mut state = self.state.lock();
-                state.stats.messages_retrieved += messages.len();
-                (summaries, messages)
-            }
-            Err(err) => {
-                error!("get_session_history_with_summaries failed: {}", err);
-                (summaries, Vec::new())
-            }
-        }
-    }
-
-    pub(crate) async fn get_chat_history_context(
-        &self,
-        session_id: &str,
-        summary_limit: usize,
-    ) -> ChatHistoryContext {
-        match try_get_chat_history_context_from_memory_server(session_id, summary_limit).await {
-            Ok(Some(context)) => return context,
-            Ok(None) => {}
-            Err(err) => {
-                error!(
-                    "get_chat_history_context memory_server failed: session_id={} error={}",
-                    session_id, err
-                );
-            }
-        }
-
-        if memory_server_client::remote_only_enabled() {
-            return ChatHistoryContext {
-                merged_summary: None,
-                summary_count: 0,
-                messages: self.get_session_messages(session_id, None).await,
-            };
-        }
-
-        let target_summary_limit = summary_limit.max(1);
-        let fetch_summary_limit = (target_summary_limit as i64).saturating_mul(10).max(10);
-        let mut recent_summary_texts: Vec<String> = Vec::new();
-
-        match SessionSummaryV2Service::list_by_session(session_id, Some(fetch_summary_limit), 0)
-            .await
+        let mut messages = match memory_server_client::list_messages(session_id, None, 0, true).await
         {
-            Ok(records) => {
-                for record in records {
-                    if record.status != "done" {
-                        continue;
-                    }
-                    let text = record.summary_text.trim();
-                    if text.is_empty() {
-                        continue;
-                    }
-                    recent_summary_texts.push(text.to_string());
-                    if recent_summary_texts.len() >= target_summary_limit {
-                        break;
-                    }
-                }
-            }
+            Ok(items) => items,
             Err(err) => {
-                error!(
-                    "get_chat_history_context summaries_v2 failed: session_id={} error={}",
-                    session_id, err
-                );
-            }
-        }
-
-        if recent_summary_texts.is_empty() {
-            return ChatHistoryContext {
-                merged_summary: None,
-                summary_count: 0,
-                messages: self.get_session_messages(session_id, None).await,
-            };
-        }
-
-        recent_summary_texts.reverse();
-        let merged_summary = Some(format!(
-            "以下是最近历史会话总结（按时间从旧到新）：\n\n{}",
-            recent_summary_texts.join("\n\n---\n\n")
-        ));
-
-        let messages = match MessageService::get_pending_for_summary(session_id, None).await {
-            Ok(items) => {
-                let filtered: Vec<Message> = items
-                    .into_iter()
-                    .filter(|message| {
-                        message
-                            .metadata
-                            .as_ref()
-                            .and_then(|value| value.get("type"))
-                            .and_then(|value| value.as_str())
-                            != Some("session_summary")
-                    })
-                    .collect();
-                let mut state = self.state.lock();
-                state.stats.messages_retrieved += filtered.len();
-                filtered
-            }
-            Err(err) => {
-                error!(
-                    "get_chat_history_context pending messages failed: session_id={} error={}",
-                    session_id, err
-                );
+                error!("get_session_memory_history list_messages failed: {}", err);
                 Vec::new()
             }
         };
 
-        ChatHistoryContext {
-            merged_summary,
-            summary_count: recent_summary_texts.len(),
-            messages,
+        if let Some(last_message_id) = summaries
+            .last()
+            .and_then(|summary| summary.source_end_message_id.clone())
+        {
+            if let Some(last_idx) = messages.iter().position(|message| message.id == last_message_id) {
+                messages = messages.into_iter().skip(last_idx + 1).collect();
+            }
+        }
+
+        if let Some(v) = limit {
+            if v > 0 && messages.len() > v as usize {
+                messages = messages[messages.len() - v as usize..].to_vec();
+            }
+        }
+
+        let mut state = self.state.lock();
+        state.stats.messages_retrieved += messages.len();
+        (summaries, messages)
+    }
+
+    pub(crate) async fn get_memory_chat_history_context(
+        &self,
+        session_id: &str,
+        memory_summary_limit: usize,
+    ) -> ChatHistoryContext {
+        match try_get_memory_chat_history_context_from_memory_server(
+            session_id,
+            memory_summary_limit,
+        )
+        .await
+        {
+            Ok(context) => context,
+            Err(err) => {
+                error!(
+                    "get_memory_chat_history_context memory_server failed: session_id={} error={}",
+                    session_id, err
+                );
+                ChatHistoryContext {
+                    merged_summary: None,
+                    summary_count: 0,
+                    messages: self.get_session_messages(session_id, None).await,
+                }
+            }
         }
     }
 
-    pub(crate) async fn get_sub_agent_run_history_context(
+    pub(crate) async fn get_memory_sub_agent_run_history_context(
         &self,
         run_id: &str,
-        summary_limit: usize,
+        memory_summary_limit: usize,
     ) -> ChatHistoryContext {
-        let target_summary_limit = summary_limit.max(1);
+        let target_summary_limit = memory_summary_limit.max(1);
         let fetch_summary_limit = (target_summary_limit as i64).saturating_mul(10).max(10);
         let mut recent_summary_texts: Vec<String> = Vec::new();
 
@@ -417,7 +290,7 @@ impl MessageManagerCore {
             }
             Err(err) => {
                 error!(
-                    "get_sub_agent_run_history_context summaries failed: run_id={} error={}",
+                    "get_memory_sub_agent_run_history_context summaries failed: run_id={} error={}",
                     run_id, err
                 );
             }
@@ -431,7 +304,7 @@ impl MessageManagerCore {
                     .collect(),
                 Err(err) => {
                     error!(
-                        "get_sub_agent_run_history_context messages failed: run_id={} error={}",
+                        "get_memory_sub_agent_run_history_context messages failed: run_id={} error={}",
                         run_id, err
                     );
                     Vec::new()
@@ -458,7 +331,7 @@ impl MessageManagerCore {
                 .collect(),
             Err(err) => {
                 error!(
-                    "get_sub_agent_run_history_context pending failed: run_id={} error={}",
+                    "get_memory_sub_agent_run_history_context pending failed: run_id={} error={}",
                     run_id, err
                 );
                 Vec::new()
@@ -484,11 +357,7 @@ impl MessageManagerCore {
             return Some(cached);
         }
 
-        let result = if memory_server_client::remote_only_enabled() {
-            memory_server_client::get_message_by_id(message_id).await
-        } else {
-            MessageService::get_by_id(message_id).await
-        };
+        let result = memory_server_client::get_message_by_id(message_id).await;
 
         match result {
             Ok(Some(message)) => {
@@ -504,17 +373,7 @@ impl MessageManagerCore {
     }
 
     pub(crate) fn process_pending_saves(&self) -> Result<usize, String> {
-        let mut state = self.state.lock();
-        let mut processed = 0;
-
-        while let Some(message) = state.pending_saves.pop_front() {
-            if let Ok(saved) = MessageService::create_sync(message) {
-                state.recent_messages.insert(saved.id.clone(), saved);
-                processed += 1;
-            }
-        }
-
-        Ok(processed)
+        Ok(0)
     }
 
     pub(crate) fn get_stats(&self) -> Value {
@@ -559,42 +418,16 @@ impl MessageManagerCore {
     }
 }
 
-async fn try_get_chat_history_context_from_memory_server(
+async fn try_get_memory_chat_history_context_from_memory_server(
     session_id: &str,
-    summary_limit: usize,
-) -> Result<Option<ChatHistoryContext>, String> {
-    if !memory_server_client::context_enabled() {
-        return Ok(None);
-    }
-
-    let payload = memory_server_client::compose_context(session_id, summary_limit).await?;
-    Ok(Some(ChatHistoryContext {
+    memory_summary_limit: usize,
+) -> Result<ChatHistoryContext, String> {
+    let payload = memory_server_client::compose_context(session_id, memory_summary_limit).await?;
+    Ok(ChatHistoryContext {
         merged_summary: payload.0,
         summary_count: payload.1,
         messages: payload.2,
-    }))
-}
-
-fn map_summary_v2_to_v1(source: SessionSummaryV2) -> SessionSummary {
-    SessionSummary {
-        id: source.id,
-        session_id: source.session_id,
-        summary_text: source.summary_text,
-        summary_prompt: None,
-        model: Some(source.summary_model),
-        temperature: None,
-        target_summary_tokens: None,
-        keep_last_n: None,
-        message_count: Some(source.source_message_count),
-        approx_tokens: Some(source.source_estimated_tokens),
-        first_message_id: source.source_start_message_id,
-        last_message_id: source.source_end_message_id,
-        first_message_created_at: None,
-        last_message_created_at: None,
-        metadata: None,
-        created_at: source.created_at,
-        updated_at: source.updated_at,
-    }
+    })
 }
 
 fn map_sub_agent_run_message_to_message(source: SubAgentRunMessage) -> Message {

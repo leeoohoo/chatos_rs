@@ -233,7 +233,7 @@ impl AiRequestHandler {
                     turn_id.as_deref(),
                 );
                 let reasoning = None;
-                let _ = self
+                if let Err(err) = self
                     .message_manager
                     .save_assistant_message(
                         &session_id,
@@ -245,7 +245,13 @@ impl AiRequestHandler {
                         meta_val,
                         tool_calls.clone(),
                     )
-                    .await;
+                    .await
+                {
+                    error!(
+                        "[AI_V3] save assistant message failed: session_id={}, detail={}",
+                        session_id, err
+                    );
+                }
             }
         }
 
@@ -379,7 +385,7 @@ impl AiRequestHandler {
                     stream_state.response_id.as_deref(),
                     turn_id.as_deref(),
                 );
-                let _ = self
+                if let Err(err) = self
                     .message_manager
                     .save_assistant_message(
                         &session_id,
@@ -391,7 +397,13 @@ impl AiRequestHandler {
                         meta_val,
                         tool_calls.clone(),
                     )
-                    .await;
+                    .await
+                {
+                    error!(
+                        "[AI_V3] save assistant message failed: session_id={}, detail={}",
+                        session_id, err
+                    );
+                }
             }
         }
 

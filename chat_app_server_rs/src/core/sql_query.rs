@@ -63,21 +63,21 @@ mod tests {
 
     #[test]
     fn append_limit_offset_supports_limit_without_offset() {
-        let mut query = "SELECT * FROM sessions ORDER BY created_at DESC".to_string();
+        let mut query = "SELECT * FROM projects ORDER BY created_at DESC".to_string();
         append_limit_offset_clause(&mut query, Some(10), 0);
         assert_eq!(
             query,
-            "SELECT * FROM sessions ORDER BY created_at DESC LIMIT ?"
+            "SELECT * FROM projects ORDER BY created_at DESC LIMIT ?"
         );
     }
 
     #[test]
     fn append_limit_offset_supports_limit_with_offset() {
-        let mut query = "SELECT * FROM sessions ORDER BY created_at DESC".to_string();
+        let mut query = "SELECT * FROM projects ORDER BY created_at DESC".to_string();
         append_limit_offset_clause(&mut query, Some(10), 5);
         assert_eq!(
             query,
-            "SELECT * FROM sessions ORDER BY created_at DESC LIMIT ? OFFSET ?"
+            "SELECT * FROM projects ORDER BY created_at DESC LIMIT ? OFFSET ?"
         );
     }
 }

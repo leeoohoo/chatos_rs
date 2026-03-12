@@ -1,4 +1,3 @@
-use crate::models::session::SessionService;
 use crate::repositories::system_contexts;
 use crate::services::memory_server_client;
 use crate::services::session_title::maybe_rename_session_title;
@@ -28,14 +27,7 @@ pub async fn resolve_effective_user_id(
         return explicit_user_id;
     }
 
-    if memory_server_client::remote_only_enabled() {
-        return match memory_server_client::get_session_by_id(session_id).await {
-            Ok(Some(session)) => session.user_id,
-            _ => None,
-        };
-    }
-
-    match SessionService::get_by_id(session_id).await {
+    match memory_server_client::get_session_by_id(session_id).await {
         Ok(Some(session)) => session.user_id,
         _ => None,
     }

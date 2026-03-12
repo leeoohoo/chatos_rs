@@ -9,7 +9,6 @@ import {
 import type { SessionAiSelection } from '../types';
 import { debugLog, generateId } from '@/lib/utils';
 
-const SESSION_MESSAGES_CACHE_TTL_MS = 45_000;
 const SESSION_MESSAGES_CACHE_MAX_ENTRIES = 16;
 type SessionMessagesCacheEntry = {
   fetchedAt: number;
@@ -52,22 +51,6 @@ const cloneStreamingMessageDraft = <T,>(value: T): T => {
   } catch {
     return value;
   }
-};
-
-const readSessionMessagesCache = (sessionId: string): any[] | null => {
-  const cached = sessionMessagesPageCache.get(sessionId);
-  if (!cached) {
-    return null;
-  }
-  if (Date.now() - cached.fetchedAt > SESSION_MESSAGES_CACHE_TTL_MS) {
-    sessionMessagesPageCache.delete(sessionId);
-    return null;
-  }
-
-  // refresh LRU order
-  sessionMessagesPageCache.delete(sessionId);
-  sessionMessagesPageCache.set(sessionId, cached);
-  return cloneStreamingMessageDraft(cached.messages);
 };
 
 const writeSessionMessagesCache = (sessionId: string, messages: any[]) => {
@@ -404,16 +387,11 @@ export function createSessionActions({
           state.error = null;
         });
 
-        const cachedMessages = readSessionMessagesCache(sessionId);
         const [session, messages] = await Promise.all([
           fetchSession(client, sessionId),
-          cachedMessages
-            ? Promise.resolve(cachedMessages)
-            : fetchSessionMessages(client, sessionId, { limit: 50, offset: 0 }),
+          fetchSessionMessages(client, sessionId, { limit: 50, offset: 0 }),
         ]);
-        if (!cachedMessages) {
-          writeSessionMessagesCache(sessionId, messages);
-        }
+        writeSessionMessagesCache(sessionId, messages);
         const sessionAiSelectionFromMetadata = readSessionAiSelectionFromMetadata(session?.metadata);
         const stateSnapshot = get();
         const snapshotChatState = stateSnapshot.sessionChatState?.[sessionId];
@@ -613,7 +591,7 @@ export function createSessionActions({
           sessionId,
           previousSessionId,
           messageCount: messages.length,
-          cacheHit: Boolean(cachedMessages),
+          cacheHit: false,
           perfMs: stopPerfMeasure() ?? null,
           elapsedMs: Date.now() - selectStartedAt,
         });

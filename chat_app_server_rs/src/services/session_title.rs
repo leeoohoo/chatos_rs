@@ -1,4 +1,3 @@
-use crate::models::session::SessionService;
 use crate::services::memory_server_client;
 
 fn is_default_title(title: &str) -> bool {
@@ -35,28 +34,13 @@ pub async fn maybe_rename_session_title(
         return false;
     }
 
-    if memory_server_client::remote_only_enabled() {
-        if let Ok(Some(session)) = memory_server_client::get_session_by_id(session_id).await {
-            if !is_default_title(&session.title) {
-                return false;
-            }
-            let new_title = derive_title_from_content(user_content, max_len);
-            if new_title != session.title {
-                let _ =
-                    memory_server_client::update_session(session_id, Some(new_title), None).await;
-                return true;
-            }
-        }
-        return false;
-    }
-
-    if let Ok(Some(session)) = SessionService::get_by_id(session_id).await {
+    if let Ok(Some(session)) = memory_server_client::get_session_by_id(session_id).await {
         if !is_default_title(&session.title) {
             return false;
         }
         let new_title = derive_title_from_content(user_content, max_len);
         if new_title != session.title {
-            let _ = SessionService::update(session_id, Some(new_title), None, None).await;
+            let _ = memory_server_client::update_session(session_id, Some(new_title), None).await;
             return true;
         }
     }

@@ -1,5 +1,5 @@
 use serde_json::{json, Value};
-use tracing::warn;
+use tracing::error;
 
 use crate::services::ai_common::{
     build_user_content_parts, build_user_message_metadata, normalize_turn_id,
@@ -71,8 +71,7 @@ impl AiServer {
 
         let attachments_list = options.attachments.unwrap_or_default();
         let meta = build_user_message_metadata(&attachments_list, turn_id.as_deref());
-        if let Err(err) = self
-            .message_manager
+        self.message_manager
             .save_user_message(
                 session_id,
                 user_message,
@@ -82,9 +81,14 @@ impl AiServer {
                 meta,
             )
             .await
-        {
-            warn!("save user message failed: {}", err);
-        }
+            .map_err(|err| {
+                let detail = format!(
+                    "persist user message failed: session_id={} detail={}",
+                    session_id, err
+                );
+                error!("{}", detail);
+                detail
+            })?;
 
         let content_parts = build_user_content_parts(
             &model,

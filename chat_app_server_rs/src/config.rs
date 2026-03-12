@@ -27,8 +27,6 @@ pub struct Config {
     pub summary_retry_on_context_overflow: bool,
     pub auth_jwt_secret: String,
     pub auth_access_token_ttl_seconds: i64,
-    pub memory_server_context_enabled: bool,
-    pub memory_server_remote_only: bool,
     pub memory_server_base_url: String,
     pub memory_server_service_token: String,
     pub memory_server_context_timeout_ms: i64,
@@ -118,14 +116,6 @@ impl Config {
             .unwrap_or_else(|_| "dev-only-change-me-please".to_string());
         let auth_access_token_ttl_seconds =
             read_int("AUTH_ACCESS_TOKEN_TTL_SECONDS", 43_200).max(60);
-        let memory_server_context_enabled = std::env::var("MEMORY_SERVER_CONTEXT_ENABLED")
-            .unwrap_or_else(|_| "false".to_string())
-            .to_lowercase()
-            == "true";
-        let memory_server_remote_only = std::env::var("MEMORY_SERVER_REMOTE_ONLY")
-            .unwrap_or_else(|_| "false".to_string())
-            .to_lowercase()
-            == "true";
         let memory_server_base_url = std::env::var("MEMORY_SERVER_BASE_URL")
             .unwrap_or_else(|_| "http://127.0.0.1:7080/api/memory/v1".to_string());
         let memory_server_service_token =
@@ -160,8 +150,6 @@ impl Config {
             summary_retry_on_context_overflow,
             auth_jwt_secret,
             auth_access_token_ttl_seconds,
-            memory_server_context_enabled,
-            memory_server_remote_only,
             memory_server_base_url,
             memory_server_service_token,
             memory_server_context_timeout_ms,
@@ -242,14 +230,6 @@ impl Config {
             self.auth_access_token_ttl_seconds
         );
         println!("  - Memory Server 上下文配置:");
-        println!(
-            "    • MEMORY_SERVER_CONTEXT_ENABLED: {}",
-            self.memory_server_context_enabled
-        );
-        println!(
-            "    • MEMORY_SERVER_REMOTE_ONLY: {}",
-            self.memory_server_remote_only
-        );
         println!(
             "    • MEMORY_SERVER_BASE_URL: {}",
             self.memory_server_base_url
