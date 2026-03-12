@@ -304,7 +304,7 @@ pub async fn upsert_summary_rollup_job_config(
         current.token_limit = v.max(500);
     }
     if let Some(v) = req.round_limit {
-        current.round_limit = v.max(10);
+        current.round_limit = v.max(3);
     }
     if let Some(v) = req.target_summary_tokens {
         current.target_summary_tokens = v.max(200);

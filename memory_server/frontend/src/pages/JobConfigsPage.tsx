@@ -271,9 +271,9 @@ export function JobConfigsPage({ userId, selectedSessionId }: JobConfigsPageProp
                     </Form.Item>
                     <Form.Item label={t('jobConfigs.roundLimit')}>
                       <InputNumber
-                        min={10}
+                        min={3}
                         value={rollupCfg.round_limit}
-                        onChange={(value) => setRollupNumber('round_limit', value, 10)}
+                        onChange={(value) => setRollupNumber('round_limit', value, 3)}
                         style={{ width: '100%' }}
                       />
                     </Form.Item>
