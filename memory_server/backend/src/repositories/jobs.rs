@@ -74,13 +74,6 @@ pub async fn finish_job_run(
     Ok(())
 }
 
-pub async fn get_job_run_by_id(db: &Db, id: &str) -> Result<Option<JobRun>, String> {
-    collection(db)
-        .find_one(doc! {"id": id})
-        .await
-        .map_err(|e| e.to_string())
-}
-
 pub async fn list_job_runs(
     db: &Db,
     job_type: Option<&str>,

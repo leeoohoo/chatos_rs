@@ -51,13 +51,6 @@ pub async fn create_summary(db: &Db, input: CreateSummaryInput) -> Result<Sessio
     Ok(summary)
 }
 
-pub async fn get_summary_by_id(db: &Db, summary_id: &str) -> Result<Option<SessionSummary>, String> {
-    collection(db)
-        .find_one(doc! {"id": summary_id})
-        .await
-        .map_err(|e| e.to_string())
-}
-
 pub async fn list_summaries(
     db: &Db,
     session_id: &str,
