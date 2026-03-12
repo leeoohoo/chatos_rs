@@ -44,9 +44,7 @@ async fn main() {
         std::process::exit(1);
     }
 
-    modules::session_archive_job::start_background();
-    modules::session_summary_job::start_background();
-    modules::sub_agent_summary_job::start_background();
+    info!("Memory-only mode enabled, skip local session background jobs");
 
     cfg.print();
 

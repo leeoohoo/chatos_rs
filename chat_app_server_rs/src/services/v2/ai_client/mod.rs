@@ -66,7 +66,7 @@ impl AiClient {
         self.system_prompt = prompt;
     }
 
-    async fn load_summary_pending_messages_for_scope(
+    async fn load_memory_context_messages_for_scope(
         &self,
         session_id: Option<&str>,
         sub_agent_run_id: Option<&str>,
@@ -75,10 +75,12 @@ impl AiClient {
         let mut mapped = Vec::new();
         let (merged_summary, _summary_count, history) = if let Some(run_id) = sub_agent_run_id {
             self.message_manager
-                .get_sub_agent_run_history_context(run_id, 2)
+                .get_memory_sub_agent_run_history_context(run_id, 2)
                 .await
         } else if let Some(sid) = session_id {
-            self.message_manager.get_chat_history_context(sid, 2).await
+            self.message_manager
+                .get_memory_chat_history_context(sid, 2)
+                .await
         } else {
             (None, 0, Vec::new())
         };
@@ -140,7 +142,7 @@ impl AiClient {
         mapped
     }
 
-    async fn maybe_refresh_context_from_summary_pending(
+    async fn maybe_refresh_context_from_memory(
         &self,
         purpose: &str,
         iteration: i64,
@@ -161,7 +163,7 @@ impl AiClient {
             refreshed.push(json!({"role": "system", "content": prompt}));
         }
         let mapped = self
-            .load_summary_pending_messages_for_scope(
+            .load_memory_context_messages_for_scope(
                 session_id,
                 sub_agent_run_id,
                 include_reasoning,
@@ -170,7 +172,7 @@ impl AiClient {
         refreshed.extend(ensure_tool_responses(mapped));
         if refreshed != *messages {
             info!(
-                "[AI_V2] context refreshed from summary+pending: old_messages={}, new_messages={}",
+                "[AI_V2] context refreshed from memory_context: old_messages={}, new_messages={}",
                 messages.len(),
                 refreshed.len()
             );
@@ -206,7 +208,7 @@ impl AiClient {
         let mut history_messages: Vec<Value> = Vec::new();
         if session_id.is_some() || sub_agent_run_id.is_some() {
             let mapped = self
-                .load_summary_pending_messages_for_scope(
+                .load_memory_context_messages_for_scope(
                     session_id.as_deref(),
                     sub_agent_run_id.as_deref(),
                     reasoning_enabled,
@@ -285,7 +287,7 @@ impl AiClient {
                 messages.len()
             );
 
-            self.maybe_refresh_context_from_summary_pending(
+            self.maybe_refresh_context_from_memory(
                 purpose.as_str(),
                 iteration,
                 session_id.as_deref(),

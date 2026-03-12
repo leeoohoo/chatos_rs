@@ -1,5 +1,5 @@
-use crate::models::session::SessionService;
 use crate::repositories::system_contexts;
+use crate::services::memory_server_client;
 use crate::services::session_title::maybe_rename_session_title;
 
 pub fn maybe_spawn_session_title_rename(
@@ -14,7 +14,7 @@ pub fn maybe_spawn_session_title_rename(
 
     let sid = session_id.to_string();
     let text = content.to_string();
-    tokio::spawn(async move {
+    memory_server_client::spawn_with_current_access_token(async move {
         let _ = maybe_rename_session_title(&sid, &text, max_len).await;
     });
 }
@@ -27,7 +27,7 @@ pub async fn resolve_effective_user_id(
         return explicit_user_id;
     }
 
-    match SessionService::get_by_id(session_id).await {
+    match memory_server_client::get_session_by_id(session_id).await {
         Ok(Some(session)) => session.user_id,
         _ => None,
     }

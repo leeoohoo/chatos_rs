@@ -965,14 +965,13 @@ class ApiClient {
   }
 
   async register(data: {
-    email: string;
+    username: string;
     password: string;
-    display_name?: string;
   }): Promise<any> {
     return accountApi.register(this.requestFn, data);
   }
 
-  async login(data: { email: string; password: string }): Promise<any> {
+  async login(data: { username: string; password: string }): Promise<any> {
     return accountApi.login(this.requestFn, data);
   }
 

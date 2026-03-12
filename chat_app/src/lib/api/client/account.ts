@@ -3,9 +3,8 @@ import type { ApiRequestFn } from './workspace';
 export const register = (
   request: ApiRequestFn,
   data: {
-    email: string;
+    username: string;
     password: string;
-    display_name?: string;
   }
 ): Promise<any> => {
   return request<any>('/auth/register', {
@@ -16,7 +15,7 @@ export const register = (
 
 export const login = (
   request: ApiRequestFn,
-  data: { email: string; password: string }
+  data: { username: string; password: string }
 ): Promise<any> => {
   return request<any>('/auth/login', {
     method: 'POST',

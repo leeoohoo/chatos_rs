@@ -36,6 +36,7 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
 
   const userDisplayName = useMemo(() => (
     user?.display_name?.trim()
+    || user?.username?.trim()
     || user?.email?.trim()
     || user?.id
     || '当前用户'
@@ -125,7 +126,7 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
                   {user?.display_name?.trim() || '未设置昵称'}
                 </div>
                 <div className="text-xs text-muted-foreground truncate mt-0.5">
-                  {user?.email || user?.id}
+                  {user?.username || user?.email || user?.id}
                 </div>
               </div>
               <button

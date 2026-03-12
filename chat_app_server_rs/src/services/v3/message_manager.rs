@@ -2,7 +2,7 @@ use serde_json::Value;
 
 use crate::core::mcp_tools::ToolResult;
 use crate::models::message::Message;
-use crate::models::session_summary::SessionSummary;
+use crate::models::session_summary_v2::SessionSummaryV2;
 use crate::services::message_manager_common::MessageManagerCore;
 
 #[derive(Clone)]
@@ -92,25 +92,25 @@ impl MessageManager {
         self.core.get_session_messages(session_id, limit).await
     }
 
-    pub async fn get_session_history_with_summaries(
+    pub async fn get_session_memory_history(
         &self,
         session_id: &str,
         limit: Option<i64>,
-        summary_limit: Option<i64>,
-    ) -> (Vec<SessionSummary>, Vec<Message>) {
+        memory_summary_limit: Option<i64>,
+    ) -> (Vec<SessionSummaryV2>, Vec<Message>) {
         self.core
-            .get_session_history_with_summaries(session_id, limit, summary_limit, true)
+            .get_session_memory_history(session_id, limit, memory_summary_limit, true)
             .await
     }
 
-    pub async fn get_chat_history_context(
+    pub async fn get_memory_chat_history_context(
         &self,
         session_id: &str,
-        summary_limit: usize,
+        memory_summary_limit: usize,
     ) -> (Option<String>, usize, Vec<Message>) {
         let context = self
             .core
-            .get_chat_history_context(session_id, summary_limit)
+            .get_memory_chat_history_context(session_id, memory_summary_limit)
             .await;
         (
             context.merged_summary,
@@ -119,14 +119,14 @@ impl MessageManager {
         )
     }
 
-    pub async fn get_sub_agent_run_history_context(
+    pub async fn get_memory_sub_agent_run_history_context(
         &self,
         run_id: &str,
-        summary_limit: usize,
+        memory_summary_limit: usize,
     ) -> (Option<String>, usize, Vec<Message>) {
         let context = self
             .core
-            .get_sub_agent_run_history_context(run_id, summary_limit)
+            .get_memory_sub_agent_run_history_context(run_id, memory_summary_limit)
             .await;
         (
             context.merged_summary,
@@ -136,9 +136,9 @@ impl MessageManager {
     }
 
     pub async fn get_last_response_id(&self, session_id: &str, limit: i64) -> Option<String> {
-        let summary_limit = Some(2);
+        let memory_summary_limit = Some(2);
         let (_summaries, messages) = self
-            .get_session_history_with_summaries(session_id, Some(limit), summary_limit)
+            .get_session_memory_history(session_id, Some(limit), memory_summary_limit)
             .await;
 
         for message in messages.iter().rev() {

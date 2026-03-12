@@ -67,15 +67,3 @@ impl SummaryJobDefaults {
         }
     }
 }
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EffectiveSummaryJobConfig {
-    pub enabled: bool,
-    pub token_limit: i64,
-    pub round_limit: i64,
-    pub target_summary_tokens: i64,
-    pub job_interval_seconds: i64,
-    pub keep_last_n_messages: usize,
-    pub model_config_id: Option<String>,
-    pub fallback_model: String,
-}

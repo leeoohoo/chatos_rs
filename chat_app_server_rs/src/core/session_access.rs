@@ -1,5 +1,6 @@
 use crate::core::auth::AuthUser;
-use crate::models::session::{Session, SessionService};
+use crate::models::session::Session;
+use crate::services::memory_server_client;
 use axum::http::StatusCode;
 use axum::Json;
 use serde_json::{json, Value};
@@ -19,7 +20,7 @@ pub async fn ensure_owned_session(
     session_id: &str,
     auth: &AuthUser,
 ) -> Result<Session, SessionAccessError> {
-    match SessionService::get_by_id(session_id).await {
+    match memory_server_client::get_session_by_id(session_id).await {
         Ok(Some(session)) => {
             if is_owned_session(&session, auth) {
                 Ok(session)

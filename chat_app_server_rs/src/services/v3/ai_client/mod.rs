@@ -312,7 +312,7 @@ impl AiClient {
 
             info!("AI_V3 request iteration {}", iteration);
 
-            // In chat/stateless mode, refresh context from persisted summary+pending messages
+            // In chat/stateless mode, refresh context from persisted memory context messages
             // before each model request so newly generated summaries are reflected immediately.
             self.maybe_refresh_stateless_context(
                 session_id.as_deref(),

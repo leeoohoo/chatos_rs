@@ -1,0 +1,25 @@
+[package]
+name = "memory_server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axum = { version = "0.7", features = ["json", "macros"] }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde", "clock"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+thiserror = "1"
+anyhow = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
+mongodb = "3"
+futures-util = "0.3"
+rusqlite = { version = "0.32", features = ["bundled"] }
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+url = "2"
+parking_lot = "0.12"
+sha2 = "0.10"
+base64 = "0.22"

@@ -227,7 +227,7 @@ impl AiRequestHandler {
             if let Some(session_id) = session_id {
                 let meta_val =
                     build_assistant_message_metadata(tool_calls.as_ref(), None, turn_id.as_deref());
-                let _ = self
+                if let Err(err) = self
                     .message_manager
                     .save_assistant_message(
                         &session_id,
@@ -239,7 +239,13 @@ impl AiRequestHandler {
                         meta_val,
                         tool_calls.clone(),
                     )
-                    .await;
+                    .await
+                {
+                    error!(
+                        "[AI] save assistant message failed: session_id={}, detail={}",
+                        session_id, err
+                    );
+                }
             }
         }
 
@@ -328,7 +334,7 @@ impl AiRequestHandler {
             if let Some(session_id) = session_id {
                 let meta_val =
                     build_assistant_message_metadata(tool_calls.as_ref(), None, turn_id.as_deref());
-                let _ = self
+                if let Err(err) = self
                     .message_manager
                     .save_assistant_message(
                         &session_id,
@@ -340,7 +346,13 @@ impl AiRequestHandler {
                         meta_val,
                         tool_calls.clone(),
                     )
-                    .await;
+                    .await
+                {
+                    error!(
+                        "[AI] save assistant message failed: session_id={}, detail={}",
+                        session_id, err
+                    );
+                }
             }
         }
 
