@@ -12,10 +12,125 @@ const normalizeMetaId = (value: unknown): string => (
 );
 const MESSAGE_WINDOW_EXPAND_TOP_OFFSET = 120;
 const ESTIMATED_MESSAGE_ROW_HEIGHT = 88;
-const MESSAGE_WINDOW_MIN_SIZE = 120;
-const MESSAGE_WINDOW_MAX_SIZE = 280;
-const MESSAGE_WINDOW_OVERSCAN_ROWS = 24;
-const MESSAGE_WINDOW_THRESHOLD_EXTRA = 48;
+const MESSAGE_WINDOW_MIN_SIZE = 56;
+const MESSAGE_WINDOW_MAX_SIZE = 180;
+const MESSAGE_WINDOW_OVERSCAN_ROWS = 12;
+const MESSAGE_WINDOW_THRESHOLD_EXTRA = 24;
+
+type ParsedMessageForList = {
+  message: Message;
+  id: string;
+  role: Message['role'];
+  status: string;
+  visible: boolean;
+  time: number;
+  metadata: Record<string, any>;
+  segments: any[];
+  metadataToolCalls: any[];
+  topLevelToolCalls: any[];
+  assistantToolCalls: Array<{ id: string; toolCall: any }>;
+  toolResultCallId: string;
+  thinkingSegmentCount: number;
+  toolCallSegmentCount: number;
+  conversationTurnId: string;
+  historyProcessTurnId: string;
+  historyProcessUserMessageId: string;
+  historyFinalForUserMessageId: string;
+  historyFinalForTurnId: string;
+  historyProcessPlaceholder: boolean;
+  userExpanded: boolean;
+  userTurnId: string;
+  userFinalAssistantMessageId: string;
+};
+
+type ParsedMessageCacheEntry = {
+  ref: Message;
+  metadataRef: unknown;
+  content: string;
+  status: unknown;
+  updatedAt: unknown;
+  parsed: ParsedMessageForList;
+};
+
+const getTimeValue = (value: unknown): number => {
+  if (!value) return 0;
+  if (value instanceof Date) return value.getTime();
+  const parsed = new Date(value as any).getTime();
+  return Number.isNaN(parsed) ? 0 : parsed;
+};
+
+const parseMessageForList = (message: Message): ParsedMessageForList => {
+  const raw = message as any;
+  const metadata = ((raw?.metadata || {}) as Record<string, any>);
+  const segments = Array.isArray(metadata.contentSegments) ? metadata.contentSegments : [];
+  const metadataToolCalls = Array.isArray(metadata.toolCalls) ? metadata.toolCalls : [];
+  const topLevelToolCalls = Array.isArray(raw.toolCalls) ? raw.toolCalls : [];
+  const assistantToolCalls: Array<{ id: string; toolCall: any }> = [];
+
+  if (message.role === 'assistant') {
+    [...metadataToolCalls, ...topLevelToolCalls].forEach((toolCall: any) => {
+      const id = normalizeMetaId(toolCall?.id);
+      if (id) {
+        assistantToolCalls.push({ id, toolCall });
+      }
+    });
+  }
+
+  let thinkingSegmentCount = 0;
+  let toolCallSegmentCount = 0;
+  if (message.role === 'assistant') {
+    segments.forEach((segment: any) => {
+      if (
+        segment?.type === 'thinking'
+        && typeof segment?.content === 'string'
+        && segment.content.trim().length > 0
+      ) {
+        thinkingSegmentCount += 1;
+        return;
+      }
+      if (segment?.type === 'tool_call' && Boolean(segment?.toolCallId)) {
+        toolCallSegmentCount += 1;
+      }
+    });
+  }
+
+  const toolResultCallIdRaw = raw.tool_call_id || raw.toolCallId || metadata.tool_call_id || metadata.toolCallId;
+  const conversationTurnId = normalizeTurnId(metadata.conversation_turn_id);
+  const historyProcessTurnId = normalizeTurnId(metadata.historyProcessTurnId || metadata.historyProcess?.turnId);
+  const historyProcessUserMessageId = normalizeMetaId(metadata.historyProcessUserMessageId);
+  const historyFinalForUserMessageId = normalizeMetaId(metadata.historyFinalForUserMessageId);
+  const historyFinalForTurnId = normalizeTurnId(metadata.historyFinalForTurnId);
+  const historyProcessPlaceholder = metadata.historyProcessPlaceholder === true;
+  const userExpanded = metadata?.historyProcess?.expanded === true;
+  const userTurnId = normalizeTurnId(metadata.conversation_turn_id || metadata.historyProcess?.turnId);
+  const userFinalAssistantMessageId = normalizeMetaId(metadata?.historyProcess?.finalAssistantMessageId);
+
+  return {
+    message,
+    id: message.id,
+    role: message.role,
+    status: String(message.status || ''),
+    visible: !metadata?.hidden && message.role !== 'tool',
+    time: message.updatedAt ? getTimeValue(message.updatedAt) : getTimeValue(message.createdAt),
+    metadata,
+    segments,
+    metadataToolCalls,
+    topLevelToolCalls,
+    assistantToolCalls,
+    toolResultCallId: toolResultCallIdRaw ? String(toolResultCallIdRaw) : '',
+    thinkingSegmentCount,
+    toolCallSegmentCount,
+    conversationTurnId,
+    historyProcessTurnId,
+    historyProcessUserMessageId,
+    historyFinalForUserMessageId,
+    historyFinalForTurnId,
+    historyProcessPlaceholder,
+    userExpanded,
+    userTurnId,
+    userFinalAssistantMessageId,
+  };
+};
 
 export const MessageList: React.FC<MessageListProps> = ({
   sessionId,
@@ -40,90 +155,294 @@ export const MessageList: React.FC<MessageListProps> = ({
   const [isAtBottom, setIsAtBottom] = useState<boolean>(true);
   const [renderStartIndex, setRenderStartIndex] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
-  const visibleMessages = useMemo(
-    () => (messages || []).filter((message) => {
-      const metadata = (message as any)?.metadata;
-      if (metadata?.hidden) return false;
-      if (message.role === 'tool') return false;
-      return true;
-    }),
-    [messages]
-  );
+  const parsedMessageCacheRef = useRef<Map<string, ParsedMessageCacheEntry>>(new Map());
+  const parsedMessages = useMemo(() => {
+    const previousCache = parsedMessageCacheRef.current;
+    const nextCache = new Map<string, ParsedMessageCacheEntry>();
+    const list = (messages || []).map((message) => {
+      const cacheKey = String(message.id);
+      const metadataRef = (message as any)?.metadata;
+      const updatedAt = (message as any)?.updatedAt;
+      const cached = previousCache.get(cacheKey);
+
+      if (
+        cached
+        && cached.ref === message
+        && cached.metadataRef === metadataRef
+        && cached.content === message.content
+        && cached.status === message.status
+        && cached.updatedAt === updatedAt
+      ) {
+        nextCache.set(cacheKey, cached);
+        return cached.parsed;
+      }
+
+      const parsed = parseMessageForList(message);
+      nextCache.set(cacheKey, {
+        ref: message,
+        metadataRef,
+        content: message.content,
+        status: message.status,
+        updatedAt,
+        parsed,
+      });
+      return parsed;
+    });
+
+    parsedMessageCacheRef.current = nextCache;
+    return list;
+  }, [messages]);
+
+  const {
+    visibleMessages,
+    toolResultById,
+    toolResultMetaById,
+    assistantToolCallById,
+    assistantToolCallMetaById,
+    derivedProcessStatsByUserId,
+    processSignalByUserMessageId,
+    linkedUserExpandedByAssistantId,
+  } = useMemo(() => {
+    const visible: Message[] = [];
+    const toolResultMap = new Map<string, Message>();
+    const toolResultMetaMap = new Map<string, { id: string; time: number }>();
+    const assistantToolById = new Map<string, any>();
+    const assistantToolMetaById = new Map<string, { messageId: string; time: number }>();
+
+    const signalMap = new Map<string, string>();
+    const userMessageIds = new Set<string>();
+    const turnToUserMessageId = new Map<string, string>();
+    const assistantIdToUserMessageId = new Map<string, string>();
+    const mutableStats = new Map<string, {
+      hasStreamingAssistant: boolean;
+      thinkingCount: number;
+      processMessageCount: number;
+      toolCallIds: Set<string>;
+    }>();
+
+    const userExpandedById = new Map<string, boolean>();
+    const turnExpandedById = new Map<string, boolean>();
+    const finalAssistantExpandedById = new Map<string, boolean>();
+
+    parsedMessages.forEach((parsed) => {
+      if (parsed.visible) {
+        visible.push(parsed.message);
+      }
+
+      if (parsed.toolResultCallId) {
+        toolResultMap.set(parsed.toolResultCallId, parsed.message);
+        toolResultMetaMap.set(parsed.toolResultCallId, { id: parsed.id, time: parsed.time });
+      }
+
+      if (parsed.role === 'assistant') {
+        parsed.assistantToolCalls.forEach(({ id, toolCall }) => {
+          if (!assistantToolById.has(id)) {
+            assistantToolById.set(id, toolCall);
+          }
+          if (!assistantToolMetaById.has(id)) {
+            assistantToolMetaById.set(id, { messageId: parsed.id, time: parsed.time });
+          }
+        });
+      }
+
+      if (parsed.role === 'user') {
+        userMessageIds.add(parsed.id);
+        signalMap.set(parsed.id, '');
+        mutableStats.set(parsed.id, {
+          hasStreamingAssistant: false,
+          thinkingCount: 0,
+          processMessageCount: 0,
+          toolCallIds: new Set<string>(),
+        });
+
+        if (parsed.userTurnId && !turnToUserMessageId.has(parsed.userTurnId)) {
+          turnToUserMessageId.set(parsed.userTurnId, parsed.id);
+        }
+        if (
+          parsed.userFinalAssistantMessageId
+          && !assistantIdToUserMessageId.has(parsed.userFinalAssistantMessageId)
+        ) {
+          assistantIdToUserMessageId.set(parsed.userFinalAssistantMessageId, parsed.id);
+        }
+
+        userExpandedById.set(parsed.id, parsed.userExpanded);
+        if (parsed.userTurnId) {
+          turnExpandedById.set(parsed.userTurnId, parsed.userExpanded);
+        }
+        if (parsed.userFinalAssistantMessageId) {
+          finalAssistantExpandedById.set(parsed.userFinalAssistantMessageId, parsed.userExpanded);
+        }
+      }
+    });
+
+    const appendSignal = (userMessageId: string, piece: string) => {
+      if (!userMessageId || !piece) {
+        return;
+      }
+      const prev = signalMap.get(userMessageId) || '';
+      signalMap.set(userMessageId, prev ? `${prev}||${piece}` : piece);
+    };
+
+    const resolveLinkedUserMessageId = (parsed: ParsedMessageForList): string => {
+      if (parsed.role === 'assistant') {
+        let linkedUserMessageId = parsed.historyProcessUserMessageId;
+        if (!linkedUserMessageId || !userMessageIds.has(linkedUserMessageId)) {
+          const processTurnId = parsed.historyProcessTurnId || parsed.conversationTurnId;
+          if (processTurnId) {
+            linkedUserMessageId = turnToUserMessageId.get(processTurnId) || '';
+          }
+        }
+        if (!linkedUserMessageId || !userMessageIds.has(linkedUserMessageId)) {
+          linkedUserMessageId = parsed.historyFinalForUserMessageId;
+        }
+        if (!linkedUserMessageId || !userMessageIds.has(linkedUserMessageId)) {
+          const finalTurnId = parsed.historyFinalForTurnId || parsed.conversationTurnId;
+          if (finalTurnId) {
+            linkedUserMessageId = turnToUserMessageId.get(finalTurnId) || '';
+          }
+        }
+        if (!linkedUserMessageId || !userMessageIds.has(linkedUserMessageId)) {
+          linkedUserMessageId = assistantIdToUserMessageId.get(parsed.id) || '';
+        }
+        return userMessageIds.has(linkedUserMessageId) ? linkedUserMessageId : '';
+      }
+
+      let linkedUserMessageId = parsed.historyProcessUserMessageId;
+      if (!linkedUserMessageId || !userMessageIds.has(linkedUserMessageId)) {
+        const processTurnId = parsed.historyProcessTurnId || parsed.conversationTurnId;
+        if (processTurnId) {
+          linkedUserMessageId = turnToUserMessageId.get(processTurnId) || '';
+        }
+      }
+      return userMessageIds.has(linkedUserMessageId) ? linkedUserMessageId : '';
+    };
+
+    parsedMessages.forEach((parsed) => {
+      const linkedUserMessageId = resolveLinkedUserMessageId(parsed);
+      if (!linkedUserMessageId) {
+        return;
+      }
+
+      if (parsed.role === 'assistant') {
+        appendSignal(
+          linkedUserMessageId,
+          `A:${parsed.id}:${parsed.status}:${parsed.metadataToolCalls.length}:${parsed.toolCallSegmentCount}:${parsed.thinkingSegmentCount}:${parsed.segments.length}`,
+        );
+
+        const stats = mutableStats.get(linkedUserMessageId);
+        if (!stats) {
+          return;
+        }
+
+        if (parsed.status === 'streaming') {
+          stats.hasStreamingAssistant = true;
+        }
+
+        const isProcessAssistant = Boolean(parsed.historyProcessUserMessageId || parsed.historyProcessTurnId);
+        if (isProcessAssistant && !parsed.historyProcessPlaceholder) {
+          stats.processMessageCount += 1;
+        }
+
+        parsed.assistantToolCalls.forEach(({ id }) => {
+          stats.toolCallIds.add(id);
+        });
+
+        parsed.segments.forEach((segment: any) => {
+          if (segment?.type === 'tool_call') {
+            const id = normalizeMetaId(segment?.toolCallId);
+            if (id) {
+              stats.toolCallIds.add(id);
+            }
+            return;
+          }
+          if (
+            segment?.type === 'thinking'
+            && typeof segment?.content === 'string'
+            && segment.content.trim().length > 0
+          ) {
+            stats.thinkingCount += 1;
+          }
+        });
+        return;
+      }
+
+      appendSignal(
+        linkedUserMessageId,
+        `P:${parsed.id}:${parsed.role}:${parsed.historyProcessPlaceholder ? '1' : '0'}`,
+      );
+    });
+
+    const derivedStats = new Map<string, DerivedProcessStats>();
+    mutableStats.forEach((stats, userMessageId) => {
+      const toolCallCount = stats.toolCallIds.size;
+      derivedStats.set(userMessageId, {
+        hasProcess: toolCallCount > 0 || stats.thinkingCount > 0 || stats.processMessageCount > 0,
+        hasStreamingAssistant: stats.hasStreamingAssistant,
+        toolCallCount,
+        thinkingCount: stats.thinkingCount,
+        processMessageCount: stats.processMessageCount,
+      });
+    });
+
+    const expandedByAssistantId = new Map<string, boolean>();
+    parsedMessages.forEach((parsed) => {
+      if (parsed.role !== 'assistant') {
+        return;
+      }
+      if (parsed.historyProcessUserMessageId || parsed.historyProcessTurnId) {
+        return;
+      }
+
+      const linkedUserMessageId = parsed.historyFinalForUserMessageId;
+      if (linkedUserMessageId && userExpandedById.has(linkedUserMessageId)) {
+        expandedByAssistantId.set(parsed.id, userExpandedById.get(linkedUserMessageId) === true);
+        return;
+      }
+
+      const linkedTurnId = parsed.historyFinalForTurnId || parsed.conversationTurnId;
+      if (linkedTurnId && turnExpandedById.has(linkedTurnId)) {
+        expandedByAssistantId.set(parsed.id, turnExpandedById.get(linkedTurnId) === true);
+        return;
+      }
+
+      if (finalAssistantExpandedById.has(parsed.id)) {
+        expandedByAssistantId.set(parsed.id, finalAssistantExpandedById.get(parsed.id) === true);
+      }
+    });
+
+    return {
+      visibleMessages: visible,
+      toolResultById: toolResultMap,
+      toolResultMetaById: toolResultMetaMap,
+      assistantToolCallById: assistantToolById,
+      assistantToolCallMetaById: assistantToolMetaById,
+      derivedProcessStatsByUserId: derivedStats,
+      processSignalByUserMessageId: signalMap,
+      linkedUserExpandedByAssistantId: expandedByAssistantId,
+    };
+  }, [parsedMessages]);
+
   const windowSize = useMemo(() => {
     const estimatedRows = Math.ceil((viewportHeight || 960) / ESTIMATED_MESSAGE_ROW_HEIGHT);
     const candidate = estimatedRows + MESSAGE_WINDOW_OVERSCAN_ROWS;
     return Math.min(MESSAGE_WINDOW_MAX_SIZE, Math.max(MESSAGE_WINDOW_MIN_SIZE, candidate));
   }, [viewportHeight]);
   const windowThreshold = windowSize + MESSAGE_WINDOW_THRESHOLD_EXTRA;
-  const windowStep = Math.max(60, Math.floor(windowSize * 0.72));
+  const windowStep = Math.max(32, Math.floor(windowSize * 0.6));
   const shouldWindowMessages = visibleMessages.length > windowThreshold;
   const boundedRenderStartIndex = shouldWindowMessages
     ? Math.min(renderStartIndex, Math.max(0, visibleMessages.length - 1))
     : 0;
-  const renderedMessages = shouldWindowMessages
-    ? visibleMessages.slice(boundedRenderStartIndex)
-    : visibleMessages;
+  const renderedMessages = useMemo(
+    () => (shouldWindowMessages
+      ? visibleMessages.slice(boundedRenderStartIndex)
+      : visibleMessages),
+    [shouldWindowMessages, visibleMessages, boundedRenderStartIndex],
+  );
   const lastVisibleIndex = visibleMessages.length - 1;
-  const getTimeValue = (value: unknown): number => {
-    if (!value) return 0;
-    if (value instanceof Date) return value.getTime();
-    const parsed = new Date(value as any).getTime();
-    return Number.isNaN(parsed) ? 0 : parsed;
-  };
-  const toolResultById = useMemo(() => {
-    const map = new Map<string, Message>();
-    for (const msg of messages || []) {
-      if (msg.role !== 'tool') continue;
-      const raw = msg as any;
-      const toolCallId = raw.tool_call_id || raw.toolCallId || msg.metadata?.tool_call_id || msg.metadata?.toolCallId;
-      if (toolCallId) {
-        map.set(String(toolCallId), msg);
-      }
-    }
-    return map;
-  }, [messages]);
-  const toolResultMetaById = useMemo(() => {
-    const map = new Map<string, { id: string; time: number }>();
-    toolResultById.forEach((msg, toolCallId) => {
-      const time = msg.updatedAt ? getTimeValue(msg.updatedAt) : getTimeValue(msg.createdAt);
-      map.set(toolCallId, { id: msg.id, time });
-    });
-    return map;
-  }, [toolResultById]);
-  const {
-    assistantToolCallById,
-    assistantToolCallMetaById,
-  } = useMemo(() => {
-    const byId = new Map<string, any>();
-    const metaById = new Map<string, { messageId: string; time: number }>();
-    for (const message of messages || []) {
-      if (message.role !== 'assistant') {
-        continue;
-      }
-      const time = message.updatedAt ? getTimeValue(message.updatedAt) : getTimeValue(message.createdAt);
-      const topLevel = Array.isArray((message as any).toolCalls) ? (message as any).toolCalls : [];
-      const metadataLevel = Array.isArray(message.metadata?.toolCalls) ? message.metadata.toolCalls : [];
-      [...metadataLevel, ...topLevel].forEach((toolCall: any) => {
-        const id = normalizeMetaId(toolCall?.id);
-        if (!id) {
-          return;
-        }
-        if (!byId.has(id)) {
-          byId.set(id, toolCall);
-        }
-        if (!metaById.has(id)) {
-          metaById.set(id, { messageId: message.id, time });
-        }
-      });
-    }
-    return {
-      assistantToolCallById: byId,
-      assistantToolCallMetaById: metaById,
-    };
-  }, [messages]);
   const toolResultKeyByMessageId = useMemo(() => {
     const map = new Map<string, string>();
-    for (const message of visibleMessages) {
+    for (const message of renderedMessages) {
       const toolCalls = message.metadata?.toolCalls;
       if (!toolCalls || toolCalls.length === 0) {
         map.set(message.id, '');
@@ -138,10 +457,10 @@ export const MessageList: React.FC<MessageListProps> = ({
       map.set(message.id, key);
     }
     return map;
-  }, [visibleMessages, toolResultMetaById]);
+  }, [renderedMessages, toolResultMetaById]);
   const toolCallLookupKeyByMessageId = useMemo(() => {
     const map = new Map<string, string>();
-    for (const message of visibleMessages) {
+    for (const message of renderedMessages) {
       const segments = Array.isArray(message.metadata?.contentSegments) ? message.metadata.contentSegments : [];
       const toolCallIds = segments
         .filter((segment: any) => segment?.type === 'tool_call')
@@ -160,250 +479,7 @@ export const MessageList: React.FC<MessageListProps> = ({
       map.set(message.id, key);
     }
     return map;
-  }, [visibleMessages, assistantToolCallMetaById]);
-  const {
-    derivedProcessStatsByUserId,
-    processSignalByUserMessageId,
-  } = useMemo(() => {
-    const signalMap = new Map<string, string>();
-    const userMessageIds = new Set<string>();
-    const turnToUserMessageId = new Map<string, string>();
-    const assistantIdToUserMessageId = new Map<string, string>();
-    const mutableStats = new Map<string, {
-      hasStreamingAssistant: boolean;
-      thinkingCount: number;
-      processMessageCount: number;
-      toolCallIds: Set<string>;
-    }>();
-
-    for (const message of messages || []) {
-      if (message.role !== 'user') {
-        continue;
-      }
-      userMessageIds.add(message.id);
-      signalMap.set(message.id, '');
-      mutableStats.set(message.id, {
-        hasStreamingAssistant: false,
-        thinkingCount: 0,
-        processMessageCount: 0,
-        toolCallIds: new Set<string>(),
-      });
-      const turnId = normalizeTurnId(
-        (message as any)?.metadata?.conversation_turn_id
-        || (message as any)?.metadata?.historyProcess?.turnId,
-      );
-      if (turnId && !turnToUserMessageId.has(turnId)) {
-        turnToUserMessageId.set(turnId, message.id);
-      }
-      const finalAssistantMessageId = normalizeMetaId(
-        (message as any)?.metadata?.historyProcess?.finalAssistantMessageId,
-      );
-      if (finalAssistantMessageId && !assistantIdToUserMessageId.has(finalAssistantMessageId)) {
-        assistantIdToUserMessageId.set(finalAssistantMessageId, message.id);
-      }
-    }
-
-    const appendSignal = (userMessageId: string, piece: string) => {
-      if (!userMessageId || !piece) {
-        return;
-      }
-      const prev = signalMap.get(userMessageId) || '';
-      signalMap.set(userMessageId, prev ? `${prev}||${piece}` : piece);
-    };
-
-    const resolveLinkedUserMessageId = (message: Message, metadata: Record<string, any>): string => {
-      if (message.role === 'assistant') {
-        let linkedUserMessageId = normalizeMetaId(metadata.historyProcessUserMessageId);
-        if (!linkedUserMessageId || !userMessageIds.has(linkedUserMessageId)) {
-          const processTurnId = normalizeTurnId(
-            metadata.historyProcessTurnId || metadata.conversation_turn_id,
-          );
-          if (processTurnId) {
-            linkedUserMessageId = turnToUserMessageId.get(processTurnId) || '';
-          }
-        }
-        if (!linkedUserMessageId || !userMessageIds.has(linkedUserMessageId)) {
-          linkedUserMessageId = normalizeMetaId(metadata.historyFinalForUserMessageId);
-        }
-        if (!linkedUserMessageId || !userMessageIds.has(linkedUserMessageId)) {
-          const finalTurnId = normalizeTurnId(
-            metadata.historyFinalForTurnId || metadata.conversation_turn_id,
-          );
-          if (finalTurnId) {
-            linkedUserMessageId = turnToUserMessageId.get(finalTurnId) || '';
-          }
-        }
-        if (!linkedUserMessageId || !userMessageIds.has(linkedUserMessageId)) {
-          linkedUserMessageId = assistantIdToUserMessageId.get(message.id) || '';
-        }
-        return userMessageIds.has(linkedUserMessageId) ? linkedUserMessageId : '';
-      }
-
-      let linkedUserMessageId = normalizeMetaId(metadata.historyProcessUserMessageId);
-      if (!linkedUserMessageId || !userMessageIds.has(linkedUserMessageId)) {
-        const processTurnId = normalizeTurnId(
-          metadata.historyProcessTurnId || metadata.conversation_turn_id,
-        );
-        if (processTurnId) {
-          linkedUserMessageId = turnToUserMessageId.get(processTurnId) || '';
-        }
-      }
-      return userMessageIds.has(linkedUserMessageId) ? linkedUserMessageId : '';
-    };
-
-    for (const message of messages || []) {
-      const metadata = (message as any)?.metadata || {};
-      const linkedUserMessageId = resolveLinkedUserMessageId(message, metadata);
-      if (!linkedUserMessageId) {
-        continue;
-      }
-
-      if (message.role === 'assistant') {
-        const segments = Array.isArray(metadata.contentSegments)
-          ? metadata.contentSegments
-          : [];
-        const metadataToolCalls = Array.isArray(metadata.toolCalls)
-          ? metadata.toolCalls
-          : [];
-        const topLevelToolCalls = Array.isArray((message as any).toolCalls)
-          ? (message as any).toolCalls
-          : [];
-        const thinkingCount = segments.filter((segment: any) => (
-          segment?.type === 'thinking'
-          && typeof segment?.content === 'string'
-          && segment.content.trim().length > 0
-        )).length;
-        const toolCallSegmentCount = segments.filter((segment: any) => (
-          segment?.type === 'tool_call'
-          && Boolean(segment?.toolCallId)
-        )).length;
-        appendSignal(
-          linkedUserMessageId,
-          `A:${message.id}:${message.status || ''}:${metadataToolCalls.length}:${toolCallSegmentCount}:${thinkingCount}:${segments.length}`,
-        );
-
-        const stats = mutableStats.get(linkedUserMessageId);
-        if (!stats) {
-          continue;
-        }
-
-        if (message.status === 'streaming') {
-          stats.hasStreamingAssistant = true;
-        }
-
-        const isProcessAssistant = Boolean(metadata.historyProcessUserMessageId || metadata.historyProcessTurnId);
-        if (isProcessAssistant && metadata.historyProcessPlaceholder !== true) {
-          stats.processMessageCount += 1;
-        }
-
-        [...metadataToolCalls, ...topLevelToolCalls].forEach((toolCall: any) => {
-          const id = normalizeMetaId(toolCall?.id);
-          if (id) {
-            stats.toolCallIds.add(id);
-          }
-        });
-
-        segments.forEach((segment: any) => {
-          if (segment?.type === 'tool_call') {
-            const id = normalizeMetaId(segment?.toolCallId);
-            if (id) {
-              stats.toolCallIds.add(id);
-            }
-            return;
-          }
-          if (
-            segment?.type === 'thinking'
-            && typeof segment?.content === 'string'
-            && segment.content.trim().length > 0
-          ) {
-            stats.thinkingCount += 1;
-          }
-        });
-        continue;
-      }
-
-      appendSignal(
-        linkedUserMessageId,
-        `P:${message.id}:${message.role}:${metadata.historyProcessPlaceholder ? '1' : '0'}`,
-      );
-    }
-
-    const derivedStats = new Map<string, DerivedProcessStats>();
-    mutableStats.forEach((stats, userMessageId) => {
-      const toolCallCount = stats.toolCallIds.size;
-      derivedStats.set(userMessageId, {
-        hasProcess: toolCallCount > 0 || stats.thinkingCount > 0 || stats.processMessageCount > 0,
-        hasStreamingAssistant: stats.hasStreamingAssistant,
-        toolCallCount,
-        thinkingCount: stats.thinkingCount,
-        processMessageCount: stats.processMessageCount,
-      });
-    });
-
-    return {
-      derivedProcessStatsByUserId: derivedStats,
-      processSignalByUserMessageId: signalMap,
-    };
-  }, [messages]);
-  const linkedUserExpandedByAssistantId = useMemo(() => {
-    const userExpandedById = new Map<string, boolean>();
-    const turnExpandedById = new Map<string, boolean>();
-    const finalAssistantExpandedById = new Map<string, boolean>();
-
-    for (const message of messages || []) {
-      if (message.role !== 'user') {
-        continue;
-      }
-      const expanded = message.metadata?.historyProcess?.expanded === true;
-      userExpandedById.set(message.id, expanded);
-
-      const turnId = normalizeTurnId(
-        (message as any)?.metadata?.conversation_turn_id
-        || (message as any)?.metadata?.historyProcess?.turnId,
-      );
-      if (turnId) {
-        turnExpandedById.set(turnId, expanded);
-      }
-
-      const finalAssistantId = normalizeMetaId(
-        (message as any)?.metadata?.historyProcess?.finalAssistantMessageId,
-      );
-      if (finalAssistantId) {
-        finalAssistantExpandedById.set(finalAssistantId, expanded);
-      }
-    }
-
-    const expandedByAssistantId = new Map<string, boolean>();
-    for (const message of messages || []) {
-      if (message.role !== 'assistant') {
-        continue;
-      }
-      const metadata = (message as any)?.metadata || {};
-      if (metadata.historyProcessUserMessageId || metadata.historyProcessTurnId) {
-        continue;
-      }
-
-      const linkedUserMessageId = normalizeMetaId(metadata.historyFinalForUserMessageId);
-      if (linkedUserMessageId && userExpandedById.has(linkedUserMessageId)) {
-        expandedByAssistantId.set(message.id, userExpandedById.get(linkedUserMessageId) === true);
-        continue;
-      }
-
-      const linkedTurnId = normalizeTurnId(
-        metadata.historyFinalForTurnId || metadata.conversation_turn_id,
-      );
-      if (linkedTurnId && turnExpandedById.has(linkedTurnId)) {
-        expandedByAssistantId.set(message.id, turnExpandedById.get(linkedTurnId) === true);
-        continue;
-      }
-
-      if (finalAssistantExpandedById.has(message.id)) {
-        expandedByAssistantId.set(message.id, finalAssistantExpandedById.get(message.id) === true);
-      }
-    }
-
-    return expandedByAssistantId;
-  }, [messages]);
+  }, [renderedMessages, assistantToolCallMetaById]);
 
   useEffect(() => {
     pendingSessionInitialScrollRef.current = true;
@@ -559,7 +635,7 @@ export const MessageList: React.FC<MessageListProps> = ({
 
   useEffect(() => {
     if (isStreaming && autoScroll) {
-      scrollToBottom(true);
+      scrollToBottom(false);
     }
   }, [messages, isStreaming, autoScroll]);
 

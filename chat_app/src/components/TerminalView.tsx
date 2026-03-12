@@ -22,8 +22,6 @@ import {
   normalizeLogTimestamp,
   parseInputChunkForCommands,
   parseOutputChunkForCommands,
-  writeToTerminal,
-  writeToTerminalInChunks,
   type CommandHistoryItem,
   type CommandHistoryParseState,
   type InputCommandParseState,
@@ -36,10 +34,14 @@ interface TerminalViewProps {
 
 type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'error';
 type HistoryState = 'idle' | 'loading' | 'ready' | 'error';
-const TERMINAL_HISTORY_INITIAL_LIMIT = 240;
+const TERMINAL_HISTORY_INITIAL_LIMIT = 120;
 const TERMINAL_HISTORY_PAGE_SIZE = 600;
 const TERMINAL_HISTORY_MAX_LIMIT = 3000;
 const TERMINAL_HISTORY_TAIL_ONLY_HINT = '已预载更早历史，终端窗口保持实时 tail 模式以确保流畅。';
+const TERMINAL_SNAPSHOT_INITIAL_LINES = 500;
+const TERMINAL_SNAPSHOT_PAGE_LINES = 500;
+const TERMINAL_SNAPSHOT_MAX_LINES = 10_000;
+const TERMINAL_SCROLL_TOP_LOAD_THRESHOLD = 0;
 
 const closeWebSocketSafely = (socket: WebSocket | null | undefined) => {
   if (!socket) {
@@ -59,6 +61,88 @@ const closeWebSocketSafely = (socket: WebSocket | null | undefined) => {
     };
     socket.addEventListener('open', closeOnOpen, { once: true });
   }
+};
+
+const countSnapshotLines = (snapshot: string): number => {
+  if (!snapshot) {
+    return 0;
+  }
+  return snapshot.split('\n').length;
+};
+
+const COMMAND_OPERATORS = new Set([
+  '|',
+  '||',
+  '&&',
+  ';',
+  '>',
+  '>>',
+  '<',
+  '<<',
+  '2>',
+  '2>>',
+]);
+
+const COMMAND_TOKEN_REGEX = /(\s+|\|\||&&|2>>|2>|>>|<<|\||;|>|<|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`|\S+)/g;
+
+const isEnvAssignmentToken = (token: string): boolean => (
+  /^[A-Za-z_][A-Za-z0-9_]*=.*/.test(token)
+);
+
+const isQuotedToken = (token: string): boolean => (
+  (token.startsWith('"') && token.endsWith('"'))
+  || (token.startsWith('\'') && token.endsWith('\''))
+  || (token.startsWith('`') && token.endsWith('`'))
+);
+
+const isPathLikeToken = (token: string): boolean => (
+  token.startsWith('./')
+  || token.startsWith('../')
+  || token.startsWith('~/')
+  || token.startsWith('/')
+  || token.includes('/')
+  || token.includes('\\')
+);
+
+const renderHighlightedCommand = (command: string): React.ReactNode => {
+  if (!command) {
+    return '';
+  }
+
+  const tokens = command.match(COMMAND_TOKEN_REGEX) || [command];
+  let commandMarked = false;
+  let expectsCommand = true;
+
+  return tokens.map((token, index) => {
+    if (/^\s+$/.test(token)) {
+      return <span key={`cmd-token-${index}`}>{token}</span>;
+    }
+
+    let className = 'text-foreground';
+
+    if (COMMAND_OPERATORS.has(token)) {
+      className = 'text-fuchsia-500';
+      expectsCommand = true;
+    } else if (expectsCommand && isEnvAssignmentToken(token)) {
+      className = 'text-cyan-500';
+    } else if (!commandMarked) {
+      className = 'font-semibold text-sky-500';
+      commandMarked = true;
+      expectsCommand = false;
+    } else if (token.startsWith('-')) {
+      className = 'text-amber-500';
+    } else if (isQuotedToken(token)) {
+      className = 'text-emerald-500';
+    } else if (isPathLikeToken(token)) {
+      className = 'text-green-500';
+    }
+
+    return (
+      <span key={`cmd-token-${index}`} className={className}>
+        {token}
+      </span>
+    );
+  });
 };
 
 type ParsedCommandHistory = {
@@ -201,6 +285,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
   const socketRef = useRef<WebSocket | null>(null);
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const dataHandlerRef = useRef<ReturnType<XTerm['onData']> | null>(null);
+  const scrollHandlerRef = useRef<ReturnType<XTerm['onScroll']> | null>(null);
   const inputForwardEnabledRef = useRef(false);
   const inputParseStateRef = useRef<InputCommandParseState>(createInitialInputCommandParseState());
   const outputParseStateRef = useRef<CommandHistoryParseState>(createInitialCommandHistoryParseState());
@@ -216,6 +301,16 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
   const commandHistoryCacheRef = useRef<Record<string, CommandHistoryItem[]>>({});
   const terminalOpenStartedAtRef = useRef<number | null>(null);
   const terminalFirstOutputLoggedRef = useRef(false);
+  const appliedSnapshotRef = useRef<string>('');
+  const snapshotVisibleLinesRef = useRef<Record<string, number>>({});
+  const snapshotNoMoreLinesRef = useRef<Record<string, boolean>>({});
+  const snapshotLoadingRef = useRef(false);
+  const supportsSnapshotPagingRef = useRef(false);
+  const snapshotRequestContextRef = useRef<{
+    terminalId: string;
+    requestedLines: number;
+    fromScroll: boolean;
+  } | null>(null);
 
   const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected');
   const [historyState, setHistoryState] = useState<HistoryState>('idle');
@@ -341,19 +436,24 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
     setCanLoadMoreHistory(false);
     setHistoryBusy(false);
     setHistoryModeHint(null);
-    setHistoryState('loading');
+    setHistoryState('ready');
     setConnectionState('disconnected');
     setErrorMessage(null);
     inputForwardEnabledRef.current = false;
     terminalOpenStartedAtRef.current = Date.now();
     terminalFirstOutputLoggedRef.current = false;
+    snapshotVisibleLinesRef.current[currentTerminal.id] = TERMINAL_SNAPSHOT_INITIAL_LINES;
+    snapshotNoMoreLinesRef.current[currentTerminal.id] = false;
+    snapshotLoadingRef.current = false;
+    supportsSnapshotPagingRef.current = false;
+    snapshotRequestContextRef.current = null;
 
     const term = new XTerm({
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
       fontSize: 13,
       lineHeight: 1.2,
       cursorBlink: true,
-      scrollback: 3000,
+      scrollback: 10000,
       theme: themeColorsRef.current,
     });
     const fitAddon = new FitAddon();
@@ -395,6 +495,46 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
       }
     });
 
+    scrollHandlerRef.current = term.onScroll((viewportY) => {
+      if (viewportY > TERMINAL_SCROLL_TOP_LOAD_THRESHOLD) {
+        return;
+      }
+
+      const terminalId = currentTerminal.id;
+      if (
+        !supportsSnapshotPagingRef.current
+        || snapshotLoadingRef.current
+        || snapshotNoMoreLinesRef.current[terminalId]
+      ) {
+        return;
+      }
+
+      const currentLines = snapshotVisibleLinesRef.current[terminalId] ?? TERMINAL_SNAPSHOT_INITIAL_LINES;
+      if (currentLines >= TERMINAL_SNAPSHOT_MAX_LINES) {
+        snapshotNoMoreLinesRef.current[terminalId] = true;
+        return;
+      }
+
+      const ws = socketRef.current;
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        return;
+      }
+
+      const nextLines = Math.min(TERMINAL_SNAPSHOT_MAX_LINES, currentLines + TERMINAL_SNAPSHOT_PAGE_LINES);
+      if (nextLines <= currentLines) {
+        snapshotNoMoreLinesRef.current[terminalId] = true;
+        return;
+      }
+
+      snapshotLoadingRef.current = true;
+      snapshotRequestContextRef.current = {
+        terminalId,
+        requestedLines: nextLines,
+        fromScroll: true,
+      };
+      ws.send(JSON.stringify({ type: 'snapshot', lines: nextLines }));
+    });
+
     const resizeObserver = new ResizeObserver(() => {
       const fit = fitRef.current;
       if (!fit) return;
@@ -417,11 +557,8 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
 
       if (mode === 'more') {
         setHistoryBusy(true);
-      } else {
-        setHistoryState('loading');
       }
       setErrorMessage(null);
-      inputForwardEnabledRef.current = false;
 
       try {
         const requestLimit = Math.max(1, Math.min(limit, TERMINAL_HISTORY_MAX_LIMIT));
@@ -470,28 +607,9 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
         commandHistoryCacheRef.current[currentTerminal.id] = mergedHistory;
 
         if (mode === 'initial') {
-          replayingHistoryRef.current = true;
-          pendingOutputChunksRef.current = [];
-          term.reset();
-          for (const log of parsedHistory.outputLogs) {
-            await writeToTerminalInChunks(term, log.content);
-          }
-
-          if (cancelled || !isCurrentRequest() || terminalRef.current !== term) {
-            return;
-          }
-
+          // Keep terminal in realtime tail mode; avoid replaying large history chunks
+          // on session switch. Screen hydration comes from websocket snapshot.
           outputParseStateRef.current = parsedHistory.outputState;
-          const pendingChunks = pendingOutputChunksRef.current;
-          pendingOutputChunksRef.current = [];
-          if (pendingChunks.length > 0) {
-            for (const chunk of pendingChunks) {
-              await writeToTerminal(term, chunk);
-              const parsed = parseOutputChunkForCommands(chunk, outputParseStateRef.current);
-              outputParseStateRef.current = parsed.nextState;
-              appendCommands(parsed.commands, new Date().toISOString(), 'correct');
-            }
-          }
           setHistoryModeHint(null);
         } else if (uniqueLogs.length > 0) {
           setHistoryModeHint(TERMINAL_HISTORY_TAIL_ONLY_HINT);
@@ -524,7 +642,6 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
         replayingHistoryRef.current = false;
         pendingOutputChunksRef.current = [];
         setHistoryBusy(false);
-        inputForwardEnabledRef.current = socketRef.current?.readyState === WebSocket.OPEN;
       }
     };
 
@@ -538,6 +655,9 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
       loadHistoryRef.current = null;
       replayingHistoryRef.current = false;
       pendingOutputChunksRef.current = [];
+      snapshotLoadingRef.current = false;
+      supportsSnapshotPagingRef.current = false;
+      snapshotRequestContextRef.current = null;
       historyLoadedCountRef.current = 0;
       historyLoadedIdsRef.current = new Set();
       historyBeforeCursorRef.current = null;
@@ -545,6 +665,8 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
       socketRef.current = null;
       dataHandlerRef.current?.dispose();
       dataHandlerRef.current = null;
+      scrollHandlerRef.current?.dispose();
+      scrollHandlerRef.current = null;
       resizeObserver.disconnect();
       resizeObserverRef.current = null;
       term.dispose();
@@ -557,11 +679,14 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
 
   useEffect(() => {
     if (!currentTerminal) return;
-    if (historyState !== 'ready' && historyState !== 'error') return;
 
     const wsUrl = buildWsUrl(apiBaseUrl, `/terminals/${currentTerminal.id}/ws`, accessToken);
     setConnectionState('connecting');
     inputForwardEnabledRef.current = false;
+    appliedSnapshotRef.current = '';
+    snapshotLoadingRef.current = false;
+    supportsSnapshotPagingRef.current = false;
+    snapshotRequestContextRef.current = null;
 
     const ws = new WebSocket(wsUrl);
     socketRef.current = ws;
@@ -585,7 +710,50 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
 
       try {
         const payload = JSON.parse(event.data);
-        if (payload?.type === 'output') {
+        if (payload?.type === 'snapshot' && typeof payload.data === 'string') {
+          const terminalId = currentTerminal.id;
+          const requestContext = snapshotRequestContextRef.current;
+          const currentSnapshot = appliedSnapshotRef.current;
+          const nextSnapshot = payload.data;
+          const previousLineCount = countSnapshotLines(currentSnapshot);
+          const nextLineCount = countSnapshotLines(nextSnapshot);
+          const hasMoreLines = nextLineCount > previousLineCount;
+
+          if (nextSnapshot !== currentSnapshot) {
+            appliedSnapshotRef.current = nextSnapshot;
+            const term = terminalRef.current;
+            if (term) {
+              term.reset();
+              term.write(nextSnapshot);
+              const parsedSnapshot = parseOutputChunkForCommands(
+                nextSnapshot,
+                createInitialCommandHistoryParseState(),
+              );
+              outputParseStateRef.current = parsedSnapshot.nextState;
+              appendCommands(parsedSnapshot.commands, new Date().toISOString(), 'correct');
+              if (requestContext?.terminalId === terminalId && requestContext.fromScroll) {
+                term.scrollToTop();
+              }
+            }
+          }
+
+          if (requestContext?.terminalId === terminalId) {
+            snapshotVisibleLinesRef.current[terminalId] = requestContext.requestedLines;
+            if (!hasMoreLines || requestContext.requestedLines >= TERMINAL_SNAPSHOT_MAX_LINES) {
+              snapshotNoMoreLinesRef.current[terminalId] = true;
+            } else {
+              snapshotNoMoreLinesRef.current[terminalId] = false;
+            }
+          } else {
+            snapshotVisibleLinesRef.current[terminalId] = Math.max(
+              TERMINAL_SNAPSHOT_INITIAL_LINES,
+              Math.min(TERMINAL_SNAPSHOT_MAX_LINES, nextLineCount),
+            );
+            snapshotNoMoreLinesRef.current[terminalId] = false;
+          }
+          snapshotLoadingRef.current = false;
+          snapshotRequestContextRef.current = null;
+        } else if (payload?.type === 'output') {
           const outputData = payload.data ?? '';
           if (replayingHistoryRef.current) {
             pendingOutputChunksRef.current.push(outputData);
@@ -613,6 +781,9 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
           setConnectionState('disconnected');
           loadTerminals();
         } else if (payload?.type === 'state') {
+          if (typeof payload.snapshot_paging === 'boolean') {
+            supportsSnapshotPagingRef.current = payload.snapshot_paging;
+          }
           loadTerminals();
         } else if (payload?.type === 'error') {
           setErrorMessage(payload.error || '终端发生错误');
@@ -629,6 +800,9 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
         return;
       }
       inputForwardEnabledRef.current = false;
+      snapshotLoadingRef.current = false;
+      supportsSnapshotPagingRef.current = false;
+      snapshotRequestContextRef.current = null;
       setConnectionState('error');
     };
 
@@ -637,18 +811,24 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
         return;
       }
       inputForwardEnabledRef.current = false;
+      snapshotLoadingRef.current = false;
+      supportsSnapshotPagingRef.current = false;
+      snapshotRequestContextRef.current = null;
       setConnectionState('disconnected');
       loadTerminals();
     };
 
     return () => {
       inputForwardEnabledRef.current = false;
+      snapshotLoadingRef.current = false;
+      supportsSnapshotPagingRef.current = false;
+      snapshotRequestContextRef.current = null;
       if (socketRef.current === ws) {
         socketRef.current = null;
       }
       closeWebSocketSafely(ws);
     };
-  }, [currentTerminal?.id, historyState, apiBaseUrl, accessToken, connectSeq, loadTerminals]);
+  }, [currentTerminal?.id, apiBaseUrl, accessToken, connectSeq, loadTerminals]);
 
   useEffect(() => {
     loadTerminals();
@@ -740,7 +920,9 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ className }) => {
                 {displayHistory.map((item) => (
                   <div key={item.id} className="rounded border border-border/60 bg-background/80 px-2 py-1.5">
                     <div className="text-[10px] text-muted-foreground">{formatCommandTime(item.createdAt)}</div>
-                    <div className="mt-1 break-all font-mono text-xs text-foreground">{item.command}</div>
+                    <div className="mt-1 break-all font-mono text-xs whitespace-pre-wrap">
+                      {renderHighlightedCommand(item.command)}
+                    </div>
                   </div>
                 ))}
               </div>

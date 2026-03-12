@@ -85,6 +85,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     createProject,
     selectProject,
     deleteProject,
+    setActivePanel,
     terminals,
     currentTerminal,
     loadTerminals,
@@ -116,6 +117,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     createProject: state.createProject,
     selectProject: state.selectProject,
     deleteProject: state.deleteProject,
+    setActivePanel: state.setActivePanel,
     terminals: state.terminals,
     currentTerminal: state.currentTerminal,
     loadTerminals: state.loadTerminals,
@@ -395,6 +397,24 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     }
   };
 
+  const focusTerminalPanel = () => {
+    const targetTerminalId = currentTerminal?.id || terminals[0]?.id || null;
+    if (targetTerminalId) {
+      void handleSelectTerminal(targetTerminalId);
+      return;
+    }
+    setActivePanel('terminal');
+  };
+
+  const focusRemotePanel = () => {
+    const targetConnectionId = currentRemoteConnection?.id || remoteConnections[0]?.id || null;
+    if (targetConnectionId) {
+      void handleSelectRemoteConnection(targetConnectionId);
+      return;
+    }
+    setActivePanel('remote_terminal');
+  };
+
   const handleToggleSessionsSection = () => {
     setSessionsExpanded((prev) => {
       const next = !prev;
@@ -426,6 +446,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
         setSessionsExpanded(false);
         setProjectsExpanded(false);
         setRemoteExpanded(false);
+        focusTerminalPanel();
       }
       return next;
     });
@@ -438,6 +459,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
         setSessionsExpanded(false);
         setProjectsExpanded(false);
         setTerminalsExpanded(false);
+        focusRemotePanel();
       }
       return next;
     });
