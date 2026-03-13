@@ -531,8 +531,15 @@ fn join_stream_text(current: &str, chunk: &str) -> String {
 
     let max_overlap = std::cmp::min(current.len(), chunk.len());
     for overlap in (8..=max_overlap).rev() {
-        if current[current.len() - overlap..] == chunk[..overlap] {
-            return format!("{}{}", current, &chunk[overlap..]);
+        let Some(current_tail) = current.get(current.len() - overlap..) else {
+            continue;
+        };
+        let Some(chunk_head) = chunk.get(..overlap) else {
+            continue;
+        };
+        if current_tail == chunk_head {
+            let rest = chunk.get(overlap..).unwrap_or_default();
+            return format!("{}{}", current, rest);
         }
     }
 
@@ -676,6 +683,14 @@ mod tests {
         let _ = apply_stream_event(&mut state, &second);
 
         assert_eq!(state.full_content, "严格式说：不是“真并行”。");
+    }
+
+    #[test]
+    fn join_stream_text_handles_unicode_overlap_without_panic() {
+        let current = "你好世界ABCD";
+        let chunk = "好世界ABCD123";
+
+        assert_eq!(join_stream_text(current, chunk), "你好世界ABCD123");
     }
 
     #[test]

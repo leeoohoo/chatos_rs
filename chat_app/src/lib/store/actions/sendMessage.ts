@@ -26,6 +26,13 @@ export function createSendMessageHandler({
   client: ApiClient;
   getUserIdParam: () => string;
 }) {
+  const defaultSessionChatState = {
+    isLoading: false,
+    isStreaming: false,
+    isStopping: false,
+    streamingMessageId: null as string | null,
+  };
+
   return async function sendMessage(content: string, attachments: any[] = []) {
     let tempUserId: string | null = null;
     let tempAssistantId: string | null = null;
@@ -46,8 +53,8 @@ export function createSendMessageHandler({
     }
 
     // 检查是否已经在发送消息，防止重复发送
-    const chatState = sessionChatState[currentSessionId] || { isLoading: false, isStreaming: false, streamingMessageId: null };
-    if (chatState.isLoading || chatState.isStreaming) {
+    const chatState = sessionChatState[currentSessionId] || defaultSessionChatState;
+    if (chatState.isLoading || chatState.isStreaming || chatState.isStopping) {
       debugLog('Message sending already in progress, ignoring duplicate request');
       return;
     }
@@ -292,8 +299,8 @@ export function createSendMessageHandler({
           loading: false,
         };
 
-        const prev = state.sessionChatState[currentSessionId] || { isLoading: false, isStreaming: false, streamingMessageId: null };
-        state.sessionChatState[currentSessionId] = { ...prev, isLoading: true, isStreaming: true };
+        const prev = state.sessionChatState[currentSessionId] || defaultSessionChatState;
+        state.sessionChatState[currentSessionId] = { ...prev, isLoading: true, isStreaming: true, isStopping: false };
         if (state.currentSessionId === currentSessionId) {
           state.isLoading = true;
           state.isStreaming = true;
@@ -345,11 +352,12 @@ export function createSendMessageHandler({
           linkedUserMessage.metadata.historyProcess.finalAssistantMessageId = tempAssistantMessage.id;
         }
 
-        const prev = state.sessionChatState[currentSessionId] || { isLoading: false, isStreaming: false, streamingMessageId: null };
+        const prev = state.sessionChatState[currentSessionId] || defaultSessionChatState;
         state.sessionChatState[currentSessionId] = {
           ...prev,
           isLoading: true,
           isStreaming: true,
+          isStopping: false,
           streamingMessageId: tempAssistantMessage.id,
         };
         if (!state.sessionStreamingMessageDrafts) {
@@ -424,7 +432,9 @@ export function createSendMessageHandler({
       const decoder = new TextDecoder();
       let buffer = '';
       let sawDone = false;
+      let sawCancelled = false;
       let parseFailureCount = 0;
+      let sawMeaningfulStreamData = false;
 
       const ensureStreamingMessage = (state: any) => {
         let message = state.messages.find((m: any) => m.id === tempAssistantMessage.id);
@@ -642,6 +652,9 @@ export function createSendMessageHandler({
                         ? parsed
                         : parsed.content || '';
                     appendTextToStreamingMessage(contentStr);
+                    if (typeof contentStr === 'string' && contentStr.trim().length > 0) {
+                      sawMeaningfulStreamData = true;
+                    }
                   }
 
             } else if (parsed.type === 'thinking') {
@@ -687,6 +700,7 @@ export function createSendMessageHandler({
                       }
                       persistStreamingMessageDraft(state, message);
                     });
+                    sawMeaningfulStreamData = true;
                   }
             } else if (parsed.type === 'content') {
                   // 兼容旧格式: {type: 'content', content: '...'}
@@ -697,6 +711,9 @@ export function createSendMessageHandler({
                       ? parsed
                       : parsed.content || '';
                   appendTextToStreamingMessage(contentStr);
+                  if (typeof contentStr === 'string' && contentStr.trim().length > 0) {
+                    sawMeaningfulStreamData = true;
+                  }
 
             } else if (parsed.type === 'tools_start') {
                   // 处理工具调用事件
@@ -781,6 +798,7 @@ export function createSendMessageHandler({
                     (message as any).updatedAt = new Date();
                     persistStreamingMessageDraft(state, message);
                   });
+                  sawMeaningfulStreamData = true;
             } else if (parsed.type === 'tools_end') {
                   // 处理工具结果事件
                   debugLog('🔧 收到工具结果:', parsed.data);
@@ -865,6 +883,7 @@ export function createSendMessageHandler({
                     (message as any).updatedAt = new Date();
                     persistStreamingMessageDraft(state, message);
                   });
+                  sawMeaningfulStreamData = true;
             } else if (parsed.type === 'tools_stream') {
                   // 处理工具流式返回内容
                   debugLog('🔧 收到工具流式数据:', parsed.data);
@@ -1021,6 +1040,7 @@ export function createSendMessageHandler({
                       persistStreamingMessageDraft(state, message);
                     }
                   });
+                  sawMeaningfulStreamData = true;
             } else if (parsed.type === 'error') {
               const streamError = resolveStreamErrorPayload(parsed);
               throw new Error(
@@ -1047,9 +1067,11 @@ export function createSendMessageHandler({
                       persistStreamingMessageDraft(state, message);
                     }
                   });
-                  debugLog('⚠️ 流式会话已被取消');
-                  sawDone = true;
-                  break;
+                  // 仅标记“已收到取消事件”，继续等待后端 done / complete，
+                  // 避免前端在 stop 请求返回后立即结束。
+                  debugLog('⚠️ 收到取消事件，等待后端完成信号...');
+                  sawCancelled = true;
+                  continue;
             } else if (parsed.type === 'done') {
                   debugLog('✅ 收到完成信号');
                   sawDone = true;
@@ -1067,7 +1089,22 @@ export function createSendMessageHandler({
           if (done) {
             debugLog('✅ 流式响应完成');
             if (!sawDone) {
-              throw new Error('流式响应在完成前中断，请稍后重试');
+              if (sawCancelled) {
+                // 某些后端实现只会发送 cancelled，然后直接关闭连接，不再额外发送 done。
+                // 此时按正常取消完成处理，避免误判为中断错误。
+                debugLog('⚠️ 未收到 done/complete，但已收到 cancelled，按取消完成处理');
+                sawDone = true;
+                break;
+              }
+              const hasBufferedText =
+                typeof streamedTextBuffer === 'string' && streamedTextBuffer.trim().length > 0;
+              if (sawMeaningfulStreamData || hasBufferedText) {
+                // Some providers/gateways close stream without explicit done marker.
+                debugLog('⚠️ 未收到 done/complete 事件，按已接收流数据正常结束');
+                sawDone = true;
+              } else {
+                throw new Error('流式响应在完成前中断，请稍后重试');
+              }
             }
             break;
           }
@@ -1105,8 +1142,8 @@ export function createSendMessageHandler({
             state.sessionStreamingMessageDrafts[currentSessionId] = backgroundFinalizedDraft;
           }
 
-          const prev = state.sessionChatState[currentSessionId] || { isLoading: false, isStreaming: false, streamingMessageId: null };
-          state.sessionChatState[currentSessionId] = { ...prev, isLoading: false, isStreaming: false, streamingMessageId: null };
+          const prev = state.sessionChatState[currentSessionId] || defaultSessionChatState;
+          state.sessionChatState[currentSessionId] = { ...prev, isLoading: false, isStreaming: false, isStopping: false, streamingMessageId: null };
           if (state.currentSessionId === currentSessionId) {
             state.isLoading = false;
             state.isStreaming = false;
@@ -1169,8 +1206,8 @@ export function createSendMessageHandler({
             : cloneStreamingMessageDraft(failureAssistantMessage);
         }
 
-        const prev = state.sessionChatState[currentSessionId] || { isLoading: false, isStreaming: false, streamingMessageId: null };
-        state.sessionChatState[currentSessionId] = { ...prev, isLoading: false, isStreaming: false, streamingMessageId: null };
+        const prev = state.sessionChatState[currentSessionId] || defaultSessionChatState;
+        state.sessionChatState[currentSessionId] = { ...prev, isLoading: false, isStreaming: false, isStopping: false, streamingMessageId: null };
         if (state.currentSessionId === currentSessionId) {
           state.isLoading = false;
           state.isStreaming = false;

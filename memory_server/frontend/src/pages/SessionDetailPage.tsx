@@ -138,12 +138,7 @@ export function SessionDetailPage({ sessionId, onBack }: SessionDetailPageProps)
       key: 'source_message_count',
       width: 120,
     },
-    {
-      title: t('summaryLevels.rollup'),
-      dataIndex: 'rollup_status',
-      key: 'rollup_status',
-      width: 120,
-    },
+    { title: t('summaryLevels.status'), dataIndex: 'status', key: 'status', width: 120 },
     {
       title: t('sessionDetail.createdAt'),
       dataIndex: 'created_at',
@@ -344,8 +339,7 @@ export function SessionDetailPage({ sessionId, onBack }: SessionDetailPageProps)
   const nodeColumns: ColumnsType<GraphNodeRow> = [
     { title: t('summaryLevels.nodeLabel'), dataIndex: 'label', key: 'label', width: 260, ellipsis: true },
     { title: t('summaryLevels.level'), dataIndex: 'level', key: 'level', width: 80 },
-    { title: t('summaryLevels.status'), dataIndex: 'status', key: 'status', width: 120 },
-    { title: t('summaryLevels.rollup'), dataIndex: 'rollup_status', key: 'rollup_status', width: 130 },
+    { title: t('summaryLevels.status'), dataIndex: 'status', key: 'status', width: 130 },
     { title: t('summaryLevels.parentNode'), dataIndex: 'parent_label', key: 'parent_label', width: 260, ellipsis: true },
     { title: t('summaryLevels.childCount'), dataIndex: 'child_count', key: 'child_count', width: 100 },
     { title: t('summaryLevels.idRef'), dataIndex: 'id', key: 'id', width: 120, render: (value: string) => value.slice(0, 8) },

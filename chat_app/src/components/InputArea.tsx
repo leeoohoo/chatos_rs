@@ -19,6 +19,7 @@ export const InputArea: React.FC<InputAreaProps> = ({
   onStop,
   disabled = false,
   isStreaming = false,
+  isStopping = false,
   placeholder = 'Type your message...',
   maxLength = 4000,
   allowAttachments = false,
@@ -874,13 +875,13 @@ export const InputArea: React.FC<InputAreaProps> = ({
           <button
             type="button"
             onClick={() => onReasoningToggle?.(!reasoningEnabled)}
-            disabled={disabled || isStreaming}
+            disabled={disabled || isStreaming || isStopping}
             className={cn(
               'flex-shrink-0 px-2 py-1 text-xs rounded-md transition-colors',
               reasoningEnabled
                 ? 'bg-primary text-primary-foreground hover:bg-primary/90'
                 : 'bg-muted text-muted-foreground hover:text-foreground',
-              (disabled || isStreaming) && 'opacity-50 cursor-not-allowed'
+              (disabled || isStreaming || isStopping) && 'opacity-50 cursor-not-allowed'
             )}
             title={reasoningEnabled ? '推理已开启' : '推理已关闭'}
           >
@@ -919,31 +920,39 @@ export const InputArea: React.FC<InputAreaProps> = ({
         {isStreaming ? (
           <button
             onClick={() => {
-              if (onStop) {
+              if (onStop && !isStopping) {
                 onStop();
               }
             }}
-            disabled={false}
+            disabled={isStopping}
             className={cn(
               'flex-shrink-0 p-2 rounded-md transition-colors',
-              'bg-red-500 text-white hover:bg-red-600',
+              isStopping
+                ? 'bg-amber-500 text-white'
+                : 'bg-red-500 text-white hover:bg-red-600',
               'disabled:opacity-50 disabled:cursor-not-allowed'
             )}
-            title="停止生成"
-            style={{ backgroundColor: '#ef4444', color: 'white' }}
+            title={isStopping ? '停止中...' : '停止生成'}
+            style={{ backgroundColor: isStopping ? '#f59e0b' : '#ef4444', color: 'white' }}
           >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 6h12v12H6z" />
-            </svg>
+            {isStopping ? (
+              <svg className="w-5 h-5 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3a9 9 0 109 9" />
+              </svg>
+            ) : (
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 6h12v12H6z" />
+              </svg>
+            )}
           </button>
         ) : (
           <button
             onClick={handleSend}
-            disabled={disabled || isStreaming || (!message.trim() && attachments.length === 0)}
+            disabled={disabled || isStreaming || isStopping || (!message.trim() && attachments.length === 0)}
             className={cn(
               'flex-shrink-0 p-2 rounded-md transition-colors',
               'disabled:opacity-50 disabled:cursor-not-allowed',
-              (message.trim() || attachments.length > 0) && !disabled && !isStreaming
+              (message.trim() || attachments.length > 0) && !disabled && !isStreaming && !isStopping
                 ? 'bg-primary text-primary-foreground hover:bg-primary/90'
                 : 'text-muted-foreground'
             )}

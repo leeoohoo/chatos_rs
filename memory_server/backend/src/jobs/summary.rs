@@ -293,7 +293,7 @@ async fn process_session(
             source_end_message_id: selected.last().map(|m| m.id.clone()),
             source_message_count: selected.len() as i64,
             source_estimated_tokens: selected_tokens,
-            status: "done".to_string(),
+            status: "pending".to_string(),
             error_message: None,
             level: 0,
         },

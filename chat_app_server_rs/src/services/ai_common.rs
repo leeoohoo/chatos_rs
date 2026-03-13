@@ -240,19 +240,35 @@ where
 {
     let mut buffer = String::new();
 
-    while let Some(chunk) = stream.next().await {
-        if let Some(token) = token.as_ref() {
-            if token.is_cancelled() {
-                return Err("aborted".to_string());
-            }
-        }
-
+    let mut process_chunk = |chunk: Result<bytes::Bytes, E>| -> Result<(), String> {
         let bytes = chunk.map_err(|err| err.to_string())?;
         let text = String::from_utf8_lossy(&bytes).to_string();
         buffer.push_str(&text);
 
         for event in drain_sse_json_events(&mut buffer) {
             on_event(event);
+        }
+
+        Ok(())
+    };
+
+    if let Some(token) = token {
+        loop {
+            tokio::select! {
+                _ = token.cancelled() => {
+                    return Err("aborted".to_string());
+                }
+                next = stream.next() => {
+                    match next {
+                        Some(chunk) => process_chunk(chunk)?,
+                        None => break,
+                    }
+                }
+            }
+        }
+    } else {
+        while let Some(chunk) = stream.next().await {
+            process_chunk(chunk)?;
         }
     }
 
@@ -680,6 +696,34 @@ mod tests {
                 .and_then(|value| value.as_str()),
             Some("summary text")
         );
+    }
+
+    #[tokio::test]
+    async fn consume_sse_stream_returns_aborted_immediately_when_token_cancelled() {
+        use futures::stream;
+        use tokio::time::{sleep, timeout, Duration};
+
+        let token = CancellationToken::new();
+        let cancel_token = token.clone();
+        tokio::spawn(async move {
+            sleep(Duration::from_millis(20)).await;
+            cancel_token.cancel();
+        });
+
+        let mut events = Vec::new();
+        let result = timeout(
+            Duration::from_millis(300),
+            consume_sse_stream(
+                stream::pending::<Result<bytes::Bytes, String>>(),
+                Some(token),
+                |event| events.push(event),
+            ),
+        )
+        .await
+        .expect("consume_sse_stream should not hang after cancellation");
+
+        assert_eq!(result, Err("aborted".to_string()));
+        assert!(events.is_empty());
     }
 
     #[tokio::test]

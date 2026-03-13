@@ -79,6 +79,13 @@ export interface SessionAiSelection {
   selectedAgentId: string | null;
 }
 
+export interface SessionChatState {
+  isLoading: boolean;
+  isStreaming: boolean;
+  isStopping: boolean;
+  streamingMessageId: string | null;
+}
+
 export interface ChatState {
   // 会话相关
   sessions: Session[];
@@ -107,7 +114,7 @@ export interface ChatState {
   isStreaming: boolean;
   streamingMessageId: string | null;
   hasMoreMessages: boolean;
-  sessionChatState: Record<string, { isLoading: boolean; isStreaming: boolean; streamingMessageId: string | null }>;
+  sessionChatState: Record<string, SessionChatState>;
   sessionStreamingMessageDrafts: Record<string, Message | null>;
   sessionTurnProcessState: Record<string, Record<string, { expanded: boolean; loaded: boolean; loading: boolean }>>;
   sessionTurnProcessCache: Record<string, Record<string, Message[]>>;

@@ -73,7 +73,6 @@ export function SummaryLevelsPage({ sessionId }: SummaryLevelsPageProps) {
     },
     { title: t('summaryLevels.level'), dataIndex: 'level', key: 'level', width: 80 },
     { title: t('summaryLevels.status'), dataIndex: 'status', key: 'status', width: 120 },
-    { title: t('summaryLevels.rollup'), dataIndex: 'rollup_status', key: 'rollup_status', width: 130 },
     {
       title: t('summaryLevels.parent'),
       dataIndex: 'rollup_summary_id',

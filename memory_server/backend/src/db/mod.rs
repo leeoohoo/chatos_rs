@@ -1,4 +1,4 @@
-use mongodb::bson::doc;
+use mongodb::bson::{doc, Bson};
 use mongodb::options::{ClientOptions, IndexOptions};
 use mongodb::{Client, Collection, Database, IndexModel};
 use tracing::info;
@@ -70,7 +70,7 @@ pub async fn init_schema(db: &Db) -> Result<(), String> {
     .await?;
     ensure_index(
         db.collection::<mongodb::bson::Document>("session_summaries_v2"),
-        doc! {"session_id": 1, "level": 1, "status": 1, "rollup_status": 1, "created_at": 1},
+        doc! {"session_id": 1, "level": 1, "status": 1, "created_at": 1},
     )
     .await?;
     ensure_index(
@@ -124,7 +124,62 @@ pub async fn init_schema(db: &Db) -> Result<(), String> {
     )
     .await?;
 
+    normalize_summary_status(db).await?;
+
     info!("[MEMORY-SERVER] mongodb indexes initialized");
+    Ok(())
+}
+
+async fn normalize_summary_status(db: &Db) -> Result<(), String> {
+    let collection = db.collection::<mongodb::bson::Document>("session_summaries_v2");
+
+    // Legacy data compatibility:
+    // 1) rollup_status=summarized -> status=summarized
+    // 2) status=done/missing + not summarized -> status=pending
+    let to_summarized = collection
+        .update_many(
+            doc! {
+                "rollup_status": "summarized",
+                "status": {"$ne": "summarized"}
+            },
+            doc! { "$set": { "status": "summarized" } },
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let to_pending = collection
+        .update_many(
+            doc! {
+                "$and": [
+                    {
+                        "$or": [
+                            {"status": "done"},
+                            {"status": "pending"},
+                            {"status": {"$exists": false}},
+                            {"status": Bson::Null}
+                        ]
+                    },
+                    {
+                        "$or": [
+                            {"rollup_status": {"$ne": "summarized"}},
+                            {"rollup_status": {"$exists": false}},
+                            {"rollup_status": Bson::Null}
+                        ]
+                    }
+                ]
+            },
+            doc! { "$set": { "status": "pending" } },
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if to_summarized.modified_count > 0 || to_pending.modified_count > 0 {
+        info!(
+            "[MEMORY-SERVER] summary status normalized: summarized={}, pending={}",
+            to_summarized.modified_count, to_pending.modified_count
+        );
+    }
+
     Ok(())
 }
 
