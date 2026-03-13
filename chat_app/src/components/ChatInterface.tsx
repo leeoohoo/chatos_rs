@@ -222,6 +222,14 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [uiPromptHistoryLoading, setUiPromptHistoryLoading] = useState(false);
   const [uiPromptHistoryError, setUiPromptHistoryError] = useState<string | null>(null);
   const [uiPromptHistoryLoadedSessionId, setUiPromptHistoryLoadedSessionId] = useState<string | null>(null);
+  const currentSessionRef = useRef<string | null>(null);
+  const lastHydratedChatSessionRef = useRef<string | null>(null);
+  const currentTurnLoadSeqRef = useRef(0);
+  const historyLoadSeqRef = useRef(0);
+  const summariesLoadSeqRef = useRef(0);
+  const summariesLoadMoreSeqRef = useRef(0);
+  const uiPromptHistoryLoadSeqRef = useRef(0);
+  const uiPromptHistoryCacheRef = useRef<Map<string, UiPromptHistoryItem[]>>(new Map());
 
   const activeTaskReviewPanel = useMemo(() => {
     if (!currentSession) {
@@ -276,6 +284,10 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const currentSessionIdForUiPrompts = currentSession?.id || null;
 
   useEffect(() => {
+    currentSessionRef.current = currentSession?.id || null;
+  }, [currentSession?.id]);
+
+  useEffect(() => {
     if (!currentSessionIdForUiPrompts || activePanel !== 'chat') {
       return;
     }
@@ -306,14 +318,28 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       setUiPromptHistoryItems([]);
       setUiPromptHistoryError(null);
       setUiPromptHistoryLoadedSessionId(null);
+      setUiPromptHistoryLoading(false);
       return;
     }
 
+    const cached = uiPromptHistoryCacheRef.current.get(sessionId);
     if (!force && uiPromptHistoryLoadedSessionId === sessionId && uiPromptHistoryItems.length > 0) {
       return;
     }
+    if (!force && cached) {
+      setUiPromptHistoryItems(cached);
+      setUiPromptHistoryError(null);
+      setUiPromptHistoryLoadedSessionId(sessionId);
+      setUiPromptHistoryLoading(false);
+      return;
+    }
 
-    setUiPromptHistoryLoading(true);
+    const requestSeq = uiPromptHistoryLoadSeqRef.current + 1;
+    uiPromptHistoryLoadSeqRef.current = requestSeq;
+    const shouldShowLoading = force || !cached;
+    if (shouldShowLoading) {
+      setUiPromptHistoryLoading(true);
+    }
     setUiPromptHistoryError(null);
     try {
       const records = await apiClient.getUiPromptHistory(sessionId, { limit: 200 });
@@ -322,12 +348,30 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
             .map((item) => normalizeUiPromptHistoryItem(item))
             .filter((item): item is UiPromptHistoryItem => item !== null)
         : [];
+      uiPromptHistoryCacheRef.current.set(sessionId, normalized);
+      if (
+        uiPromptHistoryLoadSeqRef.current !== requestSeq
+        || currentSessionRef.current !== sessionId
+      ) {
+        return;
+      }
       setUiPromptHistoryItems(normalized);
       setUiPromptHistoryLoadedSessionId(sessionId);
     } catch (error) {
+      if (
+        uiPromptHistoryLoadSeqRef.current !== requestSeq
+        || currentSessionRef.current !== sessionId
+      ) {
+        return;
+      }
       setUiPromptHistoryError(error instanceof Error ? error.message : '交互确认记录加载失败');
     } finally {
-      setUiPromptHistoryLoading(false);
+      if (
+        uiPromptHistoryLoadSeqRef.current === requestSeq
+        && currentSessionRef.current === sessionId
+      ) {
+        setUiPromptHistoryLoading(false);
+      }
     }
   }, [apiClient, uiPromptHistoryItems.length, uiPromptHistoryLoadedSessionId]);
 
@@ -403,9 +447,12 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     if (!sessionId) {
       setWorkbarCurrentTurnTasks([]);
       setWorkbarError(null);
+      setWorkbarLoading(false);
       return;
     }
 
+    const requestSeq = currentTurnLoadSeqRef.current + 1;
+    currentTurnLoadSeqRef.current = requestSeq;
     const turnId = typeof conversationTurnId === 'string' ? conversationTurnId.trim() : '';
 
     setWorkbarLoading(true);
@@ -430,11 +477,28 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         normalizedTasks = selectLatestTurnTasks(fallbackTasks.map(normalizeWorkbarTask));
       }
 
+      if (
+        currentTurnLoadSeqRef.current !== requestSeq
+        || currentSessionRef.current !== sessionId
+      ) {
+        return;
+      }
       setWorkbarCurrentTurnTasks(normalizedTasks);
     } catch (error) {
+      if (
+        currentTurnLoadSeqRef.current !== requestSeq
+        || currentSessionRef.current !== sessionId
+      ) {
+        return;
+      }
       setWorkbarError(error instanceof Error ? error.message : '任务操作失败');
     } finally {
-      setWorkbarLoading(false);
+      if (
+        currentTurnLoadSeqRef.current === requestSeq
+        && currentSessionRef.current === sessionId
+      ) {
+        setWorkbarLoading(false);
+      }
     }
   }, [apiClient]);
 
@@ -443,6 +507,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       setWorkbarHistoryTasks([]);
       setWorkbarHistoryError(null);
       setWorkbarHistoryLoadedSessionId(null);
+      setWorkbarHistoryLoading(false);
       return;
     }
 
@@ -450,6 +515,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       return;
     }
 
+    const requestSeq = historyLoadSeqRef.current + 1;
+    historyLoadSeqRef.current = requestSeq;
     setWorkbarHistoryLoading(true);
     setWorkbarHistoryError(null);
     try {
@@ -457,12 +524,29 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         includeDone: true,
         limit: 300,
       });
+      if (
+        historyLoadSeqRef.current !== requestSeq
+        || currentSessionRef.current !== sessionId
+      ) {
+        return;
+      }
       setWorkbarHistoryTasks(tasks.map(normalizeWorkbarTask));
       setWorkbarHistoryLoadedSessionId(sessionId);
     } catch (error) {
+      if (
+        historyLoadSeqRef.current !== requestSeq
+        || currentSessionRef.current !== sessionId
+      ) {
+        return;
+      }
       setWorkbarHistoryError(error instanceof Error ? error.message : '\u4efb\u52a1\u52a0\u8f7d\u5931\u8d25');
     } finally {
-      setWorkbarHistoryLoading(false);
+      if (
+        historyLoadSeqRef.current === requestSeq
+        && currentSessionRef.current === sessionId
+      ) {
+        setWorkbarHistoryLoading(false);
+      }
     }
   }, [apiClient, workbarHistoryLoadedSessionId, workbarHistoryTasks.length]);
 
@@ -472,6 +556,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       setWorkbarSummariesTotal(0);
       setWorkbarSummariesLoadedSessionId(null);
       setWorkbarSummariesError(null);
+      setWorkbarSummariesLoading(false);
       setWorkbarSummariesLoadingMore(false);
       return;
     }
@@ -480,6 +565,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       return;
     }
 
+    const requestSeq = summariesLoadSeqRef.current + 1;
+    summariesLoadSeqRef.current = requestSeq;
     setWorkbarSummariesLoading(true);
     setWorkbarSummariesLoadingMore(false);
     setWorkbarSummariesError(null);
@@ -491,14 +578,31 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       const items = Array.isArray(payload?.items)
         ? payload.items.map(normalizeWorkbarSummary)
         : [];
+      if (
+        summariesLoadSeqRef.current !== requestSeq
+        || currentSessionRef.current !== sessionId
+      ) {
+        return;
+      }
       setWorkbarSummaries(items);
       const total = typeof payload?.total === 'number' ? payload.total : items.length;
       setWorkbarSummariesTotal(Math.max(total, items.length));
       setWorkbarSummariesLoadedSessionId(sessionId);
     } catch (error) {
+      if (
+        summariesLoadSeqRef.current !== requestSeq
+        || currentSessionRef.current !== sessionId
+      ) {
+        return;
+      }
       setWorkbarSummariesError(error instanceof Error ? error.message : '会话总结加载失败');
     } finally {
-      setWorkbarSummariesLoading(false);
+      if (
+        summariesLoadSeqRef.current === requestSeq
+        && currentSessionRef.current === sessionId
+      ) {
+        setWorkbarSummariesLoading(false);
+      }
     }
   }, [apiClient, workbarSummariesLoadedSessionId]);
 
@@ -515,6 +619,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     }
 
     const offset = workbarSummaries.length;
+    const requestSeq = summariesLoadMoreSeqRef.current + 1;
+    summariesLoadMoreSeqRef.current = requestSeq;
     setWorkbarSummariesLoadingMore(true);
     setWorkbarSummariesError(null);
     try {
@@ -525,13 +631,30 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       const items = Array.isArray(payload?.items)
         ? payload.items.map(normalizeWorkbarSummary)
         : [];
+      if (
+        summariesLoadMoreSeqRef.current !== requestSeq
+        || currentSessionRef.current !== sessionId
+      ) {
+        return;
+      }
       setWorkbarSummaries((previous) => appendUniqueSummaries(previous, items));
       const total = typeof payload?.total === 'number' ? payload.total : workbarSummariesTotal;
       setWorkbarSummariesTotal(Math.max(total, offset + items.length));
     } catch (error) {
+      if (
+        summariesLoadMoreSeqRef.current !== requestSeq
+        || currentSessionRef.current !== sessionId
+      ) {
+        return;
+      }
       setWorkbarSummariesError(error instanceof Error ? error.message : '会话总结加载失败');
     } finally {
-      setWorkbarSummariesLoadingMore(false);
+      if (
+        summariesLoadMoreSeqRef.current === requestSeq
+        && currentSessionRef.current === sessionId
+      ) {
+        setWorkbarSummariesLoadingMore(false);
+      }
     }
   }, [
     apiClient,
@@ -561,10 +684,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       loadWorkbarSummaries(currentSession.id, true),
     ]);
   }, [activeConversationTurnId, currentSession, loadCurrentTurnWorkbarTasks, loadHistoryWorkbarTasks, loadWorkbarSummaries]);
-
-  useEffect(() => {
-    handledTaskMutationKeysRef.current.clear();
-  }, [currentSession?.id]);
 
   useEffect(() => {
     if (!currentSession || activePanel !== 'chat') {
@@ -605,12 +724,23 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     }
 
     pendingKeys.forEach((key) => handled.add(key));
-    void refreshWorkbarTasks();
+    if (handled.size > 2048) {
+      const tail = Array.from(handled).slice(-1024);
+      handled.clear();
+      tail.forEach((key) => handled.add(key));
+    }
+    void loadCurrentTurnWorkbarTasks(currentSession.id, activeConversationTurnId);
+    if (sessionSummaryPaneVisible) {
+      void loadWorkbarSummaries(currentSession.id, true);
+    }
   }, [
+    activeConversationTurnId,
     activePanel,
     currentSession,
+    loadCurrentTurnWorkbarTasks,
+    loadWorkbarSummaries,
     messages,
-    refreshWorkbarTasks,
+    sessionSummaryPaneVisible,
   ]);
 
   const {
@@ -645,6 +775,12 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
   useEffect(() => {
     if (!currentSession || activePanel !== 'chat') {
+      currentTurnLoadSeqRef.current += 1;
+      historyLoadSeqRef.current += 1;
+      summariesLoadSeqRef.current += 1;
+      summariesLoadMoreSeqRef.current += 1;
+      uiPromptHistoryLoadSeqRef.current += 1;
+      lastHydratedChatSessionRef.current = null;
       setWorkbarCurrentTurnTasks([]);
       setWorkbarHistoryTasks([]);
       setWorkbarSummaries([]);
@@ -652,28 +788,60 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       setWorkbarError(null);
       setWorkbarHistoryError(null);
       setWorkbarSummariesError(null);
+      setWorkbarLoading(false);
+      setWorkbarHistoryLoading(false);
+      setWorkbarSummariesLoading(false);
       setWorkbarHistoryLoadedSessionId(null);
       setWorkbarSummariesLoadedSessionId(null);
       setWorkbarSummariesLoadingMore(false);
       setUiPromptHistoryItems([]);
       setUiPromptHistoryError(null);
       setUiPromptHistoryLoadedSessionId(null);
+      setUiPromptHistoryLoading(false);
       setUiPromptHistoryOpen(false);
       return;
     }
 
+    const sessionChanged = lastHydratedChatSessionRef.current !== currentSession.id;
+    if (sessionChanged) {
+      lastHydratedChatSessionRef.current = currentSession.id;
+      historyLoadSeqRef.current += 1;
+      summariesLoadSeqRef.current += 1;
+      summariesLoadMoreSeqRef.current += 1;
+      uiPromptHistoryLoadSeqRef.current += 1;
+      setWorkbarHistoryTasks([]);
+      setWorkbarHistoryError(null);
+      setWorkbarHistoryLoadedSessionId(null);
+      setWorkbarHistoryLoading(false);
+      setWorkbarSummaries([]);
+      setWorkbarSummariesTotal(0);
+      setWorkbarSummariesError(null);
+      setWorkbarSummariesLoadedSessionId(null);
+      setWorkbarSummariesLoading(false);
+      setWorkbarSummariesLoadingMore(false);
+      const cachedUiPromptHistory = uiPromptHistoryCacheRef.current.get(currentSession.id);
+      setUiPromptHistoryItems(cachedUiPromptHistory ? [...cachedUiPromptHistory] : []);
+      setUiPromptHistoryError(null);
+      setUiPromptHistoryLoadedSessionId(cachedUiPromptHistory ? currentSession.id : null);
+      setUiPromptHistoryLoading(false);
+    }
+
     void loadCurrentTurnWorkbarTasks(currentSession.id, activeConversationTurnId);
-    void loadHistoryWorkbarTasks(currentSession.id);
-    void loadWorkbarSummaries(currentSession.id);
-    void loadUiPromptHistory(currentSession.id);
+    if (sessionSummaryPaneVisible) {
+      void loadWorkbarSummaries(currentSession.id);
+    }
+    if (uiPromptHistoryOpen) {
+      void loadUiPromptHistory(currentSession.id);
+    }
   }, [
     activeConversationTurnId,
     activePanel,
     currentSession,
     loadCurrentTurnWorkbarTasks,
-    loadHistoryWorkbarTasks,
     loadWorkbarSummaries,
     loadUiPromptHistory,
+    sessionSummaryPaneVisible,
+    uiPromptHistoryOpen,
   ]);
 
   // 澶勭悊娑堟伅鍙戦€?
@@ -882,7 +1050,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                       }}
                       onOpenUiPromptHistory={(sessionId) => {
                         setUiPromptHistoryOpen(true);
-                        void loadUiPromptHistory(sessionId, true);
+                        void loadUiPromptHistory(sessionId);
                       }}
                       uiPromptHistoryCount={uiPromptHistoryItems.length}
                       uiPromptHistoryLoading={uiPromptHistoryLoading}
