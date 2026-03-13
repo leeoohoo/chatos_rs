@@ -1,4 +1,6 @@
+use futures_util::TryStreamExt;
 use mongodb::bson::doc;
+use mongodb::options::FindOptions;
 use sha2::{Digest, Sha256};
 
 use crate::db::Db;
@@ -59,7 +61,12 @@ pub async fn get_user_by_id(db: &Db, user_id: &str) -> Result<Option<AuthUser>, 
         .map_err(|e| e.to_string())
 }
 
-pub async fn create_user(db: &Db, user_id: &str, password: &str, role: &str) -> Result<AuthUser, String> {
+pub async fn create_user(
+    db: &Db,
+    user_id: &str,
+    password: &str,
+    role: &str,
+) -> Result<AuthUser, String> {
     let now = now_rfc3339();
     let user = AuthUser {
         user_id: user_id.to_string(),
@@ -77,6 +84,46 @@ pub async fn create_user(db: &Db, user_id: &str, password: &str, role: &str) -> 
     Ok(user)
 }
 
+pub async fn update_user(
+    db: &Db,
+    user_id: &str,
+    password: Option<&str>,
+    role: Option<&str>,
+) -> Result<Option<AuthUser>, String> {
+    let Some(existing) = get_user_by_id(db, user_id).await? else {
+        return Ok(None);
+    };
+
+    let mut update_fields = doc! {
+        "updated_at": now_rfc3339(),
+    };
+
+    if let Some(password) = password {
+        update_fields.insert("password_hash", hash_password(password));
+    }
+    if let Some(role) = role {
+        update_fields.insert("role", role);
+    }
+
+    collection(db)
+        .update_one(
+            doc! {"user_id": &existing.user_id},
+            doc! {"$set": update_fields},
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+    get_user_by_id(db, user_id).await
+}
+
+pub async fn delete_user(db: &Db, user_id: &str) -> Result<bool, String> {
+    let result = collection(db)
+        .delete_one(doc! {"user_id": user_id})
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(result.deleted_count > 0)
+}
+
 pub async fn verify_user_password(
     db: &Db,
     user_id: &str,
@@ -92,4 +139,19 @@ pub async fn verify_user_password(
     } else {
         Ok(None)
     }
+}
+
+pub async fn list_users(db: &Db, limit: i64) -> Result<Vec<AuthUser>, String> {
+    let options = FindOptions::builder()
+        .sort(doc! {"created_at": 1, "user_id": 1})
+        .limit(Some(limit.max(1)))
+        .build();
+
+    let cursor = collection(db)
+        .find(doc! {})
+        .with_options(options)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    cursor.try_collect().await.map_err(|e| e.to_string())
 }

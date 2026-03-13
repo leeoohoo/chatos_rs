@@ -118,7 +118,8 @@ pub async fn job_stats(db: &Db) -> Result<serde_json::Value, String> {
         .aggregate(pipeline)
         .await
         .map_err(|e| e.to_string())?;
-    let docs: Vec<mongodb::bson::Document> = cursor.try_collect().await.map_err(|e| e.to_string())?;
+    let docs: Vec<mongodb::bson::Document> =
+        cursor.try_collect().await.map_err(|e| e.to_string())?;
 
     let mut map = serde_json::Map::new();
     for doc in docs {

@@ -13,8 +13,8 @@ use crate::ai::AiClient;
 use crate::jobs;
 use crate::models::{
     BatchCreateMessagesRequest, ComposeContextRequest, CreateMessageRequest, CreateSessionRequest,
-    UpsertAiModelConfigRequest, UpsertSummaryJobConfigRequest,
-    UpsertSummaryRollupJobConfigRequest, UpdateSessionRequest,
+    UpdateSessionRequest, UpsertAiModelConfigRequest, UpsertSummaryJobConfigRequest,
+    UpsertSummaryRollupJobConfigRequest,
 };
 use crate::repositories::{
     auth as auth_repo, configs, jobs as job_repo, messages, sessions, summaries,
@@ -29,18 +29,33 @@ pub fn router(state: SharedState) -> Router {
         .route("/health", get(health))
         .route("/api/memory/v1/auth/login", post(login))
         .route("/api/memory/v1/auth/me", get(me))
-        .route("/api/memory/v1/sessions", post(create_session).get(list_sessions))
+        .route(
+            "/api/memory/v1/auth/users",
+            get(list_users).post(create_user),
+        )
+        .route(
+            "/api/memory/v1/auth/users/:username",
+            patch(update_user).delete(delete_user),
+        )
+        .route(
+            "/api/memory/v1/sessions",
+            post(create_session).get(list_sessions),
+        )
         .route(
             "/api/memory/v1/sessions/:session_id/sync",
             put(sync_session),
         )
         .route(
             "/api/memory/v1/sessions/:session_id",
-            get(get_session).patch(update_session).delete(delete_session),
+            get(get_session)
+                .patch(update_session)
+                .delete(delete_session),
         )
         .route(
             "/api/memory/v1/sessions/:session_id/messages",
-            post(create_message).get(list_messages).delete(clear_session_messages),
+            post(create_message)
+                .get(list_messages)
+                .delete(clear_session_messages),
         )
         .route(
             "/api/memory/v1/sessions/:session_id/messages/:message_id/sync",
@@ -140,40 +155,24 @@ async fn login(
         );
     }
 
-    let verified = match auth_repo::verify_user_password(&state.pool, username.as_str(), password.as_str()).await
-    {
-        Ok(Some(user)) => Some(user),
-        Ok(None) => None,
-        Err(err) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "login failed", "detail": err})),
-            )
-        }
-    };
-
-    let user = if let Some(user) = verified {
-        user
-    } else {
-        if username == auth_repo::ADMIN_USER_ID {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(json!({"error": "invalid credentials"})),
-            );
-        }
-
-        match auth_repo::create_user(&state.pool, username.as_str(), password.as_str(), auth_repo::USER_ROLE)
+    let user =
+        match auth_repo::verify_user_password(&state.pool, username.as_str(), password.as_str())
             .await
         {
-            Ok(v) => v,
-            Err(err) => {
+            Ok(Some(user)) => user,
+            Ok(None) => {
                 return (
                     StatusCode::UNAUTHORIZED,
-                    Json(json!({"error": "invalid credentials", "detail": err})),
+                    Json(json!({"error": "invalid credentials"})),
                 )
             }
-        }
-    };
+            Err(err) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": "login failed", "detail": err})),
+                )
+            }
+        };
 
     let token = build_auth_token(
         user.user_id.as_str(),
@@ -186,16 +185,13 @@ async fn login(
         StatusCode::OK,
         Json(json!({
             "token": token,
-            "user_id": user.user_id,
+            "username": user.user_id,
             "role": user.role
         })),
     )
 }
 
-async fn me(
-    State(state): State<SharedState>,
-    headers: HeaderMap,
-) -> (StatusCode, Json<Value>) {
+async fn me(State(state): State<SharedState>, headers: HeaderMap) -> (StatusCode, Json<Value>) {
     let auth = match resolve_identity(&headers, state.as_ref()) {
         Ok(v) => v,
         Err(err) => return err,
@@ -204,10 +200,282 @@ async fn me(
     (
         StatusCode::OK,
         Json(json!({
-            "user_id": auth.user_id,
+            "username": auth.user_id,
             "role": auth.role
         })),
     )
+}
+
+#[derive(Debug, Deserialize)]
+struct ListUsersQuery {
+    limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateUserRequest {
+    username: String,
+    password: String,
+    role: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateUserRequest {
+    password: Option<String>,
+    role: Option<String>,
+}
+
+fn auth_user_json(user: &auth_repo::AuthUser) -> Value {
+    json!({
+        "username": user.user_id,
+        "role": user.role,
+        "created_at": user.created_at,
+        "updated_at": user.updated_at,
+    })
+}
+
+async fn list_users(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Query(q): Query<ListUsersQuery>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match resolve_identity(&headers, state.as_ref()) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+
+    if auth.is_admin() {
+        let limit = q.limit.unwrap_or(500).max(1);
+        return match auth_repo::list_users(&state.pool, limit).await {
+            Ok(items) => (
+                StatusCode::OK,
+                Json(json!({
+                    "items": items
+                        .into_iter()
+                        .map(|u| auth_user_json(&u))
+                        .collect::<Vec<Value>>()
+                })),
+            ),
+            Err(err) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "list users failed", "detail": err})),
+            ),
+        };
+    }
+
+    match auth_repo::get_user_by_id(&state.pool, auth.user_id.as_str()).await {
+        Ok(Some(user)) => (
+            StatusCode::OK,
+            Json(json!({ "items": [auth_user_json(&user)] })),
+        ),
+        Ok(None) => (StatusCode::OK, Json(json!({"items": []}))),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "load user failed", "detail": err})),
+        ),
+    }
+}
+
+fn normalize_role_input(role: Option<&str>) -> Result<String, String> {
+    let role = role
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .unwrap_or(auth_repo::USER_ROLE)
+        .to_lowercase();
+
+    if role == auth_repo::ADMIN_ROLE || role == auth_repo::USER_ROLE {
+        Ok(role)
+    } else {
+        Err("role only supports admin/user".to_string())
+    }
+}
+
+async fn create_user(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Json(req): Json<CreateUserRequest>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match resolve_identity(&headers, state.as_ref()) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    if !auth.is_admin() {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"})));
+    }
+
+    let username = req.username.trim().to_string();
+    let password = req.password.trim().to_string();
+    if username.is_empty() || password.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "username/password required"})),
+        );
+    }
+
+    let mut role = match normalize_role_input(req.role.as_deref()) {
+        Ok(v) => v,
+        Err(err) => return (StatusCode::BAD_REQUEST, Json(json!({"error": err}))),
+    };
+    if username == auth_repo::ADMIN_USER_ID {
+        role = auth_repo::ADMIN_ROLE.to_string();
+    }
+
+    match auth_repo::get_user_by_id(&state.pool, username.as_str()).await {
+        Ok(Some(_)) => {
+            return (
+                StatusCode::CONFLICT,
+                Json(json!({"error": "user already exists"})),
+            )
+        }
+        Ok(None) => {}
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "load user failed", "detail": err})),
+            )
+        }
+    }
+
+    match auth_repo::create_user(
+        &state.pool,
+        username.as_str(),
+        password.as_str(),
+        role.as_str(),
+    )
+    .await
+    {
+        Ok(user) => (StatusCode::OK, Json(auth_user_json(&user))),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "create user failed", "detail": err})),
+        ),
+    }
+}
+
+async fn update_user(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Path(username): Path<String>,
+    Json(req): Json<UpdateUserRequest>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match resolve_identity(&headers, state.as_ref()) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    if !auth.is_admin() {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"})));
+    }
+
+    let target_username = username.trim().to_string();
+    if target_username.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "username required"})),
+        );
+    }
+
+    let password = req
+        .password
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+    let mut role = match req.role.as_ref() {
+        Some(v) => match normalize_role_input(Some(v.as_str())) {
+            Ok(role) => Some(role),
+            Err(err) => return (StatusCode::BAD_REQUEST, Json(json!({"error": err}))),
+        },
+        None => None,
+    };
+
+    if password.is_none() && role.is_none() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "nothing to update"})),
+        );
+    }
+
+    if target_username == auth_repo::ADMIN_USER_ID
+        && role.as_deref() != Some(auth_repo::ADMIN_ROLE)
+        && role.is_some()
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "admin role cannot be changed"})),
+        );
+    }
+    if target_username == auth_repo::ADMIN_USER_ID {
+        role = Some(auth_repo::ADMIN_ROLE.to_string());
+    }
+
+    match auth_repo::update_user(
+        &state.pool,
+        target_username.as_str(),
+        password.as_deref(),
+        role.as_deref(),
+    )
+    .await
+    {
+        Ok(Some(user)) => (StatusCode::OK, Json(auth_user_json(&user))),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "user not found"})),
+        ),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "update user failed", "detail": err})),
+        ),
+    }
+}
+
+async fn delete_user(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Path(username): Path<String>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match resolve_identity(&headers, state.as_ref()) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    if !auth.is_admin() {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"})));
+    }
+
+    let target_username = username.trim().to_string();
+    if target_username.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "username required"})),
+        );
+    }
+    if target_username == auth_repo::ADMIN_USER_ID {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "admin user cannot be deleted"})),
+        );
+    }
+    if target_username == auth.user_id {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "cannot delete current login user"})),
+        );
+    }
+
+    if let Err(err) = configs::delete_user_configs(&state.pool, target_username.as_str()).await {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "delete user configs failed", "detail": err})),
+        );
+    }
+
+    match auth_repo::delete_user(&state.pool, target_username.as_str()).await {
+        Ok(true) => (StatusCode::OK, Json(json!({"success": true}))),
+        Ok(false) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "user not found"})),
+        ),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "delete user failed", "detail": err})),
+        ),
+    }
 }
 
 fn resolve_identity(
@@ -232,12 +500,19 @@ fn resolve_identity(
         });
 
     let Some(token) = token_from_header else {
-        return Err((StatusCode::UNAUTHORIZED, Json(json!({"error": "unauthorized"}))));
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"error": "unauthorized"})),
+        ));
     };
 
-    let parsed = parse_auth_token(token.as_str(), state.config.auth_secret.as_str()).ok_or_else(|| {
-        (StatusCode::UNAUTHORIZED, Json(json!({"error": "unauthorized"})))
-    })?;
+    let parsed =
+        parse_auth_token(token.as_str(), state.config.auth_secret.as_str()).ok_or_else(|| {
+            (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({"error": "unauthorized"})),
+            )
+        })?;
 
     Ok(AuthIdentity {
         user_id: parsed.0,
@@ -287,7 +562,10 @@ async fn ensure_session_access(
                 Err((StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"}))))
             }
         }
-        Ok(None) => Err((StatusCode::NOT_FOUND, Json(json!({"error": "session not found"})))),
+        Ok(None) => Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "session not found"})),
+        )),
         Err(err) => Err((
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": "load session failed", "detail": err})),
@@ -487,7 +765,10 @@ async fn get_session(
 
     match sessions::get_session_by_id(&state.pool, session_id.as_str()).await {
         Ok(Some(session)) => (StatusCode::OK, Json(json!(session))),
-        Ok(None) => (StatusCode::NOT_FOUND, Json(json!({"error": "session not found"}))),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "session not found"})),
+        ),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": "get session failed", "detail": err})),
@@ -511,7 +792,10 @@ async fn update_session(
 
     match sessions::update_session(&state.pool, session_id.as_str(), req).await {
         Ok(Some(session)) => (StatusCode::OK, Json(json!(session))),
-        Ok(None) => (StatusCode::NOT_FOUND, Json(json!({"error": "session not found"}))),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "session not found"})),
+        ),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": "update session failed", "detail": err})),
@@ -642,7 +926,9 @@ async fn list_messages(
     let limit = q.limit.unwrap_or(100);
     let offset = q.offset.unwrap_or(0);
 
-    match messages::list_messages_by_session(&state.pool, session_id.as_str(), limit, offset, asc).await {
+    match messages::list_messages_by_session(&state.pool, session_id.as_str(), limit, offset, asc)
+        .await
+    {
         Ok(items) => (StatusCode::OK, Json(json!({"items": items}))),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -665,7 +951,10 @@ async fn clear_session_messages(
     }
 
     match messages::delete_messages_by_session(&state.pool, session_id.as_str()).await {
-        Ok(deleted) => (StatusCode::OK, Json(json!({"deleted": deleted, "success": true}))),
+        Ok(deleted) => (
+            StatusCode::OK,
+            Json(json!({"deleted": deleted, "success": true})),
+        ),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": "clear messages failed", "detail": err})),
@@ -688,7 +977,10 @@ async fn get_message(
 
     match messages::get_message_by_id(&state.pool, message_id.as_str()).await {
         Ok(Some(item)) => (StatusCode::OK, Json(json!(item))),
-        Ok(None) => (StatusCode::NOT_FOUND, Json(json!({"error": "message not found"}))),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "message not found"})),
+        ),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": "get message failed", "detail": err})),
@@ -711,7 +1003,10 @@ async fn delete_message(
 
     match messages::delete_message_by_id(&state.pool, message_id.as_str()).await {
         Ok(true) => (StatusCode::OK, Json(json!({"success": true}))),
-        Ok(false) => (StatusCode::NOT_FOUND, Json(json!({"error": "message not found"}))),
+        Ok(false) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "message not found"})),
+        ),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": "delete message failed", "detail": err})),
@@ -867,7 +1162,10 @@ async fn delete_summary(
 
     match summaries::delete_summary(&state.pool, session_id.as_str(), summary_id.as_str()).await {
         Ok(true) => (StatusCode::OK, Json(json!({"success": true}))),
-        Ok(false) => (StatusCode::NOT_FOUND, Json(json!({"error": "summary not found"}))),
+        Ok(false) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "summary not found"})),
+        ),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": "delete summary failed", "detail": err})),
@@ -937,7 +1235,12 @@ async fn update_model_config(
     };
     let existing = match configs::get_model_config_by_id(&state.pool, model_id.as_str()).await {
         Ok(Some(cfg)) => cfg,
-        Ok(None) => return (StatusCode::NOT_FOUND, Json(json!({"error": "model config not found"}))),
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "model config not found"})),
+            )
+        }
         Err(err) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -957,7 +1260,10 @@ async fn update_model_config(
 
     match configs::update_model_config(&state.pool, model_id.as_str(), req).await {
         Ok(Some(item)) => (StatusCode::OK, Json(json!(item))),
-        Ok(None) => (StatusCode::NOT_FOUND, Json(json!({"error": "model config not found"}))),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "model config not found"})),
+        ),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": "update model config failed", "detail": err})),
@@ -1037,7 +1343,12 @@ async fn delete_model_config(
     };
     let existing = match configs::get_model_config_by_id(&state.pool, model_id.as_str()).await {
         Ok(Some(cfg)) => cfg,
-        Ok(None) => return (StatusCode::NOT_FOUND, Json(json!({"error": "model config not found"}))),
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "model config not found"})),
+            )
+        }
         Err(err) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -1074,7 +1385,12 @@ async fn test_model_config(
 
     let cfg = match configs::get_model_config_by_id(&state.pool, model_id.as_str()).await {
         Ok(Some(cfg)) => cfg,
-        Ok(None) => return (StatusCode::NOT_FOUND, Json(json!({"error": "model config not found"}))),
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "model config not found"})),
+            )
+        }
         Err(err) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,

@@ -29,7 +29,7 @@ struct RollupBatchSelection {
 }
 
 pub async fn run_once(pool: &Db, ai: &AiClient, user_id: &str) -> Result<RollupRunResult, String> {
-    let config = configs::get_summary_rollup_job_config(pool, user_id).await?;
+    let config = configs::get_effective_summary_rollup_job_config(pool, user_id).await?;
     if config.enabled != 1 {
         return Ok(RollupRunResult {
             processed_sessions: 0,
@@ -40,7 +40,8 @@ pub async fn run_once(pool: &Db, ai: &AiClient, user_id: &str) -> Result<RollupR
         });
     }
 
-    let model_cfg = resolve_model_config(pool, user_id, config.summary_model_config_id.as_deref()).await?;
+    let model_cfg =
+        resolve_model_config(pool, user_id, config.summary_model_config_id.as_deref()).await?;
     let model_name = model_cfg
         .as_ref()
         .map(|m| m.model.clone())
@@ -146,7 +147,11 @@ pub async fn run_once(pool: &Db, ai: &AiClient, user_id: &str) -> Result<RollupR
     Ok(out)
 }
 
-fn resolve_session_concurrency(max_sessions_per_tick: i64, env_key: &str, default_limit: usize) -> usize {
+fn resolve_session_concurrency(
+    max_sessions_per_tick: i64,
+    env_key: &str,
+    default_limit: usize,
+) -> usize {
     let configured = std::env::var(env_key)
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
@@ -234,7 +239,8 @@ async fn process_session(
             token_limit,
             target_summary_tokens,
         )
-        .await {
+        .await
+        {
             Ok(v) => v,
             Err(err) => {
                 let _ = finish_failed_job_run(pool, job_run.id.as_str(), err.as_str()).await;
@@ -255,9 +261,8 @@ async fn process_session(
             ));
         }
         if build.forced_truncated {
-            merged.push_str(
-                "\n\n[meta] 本次 rollup 触发强制截断兜底，已标记该批次总结为已 rollup。",
-            );
+            merged
+                .push_str("\n\n[meta] 本次 rollup 触发强制截断兜底，已标记该批次总结为已 rollup。");
         }
         if !oversized.is_empty() {
             merged.push_str(&format!(
@@ -297,7 +302,8 @@ async fn process_session(
             level: target_level,
         },
     )
-    .await {
+    .await
+    {
         Ok(v) => v,
         Err(err) => {
             let _ = finish_failed_job_run(pool, job_run.id.as_str(), err.as_str()).await;
@@ -357,7 +363,8 @@ async fn select_rollup_batch(
     max_level: i64,
 ) -> Result<Option<RollupBatchSelection>, String> {
     for level in 0..max_level {
-        let mut candidates = summaries::list_pending_summaries_by_level_no_limit(pool, session_id, level).await?;
+        let mut candidates =
+            summaries::list_pending_summaries_by_level_no_limit(pool, session_id, level).await?;
         if level == 0 && keep_raw_level0_count > 0 {
             let keep = keep_raw_level0_count as usize;
             if candidates.len() > keep {

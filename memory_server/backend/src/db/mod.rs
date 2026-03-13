@@ -24,7 +24,11 @@ pub async fn init_pool(config: &AppConfig) -> Result<Db, String> {
 }
 
 pub async fn init_schema(db: &Db) -> Result<(), String> {
-    ensure_unique_index(db.collection::<mongodb::bson::Document>("sessions"), doc! {"id": 1}).await?;
+    ensure_unique_index(
+        db.collection::<mongodb::bson::Document>("sessions"),
+        doc! {"id": 1},
+    )
+    .await?;
     ensure_index(
         db.collection::<mongodb::bson::Document>("sessions"),
         doc! {"user_id": 1, "status": 1, "created_at": -1},
@@ -36,7 +40,11 @@ pub async fn init_schema(db: &Db) -> Result<(), String> {
     )
     .await?;
 
-    ensure_unique_index(db.collection::<mongodb::bson::Document>("messages"), doc! {"id": 1}).await?;
+    ensure_unique_index(
+        db.collection::<mongodb::bson::Document>("messages"),
+        doc! {"id": 1},
+    )
+    .await?;
     ensure_index(
         db.collection::<mongodb::bson::Document>("messages"),
         doc! {"session_id": 1, "created_at": 1},
@@ -112,7 +120,11 @@ pub async fn init_schema(db: &Db) -> Result<(), String> {
     )
     .await?;
 
-    ensure_unique_index(db.collection::<mongodb::bson::Document>("job_runs"), doc! {"id": 1}).await?;
+    ensure_unique_index(
+        db.collection::<mongodb::bson::Document>("job_runs"),
+        doc! {"id": 1},
+    )
+    .await?;
     ensure_index(
         db.collection::<mongodb::bson::Document>("job_runs"),
         doc! {"job_type": 1, "started_at": -1},
@@ -183,15 +195,27 @@ async fn normalize_summary_status(db: &Db) -> Result<(), String> {
     Ok(())
 }
 
-async fn ensure_unique_index(collection: Collection<mongodb::bson::Document>, keys: mongodb::bson::Document) -> Result<(), String> {
+async fn ensure_unique_index(
+    collection: Collection<mongodb::bson::Document>,
+    keys: mongodb::bson::Document,
+) -> Result<(), String> {
     let options = IndexOptions::builder().unique(Some(true)).build();
     let model = IndexModel::builder().keys(keys).options(options).build();
-    collection.create_index(model).await.map_err(|e| e.to_string())?;
+    collection
+        .create_index(model)
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
-async fn ensure_index(collection: Collection<mongodb::bson::Document>, keys: mongodb::bson::Document) -> Result<(), String> {
+async fn ensure_index(
+    collection: Collection<mongodb::bson::Document>,
+    keys: mongodb::bson::Document,
+) -> Result<(), String> {
     let model = IndexModel::builder().keys(keys).build();
-    collection.create_index(model).await.map_err(|e| e.to_string())?;
+    collection
+        .create_index(model)
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(())
 }

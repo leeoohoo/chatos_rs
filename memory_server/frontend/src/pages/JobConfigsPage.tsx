@@ -5,28 +5,38 @@ import {
   Card,
   Col,
   Form,
-  Input,
   InputNumber,
   Row,
   Select,
   Space,
   Spin,
   Switch,
+  Table,
 } from 'antd';
 
 import { api } from '../api/client';
 import { useI18n } from '../i18n';
-import type { RollupJobConfig, SummaryJobConfig } from '../types';
+import type { RollupJobConfig, SummaryJobConfig, UserItem } from '../types';
 
 interface JobConfigsPageProps {
   userId: string;
   isAdmin: boolean;
   selectedSessionId?: string;
+  onSelectUser?: (userId: string) => void;
+  showUserSelector?: boolean;
 }
 
-export function JobConfigsPage({ userId, isAdmin, selectedSessionId }: JobConfigsPageProps) {
+export function JobConfigsPage({
+  userId,
+  isAdmin,
+  selectedSessionId,
+  onSelectUser,
+  showUserSelector = true,
+}: JobConfigsPageProps) {
   const { t } = useI18n();
   const [targetUserId, setTargetUserId] = useState(userId);
+  const [users, setUsers] = useState<UserItem[]>([]);
+  const [usersLoading, setUsersLoading] = useState(false);
   const [summaryCfg, setSummaryCfg] = useState<SummaryJobConfig | null>(null);
   const [rollupCfg, setRollupCfg] = useState<RollupJobConfig | null>(null);
   const [modelOptions, setModelOptions] = useState<Array<{ label: string; value: string }>>([]);
@@ -37,6 +47,62 @@ export function JobConfigsPage({ userId, isAdmin, selectedSessionId }: JobConfig
   useEffect(() => {
     setTargetUserId(userId);
   }, [userId]);
+
+  useEffect(() => {
+    const uid = targetUserId.trim();
+    if (uid) {
+      onSelectUser?.(uid);
+    }
+  }, [targetUserId, onSelectUser]);
+
+  const createSummaryConfig = (uid: string): SummaryJobConfig => ({
+    user_id: uid,
+    enabled: 1,
+    summary_model_config_id: null,
+    token_limit: 6000,
+    round_limit: 8,
+    target_summary_tokens: 700,
+    job_interval_seconds: 30,
+    max_sessions_per_tick: 50,
+  });
+
+  const createRollupConfig = (uid: string): RollupJobConfig => ({
+    user_id: uid,
+    enabled: 1,
+    summary_model_config_id: null,
+    token_limit: 6000,
+    round_limit: 50,
+    target_summary_tokens: 700,
+    job_interval_seconds: 60,
+    keep_raw_level0_count: 5,
+    max_level: 4,
+    max_sessions_per_tick: 50,
+  });
+
+  const loadUsers = async () => {
+    setUsersLoading(true);
+    try {
+      const items = await api.listUsers(500);
+      setUsers(items);
+      if (items.length === 0) {
+        return;
+      }
+      const currentTarget = targetUserId.trim();
+      if (currentTarget && items.some((item) => item.username === currentTarget)) {
+        return;
+      }
+      const preferred = userId.trim();
+      if (preferred && items.some((item) => item.username === preferred)) {
+        setTargetUserId(preferred);
+        return;
+      }
+      setTargetUserId(items[0].username);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setUsersLoading(false);
+    }
+  };
 
   const disabled = useMemo(() => !targetUserId.trim(), [targetUserId]);
 
@@ -71,6 +137,14 @@ export function JobConfigsPage({ userId, isAdmin, selectedSessionId }: JobConfig
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (!showUserSelector) {
+      return;
+    }
+    loadUsers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin, showUserSelector]);
 
   useEffect(() => {
     load();
@@ -157,6 +231,11 @@ export function JobConfigsPage({ userId, isAdmin, selectedSessionId }: JobConfig
         title={t('jobConfigs.title')}
         extra={
           <Space>
+            {showUserSelector && (
+              <Button onClick={loadUsers} loading={usersLoading}>
+                {t('common.refresh')}
+              </Button>
+            )}
             <Button onClick={load} loading={loading}>
               {t('common.refresh')}
             </Button>
@@ -169,20 +248,52 @@ export function JobConfigsPage({ userId, isAdmin, selectedSessionId }: JobConfig
           </Space>
         }
       >
-        {isAdmin && (
+        {showUserSelector && (
+          <Card size="small" title={t('jobConfigs.userListTitle')} style={{ marginBottom: 12 }}>
+            <Table<UserItem>
+              rowKey="username"
+              loading={usersLoading}
+              dataSource={users}
+              pagination={false}
+              size="small"
+              columns={[
+                {
+                  title: t('top.userId'),
+                  dataIndex: 'username',
+                  key: 'username',
+                },
+                {
+                  title: t('top.role'),
+                  dataIndex: 'role',
+                  key: 'role',
+                },
+                {
+                  title: t('common.action'),
+                  key: 'action',
+                  width: 160,
+                  render: (_, record) => (
+                    <Button
+                      type={targetUserId === record.username ? 'primary' : 'default'}
+                      onClick={() => {
+                        setTargetUserId(record.username);
+                        onSelectUser?.(record.username);
+                      }}
+                    >
+                      {t('jobConfigs.viewConfig')}
+                    </Button>
+                  ),
+                },
+              ]}
+            />
+          </Card>
+        )}
+
+        {showUserSelector && (
           <Alert
             type="info"
             showIcon
-            message={`${t('top.userId')}: ${targetUserId || '-'}`}
+            message={`${t('jobConfigs.currentTarget')}: ${targetUserId || '-'}`}
             style={{ marginBottom: 12 }}
-          />
-        )}
-        {isAdmin && (
-          <Input
-            value={targetUserId}
-            onChange={(e) => setTargetUserId(e.target.value)}
-            placeholder={t('top.userFilter')}
-            style={{ marginBottom: 12, maxWidth: 320 }}
           />
         )}
         {disabled && (
@@ -270,6 +381,23 @@ export function JobConfigsPage({ userId, isAdmin, selectedSessionId }: JobConfig
                       {t('common.save')}
                     </Button>
                   </Form>
+                )}
+                {!summaryCfg && (
+                  <Space direction="vertical" style={{ width: '100%' }}>
+                    <Alert type="info" showIcon message={t('jobConfigs.notConfiguredSummary')} />
+                    <Button
+                      type="dashed"
+                      onClick={() => {
+                        const uid = targetUserId.trim();
+                        if (!uid) {
+                          return;
+                        }
+                        setSummaryCfg(createSummaryConfig(uid));
+                      }}
+                    >
+                      {t('jobConfigs.createSummaryConfig')}
+                    </Button>
+                  </Space>
                 )}
               </Card>
             </Col>
@@ -367,6 +495,23 @@ export function JobConfigsPage({ userId, isAdmin, selectedSessionId }: JobConfig
                       {t('common.save')}
                     </Button>
                   </Form>
+                )}
+                {!rollupCfg && (
+                  <Space direction="vertical" style={{ width: '100%' }}>
+                    <Alert type="info" showIcon message={t('jobConfigs.notConfiguredRollup')} />
+                    <Button
+                      type="dashed"
+                      onClick={() => {
+                        const uid = targetUserId.trim();
+                        if (!uid) {
+                          return;
+                        }
+                        setRollupCfg(createRollupConfig(uid));
+                      }}
+                    >
+                      {t('jobConfigs.createRollupConfig')}
+                    </Button>
+                  </Space>
                 )}
               </Card>
             </Col>

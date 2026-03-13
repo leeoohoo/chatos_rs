@@ -2,7 +2,9 @@ use std::collections::BTreeSet;
 use std::collections::HashSet;
 
 use crate::db::Db;
-use crate::models::{ComposeContextMeta, ComposeContextRequest, ComposeContextResponse, SessionSummary};
+use crate::models::{
+    ComposeContextMeta, ComposeContextRequest, ComposeContextResponse, SessionSummary,
+};
 use crate::repositories::{messages, summaries};
 
 const DEFAULT_SUMMARY_LIMIT: usize = 3;
@@ -15,7 +17,11 @@ pub async fn compose_context(
     req: ComposeContextRequest,
 ) -> Result<ComposeContextResponse, String> {
     // Keep request summary_limit only as a scan multiplier for compatibility.
-    let summary_limit = req.summary_limit.unwrap_or(DEFAULT_SUMMARY_LIMIT).max(1).min(20);
+    let summary_limit = req
+        .summary_limit
+        .unwrap_or(DEFAULT_SUMMARY_LIMIT)
+        .max(1)
+        .min(20);
     let include_raw = req.include_raw_messages.unwrap_or(true);
 
     let summary_records = summaries::list_summaries(

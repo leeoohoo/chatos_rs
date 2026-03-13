@@ -47,20 +47,29 @@ async fn tick_once(
     let now_ts = chrono::Utc::now().timestamp();
 
     for user_id in user_ids {
-        let summary_cfg = configs::get_summary_job_config(&state.pool, user_id.as_str()).await?;
+        let summary_cfg =
+            configs::get_effective_summary_job_config(&state.pool, user_id.as_str()).await?;
         if summary_cfg.enabled == 1 {
             let key = format!("summary:{}", user_id);
-            if is_due(&worker_state, key.as_str(), now_ts, summary_cfg.job_interval_seconds) {
+            if is_due(
+                &worker_state,
+                key.as_str(),
+                now_ts,
+                summary_cfg.job_interval_seconds,
+            ) {
                 let result = summary::run_once(&state.pool, &ai, user_id.as_str()).await;
                 if let Err(err) = result {
-                    warn!("[MEMORY-WORKER] summary run failed user_id={} error={}", user_id, err);
+                    warn!(
+                        "[MEMORY-WORKER] summary run failed user_id={} error={}",
+                        user_id, err
+                    );
                 }
                 mark_run(&worker_state, key.as_str(), now_ts);
             }
         }
 
         let rollup_cfg =
-            configs::get_summary_rollup_job_config(&state.pool, user_id.as_str()).await?;
+            configs::get_effective_summary_rollup_job_config(&state.pool, user_id.as_str()).await?;
         if rollup_cfg.enabled == 1 {
             let key = format!("rollup:{}", user_id);
             if is_due(
@@ -71,7 +80,10 @@ async fn tick_once(
             ) {
                 let result = rollup::run_once(&state.pool, &ai, user_id.as_str()).await;
                 if let Err(err) = result {
-                    warn!("[MEMORY-WORKER] rollup run failed user_id={} error={}", user_id, err);
+                    warn!(
+                        "[MEMORY-WORKER] rollup run failed user_id={} error={}",
+                        user_id, err
+                    );
                 }
                 mark_run(&worker_state, key.as_str(), now_ts);
             }

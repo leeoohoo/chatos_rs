@@ -30,8 +30,8 @@ impl AppConfig {
             .or_else(|| env_text("MEMORY_SERVER_DATABASE_URL"))
             .unwrap_or_else(|| "mongodb://127.0.0.1:27017".to_string());
 
-        let mongodb_database =
-            env_text("MEMORY_SERVER_MONGODB_DATABASE").unwrap_or_else(|| "memory_server".to_string());
+        let mongodb_database = env_text("MEMORY_SERVER_MONGODB_DATABASE")
+            .unwrap_or_else(|| "memory_server".to_string());
 
         let service_token = env_text("MEMORY_SERVER_SERVICE_TOKEN");
 
@@ -62,8 +62,8 @@ impl AppConfig {
             .or_else(|| env_text("OPENAI_BASE_URL"))
             .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
 
-        let openai_model = env::var("MEMORY_SERVER_OPENAI_MODEL")
-            .unwrap_or_else(|_| "gpt-4o-mini".to_string());
+        let openai_model =
+            env::var("MEMORY_SERVER_OPENAI_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string());
 
         let openai_temperature = env::var("MEMORY_SERVER_OPENAI_TEMPERATURE")
             .ok()

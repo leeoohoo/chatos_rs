@@ -95,7 +95,10 @@ pub async fn list_all_summaries_by_session(
     cursor.try_collect().await.map_err(|e| e.to_string())
 }
 
-pub async fn list_summary_level_stats(db: &Db, session_id: &str) -> Result<Vec<(i64, i64, i64)>, String> {
+pub async fn list_summary_level_stats(
+    db: &Db,
+    session_id: &str,
+) -> Result<Vec<(i64, i64, i64)>, String> {
     let pipeline = vec![
         doc! {"$match": {"session_id": session_id}},
         doc! {"$group": {
@@ -119,7 +122,8 @@ pub async fn list_summary_level_stats(db: &Db, session_id: &str) -> Result<Vec<(
         .aggregate(pipeline)
         .await
         .map_err(|e| e.to_string())?;
-    let docs: Vec<mongodb::bson::Document> = cursor.try_collect().await.map_err(|e| e.to_string())?;
+    let docs: Vec<mongodb::bson::Document> =
+        cursor.try_collect().await.map_err(|e| e.to_string())?;
 
     let mut out = Vec::with_capacity(docs.len());
     for doc in docs {
@@ -180,7 +184,8 @@ pub async fn list_session_ids_with_pending_rollup_by_user(
         .aggregate(pipeline)
         .await
         .map_err(|e| e.to_string())?;
-    let docs: Vec<mongodb::bson::Document> = cursor.try_collect().await.map_err(|e| e.to_string())?;
+    let docs: Vec<mongodb::bson::Document> =
+        cursor.try_collect().await.map_err(|e| e.to_string())?;
 
     Ok(docs
         .into_iter()
