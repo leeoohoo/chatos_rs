@@ -425,6 +425,7 @@ export function createSendMessageHandler({
       let buffer = '';
       let sawDone = false;
       let parseFailureCount = 0;
+      let sawMeaningfulStreamData = false;
 
       const ensureStreamingMessage = (state: any) => {
         let message = state.messages.find((m: any) => m.id === tempAssistantMessage.id);
@@ -642,6 +643,9 @@ export function createSendMessageHandler({
                         ? parsed
                         : parsed.content || '';
                     appendTextToStreamingMessage(contentStr);
+                    if (typeof contentStr === 'string' && contentStr.trim().length > 0) {
+                      sawMeaningfulStreamData = true;
+                    }
                   }
 
             } else if (parsed.type === 'thinking') {
@@ -687,6 +691,7 @@ export function createSendMessageHandler({
                       }
                       persistStreamingMessageDraft(state, message);
                     });
+                    sawMeaningfulStreamData = true;
                   }
             } else if (parsed.type === 'content') {
                   // 兼容旧格式: {type: 'content', content: '...'}
@@ -697,6 +702,9 @@ export function createSendMessageHandler({
                       ? parsed
                       : parsed.content || '';
                   appendTextToStreamingMessage(contentStr);
+                  if (typeof contentStr === 'string' && contentStr.trim().length > 0) {
+                    sawMeaningfulStreamData = true;
+                  }
 
             } else if (parsed.type === 'tools_start') {
                   // 处理工具调用事件
@@ -781,6 +789,7 @@ export function createSendMessageHandler({
                     (message as any).updatedAt = new Date();
                     persistStreamingMessageDraft(state, message);
                   });
+                  sawMeaningfulStreamData = true;
             } else if (parsed.type === 'tools_end') {
                   // 处理工具结果事件
                   debugLog('🔧 收到工具结果:', parsed.data);
@@ -865,6 +874,7 @@ export function createSendMessageHandler({
                     (message as any).updatedAt = new Date();
                     persistStreamingMessageDraft(state, message);
                   });
+                  sawMeaningfulStreamData = true;
             } else if (parsed.type === 'tools_stream') {
                   // 处理工具流式返回内容
                   debugLog('🔧 收到工具流式数据:', parsed.data);
@@ -1021,6 +1031,7 @@ export function createSendMessageHandler({
                       persistStreamingMessageDraft(state, message);
                     }
                   });
+                  sawMeaningfulStreamData = true;
             } else if (parsed.type === 'error') {
               const streamError = resolveStreamErrorPayload(parsed);
               throw new Error(
@@ -1067,7 +1078,15 @@ export function createSendMessageHandler({
           if (done) {
             debugLog('✅ 流式响应完成');
             if (!sawDone) {
-              throw new Error('流式响应在完成前中断，请稍后重试');
+              const hasBufferedText =
+                typeof streamedTextBuffer === 'string' && streamedTextBuffer.trim().length > 0;
+              if (sawMeaningfulStreamData || hasBufferedText) {
+                // Some providers/gateways close stream without explicit done marker.
+                debugLog('⚠️ 未收到 done/complete 事件，按已接收流数据正常结束');
+                sawDone = true;
+              } else {
+                throw new Error('流式响应在完成前中断，请稍后重试');
+              }
             }
             break;
           }
