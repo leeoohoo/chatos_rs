@@ -22,7 +22,6 @@ pub async fn compose_context(
         pool,
         req.session_id.as_str(),
         None,
-        Some("done"),
         Some("pending"),
         (summary_limit as i64).saturating_mul(20),
         0,

@@ -8,13 +8,20 @@ interface Deps {
 }
 
 export function createStreamingActions({ set, get, client }: Deps) {
+  const defaultSessionChatState = {
+    isLoading: false,
+    isStreaming: false,
+    isStopping: false,
+    streamingMessageId: null as string | null,
+  };
+
   return {
     startStreaming: (messageId: string) => {
       set((state: any) => {
         const sessionId = state.currentSessionId;
         if (sessionId) {
-          const prev = state.sessionChatState[sessionId] || { isLoading: false, isStreaming: false, streamingMessageId: null };
-          state.sessionChatState[sessionId] = { ...prev, isStreaming: true, streamingMessageId: messageId };
+          const prev = state.sessionChatState[sessionId] || defaultSessionChatState;
+          state.sessionChatState[sessionId] = { ...prev, isStreaming: true, isStopping: false, streamingMessageId: messageId };
         }
         state.isStreaming = true;
         state.streamingMessageId = messageId;
@@ -36,8 +43,8 @@ export function createStreamingActions({ set, get, client }: Deps) {
       set((state: any) => {
         const sessionId = state.currentSessionId;
         if (sessionId) {
-          const prev = state.sessionChatState[sessionId] || { isLoading: false, isStreaming: false, streamingMessageId: null };
-          state.sessionChatState[sessionId] = { ...prev, isLoading: false, isStreaming: false, streamingMessageId: null };
+          const prev = state.sessionChatState[sessionId] || defaultSessionChatState;
+          state.sessionChatState[sessionId] = { ...prev, isLoading: false, isStreaming: false, isStopping: false, streamingMessageId: null };
         }
         state.isStreaming = false;
         state.streamingMessageId = null;
@@ -49,6 +56,10 @@ export function createStreamingActions({ set, get, client }: Deps) {
       if (!currentSessionId) {
         return;
       }
+      const currentSessionState = get().sessionChatState?.[currentSessionId];
+      if (currentSessionState?.isStopping) {
+        return;
+      }
 
       // 用户点击“停止”后保持会话在流式/加载态，直到后端 cancel 事件或流真正结束，
       // 避免按钮过早恢复为“发送”导致并发发送。
@@ -57,8 +68,11 @@ export function createStreamingActions({ set, get, client }: Deps) {
         if (!sessionId) {
           return;
         }
-        const prev = state.sessionChatState[sessionId] || { isLoading: false, isStreaming: false, streamingMessageId: null };
-        state.sessionChatState[sessionId] = { ...prev, isLoading: true, isStreaming: true };
+        const prev = state.sessionChatState[sessionId] || defaultSessionChatState;
+        if (prev.isStopping) {
+          return;
+        }
+        state.sessionChatState[sessionId] = { ...prev, isLoading: true, isStreaming: true, isStopping: true };
         if (state.currentSessionId === sessionId) {
           state.isLoading = true;
           state.isStreaming = true;
@@ -91,6 +105,15 @@ export function createStreamingActions({ set, get, client }: Deps) {
         debugLog('✅ 成功停止当前对话');
       } catch (error) {
         console.error('❌ 停止对话失败:', error);
+        // 停止请求失败时允许用户再次点击“停止”，但仍保持流式态，继续阻止新消息发送。
+        set((state: any) => {
+          const sessionId = state.currentSessionId;
+          if (!sessionId || sessionId !== currentSessionId) {
+            return;
+          }
+          const prev = state.sessionChatState[sessionId] || defaultSessionChatState;
+          state.sessionChatState[sessionId] = { ...prev, isStopping: false };
+        });
       }
     },
   };

@@ -340,6 +340,7 @@ export interface MessageListProps {
   messages: Message[];
   isLoading?: boolean;
   isStreaming?: boolean;
+  isStopping?: boolean;
   hasMore?: boolean;
   onLoadMore?: () => void;
   onToggleTurnProcess?: (userMessageId: string) => void;
@@ -356,6 +357,7 @@ export interface InputAreaProps {
   onStop?: () => void;
   disabled?: boolean;
   isStreaming?: boolean;
+  isStopping?: boolean;
   placeholder?: string;
   maxLength?: number;
   allowAttachments?: boolean;

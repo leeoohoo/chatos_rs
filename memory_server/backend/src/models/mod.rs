@@ -9,10 +9,6 @@ fn default_pending() -> String {
     "pending".to_string()
 }
 
-fn default_done() -> String {
-    "done".to_string()
-}
-
 fn default_i64_0() -> i64 {
     0
 }
@@ -96,13 +92,11 @@ pub struct SessionSummary {
     pub source_message_count: i64,
     #[serde(default = "default_i64_0")]
     pub source_estimated_tokens: i64,
-    #[serde(default = "default_done")]
+    #[serde(default = "default_pending")]
     pub status: String,
     pub error_message: Option<String>,
     #[serde(default = "default_i64_0")]
     pub level: i64,
-    #[serde(default = "default_pending")]
-    pub rollup_status: String,
     pub rollup_summary_id: Option<String>,
     pub rolled_up_at: Option<String>,
     pub created_at: String,

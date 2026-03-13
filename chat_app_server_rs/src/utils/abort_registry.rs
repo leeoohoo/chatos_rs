@@ -24,6 +24,9 @@ pub fn set_controller(session_id: &str, token: CancellationToken) {
         aborted: false,
     });
     entry.token = token;
+    if entry.aborted {
+        entry.token.cancel();
+    }
 }
 
 pub fn get_controller(session_id: &str) -> Option<CancellationToken> {
@@ -78,4 +81,26 @@ pub fn clear(session_id: &str) {
     }
     let mut map = ABORT_REGISTRY.lock();
     map.remove(session_id);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn set_controller_cancels_new_token_when_session_already_aborted() {
+        let session_id = "abort_registry_set_controller_cancels_token";
+        clear(session_id);
+
+        // Simulate stop arriving before controller registration.
+        assert!(abort(session_id));
+        assert!(is_aborted(session_id));
+
+        let token = CancellationToken::new();
+        assert!(!token.is_cancelled());
+        set_controller(session_id, token.clone());
+
+        assert!(token.is_cancelled());
+        clear(session_id);
+    }
 }

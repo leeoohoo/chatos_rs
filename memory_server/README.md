@@ -58,31 +58,35 @@ VITE_MEMORY_API_BASE=http://localhost:7080/api/memory/v1
 
 ## One-command Start
 
-Run backend + frontend together:
+Unified startup is now managed by the root script:
 
 ```bash
-./start-dev.sh
+cd ..
+./restart_services.sh
 ```
 
-The script behavior is the same as the main project restart style:
-1. Kill existing backend/frontend processes (by pid file + occupied ports).
-2. Start both services in background (`nohup`).
-3. Print pid/log/api URLs.
+This script manages all 4 services together:
+1. main backend (`chat_app_server_rs`)
+2. main frontend (`chat_app`)
+3. memory backend (`memory_server`)
+4. memory frontend
 
 Commands:
 
 ```bash
-./start-dev.sh                # default = restart
-./start-dev.sh restart
-./start-dev.sh stop
-./start-dev.sh status
+./restart_services.sh                # default = restart
+./restart_services.sh restart
+./restart_services.sh stop
+./restart_services.sh status
 ```
 
 Default runtime/log path:
 
 ```text
-/tmp/memory_server_dev/backend.log
-/tmp/memory_server_dev/frontend.log
+/tmp/chatos_rs_dev/backend.log
+/tmp/chatos_rs_dev/frontend.log
+/tmp/chatos_rs_dev/memory_backend.log
+/tmp/chatos_rs_dev/memory_frontend.log
 ```
 
 ## SQLite -> Mongo Migration

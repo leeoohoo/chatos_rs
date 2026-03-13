@@ -292,7 +292,7 @@ async fn process_session(
             source_end_message_id: selected.last().map(|s| s.id.clone()),
             source_message_count: selected.len() as i64,
             source_estimated_tokens: selected_tokens,
-            status: "done".to_string(),
+            status: "pending".to_string(),
             error_message: None,
             level: target_level,
         },
@@ -357,7 +357,7 @@ async fn select_rollup_batch(
     max_level: i64,
 ) -> Result<Option<RollupBatchSelection>, String> {
     for level in 0..max_level {
-        let mut candidates = summaries::list_done_pending_rollup_summaries_by_level_no_limit(pool, session_id, level).await?;
+        let mut candidates = summaries::list_pending_summaries_by_level_no_limit(pool, session_id, level).await?;
         if level == 0 && keep_raw_level0_count > 0 {
             let keep = keep_raw_level0_count as usize;
             if candidates.len() > keep {

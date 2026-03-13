@@ -137,6 +137,7 @@ export const MessageList: React.FC<MessageListProps> = ({
   messages,
   isLoading = false,
   isStreaming = false,
+  isStopping = false,
   hasMore = false,
   onLoadMore,
   onToggleTurnProcess,
@@ -775,7 +776,7 @@ export const MessageList: React.FC<MessageListProps> = ({
           <div className="flex justify-start">
             <div className="flex items-center space-x-2 bg-muted px-4 py-3 rounded-lg max-w-xs">
               <LoadingSpinner size="sm" />
-              <span className="text-sm text-muted-foreground">AI is thinking...</span>
+              <span className="text-sm text-muted-foreground">{isStopping ? 'AI is stopping...' : 'AI is thinking...'}</span>
             </div>
           </div>
         )}

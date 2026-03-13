@@ -27,7 +27,6 @@ export interface SessionSummary {
   source_estimated_tokens: number;
   status: string;
   level: number;
-  rollup_status: string;
   rollup_summary_id?: string | null;
   created_at: string;
 }
@@ -98,7 +97,6 @@ export interface SummaryGraphNode {
   id: string;
   level: number;
   status: string;
-  rollup_status: string;
   rollup_summary_id?: string | null;
   created_at: string;
   summary_excerpt: string;

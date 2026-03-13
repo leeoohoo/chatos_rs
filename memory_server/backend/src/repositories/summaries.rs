@@ -36,7 +36,6 @@ pub async fn create_summary(db: &Db, input: CreateSummaryInput) -> Result<Sessio
         status: input.status,
         error_message: input.error_message,
         level: input.level,
-        rollup_status: "pending".to_string(),
         rollup_summary_id: None,
         rolled_up_at: None,
         created_at: now.clone(),
@@ -56,7 +55,6 @@ pub async fn list_summaries(
     session_id: &str,
     level: Option<i64>,
     status: Option<&str>,
-    rollup_status: Option<&str>,
     limit: i64,
     offset: i64,
 ) -> Result<Vec<SessionSummary>, String> {
@@ -67,12 +65,9 @@ pub async fn list_summaries(
     if let Some(v) = status {
         filter.insert("status", v);
     }
-    if let Some(v) = rollup_status {
-        filter.insert("rollup_status", v);
-    }
 
     let options = FindOptions::builder()
-        .sort(doc! {"created_at": -1})
+        .sort(doc! {"level": -1, "created_at": 1})
         .limit(Some(limit.max(1).min(500)))
         .skip(Some(offset.max(0) as u64))
         .build();
@@ -109,7 +104,7 @@ pub async fn list_summary_level_stats(db: &Db, session_id: &str) -> Result<Vec<(
             "pending_count": {
                 "$sum": {
                     "$cond": [
-                        {"$eq": ["$rollup_status", "pending"]},
+                        {"$eq": ["$status", "pending"]},
                         1,
                         0,
                     ]
@@ -136,7 +131,7 @@ pub async fn list_summary_level_stats(db: &Db, session_id: &str) -> Result<Vec<(
     Ok(out)
 }
 
-pub async fn list_done_pending_rollup_summaries_by_level_no_limit(
+pub async fn list_pending_summaries_by_level_no_limit(
     db: &Db,
     session_id: &str,
     level: i64,
@@ -146,8 +141,7 @@ pub async fn list_done_pending_rollup_summaries_by_level_no_limit(
         .find(doc! {
             "session_id": session_id,
             "level": level,
-            "status": "done",
-            "rollup_status": "pending",
+            "status": "pending",
         })
         .with_options(options)
         .await
@@ -164,8 +158,7 @@ pub async fn list_session_ids_with_pending_rollup_by_user(
 ) -> Result<Vec<String>, String> {
     let pipeline = vec![
         doc! {"$match": {
-            "status": "done",
-            "rollup_status": "pending",
+            "status": "pending",
             "level": {"$lte": max_level.max(0)}
         }},
         doc! {"$lookup": {
@@ -209,11 +202,11 @@ pub async fn mark_summaries_rolled_up(
         .update_many(
             doc! {
                 "id": {"$in": summary_ids.to_vec()},
-                "rollup_status": "pending",
+                "status": "pending",
             },
             doc! {
                 "$set": {
-                    "rollup_status": "summarized",
+                    "status": "summarized",
                     "rollup_summary_id": rollup_summary_id,
                     "rolled_up_at": &now,
                     "updated_at": &now,

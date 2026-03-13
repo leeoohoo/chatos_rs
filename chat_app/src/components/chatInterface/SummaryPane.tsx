@@ -10,6 +10,7 @@ interface SummaryPaneProps {
   messages: Message[];
   isLoading: boolean;
   isStreaming: boolean;
+  isStopping: boolean;
   hasMore: boolean;
   onLoadMore: () => void;
   onToggleTurnProcess: (userMessageId: string) => void;
@@ -34,6 +35,7 @@ const SummaryPane: React.FC<SummaryPaneProps> = ({
   messages,
   isLoading,
   isStreaming,
+  isStopping,
   hasMore,
   onLoadMore,
   onToggleTurnProcess,
@@ -154,6 +156,7 @@ const SummaryPane: React.FC<SummaryPaneProps> = ({
         messages={messages}
         isLoading={isLoading}
         isStreaming={isStreaming}
+        isStopping={isStopping}
         hasMore={hasMore}
         onLoadMore={onLoadMore}
         onToggleTurnProcess={onToggleTurnProcess}

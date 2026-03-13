@@ -186,6 +186,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   ), [currentSession, sessionChatState]);
   const chatIsLoading = currentChatState?.isLoading ?? false;
   const chatIsStreaming = currentChatState?.isStreaming ?? false;
+  const chatIsStopping = currentChatState?.isStopping ?? false;
   const headerTitle = activePanel === 'project'
     ? (currentProject?.name || '项目')
     : activePanel === 'terminal'
@@ -800,6 +801,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                           messages={messages}
                           isLoading={chatIsLoading}
                           isStreaming={chatIsStreaming}
+                          isStopping={chatIsStopping}
                           hasMore={hasMoreMessages}
                           onLoadMore={handleLoadMore}
                           onToggleTurnProcess={handleToggleTurnProcess}
@@ -832,6 +834,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                           messages={messages}
                           isLoading={chatIsLoading}
                           isStreaming={chatIsStreaming}
+                          isStopping={chatIsStopping}
                           hasMore={hasMoreMessages}
                           onLoadMore={handleLoadMore}
                           onToggleTurnProcess={handleToggleTurnProcess}
@@ -900,8 +903,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                       onTaskReviewCancel={handleTaskReviewCancel}
                       onSend={handleMessageSend}
                       onStop={abortCurrentConversation}
-                      inputDisabled={chatIsLoading || chatIsStreaming}
+                      inputDisabled={chatIsLoading || chatIsStreaming || chatIsStopping}
                       isStreaming={chatIsStreaming}
+                      isStopping={chatIsStopping}
                       supportedFileTypes={supportedFileTypes}
                       reasoningSupported={supportsReasoning}
                       reasoningEnabled={chatConfig?.reasoningEnabled === true}

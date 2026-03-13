@@ -95,7 +95,7 @@ export const api = {
 
   async listSummaries(sessionId: string): Promise<SessionSummary[]> {
     const { data } = await client.get(`/sessions/${sessionId}/summaries`, {
-      params: { limit: 200, offset: 0 },
+      params: { status: 'pending', limit: 200, offset: 0 },
     });
     return data.items ?? [];
   },

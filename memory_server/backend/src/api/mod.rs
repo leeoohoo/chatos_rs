@@ -723,7 +723,6 @@ async fn delete_message(
 struct ListSummariesQuery {
     level: Option<i64>,
     status: Option<String>,
-    rollup_status: Option<String>,
     limit: Option<i64>,
     offset: Option<i64>,
 }
@@ -746,8 +745,7 @@ async fn list_summaries(
         &state.pool,
         session_id.as_str(),
         q.level,
-        q.status.as_deref(),
-        q.rollup_status.as_deref(),
+        q.status.as_deref().or(Some("pending")),
         q.limit.unwrap_or(100),
         q.offset.unwrap_or(0),
     )
@@ -819,7 +817,6 @@ async fn summary_graph(
                         "id": s.id,
                         "level": s.level,
                         "status": s.status,
-                        "rollup_status": s.rollup_status,
                         "rollup_summary_id": s.rollup_summary_id,
                         "created_at": s.created_at,
                         "summary_excerpt": excerpt,

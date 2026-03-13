@@ -39,6 +39,7 @@ interface ChatComposerPanelProps {
   onStop: () => void;
   inputDisabled: boolean;
   isStreaming: boolean;
+  isStopping: boolean;
   supportedFileTypes: string[];
   reasoningSupported: boolean;
   reasoningEnabled: boolean;
@@ -81,6 +82,7 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
   onStop,
   inputDisabled,
   isStreaming,
+  isStopping,
   supportedFileTypes,
   reasoningSupported,
   reasoningEnabled,
@@ -132,6 +134,7 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
       onStop={onStop}
       disabled={inputDisabled}
       isStreaming={isStreaming}
+      isStopping={isStopping}
       placeholder="输入消息..."
       allowAttachments={true}
       supportedFileTypes={supportedFileTypes}
