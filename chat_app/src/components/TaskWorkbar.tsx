@@ -251,11 +251,10 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
             {onOpenUiPromptHistory ? (
               <button
                 type="button"
-                className="rounded-md border border-border bg-background px-2 py-1 text-[11px] text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
+                className="rounded-md border border-border bg-background px-2 py-1 text-[11px] text-foreground hover:bg-accent"
                 onClick={onOpenUiPromptHistory}
-                disabled={uiPromptHistoryLoading}
               >
-                {uiPromptHistoryLoading ? '记录加载中...' : `交互确认记录 ${uiPromptHistoryCount}`}
+                {`交互确认记录 ${uiPromptHistoryCount}${uiPromptHistoryLoading ? ' · 更新中' : ''}`}
               </button>
             ) : null}
             {expanded ? (
