@@ -53,7 +53,11 @@ pub async fn create_model_config(
         model: req.model,
         base_url: req.base_url,
         api_key: req.api_key,
-        supports_images: if req.supports_images.unwrap_or(false) { 1 } else { 0 },
+        supports_images: if req.supports_images.unwrap_or(false) {
+            1
+        } else {
+            0
+        },
         supports_reasoning: if req.supports_reasoning.unwrap_or(false) {
             1
         } else {
@@ -145,6 +149,25 @@ pub async fn delete_model_config(db: &Db, id: &str) -> Result<bool, String> {
     Ok(result.deleted_count > 0)
 }
 
+pub async fn delete_user_configs(db: &Db, user_id: &str) -> Result<(), String> {
+    model_collection(db)
+        .delete_many(doc! {"user_id": user_id})
+        .await
+        .map_err(|e| e.to_string())?;
+
+    summary_job_collection(db)
+        .delete_one(doc! {"user_id": user_id})
+        .await
+        .map_err(|e| e.to_string())?;
+
+    summary_rollup_collection(db)
+        .delete_one(doc! {"user_id": user_id})
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
 fn default_summary_job_config(user_id: &str) -> SummaryJobConfig {
     SummaryJobConfig {
         user_id: user_id.to_string(),
@@ -159,7 +182,27 @@ fn default_summary_job_config(user_id: &str) -> SummaryJobConfig {
     }
 }
 
-pub async fn get_summary_job_config(db: &Db, user_id: &str) -> Result<SummaryJobConfig, String> {
+pub async fn get_summary_job_config(
+    db: &Db,
+    user_id: &str,
+) -> Result<Option<SummaryJobConfig>, String> {
+    fetch_summary_job_config(db, user_id).await
+}
+
+async fn fetch_summary_job_config(
+    db: &Db,
+    user_id: &str,
+) -> Result<Option<SummaryJobConfig>, String> {
+    summary_job_collection(db)
+        .find_one(doc! {"user_id": user_id})
+        .await
+        .map_err(|e| e.to_string())
+}
+
+pub async fn get_effective_summary_job_config(
+    db: &Db,
+    user_id: &str,
+) -> Result<SummaryJobConfig, String> {
     if let Some(cfg) = fetch_summary_job_config(db, user_id).await? {
         return Ok(cfg);
     }
@@ -180,49 +223,16 @@ pub async fn get_summary_job_config(db: &Db, user_id: &str) -> Result<SummaryJob
         }
     }
 
-    create_default_summary_job_config(db, user_id).await?;
-    fetch_summary_job_config(db, user_id)
-        .await?
-        .ok_or_else(|| "summary job config create failed".to_string())
-}
-
-async fn fetch_summary_job_config(db: &Db, user_id: &str) -> Result<Option<SummaryJobConfig>, String> {
-    summary_job_collection(db)
-        .find_one(doc! {"user_id": user_id})
-        .await
-        .map_err(|e| e.to_string())
-}
-
-async fn create_default_summary_job_config(db: &Db, user_id: &str) -> Result<(), String> {
-    let cfg = default_summary_job_config(user_id);
-    summary_job_collection(db)
-        .update_one(
-            doc! {"user_id": user_id},
-            doc! {
-                "$setOnInsert": {
-                    "user_id": &cfg.user_id,
-                    "enabled": cfg.enabled,
-                    "summary_model_config_id": cfg.summary_model_config_id,
-                    "token_limit": cfg.token_limit,
-                    "round_limit": cfg.round_limit,
-                    "target_summary_tokens": cfg.target_summary_tokens,
-                    "job_interval_seconds": cfg.job_interval_seconds,
-                    "max_sessions_per_tick": cfg.max_sessions_per_tick,
-                    "updated_at": cfg.updated_at,
-                }
-            },
-        )
-        .upsert(true)
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(())
+    Ok(default_summary_job_config(user_id))
 }
 
 pub async fn upsert_summary_job_config(
     db: &Db,
     req: UpsertSummaryJobConfigRequest,
 ) -> Result<SummaryJobConfig, String> {
-    let mut current = get_summary_job_config(db, req.user_id.as_str()).await?;
+    let mut current = fetch_summary_job_config(db, req.user_id.as_str())
+        .await?
+        .unwrap_or_else(|| default_summary_job_config(req.user_id.as_str()));
 
     if let Some(v) = req.enabled {
         current.enabled = if v { 1 } else { 0 };
@@ -276,6 +286,23 @@ fn default_summary_rollup_job_config(user_id: &str) -> SummaryRollupJobConfig {
 pub async fn get_summary_rollup_job_config(
     db: &Db,
     user_id: &str,
+) -> Result<Option<SummaryRollupJobConfig>, String> {
+    fetch_summary_rollup_job_config(db, user_id).await
+}
+
+async fn fetch_summary_rollup_job_config(
+    db: &Db,
+    user_id: &str,
+) -> Result<Option<SummaryRollupJobConfig>, String> {
+    summary_rollup_collection(db)
+        .find_one(doc! {"user_id": user_id})
+        .await
+        .map_err(|e| e.to_string())
+}
+
+pub async fn get_effective_summary_rollup_job_config(
+    db: &Db,
+    user_id: &str,
 ) -> Result<SummaryRollupJobConfig, String> {
     if let Some(cfg) = fetch_summary_rollup_job_config(db, user_id).await? {
         return Ok(cfg);
@@ -299,54 +326,16 @@ pub async fn get_summary_rollup_job_config(
         }
     }
 
-    create_default_summary_rollup_job_config(db, user_id).await?;
-    fetch_summary_rollup_job_config(db, user_id)
-        .await?
-        .ok_or_else(|| "summary rollup job config create failed".to_string())
-}
-
-async fn fetch_summary_rollup_job_config(
-    db: &Db,
-    user_id: &str,
-) -> Result<Option<SummaryRollupJobConfig>, String> {
-    summary_rollup_collection(db)
-        .find_one(doc! {"user_id": user_id})
-        .await
-        .map_err(|e| e.to_string())
-}
-
-async fn create_default_summary_rollup_job_config(db: &Db, user_id: &str) -> Result<(), String> {
-    let cfg = default_summary_rollup_job_config(user_id);
-    summary_rollup_collection(db)
-        .update_one(
-            doc! {"user_id": user_id},
-            doc! {
-                "$setOnInsert": {
-                    "user_id": &cfg.user_id,
-                    "enabled": cfg.enabled,
-                    "summary_model_config_id": cfg.summary_model_config_id,
-                    "token_limit": cfg.token_limit,
-                    "round_limit": cfg.round_limit,
-                    "target_summary_tokens": cfg.target_summary_tokens,
-                    "job_interval_seconds": cfg.job_interval_seconds,
-                    "keep_raw_level0_count": cfg.keep_raw_level0_count,
-                    "max_level": cfg.max_level,
-                    "max_sessions_per_tick": cfg.max_sessions_per_tick,
-                    "updated_at": cfg.updated_at,
-                }
-            },
-        )
-        .upsert(true)
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(())
+    Ok(default_summary_rollup_job_config(user_id))
 }
 
 pub async fn upsert_summary_rollup_job_config(
     db: &Db,
     req: UpsertSummaryRollupJobConfigRequest,
 ) -> Result<SummaryRollupJobConfig, String> {
-    let mut current = get_summary_rollup_job_config(db, req.user_id.as_str()).await?;
+    let mut current = fetch_summary_rollup_job_config(db, req.user_id.as_str())
+        .await?
+        .unwrap_or_else(|| default_summary_rollup_job_config(req.user_id.as_str()));
 
     if let Some(v) = req.enabled {
         current.enabled = if v { 1 } else { 0 };

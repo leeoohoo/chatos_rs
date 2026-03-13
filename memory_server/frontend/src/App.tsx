@@ -1,10 +1,8 @@
 import {
-  ApiOutlined,
   BarChartOutlined,
   DatabaseOutlined,
   HistoryOutlined,
   LogoutOutlined,
-  SettingOutlined,
   UserOutlined,
 } from '@ant-design/icons';
 import {
@@ -29,10 +27,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { api } from './api/client';
 import { I18nProvider, useI18n } from './i18n';
 import { DashboardPage } from './pages/DashboardPage';
-import { JobConfigsPage } from './pages/JobConfigsPage';
 import { JobRunsPage } from './pages/JobRunsPage';
-import { ModelConfigsPage } from './pages/ModelConfigsPage';
+import { UserConfigCenterPage } from './pages/UserConfigCenterPage';
 import { SessionsPage } from './pages/SessionsPage';
+import { UserManagementPage } from './pages/UserManagementPage';
 
 const { Sider, Header, Content } = Layout;
 const { Title, Text } = Typography;
@@ -40,12 +38,11 @@ const { Title, Text } = Typography;
 type TabKey =
   | 'dashboard'
   | 'sessions'
-  | 'models'
-  | 'jobConfigs'
+  | 'users'
   | 'jobRuns';
 
 type AuthUser = {
-  user_id: string;
+  username: string;
   role: string;
 };
 
@@ -53,7 +50,6 @@ function Shell() {
   const { lang, setLang, t } = useI18n();
   const [tab, setTab] = useState<TabKey>('dashboard');
   const [selectedSessionId, setSelectedSessionId] = useState<string | undefined>(undefined);
-  const [selectedSessionUserId, setSelectedSessionUserId] = useState<string | undefined>(undefined);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [bootLoading, setBootLoading] = useState(true);
   const [loginLoading, setLoginLoading] = useState(false);
@@ -61,9 +57,10 @@ function Shell() {
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('admin');
   const [adminSessionFilter, setAdminSessionFilter] = useState('');
+  const [openConfigUserId, setOpenConfigUserId] = useState<string | undefined>(undefined);
 
   const isAdmin = authUser?.role === 'admin';
-  const scopeUserId = authUser?.user_id || '';
+  const scopeUserId = authUser?.username || '';
   const sessionListUserFilter = isAdmin ? adminSessionFilter.trim() || undefined : scopeUserId;
 
   useEffect(() => {
@@ -73,6 +70,7 @@ function Shell() {
         setBootLoading(false);
         return;
       }
+
       try {
         const me = await api.me();
         setAuthUser(me);
@@ -90,8 +88,7 @@ function Shell() {
     () => [
       { key: 'dashboard', icon: <BarChartOutlined />, label: t('nav.dashboard') },
       { key: 'sessions', icon: <DatabaseOutlined />, label: t('nav.sessions') },
-      { key: 'models', icon: <ApiOutlined />, label: t('nav.models') },
-      { key: 'jobConfigs', icon: <SettingOutlined />, label: t('nav.jobConfigs') },
+      { key: 'users', icon: <UserOutlined />, label: t('nav.users') },
       ...(isAdmin
         ? [{ key: 'jobRuns', icon: <HistoryOutlined />, label: t('nav.jobRuns') }]
         : []),
@@ -105,7 +102,7 @@ function Shell() {
     try {
       const data = await api.login(username.trim(), password);
       localStorage.setItem('memory_auth_token', data.token);
-      setAuthUser({ user_id: data.user_id, role: data.role });
+      setAuthUser({ username: data.username, role: data.role });
       setTab('sessions');
     } catch (err) {
       setLoginError((err as Error).message);
@@ -118,7 +115,7 @@ function Shell() {
     localStorage.removeItem('memory_auth_token');
     setAuthUser(null);
     setSelectedSessionId(undefined);
-    setSelectedSessionUserId(undefined);
+    setOpenConfigUserId(undefined);
     setTab('dashboard');
   };
 
@@ -189,7 +186,7 @@ function Shell() {
               <Header className="top-header">
                 <Space wrap>
                   <Tag color={isAdmin ? 'gold' : 'default'}>
-                    {authUser.user_id} ({authUser.role})
+                    {authUser.username} ({authUser.role})
                   </Tag>
                   {isAdmin && (
                     <Input
@@ -220,22 +217,35 @@ function Shell() {
                     currentUserId={scopeUserId}
                     isAdmin={Boolean(isAdmin)}
                     selectedSessionId={selectedSessionId}
-                    onSelectSession={(sessionId, sessionUserId) => {
+                    onSelectSession={(sessionId) => {
                       setSelectedSessionId(sessionId);
-                      setSelectedSessionUserId(sessionUserId);
                     }}
                   />
                 )}
-                {tab === 'models' && <ModelConfigsPage userId={scopeUserId} />}
-                {tab === 'jobConfigs' && (
-                  <JobConfigsPage
-                    userId={
-                      isAdmin
-                        ? selectedSessionUserId || adminSessionFilter.trim() || scopeUserId
-                        : scopeUserId
-                    }
+                {tab === 'users' && isAdmin && (
+                  <>
+                    {openConfigUserId ? (
+                      <UserConfigCenterPage
+                        userId={openConfigUserId}
+                        isAdmin={Boolean(isAdmin)}
+                        currentUserId={scopeUserId}
+                        onBack={() => setOpenConfigUserId(undefined)}
+                      />
+                    ) : (
+                      <UserManagementPage
+                        isAdmin={Boolean(isAdmin)}
+                        currentUsername={scopeUserId}
+                        onOpenConfigUser={(userId) => setOpenConfigUserId(userId)}
+                      />
+                    )}
+                  </>
+                )}
+                {tab === 'users' && !isAdmin && (
+                  <UserConfigCenterPage
+                    userId={scopeUserId}
                     isAdmin={Boolean(isAdmin)}
-                    selectedSessionId={selectedSessionId}
+                    currentUserId={scopeUserId}
+                    onBack={() => setTab('dashboard')}
                   />
                 )}
                 {tab === 'jobRuns' && isAdmin && <JobRunsPage />}

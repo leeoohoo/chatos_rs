@@ -11,6 +11,7 @@ import type {
   SessionSummary,
   SummaryJobConfig,
   SummaryLevelItem,
+  UserItem,
 } from '../types';
 
 const baseURL =
@@ -20,6 +21,22 @@ const client = axios.create({
   baseURL,
   timeout: 30000,
 });
+
+type RawUserItem = {
+  username: string;
+  role: string;
+  created_at: string;
+  updated_at: string;
+};
+
+function normalizeUserItem(raw: RawUserItem): UserItem {
+  return {
+    username: raw.username,
+    role: raw.role,
+    created_at: raw.created_at,
+    updated_at: raw.updated_at,
+  };
+}
 
 client.interceptors.request.use((config) => {
   const authToken = localStorage.getItem('memory_auth_token');
@@ -53,14 +70,47 @@ client.interceptors.response.use(
 );
 
 export const api = {
-  async login(username: string, password: string): Promise<{ token: string; user_id: string; role: string }> {
+  async login(
+    username: string,
+    password: string,
+  ): Promise<{ token: string; username: string; role: string }> {
     const { data } = await client.post('/auth/login', { username, password });
-    return data;
+    return {
+      token: data.token,
+      username: data.username,
+      role: data.role,
+    };
   },
 
-  async me(): Promise<{ user_id: string; role: string }> {
+  async me(): Promise<{ username: string; role: string }> {
     const { data } = await client.get('/auth/me');
-    return data;
+    return {
+      username: data.username,
+      role: data.role,
+    };
+  },
+
+  async listUsers(limit = 500): Promise<UserItem[]> {
+    const { data } = await client.get('/auth/users', { params: { limit } });
+    return (data.items ?? []).map((item: RawUserItem) => normalizeUserItem(item));
+  },
+
+  async createUser(payload: { username: string; password: string; role?: string }): Promise<UserItem> {
+    const { data } = await client.post('/auth/users', payload);
+    return normalizeUserItem(data);
+  },
+
+  async updateUser(
+    username: string,
+    payload: { password?: string; role?: string },
+  ): Promise<UserItem> {
+    const { data } = await client.patch(`/auth/users/${username}`, payload);
+    return normalizeUserItem(data);
+  },
+
+  async deleteUser(username: string): Promise<boolean> {
+    const { data } = await client.delete(`/auth/users/${username}`);
+    return Boolean(data?.success);
   },
 
   async listSessions(userId?: string): Promise<Session[]> {
@@ -169,9 +219,9 @@ export const api = {
     return data;
   },
 
-  async getSummaryJobConfig(userId: string): Promise<SummaryJobConfig> {
+  async getSummaryJobConfig(userId: string): Promise<SummaryJobConfig | null> {
     const { data } = await client.get('/configs/summary-job', { params: { user_id: userId } });
-    return data;
+    return data ?? null;
   },
 
   async saveSummaryJobConfig(payload: Partial<SummaryJobConfig> & { user_id: string }) {
@@ -194,11 +244,11 @@ export const api = {
     return data;
   },
 
-  async getRollupJobConfig(userId: string): Promise<RollupJobConfig> {
+  async getRollupJobConfig(userId: string): Promise<RollupJobConfig | null> {
     const { data } = await client.get('/configs/summary-rollup-job', {
       params: { user_id: userId },
     });
-    return data;
+    return data ?? null;
   },
 
   async saveRollupJobConfig(payload: Partial<RollupJobConfig> & { user_id: string }) {

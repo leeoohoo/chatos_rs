@@ -247,7 +247,8 @@ pub async fn list_session_ids_with_pending_messages_by_user(
         .aggregate(pipeline)
         .await
         .map_err(|e| e.to_string())?;
-    let docs: Vec<mongodb::bson::Document> = cursor.try_collect().await.map_err(|e| e.to_string())?;
+    let docs: Vec<mongodb::bson::Document> =
+        cursor.try_collect().await.map_err(|e| e.to_string())?;
 
     Ok(docs
         .into_iter()

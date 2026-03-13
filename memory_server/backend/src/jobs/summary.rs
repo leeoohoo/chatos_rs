@@ -9,7 +9,8 @@ use crate::db::Db;
 use crate::models::{AiModelConfig, CreateSummaryInput};
 use crate::repositories::{auth::ADMIN_USER_ID, configs, jobs, messages, summaries};
 use crate::services::summarizer::{
-    estimate_tokens_text, estimate_tokens_texts, message_to_summary_block, summarize_texts_with_split,
+    estimate_tokens_text, estimate_tokens_texts, message_to_summary_block,
+    summarize_texts_with_split,
 };
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -22,7 +23,7 @@ pub struct SummaryRunResult {
 }
 
 pub async fn run_once(pool: &Db, ai: &AiClient, user_id: &str) -> Result<SummaryRunResult, String> {
-    let config = configs::get_summary_job_config(pool, user_id).await?;
+    let config = configs::get_effective_summary_job_config(pool, user_id).await?;
     if config.enabled != 1 {
         return Ok(SummaryRunResult {
             processed_sessions: 0,
@@ -33,7 +34,8 @@ pub async fn run_once(pool: &Db, ai: &AiClient, user_id: &str) -> Result<Summary
         });
     }
 
-    let model_cfg = resolve_model_config(pool, user_id, config.summary_model_config_id.as_deref()).await?;
+    let model_cfg =
+        resolve_model_config(pool, user_id, config.summary_model_config_id.as_deref()).await?;
     let model_name = model_cfg
         .as_ref()
         .map(|m| m.model.clone())
@@ -136,7 +138,11 @@ pub async fn run_once(pool: &Db, ai: &AiClient, user_id: &str) -> Result<Summary
     Ok(out)
 }
 
-fn resolve_session_concurrency(max_sessions_per_tick: i64, env_key: &str, default_limit: usize) -> usize {
+fn resolve_session_concurrency(
+    max_sessions_per_tick: i64,
+    env_key: &str,
+    default_limit: usize,
+) -> usize {
     let configured = std::env::var(env_key)
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
@@ -157,7 +163,8 @@ async fn process_session(
     token_limit: i64,
     target_summary_tokens: i64,
 ) -> Result<(usize, usize), String> {
-    let pending_head = messages::list_pending_messages(pool, session_id, Some(round_limit.max(1))).await?;
+    let pending_head =
+        messages::list_pending_messages(pool, session_id, Some(round_limit.max(1))).await?;
     if pending_head.is_empty() {
         return Ok((0, 0));
     }
@@ -231,7 +238,8 @@ async fn process_session(
             token_limit,
             target_summary_tokens,
         )
-        .await {
+        .await
+        {
             Ok(v) => v,
             Err(err) => {
                 let _ = finish_failed_job_run(pool, job_run.id.as_str(), err.as_str()).await;
@@ -253,9 +261,7 @@ async fn process_session(
             ));
         }
         if build.forced_truncated {
-            text.push_str(
-                "\n\n[meta] 本次总结触发强制截断兜底，已标记该批次消息为已总结。",
-            );
+            text.push_str("\n\n[meta] 本次总结触发强制截断兜底，已标记该批次消息为已总结。");
         }
         if !oversized_messages.is_empty() {
             text.push_str(&format!(
@@ -298,7 +304,8 @@ async fn process_session(
             level: 0,
         },
     )
-    .await {
+    .await
+    {
         Ok(v) => v,
         Err(err) => {
             let _ = finish_failed_job_run(pool, job_run.id.as_str(), err.as_str()).await;
@@ -381,12 +388,13 @@ pub async fn run_once_for_session(
     user_id: &str,
     session_id: &str,
 ) -> Result<(), String> {
-    let config = configs::get_summary_job_config(pool, user_id).await?;
+    let config = configs::get_effective_summary_job_config(pool, user_id).await?;
     if config.enabled != 1 {
         return Ok(());
     }
 
-    let model_cfg = resolve_model_config(pool, user_id, config.summary_model_config_id.as_deref()).await?;
+    let model_cfg =
+        resolve_model_config(pool, user_id, config.summary_model_config_id.as_deref()).await?;
     let model_name = model_cfg
         .as_ref()
         .map(|m| m.model.clone())

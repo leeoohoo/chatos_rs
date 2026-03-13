@@ -195,7 +195,8 @@ pub async fn list_active_user_ids(db: &Db, limit: i64) -> Result<Vec<String>, St
         .aggregate(pipeline)
         .await
         .map_err(|e| e.to_string())?;
-    let docs: Vec<mongodb::bson::Document> = cursor.try_collect().await.map_err(|e| e.to_string())?;
+    let docs: Vec<mongodb::bson::Document> =
+        cursor.try_collect().await.map_err(|e| e.to_string())?;
     Ok(docs
         .into_iter()
         .filter_map(|doc| doc.get_str("user_id").ok().map(|v| v.to_string()))

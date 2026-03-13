@@ -20,10 +20,14 @@ import type { ColumnsType } from 'antd/es/table';
 
 import { api } from '../api/client';
 import { useI18n } from '../i18n';
-import type { AiModelConfig } from '../types';
+import type { AiModelConfig, UserItem } from '../types';
 
 interface ModelConfigsPageProps {
   userId: string;
+  isAdmin: boolean;
+  currentUserId: string;
+  onSelectUser?: (userId: string) => void;
+  showUserSelector?: boolean;
 }
 
 interface ModelFormValues {
@@ -66,8 +70,17 @@ const DEFAULT_FORM: ModelFormValues = {
   supports_responses: false,
 };
 
-export function ModelConfigsPage({ userId }: ModelConfigsPageProps) {
+export function ModelConfigsPage({
+  userId,
+  isAdmin,
+  currentUserId,
+  onSelectUser,
+  showUserSelector = true,
+}: ModelConfigsPageProps) {
   const { t } = useI18n();
+  const [targetUserId, setTargetUserId] = useState(userId);
+  const [users, setUsers] = useState<UserItem[]>([]);
+  const [usersLoading, setUsersLoading] = useState(false);
   const [items, setItems] = useState<AiModelConfig[]>([]);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -79,7 +92,47 @@ export function ModelConfigsPage({ userId }: ModelConfigsPageProps) {
   const [form] = Form.useForm<ModelFormValues>();
   const provider = Form.useWatch('provider', form);
 
-  const disabled = useMemo(() => !userId.trim(), [userId]);
+  useEffect(() => {
+    setTargetUserId(userId);
+  }, [userId]);
+
+  useEffect(() => {
+    const uid = targetUserId.trim();
+    if (uid) {
+      onSelectUser?.(uid);
+    }
+  }, [targetUserId, onSelectUser]);
+
+  const disabled = useMemo(() => !targetUserId.trim(), [targetUserId]);
+
+  const loadUsers = async () => {
+    setUsersLoading(true);
+    try {
+      const list = await api.listUsers(500);
+      setUsers(list);
+
+      if (list.length === 0) {
+        return;
+      }
+
+      const currentTarget = targetUserId.trim();
+      if (currentTarget && list.some((item) => item.username === currentTarget)) {
+        return;
+      }
+
+      const preferred = userId.trim() || currentUserId.trim();
+      if (preferred && list.some((item) => item.username === preferred)) {
+        setTargetUserId(preferred);
+        return;
+      }
+
+      setTargetUserId(list[0].username);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setUsersLoading(false);
+    }
+  };
 
   const load = async () => {
     if (disabled) {
@@ -90,7 +143,7 @@ export function ModelConfigsPage({ userId }: ModelConfigsPageProps) {
     setLoading(true);
     setError(null);
     try {
-      const data = await api.listModelConfigs(userId);
+      const data = await api.listModelConfigs(targetUserId.trim());
       setItems(data);
     } catch (err) {
       setError((err as Error).message);
@@ -100,9 +153,17 @@ export function ModelConfigsPage({ userId }: ModelConfigsPageProps) {
   };
 
   useEffect(() => {
+    if (!showUserSelector) {
+      return;
+    }
+    loadUsers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin, currentUserId, showUserSelector]);
+
+  useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userId]);
+  }, [targetUserId]);
 
   const openCreate = () => {
     setEditing(null);
@@ -147,7 +208,7 @@ export function ModelConfigsPage({ userId }: ModelConfigsPageProps) {
       const providerValue = values.provider || 'gpt';
 
       const payload = {
-        user_id: userId,
+        user_id: targetUserId.trim(),
         name: values.name.trim(),
         provider: providerValue,
         model: values.model.trim(),
@@ -206,6 +267,43 @@ export function ModelConfigsPage({ userId }: ModelConfigsPageProps) {
       setError((err as Error).message);
     }
   };
+
+  const userColumns: ColumnsType<UserItem> = [
+    {
+      title: t('top.userId'),
+      dataIndex: 'username',
+      key: 'username',
+      render: (value: string) => (
+        <Space size={6}>
+          <span>{value}</span>
+          {targetUserId === value && <Tag color="blue">{t('models.currentTarget')}</Tag>}
+        </Space>
+      ),
+    },
+    {
+      title: t('top.role'),
+      dataIndex: 'role',
+      key: 'role',
+      width: 120,
+    },
+    {
+      title: t('common.action'),
+      key: 'action',
+      width: 140,
+      render: (_, record) => (
+        <Button
+          type={targetUserId === record.username ? 'primary' : 'default'}
+          size="small"
+          onClick={() => {
+            setTargetUserId(record.username);
+            onSelectUser?.(record.username);
+          }}
+        >
+          {t('models.viewConfig')}
+        </Button>
+      ),
+    },
+  ];
 
   const columns: ColumnsType<AiModelConfig> = [
     { title: t('models.name'), dataIndex: 'name', key: 'name', width: 180 },
@@ -300,6 +398,11 @@ export function ModelConfigsPage({ userId }: ModelConfigsPageProps) {
       title={t('models.title')}
       extra={
         <Space>
+          {showUserSelector && (
+            <Button onClick={loadUsers} loading={usersLoading}>
+              {t('common.refresh')}
+            </Button>
+          )}
           <Button onClick={load} loading={loading}>
             {t('common.refresh')}
           </Button>
@@ -309,8 +412,29 @@ export function ModelConfigsPage({ userId }: ModelConfigsPageProps) {
         </Space>
       }
     >
-      {!userId.trim() && (
+      {showUserSelector && (
+        <Card size="small" title={t('models.userListTitle')} style={{ marginBottom: 12 }}>
+          <Table<UserItem>
+            rowKey="username"
+            loading={usersLoading}
+            dataSource={users}
+            pagination={false}
+            size="small"
+            columns={userColumns}
+          />
+        </Card>
+      )}
+
+      {!targetUserId.trim() && (
         <Alert type="warning" showIcon message={t('sessions.needUserId')} style={{ marginBottom: 12 }} />
+      )}
+      {showUserSelector && (
+        <Alert
+          type="info"
+          showIcon
+          message={`${t('models.currentTarget')}: ${targetUserId || '-'}`}
+          style={{ marginBottom: 12 }}
+        />
       )}
       {error && <Alert type="error" showIcon message={error} style={{ marginBottom: 12 }} />}
       {message && <Alert type="success" showIcon message={message} style={{ marginBottom: 12 }} />}
@@ -379,11 +503,7 @@ export function ModelConfigsPage({ userId }: ModelConfigsPageProps) {
           </Form.Item>
 
           <Form.Item label={t('models.thinking')} name="thinking_level">
-            <Select
-              allowClear
-              disabled={provider !== 'gpt'}
-              options={THINKING_LEVEL_OPTIONS}
-            />
+            <Select allowClear disabled={provider !== 'gpt'} options={THINKING_LEVEL_OPTIONS} />
           </Form.Item>
 
           <Form.Item label={t('models.temperature')} name="temperature">

@@ -339,7 +339,9 @@ async fn migrate_summary_job_configs(conn: &Connection, db: &Database) -> Result
 
     let mut count = 0usize;
     while let Some(row) = rows.next().map_err(|e| e.to_string())? {
-        let user_id: String = row.get(0).map_err(to_row_err("summary_job_configs.user_id"))?;
+        let user_id: String = row
+            .get(0)
+            .map_err(to_row_err("summary_job_configs.user_id"))?;
         let doc = doc! {
             "user_id": &user_id,
             "enabled": row.get::<_, i64>(1).map_err(to_row_err("summary_job_configs.enabled"))?,
@@ -429,7 +431,11 @@ async fn migrate_job_runs(conn: &Connection, db: &Database) -> Result<usize, Str
     Ok(count)
 }
 
-async fn upsert(coll: &Collection<Document>, filter: Document, replacement: Document) -> Result<(), String> {
+async fn upsert(
+    coll: &Collection<Document>,
+    filter: Document,
+    replacement: Document,
+) -> Result<(), String> {
     coll.replace_one(filter, replacement)
         .upsert(true)
         .await

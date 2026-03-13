@@ -26,10 +26,7 @@ pub fn estimate_tokens_texts(items: &[String]) -> i64 {
 pub fn message_to_summary_block(message: &Message) -> String {
     let mut out = format!(
         "[{}][{}][id={}] {}",
-        message.created_at,
-        message.role,
-        message.id,
-        message.content
+        message.created_at, message.role, message.id, message.content
     );
     if let Some(reasoning) = message.reasoning.as_ref() {
         out.push_str("\n[reasoning] ");
@@ -163,7 +160,8 @@ async fn merge_chunk_summaries(
             return Err("context_length_exceeded: merge rounds exceeded".to_string());
         }
 
-        let groups = split_chunks_by_token_limit(current.as_slice(), token_limit.max(MIN_TOKEN_LIMIT));
+        let groups =
+            split_chunks_by_token_limit(current.as_slice(), token_limit.max(MIN_TOKEN_LIMIT));
         let mut next = Vec::with_capacity(groups.len());
         let mut progressed = false;
 
@@ -191,7 +189,9 @@ async fn merge_chunk_summaries(
         }
 
         if !progressed {
-            return Err("context_length_exceeded: merge chunks are individually oversized".to_string());
+            return Err(
+                "context_length_exceeded: merge chunks are individually oversized".to_string(),
+            );
         }
 
         current = next;
