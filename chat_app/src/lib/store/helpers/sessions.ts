@@ -6,12 +6,19 @@ export const normalizeSession = (raw: any): Session => {
     ? raw.status.toLowerCase()
     : (raw?.archived ? 'archived' : 'active');
   const archived = raw?.archived === true || status === 'archiving' || status === 'archived';
+  const metadataFromRaw = (raw?.metadata && typeof raw.metadata === 'object' && !Array.isArray(raw.metadata))
+    ? raw.metadata
+    : {};
   const selectedModelId = typeof raw?.selected_model_id === 'string'
     ? raw.selected_model_id.trim()
-    : '';
+    : (typeof metadataFromRaw?.chat_runtime?.selected_model_id === 'string'
+      ? metadataFromRaw.chat_runtime.selected_model_id.trim()
+      : '');
   const selectedAgentId = typeof raw?.selected_agent_id === 'string'
     ? raw.selected_agent_id.trim()
-    : '';
+    : (typeof metadataFromRaw?.contact?.agent_id === 'string'
+      ? metadataFromRaw.contact.agent_id.trim()
+      : '');
   let metadata = raw?.metadata ?? null;
   const hasSelection = selectedModelId.length > 0 || selectedAgentId.length > 0;
   if (hasSelection) {
@@ -21,6 +28,19 @@ export const normalizeSession = (raw: any): Session => {
     metadataObject.ui_chat_selection = {
       selected_model_id: selectedModelId.length > 0 ? selectedModelId : null,
       selected_agent_id: selectedAgentId.length > 0 ? selectedAgentId : null,
+    };
+    metadataObject.chat_runtime = {
+      ...(metadataObject.chat_runtime && typeof metadataObject.chat_runtime === 'object' && !Array.isArray(metadataObject.chat_runtime)
+        ? metadataObject.chat_runtime
+        : {}),
+      selected_model_id: selectedModelId.length > 0 ? selectedModelId : null,
+    };
+    metadataObject.contact = {
+      ...(metadataObject.contact && typeof metadataObject.contact === 'object' && !Array.isArray(metadataObject.contact)
+        ? metadataObject.contact
+        : {}),
+      type: 'memory_agent',
+      agent_id: selectedAgentId.length > 0 ? selectedAgentId : null,
     };
     metadata = metadataObject;
   }

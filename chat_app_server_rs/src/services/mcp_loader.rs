@@ -60,6 +60,9 @@ fn build_servers_from_configs(
             else {
                 continue;
             };
+            if matches!(kind, BuiltinMcpKind::AgentBuilder) {
+                continue;
+            }
             let root = workspace_dir_fallback
                 .clone()
                 .unwrap_or_else(|| resolve_workspace_dir(None));

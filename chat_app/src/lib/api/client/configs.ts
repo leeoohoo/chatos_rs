@@ -58,69 +58,6 @@ export const deleteMcpConfig = (request: ApiRequestFn, id: string) => {
   });
 };
 
-export const getBuiltinMcpSettings = (request: ApiRequestFn, id: string): Promise<any> => {
-  return request<any>(`/mcp-configs/${id}/builtin/settings`);
-};
-
-export const getBuiltinMcpPermissions = (request: ApiRequestFn, id: string): Promise<any> => {
-  return request<any>(`/mcp-configs/${id}/builtin/mcp-permissions`);
-};
-
-export const updateBuiltinMcpPermissions = (
-  request: ApiRequestFn,
-  id: string,
-  payload: { enabled_mcp_ids: string[]; selected_system_context_id?: string }
-): Promise<any> => {
-  return request<any>(`/mcp-configs/${id}/builtin/mcp-permissions`, {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
-};
-
-export const importBuiltinMcpAgents = (
-  request: ApiRequestFn,
-  id: string,
-  content: string
-): Promise<any> => {
-  return request<any>(`/mcp-configs/${id}/builtin/import-agents`, {
-    method: 'POST',
-    body: JSON.stringify({ content }),
-  });
-};
-
-export const importBuiltinMcpSkills = (
-  request: ApiRequestFn,
-  id: string,
-  content: string
-): Promise<any> => {
-  return request<any>(`/mcp-configs/${id}/builtin/import-skills`, {
-    method: 'POST',
-    body: JSON.stringify({ content }),
-  });
-};
-
-export const importBuiltinMcpFromGit = (
-  request: ApiRequestFn,
-  id: string,
-  payload: { repository: string; branch?: string; agents_path?: string; skills_path?: string }
-): Promise<any> => {
-  return request<any>(`/mcp-configs/${id}/builtin/import-git`, {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
-};
-
-export const installBuiltinMcpPlugin = (
-  request: ApiRequestFn,
-  id: string,
-  payload: { source?: string; install_all?: boolean }
-): Promise<any> => {
-  return request<any>(`/mcp-configs/${id}/builtin/install-plugin`, {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
-};
-
 export const getAiModelConfigs = (request: ApiRequestFn, userId?: string) => {
   const query = buildQuery({ user_id: userId });
   debugLog('🔍 getAiModelConfigs API调用:', { userId, query });
@@ -308,65 +245,6 @@ export const updateApplication = (
 
 export const deleteApplication = (request: ApiRequestFn, id: string): Promise<any> => {
   return request<any>(`/applications/${id}`, {
-    method: 'DELETE',
-  });
-};
-
-export const getAgents = (request: ApiRequestFn, userId?: string): Promise<any[]> => {
-  const query = buildQuery({ user_id: userId });
-  return request<any[]>(`/agents${query}`);
-};
-
-export const createAgent = (
-  request: ApiRequestFn,
-  data: {
-    name: string;
-    description?: string;
-    ai_model_config_id: string;
-    mcp_config_ids?: string[];
-    callable_agent_ids?: string[];
-    system_context_id?: string;
-    project_id?: string | null;
-    workspace_dir?: string | null;
-    user_id?: string;
-    enabled?: boolean;
-    app_ids?: string[];
-  }
-): Promise<any> => {
-  debugLog('🔍 API client createAgent 调用:', data);
-  debugLog('🔍 [关键] app_ids 字段:', data.app_ids, '类型:', typeof data.app_ids, '是否为数组:', Array.isArray(data.app_ids));
-  return request<any>('/agents', {
-    method: 'POST',
-    body: JSON.stringify(data),
-  });
-};
-
-export const updateAgent = (
-  request: ApiRequestFn,
-  agentId: string,
-  data: {
-    name?: string;
-    description?: string;
-    ai_model_config_id?: string;
-    mcp_config_ids?: string[];
-    callable_agent_ids?: string[];
-    system_context_id?: string;
-    project_id?: string | null;
-    workspace_dir?: string | null;
-    enabled?: boolean;
-    app_ids?: string[];
-  }
-): Promise<any> => {
-  debugLog('🔍 API client updateAgent 调用:', { agentId, data });
-  debugLog('🔍 [关键] app_ids 字段:', data.app_ids, '类型:', typeof data.app_ids, '是否为数组:', Array.isArray(data.app_ids));
-  return request<any>(`/agents/${agentId}`, {
-    method: 'PUT',
-    body: JSON.stringify(data),
-  });
-};
-
-export const deleteAgent = (request: ApiRequestFn, agentId: string): Promise<any> => {
-  return request<any>(`/agents/${agentId}`, {
     method: 'DELETE',
   });
 };

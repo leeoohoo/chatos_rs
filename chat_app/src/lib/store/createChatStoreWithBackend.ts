@@ -50,7 +50,7 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                     (set, get) => {
                     const getSessionParams = () => ({
                         userId,
-                        projectId: '',
+                        projectId: customProjectId || get().currentProjectId || '',
                     });
 
                     return {

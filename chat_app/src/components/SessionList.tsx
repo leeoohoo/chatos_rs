@@ -9,6 +9,7 @@ import { useConfirmDialog } from '../hooks/useConfirmDialog';
 import { cn } from '../lib/utils';
 import { resolveRemoteConnectionErrorFeedback } from '../lib/api/remoteConnectionErrors';
 import { DirPickerDialog, KeyFilePickerDialog } from './sessionList/Pickers';
+import { CreateContactModal } from './sessionList/CreateContactModal';
 import { RemoteConnectionModal } from './sessionList/RemoteConnectionModal';
 import { CreateProjectModal, CreateTerminalModal } from './sessionList/CreateResourceModals';
 import {
@@ -70,12 +71,14 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
   
   const {
     sessions,
+    agents,
     currentSession,
     createSession,
     selectSession,
     deleteSession,
     updateSession,
     loadSessions,
+    loadAgents,
     sessionChatState,
     taskReviewPanelsBySession = {},
     uiPromptPanelsBySession = {},
@@ -102,12 +105,14 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     openRemoteSftp,
   } = storeToUse((state) => ({
     sessions: state.sessions,
+    agents: state.agents,
     currentSession: state.currentSession,
     createSession: state.createSession,
     selectSession: state.selectSession,
     deleteSession: state.deleteSession,
     updateSession: state.updateSession,
     loadSessions: state.loadSessions,
+    loadAgents: state.loadAgents,
     sessionChatState: state.sessionChatState,
     taskReviewPanelsBySession: state.taskReviewPanelsBySession,
     uiPromptPanelsBySession: state.uiPromptPanelsBySession,
@@ -146,6 +151,10 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
   const [isRefreshingTerminals, setIsRefreshingTerminals] = useState(false);
   const [isRefreshingRemote, setIsRefreshingRemote] = useState(false);
   const PAGE_SIZE = 30;
+
+  const [createContactModalOpen, setCreateContactModalOpen] = useState(false);
+  const [selectedContactAgentId, setSelectedContactAgentId] = useState<string | null>(null);
+  const [contactError, setContactError] = useState<string | null>(null);
 
   const [projectModalOpen, setProjectModalOpen] = useState(false);
   const [projectRoot, setProjectRoot] = useState('');
@@ -238,6 +247,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
   });
 
   const didLoadProjectsRef = useRef(false);
+  const didLoadAgentsRef = useRef(false);
   const didLoadTerminalsRef = useRef(false);
   const didLoadRemoteRef = useRef(false);
   
@@ -245,10 +255,38 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
 
   const isCollapsed = collapsed ?? !isOpen;
   const handleCreateSession = async () => {
+    setContactError(null);
+    setSelectedContactAgentId(null);
+    setCreateContactModalOpen(true);
+  };
+
+  const handleCreateContactSession = async () => {
+    const agentId = selectedContactAgentId?.trim();
+    if (!agentId) {
+      setContactError('请先选择一个联系人');
+      return;
+    }
+    const selectedAgent = (agents || []).find((agent: any) => agent.id === agentId);
+    if (!selectedAgent) {
+      setContactError('联系人不存在或不可用');
+      return;
+    }
     try {
-      await createSession();
+      await createSession({
+        title: selectedAgent.name || '新对话',
+        contactAgentId: selectedAgent.id,
+        selectedModelId: null,
+        projectId: currentProject?.id || null,
+        projectRoot: currentProject?.rootPath || null,
+        mcpEnabled: true,
+        enabledMcpIds: [],
+      });
+      setCreateContactModalOpen(false);
+      setSelectedContactAgentId(null);
+      setContactError(null);
     } catch (error) {
       console.error('Failed to create session:', error);
+      setContactError(error instanceof Error ? error.message : '添加联系人失败');
     }
   };
 
@@ -779,6 +817,12 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
   }, [loadProjects]);
 
   useEffect(() => {
+    if (didLoadAgentsRef.current) return;
+    didLoadAgentsRef.current = true;
+    loadAgents();
+  }, [loadAgents]);
+
+  useEffect(() => {
     if (didLoadTerminalsRef.current) return;
     didLoadTerminalsRef.current = true;
     loadTerminals();
@@ -919,6 +963,25 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
           />
         </div>
       )}
+
+      <CreateContactModal
+        isOpen={createContactModalOpen}
+        agents={(agents || []) as any[]}
+        selectedAgentId={selectedContactAgentId}
+        error={contactError}
+        onClose={() => {
+          setCreateContactModalOpen(false);
+          setSelectedContactAgentId(null);
+          setContactError(null);
+        }}
+        onSelectedAgentChange={(agentId) => {
+          setSelectedContactAgentId(agentId);
+          setContactError(null);
+        }}
+        onCreate={() => {
+          void handleCreateContactSession();
+        }}
+      />
 
       <CreateProjectModal
         isOpen={projectModalOpen}

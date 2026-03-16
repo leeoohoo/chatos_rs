@@ -8,8 +8,6 @@ use tracing::error;
 use crate::core::mcp_tools::ToolResult;
 use crate::models::message::Message;
 use crate::models::session_summary_v2::SessionSummaryV2;
-use crate::models::sub_agent_run_message::{SubAgentRunMessage, SubAgentRunMessageService};
-use crate::models::sub_agent_run_summary::SubAgentRunSummaryService;
 use crate::services::ai_common::build_tool_result_metadata;
 use crate::services::memory_server_client;
 
@@ -185,19 +183,14 @@ impl MessageManagerCore {
         memory_summary_limit: Option<i64>,
         filter_empty_summaries: bool,
     ) -> (Vec<SessionSummaryV2>, Vec<Message>) {
-        let mut summaries = match memory_server_client::list_summaries(
-            session_id,
-            memory_summary_limit,
-            0,
-        )
-        .await
-        {
-            Ok(items) => items,
-            Err(err) => {
-                error!("list_summaries from memory_server failed: {}", err);
-                Vec::new()
-            }
-        };
+        let mut summaries =
+            match memory_server_client::list_summaries(session_id, memory_summary_limit, 0).await {
+                Ok(items) => items,
+                Err(err) => {
+                    error!("list_summaries from memory_server failed: {}", err);
+                    Vec::new()
+                }
+            };
 
         if filter_empty_summaries {
             summaries.retain(|summary| !summary.summary_text.trim().is_empty());
@@ -208,20 +201,23 @@ impl MessageManagerCore {
             return (Vec::new(), messages);
         }
 
-        let mut messages = match memory_server_client::list_messages(session_id, None, 0, true).await
-        {
-            Ok(items) => items,
-            Err(err) => {
-                error!("get_session_memory_history list_messages failed: {}", err);
-                Vec::new()
-            }
-        };
+        let mut messages =
+            match memory_server_client::list_messages(session_id, None, 0, true).await {
+                Ok(items) => items,
+                Err(err) => {
+                    error!("get_session_memory_history list_messages failed: {}", err);
+                    Vec::new()
+                }
+            };
 
         if let Some(last_message_id) = summaries
             .last()
             .and_then(|summary| summary.source_end_message_id.clone())
         {
-            if let Some(last_idx) = messages.iter().position(|message| message.id == last_message_id) {
+            if let Some(last_idx) = messages
+                .iter()
+                .position(|message| message.id == last_message_id)
+            {
                 messages = messages.into_iter().skip(last_idx + 1).collect();
             }
         }
@@ -260,88 +256,6 @@ impl MessageManagerCore {
                     messages: self.get_session_messages(session_id, None).await,
                 }
             }
-        }
-    }
-
-    pub(crate) async fn get_memory_sub_agent_run_history_context(
-        &self,
-        run_id: &str,
-        memory_summary_limit: usize,
-    ) -> ChatHistoryContext {
-        let target_summary_limit = memory_summary_limit.max(1);
-        let fetch_summary_limit = (target_summary_limit as i64).saturating_mul(10).max(10);
-        let mut recent_summary_texts: Vec<String> = Vec::new();
-
-        match SubAgentRunSummaryService::list_by_run(run_id, Some(fetch_summary_limit), 0).await {
-            Ok(records) => {
-                for record in records {
-                    if record.status != "done" {
-                        continue;
-                    }
-                    let text = record.summary_text.trim();
-                    if text.is_empty() {
-                        continue;
-                    }
-                    recent_summary_texts.push(text.to_string());
-                    if recent_summary_texts.len() >= target_summary_limit {
-                        break;
-                    }
-                }
-            }
-            Err(err) => {
-                error!(
-                    "get_memory_sub_agent_run_history_context summaries failed: run_id={} error={}",
-                    run_id, err
-                );
-            }
-        }
-
-        if recent_summary_texts.is_empty() {
-            let messages = match SubAgentRunMessageService::list_by_run(run_id, None).await {
-                Ok(items) => items
-                    .into_iter()
-                    .map(map_sub_agent_run_message_to_message)
-                    .collect(),
-                Err(err) => {
-                    error!(
-                        "get_memory_sub_agent_run_history_context messages failed: run_id={} error={}",
-                        run_id, err
-                    );
-                    Vec::new()
-                }
-            };
-            return ChatHistoryContext {
-                merged_summary: None,
-                summary_count: 0,
-                messages,
-            };
-        }
-
-        recent_summary_texts.reverse();
-        let merged_summary = Some(format!(
-            "以下是当前 Sub-Agent 历史总结（按时间从旧到新）：\n\n{}",
-            recent_summary_texts.join("\n\n---\n\n")
-        ));
-
-        let messages = match SubAgentRunMessageService::get_pending_for_summary(run_id, None).await
-        {
-            Ok(items) => items
-                .into_iter()
-                .map(map_sub_agent_run_message_to_message)
-                .collect(),
-            Err(err) => {
-                error!(
-                    "get_memory_sub_agent_run_history_context pending failed: run_id={} error={}",
-                    run_id, err
-                );
-                Vec::new()
-            }
-        };
-
-        ChatHistoryContext {
-            merged_summary,
-            summary_count: recent_summary_texts.len(),
-            messages,
         }
     }
 
@@ -428,21 +342,4 @@ async fn try_get_memory_chat_history_context_from_memory_server(
         summary_count: payload.1,
         messages: payload.2,
     })
-}
-
-fn map_sub_agent_run_message_to_message(source: SubAgentRunMessage) -> Message {
-    Message {
-        id: source.id,
-        session_id: source.run_id,
-        role: source.role,
-        content: source.content,
-        message_mode: None,
-        message_source: None,
-        summary: None,
-        tool_calls: None,
-        tool_call_id: source.tool_call_id,
-        reasoning: source.reasoning,
-        metadata: source.metadata,
-        created_at: source.created_at,
-    }
 }

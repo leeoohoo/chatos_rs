@@ -14,10 +14,17 @@ use crate::core::auth::AuthUser;
 use crate::core::chat_context::{
     maybe_spawn_session_title_rename, resolve_effective_user_id, resolve_system_prompt,
 };
+use crate::core::chat_runtime::{
+    compose_contact_system_prompt, contact_agent_id_from_metadata, enabled_mcp_ids_from_metadata,
+    mcp_enabled_from_metadata, normalize_id, project_id_from_metadata, project_root_from_metadata,
+    resolve_project_runtime,
+};
 use crate::core::chat_stream::{
     build_v3_callbacks, handle_chat_result, send_error_event, send_start_event,
 };
-use crate::core::mcp_runtime::load_mcp_servers_by_selection;
+use crate::core::mcp_runtime::{
+    has_any_mcp_server, load_mcp_servers_by_selection, normalize_mcp_ids,
+};
 use crate::core::user_scope::{ensure_and_set_user_id, resolve_user_id};
 use crate::services::memory_server_client;
 use crate::services::user_settings::{apply_settings_to_ai_client, get_effective_user_settings};
@@ -37,6 +44,11 @@ struct ChatRequest {
     attachments: Option<Vec<Value>>,
     reasoning_enabled: Option<bool>,
     turn_id: Option<String>,
+    contact_agent_id: Option<String>,
+    project_id: Option<String>,
+    project_root: Option<String>,
+    mcp_enabled: Option<bool>,
+    enabled_mcp_ids: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -190,35 +202,89 @@ async fn stream_chat_v3(sender: SseSender, req: ChatRequest) {
         req.reasoning_enabled,
         true,
     );
-    let use_tools = false;
-
-    let (http_servers, stdio_servers, builtin_servers) = (Vec::new(), Vec::new(), Vec::new());
-    let mut mcp_exec = McpToolExecute::new(
-        http_servers.clone(),
-        stdio_servers.clone(),
-        builtin_servers.clone(),
-    );
-    let _ = mcp_exec.init().await;
+    let memory_session = memory_server_client::get_session_by_id(&session_id)
+        .await
+        .ok()
+        .flatten();
+    let session_metadata = memory_session
+        .as_ref()
+        .and_then(|session| session.metadata.as_ref());
 
     let mut ai_server = AiServer::new(
         model_runtime.api_key.clone(),
         model_runtime.base_url.clone(),
         model_runtime.model.clone(),
         model_runtime.temperature,
-        mcp_exec,
+        McpToolExecute::new(Vec::new(), Vec::new(), Vec::new()),
     );
 
     let effective_user_id = resolve_effective_user_id(req.user_id.clone(), &session_id).await;
-
-    if let Some(prompt) = resolve_system_prompt(
+    let contact_agent_id = normalize_id(req.contact_agent_id)
+        .or_else(|| contact_agent_id_from_metadata(session_metadata));
+    let contact_runtime_context = match contact_agent_id.as_deref() {
+        Some(agent_id) => memory_server_client::get_memory_agent_runtime_context(agent_id)
+            .await
+            .ok()
+            .flatten(),
+        None => None,
+    };
+    let base_system_prompt = resolve_system_prompt(
         model_runtime.system_prompt.clone(),
         model_runtime.use_active_system_context,
         effective_user_id.clone(),
     )
-    .await
-    {
-        ai_server.set_system_prompt(Some(prompt));
+    .await;
+    let final_system_prompt =
+        compose_contact_system_prompt(base_system_prompt, contact_runtime_context.as_ref());
+    if final_system_prompt.is_some() {
+        ai_server.set_system_prompt(final_system_prompt);
     }
+
+    let requested_project_id = normalize_id(req.project_id)
+        .or_else(|| project_id_from_metadata(session_metadata))
+        .or_else(|| {
+            memory_session
+                .as_ref()
+                .and_then(|session| normalize_id(session.project_id.clone()))
+        });
+    let requested_project_root =
+        normalize_id(req.project_root).or_else(|| project_root_from_metadata(session_metadata));
+    let (resolved_project_id, resolved_project_root) = resolve_project_runtime(
+        effective_user_id.as_deref(),
+        requested_project_id,
+        requested_project_root,
+    )
+    .await;
+    let requested_mcp_ids = req
+        .enabled_mcp_ids
+        .unwrap_or_else(|| enabled_mcp_ids_from_metadata(session_metadata));
+    let normalized_mcp_ids = normalize_mcp_ids(&requested_mcp_ids);
+    let mcp_enabled = req
+        .mcp_enabled
+        .or_else(|| mcp_enabled_from_metadata(session_metadata))
+        .unwrap_or(true);
+    let (http_servers, stdio_servers, builtin_servers) = if mcp_enabled {
+        load_mcp_servers_by_selection(
+            effective_user_id.clone(),
+            !normalized_mcp_ids.is_empty(),
+            normalized_mcp_ids,
+            resolved_project_root.as_deref(),
+            resolved_project_id.as_deref(),
+        )
+        .await
+    } else {
+        (Vec::new(), Vec::new(), Vec::new())
+    };
+    let use_tools = has_any_mcp_server(&http_servers, &stdio_servers, &builtin_servers);
+    let mut mcp_exec = McpToolExecute::new(
+        http_servers.clone(),
+        stdio_servers.clone(),
+        builtin_servers.clone(),
+    );
+    if use_tools {
+        let _ = mcp_exec.init().await;
+    }
+    ai_server.mcp_tool_execute = mcp_exec;
 
     let effective_settings = get_effective_user_settings(effective_user_id.clone())
         .await

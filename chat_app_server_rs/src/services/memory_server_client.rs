@@ -44,10 +44,53 @@ struct MemorySession {
     user_id: String,
     project_id: Option<String>,
     title: Option<String>,
+    metadata: Option<Value>,
     status: String,
     archived_at: Option<String>,
     created_at: String,
     updated_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct MemoryAgentSkillDto {
+    pub id: String,
+    pub name: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct MemoryAgentDto {
+    pub id: String,
+    pub user_id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub category: Option<String>,
+    pub role_definition: String,
+    #[serde(default)]
+    pub skills: Vec<MemoryAgentSkillDto>,
+    #[serde(default)]
+    pub skill_ids: Vec<String>,
+    #[serde(default)]
+    pub default_skill_ids: Vec<String>,
+    pub mcp_policy: Option<Value>,
+    pub project_policy: Option<Value>,
+    pub enabled: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct MemoryAgentRuntimeContextDto {
+    pub agent_id: String,
+    pub name: String,
+    pub role_definition: String,
+    #[serde(default)]
+    pub skills: Vec<MemoryAgentSkillDto>,
+    #[serde(default)]
+    pub skill_ids: Vec<String>,
+    pub mcp_policy: Option<Value>,
+    pub project_policy: Option<Value>,
+    pub updated_at: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -74,12 +117,43 @@ struct CreateSessionRequest {
     user_id: String,
     project_id: Option<String>,
     title: Option<String>,
+    metadata: Option<Value>,
 }
 
 #[derive(Debug, Serialize)]
 struct PatchSessionRequest {
     title: Option<String>,
     status: Option<String>,
+    metadata: Option<Value>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CreateMemoryAgentRequestDto {
+    pub user_id: Option<String>,
+    pub name: String,
+    pub description: Option<String>,
+    pub category: Option<String>,
+    pub role_definition: String,
+    pub skills: Option<Vec<MemoryAgentSkillDto>>,
+    pub skill_ids: Option<Vec<String>>,
+    pub default_skill_ids: Option<Vec<String>>,
+    pub mcp_policy: Option<Value>,
+    pub project_policy: Option<Value>,
+    pub enabled: Option<bool>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UpdateMemoryAgentRequestDto {
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub category: Option<String>,
+    pub role_definition: Option<String>,
+    pub skills: Option<Vec<MemoryAgentSkillDto>>,
+    pub skill_ids: Option<Vec<String>>,
+    pub default_skill_ids: Option<Vec<String>>,
+    pub mcp_policy: Option<Value>,
+    pub project_policy: Option<Value>,
+    pub enabled: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -194,6 +268,7 @@ pub async fn create_session(
     user_id: String,
     title: String,
     project_id: Option<String>,
+    metadata: Option<Value>,
 ) -> Result<Session, String> {
     let req = MEMORY_SERVER_HTTP
         .post(build_url("/sessions").as_str())
@@ -202,6 +277,7 @@ pub async fn create_session(
             user_id,
             project_id,
             title: Some(title),
+            metadata,
         });
 
     let resp: MemorySession = send_json(req).await?;
@@ -223,11 +299,16 @@ pub async fn update_session(
     session_id: &str,
     title: Option<String>,
     status: Option<String>,
+    metadata: Option<Value>,
 ) -> Result<Option<Session>, String> {
     let req = MEMORY_SERVER_HTTP
         .patch(build_url(&format!("/sessions/{}", urlencoding::encode(session_id))).as_str())
         .timeout(timeout_duration())
-        .json(&PatchSessionRequest { title, status });
+        .json(&PatchSessionRequest {
+            title,
+            status,
+            metadata,
+        });
 
     match send_optional_json::<MemorySession>(req).await? {
         Some(session) => Ok(Some(map_memory_session(session))),
@@ -452,14 +533,112 @@ pub async fn upsert_summary_job_config(
     send_json(req).await
 }
 
+pub async fn list_memory_agents(
+    user_id: Option<&str>,
+    enabled: Option<bool>,
+    limit: Option<i64>,
+    offset: i64,
+) -> Result<Vec<MemoryAgentDto>, String> {
+    let mut params: Vec<(String, String)> = Vec::new();
+    if let Some(value) = user_id {
+        params.push(("user_id".to_string(), value.to_string()));
+    }
+    if let Some(value) = enabled {
+        params.push(("enabled".to_string(), value.to_string()));
+    }
+    if let Some(value) = limit {
+        params.push(("limit".to_string(), value.max(1).to_string()));
+    }
+    if offset > 0 {
+        params.push(("offset".to_string(), offset.to_string()));
+    }
+
+    let req = MEMORY_SERVER_HTTP
+        .get(build_url("/agents").as_str())
+        .timeout(timeout_duration())
+        .query(&params);
+    let resp: ListResponse<MemoryAgentDto> = send_json(req).await?;
+    Ok(resp.items)
+}
+
+pub async fn get_memory_agent(agent_id: &str) -> Result<Option<MemoryAgentDto>, String> {
+    let req = MEMORY_SERVER_HTTP
+        .get(build_url(&format!("/agents/{}", urlencoding::encode(agent_id))).as_str())
+        .timeout(timeout_duration());
+    send_optional_json(req).await
+}
+
+pub async fn create_memory_agent(
+    payload: &CreateMemoryAgentRequestDto,
+) -> Result<MemoryAgentDto, String> {
+    let req = MEMORY_SERVER_HTTP
+        .post(build_url("/agents").as_str())
+        .timeout(timeout_duration())
+        .json(payload);
+    send_json(req).await
+}
+
+pub async fn update_memory_agent(
+    agent_id: &str,
+    payload: &UpdateMemoryAgentRequestDto,
+) -> Result<Option<MemoryAgentDto>, String> {
+    let req = MEMORY_SERVER_HTTP
+        .patch(build_url(&format!("/agents/{}", urlencoding::encode(agent_id))).as_str())
+        .timeout(timeout_duration())
+        .json(payload);
+    send_optional_json(req).await
+}
+
+pub async fn delete_memory_agent(agent_id: &str) -> Result<bool, String> {
+    let req = MEMORY_SERVER_HTTP
+        .delete(build_url(&format!("/agents/{}", urlencoding::encode(agent_id))).as_str())
+        .timeout(timeout_duration());
+
+    let resp = apply_auth(req).send().await.map_err(|e| e.to_string())?;
+    if resp.status().as_u16() == 404 {
+        return Ok(false);
+    }
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let detail = resp.text().await.unwrap_or_default();
+        return Err(format!("status={} detail={}", status, detail));
+    }
+    Ok(true)
+}
+
+pub async fn get_memory_agent_runtime_context(
+    agent_id: &str,
+) -> Result<Option<MemoryAgentRuntimeContextDto>, String> {
+    let req = MEMORY_SERVER_HTTP
+        .get(
+            build_url(&format!(
+                "/agents/{}/runtime-context",
+                urlencoding::encode(agent_id)
+            ))
+            .as_str(),
+        )
+        .timeout(timeout_duration());
+    send_optional_json(req).await
+}
+
+pub async fn ai_create_memory_agent(payload: &Value) -> Result<Value, String> {
+    let req = MEMORY_SERVER_HTTP
+        .post(build_url("/agents/ai-create").as_str())
+        .timeout(timeout_duration())
+        .json(payload);
+    send_json(req).await
+}
+
 fn map_memory_session(value: MemorySession) -> Session {
+    let (selected_model_id, selected_agent_id) =
+        extract_selection_from_session_metadata(value.metadata.as_ref());
     Session {
         id: value.id,
         title: value.title.unwrap_or_else(|| "Untitled".to_string()),
         description: None,
-        metadata: None,
-        selected_model_id: None,
-        selected_agent_id: None,
+        metadata: value.metadata,
+        selected_model_id,
+        selected_agent_id,
         user_id: Some(value.user_id),
         project_id: value.project_id,
         status: value.status,
@@ -467,6 +646,71 @@ fn map_memory_session(value: MemorySession) -> Session {
         created_at: value.created_at,
         updated_at: value.updated_at,
     }
+}
+
+fn extract_selection_from_session_metadata(
+    metadata: Option<&Value>,
+) -> (Option<String>, Option<String>) {
+    let Some(Value::Object(metadata_map)) = metadata else {
+        return (None, None);
+    };
+    let selected_model_id = metadata_map
+        .get("chat_runtime")
+        .and_then(Value::as_object)
+        .and_then(|runtime| {
+            runtime
+                .get("selected_model_id")
+                .or_else(|| runtime.get("selectedModelId"))
+        })
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            metadata_map
+                .get("ui_chat_selection")
+                .and_then(Value::as_object)
+                .and_then(|selection| {
+                    selection
+                        .get("selected_model_id")
+                        .or_else(|| selection.get("selectedModelId"))
+                })
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
+        });
+
+    let selected_agent_id = metadata_map
+        .get("contact")
+        .and_then(Value::as_object)
+        .and_then(|contact| contact.get("agent_id"))
+        .or_else(|| {
+            metadata_map
+                .get("ui_contact")
+                .and_then(Value::as_object)
+                .and_then(|contact| contact.get("agent_id"))
+        })
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            metadata_map
+                .get("ui_chat_selection")
+                .and_then(Value::as_object)
+                .and_then(|selection| {
+                    selection
+                        .get("selected_agent_id")
+                        .or_else(|| selection.get("selectedAgentId"))
+                })
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
+        });
+
+    (selected_model_id, selected_agent_id)
 }
 
 fn build_url(path: &str) -> String {

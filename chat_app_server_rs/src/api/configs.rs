@@ -14,11 +14,10 @@ use crate::core::user_scope::resolve_user_id;
 use crate::models::mcp_config::McpConfig;
 use crate::repositories::mcp_configs as mcp_repo;
 use crate::services::builtin_mcp::{
-    builtin_display_name, is_builtin_mcp_id, list_builtin_mcp_configs, SUB_AGENT_ROUTER_MCP_ID,
+    builtin_display_name, is_builtin_mcp_id, list_builtin_mcp_configs,
 };
 
 mod ai_model;
-mod builtin_settings;
 mod mcp_resource;
 
 #[derive(Debug, Deserialize)]
@@ -64,31 +63,6 @@ struct ResourceByCommandRequest {
     alias: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-struct BuiltinImportRequest {
-    content: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct BuiltinGitImportRequest {
-    repository: Option<String>,
-    branch: Option<String>,
-    agents_path: Option<String>,
-    skills_path: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct BuiltinPluginInstallRequest {
-    source: Option<String>,
-    install_all: Option<bool>,
-}
-
-#[derive(Debug, Deserialize)]
-struct BuiltinMcpPermissionsRequest {
-    enabled_mcp_ids: Option<Vec<String>>,
-    selected_system_context_id: Option<String>,
-}
-
 pub fn router() -> Router {
     Router::new()
         .route(
@@ -102,31 +76,6 @@ pub fn router() -> Router {
         .route(
             "/api/mcp-configs/:config_id/resource/config",
             get(mcp_resource::get_mcp_resource_config),
-        )
-        .route(
-            "/api/mcp-configs/:config_id/builtin/settings",
-            get(builtin_settings::get_builtin_mcp_settings),
-        )
-        .route(
-            "/api/mcp-configs/:config_id/builtin/mcp-permissions",
-            get(builtin_settings::get_builtin_mcp_permissions)
-                .post(builtin_settings::update_builtin_mcp_permissions),
-        )
-        .route(
-            "/api/mcp-configs/:config_id/builtin/import-agents",
-            post(builtin_settings::import_builtin_agents),
-        )
-        .route(
-            "/api/mcp-configs/:config_id/builtin/import-skills",
-            post(builtin_settings::import_builtin_skills),
-        )
-        .route(
-            "/api/mcp-configs/:config_id/builtin/import-git",
-            post(builtin_settings::import_builtin_from_git),
-        )
-        .route(
-            "/api/mcp-configs/:config_id/builtin/install-plugin",
-            post(builtin_settings::install_builtin_plugin),
         )
         .route(
             "/api/mcp-configs/resource/config",
@@ -198,10 +147,6 @@ async fn list_mcp_configs(
             map.insert("builtin".to_string(), json!(true));
             map.insert("display_name".to_string(), json!(display_name));
             map.insert("app_ids".to_string(), json!([] as [String; 0]));
-            if cfg.id == SUB_AGENT_ROUTER_MCP_ID {
-                map.insert("supports_settings".to_string(), json!(true));
-                map.insert("builtin_kind".to_string(), json!("sub_agent_router"));
-            }
         }
         out.push(obj);
     }

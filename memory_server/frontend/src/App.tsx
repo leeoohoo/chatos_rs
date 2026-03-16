@@ -39,6 +39,7 @@ type TabKey =
   | 'dashboard'
   | 'sessions'
   | 'users'
+  | 'profile'
   | 'jobRuns';
 
 type AuthUser = {
@@ -88,7 +89,9 @@ function Shell() {
     () => [
       { key: 'dashboard', icon: <BarChartOutlined />, label: t('nav.dashboard') },
       { key: 'sessions', icon: <DatabaseOutlined />, label: t('nav.sessions') },
-      { key: 'users', icon: <UserOutlined />, label: t('nav.users') },
+      ...(isAdmin
+        ? [{ key: 'users', icon: <UserOutlined />, label: t('nav.users') }]
+        : [{ key: 'profile', icon: <UserOutlined />, label: t('nav.profile') }]),
       ...(isAdmin
         ? [{ key: 'jobRuns', icon: <HistoryOutlined />, label: t('nav.jobRuns') }]
         : []),
@@ -240,7 +243,7 @@ function Shell() {
                     )}
                   </>
                 )}
-                {tab === 'users' && !isAdmin && (
+                {tab === 'profile' && !isAdmin && (
                   <UserConfigCenterPage
                     userId={scopeUserId}
                     isAdmin={Boolean(isAdmin)}

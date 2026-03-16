@@ -136,6 +136,49 @@ pub async fn init_schema(db: &Db) -> Result<(), String> {
     )
     .await?;
 
+    ensure_unique_index(
+        db.collection::<mongodb::bson::Document>("memory_agents"),
+        doc! {"id": 1},
+    )
+    .await?;
+    ensure_index(
+        db.collection::<mongodb::bson::Document>("memory_agents"),
+        doc! {"user_id": 1, "enabled": 1, "updated_at": -1},
+    )
+    .await?;
+
+    ensure_unique_index(
+        db.collection::<mongodb::bson::Document>("memory_skill_plugins"),
+        doc! {"id": 1},
+    )
+    .await?;
+    ensure_unique_index(
+        db.collection::<mongodb::bson::Document>("memory_skill_plugins"),
+        doc! {"user_id": 1, "source": 1},
+    )
+    .await?;
+    ensure_index(
+        db.collection::<mongodb::bson::Document>("memory_skill_plugins"),
+        doc! {"user_id": 1, "updated_at": -1},
+    )
+    .await?;
+
+    ensure_unique_index(
+        db.collection::<mongodb::bson::Document>("memory_skills"),
+        doc! {"id": 1},
+    )
+    .await?;
+    ensure_unique_index(
+        db.collection::<mongodb::bson::Document>("memory_skills"),
+        doc! {"user_id": 1, "plugin_source": 1, "source_path": 1},
+    )
+    .await?;
+    ensure_index(
+        db.collection::<mongodb::bson::Document>("memory_skills"),
+        doc! {"user_id": 1, "plugin_source": 1, "updated_at": -1},
+    )
+    .await?;
+
     normalize_summary_status(db).await?;
 
     info!("[MEMORY-SERVER] mongodb indexes initialized");

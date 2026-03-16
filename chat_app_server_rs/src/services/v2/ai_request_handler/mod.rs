@@ -120,7 +120,7 @@ impl AiRequestHandler {
             session_id.clone().unwrap_or_else(|| "n/a".to_string())
         );
 
-        let persist_messages = purpose != "sub_agent_router";
+        let persist_messages = purpose != "agent_builder";
         let force_identity_encoding = purpose == "session_summary_job";
 
         if stream {

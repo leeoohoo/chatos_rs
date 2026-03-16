@@ -2,8 +2,10 @@ import { ArrowLeftOutlined } from '@ant-design/icons';
 import { Button, Card, Space, Tabs, Tag } from 'antd';
 
 import { useI18n } from '../i18n';
+import { AgentsPage } from './AgentsPage';
 import { JobConfigsPage } from './JobConfigsPage';
 import { ModelConfigsPage } from './ModelConfigsPage';
+import { SkillsPage } from './SkillsPage';
 
 interface UserConfigCenterPageProps {
   userId: string;
@@ -62,6 +64,28 @@ export function UserConfigCenterPage({
                 userId={userId}
                 isAdmin={isAdmin}
                 showUserSelector={false}
+              />
+            ),
+          },
+          {
+            key: 'skills',
+            label: t('users.skillsTab'),
+            children: (
+              <SkillsPage
+                filterUserId={userId}
+                currentUserId={currentUserId}
+                isAdmin={isAdmin}
+              />
+            ),
+          },
+          {
+            key: 'agents',
+            label: t('users.agentsTab'),
+            children: (
+              <AgentsPage
+                filterUserId={userId}
+                currentUserId={currentUserId}
+                isAdmin={isAdmin}
               />
             ),
           },

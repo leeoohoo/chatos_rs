@@ -25,15 +25,14 @@ use crate::services::memory_server_client;
 static START_TIME: Lazy<Instant> = Lazy::new(Instant::now);
 static REQUEST_ID_HEADER: HeaderName = HeaderName::from_static("x-request-id");
 
-pub mod agents;
-pub mod agents_v3;
+pub mod agent_builder;
 pub mod applications;
 pub mod auth;
-pub mod chat_agent_v2;
 pub mod chat_v2;
 pub mod chat_v3;
 pub mod configs;
 pub mod fs;
+pub mod memory_agents;
 pub mod messages;
 pub mod notepad;
 pub mod projects;
@@ -116,10 +115,10 @@ pub fn router() -> Router {
     let protected_api = Router::new()
         .merge(sessions::router())
         .merge(messages::router())
+        .merge(memory_agents::router())
+        .merge(agent_builder::router())
         .merge(chat_v2::router())
         .merge(chat_v3::router())
-        .merge(agents_v3::router())
-        .nest("/api/agents", agents::router())
         .nest("/api/applications", applications::router())
         .merge(projects::router())
         .merge(remote_connections::router())
@@ -131,7 +130,6 @@ pub fn router() -> Router {
         .merge(system_contexts::router())
         .merge(fs::router())
         .merge(notepad::router())
-        .nest("/api/v2", chat_agent_v2::router())
         .merge(user_settings::router())
         .route_layer(middleware::from_fn(require_auth));
 

@@ -84,13 +84,13 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
           className="flex items-center gap-2 uppercase tracking-wide"
         >
           <span>{expanded ? '▾' : '▸'}</span>
-          <span>SESSIONS</span>
+          <span>CONTACTS</span>
         </button>
         <div className="flex items-center gap-1">
           <button
             onClick={onRefresh}
             className="p-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded"
-            title="刷新会话列表"
+            title="刷新联系人列表"
           >
             <svg className={cn('w-4 h-4', isRefreshing && 'animate-spin')} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12a7.5 7.5 0 0112.125-5.303M19.5 12a7.5 7.5 0 01-12.125 5.303M16.5 6.697V3m0 3.697h-3.697M7.5 17.303V21m0-3.697H3.803" />
@@ -99,7 +99,7 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
           <button
             onClick={onCreateSession}
             className="p-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded"
-            title="新建会话"
+            title="添加联系人"
           >
             <PlusIcon className="w-4 h-4" />
           </button>
@@ -111,12 +111,12 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
           {sessions.length === 0 ? (
             <div className="flex flex-col items-center justify-center text-muted-foreground py-6">
               <ChatIcon className="w-12 h-12 mb-4 opacity-50" />
-              <p className="text-sm">还没有会话</p>
+              <p className="text-sm">还没有联系人</p>
               <button
                 onClick={onCreateSession}
                 className="mt-2 px-4 py-2 text-sm bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
               >
-                创建第一个会话
+                添加第一个联系人
               </button>
             </div>
           ) : (

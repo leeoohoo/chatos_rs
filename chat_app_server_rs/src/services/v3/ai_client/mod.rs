@@ -65,7 +65,6 @@ pub struct ProcessOptions {
     pub conversation_turn_id: Option<String>,
     pub message_mode: Option<String>,
     pub message_source: Option<String>,
-    pub sub_agent_run_id: Option<String>,
     pub callbacks: Option<AiClientCallbacks>,
 }
 
@@ -121,12 +120,6 @@ impl AiClient {
         let purpose = options.purpose.unwrap_or_else(|| "chat".to_string());
         let message_mode = options.message_mode;
         let message_source = options.message_source;
-        let sub_agent_run_id = options
-            .sub_agent_run_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(|value| value.to_string());
         let turn_id = options
             .conversation_turn_id
             .as_deref()
@@ -143,11 +136,11 @@ impl AiClient {
             on_context_summarized_stream: None,
             on_context_summarized_end: None,
         });
-        let stable_prefix_mode = purpose == "chat" || sub_agent_run_id.is_some();
+        let stable_prefix_mode = purpose == "chat";
 
         // Chat mode favors a stable stateless prefix so provider-side prompt caching can reuse
         // a bounded recent window even when async summary jobs are updating session summaries.
-        let prefer_stateless = if purpose == "chat" || sub_agent_run_id.is_some() {
+        let prefer_stateless = if purpose == "chat" {
             true
         } else {
             history_limit != 0
@@ -210,7 +203,6 @@ impl AiClient {
                     force_text_content,
                     &current_items,
                     include_tool_items,
-                    sub_agent_run_id.clone(),
                 )
                 .await,
             )
@@ -242,7 +234,6 @@ impl AiClient {
                 prefer_stateless,
                 message_mode,
                 message_source,
-                sub_agent_run_id,
             )
             .await;
 
@@ -275,10 +266,9 @@ impl AiClient {
         prefer_stateless: bool,
         message_mode: Option<String>,
         message_source: Option<String>,
-        sub_agent_run_id: Option<String>,
     ) -> Result<Value, String> {
         let include_tool_items = !tools.is_empty();
-        let persist_tool_messages = purpose != "sub_agent_router";
+        let persist_tool_messages = purpose != "agent_builder";
         let mut input = input;
         let mut previous_response_id = previous_response_id;
         let mut use_prev_id = use_prev_id;
@@ -316,7 +306,6 @@ impl AiClient {
             // before each model request so newly generated summaries are reflected immediately.
             self.maybe_refresh_stateless_context(
                 session_id.as_deref(),
-                sub_agent_run_id.as_deref(),
                 stable_prefix_mode,
                 use_prev_id,
                 &raw_input,
@@ -395,7 +384,6 @@ impl AiClient {
                             .try_recover_from_request_error(
                                 err_msg.as_str(),
                                 session_id.as_ref(),
-                                sub_agent_run_id.as_ref(),
                                 &raw_input,
                                 stable_prefix_mode,
                                 include_tool_items,
@@ -460,7 +448,6 @@ impl AiClient {
                     .try_recover_from_completion_error(
                         err.as_str(),
                         session_id.as_ref(),
-                        sub_agent_run_id.as_ref(),
                         &raw_input,
                         stable_prefix_mode,
                         include_tool_items,
@@ -632,7 +619,6 @@ impl AiClient {
                         force_text_content,
                         &current_items,
                         include_tool_items,
-                        sub_agent_run_id.clone(),
                     )
                     .await
                 };

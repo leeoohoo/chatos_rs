@@ -3,6 +3,9 @@ import axios from 'axios';
 import type {
   AiModelConfig,
   JobRun,
+  MemoryAgent,
+  MemorySkill,
+  MemorySkillPlugin,
   Message,
   SummaryGraphEdge,
   SummaryGraphNode,
@@ -306,6 +309,122 @@ export const api = {
       summary_limit: 3,
       include_raw_messages: true,
     });
+    return data;
+  },
+
+  async listAgents(
+    userId?: string,
+    params?: { enabled?: boolean; limit?: number; offset?: number },
+  ): Promise<MemoryAgent[]> {
+    const { data } = await client.get('/agents', {
+      params: {
+        user_id: userId,
+        enabled: params?.enabled,
+        limit: params?.limit ?? 200,
+        offset: params?.offset ?? 0,
+      },
+    });
+    return data.items ?? [];
+  },
+
+  async createAgent(payload: {
+    user_id?: string;
+    name: string;
+    description?: string;
+    category?: string;
+    role_definition: string;
+    skill_ids?: string[];
+    default_skill_ids?: string[];
+    enabled?: boolean;
+  }): Promise<MemoryAgent> {
+    const { data } = await client.post('/agents', payload);
+    return data;
+  },
+
+  async updateAgent(
+    agentId: string,
+    payload: {
+      name?: string;
+      description?: string;
+      category?: string;
+      role_definition?: string;
+      skill_ids?: string[];
+      default_skill_ids?: string[];
+      enabled?: boolean;
+    },
+  ): Promise<MemoryAgent> {
+    const { data } = await client.patch(`/agents/${agentId}`, payload);
+    return data;
+  },
+
+  async deleteAgent(agentId: string): Promise<boolean> {
+    const { data } = await client.delete(`/agents/${agentId}`);
+    return Boolean(data?.success);
+  },
+
+  async aiCreateAgent(payload: {
+    user_id?: string;
+    requirement: string;
+    name?: string;
+    category?: string;
+    description?: string;
+    role_definition?: string;
+    skill_ids?: string[];
+    default_skill_ids?: string[];
+    enabled?: boolean;
+  }): Promise<{ created: boolean; agent: MemoryAgent; source?: string }> {
+    const { data } = await client.post('/agents/ai-create', payload);
+    return data;
+  },
+
+  async listSkillPlugins(
+    userId?: string,
+    params?: { limit?: number; offset?: number },
+  ): Promise<MemorySkillPlugin[]> {
+    const { data } = await client.get('/skills/plugins', {
+      params: {
+        user_id: userId,
+        limit: params?.limit ?? 200,
+        offset: params?.offset ?? 0,
+      },
+    });
+    return data.items ?? [];
+  },
+
+  async listSkills(
+    userId?: string,
+    params?: { plugin_source?: string; query?: string; limit?: number; offset?: number },
+  ): Promise<MemorySkill[]> {
+    const { data } = await client.get('/skills', {
+      params: {
+        user_id: userId,
+        plugin_source: params?.plugin_source,
+        query: params?.query,
+        limit: params?.limit ?? 300,
+        offset: params?.offset ?? 0,
+      },
+    });
+    return data.items ?? [];
+  },
+
+  async importSkillsFromGit(payload: {
+    user_id?: string;
+    repository: string;
+    branch?: string;
+    marketplace_path?: string;
+    plugins_path?: string;
+    auto_install?: boolean;
+  }): Promise<any> {
+    const { data } = await client.post('/skills/import-git', payload);
+    return data;
+  },
+
+  async installSkillPlugins(payload: {
+    user_id?: string;
+    source?: string;
+    install_all?: boolean;
+  }): Promise<any> {
+    const { data } = await client.post('/skills/plugins/install', payload);
     return data;
   },
 };

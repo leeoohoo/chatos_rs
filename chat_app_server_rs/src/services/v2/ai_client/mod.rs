@@ -69,15 +69,10 @@ impl AiClient {
     async fn load_memory_context_messages_for_scope(
         &self,
         session_id: Option<&str>,
-        sub_agent_run_id: Option<&str>,
         include_reasoning: bool,
     ) -> Vec<Value> {
         let mut mapped = Vec::new();
-        let (merged_summary, _summary_count, history) = if let Some(run_id) = sub_agent_run_id {
-            self.message_manager
-                .get_memory_sub_agent_run_history_context(run_id, 2)
-                .await
-        } else if let Some(sid) = session_id {
+        let (merged_summary, _summary_count, history) = if let Some(sid) = session_id {
             self.message_manager
                 .get_memory_chat_history_context(sid, 2)
                 .await
@@ -147,14 +142,13 @@ impl AiClient {
         purpose: &str,
         iteration: i64,
         session_id: Option<&str>,
-        sub_agent_run_id: Option<&str>,
         include_reasoning: bool,
         messages: &mut Vec<Value>,
     ) {
-        if (purpose != "chat" && sub_agent_run_id.is_none()) || iteration <= 0 {
+        if purpose != "chat" || iteration <= 0 {
             return;
         }
-        if session_id.is_none() && sub_agent_run_id.is_none() {
+        if session_id.is_none() {
             return;
         }
 
@@ -163,11 +157,7 @@ impl AiClient {
             refreshed.push(json!({"role": "system", "content": prompt}));
         }
         let mapped = self
-            .load_memory_context_messages_for_scope(
-                session_id,
-                sub_agent_run_id,
-                include_reasoning,
-            )
+            .load_memory_context_messages_for_scope(session_id, include_reasoning)
             .await;
         refreshed.extend(ensure_tool_responses(mapped));
         if refreshed != *messages {
@@ -196,7 +186,6 @@ impl AiClient {
         purpose: Option<String>,
         message_mode: Option<String>,
         message_source: Option<String>,
-        sub_agent_run_id: Option<String>,
     ) -> Result<Value, String> {
         let resolved_purpose = purpose.unwrap_or_else(|| "chat".to_string());
         let mut all_messages: Vec<Value> = Vec::new();
@@ -206,11 +195,10 @@ impl AiClient {
         }
 
         let mut history_messages: Vec<Value> = Vec::new();
-        if session_id.is_some() || sub_agent_run_id.is_some() {
+        if session_id.is_some() {
             let mapped = self
                 .load_memory_context_messages_for_scope(
                     session_id.as_deref(),
-                    sub_agent_run_id.as_deref(),
                     reasoning_enabled,
                 )
                 .await;
@@ -241,7 +229,6 @@ impl AiClient {
             Some(resolved_purpose),
             message_mode,
             message_source,
-            sub_agent_run_id,
             0,
         )
         .await
@@ -263,13 +250,12 @@ impl AiClient {
         purpose: Option<String>,
         message_mode: Option<String>,
         message_source: Option<String>,
-        sub_agent_run_id: Option<String>,
         iteration: i64,
     ) -> Result<Value, String> {
         let mut messages = messages;
         let mut iteration = iteration;
         let purpose = purpose.unwrap_or_else(|| "chat".to_string());
-        let persist_tool_messages = purpose != "sub_agent_router";
+        let persist_tool_messages = purpose != "agent_builder";
 
         loop {
             if let Some(sid) = session_id.as_ref() {
@@ -291,7 +277,6 @@ impl AiClient {
                 purpose.as_str(),
                 iteration,
                 session_id.as_deref(),
-                sub_agent_run_id.as_deref(),
                 reasoning_enabled,
                 &mut messages,
             )

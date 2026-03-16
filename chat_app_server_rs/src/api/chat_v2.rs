@@ -14,10 +14,17 @@ use crate::core::auth::AuthUser;
 use crate::core::chat_context::{
     maybe_spawn_session_title_rename, resolve_effective_user_id, resolve_system_prompt,
 };
-use crate::core::chat_stream::{
-    build_v2_callbacks, handle_chat_result, send_error_event, send_start_event,
+use crate::core::chat_runtime::{
+    compose_contact_system_prompt, contact_agent_id_from_metadata, enabled_mcp_ids_from_metadata,
+    mcp_enabled_from_metadata, normalize_id, project_id_from_metadata, project_root_from_metadata,
+    resolve_project_runtime,
 };
-use crate::core::mcp_runtime::load_mcp_servers_by_selection;
+use crate::core::chat_stream::{
+    build_v2_callbacks, handle_chat_result, send_start_event,
+};
+use crate::core::mcp_runtime::{
+    has_any_mcp_server, load_mcp_servers_by_selection, normalize_mcp_ids,
+};
 use crate::core::user_scope::{ensure_and_set_user_id, resolve_user_id};
 use crate::services::memory_server_client;
 use crate::services::user_settings::{apply_settings_to_ai_client, get_effective_user_settings};
@@ -37,7 +44,11 @@ struct ChatRequest {
     attachments: Option<Vec<Value>>,
     reasoning_enabled: Option<bool>,
     turn_id: Option<String>,
-    agent_id: Option<String>,
+    contact_agent_id: Option<String>,
+    project_id: Option<String>,
+    project_root: Option<String>,
+    mcp_enabled: Option<bool>,
+    enabled_mcp_ids: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -48,10 +59,6 @@ struct UserQuery {
 pub fn router() -> Router {
     Router::new()
         .route("/api/agent_v2/chat/stream", post(agent_chat_stream))
-        .route(
-            "/api/agent_v2/chat/stream/simple",
-            post(agent_chat_stream_simple),
-        )
         .route("/api/agent_v2/tools", get(agent_tools))
         .route("/api/agent_v2/status", get(agent_status))
         .route(
@@ -93,41 +100,6 @@ async fn agent_chat_stream(
         sender, req, false, true, false,
     ));
 
-    Ok(sse)
-}
-
-async fn agent_chat_stream_simple(
-    auth: AuthUser,
-    Json(mut req): Json<ChatRequest>,
-) -> Result<
-    axum::response::Sse<
-        impl futures::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>,
-    >,
-    (StatusCode, Json<Value>),
-> {
-    if let Err(err) = ensure_and_set_user_id(&mut req.user_id, &auth) {
-        return Err(err);
-    }
-    let session_id = req.session_id.clone().unwrap_or_default();
-    let content = req.content.clone().unwrap_or_default();
-    if session_id.is_empty() || content.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "session_id 和 content 不能为空"})),
-        ));
-    }
-
-    abort_registry::reset(&session_id);
-    let (sse, sender) = sse_channel();
-    if req.agent_id.is_some() {
-        memory_server_client::spawn_with_current_access_token(stream_chat_v2_agent(
-            sender, req, false,
-        ));
-    } else {
-        memory_server_client::spawn_with_current_access_token(stream_chat_v2(
-            sender, req, true, false, true,
-        ));
-    }
     Ok(sse)
 }
 
@@ -236,35 +208,89 @@ async fn stream_chat_v2(
         req.reasoning_enabled,
         respect_model_flags,
     );
-    let use_tools = false;
-
-    let (http_servers, stdio_servers, builtin_servers) = (Vec::new(), Vec::new(), Vec::new());
-    let mut mcp_exec = McpToolExecute::new(
-        http_servers.clone(),
-        stdio_servers.clone(),
-        builtin_servers.clone(),
-    );
-    let _ = mcp_exec.init().await;
+    let memory_session = memory_server_client::get_session_by_id(&session_id)
+        .await
+        .ok()
+        .flatten();
+    let session_metadata = memory_session
+        .as_ref()
+        .and_then(|session| session.metadata.as_ref());
 
     let mut ai_server = AiServer::new(
         model_runtime.api_key.clone(),
         model_runtime.base_url.clone(),
         model_runtime.model.clone(),
         model_runtime.temperature,
-        mcp_exec,
+        McpToolExecute::new(Vec::new(), Vec::new(), Vec::new()),
     );
 
     let effective_user_id = resolve_effective_user_id(req.user_id.clone(), &session_id).await;
-
-    if let Some(prompt) = resolve_system_prompt(
+    let contact_agent_id = normalize_id(req.contact_agent_id)
+        .or_else(|| contact_agent_id_from_metadata(session_metadata));
+    let contact_runtime_context = match contact_agent_id.as_deref() {
+        Some(agent_id) => memory_server_client::get_memory_agent_runtime_context(agent_id)
+            .await
+            .ok()
+            .flatten(),
+        None => None,
+    };
+    let base_system_prompt = resolve_system_prompt(
         model_runtime.system_prompt.clone(),
         model_runtime.use_active_system_context,
         effective_user_id.clone(),
     )
-    .await
-    {
-        ai_server.set_system_prompt(Some(prompt));
+    .await;
+    let final_system_prompt =
+        compose_contact_system_prompt(base_system_prompt, contact_runtime_context.as_ref());
+    if final_system_prompt.is_some() {
+        ai_server.set_system_prompt(final_system_prompt);
     }
+
+    let requested_project_id = normalize_id(req.project_id)
+        .or_else(|| project_id_from_metadata(session_metadata))
+        .or_else(|| {
+            memory_session
+                .as_ref()
+                .and_then(|session| normalize_id(session.project_id.clone()))
+        });
+    let requested_project_root =
+        normalize_id(req.project_root).or_else(|| project_root_from_metadata(session_metadata));
+    let (resolved_project_id, resolved_project_root) = resolve_project_runtime(
+        effective_user_id.as_deref(),
+        requested_project_id,
+        requested_project_root,
+    )
+    .await;
+    let requested_mcp_ids = req
+        .enabled_mcp_ids
+        .unwrap_or_else(|| enabled_mcp_ids_from_metadata(session_metadata));
+    let normalized_mcp_ids = normalize_mcp_ids(&requested_mcp_ids);
+    let mcp_enabled = req
+        .mcp_enabled
+        .or_else(|| mcp_enabled_from_metadata(session_metadata))
+        .unwrap_or(true);
+    let (http_servers, stdio_servers, builtin_servers) = if mcp_enabled {
+        load_mcp_servers_by_selection(
+            effective_user_id.clone(),
+            !normalized_mcp_ids.is_empty(),
+            normalized_mcp_ids,
+            resolved_project_root.as_deref(),
+            resolved_project_id.as_deref(),
+        )
+        .await
+    } else {
+        (Vec::new(), Vec::new(), Vec::new())
+    };
+    let use_tools = has_any_mcp_server(&http_servers, &stdio_servers, &builtin_servers);
+    let mut mcp_exec = McpToolExecute::new(
+        http_servers.clone(),
+        stdio_servers.clone(),
+        builtin_servers.clone(),
+    );
+    if use_tools {
+        let _ = mcp_exec.init().await;
+    }
+    ai_server.mcp_tool_execute = mcp_exec;
 
     let effective_settings = get_effective_user_settings(effective_user_id.clone())
         .await
@@ -321,57 +347,4 @@ async fn stream_chat_v2(
     if always_send_done || should_send_done {
         sender.send_done();
     }
-}
-
-async fn stream_chat_v2_agent(sender: SseSender, req: ChatRequest, rename_session: bool) {
-    let session_id = req.session_id.clone().unwrap_or_default();
-    let content = req.content.clone().unwrap_or_default();
-    let agent_id = req.agent_id.clone().unwrap_or_default();
-    if session_id.is_empty() || content.is_empty() || agent_id.is_empty() {
-        send_error_event(&sender, "session_id, content 和 agent_id 为必填项");
-        sender.send_done();
-        return;
-    }
-
-    send_start_event(&sender, &session_id);
-
-    maybe_spawn_session_title_rename(rename_session, &session_id, &content, 30);
-
-    let model_config =
-        match crate::services::v2::agent::load_model_config_for_agent(&agent_id).await {
-            Ok(cfg) => cfg,
-            Err(err) => {
-                send_error_event(&sender, &err);
-                sender.send_done();
-                return;
-            }
-        };
-
-    let callback_bundle = build_v2_callbacks(&sender, &session_id);
-    let chunk_sent = callback_bundle.chunk_sent;
-
-    let attachments_list = req.attachments.unwrap_or_default();
-    let att = attachments::parse_attachments(&attachments_list);
-    let result = crate::services::v2::agent::run_chat(
-        &session_id,
-        &content,
-        Some(agent_id.clone()),
-        &model_config,
-        req.user_id.clone(),
-        att,
-        req.reasoning_enabled,
-        req.turn_id.clone(),
-        callback_bundle.callbacks,
-    )
-    .await;
-
-    let _ = handle_chat_result(
-        &sender,
-        &session_id,
-        Some(&chunk_sent),
-        result,
-        || {},
-        |_| {},
-    );
-    sender.send_done();
 }

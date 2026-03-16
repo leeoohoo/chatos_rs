@@ -1,5 +1,3 @@
-pub mod agent_access;
-pub mod agent_runtime;
 pub mod ai_model_access;
 pub mod ai_model_config;
 pub mod ai_response;
@@ -8,6 +6,7 @@ pub mod application_access;
 pub mod async_bridge;
 pub mod auth;
 pub mod chat_context;
+pub mod chat_runtime;
 pub mod chat_stream;
 pub mod mcp_args;
 pub mod mcp_config_access;

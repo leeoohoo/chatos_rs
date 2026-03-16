@@ -1,5 +1,5 @@
 use futures_util::TryStreamExt;
-use mongodb::bson::doc;
+use mongodb::bson::{doc, Bson};
 use mongodb::options::FindOptions;
 use uuid::Uuid;
 
@@ -19,6 +19,7 @@ pub async fn create_session(db: &Db, req: CreateSessionRequest) -> Result<Sessio
         user_id: req.user_id,
         project_id: req.project_id,
         title: req.title,
+        metadata: req.metadata,
         status: "active".to_string(),
         created_at: now.clone(),
         updated_at: now,
@@ -40,6 +41,7 @@ pub async fn upsert_session_sync(
     user_id: &str,
     project_id: Option<String>,
     title: Option<String>,
+    metadata: Option<serde_json::Value>,
     status: Option<String>,
     created_at: Option<String>,
     updated_at: Option<String>,
@@ -49,6 +51,10 @@ pub async fn upsert_session_sync(
     let updated_at = updated_at.unwrap_or_else(|| now.clone());
     let title = title.unwrap_or_else(|| "Untitled".to_string());
     let status = status.unwrap_or_else(|| "active".to_string());
+    let metadata_bson = metadata
+        .as_ref()
+        .and_then(|value| mongodb::bson::to_bson(value).ok())
+        .unwrap_or(Bson::Null);
     let archived_at = if status == "archived" {
         Some(updated_at.clone())
     } else {
@@ -63,6 +69,7 @@ pub async fn upsert_session_sync(
                     "user_id": user_id,
                     "project_id": project_id,
                     "title": title,
+                    "metadata": metadata_bson,
                     "status": &status,
                     "updated_at": &updated_at,
                     "archived_at": archived_at,
@@ -156,6 +163,11 @@ pub async fn update_session(
 
     let now = now_rfc3339();
     let title = req.title.or(current.title);
+    let metadata = req.metadata.or(current.metadata);
+    let metadata_bson = metadata
+        .as_ref()
+        .and_then(|value| mongodb::bson::to_bson(value).ok())
+        .unwrap_or(Bson::Null);
     let status = req.status.unwrap_or(current.status);
     let archived_at = if status == "archived" {
         Some(now.clone())
@@ -169,6 +181,7 @@ pub async fn update_session(
             doc! {
                 "$set": {
                     "title": title,
+                    "metadata": metadata_bson,
                     "status": &status,
                     "archived_at": archived_at,
                     "updated_at": &now,

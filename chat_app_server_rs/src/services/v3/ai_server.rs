@@ -129,7 +129,6 @@ impl AiServer {
                     conversation_turn_id: turn_id.clone(),
                     message_mode: options.message_mode.clone(),
                     message_source: options.message_source.clone(),
-                    sub_agent_run_id: None,
                     callbacks: Some(if use_tools {
                         callbacks
                     } else {

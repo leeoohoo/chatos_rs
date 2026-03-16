@@ -10,7 +10,6 @@ impl AiClient {
     pub(super) async fn maybe_refresh_stateless_context(
         &self,
         session_id: Option<&str>,
-        sub_agent_run_id: Option<&str>,
         stable_prefix_mode: bool,
         use_prev_id: bool,
         raw_input: &Value,
@@ -24,7 +23,7 @@ impl AiClient {
             return;
         }
 
-        if session_id.is_none() && sub_agent_run_id.is_none() {
+        if session_id.is_none() {
             return;
         }
 
@@ -37,7 +36,6 @@ impl AiClient {
                 force_text_content,
                 &current_items,
                 include_tool_items,
-                sub_agent_run_id.map(|value| value.to_string()),
             )
             .await;
         let previous_len = stateless_context_items
@@ -68,7 +66,6 @@ impl AiClient {
         force_text: bool,
         current_input_items: &[Value],
         include_tool_items: bool,
-        sub_agent_run_id: Option<String>,
     ) -> Vec<Value> {
         let mut items = Vec::new();
         let memory_summary_count;
@@ -76,11 +73,7 @@ impl AiClient {
         let mut memory_summary_used = false;
         let mut tool_call_ids: HashSet<String> = HashSet::new();
         let mut tool_output_ids: HashSet<String> = HashSet::new();
-        let context_data = if let Some(run_id) = sub_agent_run_id.as_ref() {
-            self.message_manager
-                .get_memory_sub_agent_run_history_context(run_id, 2)
-                .await
-        } else if let Some(sid) = session_id.as_ref() {
+        let context_data = if let Some(sid) = session_id.as_ref() {
             self.message_manager
                 .get_memory_chat_history_context(sid, 2)
                 .await

@@ -3,7 +3,7 @@ import { InputArea } from '../InputArea';
 import TaskDraftPanel from '../TaskDraftPanel';
 import TaskWorkbar, { type TaskWorkbarItem } from '../TaskWorkbar';
 import UiPromptPanel from '../UiPromptPanel';
-import type { AgentConfig, AiModelConfig, Project } from '../../types';
+import type { AiModelConfig, Project } from '../../types';
 import type {
   TaskReviewDraft,
   TaskReviewPanelState,
@@ -35,7 +35,16 @@ interface ChatComposerPanelProps {
   activeTaskReviewPanel: TaskReviewPanelState | null;
   onTaskReviewConfirm: (drafts: TaskReviewDraft[]) => void;
   onTaskReviewCancel: () => void;
-  onSend: (content: string, attachments?: File[]) => void;
+  onSend: (
+    content: string,
+    attachments?: File[],
+    runtimeOptions?: {
+      mcpEnabled?: boolean;
+      projectId?: string | null;
+      projectRoot?: string | null;
+      enabledMcpIds?: string[];
+    },
+  ) => void;
   onStop: () => void;
   inputDisabled: boolean;
   isStreaming: boolean;
@@ -47,11 +56,13 @@ interface ChatComposerPanelProps {
   selectedModelId: string | null;
   availableModels: AiModelConfig[];
   onModelChange: (modelId: string | null) => void;
-  selectedAgentId: string | null;
-  availableAgents: AgentConfig[];
-  onAgentChange: (agentId: string | null) => void;
   availableProjects: Project[];
   currentProject: Project | null;
+  selectedProjectId: string | null;
+  onProjectChange: (projectId: string | null) => void;
+  mcpEnabled: boolean;
+  enabledMcpIds?: string[];
+  onMcpEnabledChange: (enabled: boolean) => void;
 }
 
 const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
@@ -90,11 +101,13 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
   selectedModelId,
   availableModels,
   onModelChange,
-  selectedAgentId,
-  availableAgents,
-  onAgentChange,
   availableProjects,
   currentProject,
+  selectedProjectId,
+  onProjectChange,
+  mcpEnabled,
+  enabledMcpIds,
+  onMcpEnabledChange,
 }) => (
   <div className="border-t border-border">
     <TaskWorkbar
@@ -145,11 +158,13 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
       selectedModelId={selectedModelId}
       availableModels={availableModels}
       onModelChange={onModelChange}
-      selectedAgentId={selectedAgentId}
-      availableAgents={availableAgents}
-      onAgentChange={onAgentChange}
       availableProjects={availableProjects}
       currentProject={currentProject}
+      selectedProjectId={selectedProjectId}
+      onProjectChange={onProjectChange}
+      mcpEnabled={mcpEnabled}
+      enabledMcpIds={enabledMcpIds}
+      onMcpEnabledChange={onMcpEnabledChange}
     />
   </div>
 );

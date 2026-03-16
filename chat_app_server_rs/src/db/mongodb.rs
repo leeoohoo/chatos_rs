@@ -57,7 +57,6 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
         "mcp_config_profiles",
         "ai_model_configs",
         "system_contexts",
-        "agents",
         "applications",
         "projects",
         "terminals",
@@ -65,7 +64,6 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
         "terminal_logs",
         "mcp_config_applications",
         "system_context_applications",
-        "agent_applications",
         "session_mcp_servers",
         "user_settings",
     ];
@@ -160,13 +158,6 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
             IndexModel::builder()
                 .keys(doc! { "conversation_turn_id": 1, "created_at": -1 })
                 .build(),
-            None,
-        )
-        .await;
-    let _ = db
-        .collection::<mongodb::bson::Document>("agents")
-        .create_index(
-            IndexModel::builder().keys(doc! { "project_id": 1 }).build(),
             None,
         )
         .await;

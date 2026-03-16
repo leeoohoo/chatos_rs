@@ -113,3 +113,55 @@ export interface SummaryGraphEdge {
   from: string;
   to: string;
 }
+
+export interface MemoryAgentSkill {
+  id: string;
+  name: string;
+  content: string;
+}
+
+export interface MemoryAgent {
+  id: string;
+  user_id: string;
+  name: string;
+  description?: string | null;
+  category?: string | null;
+  role_definition: string;
+  skills: MemoryAgentSkill[];
+  skill_ids: string[];
+  default_skill_ids: string[];
+  mcp_policy?: Record<string, unknown> | null;
+  project_policy?: Record<string, unknown> | null;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MemorySkillPlugin {
+  id: string;
+  user_id: string;
+  source: string;
+  name: string;
+  category?: string | null;
+  description?: string | null;
+  version?: string | null;
+  repository?: string | null;
+  branch?: string | null;
+  cache_path?: string | null;
+  installed: boolean;
+  discoverable_skills: number;
+  installed_skill_count: number;
+  updated_at: string;
+}
+
+export interface MemorySkill {
+  id: string;
+  user_id: string;
+  plugin_source: string;
+  name: string;
+  description?: string | null;
+  content: string;
+  source_path: string;
+  version?: string | null;
+  updated_at: string;
+}

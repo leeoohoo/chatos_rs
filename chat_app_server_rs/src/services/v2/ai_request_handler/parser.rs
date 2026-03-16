@@ -113,7 +113,8 @@ pub(super) fn apply_stream_event(
                     .or_else(|| delta.get("reasoning")),
             );
             if !reasoning_piece.is_empty() {
-                state.reasoning = join_stream_text(state.reasoning.as_str(), reasoning_piece.as_str());
+                state.reasoning =
+                    join_stream_text(state.reasoning.as_str(), reasoning_piece.as_str());
                 payload.thinking = Some(reasoning_piece);
             }
         }
@@ -130,7 +131,8 @@ pub(super) fn apply_stream_event(
     if let Some(message) = choice.get("message") {
         if let Some(content) = extract_message_text(message) {
             if !content.is_empty() {
-                state.full_content = join_stream_text(state.full_content.as_str(), content.as_str());
+                state.full_content =
+                    join_stream_text(state.full_content.as_str(), content.as_str());
                 payload.chunk = Some(content);
             }
         }
@@ -142,7 +144,8 @@ pub(super) fn apply_stream_event(
                     .or_else(|| message.get("reasoning")),
             );
             if !reasoning_piece.is_empty() {
-                state.reasoning = join_stream_text(state.reasoning.as_str(), reasoning_piece.as_str());
+                state.reasoning =
+                    join_stream_text(state.reasoning.as_str(), reasoning_piece.as_str());
                 payload.thinking = Some(reasoning_piece);
             }
         }

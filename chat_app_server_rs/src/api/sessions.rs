@@ -192,8 +192,8 @@ async fn create_session(
         );
     };
 
-    let _ = (description, metadata);
-    match memory_server_client::create_session(user_id, title, project_id).await {
+    let _ = description;
+    match memory_server_client::create_session(user_id, title, project_id, metadata).await {
         Ok(saved) => (
             StatusCode::CREATED,
             Json(serde_json::to_value(saved).unwrap_or(Value::Null)),
@@ -224,8 +224,10 @@ async fn update_session(
         return map_session_access_error(err);
     }
 
-    let _ = (req.description, req.metadata);
-    match memory_server_client::update_session(&id, req.title.clone(), None).await {
+    let _ = req.description;
+    match memory_server_client::update_session(&id, req.title.clone(), None, req.metadata.clone())
+        .await
+    {
         Ok(Some(session)) => (
             StatusCode::OK,
             Json(serde_json::to_value(session).unwrap_or(Value::Null)),
@@ -381,12 +383,11 @@ async fn get_session_messages(
         Ok(list) => {
             let out: Vec<Value> = list
                 .into_iter()
-                .map(|message| serde_json::to_value(MessageOut::from(message)).unwrap_or(Value::Null))
+                .map(|message| {
+                    serde_json::to_value(MessageOut::from(message)).unwrap_or(Value::Null)
+                })
                 .collect();
-            (
-                StatusCode::OK,
-                Json(Value::Array(out)),
-            )
+            (StatusCode::OK, Json(Value::Array(out)))
         }
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -479,14 +480,14 @@ async fn list_session_memory_summaries(
 
     let memory_summaries =
         match memory_server_client::list_summaries(&session_id, limit, offset).await {
-        Ok(list) => list,
-        Err(err) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": "获取会话总结失败", "detail": err})),
-            )
-        }
-    };
+            Ok(list) => list,
+            Err(err) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"error": "获取会话总结失败", "detail": err})),
+                )
+            }
+        };
 
     let total = memory_summaries.len() as i64;
 

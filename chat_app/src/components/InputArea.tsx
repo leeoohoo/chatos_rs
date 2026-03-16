@@ -37,11 +37,13 @@ export const InputArea: React.FC<InputAreaProps> = ({
   selectedModelId = null,
   availableModels = [],
   onModelChange,
-  selectedAgentId = null,
-  availableAgents = [],
-  onAgentChange,
   availableProjects = [],
   currentProject = null,
+  selectedProjectId = null,
+  onProjectChange,
+  mcpEnabled = true,
+  enabledMcpIds = [],
+  onMcpEnabledChange,
 }) => {
   const [message, setMessage] = useState('');
   const [attachments, setAttachments] = useState<File[]>([]);
@@ -83,37 +85,34 @@ export const InputArea: React.FC<InputAreaProps> = ({
     return normalizedCandidate === normalizedRoot || normalizedCandidate.startsWith(`${normalizedRoot}/`);
   }, [normalizePath]);
 
-  const selectedAgent = useMemo(
-    () => (selectedAgentId ? (availableAgents || []).find(a => a.id === selectedAgentId) : null),
-    [availableAgents, selectedAgentId]
-  );
-  const selectedProject = useMemo(() => {
-    if (!selectedAgent?.project_id) return null;
-    return (availableProjects || []).find((p: any) => p.id === selectedAgent.project_id) || null;
-  }, [availableProjects, selectedAgent]);
+  const selectedRuntimeProject = useMemo(() => {
+    if (selectedProjectId) {
+      return (availableProjects || []).find((p: any) => p.id === selectedProjectId) || null;
+    }
+    return currentProject || null;
+  }, [availableProjects, currentProject, selectedProjectId]);
   const selectedModel = useMemo(
     () => (selectedModelId ? (availableModels || []).find(m => (m as any).id === selectedModelId) : null),
     [availableModels, selectedModelId]
-  );
-  const enabledAgents = useMemo(
-    () => (availableAgents || []).filter((a: any) => a.enabled),
-    [availableAgents]
   );
   const enabledModels = useMemo(
     () => (availableModels || []).filter((m: any) => m.enabled),
     [availableModels]
   );
-  const hasAiOptions = (availableModels && availableModels.length > 0) || (availableAgents && availableAgents.length > 0);
-  const projectForAgentFiles = useMemo(() => selectedProject || currentProject || null, [selectedProject, currentProject]);
-  const projectRootForAgentFiles = useMemo(() => {
-    if (!projectForAgentFiles?.rootPath) return null;
-    return normalizePath(projectForAgentFiles.rootPath);
-  }, [projectForAgentFiles?.rootPath, normalizePath]);
+  const hasAiOptions = (availableModels && availableModels.length > 0);
+  const projectForFilePicker = useMemo(
+    () => selectedRuntimeProject || null,
+    [selectedRuntimeProject],
+  );
+  const projectRootForFilePicker = useMemo(() => {
+    if (!projectForFilePicker?.rootPath) return null;
+    return normalizePath(projectForFilePicker.rootPath);
+  }, [projectForFilePicker?.rootPath, normalizePath]);
   const isHiddenProjectPath = useCallback((candidatePath: string) => {
-    if (!projectRootForAgentFiles) return false;
+    if (!projectRootForFilePicker) return false;
     const normalizedCandidate = normalizePath(candidatePath || '');
     if (!normalizedCandidate) return false;
-    const normalizedRoot = normalizePath(projectRootForAgentFiles);
+    const normalizedRoot = normalizePath(projectRootForFilePicker);
     if (!normalizedRoot) return false;
 
     let relativePath = normalizedCandidate;
@@ -125,27 +124,22 @@ export const InputArea: React.FC<InputAreaProps> = ({
 
     if (!relativePath) return false;
     return relativePath.split('/').some((segment) => segment.startsWith('.'));
-  }, [normalizePath, projectRootForAgentFiles]);
-  const showAgentProjectFilePicker = Boolean(selectedAgent && projectRootForAgentFiles);
-  const currentAiLabel = useMemo(() => {
-    if (selectedAgent) {
-      const projectName = projectForAgentFiles?.name || (selectedAgent.project_id ? '未知项目' : '当前项目');
-      return projectName
-        ? `Agent: ${selectedAgent.name} · 项目: ${projectName}`
-        : `Agent: ${selectedAgent.name}`;
-    }
-    return selectedModel ? `Model: ${(selectedModel as any).name}` : '选择 AI';
-  }, [projectForAgentFiles?.name, selectedAgent, selectedModel]);
+  }, [normalizePath, projectRootForFilePicker]);
+  const showProjectFilePicker = Boolean(projectRootForFilePicker);
+  const currentAiLabel = useMemo(
+    () => (selectedModel ? `Model: ${(selectedModel as any).name}` : '选择模型'),
+    [selectedModel]
+  );
   const projectFilePathLabel = useMemo(() => {
-    if (!projectFilePath || !projectRootForAgentFiles) return '';
+    if (!projectFilePath || !projectRootForFilePicker) return '';
     const normalized = normalizePath(projectFilePath);
-    if (normalized === projectRootForAgentFiles) return '/';
-    const prefix = `${projectRootForAgentFiles}/`;
+    if (normalized === projectRootForFilePicker) return '/';
+    const prefix = `${projectRootForFilePicker}/`;
     if (normalized.startsWith(prefix)) {
       return `/${normalized.slice(prefix.length)}`;
     }
     return normalized;
-  }, [normalizePath, projectFilePath, projectRootForAgentFiles]);
+  }, [normalizePath, projectFilePath, projectRootForFilePicker]);
   const filteredProjectFileEntries = useMemo(() => {
     const keywordRaw = projectFileFilter.trim().toLocaleLowerCase();
     const keywordCompact = compactSearchText(keywordRaw);
@@ -171,8 +165,8 @@ export const InputArea: React.FC<InputAreaProps> = ({
       const nameText = entry.name;
       const normalizedEntryPath = normalizePath(entry.path);
       let relativePathText = normalizedEntryPath;
-      if (projectRootForAgentFiles) {
-        const normalizedRoot = normalizePath(projectRootForAgentFiles);
+      if (projectRootForFilePicker) {
+        const normalizedRoot = normalizePath(projectRootForFilePicker);
         const prefix = `${normalizedRoot}/`;
         if (normalizedEntryPath.startsWith(prefix)) {
           relativePathText = normalizedEntryPath.slice(prefix.length);
@@ -180,7 +174,7 @@ export const InputArea: React.FC<InputAreaProps> = ({
       }
       return matches(nameText) || matches(relativePathText);
     });
-  }, [isHiddenProjectPath, normalizePath, projectFileEntries, projectFileFilter, projectRootForAgentFiles]);
+  }, [isHiddenProjectPath, normalizePath, projectFileEntries, projectFileFilter, projectRootForFilePicker]);
   const projectFileKeywordActive = projectFileFilter.trim().length > 0;
   const displayedProjectFileEntries = projectFileKeywordActive
     ? projectFileSearchResults
@@ -188,17 +182,17 @@ export const InputArea: React.FC<InputAreaProps> = ({
   const projectFileBusy = projectFileKeywordActive ? projectFileSearching : projectFileLoading;
 
   const toRelativeProjectPath = useCallback((absolutePath: string) => {
-    if (!projectRootForAgentFiles) return absolutePath;
+    if (!projectRootForFilePicker) return absolutePath;
     const normalized = normalizePath(absolutePath);
-    if (normalized === projectRootForAgentFiles) {
+    if (normalized === projectRootForFilePicker) {
       return absolutePath;
     }
-    const prefix = `${projectRootForAgentFiles}/`;
+    const prefix = `${projectRootForFilePicker}/`;
     if (normalized.startsWith(prefix)) {
       return normalized.slice(prefix.length);
     }
     return normalized;
-  }, [normalizePath, projectRootForAgentFiles]);
+  }, [normalizePath, projectRootForFilePicker]);
 
   // 自动调整文本框高度
   const adjustTextareaHeight = useCallback(() => {
@@ -247,10 +241,10 @@ export const InputArea: React.FC<InputAreaProps> = ({
     setProjectFileFilter('');
     setProjectFileError(null);
     setProjectFileAttachingPath(null);
-  }, [selectedAgentId, projectRootForAgentFiles]);
+  }, [projectRootForFilePicker]);
 
   useEffect(() => {
-    if (!projectFilePickerOpen || !projectRootForAgentFiles) return;
+    if (!projectFilePickerOpen || !projectRootForFilePicker) return;
 
     const keyword = projectFileFilter.trim();
     if (!keyword) {
@@ -265,7 +259,7 @@ export const InputArea: React.FC<InputAreaProps> = ({
       setProjectFileSearching(true);
       setProjectFileError(null);
       try {
-        const data = await client.searchFsEntries(projectRootForAgentFiles, keyword, 300);
+        const data = await client.searchFsEntries(projectRootForFilePicker, keyword, 300);
         if (cancelled) return;
 
         const entriesRaw: any[] = Array.isArray(data?.entries) ? data.entries : [];
@@ -274,7 +268,7 @@ export const InputArea: React.FC<InputAreaProps> = ({
           .filter((entry: FsEntry) => (
             !entry.isDir
             && entry.path
-            && isPathWithinRoot(entry.path, projectRootForAgentFiles)
+            && isPathWithinRoot(entry.path, projectRootForFilePicker)
             && !isHiddenProjectPath(entry.path)
           ));
 
@@ -296,7 +290,7 @@ export const InputArea: React.FC<InputAreaProps> = ({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [client, isHiddenProjectPath, isPathWithinRoot, projectFileFilter, projectFilePickerOpen, projectRootForAgentFiles]);
+  }, [client, isHiddenProjectPath, isPathWithinRoot, projectFileFilter, projectFilePickerOpen, projectRootForFilePicker]);
 
   const isFileTypeAllowed = useCallback((file: File) => {
     if (!supportedFileTypes || supportedFileTypes.length === 0) return true;
@@ -364,9 +358,9 @@ export const InputArea: React.FC<InputAreaProps> = ({
   }, [isFileTypeAllowed]);
 
   const loadProjectFileEntries = useCallback(async (nextPath?: string | null) => {
-    if (!projectRootForAgentFiles) return;
+    if (!projectRootForFilePicker) return;
 
-    const fallbackRoot = normalizePath(projectRootForAgentFiles);
+    const fallbackRoot = normalizePath(projectRootForFilePicker);
     const preferredPath = nextPath ? normalizePath(nextPath) : fallbackRoot;
     let safePath = isPathWithinRoot(preferredPath, fallbackRoot) ? preferredPath : fallbackRoot;
     if (isHiddenProjectPath(safePath)) {
@@ -402,19 +396,19 @@ export const InputArea: React.FC<InputAreaProps> = ({
     } finally {
       setProjectFileLoading(false);
     }
-  }, [client, isHiddenProjectPath, isPathWithinRoot, normalizePath, projectRootForAgentFiles]);
+  }, [client, isHiddenProjectPath, isPathWithinRoot, normalizePath, projectRootForFilePicker]);
 
   const handleToggleProjectFilePicker = useCallback(async () => {
-    if (!showAgentProjectFilePicker || disabled) return;
+    if (!showProjectFilePicker || disabled) return;
 
     if (projectFilePickerOpen) {
       setProjectFilePickerOpen(false);
       return;
     }
 
-    const initialPath = projectFilePath && projectRootForAgentFiles && isPathWithinRoot(projectFilePath, projectRootForAgentFiles)
+    const initialPath = projectFilePath && projectRootForFilePicker && isPathWithinRoot(projectFilePath, projectRootForFilePicker)
       ? projectFilePath
-      : projectRootForAgentFiles;
+      : projectRootForFilePicker;
 
     setProjectFilePickerOpen(true);
     setProjectFileFilter('');
@@ -425,12 +419,12 @@ export const InputArea: React.FC<InputAreaProps> = ({
     loadProjectFileEntries,
     projectFilePath,
     projectFilePickerOpen,
-    projectRootForAgentFiles,
-    showAgentProjectFilePicker,
+    projectRootForFilePicker,
+    showProjectFilePicker,
   ]);
 
   const handleAttachProjectFile = useCallback(async (entry: FsEntry) => {
-    if (!projectRootForAgentFiles) return;
+    if (!projectRootForFilePicker) return;
 
     if (entry.isDir) {
       await loadProjectFileEntries(entry.path);
@@ -469,7 +463,7 @@ export const InputArea: React.FC<InputAreaProps> = ({
     } finally {
       setProjectFileAttachingPath(null);
     }
-  }, [addFiles, client, loadProjectFileEntries, projectRootForAgentFiles, toRelativeProjectPath]);
+  }, [addFiles, client, loadProjectFileEntries, projectRootForFilePicker, toRelativeProjectPath]);
 
   // 全局拖拽支持：允许把文件拖到整个应用任意位置
   useEffect(() => {
@@ -590,13 +584,18 @@ export const InputArea: React.FC<InputAreaProps> = ({
     if (!trimmedMessage && attachments.length === 0) return;
     if (disabled) return;
 
-    // 检查是否选择了模型或智能体（二选一）
-    if (showModelSelector && !selectedModelId && !selectedAgentId) {
-      alert('请先选择一个模型或智能体');
+    // 检查是否选择了模型
+    if (showModelSelector && !selectedModelId) {
+      alert('请先选择一个模型');
       return;
     }
 
-    onSend(trimmedMessage, attachments);
+    onSend(trimmedMessage, attachments, {
+      mcpEnabled,
+      enabledMcpIds,
+      projectId: selectedRuntimeProject?.id || null,
+      projectRoot: selectedRuntimeProject?.rootPath || null,
+    });
     setMessage('');
     setAttachments([]);
     
@@ -703,35 +702,21 @@ export const InputArea: React.FC<InputAreaProps> = ({
                 'hover:bg-accent hover:text-accent-foreground transition-colors',
                 'disabled:opacity-50 disabled:cursor-not-allowed'
               )}
-              title="选择模型或智能体"
+              title="选择模型"
             >
               {currentAiLabel}
               <span className="ml-1">▾</span>
             </button>
             {pickerOpen && (
               <div className="absolute left-0 bottom-full mb-2 w-64 max-h-64 overflow-auto bg-popover text-popover-foreground border rounded-md shadow-lg">
-                {enabledAgents.length > 0 && (
-                  <>
-                    <div className="px-2 py-1 text-[11px] uppercase tracking-wide text-muted-foreground">智能体</div>
-                    {enabledAgents.map((agent: any) => (
-                        <button
-                          key={agent.id}
-                          className={cn('w-full text-left px-3 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground', selectedAgentId === agent.id && 'bg-accent/40')}
-                          onClick={() => { onAgentChange?.(agent.id); onModelChange?.(null); setPickerOpen(false); }}
-                        >
-                          [Agent] {agent.name}
-                        </button>
-                    ))}
-                  </>
-                )}
                 {enabledModels.length > 0 && (
                   <>
-                    <div className="px-2 py-1 text-[11px] uppercase tracking-wide text-muted-foreground border-t">模型</div>
+                    <div className="px-2 py-1 text-[11px] uppercase tracking-wide text-muted-foreground">模型</div>
                     {enabledModels.map((model: any) => (
                         <button
                           key={model.id}
                           className={cn('w-full text-left px-3 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground', selectedModelId === model.id && 'bg-accent/40')}
-                          onClick={() => { onModelChange?.(model.id); onAgentChange?.(null); setPickerOpen(false); }}
+                          onClick={() => { onModelChange?.(model.id); setPickerOpen(false); }}
                         >
                           {model.name} ({model.model_name})
                         </button>
@@ -741,7 +726,7 @@ export const InputArea: React.FC<InputAreaProps> = ({
                 <div className="border-t" />
                 <button
                   className="w-full text-left px-3 py-1.5 text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-                  onClick={() => { onModelChange?.(null); onAgentChange?.(null); setPickerOpen(false); }}
+                  onClick={() => { onModelChange?.(null); setPickerOpen(false); }}
                 >
                   清除选择
                 </button>
@@ -763,7 +748,7 @@ export const InputArea: React.FC<InputAreaProps> = ({
           </button>
         )}
 
-        {allowAttachments && showAgentProjectFilePicker && (
+        {allowAttachments && showProjectFilePicker && (
           <div className="relative flex-shrink-0" ref={projectFilePickerRef}>
             <button
               type="button"
@@ -785,9 +770,9 @@ export const InputArea: React.FC<InputAreaProps> = ({
                   <div className="space-y-1">
                     <div
                       className="text-[11px] text-muted-foreground truncate"
-                      title={projectForAgentFiles?.name || '当前项目'}
+                      title={projectForFilePicker?.name || '当前项目'}
                     >
-                      项目: {projectForAgentFiles?.name || '当前项目'}
+                      项目: {projectForFilePicker?.name || '当前项目'}
                     </div>
                     <div
                       className="text-[11px] text-muted-foreground truncate font-mono"
@@ -870,6 +855,43 @@ export const InputArea: React.FC<InputAreaProps> = ({
             )}
           </div>
         )}
+
+        {availableProjects.length > 0 && (
+          <select
+            value={selectedProjectId || ''}
+            onChange={(event) => onProjectChange?.(event.target.value || null)}
+            disabled={disabled || isStreaming || isStopping}
+            className={cn(
+              'flex-shrink-0 px-2 py-1 text-xs rounded-md border bg-background',
+              'text-foreground focus:outline-none focus:ring-1 focus:ring-primary',
+              (disabled || isStreaming || isStopping) && 'opacity-50 cursor-not-allowed'
+            )}
+            title="发送时透传 project_root"
+          >
+            <option value="">当前项目</option>
+            {availableProjects.map((project: any) => (
+              <option key={project.id} value={project.id}>
+                {project.name}
+              </option>
+            ))}
+          </select>
+        )}
+
+        <button
+          type="button"
+          onClick={() => onMcpEnabledChange?.(!mcpEnabled)}
+          disabled={disabled || isStreaming || isStopping}
+          className={cn(
+            'flex-shrink-0 px-2 py-1 text-xs rounded-md transition-colors',
+            mcpEnabled
+              ? 'bg-primary text-primary-foreground hover:bg-primary/90'
+              : 'bg-muted text-muted-foreground hover:text-foreground',
+            (disabled || isStreaming || isStopping) && 'opacity-50 cursor-not-allowed'
+          )}
+          title={mcpEnabled ? 'MCP 已开启' : 'MCP 已关闭'}
+        >
+          MCP {mcpEnabled ? '开' : '关'}
+        </button>
 
         {reasoningSupported && (
           <button
@@ -956,7 +978,7 @@ export const InputArea: React.FC<InputAreaProps> = ({
                 ? 'bg-primary text-primary-foreground hover:bg-primary/90'
                 : 'text-muted-foreground'
             )}
-            title={showModelSelector && !selectedModelId && !selectedAgentId ? "请先选择模型或智能体" : "Send message"}
+            title={showModelSelector && !selectedModelId ? "请先选择模型" : "Send message"}
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />

@@ -125,27 +125,7 @@ export const shouldRefreshForTaskMutationToolCall = (toolCall: any): boolean => 
   if (isTaskMutationToolName(toolCall?.name)) {
     return true;
   }
-
-  const normalizedName = String(toolCall?.name || '').toLowerCase();
-  if (!normalizedName.includes('sub_agent')) {
-    return false;
-  }
-
-  const combinedOutput = [toolCall?.result, toolCall?.finalResult, toolCall?.streamLog]
-    .filter((value) => typeof value === 'string' && value.trim())
-    .map((value) => String(value).toLowerCase())
-    .join(' ');
-
-  if (!combinedOutput) {
-    return true;
-  }
-
-  return combinedOutput.includes('task_manager_builtin__')
-    || combinedOutput.includes('task_manager')
-    || combinedOutput.includes('add_task')
-    || combinedOutput.includes('update_task')
-    || combinedOutput.includes('complete_task')
-    || combinedOutput.includes('delete_task');
+  return false;
 };
 
 export const hasToolCallError = (toolCall: any): boolean => {

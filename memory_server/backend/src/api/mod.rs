@@ -1,3 +1,7 @@
+use std::collections::HashSet;
+use std::fs;
+use std::path::{Path as FsPath, PathBuf};
+use std::process::Command;
 use std::sync::Arc;
 
 use axum::extract::{Path, Query, State};
@@ -12,12 +16,14 @@ use sha2::{Digest, Sha256};
 use crate::ai::AiClient;
 use crate::jobs;
 use crate::models::{
-    BatchCreateMessagesRequest, ComposeContextRequest, CreateMessageRequest, CreateSessionRequest,
-    UpdateSessionRequest, UpsertAiModelConfigRequest, UpsertSummaryJobConfigRequest,
-    UpsertSummaryRollupJobConfigRequest,
+    BatchCreateMessagesRequest, ComposeContextRequest, CreateMemoryAgentRequest,
+    CreateMessageRequest, CreateSessionRequest, MemoryAgentSkill, MemorySkill, MemorySkillPlugin,
+    UpdateMemoryAgentRequest, UpdateSessionRequest, UpsertAiModelConfigRequest,
+    UpsertSummaryJobConfigRequest, UpsertSummaryRollupJobConfigRequest,
 };
 use crate::repositories::{
-    auth as auth_repo, configs, jobs as job_repo, messages, sessions, summaries,
+    agents as agents_repo, auth as auth_repo, configs, jobs as job_repo, messages, sessions,
+    skills as skills_repo, summaries,
 };
 use crate::services::context;
 use crate::state::AppState;
@@ -64,6 +70,29 @@ pub fn router(state: SharedState) -> Router {
         .route(
             "/api/memory/v1/sessions/:session_id/messages/batch",
             post(batch_create_messages),
+        )
+        .route("/api/memory/v1/agents", get(list_agents).post(create_agent))
+        .route("/api/memory/v1/skills", get(list_skills))
+        .route("/api/memory/v1/skills/plugins", get(list_skill_plugins))
+        .route(
+            "/api/memory/v1/skills/import-git",
+            post(import_skills_from_git),
+        )
+        .route(
+            "/api/memory/v1/skills/plugins/install",
+            post(install_skill_plugins),
+        )
+        .route(
+            "/api/memory/v1/agents/ai-create",
+            post(ai_create_agent),
+        )
+        .route(
+            "/api/memory/v1/agents/:agent_id/runtime-context",
+            get(get_agent_runtime_context),
+        )
+        .route(
+            "/api/memory/v1/agents/:agent_id",
+            get(get_agent).patch(update_agent).delete(delete_agent),
         )
         .route(
             "/api/memory/v1/messages/:message_id",
@@ -545,6 +574,17 @@ fn resolve_scope_user_id(auth: &AuthIdentity, requested_user_id: Option<String>)
     }
 }
 
+fn resolve_visible_user_ids(scope_user_id: &str) -> Vec<String> {
+    let normalized = scope_user_id.trim();
+    if normalized.is_empty() || normalized == auth_repo::ADMIN_USER_ID {
+        return vec![auth_repo::ADMIN_USER_ID.to_string()];
+    }
+    vec![
+        normalized.to_string(),
+        auth_repo::ADMIN_USER_ID.to_string(),
+    ]
+}
+
 async fn ensure_session_access(
     state: &AppState,
     auth: &AuthIdentity,
@@ -569,6 +609,51 @@ async fn ensure_session_access(
         Err(err) => Err((
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": "load session failed", "detail": err})),
+        )),
+    }
+}
+
+async fn ensure_agent_read_access(
+    state: &AppState,
+    auth: &AuthIdentity,
+    agent_id: &str,
+) -> Result<crate::models::MemoryAgent, (StatusCode, Json<Value>)> {
+    match agents_repo::get_agent_by_id(&state.pool, agent_id).await {
+        Ok(Some(agent)) => {
+            if auth.is_admin()
+                || agent.user_id == auth.user_id
+                || agent.user_id == auth_repo::ADMIN_USER_ID
+            {
+                Ok(agent)
+            } else {
+                Err((StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"}))))
+            }
+        }
+        Ok(None) => Err((StatusCode::NOT_FOUND, Json(json!({"error": "agent not found"})))),
+        Err(err) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "load agent failed", "detail": err})),
+        )),
+    }
+}
+
+async fn ensure_agent_manage_access(
+    state: &AppState,
+    auth: &AuthIdentity,
+    agent_id: &str,
+) -> Result<crate::models::MemoryAgent, (StatusCode, Json<Value>)> {
+    match agents_repo::get_agent_by_id(&state.pool, agent_id).await {
+        Ok(Some(agent)) => {
+            if auth.is_admin() || agent.user_id == auth.user_id {
+                Ok(agent)
+            } else {
+                Err((StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"}))))
+            }
+        }
+        Ok(None) => Err((StatusCode::NOT_FOUND, Json(json!({"error": "agent not found"})))),
+        Err(err) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "load agent failed", "detail": err})),
         )),
     }
 }
@@ -626,6 +711,7 @@ struct SyncSessionRequest {
     user_id: String,
     project_id: Option<String>,
     title: Option<String>,
+    metadata: Option<Value>,
     status: Option<String>,
     created_at: Option<String>,
     updated_at: Option<String>,
@@ -675,6 +761,7 @@ async fn sync_session(
         req.user_id.as_str(),
         req.project_id,
         req.title,
+        req.metadata,
         req.status,
         req.created_at,
         req.updated_at,
@@ -801,6 +888,1594 @@ async fn update_session(
             Json(json!({"error": "update session failed", "detail": err})),
         ),
     }
+}
+
+#[derive(Debug, Deserialize)]
+struct ListAgentsQuery {
+    user_id: Option<String>,
+    enabled: Option<bool>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateAgentRequest {
+    user_id: Option<String>,
+    name: String,
+    description: Option<String>,
+    category: Option<String>,
+    role_definition: String,
+    skills: Option<Vec<MemoryAgentSkill>>,
+    skill_ids: Option<Vec<String>>,
+    default_skill_ids: Option<Vec<String>>,
+    mcp_policy: Option<Value>,
+    project_policy: Option<Value>,
+    enabled: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ListSkillsQuery {
+    user_id: Option<String>,
+    plugin_source: Option<String>,
+    query: Option<String>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ListSkillPluginsQuery {
+    user_id: Option<String>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ImportSkillsFromGitRequest {
+    user_id: Option<String>,
+    repository: String,
+    branch: Option<String>,
+    marketplace_path: Option<String>,
+    plugins_path: Option<String>,
+    auto_install: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct InstallSkillPluginsRequest {
+    user_id: Option<String>,
+    source: Option<String>,
+    install_all: Option<bool>,
+}
+
+#[derive(Debug, Clone)]
+struct SkillPluginCandidate {
+    source: String,
+    name: String,
+    category: Option<String>,
+    description: Option<String>,
+    version: Option<String>,
+}
+
+async fn list_skills(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Query(q): Query<ListSkillsQuery>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match resolve_identity(&headers, state.as_ref()) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+
+    let scope_user_id = resolve_scope_user_id(&auth, q.user_id);
+    let visible_user_ids = resolve_visible_user_ids(scope_user_id.as_str());
+    let limit = q.limit.unwrap_or(200);
+    let offset = q.offset.unwrap_or(0);
+    let plugin_source = q
+        .plugin_source
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let query = q
+        .query
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    match skills_repo::list_skills(
+        &state.pool,
+        visible_user_ids.as_slice(),
+        plugin_source,
+        query,
+        limit,
+        offset,
+    )
+    .await
+    {
+        Ok(items) => (StatusCode::OK, Json(json!({"items": items}))),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "list skills failed", "detail": err})),
+        ),
+    }
+}
+
+async fn list_skill_plugins(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Query(q): Query<ListSkillPluginsQuery>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match resolve_identity(&headers, state.as_ref()) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+
+    let scope_user_id = resolve_scope_user_id(&auth, q.user_id);
+    let limit = q.limit.unwrap_or(200);
+    let offset = q.offset.unwrap_or(0);
+
+    match skills_repo::list_plugins(&state.pool, scope_user_id.as_str(), limit, offset).await {
+        Ok(items) => (StatusCode::OK, Json(json!({"items": items}))),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "list skill plugins failed", "detail": err})),
+        ),
+    }
+}
+
+async fn import_skills_from_git(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Json(req): Json<ImportSkillsFromGitRequest>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match resolve_identity(&headers, state.as_ref()) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+
+    let repository = req.repository.trim().to_string();
+    if repository.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "repository is required"})),
+        );
+    }
+
+    let scope_user_id = resolve_scope_user_id(&auth, req.user_id);
+    let state_root = resolve_skill_state_root(scope_user_id.as_str());
+    let plugins_root = state_root.join("plugins");
+    let git_cache_root = state_root.join("git-cache");
+
+    if let Err(err) = ensure_dir(plugins_root.as_path()) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "prepare plugin cache failed", "detail": err})),
+        );
+    }
+    if let Err(err) = ensure_dir(git_cache_root.as_path()) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "prepare git cache failed", "detail": err})),
+        );
+    }
+
+    let branch = req
+        .branch
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+
+    let repo_root = match ensure_git_repo(
+        repository.as_str(),
+        branch.as_deref(),
+        git_cache_root.as_path(),
+    ) {
+        Ok(path) => path,
+        Err(err) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "git import failed", "detail": err})),
+            )
+        }
+    };
+
+    let candidates = match load_plugin_candidates_from_repo(
+        repo_root.as_path(),
+        req.marketplace_path.as_deref(),
+        req.plugins_path.as_deref(),
+    ) {
+        Ok(items) if !items.is_empty() => items,
+        Ok(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "no plugins discovered from repository"})),
+            )
+        }
+        Err(err) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "parse plugin definitions failed", "detail": err})),
+            )
+        }
+    };
+
+    let sources = candidates
+        .iter()
+        .map(|item| item.source.clone())
+        .collect::<Vec<_>>();
+    let existing = skills_repo::get_plugins_by_sources(&state.pool, scope_user_id.as_str(), &sources)
+        .await
+        .unwrap_or_default();
+    let existing_by_source = existing
+        .into_iter()
+        .map(|item| (item.source.clone(), item))
+        .collect::<std::collections::HashMap<_, _>>();
+
+    let mut imported_sources = Vec::new();
+    let mut details = Vec::new();
+    for candidate in candidates {
+        let cache_rel = match copy_plugin_source_from_repo(
+            repo_root.as_path(),
+            plugins_root.as_path(),
+            candidate.source.as_str(),
+        ) {
+            Ok(value) => value,
+            Err(err) => {
+                details.push(json!({
+                    "source": candidate.source,
+                    "ok": false,
+                    "error": err
+                }));
+                continue;
+            }
+        };
+
+        let plugin_root = plugins_root.join(cache_rel.as_str());
+        let discoverable_skills = discover_skill_entries(plugin_root.as_path()).len() as i64;
+        let previous = existing_by_source.get(candidate.source.as_str());
+        let plugin = MemorySkillPlugin {
+            id: previous
+                .map(|item| item.id.clone())
+                .unwrap_or_else(|| hash_id(&["plugin", scope_user_id.as_str(), candidate.source.as_str()])),
+            user_id: scope_user_id.clone(),
+            source: candidate.source.clone(),
+            name: candidate.name.clone(),
+            category: candidate.category.clone(),
+            description: candidate.description.clone(),
+            version: candidate.version.clone(),
+            repository: Some(repository.clone()),
+            branch: branch.clone(),
+            cache_path: Some(cache_rel.clone()),
+            installed: previous.map(|item| item.installed).unwrap_or(false),
+            discoverable_skills,
+            installed_skill_count: previous
+                .map(|item| item.installed_skill_count)
+                .unwrap_or(0),
+            updated_at: crate::repositories::now_rfc3339(),
+        };
+
+        match skills_repo::upsert_plugin(&state.pool, plugin).await {
+            Ok(saved) => {
+                imported_sources.push(saved.source.clone());
+                details.push(json!({
+                    "source": saved.source,
+                    "name": saved.name,
+                    "discoverable_skills": saved.discoverable_skills,
+                    "installed": saved.installed,
+                    "cache_path": saved.cache_path,
+                    "ok": true
+                }));
+            }
+            Err(err) => {
+                details.push(json!({
+                    "source": candidate.source,
+                    "ok": false,
+                    "error": err
+                }));
+            }
+        }
+    }
+
+    if imported_sources.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "no plugin imported", "details": details})),
+        );
+    }
+
+    let auto_install = req.auto_install.unwrap_or(false);
+    let install_result = if auto_install {
+        match install_skill_plugins_internal(
+            state.as_ref(),
+            scope_user_id.as_str(),
+            imported_sources.as_slice(),
+        )
+        .await
+        {
+            Ok(value) => Some(value),
+            Err(err) => Some(json!({"ok": false, "error": err})),
+        }
+    } else {
+        None
+    };
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "ok": true,
+            "repository": repository,
+            "branch": branch,
+            "imported_sources": imported_sources,
+            "details": details,
+            "auto_install": auto_install,
+            "install_result": install_result
+        })),
+    )
+}
+
+async fn install_skill_plugins(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Json(req): Json<InstallSkillPluginsRequest>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match resolve_identity(&headers, state.as_ref()) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+
+    let scope_user_id = resolve_scope_user_id(&auth, req.user_id);
+    let install_all = req.install_all.unwrap_or(false);
+    let source = req
+        .source
+        .as_deref()
+        .map(normalize_plugin_source)
+        .filter(|value| !value.is_empty());
+
+    let target_sources = if install_all {
+        match skills_repo::list_plugins(&state.pool, scope_user_id.as_str(), 500, 0).await {
+            Ok(items) => items.into_iter().map(|item| item.source).collect::<Vec<_>>(),
+            Err(err) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": "load plugins failed", "detail": err})),
+                )
+            }
+        }
+    } else if let Some(value) = source {
+        vec![value]
+    } else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "source is required when install_all=false"})),
+        );
+    };
+
+    match install_skill_plugins_internal(state.as_ref(), scope_user_id.as_str(), &target_sources)
+        .await
+    {
+        Ok(value) => (StatusCode::OK, Json(value)),
+        Err(err) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "install plugins failed", "detail": err})),
+        ),
+    }
+}
+
+async fn install_skill_plugins_internal(
+    state: &AppState,
+    user_id: &str,
+    sources: &[String],
+) -> Result<Value, String> {
+    let normalized_sources = unique_strings(
+        sources
+            .iter()
+            .map(|item| normalize_plugin_source(item.as_str()))
+            .filter(|item| !item.is_empty())
+            .collect::<Vec<_>>(),
+    );
+    if normalized_sources.is_empty() {
+        return Err("no plugin sources specified".to_string());
+    }
+
+    let plugins = skills_repo::get_plugins_by_sources(&state.pool, user_id, &normalized_sources).await?;
+    if plugins.is_empty() {
+        return Err("plugins not found".to_string());
+    }
+
+    let state_root = resolve_skill_state_root(user_id);
+    let plugins_root = state_root.join("plugins");
+
+    let mut installed = 0usize;
+    let mut skipped = 0usize;
+    let mut details = Vec::new();
+
+    for plugin in plugins {
+        let Some(plugin_root) = resolve_plugin_root_from_cache(
+            plugins_root.as_path(),
+            plugin.cache_path.as_deref(),
+            plugin.source.as_str(),
+        ) else {
+            skipped += 1;
+            details.push(json!({
+                "source": plugin.source,
+                "ok": false,
+                "reason": "cached plugin path not found"
+            }));
+            continue;
+        };
+
+        let entries = discover_skill_entries(plugin_root.as_path());
+        if entries.is_empty() {
+            let _ = skills_repo::replace_skills_for_plugin(
+                &state.pool,
+                user_id,
+                plugin.source.as_str(),
+                Vec::new(),
+            )
+            .await;
+            let _ = skills_repo::update_plugin_install_state(
+                &state.pool,
+                user_id,
+                plugin.source.as_str(),
+                0,
+                0,
+            )
+            .await;
+            skipped += 1;
+            details.push(json!({
+                "source": plugin.source,
+                "ok": false,
+                "reason": "no skills discovered in plugin"
+            }));
+            continue;
+        }
+
+        let mut skills = Vec::new();
+        for entry in entries {
+            let Some(file_path) = normalize_skill_entry_to_file(plugin_root.as_path(), entry.as_str()) else {
+                continue;
+            };
+            let raw = match fs::read_to_string(file_path.as_path()) {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
+            let content = raw.trim().to_string();
+            if content.is_empty() {
+                continue;
+            }
+            let id = hash_id(&["skill", user_id, plugin.source.as_str(), entry.as_str()]);
+            let skill = MemorySkill {
+                id,
+                user_id: user_id.to_string(),
+                plugin_source: plugin.source.clone(),
+                name: build_skill_name_from_entry(entry.as_str()),
+                description: None,
+                content,
+                source_path: entry,
+                version: plugin.version.clone(),
+                updated_at: crate::repositories::now_rfc3339(),
+            };
+            skills.push(skill);
+        }
+
+        let installed_count = skills_repo::replace_skills_for_plugin(
+            &state.pool,
+            user_id,
+            plugin.source.as_str(),
+            skills,
+        )
+        .await?;
+        let _ = skills_repo::update_plugin_install_state(
+            &state.pool,
+            user_id,
+            plugin.source.as_str(),
+            installed_count as i64,
+            entries_len_to_i64(&discover_skill_entries(plugin_root.as_path())),
+        )
+        .await?;
+
+        installed += 1;
+        details.push(json!({
+            "source": plugin.source,
+            "ok": true,
+            "installed_skills": installed_count
+        }));
+    }
+
+    Ok(json!({
+        "ok": true,
+        "installed_plugins": installed,
+        "skipped_plugins": skipped,
+        "details": details
+    }))
+}
+
+fn entries_len_to_i64(entries: &[String]) -> i64 {
+    entries.len().min(i64::MAX as usize) as i64
+}
+
+async fn list_agents(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Query(q): Query<ListAgentsQuery>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match resolve_identity(&headers, state.as_ref()) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+
+    let scope_user_id = resolve_scope_user_id(&auth, q.user_id);
+    let visible_user_ids = resolve_visible_user_ids(scope_user_id.as_str());
+    let limit = q.limit.unwrap_or(100);
+    let offset = q.offset.unwrap_or(0);
+
+    match agents_repo::list_agents(
+        &state.pool,
+        visible_user_ids.as_slice(),
+        q.enabled,
+        limit,
+        offset,
+    )
+    .await {
+        Ok(items) => (StatusCode::OK, Json(json!({"items": items}))),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "list agents failed", "detail": err})),
+        ),
+    }
+}
+
+async fn create_agent(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Json(req): Json<CreateAgentRequest>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match resolve_identity(&headers, state.as_ref()) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+
+    let name = req.name.trim().to_string();
+    if name.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "name is required"})),
+        );
+    }
+
+    let role_definition = req.role_definition.trim().to_string();
+    if role_definition.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "role_definition is required"})),
+        );
+    }
+
+    let scope_user_id = resolve_scope_user_id(&auth, req.user_id);
+    let create_req = CreateMemoryAgentRequest {
+        user_id: scope_user_id,
+        name,
+        description: req.description,
+        category: req.category,
+        role_definition,
+        skills: req.skills,
+        skill_ids: req.skill_ids,
+        default_skill_ids: req.default_skill_ids,
+        mcp_policy: req.mcp_policy,
+        project_policy: req.project_policy,
+        enabled: req.enabled,
+    };
+
+    match agents_repo::create_agent(&state.pool, create_req).await {
+        Ok(agent) => (StatusCode::OK, Json(json!(agent))),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "create agent failed", "detail": err})),
+        ),
+    }
+}
+
+async fn get_agent(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Path(agent_id): Path<String>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match resolve_identity(&headers, state.as_ref()) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+
+    match ensure_agent_read_access(state.as_ref(), &auth, agent_id.as_str()).await {
+        Ok(agent) => (StatusCode::OK, Json(json!(agent))),
+        Err(err) => err,
+    }
+}
+
+async fn update_agent(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Path(agent_id): Path<String>,
+    Json(req): Json<UpdateMemoryAgentRequest>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match resolve_identity(&headers, state.as_ref()) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    if let Err(err) = ensure_agent_manage_access(state.as_ref(), &auth, agent_id.as_str()).await {
+        return err;
+    }
+
+    match agents_repo::update_agent(&state.pool, agent_id.as_str(), req).await {
+        Ok(Some(agent)) => (StatusCode::OK, Json(json!(agent))),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "agent not found"})),
+        ),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "update agent failed", "detail": err})),
+        ),
+    }
+}
+
+async fn delete_agent(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Path(agent_id): Path<String>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match resolve_identity(&headers, state.as_ref()) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    if let Err(err) = ensure_agent_manage_access(state.as_ref(), &auth, agent_id.as_str()).await {
+        return err;
+    }
+
+    match agents_repo::delete_agent(&state.pool, agent_id.as_str()).await {
+        Ok(true) => (StatusCode::OK, Json(json!({"success": true}))),
+        Ok(false) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "agent not found"})),
+        ),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "delete agent failed", "detail": err})),
+        ),
+    }
+}
+
+async fn get_agent_runtime_context(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Path(agent_id): Path<String>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match resolve_identity(&headers, state.as_ref()) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    if let Err(err) = ensure_agent_read_access(state.as_ref(), &auth, agent_id.as_str()).await {
+        return err;
+    }
+
+    match agents_repo::get_runtime_context(&state.pool, agent_id.as_str()).await {
+        Ok(Some(context)) => (StatusCode::OK, Json(json!(context))),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "agent not found"})),
+        ),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "load runtime context failed", "detail": err})),
+        ),
+    }
+}
+
+async fn ai_create_agent(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Json(req): Json<Value>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match resolve_identity(&headers, state.as_ref()) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+
+    let requested_user_id = req
+        .get("user_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+    let scope_user_id = resolve_scope_user_id(&auth, requested_user_id);
+
+    let requirement = req
+        .get("requirement")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+    let Some(requirement) = requirement else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "requirement is required"})),
+        );
+    };
+
+    let name = req
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| default_agent_name(&requirement));
+    let category = req
+        .get("category")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| Some(infer_agent_category(&requirement).to_string()));
+    let description = req
+        .get("description")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| Some(format!("根据需求“{}”生成的智能体。", truncate_text(&requirement, 120))));
+    let role_definition = req
+        .get("role_definition")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| default_role_definition(name.as_str(), requirement.as_str()));
+
+    let skill_ids = req
+        .get("skill_ids")
+        .and_then(parse_string_array)
+        .unwrap_or_else(|| default_skill_ids(&requirement));
+    let default_skill_ids = req
+        .get("default_skill_ids")
+        .and_then(parse_string_array)
+        .unwrap_or_else(|| skill_ids.clone());
+    let skills = parse_skill_prompts(req.get("skill_prompts"))
+        .or_else(|| req.get("skills").and_then(parse_skill_objects));
+    let enabled = req.get("enabled").and_then(Value::as_bool).unwrap_or(true);
+
+    let mcp_enabled = req
+        .get("mcp_enabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    let enabled_mcp_ids = req
+        .get("enabled_mcp_ids")
+        .and_then(parse_string_array)
+        .unwrap_or_default();
+    let project_id = req
+        .get("project_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+    let project_root = req
+        .get("project_root")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+    let mcp_policy = Some(json!({
+        "enabled": mcp_enabled,
+        "enabled_mcp_ids": enabled_mcp_ids,
+    }));
+    let project_policy = if project_id.is_some() || project_root.is_some() {
+        Some(json!({
+            "project_id": project_id,
+            "project_root": project_root,
+        }))
+    } else {
+        None
+    };
+
+    let create_req = CreateMemoryAgentRequest {
+        user_id: scope_user_id,
+        name,
+        description,
+        category,
+        role_definition,
+        skills,
+        skill_ids: Some(skill_ids),
+        default_skill_ids: Some(default_skill_ids),
+        mcp_policy,
+        project_policy,
+        enabled: Some(enabled),
+    };
+
+    match agents_repo::create_agent(&state.pool, create_req).await {
+        Ok(agent) => (
+            StatusCode::OK,
+            Json(json!({
+                "created": true,
+                "agent": agent,
+                "source": "rule_based_builder"
+            })),
+        ),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "ai-create failed", "detail": err})),
+        ),
+    }
+}
+
+fn parse_string_array(value: &Value) -> Option<Vec<String>> {
+    let items = value.as_array()?;
+    let mut out = Vec::new();
+    for item in items {
+        let Some(raw) = item.as_str() else {
+            continue;
+        };
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if out.iter().any(|existing: &String| existing == trimmed) {
+            continue;
+        }
+        out.push(trimmed.to_string());
+    }
+    Some(out)
+}
+
+fn parse_skill_objects(value: &Value) -> Option<Vec<MemoryAgentSkill>> {
+    let items = value.as_array()?;
+    let mut out = Vec::new();
+    for item in items {
+        let Some(obj) = item.as_object() else {
+            continue;
+        };
+        let id = obj
+            .get("id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned);
+        let name = obj
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned);
+        let content = obj
+            .get("content")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned);
+        let (Some(id), Some(name), Some(content)) = (id, name, content) else {
+            continue;
+        };
+        out.push(MemoryAgentSkill { id, name, content });
+    }
+    Some(out)
+}
+
+fn parse_skill_prompts(value: Option<&Value>) -> Option<Vec<MemoryAgentSkill>> {
+    let prompts = value?.as_array()?;
+    let mut out = Vec::new();
+    for (index, item) in prompts.iter().enumerate() {
+        let Some(prompt) = item.as_str() else {
+            continue;
+        };
+        let trimmed = prompt.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let skill_id = format!("skill_{}", index + 1);
+        out.push(MemoryAgentSkill {
+            id: skill_id.clone(),
+            name: format!("Skill {}", index + 1),
+            content: trimmed.to_string(),
+        });
+    }
+    Some(out)
+}
+
+fn contains_any(text: &str, patterns: &[&str]) -> bool {
+    let lowered = text.to_ascii_lowercase();
+    patterns
+        .iter()
+        .any(|pattern| lowered.contains(pattern.to_ascii_lowercase().as_str()))
+}
+
+fn infer_agent_category(requirement: &str) -> &'static str {
+    if contains_any(requirement, &["代码", "开发", "编程", "debug", "code"]) {
+        "engineering"
+    } else if contains_any(requirement, &["产品", "需求", "roadmap", "prd"]) {
+        "product"
+    } else if contains_any(requirement, &["运营", "增长", "营销", "campaign"]) {
+        "growth"
+    } else {
+        "general"
+    }
+}
+
+fn default_agent_name(requirement: &str) -> String {
+    let category = infer_agent_category(requirement);
+    match category {
+        "engineering" => "研发协作助手".to_string(),
+        "product" => "产品分析助手".to_string(),
+        "growth" => "增长运营助手".to_string(),
+        _ => "通用业务助手".to_string(),
+    }
+}
+
+fn default_role_definition(name: &str, requirement: &str) -> String {
+    format!(
+        "你是{name}。你的目标是围绕“{}”为用户提供清晰、可执行、可验证的行动建议，并在信息不足时优先澄清约束。",
+        truncate_text(requirement, 180)
+    )
+}
+
+fn default_skill_ids(requirement: &str) -> Vec<String> {
+    match infer_agent_category(requirement) {
+        "engineering" => vec![
+            "code_review".to_string(),
+            "bug_fix".to_string(),
+            "test_design".to_string(),
+        ],
+        "product" => vec![
+            "requirement_analysis".to_string(),
+            "roadmap_planning".to_string(),
+            "prd_writing".to_string(),
+        ],
+        "growth" => vec![
+            "campaign_planning".to_string(),
+            "funnel_analysis".to_string(),
+            "copywriting".to_string(),
+        ],
+        _ => vec![
+            "task_planning".to_string(),
+            "knowledge_summary".to_string(),
+            "decision_support".to_string(),
+        ],
+    }
+}
+
+fn truncate_text(raw: &str, max_chars: usize) -> String {
+    if raw.chars().count() <= max_chars {
+        return raw.to_string();
+    }
+    let mut out: String = raw.chars().take(max_chars).collect();
+    out.push_str("...");
+    out
+}
+
+fn resolve_skill_state_root(user_id: &str) -> PathBuf {
+    let user_segment = sanitize_user_segment(user_id);
+    if let Ok(raw) = std::env::var("MEMORY_SKILL_STATE_ROOT") {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed).join(user_segment);
+        }
+    }
+
+    let home = std::env::var("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("."));
+    home.join(".chatos")
+        .join("memory_skill_center")
+        .join(user_segment)
+}
+
+fn sanitize_user_segment(value: &str) -> String {
+    let mut output = String::new();
+    let mut last_dash = false;
+    for ch in value.trim().chars() {
+        let normalized = if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
+            ch
+        } else {
+            '-'
+        };
+        if normalized == '-' {
+            if last_dash {
+                continue;
+            }
+            last_dash = true;
+        } else {
+            last_dash = false;
+        }
+        output.push(normalized);
+    }
+    let trimmed = output.trim_matches('-').to_string();
+    if trimmed.is_empty() {
+        "default".to_string()
+    } else {
+        trimmed
+    }
+}
+
+fn ensure_dir(path: &FsPath) -> Result<(), String> {
+    if path.as_os_str().is_empty() {
+        return Ok(());
+    }
+    fs::create_dir_all(path).map_err(|err| err.to_string())
+}
+
+fn ensure_git_repo(repo_url: &str, branch: Option<&str>, cache_root: &FsPath) -> Result<PathBuf, String> {
+    ensure_dir(cache_root)?;
+    let safe_name = sanitize_repo_name(repo_url);
+    let repo_path = cache_root.join(safe_name);
+
+    if repo_path.exists() {
+        fs::remove_dir_all(repo_path.as_path())
+            .map_err(|err| format!("remove old repo failed ({}): {}", repo_path.to_string_lossy(), err))?;
+    }
+
+    let mut args = vec!["clone".to_string(), "--depth".to_string(), "1".to_string()];
+    if let Some(value) = branch {
+        args.push("--branch".to_string());
+        args.push(value.to_string());
+    }
+    args.push(repo_url.to_string());
+    args.push(repo_path.to_string_lossy().to_string());
+    run_git(args.as_slice())?;
+    Ok(repo_path)
+}
+
+fn run_git(args: &[String]) -> Result<(), String> {
+    let output = Command::new("git")
+        .args(args)
+        .output()
+        .map_err(|err| format!("git execution failed: {}", err))?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let detail = if !stderr.is_empty() { stderr } else { stdout };
+    Err(format!(
+        "git command failed (exit={}): {}",
+        output.status.code().unwrap_or(-1),
+        detail
+    ))
+}
+
+fn sanitize_repo_name(value: &str) -> String {
+    let mut raw = value.trim().to_string();
+    if let Some(stripped) = raw.strip_prefix("https://") {
+        raw = stripped.to_string();
+    } else if let Some(stripped) = raw.strip_prefix("http://") {
+        raw = stripped.to_string();
+    }
+    if let Some(stripped) = raw.strip_prefix("git@") {
+        raw = stripped.to_string();
+    }
+
+    raw = raw.replace([':', '/'], "-");
+    if raw.ends_with(".git") {
+        raw.truncate(raw.len().saturating_sub(4));
+    }
+
+    let mut cleaned = String::new();
+    let mut last_dash = false;
+    for ch in raw.chars() {
+        let valid = ch.is_ascii_alphanumeric() || ch == '_' || ch == '-';
+        if valid {
+            cleaned.push(ch);
+            last_dash = false;
+        } else if !last_dash {
+            cleaned.push('-');
+            last_dash = true;
+        }
+    }
+
+    let trimmed = cleaned.trim_matches('-').to_string();
+    if trimmed.is_empty() {
+        "repo".to_string()
+    } else {
+        trimmed
+    }
+}
+
+fn load_plugin_candidates_from_repo(
+    repo_root: &FsPath,
+    marketplace_path: Option<&str>,
+    plugins_path: Option<&str>,
+) -> Result<Vec<SkillPluginCandidate>, String> {
+    if let Some(path) = marketplace_path
+        .map(normalize_repo_relative_path)
+        .filter(|value| !value.is_empty())
+    {
+        let file = repo_root.join(path.as_str());
+        if !file.exists() || !file.is_file() {
+            return Err(format!("marketplace path not found: {}", file.to_string_lossy()));
+        }
+        let raw = fs::read_to_string(file.as_path()).map_err(|err| err.to_string())?;
+        let parsed = parse_marketplace_candidates(raw.as_str())?;
+        if !parsed.is_empty() {
+            return Ok(parsed);
+        }
+    } else if let Some(file) = find_default_file_recursively(repo_root, &["marketplace.json"]) {
+        if let Ok(raw) = fs::read_to_string(file.as_path()) {
+            let parsed = parse_marketplace_candidates(raw.as_str())?;
+            if !parsed.is_empty() {
+                return Ok(parsed);
+            }
+        }
+    }
+
+    Ok(fallback_plugin_candidates(repo_root, plugins_path))
+}
+
+fn parse_marketplace_candidates(raw: &str) -> Result<Vec<SkillPluginCandidate>, String> {
+    let value = serde_json::from_str::<Value>(raw)
+        .map_err(|err| format!("marketplace json parse failed: {}", err))?;
+    let plugins = value
+        .get("plugins")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+
+    let mut out = Vec::new();
+    for item in plugins {
+        let source = item
+            .get("source")
+            .and_then(Value::as_str)
+            .map(normalize_plugin_source)
+            .unwrap_or_default();
+        if source.is_empty() || has_parent_path_component(source.as_str()) {
+            continue;
+        }
+        let name = item
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| source.clone());
+        let category = item
+            .get("category")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned);
+        let description = item
+            .get("description")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned);
+        let version = item
+            .get("version")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned);
+        out.push(SkillPluginCandidate {
+            source,
+            name,
+            category,
+            description,
+            version,
+        });
+    }
+
+    Ok(unique_plugin_candidates(out))
+}
+
+fn fallback_plugin_candidates(repo_root: &FsPath, plugins_path: Option<&str>) -> Vec<SkillPluginCandidate> {
+    let root = plugins_path
+        .map(normalize_repo_relative_path)
+        .filter(|value| !value.is_empty())
+        .map(|value| repo_root.join(value))
+        .unwrap_or_else(|| repo_root.join("plugins"));
+    if !root.exists() || !root.is_dir() {
+        return Vec::new();
+    }
+
+    let entries = match fs::read_dir(root.as_path()) {
+        Ok(value) => value,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut out = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let rel = path_to_unix_relative(repo_root, path.as_path());
+        let Some(rel) = rel else {
+            continue;
+        };
+        let source = normalize_plugin_source(rel.as_str());
+        if source.is_empty() || has_parent_path_component(source.as_str()) {
+            continue;
+        }
+        let name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| source.clone());
+        out.push(SkillPluginCandidate {
+            source,
+            name,
+            category: None,
+            description: None,
+            version: None,
+        });
+    }
+
+    unique_plugin_candidates(out)
+}
+
+fn unique_plugin_candidates(items: Vec<SkillPluginCandidate>) -> Vec<SkillPluginCandidate> {
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    for item in items {
+        if seen.insert(item.source.clone()) {
+            out.push(item);
+        }
+    }
+    out
+}
+
+fn copy_plugin_source_from_repo(
+    repo_root: &FsPath,
+    plugins_root: &FsPath,
+    source: &str,
+) -> Result<String, String> {
+    let normalized = normalize_plugin_source(source);
+    if normalized.is_empty() {
+        return Err("plugin source is empty".to_string());
+    }
+    if has_parent_path_component(normalized.as_str()) {
+        return Err("plugin source cannot contain ..".to_string());
+    }
+
+    let src = repo_root.join(normalized.as_str());
+    if !src.exists() {
+        return Err(format!("plugin source not found in repository: {}", normalized));
+    }
+
+    let dest_rel = plugin_install_destination(normalized.as_str());
+    if dest_rel.is_empty() {
+        return Err("plugin source normalization failed".to_string());
+    }
+
+    let dest = plugins_root.join(dest_rel.as_str());
+    copy_path(src.as_path(), dest.as_path())?;
+    Ok(dest_rel)
+}
+
+fn copy_path(src: &FsPath, dest: &FsPath) -> Result<(), String> {
+    if !src.exists() {
+        return Err(format!("source not found: {}", src.to_string_lossy()));
+    }
+
+    if dest.exists() {
+        if dest.is_dir() {
+            fs::remove_dir_all(dest).map_err(|err| err.to_string())?;
+        } else {
+            fs::remove_file(dest).map_err(|err| err.to_string())?;
+        }
+    }
+
+    if src.is_file() {
+        if let Some(parent) = dest.parent() {
+            ensure_dir(parent)?;
+        }
+        fs::copy(src, dest).map_err(|err| err.to_string())?;
+        return Ok(());
+    }
+
+    ensure_dir(dest)?;
+    for entry in fs::read_dir(src).map_err(|err| err.to_string())? {
+        let entry = entry.map_err(|err| err.to_string())?;
+        let path = entry.path();
+        let next = dest.join(entry.file_name());
+        let file_type = entry.file_type().map_err(|err| err.to_string())?;
+        if file_type.is_dir() {
+            copy_path(path.as_path(), next.as_path())?;
+        } else if file_type.is_file() {
+            if let Some(parent) = next.parent() {
+                ensure_dir(parent)?;
+            }
+            fs::copy(path.as_path(), next.as_path()).map_err(|err| err.to_string())?;
+        }
+    }
+
+    Ok(())
+}
+
+fn normalize_plugin_source(value: &str) -> String {
+    let mut normalized = value.trim().replace('\\', "/");
+    while normalized.starts_with("./") {
+        normalized = normalized[2..].to_string();
+    }
+    normalized = normalized.trim_start_matches('/').to_string();
+    normalized.trim_matches('/').to_string()
+}
+
+fn plugin_install_destination(source: &str) -> String {
+    let normalized = normalize_plugin_source(source);
+    if let Some(stripped) = normalized.strip_prefix("plugins/") {
+        stripped.trim_matches('/').to_string()
+    } else {
+        normalized
+    }
+}
+
+fn has_parent_path_component(path: &str) -> bool {
+    FsPath::new(path)
+        .components()
+        .any(|component| matches!(component, std::path::Component::ParentDir))
+}
+
+fn find_default_file_recursively(root: &FsPath, names: &[&str]) -> Option<PathBuf> {
+    let mut candidate_names = HashSet::new();
+    for name in names {
+        candidate_names.insert((*name).to_ascii_lowercase());
+    }
+
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let entries = match fs::read_dir(dir.as_path()) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() {
+                let file_name = path
+                    .file_name()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
+                if candidate_names.contains(file_name.as_str()) {
+                    return Some(path);
+                }
+                continue;
+            }
+            if path.is_dir() && !is_skipped_repo_dir(path.as_path()) {
+                stack.push(path);
+            }
+        }
+    }
+    None
+}
+
+fn is_skipped_repo_dir(path: &FsPath) -> bool {
+    let Some(name) = path.file_name().and_then(|v| v.to_str()) else {
+        return false;
+    };
+
+    matches!(name, ".git" | "node_modules" | "target" | ".next")
+}
+
+fn normalize_repo_relative_path(value: &str) -> String {
+    let mut normalized = value.trim().replace('\\', "/");
+    while normalized.starts_with("./") {
+        normalized = normalized[2..].to_string();
+    }
+    normalized = normalized.trim_start_matches('/').to_string();
+    normalized.trim_matches('/').to_string()
+}
+
+fn resolve_plugin_root_from_cache(
+    plugins_root: &FsPath,
+    cache_path: Option<&str>,
+    source: &str,
+) -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(value) = cache_path
+        .map(normalize_repo_relative_path)
+        .filter(|value| !value.is_empty())
+    {
+        candidates.push(value);
+    }
+    let normalized = normalize_plugin_source(source);
+    if !normalized.is_empty() {
+        candidates.push(normalized.clone());
+        if let Some(stripped) = normalized.strip_prefix("plugins/") {
+            candidates.push(stripped.to_string());
+        } else {
+            candidates.push(format!("plugins/{}", normalized));
+        }
+    }
+    for rel in unique_strings(candidates) {
+        let path = plugins_root.join(rel.as_str());
+        if path.exists() && path.is_dir() {
+            return Some(path);
+        }
+    }
+    None
+}
+
+fn discover_skill_entries(plugin_root: &FsPath) -> Vec<String> {
+    let root = plugin_root.join("skills");
+    if !root.exists() || !root.is_dir() {
+        return Vec::new();
+    }
+
+    let mut seen = HashSet::new();
+    for path in collect_markdown_entries(root.as_path()) {
+        let file_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("");
+
+        if file_name.eq_ignore_ascii_case("README.md") {
+            continue;
+        }
+
+        if file_name.eq_ignore_ascii_case("SKILL.md") || file_name.eq_ignore_ascii_case("index.md")
+        {
+            let parent = path.parent().unwrap_or_else(|| root.as_path());
+            if let Some(rel) = path_to_unix_relative(plugin_root, parent) {
+                if !rel.trim().is_empty() {
+                    seen.insert(rel);
+                }
+            }
+            continue;
+        }
+
+        if contains_path_component(path.as_path(), "references") {
+            continue;
+        }
+
+        if let Some(rel) = path_to_unix_relative(plugin_root, path.as_path()) {
+            seen.insert(rel);
+        }
+    }
+
+    let mut items = seen.into_iter().collect::<Vec<_>>();
+    items.sort();
+    items
+}
+
+fn collect_markdown_entries(root: &FsPath) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    if !root.exists() || !root.is_dir() {
+        return out;
+    }
+
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let entries = match fs::read_dir(dir.as_path()) {
+            Ok(entries) => entries,
+            Err(_) => continue,
+        };
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let file_type = match entry.file_type() {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
+
+            if file_type.is_dir() {
+                if !is_skipped_repo_dir(path.as_path()) {
+                    stack.push(path);
+                }
+                continue;
+            }
+            if !file_type.is_file() {
+                continue;
+            }
+            let is_markdown = path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| ext.eq_ignore_ascii_case("md"))
+                .unwrap_or(false);
+            if is_markdown {
+                out.push(path);
+            }
+        }
+    }
+
+    out
+}
+
+fn path_to_unix_relative(base: &FsPath, path: &FsPath) -> Option<String> {
+    let rel = path.strip_prefix(base).ok()?;
+    let rendered = rel.to_string_lossy().replace('\\', "/");
+    let trimmed = rendered.trim_matches('/').to_string();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
+}
+
+fn contains_path_component(path: &FsPath, target: &str) -> bool {
+    path.components().any(|comp| {
+        comp.as_os_str()
+            .to_str()
+            .map(|name| name.eq_ignore_ascii_case(target))
+            .unwrap_or(false)
+    })
+}
+
+fn normalize_skill_entry_to_file(plugin_root: &FsPath, entry: &str) -> Option<PathBuf> {
+    let normalized = normalize_repo_relative_path(entry);
+    if normalized.is_empty() {
+        return None;
+    }
+    let path = plugin_root.join(normalized.as_str());
+    if path.is_file() {
+        return Some(path);
+    }
+    if path.is_dir() {
+        let skill_md = path.join("SKILL.md");
+        if skill_md.exists() && skill_md.is_file() {
+            return Some(skill_md);
+        }
+        let index_md = path.join("index.md");
+        if index_md.exists() && index_md.is_file() {
+            return Some(index_md);
+        }
+    }
+    None
+}
+
+fn build_skill_name_from_entry(entry: &str) -> String {
+    let normalized = normalize_repo_relative_path(entry);
+    if normalized.is_empty() {
+        return "Skill".to_string();
+    }
+
+    let parts = normalized
+        .split('/')
+        .filter(|part| !part.trim().is_empty())
+        .collect::<Vec<_>>();
+    if parts.is_empty() {
+        return "Skill".to_string();
+    }
+
+    let last = parts.last().copied().unwrap_or("");
+    if last.eq_ignore_ascii_case("SKILL.md") || last.eq_ignore_ascii_case("index.md") {
+        return parts
+            .iter()
+            .rev()
+            .nth(1)
+            .map(|value| (*value).to_string())
+            .unwrap_or_else(|| "Skill".to_string());
+    }
+    if let Some(stem) = last.strip_suffix(".md") {
+        return stem.to_string();
+    }
+    last.to_string()
+}
+
+fn hash_id(parts: &[&str]) -> String {
+    let mut hasher = Sha256::new();
+    for part in parts {
+        hasher.update(part.as_bytes());
+        hasher.update([0u8]);
+    }
+    let digest = hasher.finalize();
+    let mut out = String::new();
+    for byte in digest {
+        out.push_str(format!("{:02x}", byte).as_str());
+    }
+    out
+}
+
+fn unique_strings(values: Vec<String>) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    for item in values {
+        let trimmed = item.trim().to_string();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if seen.insert(trimmed.clone()) {
+            out.push(trimmed);
+        }
+    }
+    out
 }
 
 #[derive(Debug, Deserialize)]

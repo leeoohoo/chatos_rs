@@ -9,7 +9,6 @@ interface HeaderBarProps {
   onOpenNotepad: () => void;
   onOpenApplications: () => void;
   onOpenMcpManager: () => void;
-  onOpenAgentManager: () => void;
   onOpenAiModelManager: () => void;
   onOpenSystemContextEditor: () => void;
   onOpenUserSettings: () => void;
@@ -24,7 +23,6 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
   onOpenNotepad,
   onOpenApplications,
   onOpenMcpManager,
-  onOpenAgentManager,
   onOpenAiModelManager,
   onOpenSystemContextEditor,
   onOpenUserSettings,
@@ -137,15 +135,6 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
                 className="w-full text-left px-3 py-2 text-sm hover:bg-accent"
               >
                 MCP 服务管理
-              </button>
-              <button
-                onClick={() => {
-                  setShowUserMenu(false);
-                  onOpenAgentManager();
-                }}
-                className="w-full text-left px-3 py-2 text-sm hover:bg-accent"
-              >
-                智能体管理
               </button>
               <button
                 onClick={() => {

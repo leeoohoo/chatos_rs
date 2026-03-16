@@ -8,9 +8,9 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tracing::warn;
 use uuid::Uuid;
 
+use crate::builtin::agent_builder::{AgentBuilderOptions, AgentBuilderService};
 use crate::builtin::code_maintainer::{CodeMaintainerOptions, CodeMaintainerService};
 use crate::builtin::notepad::{NotepadBuiltinService, NotepadOptions};
-use crate::builtin::sub_agent_router::{SubAgentRouterOptions, SubAgentRouterService};
 use crate::builtin::task_manager::{TaskManagerOptions, TaskManagerService};
 use crate::builtin::terminal_controller::{TerminalControllerOptions, TerminalControllerService};
 use crate::builtin::ui_prompter::{UiPrompterOptions, UiPrompterService};
@@ -117,7 +117,7 @@ pub enum BuiltinToolService {
     TerminalController(TerminalControllerService),
     TaskManager(TaskManagerService),
     Notepad(NotepadBuiltinService),
-    SubAgentRouter(SubAgentRouterService),
+    AgentBuilder(AgentBuilderService),
     UiPrompter(UiPrompterService),
 }
 
@@ -128,7 +128,7 @@ impl BuiltinToolService {
             Self::TerminalController(service) => service.list_tools(),
             Self::TaskManager(service) => service.list_tools(),
             Self::Notepad(service) => service.list_tools(),
-            Self::SubAgentRouter(service) => service.list_tools(),
+            Self::AgentBuilder(service) => service.list_tools(),
             Self::UiPrompter(service) => service.list_tools(),
         }
     }
@@ -152,7 +152,7 @@ impl BuiltinToolService {
                 on_stream_chunk,
             ),
             Self::Notepad(service) => service.call_tool(name, args),
-            Self::SubAgentRouter(service) => service.call_tool(
+            Self::AgentBuilder(service) => service.call_tool(
                 name,
                 args,
                 session_id,
@@ -231,19 +231,12 @@ pub fn build_builtin_tool_service(server: &McpBuiltinServer) -> Result<BuiltinTo
             })?;
             Ok(BuiltinToolService::Notepad(service))
         }
-        BuiltinMcpKind::SubAgentRouter => {
-            let service = SubAgentRouterService::new(SubAgentRouterOptions {
+        BuiltinMcpKind::AgentBuilder => {
+            let service = AgentBuilderService::new(AgentBuilderOptions {
                 server_name: server.name.clone(),
-                root: std::path::PathBuf::from(&server.workspace_dir),
                 user_id: server.user_id.clone(),
-                project_id: server.project_id.clone(),
-                timeout_ms: 86_400_000,
-                max_output_bytes: 2 * 1024 * 1024,
-                ai_timeout_ms: 86_400_000,
-                session_id: None,
-                run_id: None,
             })?;
-            Ok(BuiltinToolService::SubAgentRouter(service))
+            Ok(BuiltinToolService::AgentBuilder(service))
         }
         BuiltinMcpKind::UiPrompter => {
             let service = UiPrompterService::new(UiPrompterOptions {
@@ -676,7 +669,7 @@ fn truncate_tool_text(text: &str, max_chars: usize) -> String {
     format!("{}{}{}", head, marker, tail)
 }
 
-pub fn inject_sub_agent_router_args(args: Value, caller_model: Option<&str>) -> Value {
+pub fn inject_agent_builder_args(args: Value, caller_model: Option<&str>) -> Value {
     let Some(model_name) = caller_model
         .map(str::trim)
         .filter(|value| !value.is_empty())

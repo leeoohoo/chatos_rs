@@ -19,7 +19,6 @@ impl AiClient {
         &mut self,
         err_msg: &str,
         session_id: Option<&String>,
-        sub_agent_run_id: Option<&String>,
         raw_input: &Value,
         stable_prefix_mode: bool,
         include_tool_items: bool,
@@ -57,7 +56,6 @@ impl AiClient {
             let stateless = self
                 .build_stateless_from_raw_input(
                     session_id,
-                    sub_agent_run_id,
                     raw_input,
                     *force_text_content,
                     *adaptive_history_limit,
@@ -87,7 +85,6 @@ impl AiClient {
             } else {
                 self.build_stateless_from_raw_input(
                     session_id,
-                    sub_agent_run_id,
                     raw_input,
                     *force_text_content,
                     *adaptive_history_limit,
@@ -157,7 +154,6 @@ impl AiClient {
             let stateless = self
                 .build_stateless_from_raw_input(
                     session_id,
-                    sub_agent_run_id,
                     raw_input,
                     *force_text_content,
                     *adaptive_history_limit,
@@ -181,7 +177,6 @@ impl AiClient {
         &mut self,
         err_msg: &str,
         session_id: Option<&String>,
-        sub_agent_run_id: Option<&String>,
         raw_input: &Value,
         stable_prefix_mode: bool,
         include_tool_items: bool,
@@ -208,7 +203,6 @@ impl AiClient {
             } else {
                 self.build_stateless_from_raw_input(
                     session_id,
-                    sub_agent_run_id,
                     raw_input,
                     force_text_content,
                     *adaptive_history_limit,
@@ -259,7 +253,6 @@ impl AiClient {
                 let stateless = self
                     .build_stateless_from_raw_input(
                         session_id,
-                        sub_agent_run_id,
                         raw_input,
                         force_text_content,
                         *adaptive_history_limit,
@@ -281,7 +274,6 @@ impl AiClient {
     async fn build_stateless_from_raw_input(
         &self,
         session_id: Option<&String>,
-        sub_agent_run_id: Option<&String>,
         raw_input: &Value,
         force_text_content: bool,
         history_limit: i64,
@@ -296,7 +288,6 @@ impl AiClient {
             force_text_content,
             &current_items,
             include_tool_items,
-            sub_agent_run_id.cloned(),
         )
         .await
     }

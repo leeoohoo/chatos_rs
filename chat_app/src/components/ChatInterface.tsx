@@ -6,7 +6,6 @@ import { SessionList } from './SessionList';
 import McpManager from './McpManager';
 import AiModelManager from './AiModelManager';
 import SystemContextEditor from './SystemContextEditor';
-import AgentManager from './AgentManager';
 import UserSettingsPanel from './UserSettingsPanel';
 import ProjectExplorer from './ProjectExplorer';
 import TerminalView from './TerminalView';
@@ -33,6 +32,7 @@ import {
 } from './chatInterface/helpers';
 import { usePanelActions } from './chatInterface/usePanelActions';
 import { useWorkbarMutations } from './chatInterface/useWorkbarMutations';
+import { readSessionRuntimeFromMetadata } from '../lib/store/helpers/sessionRuntime';
 import type { UiPromptHistoryItem } from './chatInterface/types';
 import type { SessionSummaryWorkbarItem, TaskWorkbarItem } from './TaskWorkbar';
 import { apiClient as globalApiClient } from '../lib/api/client';
@@ -107,9 +107,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     selectedModelId,
     setSelectedModel,
     loadAiModelConfigs,
-    agents,
-    selectedAgentId,
-    setSelectedAgent,
     loadAgents,
     chatConfig,
     updateChatConfig,
@@ -145,9 +142,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     selectedModelId: state.selectedModelId,
     setSelectedModel: state.setSelectedModel,
     loadAiModelConfigs: state.loadAiModelConfigs,
-    agents: state.agents,
-    selectedAgentId: state.selectedAgentId,
-    setSelectedAgent: state.setSelectedAgent,
     loadAgents: state.loadAgents,
     chatConfig: state.chatConfig,
     updateChatConfig: state.updateChatConfig,
@@ -165,15 +159,10 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const apiClient = useMemo(() => apiClientFromContext || globalApiClient, [apiClientFromContext]);
   const { user, logout } = useAuthStore();
 
-  const selectedAgent = useMemo(
-    () => (selectedAgentId ? agents.find((a: any) => a.id === selectedAgentId) : null),
-    [agents, selectedAgentId]
+  const activeModelConfig = useMemo(
+    () => aiModelConfigs.find((m: any) => m.id === selectedModelId),
+    [aiModelConfigs, selectedModelId]
   );
-  const activeModelConfig = useMemo(() => (
-    selectedAgent
-      ? aiModelConfigs.find((m: any) => m.id === selectedAgent.ai_model_config_id)
-      : aiModelConfigs.find((m: any) => m.id === selectedModelId)
-  ), [aiModelConfigs, selectedAgent, selectedModelId]);
   const supportsImages = activeModelConfig?.supports_images === true;
   const supportsReasoning = activeModelConfig?.supports_reasoning === true;
   const supportedFileTypes = useMemo(() => (
@@ -198,7 +187,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [showMcpManager, setShowMcpManager] = useState(false);
   const [showAiModelManager, setShowAiModelManager] = useState(false);
   const [showSystemContextEditor, setShowSystemContextEditor] = useState(false);
-  const [showAgentManager, setShowAgentManager] = useState(false);
   const [showApplicationsPanel, setShowApplicationsPanel] = useState(false);
   const [showNotepadPanel, setShowNotepadPanel] = useState(false);
   const [showUserSettings, setShowUserSettings] = useState(false);
@@ -222,6 +210,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [uiPromptHistoryLoading, setUiPromptHistoryLoading] = useState(false);
   const [uiPromptHistoryError, setUiPromptHistoryError] = useState<string | null>(null);
   const [uiPromptHistoryLoadedSessionId, setUiPromptHistoryLoadedSessionId] = useState<string | null>(null);
+  const [composerProjectId, setComposerProjectId] = useState<string | null>(null);
+  const [composerMcpEnabled, setComposerMcpEnabled] = useState(true);
+  const [composerEnabledMcpIds, setComposerEnabledMcpIds] = useState<string[]>([]);
   const currentSessionRef = useRef<string | null>(null);
   const lastHydratedChatSessionRef = useRef<string | null>(null);
   const currentTurnLoadSeqRef = useRef(0);
@@ -286,6 +277,13 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   useEffect(() => {
     currentSessionRef.current = currentSession?.id || null;
   }, [currentSession?.id]);
+
+  useEffect(() => {
+    const runtime = readSessionRuntimeFromMetadata(currentSession?.metadata);
+    setComposerProjectId(runtime?.projectId ?? currentProject?.id ?? null);
+    setComposerMcpEnabled(runtime?.mcpEnabled ?? true);
+    setComposerEnabledMcpIds(runtime?.enabledMcpIds ?? []);
+  }, [currentProject?.id, currentSession?.id, currentSession?.metadata]);
 
   useEffect(() => {
     if (!currentSessionIdForUiPrompts || activePanel !== 'chat') {
@@ -845,9 +843,18 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   ]);
 
   // 澶勭悊娑堟伅鍙戦€?
-  const handleMessageSend = useCallback(async (content: string, attachments?: File[]) => {
+  const handleMessageSend = useCallback(async (
+    content: string,
+    attachments?: File[],
+    runtimeOptions?: {
+      mcpEnabled?: boolean;
+      projectId?: string | null;
+      projectRoot?: string | null;
+      enabledMcpIds?: string[];
+    },
+  ) => {
     try {
-      await sendMessage(content, attachments);
+      await sendMessage(content, attachments, runtimeOptions);
       onMessageSend?.(content, attachments);
     } catch (error) {
       console.error('Failed to send message:', error);
@@ -908,7 +915,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         onOpenNotepad={() => setShowNotepadPanel(true)}
         onOpenApplications={() => setShowApplicationsPanel(true)}
         onOpenMcpManager={() => setShowMcpManager(true)}
-        onOpenAgentManager={() => setShowAgentManager(true)}
         onOpenAiModelManager={() => setShowAiModelManager(true)}
         onOpenSystemContextEditor={() => setShowSystemContextEditor(true)}
         onOpenUserSettings={() => setShowUserSettings(true)}
@@ -1081,11 +1087,13 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                       selectedModelId={selectedModelId}
                       availableModels={aiModelConfigs}
                       onModelChange={setSelectedModel}
-                      selectedAgentId={selectedAgentId}
-                      availableAgents={agents}
-                      onAgentChange={setSelectedAgent}
                       availableProjects={projects}
                       currentProject={currentProject}
+                      selectedProjectId={composerProjectId}
+                      onProjectChange={setComposerProjectId}
+                      mcpEnabled={composerMcpEnabled}
+                      enabledMcpIds={composerEnabledMcpIds}
+                      onMcpEnabledChange={setComposerMcpEnabled}
                     />
                   )}
                 </div>
@@ -1121,11 +1129,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
           onClose={() => setShowNotepadPanel(false)}
         />
 
-        {/* 鏅鸿兘浣撶鐞嗗櫒 */}
-        {showAgentManager && (
-          <AgentManager onClose={() => setShowAgentManager(false)} />
-        )}
-        
         {/* AI妯″瀷绠＄悊鍣?*/}
         {showAiModelManager && (
           <AiModelManager onClose={() => setShowAiModelManager(false)} />

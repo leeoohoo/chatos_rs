@@ -6,7 +6,8 @@ import {
   mergeSessionAiSelectionIntoMetadata,
   readSessionAiSelectionFromMetadata,
 } from '../helpers/sessionAiSelection';
-import type { SessionAiSelection } from '../types';
+import { mergeSessionRuntimeIntoMetadata } from '../helpers/sessionRuntime';
+import type { SessionAiSelection, SessionCreatePayload } from '../types';
 import { debugLog, generateId } from '@/lib/utils';
 
 const SESSION_MESSAGES_CACHE_MAX_ENTRIES = 16;
@@ -278,24 +279,39 @@ export function createSessionActions({
       }
     },
 
-    createSession: async (title = 'New Chat') => {
+    createSession: async (payload: string | SessionCreatePayload = 'New Chat') => {
       try {
-        const { userId, projectId } = getSessionParams();
+        const payloadObject: SessionCreatePayload = typeof payload === 'string'
+          ? { title: payload }
+          : (payload || {});
+        const title = (payloadObject.title || 'New Chat').trim() || 'New Chat';
+        const { userId, projectId: fallbackProjectId } = getSessionParams();
+        const effectiveProjectId = payloadObject.projectId ?? fallbackProjectId;
         const stateBeforeCreate = get();
+        const selectedModelId = payloadObject.selectedModelId ?? stateBeforeCreate.selectedModelId ?? null;
+        const contactAgentId = payloadObject.contactAgentId ?? null;
         const inheritedAiSelection: SessionAiSelection = {
-          selectedModelId: stateBeforeCreate.selectedModelId ?? null,
-          selectedAgentId: stateBeforeCreate.selectedAgentId ?? null,
+          selectedModelId,
+          selectedAgentId: contactAgentId,
         };
-        const initialMetadata = mergeSessionAiSelectionIntoMetadata(
+        const selectionMetadata = mergeSessionAiSelectionIntoMetadata(
           null,
           inheritedAiSelection,
         );
+        const initialMetadata = mergeSessionRuntimeIntoMetadata(selectionMetadata, {
+          contactAgentId,
+          selectedModelId,
+          projectId: effectiveProjectId || null,
+          projectRoot: payloadObject.projectRoot ?? null,
+          mcpEnabled: payloadObject.mcpEnabled ?? true,
+          enabledMcpIds: payloadObject.enabledMcpIds ?? [],
+        });
 
-        debugLog('🔍 createSession 使用参数:', { userId, projectId, title });
+        debugLog('🔍 createSession 使用参数:', { userId, projectId: effectiveProjectId, title });
         debugLog('🔍 createSession 自定义参数:', { customUserId, customProjectId });
         debugLog('🔍 createSession 最终使用的参数:', {
           userId: userId,
-          projectId: projectId,
+          projectId: effectiveProjectId,
           isCustomUserId: !!customUserId,
           isCustomProjectId: !!customProjectId,
         });
@@ -311,8 +327,8 @@ export function createSessionActions({
           title,
           user_id: userId,
         };
-        if (projectId) {
-          sessionData.project_id = projectId;
+        if (effectiveProjectId) {
+          sessionData.project_id = effectiveProjectId;
         }
         if (Object.keys(initialMetadata).length > 0) {
           sessionData.metadata = initialMetadata;
@@ -351,7 +367,7 @@ export function createSessionActions({
         });
 
         sessionMessagesPageCache.delete(formattedSession.id);
-        localStorage.setItem(`lastSessionId_${userId}_${projectId}`, formattedSession.id);
+        localStorage.setItem(`lastSessionId_${userId}_${effectiveProjectId || ''}`, formattedSession.id);
         debugLog('🔍 保存新创建的会话ID到 localStorage:', formattedSession.id);
 
         return formattedSession.id;

@@ -180,10 +180,6 @@ pub async fn delete_application(id: &str) -> Result<(), String> {
                     .delete_many(doc! { "application_id": &id }, None)
                     .await
                     .map_err(|e| e.to_string())?;
-                db.collection::<Document>("agent_applications")
-                    .delete_many(doc! { "application_id": &id }, None)
-                    .await
-                    .map_err(|e| e.to_string())?;
                 Ok(())
             })
         },

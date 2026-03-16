@@ -124,12 +124,6 @@ export function createApplicationActions({ set, get, client, getUserIdParam }: D
       set((state: any) => {
         state.agents = state.agents.map((a: any) => (a.id === agentId ? { ...a, app_ids: Array.isArray(appIds) ? appIds : [] } : a));
       });
-      // 后端持久化 app_ids 到 Agent
-      try {
-        (async () => {
-          await client.updateAgent(agentId, { app_ids: Array.isArray(appIds) ? appIds : [] });
-        })();
-      } catch {}
     },
   };
 }

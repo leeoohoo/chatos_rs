@@ -365,7 +365,8 @@ pub(super) fn apply_stream_event(state: &mut StreamState, event: &Value) -> Stre
         if event_type == "response.output_text.delta" {
             if let Some(delta) = event.get("delta").and_then(extract_text_delta) {
                 if !delta.is_empty() {
-                    state.full_content = join_stream_text(state.full_content.as_str(), delta.as_str());
+                    state.full_content =
+                        join_stream_text(state.full_content.as_str(), delta.as_str());
                     state.sent_any_chunk = true;
                     payload.chunk = Some(delta);
                 }

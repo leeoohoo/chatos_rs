@@ -3,7 +3,12 @@ import * as accountApi from './client/account';
 import * as conversationApi from './client/conversation';
 import * as configsApi from './client/configs';
 import * as notepadApi from './client/notepad';
-import { ApiRequestError, guessFilenameFromPath, parseFilenameFromContentDisposition } from './client/shared';
+import {
+  ApiRequestError,
+  buildQuery,
+  guessFilenameFromPath,
+  parseFilenameFromContentDisposition,
+} from './client/shared';
 import * as streamApi from './client/stream';
 import * as summaryApi from './client/summary';
 import * as tasksApi from './client/tasks';
@@ -499,43 +504,6 @@ class ApiClient {
     return configsApi.deleteMcpConfig(this.requestFn, id);
   }
 
-  async getBuiltinMcpSettings(id: string): Promise<any> {
-    return configsApi.getBuiltinMcpSettings(this.requestFn, id);
-  }
-
-  async getBuiltinMcpPermissions(id: string): Promise<any> {
-    return configsApi.getBuiltinMcpPermissions(this.requestFn, id);
-  }
-
-  async updateBuiltinMcpPermissions(
-    id: string,
-    payload: { enabled_mcp_ids: string[]; selected_system_context_id?: string }
-  ): Promise<any> {
-    return configsApi.updateBuiltinMcpPermissions(this.requestFn, id, payload);
-  }
-
-  async importBuiltinMcpAgents(id: string, content: string): Promise<any> {
-    return configsApi.importBuiltinMcpAgents(this.requestFn, id, content);
-  }
-
-  async importBuiltinMcpSkills(id: string, content: string): Promise<any> {
-    return configsApi.importBuiltinMcpSkills(this.requestFn, id, content);
-  }
-
-  async importBuiltinMcpFromGit(
-    id: string,
-    payload: { repository: string; branch?: string; agents_path?: string; skills_path?: string }
-  ): Promise<any> {
-    return configsApi.importBuiltinMcpFromGit(this.requestFn, id, payload);
-  }
-
-  async installBuiltinMcpPlugin(
-    id: string,
-    payload: { source?: string; install_all?: boolean }
-  ): Promise<any> {
-    return configsApi.installBuiltinMcpPlugin(this.requestFn, id, payload);
-  }
-
   // AI模型配置相关API
   async getAiModelConfigs(userId?: string) {
     return configsApi.getAiModelConfigs(this.requestFn, userId);
@@ -660,44 +628,21 @@ class ApiClient {
     return configsApi.deleteApplication(this.requestFn, id);
   }
 
-  // 智能体（Agent）相关API
-  async getAgents(userId?: string): Promise<any[]> {
-    return configsApi.getAgents(this.requestFn, userId);
+  async getMemoryAgents(
+    userId?: string,
+    options?: { enabled?: boolean; limit?: number; offset?: number },
+  ): Promise<any[]> {
+    const query = buildQuery({
+      user_id: userId,
+      enabled: typeof options?.enabled === 'boolean' ? options.enabled : undefined,
+      limit: options?.limit,
+      offset: options?.offset,
+    });
+    return this.request<any[]>(`/memory-agents${query}`);
   }
 
-  async createAgent(data: {
-    name: string;
-    description?: string;
-    ai_model_config_id: string;
-    mcp_config_ids?: string[];
-    callable_agent_ids?: string[];
-    system_context_id?: string;
-    project_id?: string | null;
-    workspace_dir?: string | null;
-    user_id?: string;
-    enabled?: boolean;
-    app_ids?: string[];
-  }): Promise<any> {
-    return configsApi.createAgent(this.requestFn, data);
-  }
-
-  async updateAgent(agentId: string, data: {
-    name?: string;
-    description?: string;
-    ai_model_config_id?: string;
-    mcp_config_ids?: string[];
-    callable_agent_ids?: string[];
-    system_context_id?: string;
-    project_id?: string | null;
-    workspace_dir?: string | null;
-    enabled?: boolean;
-    app_ids?: string[];
-  }): Promise<any> {
-    return configsApi.updateAgent(this.requestFn, agentId, data);
-  }
-
-  async deleteAgent(agentId: string): Promise<any> {
-    return configsApi.deleteAgent(this.requestFn, agentId);
+  async getMemoryAgentRuntimeContext(agentId: string): Promise<any> {
+    return this.request<any>(`/memory-agents/${encodeURIComponent(agentId)}/runtime-context`);
   }
 
   // 会话详情和助手相关API (从index.ts合并)
@@ -748,34 +693,20 @@ class ApiClient {
     userId?: string,
     attachments?: any[],
     reasoningEnabled?: boolean,
-    options?: { turnId?: string }
+    options?: {
+      turnId?: string;
+      contactAgentId?: string | null;
+      projectId?: string | null;
+      projectRoot?: string | null;
+      mcpEnabled?: boolean;
+      enabledMcpIds?: string[];
+    }
   ): Promise<ReadableStream> {
     return streamApi.streamChat(
       this.getStreamContext(),
       sessionId,
       content,
       modelConfig,
-      userId,
-      attachments,
-      reasoningEnabled,
-      options
-    );
-  }
-
-  async streamAgentChat(
-    sessionId: string,
-    content: string,
-    agentId: string,
-    userId?: string,
-    attachments?: any[],
-    reasoningEnabled?: boolean,
-    options?: { useResponses?: boolean; turnId?: string }
-  ): Promise<ReadableStream> {
-    return streamApi.streamAgentChat(
-      this.getStreamContext(),
-      sessionId,
-      content,
-      agentId,
       userId,
       attachments,
       reasoningEnabled,

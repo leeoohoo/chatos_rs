@@ -13,6 +13,11 @@ import {
   extractTaskReviewPanelFromToolStream,
   extractUiPromptPanelFromToolStream,
 } from './sendMessage/toolPanels';
+import {
+  mergeSessionRuntimeIntoMetadata,
+  readSessionRuntimeFromMetadata,
+} from '../helpers/sessionRuntime';
+import type { SendMessageRuntimeOptions } from '../types';
 
 // 工厂函数：创建 sendMessage 处理器，注入依赖以便于在 store 外部维护
 export function createSendMessageHandler({
@@ -33,18 +38,22 @@ export function createSendMessageHandler({
     streamingMessageId: null as string | null,
   };
 
-  return async function sendMessage(content: string, attachments: any[] = []) {
+  return async function sendMessage(
+    content: string,
+    attachments: any[] = [],
+    runtimeOptions: SendMessageRuntimeOptions = {},
+  ) {
     let tempUserId: string | null = null;
     let tempAssistantId: string | null = null;
     const {
       currentSessionId,
+      currentSession,
+      currentProject,
       selectedModelId,
       aiModelConfigs,
       chatConfig,
       sessionChatState,
       activeSystemContext,
-      selectedAgentId,
-      agents,
       sessionAiSelectionBySession,
     } = get();
 
@@ -60,25 +69,64 @@ export function createSendMessageHandler({
     }
 
     const sessionAiSelection = sessionAiSelectionBySession?.[currentSessionId];
-    const effectiveSelectedAgentId = sessionAiSelection?.selectedAgentId ?? selectedAgentId;
     const effectiveSelectedModelId = sessionAiSelection?.selectedModelId ?? selectedModelId;
+    const sessionRuntime = readSessionRuntimeFromMetadata(currentSession?.metadata);
+    const effectiveContactAgentId =
+      (typeof runtimeOptions?.contactAgentId === 'string'
+        ? runtimeOptions.contactAgentId.trim()
+        : '')
+      || sessionRuntime?.contactAgentId
+      || null;
+    const effectiveProjectId =
+      (typeof runtimeOptions?.projectId === 'string'
+        ? runtimeOptions.projectId.trim()
+        : '')
+      || sessionRuntime?.projectId
+      || currentProject?.id
+      || null;
+    const effectiveProjectRoot =
+      (typeof runtimeOptions?.projectRoot === 'string'
+        ? runtimeOptions.projectRoot.trim()
+        : '')
+      || sessionRuntime?.projectRoot
+      || currentProject?.rootPath
+      || null;
+    const effectiveMcpEnabled = typeof runtimeOptions?.mcpEnabled === 'boolean'
+      ? runtimeOptions.mcpEnabled
+      : (sessionRuntime?.mcpEnabled ?? true);
+    const effectiveEnabledMcpIds = Array.isArray(runtimeOptions?.enabledMcpIds)
+      ? runtimeOptions.enabledMcpIds
+      : (sessionRuntime?.enabledMcpIds ?? []);
 
-    // 需要选择模型或智能体之一
+    // 当前版本固定走模型聊天，联系人由 session metadata 决定
     let selectedModel: any = null;
-    let selectedAgent: any = null;
-    if (effectiveSelectedAgentId) {
-      selectedAgent = agents.find((a: any) => a.id === effectiveSelectedAgentId);
-      if (!selectedAgent || selectedAgent.enabled === false) {
-        throw new Error('选择的智能体不可用');
-      }
-    } else if (effectiveSelectedModelId) {
+    if (effectiveSelectedModelId) {
       selectedModel = aiModelConfigs.find((model: any) => model.id === effectiveSelectedModelId);
       if (!selectedModel || !selectedModel.enabled) {
         throw new Error('选择的模型不可用');
       }
     } else {
-      throw new Error('请先选择一个模型或智能体');
+      throw new Error('请先选择一个模型');
     }
+
+    const runtimeMetadata = mergeSessionRuntimeIntoMetadata(currentSession?.metadata, {
+      selectedModelId: selectedModel?.id || null,
+      contactAgentId: effectiveContactAgentId,
+      projectId: effectiveProjectId,
+      projectRoot: effectiveProjectRoot,
+      mcpEnabled: effectiveMcpEnabled,
+      enabledMcpIds: effectiveEnabledMcpIds,
+    });
+    set((state: any) => {
+      const sessionIndex = state.sessions.findIndex((session: any) => session.id === currentSessionId);
+      if (sessionIndex >= 0) {
+        state.sessions[sessionIndex].metadata = runtimeMetadata;
+      }
+      if (state.currentSession?.id === currentSessionId) {
+        state.currentSession.metadata = runtimeMetadata;
+      }
+    });
+    void client.updateSession(currentSessionId, { metadata: runtimeMetadata }).catch(() => {});
 
     const conversationTurnId = createInternalId('turn');
     let streamedTextBuffer = '';
@@ -230,9 +278,7 @@ export function createSendMessageHandler({
     };
 
     try {
-      const activeModelConfig = selectedAgent
-        ? aiModelConfigs.find((model: any) => model.id === selectedAgent.ai_model_config_id)
-        : selectedModel;
+      const activeModelConfig = selectedModel;
       const supportsImages = activeModelConfig?.supports_images === true;
       const supportsReasoning = activeModelConfig?.supports_reasoning === true || !!activeModelConfig?.thinking_level;
       const reasoningEnabled = supportsReasoning && (chatConfig?.reasoningEnabled === true || !!activeModelConfig?.thinking_level);
@@ -253,7 +299,7 @@ export function createSendMessageHandler({
         metadata: {
           conversation_turn_id: conversationTurnId,
           ...(previewAttachments.length > 0 ? { attachments: previewAttachments as any } : {}),
-          model: selectedAgent ? `[Agent] ${selectedAgent.name}` : selectedModel.model_name,
+          model: selectedModel.model_name,
           ...(selectedModel
             ? {
                 modelConfig: {
@@ -318,7 +364,7 @@ export function createSendMessageHandler({
         createdAt: assistantMessageTime,
         metadata: {
           conversation_turn_id: conversationTurnId,
-          model: selectedAgent ? `[Agent] ${selectedAgent.name}` : selectedModel.model_name,
+          model: selectedModel.model_name,
           ...(selectedModel
             ? {
                 modelConfig: {
@@ -369,60 +415,48 @@ export function createSendMessageHandler({
         }
       });
 
-      // 准备聊天请求数据（根据选择的目标：模型或智能体）
-      const chatRequest = selectedAgent
-        ? {
-            session_id: currentSessionId,
-            turn_id: conversationTurnId,
-            message: content,
-            // 仅在选择智能体时携带智能体信息，不包含模型配置
-            agent_id: selectedAgent.id,
-            system_context: activeSystemContext?.content || chatConfig.systemPrompt || '',
-            attachments: apiAttachments || [],
-            reasoning_enabled: reasoningEnabled,
-          }
-        : {
-            session_id: currentSessionId,
-            turn_id: conversationTurnId,
-            message: content,
-            // 仅在选择模型时携带模型配置
-            model_config: {
-              model: selectedModel.model_name,
-              provider: selectedModel.provider,
-              base_url: selectedModel.base_url,
-              api_key: selectedModel.api_key || '',
-              temperature: chatConfig.temperature,
-              thinking_level: selectedModel.thinking_level,
-              supports_images: selectedModel.supports_images === true,
-              supports_reasoning: selectedModel.supports_reasoning === true,
-            },
-            system_context: activeSystemContext?.content || chatConfig.systemPrompt || '',
-            attachments: apiAttachments || [],
-            reasoning_enabled: reasoningEnabled,
-          };
+      const chatRequest = {
+        session_id: currentSessionId,
+        turn_id: conversationTurnId,
+        message: content,
+        model_config: {
+          model: selectedModel.model_name,
+          provider: selectedModel.provider,
+          base_url: selectedModel.base_url,
+          api_key: selectedModel.api_key || '',
+          temperature: chatConfig.temperature,
+          thinking_level: selectedModel.thinking_level,
+          supports_images: selectedModel.supports_images === true,
+          supports_reasoning: selectedModel.supports_reasoning === true,
+        },
+        system_context: activeSystemContext?.content || chatConfig.systemPrompt || '',
+        attachments: apiAttachments || [],
+        reasoning_enabled: reasoningEnabled,
+        contact_agent_id: effectiveContactAgentId,
+        project_id: effectiveProjectId,
+        project_root: effectiveProjectRoot,
+        mcp_enabled: effectiveMcpEnabled,
+        enabled_mcp_ids: effectiveEnabledMcpIds,
+      };
 
       debugLog('🚀 开始调用后端流式聊天API:', chatRequest);
 
-      // 使用后端API进行流式聊天（模型或智能体）
-      const response = selectedAgent
-        ? await client.streamAgentChat(
-            currentSessionId,
-            content,
-            selectedAgent.id,
-            getUserIdParam(),
-            apiAttachments,
-            reasoningEnabled,
-            { useResponses: activeModelConfig?.supports_responses === true, turnId: conversationTurnId }
-          )
-        : await client.streamChat(
-            currentSessionId,
-            content,
-            selectedModel,
-            getUserIdParam(),
-            apiAttachments,
-            reasoningEnabled,
-            { turnId: conversationTurnId }
-          );
+      const response = await client.streamChat(
+        currentSessionId,
+        content,
+        selectedModel,
+        getUserIdParam(),
+        apiAttachments,
+        reasoningEnabled,
+        {
+          turnId: conversationTurnId,
+          contactAgentId: effectiveContactAgentId,
+          projectId: effectiveProjectId,
+          projectRoot: effectiveProjectRoot,
+          mcpEnabled: effectiveMcpEnabled,
+          enabledMcpIds: effectiveEnabledMcpIds,
+        }
+      );
 
       if (!response) {
         throw new Error('No response received');
