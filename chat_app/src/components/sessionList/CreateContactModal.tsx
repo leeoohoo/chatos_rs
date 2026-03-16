@@ -8,6 +8,7 @@ interface CreateContactModalProps {
     description?: string;
     enabled?: boolean;
   }>;
+  existingAgentIds?: string[];
   selectedAgentId: string | null;
   error: string | null;
   onClose: () => void;
@@ -18,6 +19,7 @@ interface CreateContactModalProps {
 export const CreateContactModal: React.FC<CreateContactModalProps> = ({
   isOpen,
   agents,
+  existingAgentIds = [],
   selectedAgentId,
   error,
   onClose,
@@ -29,6 +31,12 @@ export const CreateContactModal: React.FC<CreateContactModalProps> = ({
   }
 
   const enabledAgents = agents.filter((agent) => agent.enabled !== false);
+  const existingSet = new Set(
+    existingAgentIds
+      .map((item) => (typeof item === 'string' ? item.trim() : ''))
+      .filter((item) => item.length > 0),
+  );
+  const availableAgents = enabledAgents.filter((agent) => !existingSet.has(agent.id));
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -50,9 +58,13 @@ export const CreateContactModal: React.FC<CreateContactModalProps> = ({
             <div className="text-sm text-muted-foreground">
               当前没有可用联系人，请先在 Memory 中创建 Agent。
             </div>
+          ) : availableAgents.length === 0 ? (
+            <div className="text-sm text-muted-foreground">
+              所有可用 Agent 已经添加为联系人。
+            </div>
           ) : (
             <div className="max-h-72 overflow-y-auto border border-border rounded">
-              {enabledAgents.map((agent) => {
+              {availableAgents.map((agent) => {
                 const selected = selectedAgentId === agent.id;
                 return (
                   <button
@@ -88,7 +100,7 @@ export const CreateContactModal: React.FC<CreateContactModalProps> = ({
           </button>
           <button
             onClick={onCreate}
-            disabled={!selectedAgentId || enabledAgents.length === 0}
+            disabled={!selectedAgentId || availableAgents.length === 0}
             className="px-4 py-2 rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             添加并开始聊天

@@ -1,12 +1,15 @@
 import axios from 'axios';
 
 import type {
+  AgentRecall,
   AiModelConfig,
   JobRun,
   MemoryAgent,
+  MemoryContact,
   MemorySkill,
   MemorySkillPlugin,
   Message,
+  ProjectMemory,
   SummaryGraphEdge,
   SummaryGraphNode,
   RollupJobConfig,
@@ -426,5 +429,70 @@ export const api = {
   }): Promise<any> {
     const { data } = await client.post('/skills/plugins/install', payload);
     return data;
+  },
+
+  async listContacts(
+    userId?: string,
+    params?: { limit?: number; offset?: number; status?: string },
+  ): Promise<MemoryContact[]> {
+    const { data } = await client.get('/contacts', {
+      params: {
+        user_id: userId,
+        status: params?.status,
+        limit: params?.limit ?? 200,
+        offset: params?.offset ?? 0,
+      },
+    });
+    return data.items ?? [];
+  },
+
+  async listContactProjectMemories(
+    contactId: string,
+    params?: { project_id?: string; limit?: number; offset?: number },
+  ): Promise<ProjectMemory[]> {
+    const { data } = await client.get(
+      `/contacts/${encodeURIComponent(contactId)}/project-memories`,
+      {
+      params: {
+        project_id: params?.project_id,
+        limit: params?.limit ?? 200,
+        offset: params?.offset ?? 0,
+      },
+      },
+    );
+    return data.items ?? [];
+  },
+
+  async listContactProjectMemoriesByProject(
+    contactId: string,
+    projectId: string,
+    params?: { limit?: number; offset?: number },
+  ): Promise<ProjectMemory[]> {
+    const { data } = await client.get(
+      `/contacts/${encodeURIComponent(contactId)}/project-memories/${encodeURIComponent(projectId)}`,
+      {
+        params: {
+          limit: params?.limit ?? 200,
+          offset: params?.offset ?? 0,
+        },
+      },
+    );
+    return data.items ?? [];
+  },
+
+  async listContactAgentRecalls(
+    contactId: string,
+    params?: { limit?: number; offset?: number },
+  ): Promise<AgentRecall[]> {
+    const { data } = await client.get(
+      `/contacts/${encodeURIComponent(contactId)}/agent-recalls`,
+      {
+        params: {
+          limit: params?.limit ?? 200,
+          offset: params?.offset ?? 0,
+        },
+      },
+    );
+    return data.items ?? [];
   },
 };

@@ -22,7 +22,6 @@ import {
   collectMessageToolCalls,
   formatSummaryCreatedAt,
   hasToolCallError,
-  normalizeWorkbarSummary,
   normalizeWorkbarTask,
   normalizeUiPromptHistoryItem,
   selectLatestTurnTasks,
@@ -34,50 +33,30 @@ import { usePanelActions } from './chatInterface/usePanelActions';
 import { useWorkbarMutations } from './chatInterface/useWorkbarMutations';
 import { readSessionRuntimeFromMetadata } from '../lib/store/helpers/sessionRuntime';
 import type { UiPromptHistoryItem } from './chatInterface/types';
-import type { SessionSummaryWorkbarItem, TaskWorkbarItem } from './TaskWorkbar';
+import type { TaskWorkbarItem } from './TaskWorkbar';
 import { apiClient as globalApiClient } from '../lib/api/client';
 import { cn } from '../lib/utils';
 import type { ChatInterfaceProps } from '../types';
 import { useAuthStore } from '../lib/auth/authStore';
 
-const SESSION_PAGE_SIZE = 30;
-const WORKBAR_SUMMARY_PAGE_SIZE = 50;
+interface ContactProjectMemory {
+  id: string;
+  projectId: string;
+  memoryText: string;
+  memoryVersion: number;
+  lastSourceAt?: string | null;
+  updatedAt: string;
+}
 
-const appendUniqueSummaries = (
-  current: SessionSummaryWorkbarItem[],
-  incoming: SessionSummaryWorkbarItem[]
-): SessionSummaryWorkbarItem[] => {
-  if (incoming.length === 0) {
-    return current;
-  }
-
-  const merged = [...current];
-  const indexById = new Map<string, number>();
-  merged.forEach((item, index) => {
-    if (item.id) {
-      indexById.set(item.id, index);
-    }
-  });
-
-  for (const nextItem of incoming) {
-    const summaryId = nextItem.id.trim();
-    if (!summaryId) {
-      merged.push(nextItem);
-      continue;
-    }
-
-    const existingIndex = indexById.get(summaryId);
-    if (typeof existingIndex === 'number') {
-      merged[existingIndex] = nextItem;
-      continue;
-    }
-
-    indexById.set(summaryId, merged.length);
-    merged.push(nextItem);
-  }
-
-  return merged;
-};
+interface ContactAgentRecall {
+  id: string;
+  recallKey: string;
+  recallText: string;
+  sourceProjectIds: string[];
+  confidence?: number | null;
+  lastSeenAt?: string | null;
+  updatedAt: string;
+}
 
 export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   className,
@@ -86,6 +65,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
 }) => {
   const {
     currentSession,
+    contacts,
     currentProject,
     currentTerminal,
     currentRemoteConnection,
@@ -94,7 +74,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     messages,
     hasMoreMessages,
     error,
-    loadSessions,
     loadProjects,
     // selectSession,
     loadMoreMessages,
@@ -122,6 +101,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     // selectedApplicationId,  // 涓嶅啀鐢ㄤ簬鑷姩鏄剧ず
   } = useChatStoreSelector((state) => ({
     currentSession: state.currentSession,
+    contacts: state.contacts,
     currentProject: state.currentProject,
     currentTerminal: state.currentTerminal,
     currentRemoteConnection: state.currentRemoteConnection,
@@ -130,7 +110,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     messages: state.messages,
     hasMoreMessages: state.hasMoreMessages,
     error: state.error,
-    loadSessions: state.loadSessions,
     loadProjects: state.loadProjects,
     loadMoreMessages: state.loadMoreMessages,
     toggleTurnProcess: state.toggleTurnProcess,
@@ -173,6 +152,43 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const currentChatState = useMemo(() => (
     currentSession ? sessionChatState[currentSession.id] : undefined
   ), [currentSession, sessionChatState]);
+  const currentContactName = useMemo(() => {
+    if (!currentSession) {
+      return '';
+    }
+    const runtime = readSessionRuntimeFromMetadata((currentSession as any).metadata);
+    const contactId = typeof runtime?.contactId === 'string' ? runtime.contactId.trim() : '';
+    const contactAgentId = typeof runtime?.contactAgentId === 'string' ? runtime.contactAgentId.trim() : '';
+    if (!contactId && !contactAgentId) {
+      return '';
+    }
+    const matched = (contacts || []).find((item: any) => {
+      if (contactId && typeof item?.id === 'string' && item.id === contactId) {
+        return true;
+      }
+      if (contactAgentId && typeof item?.agentId === 'string' && item.agentId === contactAgentId) {
+        return true;
+      }
+      return false;
+    });
+    return matched?.name || '';
+  }, [contacts, currentSession]);
+  const currentContactId = useMemo(() => {
+    if (!currentSession) {
+      return '';
+    }
+    const runtime = readSessionRuntimeFromMetadata((currentSession as any).metadata);
+    const directContactId = typeof runtime?.contactId === 'string' ? runtime.contactId.trim() : '';
+    if (directContactId) {
+      return directContactId;
+    }
+    const contactAgentId = typeof runtime?.contactAgentId === 'string' ? runtime.contactAgentId.trim() : '';
+    if (!contactAgentId) {
+      return '';
+    }
+    const matched = (contacts || []).find((item: any) => item?.agentId === contactAgentId);
+    return typeof matched?.id === 'string' ? matched.id : '';
+  }, [contacts, currentSession]);
   const chatIsLoading = currentChatState?.isLoading ?? false;
   const chatIsStreaming = currentChatState?.isStreaming ?? false;
   const chatIsStopping = currentChatState?.isStopping ?? false;
@@ -182,7 +198,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       ? (currentTerminal?.name || '终端')
       : activePanel === 'remote_terminal' || activePanel === 'remote_sftp'
         ? (currentRemoteConnection?.name || '远端连接')
-      : (currentSession?.title || '');
+      : (currentContactName || currentSession?.title || '');
 
   const [showMcpManager, setShowMcpManager] = useState(false);
   const [showAiModelManager, setShowAiModelManager] = useState(false);
@@ -196,14 +212,13 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [workbarHistoryLoadedSessionId, setWorkbarHistoryLoadedSessionId] = useState<string | null>(null);
   const [workbarLoading, setWorkbarLoading] = useState(false);
   const [workbarHistoryLoading, setWorkbarHistoryLoading] = useState(false);
-  const [workbarSummaries, setWorkbarSummaries] = useState<SessionSummaryWorkbarItem[]>([]);
-  const [workbarSummariesTotal, setWorkbarSummariesTotal] = useState(0);
-  const [workbarSummariesLoadedSessionId, setWorkbarSummariesLoadedSessionId] = useState<string | null>(null);
-  const [workbarSummariesLoading, setWorkbarSummariesLoading] = useState(false);
-  const [workbarSummariesLoadingMore, setWorkbarSummariesLoadingMore] = useState(false);
+  const [projectMemories, setProjectMemories] = useState<ContactProjectMemory[]>([]);
+  const [agentRecalls, setAgentRecalls] = useState<ContactAgentRecall[]>([]);
+  const [memoryLoadedKey, setMemoryLoadedKey] = useState<string | null>(null);
+  const [memoryLoading, setMemoryLoading] = useState(false);
   const [workbarError, setWorkbarError] = useState<string | null>(null);
   const [workbarHistoryError, setWorkbarHistoryError] = useState<string | null>(null);
-  const [workbarSummariesError, setWorkbarSummariesError] = useState<string | null>(null);
+  const [memoryError, setMemoryError] = useState<string | null>(null);
   const [summaryPaneSessionId, setSummaryPaneSessionId] = useState<string | null>(null);
   const [uiPromptHistoryOpen, setUiPromptHistoryOpen] = useState(false);
   const [uiPromptHistoryItems, setUiPromptHistoryItems] = useState<UiPromptHistoryItem[]>([]);
@@ -213,12 +228,30 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [composerProjectId, setComposerProjectId] = useState<string | null>(null);
   const [composerMcpEnabled, setComposerMcpEnabled] = useState(true);
   const [composerEnabledMcpIds, setComposerEnabledMcpIds] = useState<string[]>([]);
+  const currentProjectIdForMemory = useMemo(() => {
+    const fromComposer = typeof composerProjectId === 'string' ? composerProjectId.trim() : '';
+    if (fromComposer) {
+      return fromComposer;
+    }
+    const runtime = readSessionRuntimeFromMetadata(currentSession?.metadata);
+    const fromRuntime = typeof runtime?.projectId === 'string' ? runtime.projectId.trim() : '';
+    if (fromRuntime) {
+      return fromRuntime;
+    }
+    return currentProject?.id || '';
+  }, [composerProjectId, currentProject?.id, currentSession?.metadata]);
+  const currentProjectNameForMemory = useMemo(() => {
+    if (!currentProjectIdForMemory) {
+      return currentProject?.name || '';
+    }
+    const matched = (projects || []).find((item) => item.id === currentProjectIdForMemory);
+    return matched?.name || currentProject?.name || '';
+  }, [currentProject?.name, currentProjectIdForMemory, projects]);
   const currentSessionRef = useRef<string | null>(null);
   const lastHydratedChatSessionRef = useRef<string | null>(null);
   const currentTurnLoadSeqRef = useRef(0);
   const historyLoadSeqRef = useRef(0);
-  const summariesLoadSeqRef = useRef(0);
-  const summariesLoadMoreSeqRef = useRef(0);
+  const memoryLoadSeqRef = useRef(0);
   const uiPromptHistoryLoadSeqRef = useRef(0);
   const uiPromptHistoryCacheRef = useRef<Map<string, UiPromptHistoryItem[]>>(new Map());
 
@@ -270,7 +303,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const sessionSummaryPaneVisible = Boolean(
     activePanel === 'chat' && currentSession && summaryPaneSessionId === currentSession.id
   );
-  const summariesHasMore = workbarSummaries.length < workbarSummariesTotal;
 
   const currentSessionIdForUiPrompts = currentSession?.id || null;
 
@@ -548,129 +580,106 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     }
   }, [apiClient, workbarHistoryLoadedSessionId, workbarHistoryTasks.length]);
 
-  const loadWorkbarSummaries = useCallback(async (sessionId: string, force = false) => {
-    if (!sessionId) {
-      setWorkbarSummaries([]);
-      setWorkbarSummariesTotal(0);
-      setWorkbarSummariesLoadedSessionId(null);
-      setWorkbarSummariesError(null);
-      setWorkbarSummariesLoading(false);
-      setWorkbarSummariesLoadingMore(false);
+  const loadContactMemoryContext = useCallback(async (sessionId: string, force = false) => {
+    if (!sessionId || !currentSession || currentSession.id !== sessionId) {
+      setProjectMemories([]);
+      setAgentRecalls([]);
+      setMemoryLoadedKey(null);
+      setMemoryError(null);
+      setMemoryLoading(false);
       return;
     }
 
-    if (!force && workbarSummariesLoadedSessionId === sessionId) {
+    const normalizedContactId = currentContactId.trim();
+    const normalizedProjectId = currentProjectIdForMemory.trim();
+    const loadKey = `${sessionId}::${normalizedContactId || '-'}::${normalizedProjectId || '-'}`;
+    if (!force && memoryLoadedKey === loadKey) {
       return;
     }
 
-    const requestSeq = summariesLoadSeqRef.current + 1;
-    summariesLoadSeqRef.current = requestSeq;
-    setWorkbarSummariesLoading(true);
-    setWorkbarSummariesLoadingMore(false);
-    setWorkbarSummariesError(null);
+    if (!normalizedContactId) {
+      setProjectMemories([]);
+      setAgentRecalls([]);
+      setMemoryLoadedKey(loadKey);
+      setMemoryError('当前会话未绑定联系人，无法加载记忆。');
+      setMemoryLoading(false);
+      return;
+    }
+
+    const requestSeq = memoryLoadSeqRef.current + 1;
+    memoryLoadSeqRef.current = requestSeq;
+    setMemoryLoading(true);
+    setMemoryError(null);
     try {
-      const payload = await apiClient.getSessionSummaries(sessionId, {
-        limit: WORKBAR_SUMMARY_PAGE_SIZE,
-        offset: 0,
-      });
-      const items = Array.isArray(payload?.items)
-        ? payload.items.map(normalizeWorkbarSummary)
-        : [];
+      const [projectRows, recallRows] = await Promise.all([
+        normalizedProjectId
+          ? apiClient.getContactProjectMemories(
+            normalizedContactId,
+            normalizedProjectId,
+            { limit: 50, offset: 0 },
+          )
+          : Promise.resolve([]),
+        apiClient.getContactAgentRecalls(normalizedContactId, { limit: 200, offset: 0 }),
+      ]);
+
       if (
-        summariesLoadSeqRef.current !== requestSeq
+        memoryLoadSeqRef.current !== requestSeq
         || currentSessionRef.current !== sessionId
       ) {
         return;
       }
-      setWorkbarSummaries(items);
-      const total = typeof payload?.total === 'number' ? payload.total : items.length;
-      setWorkbarSummariesTotal(Math.max(total, items.length));
-      setWorkbarSummariesLoadedSessionId(sessionId);
+
+      const normalizedProjectMemories: ContactProjectMemory[] = (Array.isArray(projectRows) ? projectRows : [])
+        .map((item: any) => ({
+          id: String(item?.id || ''),
+          projectId: String(item?.project_id || ''),
+          memoryText: String(item?.memory_text || ''),
+          memoryVersion: Number.isFinite(Number(item?.memory_version)) ? Number(item.memory_version) : 0,
+          lastSourceAt: typeof item?.last_source_at === 'string' ? item.last_source_at : null,
+          updatedAt: String(item?.updated_at || ''),
+        }))
+        .filter((item) => item.id && item.projectId);
+
+      const normalizedAgentRecalls: ContactAgentRecall[] = (Array.isArray(recallRows) ? recallRows : [])
+        .map((item: any) => ({
+          id: String(item?.id || ''),
+          recallKey: String(item?.recall_key || ''),
+          recallText: String(item?.recall_text || ''),
+          sourceProjectIds: Array.isArray(item?.source_project_ids)
+            ? item.source_project_ids.map((v: any) => String(v || '')).filter((v: string) => v.length > 0)
+            : [],
+          confidence: typeof item?.confidence === 'number' ? item.confidence : null,
+          lastSeenAt: typeof item?.last_seen_at === 'string' ? item.last_seen_at : null,
+          updatedAt: String(item?.updated_at || ''),
+        }))
+        .filter((item) => item.id && item.recallKey);
+
+      setProjectMemories(normalizedProjectMemories);
+      setAgentRecalls(normalizedAgentRecalls);
+      setMemoryLoadedKey(loadKey);
     } catch (error) {
       if (
-        summariesLoadSeqRef.current !== requestSeq
+        memoryLoadSeqRef.current !== requestSeq
         || currentSessionRef.current !== sessionId
       ) {
         return;
       }
-      setWorkbarSummariesError(error instanceof Error ? error.message : '会话总结加载失败');
+      setMemoryError(error instanceof Error ? error.message : '记忆加载失败');
     } finally {
       if (
-        summariesLoadSeqRef.current === requestSeq
+        memoryLoadSeqRef.current === requestSeq
         && currentSessionRef.current === sessionId
       ) {
-        setWorkbarSummariesLoading(false);
-      }
-    }
-  }, [apiClient, workbarSummariesLoadedSessionId]);
-
-  const loadMoreWorkbarSummaries = useCallback(async (sessionId: string) => {
-    if (!sessionId || workbarSummariesLoading || workbarSummariesLoadingMore) {
-      return;
-    }
-    if (workbarSummariesLoadedSessionId !== sessionId) {
-      await loadWorkbarSummaries(sessionId, true);
-      return;
-    }
-    if (workbarSummaries.length >= workbarSummariesTotal) {
-      return;
-    }
-
-    const offset = workbarSummaries.length;
-    const requestSeq = summariesLoadMoreSeqRef.current + 1;
-    summariesLoadMoreSeqRef.current = requestSeq;
-    setWorkbarSummariesLoadingMore(true);
-    setWorkbarSummariesError(null);
-    try {
-      const payload = await apiClient.getSessionSummaries(sessionId, {
-        limit: WORKBAR_SUMMARY_PAGE_SIZE,
-        offset,
-      });
-      const items = Array.isArray(payload?.items)
-        ? payload.items.map(normalizeWorkbarSummary)
-        : [];
-      if (
-        summariesLoadMoreSeqRef.current !== requestSeq
-        || currentSessionRef.current !== sessionId
-      ) {
-        return;
-      }
-      setWorkbarSummaries((previous) => appendUniqueSummaries(previous, items));
-      const total = typeof payload?.total === 'number' ? payload.total : workbarSummariesTotal;
-      setWorkbarSummariesTotal(Math.max(total, offset + items.length));
-    } catch (error) {
-      if (
-        summariesLoadMoreSeqRef.current !== requestSeq
-        || currentSessionRef.current !== sessionId
-      ) {
-        return;
-      }
-      setWorkbarSummariesError(error instanceof Error ? error.message : '会话总结加载失败');
-    } finally {
-      if (
-        summariesLoadMoreSeqRef.current === requestSeq
-        && currentSessionRef.current === sessionId
-      ) {
-        setWorkbarSummariesLoadingMore(false);
+        setMemoryLoading(false);
       }
     }
   }, [
     apiClient,
-    loadWorkbarSummaries,
-    workbarSummaries.length,
-    workbarSummariesLoadedSessionId,
-    workbarSummariesLoading,
-    workbarSummariesLoadingMore,
-    workbarSummariesTotal,
+    currentContactId,
+    currentProjectIdForMemory,
+    currentSession,
+    memoryLoadedKey,
   ]);
-
-  const handleOpenSessionSummaryPane = useCallback((sessionId: string) => {
-    if (!sessionId) {
-      return;
-    }
-    setSummaryPaneSessionId(sessionId);
-    void loadWorkbarSummaries(sessionId, true);
-  }, [loadWorkbarSummaries]);
 
   const refreshWorkbarTasks = useCallback(async () => {
     if (!currentSession) {
@@ -679,9 +688,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     await Promise.all([
       loadCurrentTurnWorkbarTasks(currentSession.id, activeConversationTurnId),
       loadHistoryWorkbarTasks(currentSession.id, true),
-      loadWorkbarSummaries(currentSession.id, true),
+      loadContactMemoryContext(currentSession.id, true),
     ]);
-  }, [activeConversationTurnId, currentSession, loadCurrentTurnWorkbarTasks, loadHistoryWorkbarTasks, loadWorkbarSummaries]);
+  }, [activeConversationTurnId, currentSession, loadContactMemoryContext, loadCurrentTurnWorkbarTasks, loadHistoryWorkbarTasks]);
 
   useEffect(() => {
     if (!currentSession || activePanel !== 'chat') {
@@ -729,34 +738,28 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     }
     void loadCurrentTurnWorkbarTasks(currentSession.id, activeConversationTurnId);
     if (sessionSummaryPaneVisible) {
-      void loadWorkbarSummaries(currentSession.id, true);
+      void loadContactMemoryContext(currentSession.id, true);
     }
   }, [
     activeConversationTurnId,
     activePanel,
     currentSession,
+    loadContactMemoryContext,
     loadCurrentTurnWorkbarTasks,
-    loadWorkbarSummaries,
     messages,
     sessionSummaryPaneVisible,
   ]);
 
   const {
     workbarActionLoadingTaskId,
-    workbarSummaryActionLoadingKey,
     handleWorkbarCompleteTask,
     handleWorkbarDeleteTask,
     handleWorkbarEditTask,
-    handleDeleteWorkbarSummary,
-    handleClearWorkbarSummaries,
   } = useWorkbarMutations({
     apiClient,
     currentSessionId: currentSession?.id ?? null,
-    workbarSummariesLength: workbarSummaries.length,
     refreshWorkbarTasks,
-    loadWorkbarSummaries,
     setWorkbarError,
-    setWorkbarSummariesError,
   });
 
   // 鍒濆鍖栧姞杞戒細璇濄€丄I妯″瀷鍜屾櫤鑳戒綋閰嶇疆
@@ -765,33 +768,30 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     if (didInitRef.current) return;
     didInitRef.current = true;
 
-    loadSessions({ limit: SESSION_PAGE_SIZE, offset: 0 });
     loadProjects();
     loadAiModelConfigs();
     loadAgents();
-  }, [loadSessions, loadProjects, loadAiModelConfigs, loadAgents]);
+  }, [loadProjects, loadAiModelConfigs, loadAgents]);
 
   useEffect(() => {
     if (!currentSession || activePanel !== 'chat') {
       currentTurnLoadSeqRef.current += 1;
       historyLoadSeqRef.current += 1;
-      summariesLoadSeqRef.current += 1;
-      summariesLoadMoreSeqRef.current += 1;
+      memoryLoadSeqRef.current += 1;
       uiPromptHistoryLoadSeqRef.current += 1;
       lastHydratedChatSessionRef.current = null;
       setWorkbarCurrentTurnTasks([]);
       setWorkbarHistoryTasks([]);
-      setWorkbarSummaries([]);
-      setWorkbarSummariesTotal(0);
+      setProjectMemories([]);
+      setAgentRecalls([]);
       setWorkbarError(null);
       setWorkbarHistoryError(null);
-      setWorkbarSummariesError(null);
+      setMemoryError(null);
       setWorkbarLoading(false);
       setWorkbarHistoryLoading(false);
-      setWorkbarSummariesLoading(false);
+      setMemoryLoading(false);
       setWorkbarHistoryLoadedSessionId(null);
-      setWorkbarSummariesLoadedSessionId(null);
-      setWorkbarSummariesLoadingMore(false);
+      setMemoryLoadedKey(null);
       setUiPromptHistoryItems([]);
       setUiPromptHistoryError(null);
       setUiPromptHistoryLoadedSessionId(null);
@@ -804,19 +804,17 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     if (sessionChanged) {
       lastHydratedChatSessionRef.current = currentSession.id;
       historyLoadSeqRef.current += 1;
-      summariesLoadSeqRef.current += 1;
-      summariesLoadMoreSeqRef.current += 1;
+      memoryLoadSeqRef.current += 1;
       uiPromptHistoryLoadSeqRef.current += 1;
       setWorkbarHistoryTasks([]);
       setWorkbarHistoryError(null);
       setWorkbarHistoryLoadedSessionId(null);
       setWorkbarHistoryLoading(false);
-      setWorkbarSummaries([]);
-      setWorkbarSummariesTotal(0);
-      setWorkbarSummariesError(null);
-      setWorkbarSummariesLoadedSessionId(null);
-      setWorkbarSummariesLoading(false);
-      setWorkbarSummariesLoadingMore(false);
+      setProjectMemories([]);
+      setAgentRecalls([]);
+      setMemoryError(null);
+      setMemoryLoadedKey(null);
+      setMemoryLoading(false);
       const cachedUiPromptHistory = uiPromptHistoryCacheRef.current.get(currentSession.id);
       setUiPromptHistoryItems(cachedUiPromptHistory ? [...cachedUiPromptHistory] : []);
       setUiPromptHistoryError(null);
@@ -826,7 +824,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
     void loadCurrentTurnWorkbarTasks(currentSession.id, activeConversationTurnId);
     if (sessionSummaryPaneVisible) {
-      void loadWorkbarSummaries(currentSession.id);
+      void loadContactMemoryContext(currentSession.id);
     }
     if (uiPromptHistoryOpen) {
       void loadUiPromptHistory(currentSession.id);
@@ -835,8 +833,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     activeConversationTurnId,
     activePanel,
     currentSession,
+    loadContactMemoryContext,
     loadCurrentTurnWorkbarTasks,
-    loadWorkbarSummaries,
     loadUiPromptHistory,
     sessionSummaryPaneVisible,
     uiPromptHistoryOpen,
@@ -892,7 +890,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     removeUiPromptPanel,
     loadCurrentTurnWorkbarTasks,
     loadHistoryWorkbarTasks,
-    loadWorkbarSummaries,
+    loadWorkbarSummaries: loadContactMemoryContext,
     loadUiPromptHistory,
   });
 
@@ -945,8 +943,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
             collapsed={!sidebarOpen}
             onToggleCollapse={toggleSidebar}
             onSelectSession={() => setSummaryPaneSessionId(null)}
-            onOpenSummary={handleOpenSessionSummaryPane}
-            summaryOpenSessionId={sessionSummaryPaneVisible ? currentSession?.id ?? null : null}
           />
 
           {/* 宸茬Щ闄ゅ乏渚у簲鐢ㄦ娊灞夐潰鏉匡紝鏀逛负寮圭獥 */}
@@ -972,6 +968,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                         <SummaryPane
                           sessionId={currentSession.id}
                           sessionTitle={currentSession.title}
+                          contactName={currentContactName}
+                          projectName={currentProjectNameForMemory}
+                          projectId={currentProjectIdForMemory || null}
                           messages={messages}
                           isLoading={chatIsLoading}
                           isStreaming={chatIsStreaming}
@@ -980,26 +979,14 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                           onLoadMore={handleLoadMore}
                           onToggleTurnProcess={handleToggleTurnProcess}
                           customRenderer={customRenderer}
-                          summaries={workbarSummaries}
-                          summariesLoading={workbarSummariesLoading}
-                          summariesLoadingMore={workbarSummariesLoadingMore}
-                          summariesHasMore={summariesHasMore}
-                          summariesError={workbarSummariesError}
-                          actionLoadingKey={workbarSummaryActionLoadingKey}
-                          onClearAll={() => {
-                            void handleClearWorkbarSummaries();
-                          }}
+                          projectMemories={projectMemories}
+                          agentRecalls={agentRecalls}
+                          memoryLoading={memoryLoading}
+                          memoryError={memoryError}
                           onRefresh={() => {
-                            void loadWorkbarSummaries(currentSession.id, true);
+                            void loadContactMemoryContext(currentSession.id, true);
                           }}
                           onClose={() => setSummaryPaneSessionId(null)}
-                          onDeleteSummary={(summary) => {
-                            void handleDeleteWorkbarSummary(summary);
-                          }}
-                          onLoadMoreSummaries={() => {
-                            void loadMoreWorkbarSummaries(currentSession.id);
-                          }}
-                          formatCreatedAt={formatSummaryCreatedAt}
                         />
                       ) : (
                         <MessageList
@@ -1022,13 +1009,13 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                             欢迎使用 AI 聊天
                           </h2>
                           <p className="text-muted-foreground mb-4">
-                            点击左上角按钮选择会话，或创建新的会话开始对话
+                            点击左上角按钮选择联系人，或先添加联系人开始对话
                           </p>
                           <button
                             onClick={toggleSidebar}
                             className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
                           >
-                            展开会话列表
+                            展开联系人列表
                           </button>
                         </div>
                       </div>
@@ -1051,8 +1038,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                         void refreshWorkbarTasks();
                       }}
                       onOpenHistory={(sessionId) => {
+                        setSummaryPaneSessionId(sessionId);
                         void loadHistoryWorkbarTasks(sessionId);
-                        void loadWorkbarSummaries(sessionId);
+                        void loadContactMemoryContext(sessionId, true);
                       }}
                       onOpenUiPromptHistory={(sessionId) => {
                         setUiPromptHistoryOpen(true);

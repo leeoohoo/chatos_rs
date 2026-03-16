@@ -103,7 +103,10 @@ pub async fn get_plugins_by_sources(
     cursor.try_collect().await.map_err(|e| e.to_string())
 }
 
-pub async fn upsert_plugin(db: &Db, mut plugin: MemorySkillPlugin) -> Result<MemorySkillPlugin, String> {
+pub async fn upsert_plugin(
+    db: &Db,
+    mut plugin: MemorySkillPlugin,
+) -> Result<MemorySkillPlugin, String> {
     plugin.updated_at = now_rfc3339();
     let filter = doc! { "id": &plugin.id };
     let exists = plugin_collection(db)

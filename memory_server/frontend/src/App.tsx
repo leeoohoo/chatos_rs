@@ -1,6 +1,5 @@
 import {
   BarChartOutlined,
-  DatabaseOutlined,
   HistoryOutlined,
   LogoutOutlined,
   UserOutlined,
@@ -29,7 +28,6 @@ import { I18nProvider, useI18n } from './i18n';
 import { DashboardPage } from './pages/DashboardPage';
 import { JobRunsPage } from './pages/JobRunsPage';
 import { UserConfigCenterPage } from './pages/UserConfigCenterPage';
-import { SessionsPage } from './pages/SessionsPage';
 import { UserManagementPage } from './pages/UserManagementPage';
 
 const { Sider, Header, Content } = Layout;
@@ -37,7 +35,6 @@ const { Title, Text } = Typography;
 
 type TabKey =
   | 'dashboard'
-  | 'sessions'
   | 'users'
   | 'profile'
   | 'jobRuns';
@@ -50,19 +47,16 @@ type AuthUser = {
 function Shell() {
   const { lang, setLang, t } = useI18n();
   const [tab, setTab] = useState<TabKey>('dashboard');
-  const [selectedSessionId, setSelectedSessionId] = useState<string | undefined>(undefined);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [bootLoading, setBootLoading] = useState(true);
   const [loginLoading, setLoginLoading] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('admin');
-  const [adminSessionFilter, setAdminSessionFilter] = useState('');
   const [openConfigUserId, setOpenConfigUserId] = useState<string | undefined>(undefined);
 
   const isAdmin = authUser?.role === 'admin';
   const scopeUserId = authUser?.username || '';
-  const sessionListUserFilter = isAdmin ? adminSessionFilter.trim() || undefined : scopeUserId;
 
   useEffect(() => {
     const init = async () => {
@@ -88,7 +82,6 @@ function Shell() {
   const menuItems = useMemo(
     () => [
       { key: 'dashboard', icon: <BarChartOutlined />, label: t('nav.dashboard') },
-      { key: 'sessions', icon: <DatabaseOutlined />, label: t('nav.sessions') },
       ...(isAdmin
         ? [{ key: 'users', icon: <UserOutlined />, label: t('nav.users') }]
         : [{ key: 'profile', icon: <UserOutlined />, label: t('nav.profile') }]),
@@ -106,7 +99,7 @@ function Shell() {
       const data = await api.login(username.trim(), password);
       localStorage.setItem('memory_auth_token', data.token);
       setAuthUser({ username: data.username, role: data.role });
-      setTab('sessions');
+      setTab('dashboard');
     } catch (err) {
       setLoginError((err as Error).message);
     } finally {
@@ -117,7 +110,6 @@ function Shell() {
   const logout = () => {
     localStorage.removeItem('memory_auth_token');
     setAuthUser(null);
-    setSelectedSessionId(undefined);
     setOpenConfigUserId(undefined);
     setTab('dashboard');
   };
@@ -191,14 +183,6 @@ function Shell() {
                   <Tag color={isAdmin ? 'gold' : 'default'}>
                     {authUser.username} ({authUser.role})
                   </Tag>
-                  {isAdmin && (
-                    <Input
-                      value={adminSessionFilter}
-                      onChange={(e) => setAdminSessionFilter(e.target.value)}
-                      placeholder={t('top.userFilter')}
-                      style={{ width: 200 }}
-                    />
-                  )}
                   <Button icon={<LogoutOutlined />} onClick={logout}>
                     {t('auth.logout')}
                   </Button>
@@ -214,17 +198,6 @@ function Shell() {
               </Header>
               <Content className="page-shell">
                 {tab === 'dashboard' && <DashboardPage />}
-                {tab === 'sessions' && (
-                  <SessionsPage
-                    filterUserId={sessionListUserFilter}
-                    currentUserId={scopeUserId}
-                    isAdmin={Boolean(isAdmin)}
-                    selectedSessionId={selectedSessionId}
-                    onSelectSession={(sessionId) => {
-                      setSelectedSessionId(sessionId);
-                    }}
-                  />
-                )}
                 {tab === 'users' && isAdmin && (
                   <>
                     {openConfigUserId ? (

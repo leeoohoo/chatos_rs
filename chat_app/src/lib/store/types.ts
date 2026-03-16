@@ -82,6 +82,7 @@ export interface SessionAiSelection {
 export interface SessionCreatePayload {
   title?: string;
   contactAgentId?: string | null;
+  contactId?: string | null;
   selectedModelId?: string | null;
   projectId?: string | null;
   projectRoot?: string | null;
@@ -91,6 +92,7 @@ export interface SessionCreatePayload {
 
 export interface SendMessageRuntimeOptions {
   contactAgentId?: string | null;
+  contactId?: string | null;
   projectId?: string | null;
   projectRoot?: string | null;
   mcpEnabled?: boolean;
@@ -104,11 +106,21 @@ export interface SessionChatState {
   streamingMessageId: string | null;
 }
 
+export interface ContactRecord {
+  id: string;
+  agentId: string;
+  name: string;
+  status: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface ChatState {
   // 会话相关
   sessions: Session[];
   currentSessionId: string | null;
   currentSession: Session | null;
+  contacts: ContactRecord[];
 
   // 项目相关
   projects: Project[];
@@ -164,6 +176,12 @@ export interface ChatState {
 }
 
 export interface ChatActions {
+  // 联系人操作
+  loadContacts: () => Promise<ContactRecord[]>;
+  createContact: (agentId: string, agentNameSnapshot?: string) => Promise<ContactRecord>;
+  deleteContact: (contactId: string) => Promise<void>;
+  getContactByAgentId: (agentId: string) => ContactRecord | null;
+
   // 会话操作
   loadSessions: (options?: { limit?: number; offset?: number; append?: boolean; silent?: boolean }) => Promise<Session[]>;
   createSession: (payload?: string | SessionCreatePayload) => Promise<string>;

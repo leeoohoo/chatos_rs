@@ -80,6 +80,57 @@ pub struct MemoryAgentDto {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct MemoryContactDto {
+    pub id: String,
+    pub user_id: String,
+    pub agent_id: String,
+    pub agent_name_snapshot: Option<String>,
+    pub status: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct MemoryProjectMemoryDto {
+    pub id: String,
+    pub user_id: String,
+    pub contact_id: String,
+    pub agent_id: String,
+    pub project_id: String,
+    pub memory_text: String,
+    pub memory_version: i64,
+    pub last_source_at: Option<String>,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct MemoryAgentRecallDto {
+    pub id: String,
+    pub user_id: String,
+    pub agent_id: String,
+    pub recall_key: String,
+    pub recall_text: String,
+    #[serde(default)]
+    pub source_project_ids: Vec<String>,
+    pub confidence: Option<f64>,
+    pub last_seen_at: Option<String>,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CreateMemoryContactRequestDto {
+    pub user_id: Option<String>,
+    pub agent_id: String,
+    pub agent_name_snapshot: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CreateMemoryContactResponseDto {
+    pub created: bool,
+    pub contact: MemoryContactDto,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct MemoryAgentRuntimeContextDto {
     pub agent_id: String,
     pub name: String,
@@ -558,6 +609,140 @@ pub async fn list_memory_agents(
         .timeout(timeout_duration())
         .query(&params);
     let resp: ListResponse<MemoryAgentDto> = send_json(req).await?;
+    Ok(resp.items)
+}
+
+pub async fn list_memory_contacts(
+    user_id: Option<&str>,
+    limit: Option<i64>,
+    offset: i64,
+) -> Result<Vec<MemoryContactDto>, String> {
+    let mut params: Vec<(String, String)> = Vec::new();
+    if let Some(value) = user_id {
+        params.push(("user_id".to_string(), value.to_string()));
+    }
+    if let Some(value) = limit {
+        params.push(("limit".to_string(), value.max(1).to_string()));
+    }
+    if offset > 0 {
+        params.push(("offset".to_string(), offset.to_string()));
+    }
+
+    let req = MEMORY_SERVER_HTTP
+        .get(build_url("/contacts").as_str())
+        .timeout(timeout_duration())
+        .query(&params);
+    let resp: ListResponse<MemoryContactDto> = send_json(req).await?;
+    Ok(resp.items)
+}
+
+pub async fn create_memory_contact(
+    payload: &CreateMemoryContactRequestDto,
+) -> Result<CreateMemoryContactResponseDto, String> {
+    let req = MEMORY_SERVER_HTTP
+        .post(build_url("/contacts").as_str())
+        .timeout(timeout_duration())
+        .json(payload);
+    send_json(req).await
+}
+
+pub async fn delete_memory_contact(contact_id: &str) -> Result<bool, String> {
+    let req = MEMORY_SERVER_HTTP
+        .delete(build_url(&format!("/contacts/{}", urlencoding::encode(contact_id))).as_str())
+        .timeout(timeout_duration());
+
+    let resp = apply_auth(req).send().await.map_err(|e| e.to_string())?;
+    if resp.status().as_u16() == 404 {
+        return Ok(false);
+    }
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let detail = resp.text().await.unwrap_or_default();
+        return Err(format!("status={} detail={}", status, detail));
+    }
+    Ok(true)
+}
+
+pub async fn list_contact_project_memories(
+    contact_id: &str,
+    project_id: &str,
+    limit: Option<i64>,
+    offset: i64,
+) -> Result<Vec<MemoryProjectMemoryDto>, String> {
+    let mut params: Vec<(String, String)> = Vec::new();
+    if let Some(value) = limit {
+        params.push(("limit".to_string(), value.max(1).to_string()));
+    }
+    if offset > 0 {
+        params.push(("offset".to_string(), offset.to_string()));
+    }
+
+    let req = MEMORY_SERVER_HTTP
+        .get(
+            build_url(&format!(
+                "/contacts/{}/project-memories/{}",
+                urlencoding::encode(contact_id),
+                urlencoding::encode(project_id)
+            ))
+            .as_str(),
+        )
+        .timeout(timeout_duration())
+        .query(&params);
+    let resp: ListResponse<MemoryProjectMemoryDto> = send_json(req).await?;
+    Ok(resp.items)
+}
+
+pub async fn list_contact_project_memories_by_contact(
+    contact_id: &str,
+    limit: Option<i64>,
+    offset: i64,
+) -> Result<Vec<MemoryProjectMemoryDto>, String> {
+    let mut params: Vec<(String, String)> = Vec::new();
+    if let Some(value) = limit {
+        params.push(("limit".to_string(), value.max(1).to_string()));
+    }
+    if offset > 0 {
+        params.push(("offset".to_string(), offset.to_string()));
+    }
+
+    let req = MEMORY_SERVER_HTTP
+        .get(
+            build_url(&format!(
+                "/contacts/{}/project-memories",
+                urlencoding::encode(contact_id)
+            ))
+            .as_str(),
+        )
+        .timeout(timeout_duration())
+        .query(&params);
+    let resp: ListResponse<MemoryProjectMemoryDto> = send_json(req).await?;
+    Ok(resp.items)
+}
+
+pub async fn list_contact_agent_recalls(
+    contact_id: &str,
+    limit: Option<i64>,
+    offset: i64,
+) -> Result<Vec<MemoryAgentRecallDto>, String> {
+    let mut params: Vec<(String, String)> = Vec::new();
+    if let Some(value) = limit {
+        params.push(("limit".to_string(), value.max(1).to_string()));
+    }
+    if offset > 0 {
+        params.push(("offset".to_string(), offset.to_string()));
+    }
+
+    let req = MEMORY_SERVER_HTTP
+        .get(
+            build_url(&format!(
+                "/contacts/{}/agent-recalls",
+                urlencoding::encode(contact_id)
+            ))
+            .as_str(),
+        )
+        .timeout(timeout_duration())
+        .query(&params);
+    let resp: ListResponse<MemoryAgentRecallDto> = send_json(req).await?;
     Ok(resp.items)
 }
 

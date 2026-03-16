@@ -11,6 +11,11 @@ export interface SessionPaging {
   includeArchiving?: boolean;
 }
 
+export interface ContactPaging {
+  limit?: number;
+  offset?: number;
+}
+
 export interface RemoteConnectionPayload {
   name?: string;
   host: string;
@@ -79,6 +84,64 @@ export const deleteSession = (request: ApiRequestFn, id: string): Promise<any> =
   return request<any>(`/sessions/${id}`, {
     method: 'DELETE',
   });
+};
+
+export const getContacts = (
+  request: ApiRequestFn,
+  userId?: string,
+  paging?: ContactPaging,
+): Promise<any[]> => {
+  const query = buildQuery({
+    user_id: userId,
+    limit: paging?.limit,
+    offset: paging?.offset,
+  });
+  return request<any[]>(`/contacts${query}`);
+};
+
+export const createContact = (
+  request: ApiRequestFn,
+  data: { agent_id: string; agent_name_snapshot?: string; user_id?: string },
+): Promise<any> => {
+  return request<any>('/contacts', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+};
+
+export const deleteContact = (request: ApiRequestFn, contactId: string): Promise<any> => {
+  return request<any>(`/contacts/${contactId}`, {
+    method: 'DELETE',
+  });
+};
+
+export const getContactProjectMemories = (
+  request: ApiRequestFn,
+  contactId: string,
+  projectId: string,
+  paging?: ContactPaging,
+): Promise<any[]> => {
+  const query = buildQuery({
+    limit: paging?.limit,
+    offset: paging?.offset,
+  });
+  return request<any[]>(
+    `/contacts/${encodeURIComponent(contactId)}/project-memories/${encodeURIComponent(projectId)}${query}`,
+  );
+};
+
+export const getContactAgentRecalls = (
+  request: ApiRequestFn,
+  contactId: string,
+  paging?: ContactPaging,
+): Promise<any[]> => {
+  const query = buildQuery({
+    limit: paging?.limit,
+    offset: paging?.offset,
+  });
+  return request<any[]>(
+    `/contacts/${encodeURIComponent(contactId)}/agent-recalls${query}`,
+  );
 };
 
 export const getSessionMessages = (

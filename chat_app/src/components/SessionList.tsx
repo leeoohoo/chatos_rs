@@ -1,4 +1,4 @@
-import React, { useCallback, useState, useEffect, useRef } from 'react';
+import React, { useCallback, useMemo, useState, useEffect, useRef } from 'react';
 import { shallow } from 'zustand/shallow';
 import { useChatStoreContext, useChatApiClientFromContext } from '../lib/store/ChatStoreContext';
 import { useChatStore } from '../lib/store';
@@ -27,11 +27,47 @@ import {
   normalizeFsEntry,
 } from './sessionList/helpers';
 import { useRemoteConnectionForm } from './sessionList/useRemoteConnectionForm';
-import { useSessionSummaryStatus } from './sessionList/useSessionSummaryStatus';
 import type {
   DirPickerTarget,
   KeyFilePickerTarget,
 } from './sessionList/helpers';
+import {
+  mergeSessionRuntimeIntoMetadata,
+  readSessionRuntimeFromMetadata,
+} from '../lib/store/helpers/sessionRuntime';
+
+const resolveContactAgentIdFromSession = (session: Session | null | undefined): string | null => {
+  if (!session) {
+    return null;
+  }
+  const runtime = readSessionRuntimeFromMetadata((session as any).metadata);
+  if (!runtime?.contactAgentId) {
+    return null;
+  }
+  const trimmed = runtime.contactAgentId.trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
+
+const resolveContactIdFromSession = (session: Session | null | undefined): string | null => {
+  if (!session) {
+    return null;
+  }
+  const runtime = readSessionRuntimeFromMetadata((session as any).metadata);
+  if (!runtime?.contactId) {
+    return null;
+  }
+  const trimmed = runtime.contactId.trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
+
+type ContactItem = {
+  id: string;
+  agentId: string;
+  name: string;
+  status: string;
+  createdAt: Date;
+  updatedAt: Date;
+};
 
 interface SessionListProps {
   isOpen?: boolean;
@@ -40,9 +76,7 @@ interface SessionListProps {
   onToggleCollapse?: () => void;
   className?: string;
   store?: typeof useChatStore;
-  onOpenSummary?: (sessionId: string) => void;
   onSelectSession?: (sessionId: string) => void;
-  summaryOpenSessionId?: string | null;
 }
 
 export const SessionList: React.FC<SessionListProps> = (props) => {
@@ -51,9 +85,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     collapsed,
     className,
     store,
-    onOpenSummary,
     onSelectSession,
-    summaryOpenSessionId = null,
   } = props;
   // 尝试从Context获取store hook（如果可用）
   let contextStoreHook: typeof useChatStore | null = null;
@@ -70,14 +102,16 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
   }
   
   const {
-    sessions,
+    contacts,
     agents,
     currentSession,
+    loadContacts: loadContactsAction,
+    createContact: createContactAction,
+    deleteContact: deleteContactAction,
     createSession,
     selectSession,
     deleteSession,
     updateSession,
-    loadSessions,
     loadAgents,
     sessionChatState,
     taskReviewPanelsBySession = {},
@@ -104,14 +138,16 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     deleteRemoteConnection,
     openRemoteSftp,
   } = storeToUse((state) => ({
-    sessions: state.sessions,
+    contacts: state.contacts,
     agents: state.agents,
     currentSession: state.currentSession,
+    loadContacts: state.loadContacts,
+    createContact: state.createContact,
+    deleteContact: state.deleteContact,
     createSession: state.createSession,
     selectSession: state.selectSession,
     deleteSession: state.deleteSession,
     updateSession: state.updateSession,
-    loadSessions: state.loadSessions,
     loadAgents: state.loadAgents,
     sessionChatState: state.sessionChatState,
     taskReviewPanelsBySession: state.taskReviewPanelsBySession,
@@ -138,19 +174,14 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     deleteRemoteConnection: state.deleteRemoteConnection,
     openRemoteSftp: state.openRemoteSftp,
   }), shallow);
-  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
-  const [editingTitle, setEditingTitle] = useState('');
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
-  const [hasMore, setHasMore] = useState(true);
-  const [hasMoreLocked, setHasMoreLocked] = useState(false);
   const [sessionsExpanded, setSessionsExpanded] = useState(true);
   const [projectsExpanded, setProjectsExpanded] = useState(true);
   const [terminalsExpanded, setTerminalsExpanded] = useState(true);
   const [remoteExpanded, setRemoteExpanded] = useState(true);
   const [isRefreshingTerminals, setIsRefreshingTerminals] = useState(false);
   const [isRefreshingRemote, setIsRefreshingRemote] = useState(false);
-  const PAGE_SIZE = 30;
+  const contactSessionCacheRef = useRef<Record<string, string>>({});
 
   const [createContactModalOpen, setCreateContactModalOpen] = useState(false);
   const [selectedContactAgentId, setSelectedContactAgentId] = useState<string | null>(null);
@@ -241,22 +272,111 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     updateRemoteConnection,
   });
 
-  const { sessionHasSummaryMap } = useSessionSummaryStatus({
-    sessions,
-    apiClient,
-  });
-
   const didLoadProjectsRef = useRef(false);
   const didLoadAgentsRef = useRef(false);
+  const didLoadContactsRef = useRef(false);
   const didLoadTerminalsRef = useRef(false);
   const didLoadRemoteRef = useRef(false);
   
   const { dialogState, showConfirmDialog, handleConfirm, handleCancel } = useConfirmDialog();
 
   const isCollapsed = collapsed ?? !isOpen;
+  const existingContactAgentIds = useMemo(
+    () => (contacts || []).map((item: ContactItem) => item.agentId),
+    [contacts],
+  );
+
+  const resolveContactProjectKey = useCallback((contact: ContactItem): string => {
+    const projectId = currentProject?.id?.trim() || '';
+    return `${contact.id}::${projectId}`;
+  }, [currentProject?.id]);
+
+  const ensureSessionForContact = useCallback(async (contact: ContactItem): Promise<string | null> => {
+    const cacheKey = resolveContactProjectKey(contact);
+    const cachedSessionId = contactSessionCacheRef.current[cacheKey];
+    if (cachedSessionId && cachedSessionId.trim()) {
+      return cachedSessionId.trim();
+    }
+
+    const currentContactId = resolveContactIdFromSession(currentSession);
+    const currentContactAgentId = resolveContactAgentIdFromSession(currentSession);
+    if (
+      currentSession?.id
+      && (
+        (currentContactId && currentContactId === contact.id)
+        || (currentContactAgentId && currentContactAgentId === contact.agentId)
+      )
+    ) {
+      contactSessionCacheRef.current[cacheKey] = currentSession.id;
+      return currentSession.id;
+    }
+
+    const createdSessionId = await createSession({
+      title: contact.name || '联系人',
+      contactAgentId: contact.agentId,
+      contactId: contact.id,
+      selectedModelId: null,
+      projectId: currentProject?.id || null,
+      projectRoot: currentProject?.rootPath || null,
+      mcpEnabled: true,
+      enabledMcpIds: [],
+    });
+    if (createdSessionId) {
+      contactSessionCacheRef.current[cacheKey] = createdSessionId;
+    }
+    return createdSessionId;
+  }, [resolveContactProjectKey, currentSession, createSession, currentProject]);
+
+  const displaySessions = useMemo<Session[]>(() => {
+    return contacts.map((contact) => {
+      return {
+        id: `contact-placeholder:${contact.id}`,
+        title: contact.name,
+        createdAt: contact.createdAt,
+        updatedAt: contact.updatedAt,
+        messageCount: 0,
+        tokenUsage: 0,
+        pinned: false,
+        archived: false,
+        status: 'active',
+        metadata: mergeSessionRuntimeIntoMetadata(null, {
+          contactAgentId: contact.agentId,
+          contactId: contact.id,
+          selectedModelId: null,
+          projectId: currentProject?.id || null,
+          projectRoot: currentProject?.rootPath || null,
+          mcpEnabled: true,
+          enabledMcpIds: [],
+        }),
+      } as Session;
+    });
+  }, [contacts, currentProject]);
+
+  const currentDisplaySessionId = useMemo(() => {
+    const currentContactId = resolveContactIdFromSession(currentSession);
+    if (currentContactId) {
+      return `contact-placeholder:${currentContactId}`;
+    }
+
+    const currentContactAgentId = resolveContactAgentIdFromSession(currentSession);
+    if (!currentContactAgentId) {
+      return null;
+    }
+    const matched = contacts.find((item) => item.agentId === currentContactAgentId);
+    if (!matched) {
+      return null;
+    }
+    return `contact-placeholder:${matched.id}`;
+  }, [contacts, currentSession]);
+
   const handleCreateSession = async () => {
     setContactError(null);
     setSelectedContactAgentId(null);
+    try {
+      await loadContactsAction();
+    } catch (error) {
+      setContactError(error instanceof Error ? error.message : '加载联系人失败');
+    }
     setCreateContactModalOpen(true);
   };
 
@@ -272,15 +392,37 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
       return;
     }
     try {
-      await createSession({
-        title: selectedAgent.name || '新对话',
-        contactAgentId: selectedAgent.id,
-        selectedModelId: null,
-        projectId: currentProject?.id || null,
-        projectRoot: currentProject?.rootPath || null,
-        mcpEnabled: true,
-        enabledMcpIds: [],
-      });
+      const createdContact = await createContactAction(
+        selectedAgent.id,
+        selectedAgent.name || undefined,
+      );
+      const matchedContact: ContactItem = {
+        id: createdContact.id,
+        agentId: createdContact.agentId,
+        name: createdContact.name,
+        status: createdContact.status,
+        createdAt: createdContact.createdAt,
+        updatedAt: createdContact.updatedAt,
+      };
+      const ensuredSessionId = await ensureSessionForContact(matchedContact);
+      if (ensuredSessionId) {
+        const metadata = mergeSessionRuntimeIntoMetadata(null, {
+          contactAgentId: selectedAgent.id,
+          contactId: createdContact.id || null,
+          selectedModelId: null,
+          projectId: currentProject?.id || null,
+          projectRoot: currentProject?.rootPath || null,
+          mcpEnabled: true,
+          enabledMcpIds: [],
+        });
+        await updateSession(ensuredSessionId, { metadata } as Partial<Session>);
+        if (currentSession?.id !== ensuredSessionId) {
+          await selectSession(ensuredSessionId);
+        }
+      }
+
+      await loadContactsAction();
+
       setCreateContactModalOpen(false);
       setSelectedContactAgentId(null);
       setContactError(null);
@@ -290,11 +432,30 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     }
   };
 
-  const handleSelectSession = async (sessionId: string) => {
+  const handleSelectSession = async (sessionId: string): Promise<string | null> => {
     try {
-      await selectSession(sessionId);
+      if (sessionId.startsWith('contact-placeholder:')) {
+        const contactId = sessionId.replace('contact-placeholder:', '').trim();
+        const contact = contacts.find((item) => item.id === contactId);
+        if (!contact) {
+          return null;
+        }
+        const ensuredSessionId = await ensureSessionForContact(contact);
+        if (!ensuredSessionId) {
+          return null;
+        }
+        if (currentSession?.id !== ensuredSessionId) {
+          await selectSession(ensuredSessionId);
+        }
+        return ensuredSessionId;
+      }
+      if (currentSession?.id !== sessionId) {
+        await selectSession(sessionId);
+      }
+      return sessionId;
     } catch (error) {
       console.error('Failed to select session:', error);
+      return null;
     }
   };
 
@@ -328,10 +489,8 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
 
   const handleRefreshSessions = async () => {
     setIsRefreshing(true);
-    const fetched = await loadSessions({ limit: PAGE_SIZE, offset: 0, append: false, silent: true });
+    await loadContactsAction();
     setIsRefreshing(false);
-    setHasMoreLocked(false);
-    setHasMore(fetched.length >= PAGE_SIZE);
   };
 
   const handleRefreshTerminals = async () => {
@@ -344,17 +503,6 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     setIsRefreshingRemote(true);
     await loadRemoteConnections();
     setIsRefreshingRemote(false);
-  };
-
-  const handleLoadMoreSessions = async () => {
-    if (isLoadingMore) return;
-    setIsLoadingMore(true);
-    const fetched = await loadSessions({ limit: PAGE_SIZE, offset: sessions.length, append: true, silent: true });
-    setIsLoadingMore(false);
-    if (!fetched || fetched.length < PAGE_SIZE) {
-      setHasMore(false);
-      setHasMoreLocked(true);
-    }
   };
 
   const openProjectModal = () => {
@@ -405,7 +553,6 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
   const handleSelectProject = async (projectId: string) => {
     try {
       await selectProject(projectId);
-      await loadSessions({ limit: PAGE_SIZE, offset: 0, append: false, silent: true });
     } catch (error) {
       console.error('Failed to select project:', error);
     }
@@ -722,54 +869,50 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
   };
 
   const handleDeleteSession = async (sessionId: string) => {
-    const session = sessions.find((s: Session) => s.id === sessionId);
+    const session = displaySessions.find((s: Session) => s.id === sessionId);
     if (!session || getSessionStatus(session) !== 'active') {
       return;
     }
+    const runtime = readSessionRuntimeFromMetadata(session.metadata);
+    const contactAgentId = runtime?.contactAgentId || null;
     showConfirmDialog({
-      title: '归档确认',
-      message: `确定要归档会话 "${session.title || 'Untitled'}" 吗？归档后将不再参与总结。`,
-      confirmText: '归档',
+      title: '删除联系人',
+      message: `确定要删除联系人 "${session.title || 'Untitled'}" 吗？`,
+      confirmText: '删除',
       cancelText: '取消',
       type: 'danger',
       onConfirm: async () => {
         try {
-          await deleteSession(sessionId);
+          let resolvedContactId = runtime?.contactId || null;
+          if (!resolvedContactId && contactAgentId) {
+            const matched = contacts.find((item: ContactItem) => item.agentId === contactAgentId) || null;
+            resolvedContactId = matched?.id || null;
+          }
+          if (resolvedContactId) {
+            await deleteContactAction(resolvedContactId);
+            const prefix = `${resolvedContactId}::`;
+            for (const [key, cachedSessionId] of Object.entries(contactSessionCacheRef.current)) {
+              if (!key.startsWith(prefix)) {
+                continue;
+              }
+              delete contactSessionCacheRef.current[key];
+              if (cachedSessionId && currentSession?.id === cachedSessionId) {
+                await deleteSession(cachedSessionId);
+              }
+            }
+          }
+          if (!sessionId.startsWith('contact-placeholder:')) {
+            await deleteSession(sessionId);
+          }
+          if (resolvedContactId) {
+            // ensure local contact state is fresh for edge cases (cross-tab changes)
+            await loadContactsAction();
+          }
         } catch (error) {
           console.error('Failed to delete session:', error);
         }
       }
     });
-  };
-
-  const handleStartEdit = (sessionId: string, currentTitle: string) => {
-    setEditingSessionId(sessionId);
-    setEditingTitle(currentTitle);
-  };
-
-  const handleSaveEdit = async () => {
-    if (editingSessionId && editingTitle.trim()) {
-      try {
-        await updateSession(editingSessionId, { title: editingTitle.trim() });
-        setEditingSessionId(null);
-        setEditingTitle('');
-      } catch (error) {
-        console.error('Failed to update session:', error);
-      }
-    }
-  };
-
-  const handleCancelEdit = () => {
-    setEditingSessionId(null);
-    setEditingTitle('');
-  };
-
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      handleSaveEdit();
-    } else if (e.key === 'Escape') {
-      handleCancelEdit();
-    }
   };
 
   useEffect(() => {
@@ -805,12 +948,6 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
   }, [closeActionMenus]);
 
   useEffect(() => {
-    if (hasMoreLocked) return;
-    if (sessions.length === 0) return;
-    setHasMore(sessions.length >= PAGE_SIZE);
-  }, [sessions.length, hasMoreLocked]);
-
-  useEffect(() => {
     if (didLoadProjectsRef.current) return;
     didLoadProjectsRef.current = true;
     loadProjects();
@@ -821,6 +958,14 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     didLoadAgentsRef.current = true;
     loadAgents();
   }, [loadAgents]);
+
+  useEffect(() => {
+    if (didLoadContactsRef.current) return;
+    didLoadContactsRef.current = true;
+    loadContactsAction().catch((error) => {
+      console.error('Failed to load contacts:', error);
+    });
+  }, [loadContactsAction]);
 
   useEffect(() => {
     if (didLoadTerminalsRef.current) return;
@@ -863,37 +1008,31 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
         className
       )}
     >
-      {/* 会话与项目列表 */}
+      {/* 联系人与项目列表 */}
       {!isCollapsed && (
         <div className="flex-1 flex flex-col overflow-hidden">
           <SessionSection
             expanded={sessionsExpanded}
-            sessions={sessions}
-            currentSessionId={currentSession?.id}
+            sessions={displaySessions}
+            currentSessionId={currentDisplaySessionId}
             sessionChatState={sessionChatState}
             taskReviewPanelsBySession={taskReviewPanelsBySession}
             uiPromptPanelsBySession={uiPromptPanelsBySession}
-            sessionHasSummaryMap={sessionHasSummaryMap}
-            editingSessionId={editingSessionId}
-            editingTitle={editingTitle}
-            hasMore={hasMore}
+            hasMore={false}
             isRefreshing={isRefreshing}
-            isLoadingMore={isLoadingMore}
-            summaryOpenSessionId={summaryOpenSessionId}
+            isLoadingMore={false}
             onToggle={handleToggleSessionsSection}
             onRefresh={handleRefreshSessions}
             onCreateSession={handleCreateSession}
             onSelectSession={(sessionId) => {
-              onSelectSession?.(sessionId);
-              void handleSelectSession(sessionId);
+              void handleSelectSession(sessionId).then((selectedSessionId) => {
+                if (selectedSessionId) {
+                  onSelectSession?.(selectedSessionId);
+                }
+              });
             }}
-            onOpenSummary={onOpenSummary}
-            onStartEdit={handleStartEdit}
             onDeleteSession={handleDeleteSession}
-            onEditingTitleChange={setEditingTitle}
-            onSaveEdit={handleSaveEdit}
-            onKeyPress={handleKeyPress}
-            onLoadMore={handleLoadMoreSessions}
+            onLoadMore={() => {}}
             onToggleActionMenu={toggleActionMenu}
             closeActionMenus={() => closeActionMenus()}
             formatTimeAgo={formatTimeAgo}
@@ -967,6 +1106,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
       <CreateContactModal
         isOpen={createContactModalOpen}
         agents={(agents || []) as any[]}
+        existingAgentIds={existingContactAgentIds}
         selectedAgentId={selectedContactAgentId}
         error={contactError}
         onClose={() => {

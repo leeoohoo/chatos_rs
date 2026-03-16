@@ -194,6 +194,47 @@ pub async fn update_session(
     get_session_by_id(db, session_id).await
 }
 
+pub async fn archive_sessions_by_contact(
+    db: &Db,
+    user_id: &str,
+    contact_id: &str,
+    agent_id: &str,
+) -> Result<usize, String> {
+    let now = now_rfc3339();
+    let mut or_conditions = vec![];
+    if !contact_id.trim().is_empty() {
+        or_conditions.push(doc! {"metadata.contact.contact_id": contact_id});
+        or_conditions.push(doc! {"metadata.ui_contact.contact_id": contact_id});
+    }
+    if !agent_id.trim().is_empty() {
+        or_conditions.push(doc! {"metadata.contact.agent_id": agent_id});
+        or_conditions.push(doc! {"metadata.ui_contact.agent_id": agent_id});
+    }
+    if or_conditions.is_empty() {
+        return Ok(0);
+    }
+
+    let result = collection(db)
+        .update_many(
+            doc! {
+                "user_id": user_id,
+                "status": {"$ne": "archived"},
+                "$or": or_conditions,
+            },
+            doc! {
+                "$set": {
+                    "status": "archived",
+                    "archived_at": &now,
+                    "updated_at": &now,
+                }
+            },
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(result.modified_count as usize)
+}
+
 pub async fn list_active_user_ids(db: &Db, limit: i64) -> Result<Vec<String>, String> {
     let pipeline = vec![
         doc! {"$match": {"status": "active"}},

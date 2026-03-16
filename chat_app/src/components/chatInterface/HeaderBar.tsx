@@ -65,7 +65,7 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
         <button
           onClick={onToggleSidebar}
           className="p-2 text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg transition-colors"
-          title={sidebarOpen ? '收起会话列表' : '展开会话列表'}
+          title={sidebarOpen ? '收起联系人列表' : '展开联系人列表'}
         >
           <svg className={`w-5 h-5 transition-transform ${sidebarOpen ? '' : 'rotate-180'}`} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" d="M15 18L9 12l6-6" />

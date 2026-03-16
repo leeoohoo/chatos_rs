@@ -21,23 +21,14 @@ interface SessionSectionProps {
   sessionChatState?: SessionChatStateMap;
   taskReviewPanelsBySession?: Record<string, any[]>;
   uiPromptPanelsBySession?: Record<string, any[]>;
-  sessionHasSummaryMap: Record<string, boolean>;
-  editingSessionId: string | null;
-  editingTitle: string;
   hasMore: boolean;
   isRefreshing: boolean;
   isLoadingMore: boolean;
-  summaryOpenSessionId?: string | null;
   onToggle: () => void;
   onRefresh: () => void;
   onCreateSession: () => void;
   onSelectSession: (sessionId: string) => void;
-  onOpenSummary?: (sessionId: string) => void;
-  onStartEdit: (sessionId: string, currentTitle: string) => void;
   onDeleteSession: (sessionId: string) => void;
-  onEditingTitleChange: (value: string) => void;
-  onSaveEdit: () => void;
-  onKeyPress: (e: React.KeyboardEvent) => void;
   onLoadMore: () => void;
   onToggleActionMenu: (event: React.MouseEvent<HTMLButtonElement>) => void;
   closeActionMenus: () => void;
@@ -52,23 +43,14 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
   sessionChatState,
   taskReviewPanelsBySession = {},
   uiPromptPanelsBySession = {},
-  sessionHasSummaryMap,
-  editingSessionId,
-  editingTitle,
   hasMore,
   isRefreshing,
   isLoadingMore,
-  summaryOpenSessionId,
   onToggle,
   onRefresh,
   onCreateSession,
   onSelectSession,
-  onOpenSummary,
-  onStartEdit,
   onDeleteSession,
-  onEditingTitleChange,
-  onSaveEdit,
-  onKeyPress,
   onLoadMore,
   onToggleActionMenu,
   closeActionMenus,
@@ -144,134 +126,80 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
                     }}
                   >
                     <div className="flex-1 min-w-0">
-                      {editingSessionId === session.id ? (
-                        <input
-                          type="text"
-                          value={editingTitle}
-                          onChange={(e) => onEditingTitleChange(e.target.value)}
-                          onBlur={onSaveEdit}
-                          onKeyDown={onKeyPress}
-                          className="w-full px-2 py-1 text-sm bg-background border border-border rounded focus:outline-none focus:ring-2 focus:ring-ring"
-                          autoFocus
-                          onClick={(e) => e.stopPropagation()}
-                        />
-                      ) : (
-                        <>
-                          <h3 className="text-sm font-medium text-foreground truncate">
-                            {session.title}
-                          </h3>
-                          <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
-                            <span>{formatTimeAgo(session.updatedAt)}</span>
-                            <span className="text-muted-foreground/60">·</span>
-                            {isArchivedSession ? (
-                              <span className={cn('inline-flex items-center gap-1', isArchivingSession ? 'text-amber-600' : 'text-slate-500')}>
-                                <span className={cn('inline-block w-2 h-2 rounded-full', isArchivingSession ? 'bg-amber-500 animate-pulse' : 'bg-slate-400')} />
-                                {isArchivingSession ? '归档中' : '已归档'}
+                      <h3 className="text-sm font-medium text-foreground truncate">
+                        {session.title}
+                      </h3>
+                      <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                        <span>{formatTimeAgo(session.updatedAt)}</span>
+                        <span className="text-muted-foreground/60">·</span>
+                        {isArchivedSession ? (
+                          <span className={cn('inline-flex items-center gap-1', isArchivingSession ? 'text-amber-600' : 'text-slate-500')}>
+                            <span className={cn('inline-block w-2 h-2 rounded-full', isArchivingSession ? 'bg-amber-500 animate-pulse' : 'bg-slate-400')} />
+                            {isArchivingSession ? '归档中' : '已归档'}
+                          </span>
+                        ) : (
+                          (() => {
+                            const chatState = sessionChatState?.[session.id];
+                            const isBusy = !!(chatState?.isLoading || chatState?.isStreaming);
+                            return (
+                              <span className={cn('inline-flex items-center gap-1', isBusy ? 'text-amber-600' : 'text-muted-foreground')}>
+                                <span className={cn('inline-block w-2 h-2 rounded-full', isBusy ? 'bg-amber-500' : 'bg-muted-foreground/40')} />
+                                {isBusy ? '执行中' : '空闲'}
                               </span>
-                            ) : (
-                              (() => {
-                                const chatState = sessionChatState?.[session.id];
-                                const isBusy = !!(chatState?.isLoading || chatState?.isStreaming);
-                                return (
-                                  <span className={cn('inline-flex items-center gap-1', isBusy ? 'text-amber-600' : 'text-muted-foreground')}>
-                                    <span className={cn('inline-block w-2 h-2 rounded-full', isBusy ? 'bg-amber-500' : 'bg-muted-foreground/40')} />
-                                    {isBusy ? '执行中' : '空闲'}
-                                  </span>
-                                );
-                              })()
-                            )}
-                            {(() => {
-                              if (isArchivedSession) {
-                                return null;
-                              }
-                              const taskReviewCount = Array.isArray(taskReviewPanelsBySession?.[session.id])
-                                ? taskReviewPanelsBySession[session.id].length
-                                : 0;
-                              const uiPromptCount = Array.isArray(uiPromptPanelsBySession?.[session.id])
-                                ? uiPromptPanelsBySession[session.id].length
-                                : 0;
-                              const pendingCount = taskReviewCount + uiPromptCount;
-                              if (pendingCount <= 0) {
-                                return null;
-                              }
-                              return (
-                                <span className="inline-flex items-center gap-1 text-blue-600">
-                                  <span className="inline-block w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
-                                  {`待处理 ${pendingCount}`}
-                                </span>
-                              );
-                            })()}
-                            {!isArchivedSession && sessionHasSummaryMap[session.id] && (
-                              <button
-                                type="button"
-                                className={cn(
-                                  'inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] transition-colors',
-                                  summaryOpenSessionId === session.id
-                                    ? 'border-blue-500/50 bg-blue-500/10 text-blue-600'
-                                    : 'border-blue-500/30 text-blue-600 hover:bg-blue-500/10'
-                                )}
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  onSelectSession(session.id);
-                                  onOpenSummary?.(session.id);
-                                }}
-                                title="查看会话总结"
-                              >
-                                总结
-                              </button>
-                            )}
-                          </div>
-                        </>
-                      )}
+                            );
+                          })()
+                        )}
+                        {(() => {
+                          if (isArchivedSession) {
+                            return null;
+                          }
+                          const taskReviewCount = Array.isArray(taskReviewPanelsBySession?.[session.id])
+                            ? taskReviewPanelsBySession[session.id].length
+                            : 0;
+                          const uiPromptCount = Array.isArray(uiPromptPanelsBySession?.[session.id])
+                            ? uiPromptPanelsBySession[session.id].length
+                            : 0;
+                          const pendingCount = taskReviewCount + uiPromptCount;
+                          if (pendingCount <= 0) {
+                            return null;
+                          }
+                          return (
+                            <span className="inline-flex items-center gap-1 text-blue-600">
+                              <span className="inline-block w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+                              {`待处理 ${pendingCount}`}
+                            </span>
+                          );
+                        })()}
+                      </div>
                     </div>
 
-                    {editingSessionId !== session.id && (
-                      <div className="relative" data-action-menu-root="true">
-                        <button
-                          className="p-1 text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 transition-opacity"
-                          onClick={onToggleActionMenu}
-                        >
-                          <DotsVerticalIcon className="w-4 h-4" />
-                        </button>
-                        <div className="js-inline-action-menu hidden absolute right-0 z-10 mt-1 w-32 bg-popover border border-border rounded-md shadow-lg">
-                          <div className="py-1">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                if (isArchivedSession) {
-                                  return;
-                                }
-                                onStartEdit(session.id, session.title);
-                                closeActionMenus();
-                              }}
-                              disabled={isArchivedSession}
-                              className={cn(
-                                'flex items-center w-full px-3 py-2 text-sm text-popover-foreground hover:bg-accent',
-                                isArchivedSession && 'opacity-50 cursor-not-allowed hover:bg-transparent'
-                              )}
-                            >
-                              <PencilIcon className="w-4 h-4 mr-2" />
-                              重命名
-                            </button>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onDeleteSession(session.id);
-                                closeActionMenus();
-                              }}
-                              disabled={isArchivedSession}
-                              className={cn(
-                                'flex items-center w-full px-3 py-2 text-sm text-destructive hover:bg-destructive/10',
-                                isArchivedSession && 'opacity-50 cursor-not-allowed hover:bg-transparent'
-                              )}
-                            >
-                              <TrashIcon className="w-4 h-4 mr-2" />
-                              {isArchivedSession ? '已归档' : '归档'}
-                            </button>
-                          </div>
+                    <div className="relative" data-action-menu-root="true">
+                      <button
+                        className="p-1 text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 transition-opacity"
+                        onClick={onToggleActionMenu}
+                      >
+                        <DotsVerticalIcon className="w-4 h-4" />
+                      </button>
+                      <div className="js-inline-action-menu hidden absolute right-0 z-10 mt-1 w-32 bg-popover border border-border rounded-md shadow-lg">
+                        <div className="py-1">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onDeleteSession(session.id);
+                              closeActionMenus();
+                            }}
+                            disabled={isArchivedSession}
+                            className={cn(
+                              'flex items-center w-full px-3 py-2 text-sm text-destructive hover:bg-destructive/10',
+                              isArchivedSession && 'opacity-50 cursor-not-allowed hover:bg-transparent'
+                            )}
+                          >
+                            <TrashIcon className="w-4 h-4 mr-2" />
+                            {isArchivedSession ? '已归档' : '删除联系人'}
+                          </button>
                         </div>
                       </div>
-                    )}
+                    </div>
                   </div>
                 );
               })}

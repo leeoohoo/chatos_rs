@@ -19,9 +19,7 @@ use crate::core::chat_runtime::{
     mcp_enabled_from_metadata, normalize_id, project_id_from_metadata, project_root_from_metadata,
     resolve_project_runtime,
 };
-use crate::core::chat_stream::{
-    build_v2_callbacks, handle_chat_result, send_start_event,
-};
+use crate::core::chat_stream::{build_v2_callbacks, handle_chat_result, send_start_event};
 use crate::core::mcp_runtime::{
     has_any_mcp_server, load_mcp_servers_by_selection, normalize_mcp_ids,
 };

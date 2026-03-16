@@ -179,6 +179,54 @@ pub async fn init_schema(db: &Db) -> Result<(), String> {
     )
     .await?;
 
+    ensure_unique_index(
+        db.collection::<mongodb::bson::Document>("contacts"),
+        doc! {"id": 1},
+    )
+    .await?;
+    ensure_unique_index(
+        db.collection::<mongodb::bson::Document>("contacts"),
+        doc! {"user_id": 1, "agent_id": 1},
+    )
+    .await?;
+    ensure_index(
+        db.collection::<mongodb::bson::Document>("contacts"),
+        doc! {"user_id": 1, "status": 1, "updated_at": -1},
+    )
+    .await?;
+
+    ensure_unique_index(
+        db.collection::<mongodb::bson::Document>("project_memories"),
+        doc! {"id": 1},
+    )
+    .await?;
+    ensure_unique_index(
+        db.collection::<mongodb::bson::Document>("project_memories"),
+        doc! {"user_id": 1, "contact_id": 1, "project_id": 1},
+    )
+    .await?;
+    ensure_index(
+        db.collection::<mongodb::bson::Document>("project_memories"),
+        doc! {"user_id": 1, "agent_id": 1, "updated_at": -1},
+    )
+    .await?;
+
+    ensure_unique_index(
+        db.collection::<mongodb::bson::Document>("agent_recalls"),
+        doc! {"id": 1},
+    )
+    .await?;
+    ensure_unique_index(
+        db.collection::<mongodb::bson::Document>("agent_recalls"),
+        doc! {"user_id": 1, "agent_id": 1, "recall_key": 1},
+    )
+    .await?;
+    ensure_index(
+        db.collection::<mongodb::bson::Document>("agent_recalls"),
+        doc! {"user_id": 1, "agent_id": 1, "updated_at": -1},
+    )
+    .await?;
+
     normalize_summary_status(db).await?;
 
     info!("[MEMORY-SERVER] mongodb indexes initialized");

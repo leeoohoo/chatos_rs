@@ -9,6 +9,7 @@ import { createAiModelActions } from './actions/aiModels';
 import { createMcpActions } from './actions/mcp';
 import { createChatConfigActions } from './actions/chatConfig';
 import { createSessionActions } from './actions/sessions';
+import { createContactActions } from './actions/contacts';
 import { createProjectActions } from './actions/projects';
 import { createTerminalActions } from './actions/terminals';
 import { createRemoteConnectionActions } from './actions/remoteConnections';
@@ -58,6 +59,7 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                     sessions: [],
                     currentSessionId: null,
                     currentSession: null,
+                    contacts: [],
                     projects: [],
                     currentProjectId: null,
                     currentProject: null,
@@ -103,6 +105,7 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                     error: null,
 
                     // 会话/项目/消息/流式/UI 操作（拆分到独立模块）
+                    ...createContactActions({ set, get, client, getUserIdParam }),
                     ...createSessionActions({ set, get, client, getSessionParams, customUserId, customProjectId }),
                     ...createProjectActions({ set, get, client, getUserIdParam }),
                     ...createTerminalActions({ set, get, client, getUserIdParam }),

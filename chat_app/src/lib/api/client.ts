@@ -150,6 +150,36 @@ class ApiClient {
     return workspaceApi.deleteSession(this.requestFn, id);
   }
 
+  async getContacts(
+    userId?: string,
+    paging?: { limit?: number; offset?: number },
+  ): Promise<any[]> {
+    return workspaceApi.getContacts(this.requestFn, userId, paging);
+  }
+
+  async createContact(data: { agent_id: string; agent_name_snapshot?: string; user_id?: string }): Promise<any> {
+    return workspaceApi.createContact(this.requestFn, data);
+  }
+
+  async deleteContact(contactId: string): Promise<any> {
+    return workspaceApi.deleteContact(this.requestFn, contactId);
+  }
+
+  async getContactProjectMemories(
+    contactId: string,
+    projectId: string,
+    paging?: { limit?: number; offset?: number },
+  ): Promise<any[]> {
+    return workspaceApi.getContactProjectMemories(this.requestFn, contactId, projectId, paging);
+  }
+
+  async getContactAgentRecalls(
+    contactId: string,
+    paging?: { limit?: number; offset?: number },
+  ): Promise<any[]> {
+    return workspaceApi.getContactAgentRecalls(this.requestFn, contactId, paging);
+  }
+
   async getSessionMessages(
     sessionId: string,
     params?: { limit?: number; offset?: number; compact?: boolean; strategy?: string },

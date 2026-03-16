@@ -31,6 +31,7 @@ pub mod auth;
 pub mod chat_v2;
 pub mod chat_v3;
 pub mod configs;
+pub mod contacts;
 pub mod fs;
 pub mod memory_agents;
 pub mod messages;
@@ -113,6 +114,7 @@ pub fn router() -> Router {
         });
 
     let protected_api = Router::new()
+        .merge(contacts::router())
         .merge(sessions::router())
         .merge(messages::router())
         .merge(memory_agents::router())

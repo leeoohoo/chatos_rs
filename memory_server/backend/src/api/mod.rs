@@ -16,14 +16,14 @@ use sha2::{Digest, Sha256};
 use crate::ai::AiClient;
 use crate::jobs;
 use crate::models::{
-    BatchCreateMessagesRequest, ComposeContextRequest, CreateMemoryAgentRequest,
-    CreateMessageRequest, CreateSessionRequest, MemoryAgentSkill, MemorySkill, MemorySkillPlugin,
-    UpdateMemoryAgentRequest, UpdateSessionRequest, UpsertAiModelConfigRequest,
-    UpsertSummaryJobConfigRequest, UpsertSummaryRollupJobConfigRequest,
+    BatchCreateMessagesRequest, ComposeContextRequest, CreateContactRequest,
+    CreateMemoryAgentRequest, CreateMessageRequest, CreateSessionRequest, MemoryAgentSkill,
+    MemorySkill, MemorySkillPlugin, UpdateMemoryAgentRequest, UpdateSessionRequest,
+    UpsertAiModelConfigRequest, UpsertSummaryJobConfigRequest, UpsertSummaryRollupJobConfigRequest,
 };
 use crate::repositories::{
-    agents as agents_repo, auth as auth_repo, configs, jobs as job_repo, messages, sessions,
-    skills as skills_repo, summaries,
+    agents as agents_repo, auth as auth_repo, configs, contacts as contacts_repo, jobs as job_repo,
+    memories as memories_repo, messages, sessions, skills as skills_repo, summaries,
 };
 use crate::services::context;
 use crate::state::AppState;
@@ -71,6 +71,26 @@ pub fn router(state: SharedState) -> Router {
             "/api/memory/v1/sessions/:session_id/messages/batch",
             post(batch_create_messages),
         )
+        .route(
+            "/api/memory/v1/contacts",
+            get(list_contacts).post(create_contact),
+        )
+        .route(
+            "/api/memory/v1/contacts/:contact_id",
+            delete(delete_contact),
+        )
+        .route(
+            "/api/memory/v1/contacts/:contact_id/project-memories",
+            get(list_contact_project_memories),
+        )
+        .route(
+            "/api/memory/v1/contacts/:contact_id/project-memories/:project_id",
+            get(list_contact_project_memories_by_project),
+        )
+        .route(
+            "/api/memory/v1/contacts/:contact_id/agent-recalls",
+            get(list_contact_agent_recalls),
+        )
         .route("/api/memory/v1/agents", get(list_agents).post(create_agent))
         .route("/api/memory/v1/skills", get(list_skills))
         .route("/api/memory/v1/skills/plugins", get(list_skill_plugins))
@@ -82,10 +102,7 @@ pub fn router(state: SharedState) -> Router {
             "/api/memory/v1/skills/plugins/install",
             post(install_skill_plugins),
         )
-        .route(
-            "/api/memory/v1/agents/ai-create",
-            post(ai_create_agent),
-        )
+        .route("/api/memory/v1/agents/ai-create", post(ai_create_agent))
         .route(
             "/api/memory/v1/agents/:agent_id/runtime-context",
             get(get_agent_runtime_context),
@@ -579,10 +596,7 @@ fn resolve_visible_user_ids(scope_user_id: &str) -> Vec<String> {
     if normalized.is_empty() || normalized == auth_repo::ADMIN_USER_ID {
         return vec![auth_repo::ADMIN_USER_ID.to_string()];
     }
-    vec![
-        normalized.to_string(),
-        auth_repo::ADMIN_USER_ID.to_string(),
-    ]
+    vec![normalized.to_string(), auth_repo::ADMIN_USER_ID.to_string()]
 }
 
 async fn ensure_session_access(
@@ -613,6 +627,30 @@ async fn ensure_session_access(
     }
 }
 
+async fn ensure_contact_access(
+    state: &AppState,
+    auth: &AuthIdentity,
+    contact_id: &str,
+) -> Result<crate::models::Contact, (StatusCode, Json<Value>)> {
+    match contacts_repo::get_contact_by_id(&state.pool, contact_id).await {
+        Ok(Some(contact)) => {
+            if auth.is_admin() || contact.user_id == auth.user_id {
+                Ok(contact)
+            } else {
+                Err((StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"}))))
+            }
+        }
+        Ok(None) => Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "contact not found"})),
+        )),
+        Err(err) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "load contact failed", "detail": err})),
+        )),
+    }
+}
+
 async fn ensure_agent_read_access(
     state: &AppState,
     auth: &AuthIdentity,
@@ -629,7 +667,10 @@ async fn ensure_agent_read_access(
                 Err((StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"}))))
             }
         }
-        Ok(None) => Err((StatusCode::NOT_FOUND, Json(json!({"error": "agent not found"})))),
+        Ok(None) => Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "agent not found"})),
+        )),
         Err(err) => Err((
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": "load agent failed", "detail": err})),
@@ -650,7 +691,10 @@ async fn ensure_agent_manage_access(
                 Err((StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"}))))
             }
         }
-        Ok(None) => Err((StatusCode::NOT_FOUND, Json(json!({"error": "agent not found"})))),
+        Ok(None) => Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "agent not found"})),
+        )),
         Err(err) => Err((
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": "load agent failed", "detail": err})),
@@ -891,6 +935,28 @@ async fn update_session(
 }
 
 #[derive(Debug, Deserialize)]
+struct ListContactsQuery {
+    user_id: Option<String>,
+    status: Option<String>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateContactPayload {
+    user_id: Option<String>,
+    agent_id: String,
+    agent_name_snapshot: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ListContactMemoriesQuery {
+    project_id: Option<String>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
 struct ListAgentsQuery {
     user_id: Option<String>,
     enabled: Option<bool>,
@@ -953,6 +1019,280 @@ struct SkillPluginCandidate {
     category: Option<String>,
     description: Option<String>,
     version: Option<String>,
+}
+
+async fn list_contacts(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Query(q): Query<ListContactsQuery>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match resolve_identity(&headers, state.as_ref()) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+
+    let scope_user_id = resolve_scope_user_id(&auth, q.user_id);
+    let limit = q.limit.unwrap_or(200);
+    let offset = q.offset.unwrap_or(0);
+    let status = q
+        .status
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("active");
+
+    match contacts_repo::list_contacts(
+        &state.pool,
+        scope_user_id.as_str(),
+        Some(status),
+        limit,
+        offset,
+    )
+    .await
+    {
+        Ok(items) => (StatusCode::OK, Json(json!({"items": items}))),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "list contacts failed", "detail": err})),
+        ),
+    }
+}
+
+async fn create_contact(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Json(req): Json<CreateContactPayload>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match resolve_identity(&headers, state.as_ref()) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+
+    let scope_user_id = resolve_scope_user_id(&auth, req.user_id);
+    let agent_id = req.agent_id.trim().to_string();
+    if agent_id.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "agent_id is required"})),
+        );
+    }
+
+    let agent = match ensure_agent_read_access(state.as_ref(), &auth, agent_id.as_str()).await {
+        Ok(agent) => agent,
+        Err(err) => return err,
+    };
+    if !agent.enabled {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "agent is disabled"})),
+        );
+    }
+
+    let create_req = CreateContactRequest {
+        user_id: scope_user_id,
+        agent_id,
+        agent_name_snapshot: req
+            .agent_name_snapshot
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+            .or_else(|| Some(agent.name)),
+    };
+
+    match contacts_repo::create_contact_idempotent(&state.pool, create_req).await {
+        Ok((contact, created)) => {
+            let status = if created {
+                StatusCode::CREATED
+            } else {
+                StatusCode::OK
+            };
+            (
+                status,
+                Json(json!({"created": created, "contact": contact})),
+            )
+        }
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "create contact failed", "detail": err})),
+        ),
+    }
+}
+
+async fn delete_contact(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Path(contact_id): Path<String>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match resolve_identity(&headers, state.as_ref()) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+
+    let contact = match ensure_contact_access(state.as_ref(), &auth, contact_id.as_str()).await {
+        Ok(contact) => contact,
+        Err(err) => return err,
+    };
+
+    if let Err(err) = sessions::archive_sessions_by_contact(
+        &state.pool,
+        contact.user_id.as_str(),
+        contact.id.as_str(),
+        contact.agent_id.as_str(),
+    )
+    .await
+    {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "archive contact sessions failed", "detail": err})),
+        );
+    }
+
+    match contacts_repo::delete_contact_by_id(&state.pool, contact_id.as_str()).await {
+        Ok(true) => (StatusCode::OK, Json(json!({"success": true}))),
+        Ok(false) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "contact not found"})),
+        ),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "delete contact failed", "detail": err})),
+        ),
+    }
+}
+
+async fn list_contact_project_memories(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Path(contact_id): Path<String>,
+    Query(q): Query<ListContactMemoriesQuery>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match resolve_identity(&headers, state.as_ref()) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    let contact = match ensure_contact_access(state.as_ref(), &auth, contact_id.as_str()).await {
+        Ok(contact) => contact,
+        Err(err) => return err,
+    };
+
+    let limit = q.limit.unwrap_or(200);
+    let offset = q.offset.unwrap_or(0);
+    let target_project_id = q
+        .project_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+
+    let list_result = match target_project_id {
+        Some(project_id) => {
+            memories_repo::list_project_memories(
+                &state.pool,
+                contact.user_id.as_str(),
+                contact.id.as_str(),
+                project_id.as_str(),
+                limit,
+                offset,
+            )
+            .await
+        }
+        None => {
+            memories_repo::list_project_memories_by_contact(
+                &state.pool,
+                contact.user_id.as_str(),
+                contact.id.as_str(),
+                limit,
+                offset,
+            )
+            .await
+        }
+    };
+
+    match list_result {
+        Ok(items) => (StatusCode::OK, Json(json!({"items": items}))),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "list project memories failed", "detail": err})),
+        ),
+    }
+}
+
+async fn list_contact_project_memories_by_project(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Path((contact_id, project_id)): Path<(String, String)>,
+    Query(q): Query<ListContactMemoriesQuery>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match resolve_identity(&headers, state.as_ref()) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    let contact = match ensure_contact_access(state.as_ref(), &auth, contact_id.as_str()).await {
+        Ok(contact) => contact,
+        Err(err) => return err,
+    };
+
+    let project_id = project_id.trim().to_string();
+    if project_id.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "project_id is required"})),
+        );
+    }
+
+    let limit = q.limit.unwrap_or(200);
+    let offset = q.offset.unwrap_or(0);
+    match memories_repo::list_project_memories(
+        &state.pool,
+        contact.user_id.as_str(),
+        contact.id.as_str(),
+        project_id.as_str(),
+        limit,
+        offset,
+    )
+    .await
+    {
+        Ok(items) => (StatusCode::OK, Json(json!({"items": items}))),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "list project memories failed", "detail": err})),
+        ),
+    }
+}
+
+async fn list_contact_agent_recalls(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Path(contact_id): Path<String>,
+    Query(q): Query<ListContactMemoriesQuery>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match resolve_identity(&headers, state.as_ref()) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    let contact = match ensure_contact_access(state.as_ref(), &auth, contact_id.as_str()).await {
+        Ok(contact) => contact,
+        Err(err) => return err,
+    };
+
+    let limit = q.limit.unwrap_or(200);
+    let offset = q.offset.unwrap_or(0);
+    match memories_repo::list_agent_recalls(
+        &state.pool,
+        contact.user_id.as_str(),
+        contact.agent_id.as_str(),
+        limit,
+        offset,
+    )
+    .await
+    {
+        Ok(items) => (StatusCode::OK, Json(json!({"items": items}))),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "list agent recalls failed", "detail": err})),
+        ),
+    }
 }
 
 async fn list_skills(
@@ -1102,9 +1442,10 @@ async fn import_skills_from_git(
         .iter()
         .map(|item| item.source.clone())
         .collect::<Vec<_>>();
-    let existing = skills_repo::get_plugins_by_sources(&state.pool, scope_user_id.as_str(), &sources)
-        .await
-        .unwrap_or_default();
+    let existing =
+        skills_repo::get_plugins_by_sources(&state.pool, scope_user_id.as_str(), &sources)
+            .await
+            .unwrap_or_default();
     let existing_by_source = existing
         .into_iter()
         .map(|item| (item.source.clone(), item))
@@ -1133,9 +1474,9 @@ async fn import_skills_from_git(
         let discoverable_skills = discover_skill_entries(plugin_root.as_path()).len() as i64;
         let previous = existing_by_source.get(candidate.source.as_str());
         let plugin = MemorySkillPlugin {
-            id: previous
-                .map(|item| item.id.clone())
-                .unwrap_or_else(|| hash_id(&["plugin", scope_user_id.as_str(), candidate.source.as_str()])),
+            id: previous.map(|item| item.id.clone()).unwrap_or_else(|| {
+                hash_id(&["plugin", scope_user_id.as_str(), candidate.source.as_str()])
+            }),
             user_id: scope_user_id.clone(),
             source: candidate.source.clone(),
             name: candidate.name.clone(),
@@ -1147,9 +1488,7 @@ async fn import_skills_from_git(
             cache_path: Some(cache_rel.clone()),
             installed: previous.map(|item| item.installed).unwrap_or(false),
             discoverable_skills,
-            installed_skill_count: previous
-                .map(|item| item.installed_skill_count)
-                .unwrap_or(0),
+            installed_skill_count: previous.map(|item| item.installed_skill_count).unwrap_or(0),
             updated_at: crate::repositories::now_rfc3339(),
         };
 
@@ -1232,7 +1571,10 @@ async fn install_skill_plugins(
 
     let target_sources = if install_all {
         match skills_repo::list_plugins(&state.pool, scope_user_id.as_str(), 500, 0).await {
-            Ok(items) => items.into_iter().map(|item| item.source).collect::<Vec<_>>(),
+            Ok(items) => items
+                .into_iter()
+                .map(|item| item.source)
+                .collect::<Vec<_>>(),
             Err(err) => {
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -1276,7 +1618,8 @@ async fn install_skill_plugins_internal(
         return Err("no plugin sources specified".to_string());
     }
 
-    let plugins = skills_repo::get_plugins_by_sources(&state.pool, user_id, &normalized_sources).await?;
+    let plugins =
+        skills_repo::get_plugins_by_sources(&state.pool, user_id, &normalized_sources).await?;
     if plugins.is_empty() {
         return Err("plugins not found".to_string());
     }
@@ -1331,7 +1674,9 @@ async fn install_skill_plugins_internal(
 
         let mut skills = Vec::new();
         for entry in entries {
-            let Some(file_path) = normalize_skill_entry_to_file(plugin_root.as_path(), entry.as_str()) else {
+            let Some(file_path) =
+                normalize_skill_entry_to_file(plugin_root.as_path(), entry.as_str())
+            else {
                 continue;
             };
             let raw = match fs::read_to_string(file_path.as_path()) {
@@ -1415,7 +1760,8 @@ async fn list_agents(
         limit,
         offset,
     )
-    .await {
+    .await
+    {
         Ok(items) => (StatusCode::OK, Json(json!({"items": items}))),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -1620,7 +1966,12 @@ async fn ai_create_agent(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
-        .or_else(|| Some(format!("根据需求“{}”生成的智能体。", truncate_text(&requirement, 120))));
+        .or_else(|| {
+            Some(format!(
+                "根据需求“{}”生成的智能体。",
+                truncate_text(&requirement, 120)
+            ))
+        });
     let role_definition = req
         .get("role_definition")
         .and_then(Value::as_str)
@@ -1898,14 +2249,23 @@ fn ensure_dir(path: &FsPath) -> Result<(), String> {
     fs::create_dir_all(path).map_err(|err| err.to_string())
 }
 
-fn ensure_git_repo(repo_url: &str, branch: Option<&str>, cache_root: &FsPath) -> Result<PathBuf, String> {
+fn ensure_git_repo(
+    repo_url: &str,
+    branch: Option<&str>,
+    cache_root: &FsPath,
+) -> Result<PathBuf, String> {
     ensure_dir(cache_root)?;
     let safe_name = sanitize_repo_name(repo_url);
     let repo_path = cache_root.join(safe_name);
 
     if repo_path.exists() {
-        fs::remove_dir_all(repo_path.as_path())
-            .map_err(|err| format!("remove old repo failed ({}): {}", repo_path.to_string_lossy(), err))?;
+        fs::remove_dir_all(repo_path.as_path()).map_err(|err| {
+            format!(
+                "remove old repo failed ({}): {}",
+                repo_path.to_string_lossy(),
+                err
+            )
+        })?;
     }
 
     let mut args = vec!["clone".to_string(), "--depth".to_string(), "1".to_string()];
@@ -1987,7 +2347,10 @@ fn load_plugin_candidates_from_repo(
     {
         let file = repo_root.join(path.as_str());
         if !file.exists() || !file.is_file() {
-            return Err(format!("marketplace path not found: {}", file.to_string_lossy()));
+            return Err(format!(
+                "marketplace path not found: {}",
+                file.to_string_lossy()
+            ));
         }
         let raw = fs::read_to_string(file.as_path()).map_err(|err| err.to_string())?;
         let parsed = parse_marketplace_candidates(raw.as_str())?;
@@ -2062,7 +2425,10 @@ fn parse_marketplace_candidates(raw: &str) -> Result<Vec<SkillPluginCandidate>, 
     Ok(unique_plugin_candidates(out))
 }
 
-fn fallback_plugin_candidates(repo_root: &FsPath, plugins_path: Option<&str>) -> Vec<SkillPluginCandidate> {
+fn fallback_plugin_candidates(
+    repo_root: &FsPath,
+    plugins_path: Option<&str>,
+) -> Vec<SkillPluginCandidate> {
     let root = plugins_path
         .map(normalize_repo_relative_path)
         .filter(|value| !value.is_empty())
@@ -2136,7 +2502,10 @@ fn copy_plugin_source_from_repo(
 
     let src = repo_root.join(normalized.as_str());
     if !src.exists() {
-        return Err(format!("plugin source not found in repository: {}", normalized));
+        return Err(format!(
+            "plugin source not found in repository: {}",
+            normalized
+        ));
     }
 
     let dest_rel = plugin_install_destination(normalized.as_str());

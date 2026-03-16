@@ -46,6 +46,53 @@ pub struct UpdateSessionRequest {
     pub metadata: Option<Value>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Contact {
+    pub id: String,
+    pub user_id: String,
+    pub agent_id: String,
+    pub agent_name_snapshot: Option<String>,
+    #[serde(default = "default_active")]
+    pub status: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateContactRequest {
+    pub user_id: String,
+    pub agent_id: String,
+    pub agent_name_snapshot: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectMemory {
+    pub id: String,
+    pub user_id: String,
+    pub contact_id: String,
+    pub agent_id: String,
+    pub project_id: String,
+    pub memory_text: String,
+    #[serde(default = "default_i64_1")]
+    pub memory_version: i64,
+    pub last_source_at: Option<String>,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentRecall {
+    pub id: String,
+    pub user_id: String,
+    pub agent_id: String,
+    pub recall_key: String,
+    pub recall_text: String,
+    #[serde(default)]
+    pub source_project_ids: Vec<String>,
+    pub confidence: Option<f64>,
+    pub last_seen_at: Option<String>,
+    pub updated_at: String,
+}
+
 fn default_true() -> bool {
     true
 }

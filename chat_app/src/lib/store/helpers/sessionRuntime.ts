@@ -1,5 +1,6 @@
 export interface SessionRuntimeMetadata {
   contactAgentId: string | null;
+  contactId: string | null;
   selectedModelId: string | null;
   mcpEnabled: boolean;
   enabledMcpIds: string[];
@@ -76,6 +77,9 @@ export const readSessionRuntimeFromMetadata = (
   const contactAgentId = normalizeId(
     contact?.agent_id ?? meta?.ui_contact?.agent_id,
   ) || readUiChatSelectionAgentId(meta);
+  const contactId = normalizeId(
+    contact?.contact_id ?? meta?.ui_contact?.contact_id,
+  );
 
   const projectId = normalizeId(
     runtime?.project_id ?? runtime?.projectId,
@@ -90,6 +94,7 @@ export const readSessionRuntimeFromMetadata = (
   if (
     !selectedModelId
     && !contactAgentId
+    && !contactId
     && !projectId
     && !projectRoot
     && enabledMcpIds.length === 0
@@ -100,6 +105,7 @@ export const readSessionRuntimeFromMetadata = (
 
   return {
     contactAgentId,
+    contactId,
     selectedModelId,
     mcpEnabled,
     enabledMcpIds,
@@ -117,6 +123,7 @@ export const mergeSessionRuntimeIntoMetadata = (
 
   const selectedModelId = normalizeId(runtime.selectedModelId ?? existingRuntime?.selectedModelId);
   const contactAgentId = normalizeId(runtime.contactAgentId ?? existingRuntime?.contactAgentId);
+  const contactId = normalizeId(runtime.contactId ?? existingRuntime?.contactId);
   const projectId = normalizeId(runtime.projectId ?? existingRuntime?.projectId);
   const projectRoot = normalizeId(runtime.projectRoot ?? existingRuntime?.projectRoot);
   const mcpEnabled = typeof runtime.mcpEnabled === 'boolean'
@@ -136,6 +143,7 @@ export const mergeSessionRuntimeIntoMetadata = (
   next.contact = {
     type: 'memory_agent',
     agent_id: contactAgentId,
+    contact_id: contactId,
   };
   next.ui_chat_selection = {
     selected_model_id: selectedModelId,
@@ -144,6 +152,7 @@ export const mergeSessionRuntimeIntoMetadata = (
   next.ui_contact = {
     type: 'memory_agent',
     agent_id: contactAgentId,
+    contact_id: contactId,
   };
   return next;
 };

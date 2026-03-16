@@ -165,3 +165,37 @@ export interface MemorySkill {
   version?: string | null;
   updated_at: string;
 }
+
+export interface MemoryContact {
+  id: string;
+  user_id: string;
+  agent_id: string;
+  agent_name_snapshot?: string | null;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProjectMemory {
+  id: string;
+  user_id: string;
+  contact_id: string;
+  agent_id: string;
+  project_id: string;
+  memory_text: string;
+  memory_version: number;
+  last_source_at?: string | null;
+  updated_at: string;
+}
+
+export interface AgentRecall {
+  id: string;
+  user_id: string;
+  agent_id: string;
+  recall_key: string;
+  recall_text: string;
+  source_project_ids: string[];
+  confidence?: number | null;
+  last_seen_at?: string | null;
+  updated_at: string;
+}

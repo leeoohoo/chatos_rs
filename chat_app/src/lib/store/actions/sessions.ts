@@ -6,7 +6,10 @@ import {
   mergeSessionAiSelectionIntoMetadata,
   readSessionAiSelectionFromMetadata,
 } from '../helpers/sessionAiSelection';
-import { mergeSessionRuntimeIntoMetadata } from '../helpers/sessionRuntime';
+import {
+  mergeSessionRuntimeIntoMetadata,
+  readSessionRuntimeFromMetadata,
+} from '../helpers/sessionRuntime';
 import type { SessionAiSelection, SessionCreatePayload } from '../types';
 import { debugLog, generateId } from '@/lib/utils';
 
@@ -94,6 +97,42 @@ const normalizeTurnId = (value: unknown): string => (
   typeof value === 'string' ? value.trim() : ''
 );
 
+const resolveSessionContactAgentId = (session: Session | null | undefined): string | null => {
+  if (!session) {
+    return null;
+  }
+  const runtime = readSessionRuntimeFromMetadata((session as any).metadata);
+  if (!runtime?.contactAgentId) {
+    return null;
+  }
+  const trimmed = runtime.contactAgentId.trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
+
+const resolveSessionTimestamp = (session: Session): number => {
+  const updated = new Date((session as any).updatedAt ?? (session as any).createdAt ?? Date.now());
+  const ts = updated.getTime();
+  return Number.isFinite(ts) ? ts : 0;
+};
+
+const normalizeContactSessions = (sessions: Session[]): Session[] => {
+  const byContact = new Map<string, Session>();
+  for (const session of sessions) {
+    const identity = resolveSessionContactIdentity(session);
+    const contactKey = identity.contactId || identity.contactAgentId;
+    if (!contactKey) {
+      continue;
+    }
+    const existing = byContact.get(contactKey);
+    if (!existing || resolveSessionTimestamp(session) >= resolveSessionTimestamp(existing)) {
+      byContact.set(contactKey, session);
+    }
+  }
+  return Array.from(byContact.values()).sort(
+    (a, b) => resolveSessionTimestamp(b) - resolveSessionTimestamp(a),
+  );
+};
+
 const resolveUserByTurnId = (messages: any[], turnId: string) => {
   if (!turnId) {
     return null;
@@ -168,6 +207,55 @@ interface Deps {
   customProjectId?: string;
 }
 
+type MemoryContact = {
+  id: string;
+  user_id: string;
+  agent_id: string;
+  agent_name_snapshot?: string | null;
+  status?: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+const normalizeContact = (value: any): MemoryContact | null => {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  const id = typeof value.id === 'string' ? value.id.trim() : '';
+  const agentId = typeof value.agent_id === 'string' ? value.agent_id.trim() : '';
+  const userId = typeof value.user_id === 'string' ? value.user_id.trim() : '';
+  if (!id || !agentId || !userId) {
+    return null;
+  }
+  return {
+    id,
+    user_id: userId,
+    agent_id: agentId,
+    agent_name_snapshot: typeof value.agent_name_snapshot === 'string'
+      ? value.agent_name_snapshot.trim()
+      : null,
+    status: typeof value.status === 'string' ? value.status.trim() : null,
+    created_at: typeof value.created_at === 'string' ? value.created_at : undefined,
+    updated_at: typeof value.updated_at === 'string' ? value.updated_at : undefined,
+  };
+};
+
+const resolveSessionContactIdentity = (session: Session | null | undefined): {
+  contactId: string | null;
+  contactAgentId: string | null;
+} => {
+  if (!session) {
+    return { contactId: null, contactAgentId: null };
+  }
+  const runtime = readSessionRuntimeFromMetadata((session as any).metadata);
+  const contactId = typeof runtime?.contactId === 'string' ? runtime.contactId.trim() : '';
+  const contactAgentId = typeof runtime?.contactAgentId === 'string' ? runtime.contactAgentId.trim() : '';
+  return {
+    contactId: contactId.length > 0 ? contactId : null,
+    contactAgentId: contactAgentId.length > 0 ? contactAgentId : null,
+  };
+};
+
 export function createSessionActions({
   set,
   get,
@@ -191,26 +279,109 @@ export function createSessionActions({
         const { userId, projectId } = getSessionParams();
 
         debugLog('🔍 loadSessions 调用 client.getSessions', { userId, projectId, customUserId, customProjectId, options });
-        const rawSessions = await client.getSessions(
-          userId,
-          projectId,
-          { limit: options.limit, offset: options.offset, includeArchiving: true },
-        );
+        const [rawContacts, rawSessions] = await Promise.all([
+          client.getContacts(userId, { limit: 2000, offset: 0 }).catch(() => []),
+          client.getSessions(
+            userId,
+            undefined,
+            { limit: options.limit, offset: options.offset },
+          ),
+        ]);
+        const contacts = (Array.isArray(rawContacts) ? rawContacts : [])
+          .map(normalizeContact)
+          .filter((item): item is MemoryContact => !!item)
+          .filter((item) => {
+            const status = typeof item.status === 'string' ? item.status.toLowerCase() : '';
+            return status === '' || status === 'active';
+          });
+        const contactsById = new Map(contacts.map((item) => [item.id, item]));
+        const contactsByAgentId = new Map(contacts.map((item) => [item.agent_id, item]));
+
         const sessions = Array.isArray(rawSessions)
           ? rawSessions.map(normalizeSession)
           : [];
-        debugLog('🔍 loadSessions 返回结果:', sessions);
+
+        const mappedContactIds = new Set<string>();
+        const mappedContactAgentIds = new Set<string>();
+        const filteredByContacts = sessions.filter((session) => {
+          const status = typeof session.status === 'string'
+            ? session.status.toLowerCase()
+            : '';
+          if (session.archived || status === 'archived' || status === 'archiving') {
+            return false;
+          }
+          const identity = resolveSessionContactIdentity(session);
+          if (identity.contactId && contactsById.has(identity.contactId)) {
+            mappedContactIds.add(identity.contactId);
+            const mappedContact = contactsById.get(identity.contactId);
+            if (mappedContact) {
+              mappedContactAgentIds.add(mappedContact.agent_id);
+            }
+            return true;
+          }
+          if (identity.contactAgentId && contactsByAgentId.has(identity.contactAgentId)) {
+            mappedContactAgentIds.add(identity.contactAgentId);
+            const mappedContact = contactsByAgentId.get(identity.contactAgentId);
+            if (mappedContact) {
+              mappedContactIds.add(mappedContact.id);
+            }
+            return true;
+          }
+          return false;
+        });
+
+        const missingContacts = contacts.filter((contact) => {
+          if (mappedContactIds.has(contact.id)) {
+            return false;
+          }
+          return !mappedContactAgentIds.has(contact.agent_id);
+        });
+
+        const backfilledSessions: Session[] = [];
+        for (const contact of missingContacts) {
+          const metadata = mergeSessionRuntimeIntoMetadata(null, {
+            contactAgentId: contact.agent_id,
+            contactId: contact.id,
+            selectedModelId: null,
+            projectId: null,
+            projectRoot: null,
+            mcpEnabled: true,
+            enabledMcpIds: [],
+          });
+          try {
+            const created = await client.createSession({
+              id: generateId(),
+              title: contact.agent_name_snapshot || '联系人',
+              user_id: userId,
+              metadata,
+            });
+            backfilledSessions.push(normalizeSession(created));
+          } catch (error) {
+            debugLog('🔍 联系人补建会话失败，忽略', {
+              contactId: contact.id,
+              agentId: contact.agent_id,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+
+        const mergedByContact = [
+          ...filteredByContacts,
+          ...backfilledSessions,
+        ];
+        debugLog('🔍 loadSessions 返回结果:', mergedByContact);
 
         const existing = options.append ? (get().sessions || []) : [];
-        const merged = options.append ? [...existing, ...sessions] : sessions;
-        const deduped: Session[] = [];
+        const merged = options.append ? [...existing, ...mergedByContact] : mergedByContact;
+        const dedupedById: Session[] = [];
         const seen = new Set<string>();
         for (const s of merged) {
           if (s && !seen.has(s.id)) {
             seen.add(s.id);
-            deduped.push(s);
+            dedupedById.push(s);
           }
         }
+        const deduped = normalizeContactSessions(dedupedById);
 
         set((state: any) => {
           state.sessions = deduped;
@@ -230,6 +401,10 @@ export function createSessionActions({
             const matched = deduped.find(s => s.id === state.currentSessionId);
             if (matched) {
               state.currentSession = matched;
+            } else {
+              state.currentSessionId = null;
+              state.currentSession = null;
+              state.messages = [];
             }
           }
         });
@@ -266,7 +441,7 @@ export function createSessionActions({
         }
 
         debugLog('🔍 loadSessions 完成');
-        return sessions;
+        return deduped;
       } catch (error) {
         console.error('🔍 loadSessions 错误:', error);
         set((state: any) => {
@@ -290,6 +465,31 @@ export function createSessionActions({
         const stateBeforeCreate = get();
         const selectedModelId = payloadObject.selectedModelId ?? stateBeforeCreate.selectedModelId ?? null;
         const contactAgentId = payloadObject.contactAgentId ?? null;
+        const contactId = payloadObject.contactId ?? null;
+
+        if (contactAgentId && typeof contactAgentId === 'string') {
+          const normalizedContactAgentId = contactAgentId.trim();
+          if (normalizedContactAgentId) {
+            const existingSession = (stateBeforeCreate.sessions || []).find((session: Session) => {
+              const sessionContactAgentId = resolveSessionContactAgentId(session);
+              if (!sessionContactAgentId) {
+                return false;
+              }
+              const status = typeof session.status === 'string'
+                ? session.status.toLowerCase()
+                : '';
+              return (
+                sessionContactAgentId === normalizedContactAgentId
+                && !(session.archived || status === 'archived' || status === 'archiving')
+              );
+            });
+            if (existingSession) {
+              await get().selectSession(existingSession.id);
+              return existingSession.id;
+            }
+          }
+        }
+
         const inheritedAiSelection: SessionAiSelection = {
           selectedModelId,
           selectedAgentId: contactAgentId,
@@ -300,6 +500,7 @@ export function createSessionActions({
         );
         const initialMetadata = mergeSessionRuntimeIntoMetadata(selectionMetadata, {
           contactAgentId,
+          contactId,
           selectedModelId,
           projectId: effectiveProjectId || null,
           projectRoot: payloadObject.projectRoot ?? null,
@@ -403,8 +604,9 @@ export function createSessionActions({
           state.error = null;
         });
 
+        const existingSession = (beforeSelect.sessions || []).find((item: Session) => item.id === sessionId) || null;
         const [session, messages] = await Promise.all([
-          fetchSession(client, sessionId),
+          existingSession ? Promise.resolve(existingSession) : fetchSession(client, sessionId),
           fetchSessionMessages(client, sessionId, { limit: 50, offset: 0 }),
         ]);
         writeSessionMessagesCache(sessionId, messages);

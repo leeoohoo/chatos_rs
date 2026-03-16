@@ -3,6 +3,7 @@ import { Button, Card, Space, Tabs, Tag } from 'antd';
 
 import { useI18n } from '../i18n';
 import { AgentsPage } from './AgentsPage';
+import { ContactMemoriesPage } from './ContactMemoriesPage';
 import { JobConfigsPage } from './JobConfigsPage';
 import { ModelConfigsPage } from './ModelConfigsPage';
 import { SkillsPage } from './SkillsPage';
@@ -86,6 +87,30 @@ export function UserConfigCenterPage({
                 filterUserId={userId}
                 currentUserId={currentUserId}
                 isAdmin={isAdmin}
+              />
+            ),
+          },
+          {
+            key: 'project-memories',
+            label: t('users.projectSummaryTab'),
+            children: (
+              <ContactMemoriesPage
+                filterUserId={userId}
+                currentUserId={currentUserId}
+                isAdmin={isAdmin}
+                mode="project"
+              />
+            ),
+          },
+          {
+            key: 'agent-recalls',
+            label: t('users.agentRecallTab'),
+            children: (
+              <ContactMemoriesPage
+                filterUserId={userId}
+                currentUserId={currentUserId}
+                isAdmin={isAdmin}
+                mode="recall"
               />
             ),
           },

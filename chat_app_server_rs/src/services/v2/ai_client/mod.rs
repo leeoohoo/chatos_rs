@@ -197,10 +197,7 @@ impl AiClient {
         let mut history_messages: Vec<Value> = Vec::new();
         if session_id.is_some() {
             let mapped = self
-                .load_memory_context_messages_for_scope(
-                    session_id.as_deref(),
-                    reasoning_enabled,
-                )
+                .load_memory_context_messages_for_scope(session_id.as_deref(), reasoning_enabled)
                 .await;
             history_messages = ensure_tool_responses(drop_duplicate_tail(mapped, &messages));
         }
