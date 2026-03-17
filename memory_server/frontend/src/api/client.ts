@@ -368,11 +368,12 @@ export const api = {
   async listAgentSessions(
     agentId: string,
     userId?: string,
-    params?: { status?: string; limit?: number; offset?: number },
+    params?: { project_id?: string; status?: string; limit?: number; offset?: number },
   ): Promise<Session[]> {
     const { data } = await client.get(`/agents/${encodeURIComponent(agentId)}/sessions`, {
       params: {
         user_id: userId,
+        project_id: params?.project_id,
         status: params?.status ?? 'active',
         limit: params?.limit ?? 100,
         offset: params?.offset ?? 0,

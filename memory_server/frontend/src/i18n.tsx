@@ -103,7 +103,8 @@ const ZH: Dict = {
   'agents.viewChats': '对话记录',
   'agents.conversationsTitle': '智能体对话记录',
   'agents.noConversations': '暂无对话记录',
-  'agents.sessionHistory': '历史会话',
+  'agents.sessionHistory': '项目会话',
+  'agents.projectSessions': '项目会话',
   'agents.messages': '消息明细',
 
   'sessions.title': '会话列表',
@@ -379,7 +380,8 @@ const EN: Dict = {
   'agents.viewChats': 'Conversations',
   'agents.conversationsTitle': 'Agent Conversations',
   'agents.noConversations': 'No conversation history',
-  'agents.sessionHistory': 'Sessions',
+  'agents.sessionHistory': 'Project Sessions',
+  'agents.projectSessions': 'Project Sessions',
   'agents.messages': 'Messages',
 
   'sessions.title': 'Sessions',

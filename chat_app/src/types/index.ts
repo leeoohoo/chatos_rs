@@ -35,6 +35,10 @@ export interface Message {
 export interface Session {
   id: string;
   title: string;
+  userId?: string | null;
+  user_id?: string | null;
+  projectId?: string | null;
+  project_id?: string | null;
   createdAt: Date;
   updatedAt: Date;
   messageCount: number;

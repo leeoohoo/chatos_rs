@@ -980,6 +980,7 @@ struct ListAgentsQuery {
 #[derive(Debug, Deserialize)]
 struct ListAgentSessionsQuery {
     user_id: Option<String>,
+    project_id: Option<String>,
     status: Option<String>,
     limit: Option<i64>,
     offset: Option<i64>,
@@ -1814,6 +1815,7 @@ async fn list_agent_sessions(
         &state.pool,
         scope_user_id.as_str(),
         agent_id.as_str(),
+        q.project_id.as_deref(),
         status,
         limit,
         offset,

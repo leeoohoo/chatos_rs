@@ -64,6 +64,14 @@ const resolveSessionProjectId = (session: Session | Record<string, any> | null |
   if (!session) {
     return null;
   }
+  const rawProjectId = typeof (session as any).projectId === 'string'
+    ? (session as any).projectId.trim()
+    : (typeof (session as any).project_id === 'string'
+      ? (session as any).project_id.trim()
+      : '');
+  if (rawProjectId) {
+    return rawProjectId;
+  }
   const runtime = readSessionRuntimeFromMetadata((session as any).metadata);
   const runtimeProjectId = typeof runtime?.projectId === 'string'
     ? runtime.projectId.trim()
@@ -71,12 +79,12 @@ const resolveSessionProjectId = (session: Session | Record<string, any> | null |
   if (runtimeProjectId) {
     return runtimeProjectId;
   }
-  const rawProjectId = typeof (session as any).projectId === 'string'
-    ? (session as any).projectId.trim()
-    : (typeof (session as any).project_id === 'string'
-      ? (session as any).project_id.trim()
-      : '');
-  return rawProjectId || null;
+  return null;
+};
+
+const normalizeProjectScopeId = (projectId: string | null | undefined): string => {
+  const trimmed = typeof projectId === 'string' ? projectId.trim() : '';
+  return trimmed.length > 0 ? trimmed : '0';
 };
 
 const resolveSessionTimestamp = (session: Session | Record<string, any> | null | undefined): number => {
@@ -128,11 +136,8 @@ const isSessionMatchedContactAndProject = (
     return false;
   }
 
-  const normalizedProjectId = typeof projectId === 'string' ? projectId.trim() : '';
-  if (!normalizedProjectId) {
-    return true;
-  }
-  const sessionProjectId = resolveSessionProjectId(session);
+  const normalizedProjectId = normalizeProjectScopeId(projectId);
+  const sessionProjectId = normalizeProjectScopeId(resolveSessionProjectId(session));
   return sessionProjectId === normalizedProjectId;
 };
 
@@ -365,12 +370,12 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
   );
 
   const resolveContactProjectKey = useCallback((contact: ContactItem): string => {
-    const projectId = currentProject?.id?.trim() || '';
+    const projectId = normalizeProjectScopeId(currentProject?.id || null);
     return `${contact.id}::${projectId}`;
   }, [currentProject?.id]);
 
   const findExistingSessionIdInStore = useCallback((contact: ContactItem): string | null => {
-    const projectId = currentProject?.id?.trim() || null;
+    const projectId = normalizeProjectScopeId(currentProject?.id || null);
     const candidates = (sessions || []).filter((session: Session) =>
       isSessionMatchedContactAndProject(session, contact, projectId),
     );
@@ -383,13 +388,13 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
   }, [currentProject?.id, sessions]);
 
   const findExistingSessionIdFromApi = useCallback(async (contact: ContactItem): Promise<string | null> => {
-    const projectId = currentProject?.id?.trim() || null;
+    const projectId = normalizeProjectScopeId(currentProject?.id || null);
     const pageSize = 200;
     const maxPages = 8;
     const candidates: any[] = [];
 
     for (let page = 0; page < maxPages; page += 1) {
-      const rows = await apiClient.getSessions(undefined, undefined, {
+      const rows = await apiClient.getSessions(undefined, projectId, {
         limit: pageSize,
         offset: page * pageSize,
       });
@@ -446,12 +451,15 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
 
     const currentContactId = resolveContactIdFromSession(currentSession);
     const currentContactAgentId = resolveContactAgentIdFromSession(currentSession);
+    const currentProjectId = normalizeProjectScopeId(currentProject?.id || null);
+    const currentSessionProjectId = normalizeProjectScopeId(resolveSessionProjectId(currentSession));
     if (
       currentSession?.id
       && (
         (currentContactId && currentContactId === contact.id)
         || (currentContactAgentId && currentContactAgentId === contact.agentId)
       )
+      && currentSessionProjectId === currentProjectId
     ) {
       contactSessionCacheRef.current[cacheKey] = currentSession.id;
       return currentSession.id;
@@ -478,7 +486,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
       contactAgentId: contact.agentId,
       contactId: contact.id,
       selectedModelId: null,
-      projectId: currentProject?.id || null,
+      projectId: normalizeProjectScopeId(currentProject?.id || null),
       projectRoot: currentProject?.rootPath || null,
       mcpEnabled: true,
       enabledMcpIds: [],
@@ -512,7 +520,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
           contactAgentId: contact.agentId,
           contactId: contact.id,
           selectedModelId: null,
-          projectId: currentProject?.id || null,
+          projectId: normalizeProjectScopeId(currentProject?.id || null),
           projectRoot: currentProject?.rootPath || null,
           mcpEnabled: true,
           enabledMcpIds: [],
@@ -579,7 +587,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
           contactAgentId: selectedAgent.id,
           contactId: createdContact.id || null,
           selectedModelId: null,
-          projectId: currentProject?.id || null,
+          projectId: normalizeProjectScopeId(currentProject?.id || null),
           projectRoot: currentProject?.rootPath || null,
           mcpEnabled: true,
           enabledMcpIds: [],
@@ -615,11 +623,15 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
         }
         if (currentSession?.id !== ensuredSessionId) {
           await selectSession(ensuredSessionId);
+        } else {
+          setActivePanel('chat');
         }
         return ensuredSessionId;
       }
       if (currentSession?.id !== sessionId) {
         await selectSession(sessionId);
+      } else {
+        setActivePanel('chat');
       }
       return sessionId;
     } catch (error) {

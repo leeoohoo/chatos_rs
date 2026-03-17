@@ -97,38 +97,54 @@ const normalizeTurnId = (value: unknown): string => (
   typeof value === 'string' ? value.trim() : ''
 );
 
-const resolveSessionContactAgentId = (session: Session | null | undefined): string | null => {
-  if (!session) {
-    return null;
-  }
-  const runtime = readSessionRuntimeFromMetadata((session as any).metadata);
-  if (!runtime?.contactAgentId) {
-    return null;
-  }
-  const trimmed = runtime.contactAgentId.trim();
-  return trimmed.length > 0 ? trimmed : null;
-};
-
 const resolveSessionTimestamp = (session: Session): number => {
   const updated = new Date((session as any).updatedAt ?? (session as any).createdAt ?? Date.now());
   const ts = updated.getTime();
   return Number.isFinite(ts) ? ts : 0;
 };
 
+const normalizeProjectScopeId = (projectId: string | null | undefined): string => {
+  const trimmed = typeof projectId === 'string' ? projectId.trim() : '';
+  return trimmed.length > 0 ? trimmed : '0';
+};
+
+const resolveSessionProjectScopeId = (session: Session | null | undefined): string => {
+  if (!session) {
+    return '0';
+  }
+  const rawProjectId = typeof (session as any).projectId === 'string'
+    ? (session as any).projectId.trim()
+    : (typeof (session as any).project_id === 'string'
+      ? (session as any).project_id.trim()
+      : '');
+  if (rawProjectId.length > 0) {
+    return normalizeProjectScopeId(rawProjectId);
+  }
+  const runtime = readSessionRuntimeFromMetadata((session as any).metadata);
+  const runtimeProjectId = typeof runtime?.projectId === 'string'
+    ? runtime.projectId.trim()
+    : '';
+  if (runtimeProjectId.length > 0) {
+    return runtimeProjectId;
+  }
+  return '0';
+};
+
 const normalizeContactSessions = (sessions: Session[]): Session[] => {
-  const byContact = new Map<string, Session>();
+  const byContactProject = new Map<string, Session>();
   for (const session of sessions) {
     const identity = resolveSessionContactIdentity(session);
     const contactKey = identity.contactId || identity.contactAgentId;
     if (!contactKey) {
       continue;
     }
-    const existing = byContact.get(contactKey);
+    const key = `${contactKey}::${resolveSessionProjectScopeId(session)}`;
+    const existing = byContactProject.get(key);
     if (!existing || resolveSessionTimestamp(session) >= resolveSessionTimestamp(existing)) {
-      byContact.set(contactKey, session);
+      byContactProject.set(key, session);
     }
   }
-  return Array.from(byContact.values()).sort(
+  return Array.from(byContactProject.values()).sort(
     (a, b) => resolveSessionTimestamp(b) - resolveSessionTimestamp(a),
   );
 };
@@ -343,7 +359,7 @@ export function createSessionActions({
             contactAgentId: contact.agent_id,
             contactId: contact.id,
             selectedModelId: null,
-            projectId: null,
+            projectId: '0',
             projectRoot: null,
             mcpEnabled: true,
             enabledMcpIds: [],
@@ -353,6 +369,7 @@ export function createSessionActions({
               id: generateId(),
               title: contact.agent_name_snapshot || '联系人',
               user_id: userId,
+              project_id: '0',
               metadata,
             });
             backfilledSessions.push(normalizeSession(created));
@@ -461,32 +478,107 @@ export function createSessionActions({
           : (payload || {});
         const title = (payloadObject.title || 'New Chat').trim() || 'New Chat';
         const { userId, projectId: fallbackProjectId } = getSessionParams();
-        const effectiveProjectId = payloadObject.projectId ?? fallbackProjectId;
+        const requestedProjectId = typeof payloadObject.projectId === 'string'
+          ? payloadObject.projectId.trim()
+          : '';
+        const fallbackScopedProjectId = typeof fallbackProjectId === 'string'
+          ? fallbackProjectId.trim()
+          : '';
+        const effectiveProjectId = normalizeProjectScopeId(
+          requestedProjectId || fallbackScopedProjectId || null,
+        );
         const stateBeforeCreate = get();
         const selectedModelId = payloadObject.selectedModelId ?? stateBeforeCreate.selectedModelId ?? null;
-        const contactAgentId = payloadObject.contactAgentId ?? null;
-        const contactId = payloadObject.contactId ?? null;
+        const contactAgentId = typeof payloadObject.contactAgentId === 'string'
+          ? (payloadObject.contactAgentId.trim() || null)
+          : null;
+        const contactId = typeof payloadObject.contactId === 'string'
+          ? (payloadObject.contactId.trim() || null)
+          : null;
+        const effectiveProjectRoot = effectiveProjectId === '0'
+          ? null
+          : (typeof payloadObject.projectRoot === 'string'
+            ? (payloadObject.projectRoot.trim() || null)
+            : null);
 
-        if (contactAgentId && typeof contactAgentId === 'string') {
-          const normalizedContactAgentId = contactAgentId.trim();
-          if (normalizedContactAgentId) {
-            const existingSession = (stateBeforeCreate.sessions || []).find((session: Session) => {
-              const sessionContactAgentId = resolveSessionContactAgentId(session);
-              if (!sessionContactAgentId) {
-                return false;
-              }
-              const status = typeof session.status === 'string'
-                ? session.status.toLowerCase()
-                : '';
-              return (
-                sessionContactAgentId === normalizedContactAgentId
-                && !(session.archived || status === 'archived' || status === 'archiving')
-              );
-            });
-            if (existingSession) {
-              await get().selectSession(existingSession.id);
-              return existingSession.id;
+        if (contactId || contactAgentId) {
+          const existingSession = (stateBeforeCreate.sessions || []).find((session: Session) => {
+            const status = typeof session.status === 'string'
+              ? session.status.toLowerCase()
+              : '';
+            if (session.archived || status === 'archived' || status === 'archiving') {
+              return false;
             }
+
+            const identity = resolveSessionContactIdentity(session);
+            let sameContact = false;
+            if (contactId) {
+              sameContact = identity.contactId === contactId;
+              if (!sameContact && contactAgentId) {
+                sameContact = identity.contactAgentId === contactAgentId;
+              }
+            } else if (contactAgentId) {
+              sameContact = identity.contactAgentId === contactAgentId;
+            }
+
+            if (!sameContact) {
+              return false;
+            }
+            return resolveSessionProjectScopeId(session) === effectiveProjectId;
+          });
+          if (existingSession) {
+            await get().selectSession(existingSession.id);
+            return existingSession.id;
+          }
+
+          try {
+            const remoteRows = await client.getSessions(
+              userId,
+              effectiveProjectId,
+              { limit: 200, offset: 0 },
+            );
+            const remoteMatched = (Array.isArray(remoteRows) ? remoteRows : [])
+              .map(normalizeSession)
+              .filter((session: Session) => {
+                const status = typeof session.status === 'string'
+                  ? session.status.toLowerCase()
+                  : '';
+                if (session.archived || status === 'archived' || status === 'archiving') {
+                  return false;
+                }
+
+                const identity = resolveSessionContactIdentity(session);
+                let sameContact = false;
+                if (contactId) {
+                  sameContact = identity.contactId === contactId;
+                  if (!sameContact && contactAgentId) {
+                    sameContact = identity.contactAgentId === contactAgentId;
+                  }
+                } else if (contactAgentId) {
+                  sameContact = identity.contactAgentId === contactAgentId;
+                }
+                if (!sameContact) {
+                  return false;
+                }
+
+                return resolveSessionProjectScopeId(session) === effectiveProjectId;
+              })
+              .sort((left: Session, right: Session) =>
+                resolveSessionTimestamp(right) - resolveSessionTimestamp(left),
+              );
+
+            const remoteExisting = remoteMatched[0];
+            if (remoteExisting?.id) {
+              await get().selectSession(remoteExisting.id);
+              return remoteExisting.id;
+            }
+          } catch (error) {
+            debugLog('🔍 createSession 远端查重失败，继续创建', {
+              contactId,
+              contactAgentId,
+              projectId: effectiveProjectId,
+              error: error instanceof Error ? error.message : String(error),
+            });
           }
         }
 
@@ -502,8 +594,8 @@ export function createSessionActions({
           contactAgentId,
           contactId,
           selectedModelId,
-          projectId: effectiveProjectId || null,
-          projectRoot: payloadObject.projectRoot ?? null,
+          projectId: effectiveProjectId,
+          projectRoot: effectiveProjectRoot,
           mcpEnabled: payloadObject.mcpEnabled ?? true,
           enabledMcpIds: payloadObject.enabledMcpIds ?? [],
         });
@@ -527,10 +619,8 @@ export function createSessionActions({
           id: generateId(),
           title,
           user_id: userId,
+          project_id: effectiveProjectId,
         };
-        if (effectiveProjectId) {
-          sessionData.project_id = effectiveProjectId;
-        }
         if (Object.keys(initialMetadata).length > 0) {
           sessionData.metadata = initialMetadata;
         }
@@ -568,7 +658,7 @@ export function createSessionActions({
         });
 
         sessionMessagesPageCache.delete(formattedSession.id);
-        localStorage.setItem(`lastSessionId_${userId}_${effectiveProjectId || ''}`, formattedSession.id);
+        localStorage.setItem(`lastSessionId_${userId}_${effectiveProjectId}`, formattedSession.id);
         debugLog('🔍 保存新创建的会话ID到 localStorage:', formattedSession.id);
 
         return formattedSession.id;

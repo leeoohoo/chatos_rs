@@ -48,7 +48,7 @@ fn build_servers_from_configs(
     let mut http_servers = Vec::new();
     let mut stdio_servers = Vec::new();
     let mut builtin_servers = Vec::new();
-    let workspace_dir_fallback = workspace_dir
+    let workspace_dir_value = workspace_dir
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
 
@@ -63,9 +63,21 @@ fn build_servers_from_configs(
             if matches!(kind, BuiltinMcpKind::AgentBuilder) {
                 continue;
             }
-            let root = workspace_dir_fallback
-                .clone()
-                .unwrap_or_else(|| resolve_workspace_dir(None));
+            let requires_workspace = matches!(
+                kind,
+                BuiltinMcpKind::CodeMaintainerRead
+                    | BuiltinMcpKind::CodeMaintainerWrite
+                    | BuiltinMcpKind::TerminalController
+            );
+            let root = match workspace_dir_value.clone() {
+                Some(value) => value,
+                None if requires_workspace => {
+                    // For tools that must be bound to a project root, skip loading
+                    // when the composer has no selected project.
+                    continue;
+                }
+                None => resolve_workspace_dir(None),
+            };
             let allow_writes = !matches!(kind, BuiltinMcpKind::CodeMaintainerRead);
             builtin_servers.push(McpBuiltinServer {
                 name: server_name,
@@ -93,7 +105,7 @@ fn build_servers_from_configs(
                 .as_deref()
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty())
-                .or_else(|| workspace_dir_fallback.clone());
+                .or_else(|| workspace_dir_value.clone());
             let server = McpStdioServer {
                 name: server_name,
                 command: cfg.command,

@@ -58,6 +58,25 @@ interface ContactAgentRecall {
   updatedAt: string;
 }
 
+const normalizeProjectScopeId = (projectId: string | null | undefined): string => {
+  const trimmed = typeof projectId === 'string' ? projectId.trim() : '';
+  return trimmed.length > 0 ? trimmed : '0';
+};
+
+const resolveSessionProjectScopeId = (session: Record<string, any> | null | undefined): string => {
+  if (!session) {
+    return '0';
+  }
+  const rawProjectId = typeof session.projectId === 'string'
+    ? session.projectId.trim()
+    : (typeof session.project_id === 'string' ? session.project_id.trim() : '');
+  if (rawProjectId.length > 0) {
+    return normalizeProjectScopeId(rawProjectId);
+  }
+  const runtime = readSessionRuntimeFromMetadata(session.metadata);
+  return normalizeProjectScopeId(runtime?.projectId ?? null);
+};
+
 export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   className,
   onMessageSend,
@@ -75,7 +94,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     hasMoreMessages,
     error,
     loadProjects,
-    // selectSession,
+    createSession,
+    selectSession,
     loadMoreMessages,
     toggleTurnProcess,
     sendMessage,
@@ -111,6 +131,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     hasMoreMessages: state.hasMoreMessages,
     error: state.error,
     loadProjects: state.loadProjects,
+    createSession: state.createSession,
+    selectSession: state.selectSession,
     loadMoreMessages: state.loadMoreMessages,
     toggleTurnProcess: state.toggleTurnProcess,
     sendMessage: state.sendMessage,
@@ -189,6 +211,26 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     const matched = (contacts || []).find((item: any) => item?.agentId === contactAgentId);
     return typeof matched?.id === 'string' ? matched.id : '';
   }, [contacts, currentSession]);
+  const currentContactAgentId = useMemo(() => {
+    if (!currentSession) {
+      return '';
+    }
+    const runtime = readSessionRuntimeFromMetadata((currentSession as any).metadata);
+    const directContactAgentId = typeof runtime?.contactAgentId === 'string'
+      ? runtime.contactAgentId.trim()
+      : '';
+    if (directContactAgentId) {
+      return directContactAgentId;
+    }
+    const directContactId = typeof runtime?.contactId === 'string'
+      ? runtime.contactId.trim()
+      : '';
+    if (!directContactId) {
+      return '';
+    }
+    const matched = (contacts || []).find((item: any) => item?.id === directContactId);
+    return typeof matched?.agentId === 'string' ? matched.agentId : '';
+  }, [contacts, currentSession]);
   const chatIsLoading = currentChatState?.isLoading ?? false;
   const chatIsStreaming = currentChatState?.isStreaming ?? false;
   const chatIsStopping = currentChatState?.isStopping ?? false;
@@ -229,24 +271,29 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [composerMcpEnabled, setComposerMcpEnabled] = useState(true);
   const [composerEnabledMcpIds, setComposerEnabledMcpIds] = useState<string[]>([]);
   const currentProjectIdForMemory = useMemo(() => {
-    const fromComposer = typeof composerProjectId === 'string' ? composerProjectId.trim() : '';
-    if (fromComposer) {
+    if (!currentSession) {
+      return '';
+    }
+    const fromComposer = normalizeProjectScopeId(composerProjectId);
+    if (fromComposer !== '0') {
       return fromComposer;
     }
-    const runtime = readSessionRuntimeFromMetadata(currentSession?.metadata);
-    const fromRuntime = typeof runtime?.projectId === 'string' ? runtime.projectId.trim() : '';
-    if (fromRuntime) {
-      return fromRuntime;
+    const fromSession = resolveSessionProjectScopeId(currentSession as any);
+    if (fromSession !== '0') {
+      return fromSession;
     }
-    return currentProject?.id || '';
-  }, [composerProjectId, currentProject?.id, currentSession?.metadata]);
+    return '0';
+  }, [composerProjectId, currentSession]);
   const currentProjectNameForMemory = useMemo(() => {
     if (!currentProjectIdForMemory) {
-      return currentProject?.name || '';
+      return '';
+    }
+    if (currentProjectIdForMemory === '0') {
+      return '未选择项目';
     }
     const matched = (projects || []).find((item) => item.id === currentProjectIdForMemory);
-    return matched?.name || currentProject?.name || '';
-  }, [currentProject?.name, currentProjectIdForMemory, projects]);
+    return matched?.name || '';
+  }, [currentProjectIdForMemory, projects]);
   const currentSessionRef = useRef<string | null>(null);
   const lastHydratedChatSessionRef = useRef<string | null>(null);
   const currentTurnLoadSeqRef = useRef(0);
@@ -312,10 +359,11 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
   useEffect(() => {
     const runtime = readSessionRuntimeFromMetadata(currentSession?.metadata);
-    setComposerProjectId(runtime?.projectId ?? currentProject?.id ?? null);
+    const sessionProjectId = resolveSessionProjectScopeId(currentSession as any);
+    setComposerProjectId(sessionProjectId !== '0' ? sessionProjectId : null);
     setComposerMcpEnabled(runtime?.mcpEnabled ?? true);
     setComposerEnabledMcpIds(runtime?.enabledMcpIds ?? []);
-  }, [currentProject?.id, currentSession?.id, currentSession?.metadata]);
+  }, [currentSession?.id, currentSession?.metadata]);
 
   useEffect(() => {
     if (!currentSessionIdForUiPrompts || activePanel !== 'chat') {
@@ -859,6 +907,65 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     }
   }, [onMessageSend, sendMessage]);
 
+  const handleComposerProjectChange = useCallback((projectId: string | null) => {
+    const normalizedProjectId = typeof projectId === 'string' ? projectId.trim() : '';
+    const nextComposerProjectId = normalizedProjectId.length > 0 ? normalizedProjectId : null;
+    setComposerProjectId(nextComposerProjectId);
+
+    if (!currentSession) {
+      return;
+    }
+
+    const contactAgentId = currentContactAgentId.trim();
+    const contactId = currentContactId.trim();
+    if (!contactAgentId && !contactId) {
+      return;
+    }
+
+    const currentScopeProjectId = resolveSessionProjectScopeId(currentSession as any);
+    const targetScopeProjectId = normalizeProjectScopeId(nextComposerProjectId);
+    if (currentScopeProjectId === targetScopeProjectId) {
+      return;
+    }
+
+    const targetProject = nextComposerProjectId
+      ? (projects || []).find((item) => item.id === nextComposerProjectId) || null
+      : null;
+
+    void createSession({
+      title: currentContactName || currentSession.title || '联系人',
+      contactAgentId: contactAgentId || null,
+      contactId: contactId || null,
+      selectedModelId: selectedModelId || null,
+      projectId: targetScopeProjectId,
+      projectRoot: targetScopeProjectId === '0' ? null : (targetProject?.rootPath || null),
+      mcpEnabled: composerMcpEnabled,
+      enabledMcpIds: composerEnabledMcpIds,
+    })
+      .then((sessionId) => {
+        if (!sessionId) {
+          return;
+        }
+        void selectSession(sessionId).catch((error) => {
+          console.error('Failed to switch session for project:', error);
+        });
+      })
+      .catch((error) => {
+        console.error('Failed to create/select session for project switch:', error);
+      });
+  }, [
+    composerEnabledMcpIds,
+    composerMcpEnabled,
+    createSession,
+    currentContactAgentId,
+    currentContactId,
+    currentContactName,
+    currentSession,
+    projects,
+    selectSession,
+    selectedModelId,
+  ]);
+
   const handleLoadMore = useCallback(() => {
     if (currentSession) {
       loadMoreMessages(currentSession.id);
@@ -1078,7 +1185,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                       availableProjects={projects}
                       currentProject={currentProject}
                       selectedProjectId={composerProjectId}
-                      onProjectChange={setComposerProjectId}
+                      onProjectChange={handleComposerProjectChange}
                       mcpEnabled={composerMcpEnabled}
                       enabledMcpIds={composerEnabledMcpIds}
                       onMcpEnabledChange={setComposerMcpEnabled}

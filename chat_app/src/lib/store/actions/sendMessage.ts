@@ -48,7 +48,6 @@ export function createSendMessageHandler({
     const {
       currentSessionId,
       currentSession,
-      currentProject,
       selectedModelId,
       aiModelConfigs,
       chatConfig,
@@ -77,20 +76,22 @@ export function createSendMessageHandler({
         : '')
       || sessionRuntime?.contactAgentId
       || null;
-    const effectiveProjectId =
-      (typeof runtimeOptions?.projectId === 'string'
-        ? runtimeOptions.projectId.trim()
-        : '')
-      || sessionRuntime?.projectId
-      || currentProject?.id
-      || null;
-    const effectiveProjectRoot =
-      (typeof runtimeOptions?.projectRoot === 'string'
-        ? runtimeOptions.projectRoot.trim()
-        : '')
-      || sessionRuntime?.projectRoot
-      || currentProject?.rootPath
-      || null;
+    const requestedProjectId = typeof runtimeOptions?.projectId === 'string'
+      ? runtimeOptions.projectId.trim()
+      : '';
+    const sessionProjectId = typeof sessionRuntime?.projectId === 'string'
+      ? sessionRuntime.projectId.trim()
+      : '';
+    const effectiveProjectId = requestedProjectId || sessionProjectId || '0';
+    const requestedProjectRoot = typeof runtimeOptions?.projectRoot === 'string'
+      ? runtimeOptions.projectRoot.trim()
+      : '';
+    const sessionProjectRoot = typeof sessionRuntime?.projectRoot === 'string'
+      ? sessionRuntime.projectRoot.trim()
+      : '';
+    const effectiveProjectRoot = effectiveProjectId === '0'
+      ? null
+      : (requestedProjectRoot || sessionProjectRoot || null);
     const effectiveMcpEnabled = typeof runtimeOptions?.mcpEnabled === 'boolean'
       ? runtimeOptions.mcpEnabled
       : (sessionRuntime?.mcpEnabled ?? true);

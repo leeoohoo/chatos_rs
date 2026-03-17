@@ -15,6 +15,12 @@ import {
 } from './inputArea/fileUtils';
 
 const AGENT_BUILDER_MCP_ID = 'builtin_agent_builder';
+const PROJECT_REQUIRED_MCP_IDS = new Set([
+  'builtin_code_maintainer',
+  'builtin_code_maintainer_read',
+  'builtin_code_maintainer_write',
+  'builtin_terminal_controller',
+]);
 
 interface SelectableMcpConfig {
   id: string;
@@ -47,7 +53,6 @@ export const InputArea: React.FC<InputAreaProps> = ({
   availableModels = [],
   onModelChange,
   availableProjects = [],
-  currentProject = null,
   selectedProjectId = null,
   onProjectChange,
   mcpEnabled = true,
@@ -101,11 +106,12 @@ export const InputArea: React.FC<InputAreaProps> = ({
   }, [normalizePath]);
 
   const selectedRuntimeProject = useMemo(() => {
-    if (selectedProjectId) {
-      return (availableProjects || []).find((p: any) => p.id === selectedProjectId) || null;
+    if (!selectedProjectId) {
+      return null;
     }
-    return currentProject || null;
-  }, [availableProjects, currentProject, selectedProjectId]);
+    return (availableProjects || []).find((p: any) => p.id === selectedProjectId) || null;
+  }, [availableProjects, selectedProjectId]);
+  const hasRuntimeProject = Boolean(selectedRuntimeProject?.id && selectedRuntimeProject?.rootPath);
   const selectedModel = useMemo(
     () => (selectedModelId ? (availableModels || []).find(m => (m as any).id === selectedModelId) : null),
     [availableModels, selectedModelId]
@@ -119,18 +125,32 @@ export const InputArea: React.FC<InputAreaProps> = ({
     () => availableMcpConfigs.map((item) => item.id),
     [availableMcpConfigs],
   );
-  const availableMcpIdSet = useMemo(
-    () => new Set(availableMcpIds),
-    [availableMcpIds],
+  const selectableMcpIds = useMemo(
+    () => availableMcpIds.filter((id) => hasRuntimeProject || !PROJECT_REQUIRED_MCP_IDS.has(id)),
+    [availableMcpIds, hasRuntimeProject],
+  );
+  const selectableMcpIdSet = useMemo(
+    () => new Set(selectableMcpIds),
+    [selectableMcpIds],
   );
   const sanitizedEnabledMcpIds = useMemo(() => {
-    if (enabledMcpIds.length === 0 || availableMcpIds.length === 0) {
+    if (availableMcpIds.length === 0) {
       return enabledMcpIds;
     }
-    return enabledMcpIds.filter((id) => availableMcpIdSet.has(id));
-  }, [availableMcpIdSet, availableMcpIds.length, enabledMcpIds]);
-  const isAllMcpSelected = sanitizedEnabledMcpIds.length === 0;
-  const selectedMcpCount = isAllMcpSelected ? availableMcpIds.length : sanitizedEnabledMcpIds.length;
+    if (enabledMcpIds.length === 0) {
+      return hasRuntimeProject ? [] : [...selectableMcpIds];
+    }
+    return enabledMcpIds.filter((id) => selectableMcpIdSet.has(id));
+  }, [
+    availableMcpIds.length,
+    enabledMcpIds,
+    hasRuntimeProject,
+    selectableMcpIdSet,
+    selectableMcpIds,
+  ]);
+  const isAllMcpSelected = enabledMcpIds.length === 0
+    || (selectableMcpIds.length > 0 && sanitizedEnabledMcpIds.length === selectableMcpIds.length);
+  const selectedMcpCount = isAllMcpSelected ? selectableMcpIds.length : sanitizedEnabledMcpIds.length;
   const builtinMcpConfigs = useMemo(
     () => availableMcpConfigs.filter((item) => item.builtin),
     [availableMcpConfigs],
@@ -413,14 +433,21 @@ export const InputArea: React.FC<InputAreaProps> = ({
     if (!onEnabledMcpIdsChange) {
       return;
     }
-    if (enabledMcpIds.length === 0 || availableMcpIds.length === 0) {
+    if (availableMcpIds.length === 0) {
       return;
     }
-    if (sanitizedEnabledMcpIds.length === enabledMcpIds.length) {
+    const sameLength = enabledMcpIds.length === sanitizedEnabledMcpIds.length;
+    const sameValues = sameLength && enabledMcpIds.every((id, index) => id === sanitizedEnabledMcpIds[index]);
+    if (sameValues) {
       return;
     }
     onEnabledMcpIdsChange(sanitizedEnabledMcpIds);
-  }, [availableMcpIds.length, enabledMcpIds, onEnabledMcpIdsChange, sanitizedEnabledMcpIds]);
+  }, [
+    availableMcpIds.length,
+    enabledMcpIds,
+    onEnabledMcpIdsChange,
+    sanitizedEnabledMcpIds,
+  ]);
 
   const handleToggleMcpPicker = useCallback(() => {
     if (disabled || isStreaming || isStopping) return;
@@ -439,28 +466,32 @@ export const InputArea: React.FC<InputAreaProps> = ({
       }
       uniqueIds.push(trimmed);
     }
-    if (uniqueIds.length === availableMcpIds.length) {
+    if (hasRuntimeProject && uniqueIds.length === selectableMcpIds.length) {
       onEnabledMcpIdsChange([]);
       return;
     }
     onEnabledMcpIdsChange(uniqueIds);
-  }, [availableMcpIds.length, onEnabledMcpIdsChange]);
+  }, [hasRuntimeProject, onEnabledMcpIdsChange, selectableMcpIds.length]);
 
   const handleSelectAllMcp = useCallback(() => {
     if (!onEnabledMcpIdsChange) {
       return;
     }
-    onEnabledMcpIdsChange([]);
-  }, [onEnabledMcpIdsChange]);
+    if (hasRuntimeProject) {
+      onEnabledMcpIdsChange([]);
+      return;
+    }
+    onEnabledMcpIdsChange([...selectableMcpIds]);
+  }, [hasRuntimeProject, onEnabledMcpIdsChange, selectableMcpIds]);
 
   const handleToggleMcpSelection = useCallback((mcpId: string) => {
     if (!onEnabledMcpIdsChange) {
       return;
     }
-    if (!availableMcpIdSet.has(mcpId)) {
+    if (!selectableMcpIdSet.has(mcpId)) {
       return;
     }
-    const baseSelected = isAllMcpSelected ? [...availableMcpIds] : [...sanitizedEnabledMcpIds];
+    const baseSelected = isAllMcpSelected ? [...selectableMcpIds] : [...sanitizedEnabledMcpIds];
     const exists = baseSelected.includes(mcpId);
     const nextSelected = exists
       ? baseSelected.filter((id) => id !== mcpId)
@@ -473,8 +504,8 @@ export const InputArea: React.FC<InputAreaProps> = ({
     applySelectedMcpIds(nextSelected);
   }, [
     applySelectedMcpIds,
-    availableMcpIdSet,
-    availableMcpIds,
+    selectableMcpIdSet,
+    selectableMcpIds,
     isAllMcpSelected,
     onEnabledMcpIdsChange,
     onMcpEnabledChange,
@@ -779,11 +810,16 @@ export const InputArea: React.FC<InputAreaProps> = ({
       return;
     }
 
+    const runtimeProjectId = selectedRuntimeProject?.id?.trim() || '0';
+    const runtimeProjectRoot = runtimeProjectId === '0'
+      ? null
+      : (selectedRuntimeProject?.rootPath || null);
+
     onSend(trimmedMessage, attachments, {
       mcpEnabled,
       enabledMcpIds: sanitizedEnabledMcpIds,
-      projectId: selectedRuntimeProject?.id || null,
-      projectRoot: selectedRuntimeProject?.rootPath || null,
+      projectId: runtimeProjectId,
+      projectRoot: runtimeProjectRoot,
     });
     setMessage('');
     setAttachments([]);
@@ -1057,7 +1093,7 @@ export const InputArea: React.FC<InputAreaProps> = ({
             )}
             title="发送时透传 project_root"
           >
-            <option value="">当前项目</option>
+            <option value="">请选择项目</option>
             {availableProjects.map((project: any) => (
               <option key={project.id} value={project.id}>
                 {project.name}
@@ -1106,8 +1142,8 @@ export const InputArea: React.FC<InputAreaProps> = ({
                   <div className="text-[11px] text-muted-foreground">
                     {mcpEnabled
                       ? (isAllMcpSelected
-                        ? `已选全部 (${availableMcpIds.length || 0})`
-                        : `已选 ${selectedMcpCount}/${availableMcpIds.length || 0}`)
+                        ? `已选全部 (${selectableMcpIds.length || 0})`
+                        : `已选 ${selectedMcpCount}/${selectableMcpIds.length || 0}`)
                       : 'MCP 总开关已关闭'}
                   </div>
                 </div>
@@ -1151,21 +1187,34 @@ export const InputArea: React.FC<InputAreaProps> = ({
                           内置 MCP
                         </div>
                         {builtinMcpConfigs.map((item) => {
-                          const checked = isAllMcpSelected || sanitizedEnabledMcpIds.includes(item.id);
+                          const projectDisabled = !hasRuntimeProject && PROJECT_REQUIRED_MCP_IDS.has(item.id);
+                          const checked = !projectDisabled && (isAllMcpSelected || sanitizedEnabledMcpIds.includes(item.id));
                           return (
-                            <label key={item.id} className="w-full px-3 py-1.5 text-sm flex items-center gap-2 hover:bg-accent">
+                            <label
+                              key={item.id}
+                              className={cn(
+                                'w-full px-3 py-1.5 text-sm flex items-center gap-2',
+                                projectDisabled ? 'opacity-50 cursor-not-allowed' : 'hover:bg-accent',
+                              )}
+                            >
                               <input
                                 type="checkbox"
                                 checked={checked}
                                 onChange={() => {
+                                  if (projectDisabled) {
+                                    return;
+                                  }
                                   if (!mcpEnabled) {
                                     onMcpEnabledChange?.(true);
                                   }
                                   handleToggleMcpSelection(item.id);
                                 }}
-                                disabled={disabled || isStreaming || isStopping}
+                                disabled={disabled || isStreaming || isStopping || projectDisabled}
                               />
                               <span className="truncate" title={item.displayName}>{item.displayName}</span>
+                              {projectDisabled && (
+                                <span className="text-[11px] text-muted-foreground">需选择项目</span>
+                              )}
                             </label>
                           );
                         })}

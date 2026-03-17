@@ -69,6 +69,35 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
   const [conversationSessionId, setConversationSessionId] = useState<string | null>(null);
   const [conversationMessages, setConversationMessages] = useState<Message[]>([]);
   const [conversationMessagesLoading, setConversationMessagesLoading] = useState(false);
+  const groupedConversationSessions = useMemo(() => {
+    const latestByProject = new Map<string, Session>();
+    for (const session of conversationSessions) {
+      const rawProjectId = typeof session.project_id === 'string'
+        ? session.project_id.trim()
+        : '';
+      const projectId = rawProjectId || '0';
+      const existing = latestByProject.get(projectId);
+      if (!existing) {
+        latestByProject.set(projectId, session);
+        continue;
+      }
+      const existingTs = new Date(existing.updated_at).getTime();
+      const currentTs = new Date(session.updated_at).getTime();
+      if (Number.isNaN(existingTs) || currentTs > existingTs) {
+        latestByProject.set(projectId, session);
+      }
+    }
+    return Array.from(latestByProject.entries())
+      .map(([projectId, session]) => ({
+        projectId,
+        session,
+      }))
+      .sort((left, right) => {
+        const leftTs = new Date(left.session.updated_at || 0).getTime();
+        const rightTs = new Date(right.session.updated_at || 0).getTime();
+        return rightTs - leftTs;
+      });
+  }, [conversationSessions]);
 
   const scopeUserId = useMemo(() => {
     if (!isAdmin) {
@@ -430,34 +459,43 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
           <Empty description={t('agents.noConversations')} />
         ) : (
           <Space align="start" size={12} style={{ width: '100%' }}>
-            <Card title={t('agents.sessionHistory')} style={{ width: 320 }}>
-              <List
-                size="small"
-                dataSource={conversationSessions}
-                renderItem={(session) => {
-                  const active = conversationSessionId === session.id;
-                  return (
-                    <List.Item
-                      style={{
-                        cursor: 'pointer',
-                        background: active ? '#f0f5ff' : undefined,
-                        borderRadius: 6,
-                        paddingInline: 8,
+            <Card title={t('agents.projectSessions')} style={{ width: 320 }}>
+              <Space direction="vertical" size={10} style={{ width: '100%' }}>
+                {groupedConversationSessions.map((group) => (
+                  <div key={group.projectId}>
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      project_id: {group.projectId}
+                    </Text>
+                    <List
+                      size="small"
+                      dataSource={[group.session]}
+                      renderItem={(session) => {
+                        const active = conversationSessionId === session.id;
+                        return (
+                          <List.Item
+                            style={{
+                              cursor: 'pointer',
+                              background: active ? '#f0f5ff' : undefined,
+                              borderRadius: 6,
+                              paddingInline: 8,
+                            }}
+                            onClick={() => {
+                              void loadConversationMessages(session.id);
+                            }}
+                          >
+                            <Space direction="vertical" size={0} style={{ width: '100%' }}>
+                              <Text strong>{session.title || session.id.slice(0, 8)}</Text>
+                              <Text type="secondary" style={{ fontSize: 12 }}>
+                                {new Date(session.updated_at).toLocaleString()}
+                              </Text>
+                            </Space>
+                          </List.Item>
+                        );
                       }}
-                      onClick={() => {
-                        void loadConversationMessages(session.id);
-                      }}
-                    >
-                      <Space direction="vertical" size={0} style={{ width: '100%' }}>
-                        <Text strong>{session.title || session.id.slice(0, 8)}</Text>
-                        <Text type="secondary" style={{ fontSize: 12 }}>
-                          {new Date(session.updated_at).toLocaleString()}
-                        </Text>
-                      </Space>
-                    </List.Item>
-                  );
-                }}
-              />
+                    />
+                  </div>
+                ))}
+              </Space>
             </Card>
 
             <Card title={t('agents.messages')} style={{ flex: 1 }}>

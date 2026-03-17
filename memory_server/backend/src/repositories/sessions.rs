@@ -1,6 +1,7 @@
 use futures_util::TryStreamExt;
 use mongodb::bson::{doc, Bson};
-use mongodb::options::FindOptions;
+use mongodb::options::{FindOneOptions, FindOptions};
+use std::collections::HashSet;
 use uuid::Uuid;
 
 use crate::db::Db;
@@ -12,24 +13,195 @@ fn collection(db: &Db) -> mongodb::Collection<Session> {
     db.collection::<Session>("sessions")
 }
 
+fn normalize_optional_text(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(|v| v.to_string())
+}
+
+fn normalize_project_scope(project_id: Option<String>) -> String {
+    normalize_optional_text(project_id.as_deref())
+        .unwrap_or_else(|| "0".to_string())
+}
+
+fn metadata_text(metadata: Option<&serde_json::Value>, path: &[&str]) -> Option<String> {
+    let mut cursor = metadata?;
+    for key in path {
+        cursor = cursor.get(*key)?;
+    }
+    normalize_optional_text(cursor.as_str())
+}
+
+fn contact_id_from_metadata(metadata: Option<&serde_json::Value>) -> Option<String> {
+    metadata_text(metadata, &["contact", "contact_id"])
+        .or_else(|| metadata_text(metadata, &["ui_contact", "contact_id"]))
+}
+
+fn agent_id_from_metadata(metadata: Option<&serde_json::Value>) -> Option<String> {
+    metadata_text(metadata, &["contact", "agent_id"])
+        .or_else(|| metadata_text(metadata, &["ui_contact", "agent_id"]))
+        .or_else(|| metadata_text(metadata, &["ui_chat_selection", "selected_agent_id"]))
+}
+
+fn set_metadata_text(metadata: &mut serde_json::Value, scope: &str, key: &str, value: &str) {
+    let Some(root) = metadata.as_object_mut() else {
+        return;
+    };
+    let entry = root
+        .entry(scope.to_string())
+        .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+    if !entry.is_object() {
+        *entry = serde_json::Value::Object(serde_json::Map::new());
+    }
+    if let Some(map) = entry.as_object_mut() {
+        map.insert(
+            key.to_string(),
+            serde_json::Value::String(value.to_string()),
+        );
+    }
+}
+
+fn normalize_session_metadata(metadata: Option<serde_json::Value>) -> Option<serde_json::Value> {
+    let contact_id = contact_id_from_metadata(metadata.as_ref());
+    let agent_id = agent_id_from_metadata(metadata.as_ref());
+
+    if contact_id.is_none() && agent_id.is_none() {
+        return metadata;
+    }
+
+    let mut normalized = match metadata {
+        Some(serde_json::Value::Object(map)) => serde_json::Value::Object(map),
+        Some(_) | None => serde_json::Value::Object(serde_json::Map::new()),
+    };
+
+    if let Some(contact_id) = contact_id.as_deref() {
+        set_metadata_text(&mut normalized, "contact", "contact_id", contact_id);
+        set_metadata_text(&mut normalized, "ui_contact", "contact_id", contact_id);
+    }
+    if let Some(agent_id) = agent_id.as_deref() {
+        set_metadata_text(&mut normalized, "contact", "agent_id", agent_id);
+        set_metadata_text(&mut normalized, "ui_contact", "agent_id", agent_id);
+        set_metadata_text(
+            &mut normalized,
+            "ui_chat_selection",
+            "selected_agent_id",
+            agent_id,
+        );
+    }
+
+    Some(normalized)
+}
+
+fn is_duplicate_key_error(err: &mongodb::error::Error) -> bool {
+    let text = err.to_string().to_ascii_lowercase();
+    text.contains("e11000") || text.contains("duplicate key")
+}
+
+fn build_contact_or_conditions(contact_id: Option<&str>, agent_id: Option<&str>) -> Vec<mongodb::bson::Document> {
+    let mut out = Vec::new();
+    if let Some(contact_id) = normalize_optional_text(contact_id) {
+        out.push(doc! {"metadata.contact.contact_id": contact_id.clone()});
+        out.push(doc! {"metadata.ui_contact.contact_id": contact_id});
+    }
+    if let Some(agent_id) = normalize_optional_text(agent_id) {
+        out.push(doc! {"metadata.contact.agent_id": agent_id.clone()});
+        out.push(doc! {"metadata.ui_contact.agent_id": agent_id.clone()});
+        out.push(doc! {"metadata.ui_chat_selection.selected_agent_id": agent_id});
+    }
+    out
+}
+
+async fn find_active_session_by_contact_project(
+    db: &Db,
+    user_id: &str,
+    project_id: &str,
+    contact_id: Option<&str>,
+    agent_id: Option<&str>,
+) -> Result<Option<Session>, String> {
+    let conditions = build_contact_or_conditions(contact_id, agent_id);
+    if conditions.is_empty() {
+        return Ok(None);
+    }
+
+    let mut filter = doc! {
+        "user_id": user_id,
+        "status": "active",
+    };
+    let mut and_conditions: Vec<mongodb::bson::Document> = Vec::new();
+    and_conditions.push(doc! {"$or": conditions});
+    if project_id == "0" {
+        and_conditions.push(doc! {
+            "$or": [
+                {"project_id": "0"},
+                {"project_id": Bson::Null},
+                {"project_id": ""},
+                {"project_id": {"$exists": false}}
+            ]
+        });
+    } else {
+        and_conditions.push(doc! {"project_id": project_id});
+    }
+    filter.insert("$and", and_conditions);
+
+    let options = FindOneOptions::builder()
+        .sort(doc! {"updated_at": -1, "created_at": -1})
+        .build();
+    collection(db)
+        .find_one(filter)
+        .with_options(options)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 pub async fn create_session(db: &Db, req: CreateSessionRequest) -> Result<Session, String> {
+    let normalized_project_id = normalize_project_scope(req.project_id.clone());
+    let user_id = req.user_id;
+    let title = req.title;
+    let metadata = normalize_session_metadata(req.metadata.clone());
+    let contact_id = contact_id_from_metadata(metadata.as_ref());
+    let agent_id = agent_id_from_metadata(metadata.as_ref());
+    if let Some(existing) = find_active_session_by_contact_project(
+        db,
+        user_id.as_str(),
+        normalized_project_id.as_str(),
+        contact_id.as_deref(),
+        agent_id.as_deref(),
+    )
+    .await?
+    {
+        return Ok(existing);
+    }
+
     let now = now_rfc3339();
     let session = Session {
         id: Uuid::new_v4().to_string(),
-        user_id: req.user_id,
-        project_id: req.project_id,
-        title: req.title,
-        metadata: req.metadata,
+        user_id: user_id.clone(),
+        project_id: Some(normalized_project_id.clone()),
+        title,
+        metadata,
         status: "active".to_string(),
         created_at: now.clone(),
         updated_at: now,
         archived_at: None,
     };
 
-    collection(db)
-        .insert_one(session.clone())
-        .await
-        .map_err(|e| e.to_string())?;
+    if let Err(err) = collection(db).insert_one(session.clone()).await {
+        if is_duplicate_key_error(&err) {
+            if let Some(existing) = find_active_session_by_contact_project(
+                db,
+                user_id.as_str(),
+                normalized_project_id.as_str(),
+                contact_id.as_deref(),
+                agent_id.as_deref(),
+            )
+            .await?
+            {
+                return Ok(existing);
+            }
+        }
+        return Err(err.to_string());
+    }
 
     Ok(session)
 }
@@ -47,6 +219,10 @@ pub async fn upsert_session_sync(
     updated_at: Option<String>,
 ) -> Result<Session, String> {
     let now = now_rfc3339();
+    let normalized_project_id = normalize_project_scope(project_id.clone());
+    let metadata = normalize_session_metadata(metadata);
+    let contact_id = contact_id_from_metadata(metadata.as_ref());
+    let agent_id = agent_id_from_metadata(metadata.as_ref());
     let created_at = created_at.unwrap_or_else(|| now.clone());
     let updated_at = updated_at.unwrap_or_else(|| now.clone());
     let title = title.unwrap_or_else(|| "Untitled".to_string());
@@ -61,13 +237,48 @@ pub async fn upsert_session_sync(
         None
     };
 
+    if status == "active" {
+        if let Some(existing) = find_active_session_by_contact_project(
+            db,
+            user_id,
+            normalized_project_id.as_str(),
+            contact_id.as_deref(),
+            agent_id.as_deref(),
+        )
+        .await?
+        {
+            collection(db)
+                .update_one(
+                    doc! {"id": existing.id.as_str()},
+                    doc! {
+                        "$set": {
+                            "project_id": normalized_project_id.clone(),
+                            "title": title.clone(),
+                            "metadata": metadata_bson.clone(),
+                            "status": &status,
+                            "updated_at": &updated_at,
+                            "archived_at": archived_at.clone(),
+                        },
+                        "$setOnInsert": {
+                            "created_at": created_at.clone(),
+                        }
+                    },
+                )
+                .await
+                .map_err(|e| e.to_string())?;
+            return get_session_by_id(db, existing.id.as_str())
+                .await?
+                .ok_or_else(|| "upserted session not found".to_string());
+        }
+    }
+
     collection(db)
         .update_one(
             doc! {"id": session_id},
             doc! {
                 "$set": {
                     "user_id": user_id,
-                    "project_id": project_id,
+                    "project_id": normalized_project_id,
                     "title": title,
                     "metadata": metadata_bson,
                     "status": &status,
@@ -105,7 +316,21 @@ pub async fn list_sessions(
         filter.insert("user_id", v);
     }
     if let Some(v) = project_id {
-        filter.insert("project_id", v);
+        if v.trim() == "0" {
+            filter.insert(
+                "$and",
+                vec![doc! {
+                    "$or": [
+                        {"project_id": "0"},
+                        {"project_id": Bson::Null},
+                        {"project_id": ""},
+                        {"project_id": {"$exists": false}}
+                    ]
+                }],
+            );
+        } else {
+            filter.insert("project_id", v);
+        }
     }
     if let Some(v) = status {
         filter.insert("status", v);
@@ -129,6 +354,7 @@ pub async fn list_sessions_by_agent(
     db: &Db,
     user_id: &str,
     agent_id: &str,
+    project_id: Option<&str>,
     status: Option<&str>,
     limit: i64,
     offset: i64,
@@ -148,6 +374,24 @@ pub async fn list_sessions_by_agent(
         filter.insert("status", v);
     }
 
+    if let Some(project_id) = normalize_optional_text(project_id) {
+        if project_id == "0" {
+            filter.insert(
+                "$and",
+                vec![doc! {
+                    "$or": [
+                        {"project_id": "0"},
+                        {"project_id": Bson::Null},
+                        {"project_id": ""},
+                        {"project_id": {"$exists": false}}
+                    ]
+                }],
+            );
+        } else {
+            filter.insert("project_id", project_id);
+        }
+    }
+
     let options = FindOptions::builder()
         .sort(doc! {"updated_at": -1, "created_at": -1})
         .limit(Some(limit as i64))
@@ -159,7 +403,16 @@ pub async fn list_sessions_by_agent(
         .with_options(options)
         .await
         .map_err(|e| e.to_string())?;
-    cursor.try_collect().await.map_err(|e| e.to_string())
+    let rows: Vec<Session> = cursor.try_collect().await.map_err(|e| e.to_string())?;
+    let mut seen_projects = HashSet::new();
+    let mut deduped = Vec::with_capacity(rows.len());
+    for session in rows {
+        let project_id = normalize_project_scope(session.project_id.clone());
+        if seen_projects.insert(project_id) {
+            deduped.push(session);
+        }
+    }
+    Ok(deduped)
 }
 
 pub async fn delete_session(db: &Db, session_id: &str) -> Result<bool, String> {
@@ -200,7 +453,7 @@ pub async fn update_session(
 
     let now = now_rfc3339();
     let title = req.title.or(current.title);
-    let metadata = req.metadata.or(current.metadata);
+    let metadata = normalize_session_metadata(req.metadata.or(current.metadata));
     let metadata_bson = metadata
         .as_ref()
         .and_then(|value| mongodb::bson::to_bson(value).ok())

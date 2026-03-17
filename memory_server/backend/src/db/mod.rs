@@ -39,6 +39,24 @@ pub async fn init_schema(db: &Db) -> Result<(), String> {
         doc! {"project_id": 1, "status": 1, "created_at": -1},
     )
     .await?;
+    ensure_unique_partial_index(
+        db.collection::<mongodb::bson::Document>("sessions"),
+        doc! {"user_id": 1, "project_id": 1, "metadata.contact.contact_id": 1, "status": 1},
+        doc! {
+            "status": "active",
+            "metadata.contact.contact_id": {"$exists": true, "$type": "string"},
+        },
+    )
+    .await?;
+    ensure_unique_partial_index(
+        db.collection::<mongodb::bson::Document>("sessions"),
+        doc! {"user_id": 1, "project_id": 1, "metadata.contact.agent_id": 1, "status": 1},
+        doc! {
+            "status": "active",
+            "metadata.contact.agent_id": {"$exists": true, "$type": "string"},
+        },
+    )
+    .await?;
 
     ensure_unique_index(
         db.collection::<mongodb::bson::Document>("messages"),
@@ -316,6 +334,34 @@ async fn ensure_unique_index(
         .create_index(model)
         .await
         .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+async fn ensure_unique_partial_index(
+    collection: Collection<mongodb::bson::Document>,
+    keys: mongodb::bson::Document,
+    partial_filter_expression: mongodb::bson::Document,
+) -> Result<(), String> {
+    let options = IndexOptions::builder()
+        .unique(Some(true))
+        .partial_filter_expression(Some(partial_filter_expression))
+        .build();
+    let model = IndexModel::builder().keys(keys).options(options).build();
+    match collection.create_index(model).await {
+        Ok(_) => {}
+        Err(err) => {
+            // Do not crash startup for legacy duplicated rows; app-level idempotency still works.
+            let lowered = err.to_string().to_ascii_lowercase();
+            if lowered.contains("e11000") || lowered.contains("duplicate key") {
+                info!(
+                    "[MEMORY-SERVER] skip partial unique index due duplicate legacy data: {}",
+                    err
+                );
+                return Ok(());
+            }
+            return Err(err.to_string());
+        }
+    }
     Ok(())
 }
 
