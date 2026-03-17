@@ -3,10 +3,14 @@ import {
   Alert,
   Button,
   Card,
+  Drawer,
+  Empty,
   Input,
+  List,
   Modal,
   Popconfirm,
   Space,
+  Spin,
   Switch,
   Table,
   Tag,
@@ -16,7 +20,7 @@ import type { ColumnsType } from 'antd/es/table';
 
 import { api } from '../api/client';
 import { useI18n } from '../i18n';
-import type { MemoryAgent } from '../types';
+import type { MemoryAgent, Message, Session } from '../types';
 
 const { Text } = Typography;
 
@@ -58,6 +62,13 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
   const [aiName, setAiName] = useState('');
   const [aiCategory, setAiCategory] = useState('');
   const [aiEnabled, setAiEnabled] = useState(true);
+  const [conversationOpen, setConversationOpen] = useState(false);
+  const [conversationAgent, setConversationAgent] = useState<MemoryAgent | null>(null);
+  const [conversationLoading, setConversationLoading] = useState(false);
+  const [conversationSessions, setConversationSessions] = useState<Session[]>([]);
+  const [conversationSessionId, setConversationSessionId] = useState<string | null>(null);
+  const [conversationMessages, setConversationMessages] = useState<Message[]>([]);
+  const [conversationMessagesLoading, setConversationMessagesLoading] = useState(false);
 
   const scopeUserId = useMemo(() => {
     if (!isAdmin) {
@@ -201,6 +212,54 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
     }
   };
 
+  const loadConversationMessages = async (sessionId: string) => {
+    const normalizedSessionId = sessionId.trim();
+    if (!normalizedSessionId) {
+      setConversationMessages([]);
+      setConversationSessionId(null);
+      return;
+    }
+    setConversationMessagesLoading(true);
+    try {
+      const rows = await api.listMessages(normalizedSessionId);
+      setConversationMessages(rows);
+      setConversationSessionId(normalizedSessionId);
+    } catch (err) {
+      setError((err as Error).message);
+      setConversationMessages([]);
+      setConversationSessionId(normalizedSessionId);
+    } finally {
+      setConversationMessagesLoading(false);
+    }
+  };
+
+  const openConversationDrawer = async (agent: MemoryAgent) => {
+    setConversationOpen(true);
+    setConversationAgent(agent);
+    setConversationLoading(true);
+    setConversationMessages([]);
+    setConversationSessionId(null);
+    try {
+      const rows = await api.listAgentSessions(agent.id, scopeUserId, {
+        status: 'active',
+        limit: 120,
+        offset: 0,
+      });
+      setConversationSessions(rows);
+      const firstSession = rows[0];
+      if (firstSession?.id) {
+        await loadConversationMessages(firstSession.id);
+      }
+    } catch (err) {
+      setError((err as Error).message);
+      setConversationSessions([]);
+      setConversationMessages([]);
+      setConversationSessionId(null);
+    } finally {
+      setConversationLoading(false);
+    }
+  };
+
   const columns: ColumnsType<MemoryAgent> = [
     {
       title: t('agents.name'),
@@ -212,6 +271,17 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
           <Text type="secondary" style={{ fontSize: 12 }}>
             {record.id.slice(0, 8)}
           </Text>
+          <Button
+            type="link"
+            size="small"
+            style={{ paddingInline: 0, height: 20 }}
+            onClick={(event) => {
+              event.stopPropagation();
+              void openConversationDrawer(record);
+            }}
+          >
+            {t('agents.viewChats')}
+          </Button>
         </Space>
       ),
     },
@@ -253,8 +323,24 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
         const readonly = isReadonlyForScope(record);
         return (
           <Space>
+            <Button
+              size="small"
+              onClick={(event) => {
+                event.stopPropagation();
+                void openConversationDrawer(record);
+              }}
+            >
+              {t('agents.viewChats')}
+            </Button>
             {readonly && <Tag color="blue">{t('agents.sharedTag')}</Tag>}
-            <Button size="small" onClick={() => openEdit(record)} disabled={readonly}>
+            <Button
+              size="small"
+              onClick={(event) => {
+                event.stopPropagation();
+                openEdit(record);
+              }}
+              disabled={readonly}
+            >
               {t('common.edit')}
             </Button>
             <Popconfirm
@@ -263,7 +349,12 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
               okButtonProps={{ loading: saving }}
               disabled={readonly}
             >
-              <Button size="small" danger disabled={readonly}>
+              <Button
+                size="small"
+                danger
+                disabled={readonly}
+                onClick={(event) => event.stopPropagation()}
+              >
                 {t('common.delete')}
               </Button>
             </Popconfirm>
@@ -312,7 +403,95 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
         dataSource={items}
         columns={columns}
         pagination={{ pageSize: 20, showSizeChanger: false }}
+        onRow={(record) => ({
+          onClick: () => {
+            void openConversationDrawer(record);
+          },
+        })}
       />
+
+      <Drawer
+        open={conversationOpen}
+        onClose={() => {
+          setConversationOpen(false);
+          setConversationAgent(null);
+          setConversationSessions([]);
+          setConversationSessionId(null);
+          setConversationMessages([]);
+        }}
+        width={980}
+        title={`${t('agents.conversationsTitle')}: ${conversationAgent?.name || '-'}`}
+      >
+        {conversationLoading ? (
+          <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 48 }}>
+            <Spin />
+          </div>
+        ) : conversationSessions.length === 0 ? (
+          <Empty description={t('agents.noConversations')} />
+        ) : (
+          <Space align="start" size={12} style={{ width: '100%' }}>
+            <Card title={t('agents.sessionHistory')} style={{ width: 320 }}>
+              <List
+                size="small"
+                dataSource={conversationSessions}
+                renderItem={(session) => {
+                  const active = conversationSessionId === session.id;
+                  return (
+                    <List.Item
+                      style={{
+                        cursor: 'pointer',
+                        background: active ? '#f0f5ff' : undefined,
+                        borderRadius: 6,
+                        paddingInline: 8,
+                      }}
+                      onClick={() => {
+                        void loadConversationMessages(session.id);
+                      }}
+                    >
+                      <Space direction="vertical" size={0} style={{ width: '100%' }}>
+                        <Text strong>{session.title || session.id.slice(0, 8)}</Text>
+                        <Text type="secondary" style={{ fontSize: 12 }}>
+                          {new Date(session.updated_at).toLocaleString()}
+                        </Text>
+                      </Space>
+                    </List.Item>
+                  );
+                }}
+              />
+            </Card>
+
+            <Card title={t('agents.messages')} style={{ flex: 1 }}>
+              {conversationMessagesLoading ? (
+                <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 24 }}>
+                  <Spin />
+                </div>
+              ) : conversationMessages.length === 0 ? (
+                <Empty description={t('agents.noConversations')} />
+              ) : (
+                <List
+                  size="small"
+                  dataSource={conversationMessages}
+                  renderItem={(message) => (
+                    <List.Item>
+                      <Space direction="vertical" size={2} style={{ width: '100%' }}>
+                        <Space size={8}>
+                          <Tag>{message.role}</Tag>
+                          <Text type="secondary" style={{ fontSize: 12 }}>
+                            {new Date(message.created_at).toLocaleString()}
+                          </Text>
+                        </Space>
+                        <Text style={{ whiteSpace: 'pre-wrap' }}>
+                          {message.content || '-'}
+                        </Text>
+                      </Space>
+                    </List.Item>
+                  )}
+                />
+              )}
+            </Card>
+          </Space>
+        )}
+      </Drawer>
 
       <Modal
         open={editorOpen}

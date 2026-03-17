@@ -125,6 +125,43 @@ pub async fn list_sessions(
     cursor.try_collect().await.map_err(|e| e.to_string())
 }
 
+pub async fn list_sessions_by_agent(
+    db: &Db,
+    user_id: &str,
+    agent_id: &str,
+    status: Option<&str>,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<Session>, String> {
+    let limit = limit.max(1).min(200) as u64;
+    let offset = offset.max(0) as u64;
+
+    let mut filter = doc! {
+        "user_id": user_id,
+        "$or": vec![
+            doc! {"metadata.contact.agent_id": agent_id},
+            doc! {"metadata.ui_contact.agent_id": agent_id},
+            doc! {"metadata.ui_chat_selection.selected_agent_id": agent_id},
+        ],
+    };
+    if let Some(v) = status {
+        filter.insert("status", v);
+    }
+
+    let options = FindOptions::builder()
+        .sort(doc! {"updated_at": -1, "created_at": -1})
+        .limit(Some(limit as i64))
+        .skip(Some(offset))
+        .build();
+
+    let cursor = collection(db)
+        .find(filter)
+        .with_options(options)
+        .await
+        .map_err(|e| e.to_string())?;
+    cursor.try_collect().await.map_err(|e| e.to_string())
+}
+
 pub async fn delete_session(db: &Db, session_id: &str) -> Result<bool, String> {
     let now = now_rfc3339();
     let result = collection(db)

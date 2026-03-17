@@ -100,6 +100,11 @@ const ZH: Dict = {
   'agents.scopeUser': '当前作用域账号',
   'agents.sharedTag': '共享',
   'agents.sharedReadonlyTip': '可使用管理员创建的共享智能体；共享智能体仅可使用，不可编辑或删除。',
+  'agents.viewChats': '对话记录',
+  'agents.conversationsTitle': '智能体对话记录',
+  'agents.noConversations': '暂无对话记录',
+  'agents.sessionHistory': '历史会话',
+  'agents.messages': '消息明细',
 
   'sessions.title': '会话列表',
   'sessions.newTitle': '新会话标题',
@@ -371,6 +376,11 @@ const EN: Dict = {
   'agents.scopeUser': 'Current Scope Account',
   'agents.sharedTag': 'Shared',
   'agents.sharedReadonlyTip': 'Admin-created shared agents can be used by everyone, but are read-only for normal users.',
+  'agents.viewChats': 'Conversations',
+  'agents.conversationsTitle': 'Agent Conversations',
+  'agents.noConversations': 'No conversation history',
+  'agents.sessionHistory': 'Sessions',
+  'agents.messages': 'Messages',
 
   'sessions.title': 'Sessions',
   'sessions.newTitle': 'New session title',

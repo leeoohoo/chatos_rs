@@ -60,6 +60,82 @@ const resolveContactIdFromSession = (session: Session | null | undefined): strin
   return trimmed.length > 0 ? trimmed : null;
 };
 
+const resolveSessionProjectId = (session: Session | Record<string, any> | null | undefined): string | null => {
+  if (!session) {
+    return null;
+  }
+  const runtime = readSessionRuntimeFromMetadata((session as any).metadata);
+  const runtimeProjectId = typeof runtime?.projectId === 'string'
+    ? runtime.projectId.trim()
+    : '';
+  if (runtimeProjectId) {
+    return runtimeProjectId;
+  }
+  const rawProjectId = typeof (session as any).projectId === 'string'
+    ? (session as any).projectId.trim()
+    : (typeof (session as any).project_id === 'string'
+      ? (session as any).project_id.trim()
+      : '');
+  return rawProjectId || null;
+};
+
+const resolveSessionTimestamp = (session: Session | Record<string, any> | null | undefined): number => {
+  if (!session) {
+    return 0;
+  }
+  const raw = (session as any).updatedAt
+    ?? (session as any).updated_at
+    ?? (session as any).createdAt
+    ?? (session as any).created_at
+    ?? Date.now();
+  const ts = new Date(raw).getTime();
+  return Number.isFinite(ts) ? ts : 0;
+};
+
+const isSessionActive = (session: Session | Record<string, any> | null | undefined): boolean => {
+  if (!session) {
+    return false;
+  }
+  const archived = (session as any).archived === true;
+  const status = typeof (session as any).status === 'string'
+    ? (session as any).status.toLowerCase()
+    : '';
+  return !archived && status !== 'archived' && status !== 'archiving';
+};
+
+const isSessionMatchedContactAndProject = (
+  session: Session | Record<string, any> | null | undefined,
+  contact: { id: string; agentId: string },
+  projectId: string | null,
+): boolean => {
+  if (!session || !isSessionActive(session)) {
+    return false;
+  }
+
+  const runtime = readSessionRuntimeFromMetadata((session as any).metadata);
+  const contactId = typeof runtime?.contactId === 'string' ? runtime.contactId.trim() : '';
+  const contactAgentId = typeof runtime?.contactAgentId === 'string' ? runtime.contactAgentId.trim() : '';
+
+  if (contactId) {
+    if (contactId !== contact.id) {
+      return false;
+    }
+  } else if (contactAgentId) {
+    if (contactAgentId !== contact.agentId) {
+      return false;
+    }
+  } else {
+    return false;
+  }
+
+  const normalizedProjectId = typeof projectId === 'string' ? projectId.trim() : '';
+  if (!normalizedProjectId) {
+    return true;
+  }
+  const sessionProjectId = resolveSessionProjectId(session);
+  return sessionProjectId === normalizedProjectId;
+};
+
 type ContactItem = {
   id: string;
   agentId: string;
@@ -102,6 +178,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
   }
   
   const {
+    sessions,
     contacts,
     agents,
     currentSession,
@@ -138,6 +215,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     deleteRemoteConnection,
     openRemoteSftp,
   } = storeToUse((state) => ({
+    sessions: state.sessions,
     contacts: state.contacts,
     agents: state.agents,
     currentSession: state.currentSession,
@@ -291,6 +369,74 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     return `${contact.id}::${projectId}`;
   }, [currentProject?.id]);
 
+  const findExistingSessionIdInStore = useCallback((contact: ContactItem): string | null => {
+    const projectId = currentProject?.id?.trim() || null;
+    const candidates = (sessions || []).filter((session: Session) =>
+      isSessionMatchedContactAndProject(session, contact, projectId),
+    );
+    if (candidates.length === 0) {
+      return null;
+    }
+    candidates.sort((a, b) => resolveSessionTimestamp(b) - resolveSessionTimestamp(a));
+    const id = typeof candidates[0]?.id === 'string' ? candidates[0].id.trim() : '';
+    return id || null;
+  }, [currentProject?.id, sessions]);
+
+  const findExistingSessionIdFromApi = useCallback(async (contact: ContactItem): Promise<string | null> => {
+    const projectId = currentProject?.id?.trim() || null;
+    const pageSize = 200;
+    const maxPages = 8;
+    const candidates: any[] = [];
+
+    for (let page = 0; page < maxPages; page += 1) {
+      const rows = await apiClient.getSessions(undefined, undefined, {
+        limit: pageSize,
+        offset: page * pageSize,
+      });
+      if (!Array.isArray(rows) || rows.length === 0) {
+        break;
+      }
+
+      for (const row of rows) {
+        if (isSessionMatchedContactAndProject(row, contact, projectId)) {
+          candidates.push(row);
+        }
+      }
+
+      if (rows.length < pageSize) {
+        break;
+      }
+    }
+
+    if (candidates.length === 0) {
+      return null;
+    }
+
+    candidates.sort((a, b) => resolveSessionTimestamp(b) - resolveSessionTimestamp(a));
+    const shortlist = candidates.slice(0, 20);
+    for (const item of shortlist) {
+      const sessionId = typeof item?.id === 'string' ? item.id.trim() : '';
+      if (!sessionId) {
+        continue;
+      }
+      try {
+        const previewMessages = await apiClient.getSessionMessages(sessionId, {
+          limit: 1,
+          offset: 0,
+          compact: false,
+        });
+        if (Array.isArray(previewMessages) && previewMessages.length > 0) {
+          return sessionId;
+        }
+      } catch {
+        // ignore preview errors and keep fallback strategy
+      }
+    }
+
+    const fallback = shortlist.find((item) => typeof item?.id === 'string' && item.id.trim());
+    return fallback ? fallback.id.trim() : null;
+  }, [apiClient, currentProject?.id]);
+
   const ensureSessionForContact = useCallback(async (contact: ContactItem): Promise<string | null> => {
     const cacheKey = resolveContactProjectKey(contact);
     const cachedSessionId = contactSessionCacheRef.current[cacheKey];
@@ -311,6 +457,22 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
       return currentSession.id;
     }
 
+    const existingLocalSessionId = findExistingSessionIdInStore(contact);
+    if (existingLocalSessionId) {
+      contactSessionCacheRef.current[cacheKey] = existingLocalSessionId;
+      return existingLocalSessionId;
+    }
+
+    try {
+      const existingSessionId = await findExistingSessionIdFromApi(contact);
+      if (existingSessionId) {
+        contactSessionCacheRef.current[cacheKey] = existingSessionId;
+        return existingSessionId;
+      }
+    } catch (error) {
+      console.error('Failed to resolve existing contact session:', error);
+    }
+
     const createdSessionId = await createSession({
       title: contact.name || '联系人',
       contactAgentId: contact.agentId,
@@ -325,7 +487,14 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
       contactSessionCacheRef.current[cacheKey] = createdSessionId;
     }
     return createdSessionId;
-  }, [resolveContactProjectKey, currentSession, createSession, currentProject]);
+  }, [
+    resolveContactProjectKey,
+    currentSession,
+    createSession,
+    currentProject,
+    findExistingSessionIdInStore,
+    findExistingSessionIdFromApi,
+  ]);
 
   const displaySessions = useMemo<Session[]>(() => {
     return contacts.map((contact) => {

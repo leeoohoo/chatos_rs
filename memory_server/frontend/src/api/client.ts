@@ -365,6 +365,22 @@ export const api = {
     return data.items ?? [];
   },
 
+  async listAgentSessions(
+    agentId: string,
+    userId?: string,
+    params?: { status?: string; limit?: number; offset?: number },
+  ): Promise<Session[]> {
+    const { data } = await client.get(`/agents/${encodeURIComponent(agentId)}/sessions`, {
+      params: {
+        user_id: userId,
+        status: params?.status ?? 'active',
+        limit: params?.limit ?? 100,
+        offset: params?.offset ?? 0,
+      },
+    });
+    return data.items ?? [];
+  },
+
   async createAgent(payload: {
     user_id?: string;
     name: string;

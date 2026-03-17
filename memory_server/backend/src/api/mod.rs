@@ -105,6 +105,10 @@ pub fn router(state: SharedState) -> Router {
         )
         .route("/api/memory/v1/agents/ai-create", post(ai_create_agent))
         .route(
+            "/api/memory/v1/agents/:agent_id/sessions",
+            get(list_agent_sessions),
+        )
+        .route(
             "/api/memory/v1/agents/:agent_id/runtime-context",
             get(get_agent_runtime_context),
         )
@@ -974,6 +978,14 @@ struct ListAgentsQuery {
 }
 
 #[derive(Debug, Deserialize)]
+struct ListAgentSessionsQuery {
+    user_id: Option<String>,
+    status: Option<String>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
 struct CreateAgentRequest {
     user_id: Option<String>,
     name: String,
@@ -1775,6 +1787,43 @@ async fn list_agents(
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": "list agents failed", "detail": err})),
+        ),
+    }
+}
+
+async fn list_agent_sessions(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Path(agent_id): Path<String>,
+    Query(q): Query<ListAgentSessionsQuery>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match resolve_identity(&headers, state.as_ref()) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    if let Err(err) = ensure_agent_read_access(state.as_ref(), &auth, agent_id.as_str()).await {
+        return err;
+    }
+
+    let scope_user_id = resolve_scope_user_id(&auth, q.user_id);
+    let limit = q.limit.unwrap_or(100);
+    let offset = q.offset.unwrap_or(0);
+    let status = q.status.as_deref().or(Some("active"));
+
+    match sessions::list_sessions_by_agent(
+        &state.pool,
+        scope_user_id.as_str(),
+        agent_id.as_str(),
+        status,
+        limit,
+        offset,
+    )
+    .await
+    {
+        Ok(items) => (StatusCode::OK, Json(json!({"items": items}))),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "list agent sessions failed", "detail": err})),
         ),
     }
 }
