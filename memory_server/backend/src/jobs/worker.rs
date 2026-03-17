@@ -10,7 +10,7 @@ use crate::ai::AiClient;
 use crate::repositories::{configs, sessions};
 use crate::state::AppState;
 
-use super::{rollup, summary};
+use super::{agent_memory, rollup, summary};
 
 #[derive(Default)]
 struct WorkerState {
@@ -82,6 +82,27 @@ async fn tick_once(
                 if let Err(err) = result {
                     warn!(
                         "[MEMORY-WORKER] rollup run failed user_id={} error={}",
+                        user_id, err
+                    );
+                }
+                mark_run(&worker_state, key.as_str(), now_ts);
+            }
+        }
+
+        let agent_memory_cfg =
+            configs::get_effective_agent_memory_job_config(&state.pool, user_id.as_str()).await?;
+        if agent_memory_cfg.enabled == 1 {
+            let key = format!("agent_memory:{}", user_id);
+            if is_due(
+                &worker_state,
+                key.as_str(),
+                now_ts,
+                agent_memory_cfg.job_interval_seconds,
+            ) {
+                let result = agent_memory::run_once(&state.pool, &ai, user_id.as_str()).await;
+                if let Err(err) = result {
+                    warn!(
+                        "[MEMORY-WORKER] agent memory run failed user_id={} error={}",
                         user_id, err
                     );
                 }

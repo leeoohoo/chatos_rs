@@ -19,7 +19,8 @@ use crate::models::{
     BatchCreateMessagesRequest, ComposeContextRequest, CreateContactRequest,
     CreateMemoryAgentRequest, CreateMessageRequest, CreateSessionRequest, MemoryAgentSkill,
     MemorySkill, MemorySkillPlugin, UpdateMemoryAgentRequest, UpdateSessionRequest,
-    UpsertAiModelConfigRequest, UpsertSummaryJobConfigRequest, UpsertSummaryRollupJobConfigRequest,
+    UpsertAgentMemoryJobConfigRequest, UpsertAiModelConfigRequest, UpsertSummaryJobConfigRequest,
+    UpsertSummaryRollupJobConfigRequest,
 };
 use crate::repositories::{
     agents as agents_repo, auth as auth_repo, configs, contacts as contacts_repo, jobs as job_repo,
@@ -152,12 +153,20 @@ pub fn router(state: SharedState) -> Router {
             get(get_summary_rollup_job_config).put(put_summary_rollup_job_config),
         )
         .route(
+            "/api/memory/v1/configs/agent-memory-job",
+            get(get_agent_memory_job_config).put(put_agent_memory_job_config),
+        )
+        .route(
             "/api/memory/v1/jobs/summary/run-once",
             post(run_summary_once),
         )
         .route(
             "/api/memory/v1/jobs/summary-rollup/run-once",
             post(run_rollup_once),
+        )
+        .route(
+            "/api/memory/v1/jobs/agent-memory/run-once",
+            post(run_agent_memory_once),
         )
         .route("/api/memory/v1/jobs/runs", get(list_job_runs))
         .route("/api/memory/v1/jobs/stats", get(job_stats))
@@ -3551,6 +3560,45 @@ async fn put_summary_rollup_job_config(
     }
 }
 
+async fn get_agent_memory_job_config(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Query(q): Query<UserIdQuery>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match resolve_identity(&headers, state.as_ref()) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    let user_id = resolve_scope_user_id(&auth, q.user_id);
+    match configs::get_agent_memory_job_config(&state.pool, user_id.as_str()).await {
+        Ok(cfg) => (StatusCode::OK, Json(json!(cfg))),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "get agent memory job config failed", "detail": err})),
+        ),
+    }
+}
+
+async fn put_agent_memory_job_config(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Json(mut req): Json<UpsertAgentMemoryJobConfigRequest>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match resolve_identity(&headers, state.as_ref()) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    req.user_id = resolve_scope_user_id(&auth, Some(req.user_id.clone()));
+
+    match configs::upsert_agent_memory_job_config(&state.pool, req).await {
+        Ok(cfg) => (StatusCode::OK, Json(json!(cfg))),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "save agent memory job config failed", "detail": err})),
+        ),
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct RunJobRequest {
     user_id: Option<String>,
@@ -3620,6 +3668,35 @@ async fn run_rollup_once(
     };
 
     match jobs::rollup::run_once(&state.pool, &ai, scope_user_id.as_str()).await {
+        Ok(data) => (StatusCode::OK, Json(json!({"ok": true, "data": data}))),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"ok": false, "error": err})),
+        ),
+    }
+}
+
+async fn run_agent_memory_once(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Json(req): Json<RunJobRequest>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match resolve_identity(&headers, state.as_ref()) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    let scope_user_id = resolve_scope_user_id(&auth, req.user_id);
+    let ai = match AiClient::new(state.config.ai_request_timeout_secs, &state.config) {
+        Ok(client) => client,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "init ai client failed", "detail": err})),
+            )
+        }
+    };
+
+    match jobs::agent_memory::run_once(&state.pool, &ai, scope_user_id.as_str()).await {
         Ok(data) => (StatusCode::OK, Json(json!({"ok": true, "data": data}))),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,

@@ -143,6 +143,7 @@ async fn drop_target_collections(db: &Database) -> Result<(), String> {
         "auth_users",
         "summary_job_configs",
         "summary_rollup_job_configs",
+        "agent_memory_job_configs",
         "job_runs",
     ];
 

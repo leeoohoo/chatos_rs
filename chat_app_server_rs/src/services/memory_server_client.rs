@@ -111,6 +111,8 @@ pub struct MemoryAgentRecallDto {
     pub recall_key: String,
     pub recall_text: String,
     #[serde(default)]
+    pub level: i64,
+    #[serde(default)]
     pub source_project_ids: Vec<String>,
     pub confidence: Option<f64>,
     pub last_seen_at: Option<String>,

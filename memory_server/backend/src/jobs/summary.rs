@@ -13,6 +13,8 @@ use crate::services::summarizer::{
     summarize_texts_with_split,
 };
 
+use super::memory_sync;
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct SummaryRunResult {
     pub processed_sessions: usize,
@@ -312,6 +314,11 @@ async fn process_session(
             return Err(err);
         }
     };
+
+    if let Err(err) = memory_sync::sync_memories_from_summary(pool, session_id, &summary).await {
+        let _ = finish_failed_job_run(pool, job_run.id.as_str(), err.as_str()).await;
+        return Err(err);
+    }
 
     let marked = match messages::mark_messages_summarized(
         pool,

@@ -12,6 +12,8 @@ use crate::services::summarizer::{
     estimate_tokens_text, summarize_texts_with_split, summary_to_rollup_block,
 };
 
+use super::memory_sync;
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct RollupRunResult {
     pub processed_sessions: usize,
@@ -311,6 +313,11 @@ async fn process_session(
         }
     };
 
+    if let Err(err) = memory_sync::sync_memories_from_summary(pool, session_id, &summary).await {
+        let _ = finish_failed_job_run(pool, job_run.id.as_str(), err.as_str()).await;
+        return Err(err);
+    }
+
     let marked = match summaries::mark_summaries_rolled_up(
         pool,
         selected_ids.as_slice(),
@@ -368,7 +375,8 @@ async fn select_rollup_batch(
         if level == 0 && keep_raw_level0_count > 0 {
             let keep = keep_raw_level0_count as usize;
             if candidates.len() > keep {
-                candidates = candidates.into_iter().skip(keep).collect();
+                let rollup_len = candidates.len().saturating_sub(keep);
+                candidates.truncate(rollup_len);
             } else {
                 candidates.clear();
             }

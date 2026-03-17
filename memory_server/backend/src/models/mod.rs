@@ -17,6 +17,14 @@ fn default_i64_1() -> i64 {
     1
 }
 
+fn default_keep_raw_level0_count() -> i64 {
+    5
+}
+
+fn default_agent_memory_max_level() -> i64 {
+    4
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
     pub id: String,
@@ -75,6 +83,9 @@ pub struct ProjectMemory {
     pub memory_text: String,
     #[serde(default = "default_i64_1")]
     pub memory_version: i64,
+    #[serde(default = "default_i64_0")]
+    pub recall_summarized: i64,
+    pub recall_summarized_at: Option<String>,
     pub last_source_at: Option<String>,
     pub updated_at: String,
 }
@@ -86,8 +97,14 @@ pub struct AgentRecall {
     pub agent_id: String,
     pub recall_key: String,
     pub recall_text: String,
+    #[serde(default = "default_i64_0")]
+    pub level: i64,
     #[serde(default)]
     pub source_project_ids: Vec<String>,
+    #[serde(default = "default_i64_0")]
+    pub rolled_up: i64,
+    pub rollup_recall_key: Option<String>,
+    pub rolled_up_at: Option<String>,
     pub confidence: Option<f64>,
     pub last_seen_at: Option<String>,
     pub updated_at: String,
@@ -360,6 +377,38 @@ pub struct SummaryRollupJobConfig {
     pub max_level: i64,
     pub max_sessions_per_tick: i64,
     pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentMemoryJobConfig {
+    pub user_id: String,
+    #[serde(default = "default_i64_1")]
+    pub enabled: i64,
+    pub summary_model_config_id: Option<String>,
+    pub token_limit: i64,
+    pub round_limit: i64,
+    pub target_summary_tokens: i64,
+    pub job_interval_seconds: i64,
+    #[serde(default = "default_keep_raw_level0_count")]
+    pub keep_raw_level0_count: i64,
+    #[serde(default = "default_agent_memory_max_level")]
+    pub max_level: i64,
+    pub max_agents_per_tick: i64,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpsertAgentMemoryJobConfigRequest {
+    pub user_id: String,
+    pub enabled: Option<bool>,
+    pub summary_model_config_id: Option<Option<String>>,
+    pub token_limit: Option<i64>,
+    pub round_limit: Option<i64>,
+    pub target_summary_tokens: Option<i64>,
+    pub job_interval_seconds: Option<i64>,
+    pub keep_raw_level0_count: Option<i64>,
+    pub max_level: Option<i64>,
+    pub max_agents_per_tick: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

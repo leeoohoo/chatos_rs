@@ -119,6 +119,11 @@ pub async fn init_schema(db: &Db) -> Result<(), String> {
         doc! {"user_id": 1},
     )
     .await?;
+    ensure_unique_index(
+        db.collection::<mongodb::bson::Document>("agent_memory_job_configs"),
+        doc! {"user_id": 1},
+    )
+    .await?;
 
     ensure_unique_index(
         db.collection::<mongodb::bson::Document>("job_runs"),
@@ -210,6 +215,11 @@ pub async fn init_schema(db: &Db) -> Result<(), String> {
         doc! {"user_id": 1, "agent_id": 1, "updated_at": -1},
     )
     .await?;
+    ensure_index(
+        db.collection::<mongodb::bson::Document>("project_memories"),
+        doc! {"user_id": 1, "agent_id": 1, "recall_summarized": 1, "updated_at": 1},
+    )
+    .await?;
 
     ensure_unique_index(
         db.collection::<mongodb::bson::Document>("agent_recalls"),
@@ -224,6 +234,16 @@ pub async fn init_schema(db: &Db) -> Result<(), String> {
     ensure_index(
         db.collection::<mongodb::bson::Document>("agent_recalls"),
         doc! {"user_id": 1, "agent_id": 1, "updated_at": -1},
+    )
+    .await?;
+    ensure_index(
+        db.collection::<mongodb::bson::Document>("agent_recalls"),
+        doc! {"user_id": 1, "agent_id": 1, "level": -1, "updated_at": -1},
+    )
+    .await?;
+    ensure_index(
+        db.collection::<mongodb::bson::Document>("agent_recalls"),
+        doc! {"user_id": 1, "agent_id": 1, "level": 1, "rolled_up": 1, "updated_at": 1},
     )
     .await?;
 

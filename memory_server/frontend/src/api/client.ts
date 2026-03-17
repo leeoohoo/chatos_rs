@@ -2,6 +2,7 @@ import axios from 'axios';
 
 import type {
   AgentRecall,
+  AgentMemoryJobConfig,
   AiModelConfig,
   JobRun,
   MemoryAgent,
@@ -289,6 +290,40 @@ export const api = {
 
   async runRollupOnce(userId: string) {
     const { data } = await client.post('/jobs/summary-rollup/run-once', {
+      user_id: userId,
+    });
+    return data;
+  },
+
+  async getAgentMemoryJobConfig(userId: string): Promise<AgentMemoryJobConfig | null> {
+    const { data } = await client.get('/configs/agent-memory-job', { params: { user_id: userId } });
+    return data ?? null;
+  },
+
+  async saveAgentMemoryJobConfig(payload: Partial<AgentMemoryJobConfig> & { user_id: string }) {
+    const req = {
+      user_id: payload.user_id,
+      enabled:
+        payload.enabled === undefined
+          ? undefined
+          : typeof payload.enabled === 'number'
+            ? payload.enabled === 1
+            : Boolean(payload.enabled),
+      summary_model_config_id: payload.summary_model_config_id,
+      token_limit: payload.token_limit,
+      round_limit: payload.round_limit,
+      target_summary_tokens: payload.target_summary_tokens,
+      job_interval_seconds: payload.job_interval_seconds,
+      keep_raw_level0_count: payload.keep_raw_level0_count,
+      max_level: payload.max_level,
+      max_agents_per_tick: payload.max_agents_per_tick,
+    };
+    const { data } = await client.put('/configs/agent-memory-job', req);
+    return data;
+  },
+
+  async runAgentMemoryOnce(userId: string) {
+    const { data } = await client.post('/jobs/agent-memory/run-once', {
       user_id: userId,
     });
     return data;

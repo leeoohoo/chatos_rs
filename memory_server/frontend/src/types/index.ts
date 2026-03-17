@@ -184,6 +184,8 @@ export interface ProjectMemory {
   project_id: string;
   memory_text: string;
   memory_version: number;
+  recall_summarized: number;
+  recall_summarized_at?: string | null;
   last_source_at?: string | null;
   updated_at: string;
 }
@@ -194,8 +196,25 @@ export interface AgentRecall {
   agent_id: string;
   recall_key: string;
   recall_text: string;
+  level: number;
   source_project_ids: string[];
+  rolled_up?: number;
+  rollup_recall_key?: string | null;
+  rolled_up_at?: string | null;
   confidence?: number | null;
   last_seen_at?: string | null;
   updated_at: string;
+}
+
+export interface AgentMemoryJobConfig {
+  user_id: string;
+  enabled: number;
+  summary_model_config_id?: string | null;
+  token_limit: number;
+  round_limit: number;
+  target_summary_tokens: number;
+  job_interval_seconds: number;
+  keep_raw_level0_count: number;
+  max_level: number;
+  max_agents_per_tick: number;
 }

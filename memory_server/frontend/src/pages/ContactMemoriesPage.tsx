@@ -189,6 +189,13 @@ export function ContactMemoriesPage({
       width: 140,
     },
     {
+      title: t('memory.recallSummarized'),
+      dataIndex: 'recall_summarized',
+      key: 'recall_summarized',
+      width: 150,
+      render: (value?: number) => (Number(value) === 1 ? 'Yes' : 'No'),
+    },
+    {
       title: t('memory.lastSourceAt'),
       dataIndex: 'last_source_at',
       key: 'last_source_at',
@@ -220,6 +227,15 @@ export function ContactMemoriesPage({
         <Paragraph style={{ marginBottom: 0, whiteSpace: 'pre-wrap' }}>
           {value || '-'}
         </Paragraph>
+      ),
+    },
+    {
+      title: t('memory.recallLevel'),
+      dataIndex: 'level',
+      key: 'level',
+      width: 100,
+      render: (value?: number) => (
+        Number.isFinite(Number(value)) ? Number(value) : 0
       ),
     },
     {
