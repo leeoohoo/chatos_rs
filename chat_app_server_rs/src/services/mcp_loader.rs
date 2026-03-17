@@ -3,7 +3,7 @@ use crate::models::mcp_config::McpConfig;
 use crate::repositories::mcp_configs;
 use crate::services::builtin_mcp::{
     builtin_kind_by_command, builtin_kind_by_id, get_builtin_mcp_config, is_builtin_mcp_id,
-    BuiltinMcpKind,
+    list_builtin_mcp_configs, BuiltinMcpKind,
 };
 use crate::utils::workspace::resolve_workspace_dir;
 
@@ -134,12 +134,22 @@ pub async fn load_mcp_configs_for_user(
     } else {
         mcp_configs::list_enabled_mcp_configs(user_id.clone()).await?
     };
+    let mut seen_ids: std::collections::HashSet<String> =
+        configs.iter().map(|cfg| cfg.id.clone()).collect();
     if use_filter {
         if let Some(ids) = mcp_config_ids.as_ref() {
             for id in ids {
                 if let Some(cfg) = get_builtin_mcp_config(id) {
-                    configs.push(cfg);
+                    if seen_ids.insert(cfg.id.clone()) {
+                        configs.push(cfg);
+                    }
                 }
+            }
+        }
+    } else {
+        for cfg in list_builtin_mcp_configs() {
+            if seen_ids.insert(cfg.id.clone()) {
+                configs.push(cfg);
             }
         }
     }

@@ -15,8 +15,8 @@ use crate::utils::model_config::is_gpt_provider;
 mod parser;
 
 use self::parser::{
-    apply_stream_event, extract_output_text, extract_reasoning_from_response, extract_tool_calls,
-    StreamState,
+    apply_stream_event, collect_stream_tool_calls, extract_output_text,
+    extract_reasoning_from_response, extract_tool_calls, StreamState,
 };
 
 #[derive(Debug, Clone)]
@@ -130,12 +130,17 @@ impl AiRequestHandler {
         };
 
         info!(
-            "[AI_V3] handleRequest start: purpose={}, model={}, stream={}, baseURL={}, session={}",
+            "[AI_V3] handleRequest start: purpose={}, model={}, stream={}, baseURL={}, session={}, tools={}",
             purpose,
             payload.get("model").and_then(|v| v.as_str()).unwrap_or(""),
             stream,
             self.base_url,
-            session_id.clone().unwrap_or_else(|| "n/a".to_string())
+            session_id.clone().unwrap_or_else(|| "n/a".to_string()),
+            payload
+                .get("tools")
+                .and_then(|value| value.as_array())
+                .map(|items| items.len())
+                .unwrap_or(0)
         );
 
         let persist_messages = purpose != "agent_builder";
@@ -335,7 +340,8 @@ impl AiRequestHandler {
             .response_obj
             .clone()
             .unwrap_or_else(|| json!({ "output_text": stream_state.full_content }));
-        let tool_calls = extract_tool_calls(&response_val);
+        let tool_calls = extract_tool_calls(&response_val)
+            .or_else(|| collect_stream_tool_calls(&stream_state.tool_calls_map));
         let content = if !stream_state.full_content.is_empty() {
             stream_state.full_content.clone()
         } else {

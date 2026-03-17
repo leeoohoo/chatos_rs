@@ -101,8 +101,7 @@ pub fn build_function_tool_schema(
             "type": "function",
             "name": name,
             "description": description,
-            "parameters": normalize_json_schema(parameters),
-            "strict": true
+            "parameters": normalize_json_schema(parameters)
         }),
     }
 }

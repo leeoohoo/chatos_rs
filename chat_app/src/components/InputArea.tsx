@@ -14,6 +14,15 @@ import {
   normalizeFsEntry,
 } from './inputArea/fileUtils';
 
+const AGENT_BUILDER_MCP_ID = 'builtin_agent_builder';
+
+interface SelectableMcpConfig {
+  id: string;
+  name: string;
+  displayName: string;
+  builtin: boolean;
+}
+
 export const InputArea: React.FC<InputAreaProps> = ({
   onSend,
   onStop,
@@ -44,6 +53,7 @@ export const InputArea: React.FC<InputAreaProps> = ({
   mcpEnabled = true,
   enabledMcpIds = [],
   onMcpEnabledChange,
+  onEnabledMcpIdsChange,
 }) => {
   const [message, setMessage] = useState('');
   const [attachments, setAttachments] = useState<File[]>([]);
@@ -53,6 +63,11 @@ export const InputArea: React.FC<InputAreaProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const pickerRef = useRef<HTMLDivElement>(null);
+  const [mcpPickerOpen, setMcpPickerOpen] = useState(false);
+  const mcpPickerRef = useRef<HTMLDivElement>(null);
+  const [availableMcpConfigs, setAvailableMcpConfigs] = useState<SelectableMcpConfig[]>([]);
+  const [mcpConfigsLoading, setMcpConfigsLoading] = useState(false);
+  const [mcpConfigsError, setMcpConfigsError] = useState<string | null>(null);
   // 记录全局拖拽层级，避免 dragenter/dragleave 抖动
   const globalDragCounter = useRef(0);
 
@@ -100,6 +115,30 @@ export const InputArea: React.FC<InputAreaProps> = ({
     [availableModels]
   );
   const hasAiOptions = (availableModels && availableModels.length > 0);
+  const availableMcpIds = useMemo(
+    () => availableMcpConfigs.map((item) => item.id),
+    [availableMcpConfigs],
+  );
+  const availableMcpIdSet = useMemo(
+    () => new Set(availableMcpIds),
+    [availableMcpIds],
+  );
+  const sanitizedEnabledMcpIds = useMemo(() => {
+    if (enabledMcpIds.length === 0 || availableMcpIds.length === 0) {
+      return enabledMcpIds;
+    }
+    return enabledMcpIds.filter((id) => availableMcpIdSet.has(id));
+  }, [availableMcpIdSet, availableMcpIds.length, enabledMcpIds]);
+  const isAllMcpSelected = sanitizedEnabledMcpIds.length === 0;
+  const selectedMcpCount = isAllMcpSelected ? availableMcpIds.length : sanitizedEnabledMcpIds.length;
+  const builtinMcpConfigs = useMemo(
+    () => availableMcpConfigs.filter((item) => item.builtin),
+    [availableMcpConfigs],
+  );
+  const customMcpConfigs = useMemo(
+    () => availableMcpConfigs.filter((item) => !item.builtin),
+    [availableMcpConfigs],
+  );
   const projectForFilePicker = useMemo(
     () => selectedRuntimeProject || null,
     [selectedRuntimeProject],
@@ -231,6 +270,18 @@ export const InputArea: React.FC<InputAreaProps> = ({
   }, [projectFilePickerOpen]);
 
   useEffect(() => {
+    if (!mcpPickerOpen) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (!mcpPickerRef.current) return;
+      if (!mcpPickerRef.current.contains(e.target as Node)) {
+        setMcpPickerOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [mcpPickerOpen]);
+
+  useEffect(() => {
     setProjectFilePickerOpen(false);
     setProjectFileEntries([]);
     setProjectFileSearchResults([]);
@@ -291,6 +342,144 @@ export const InputArea: React.FC<InputAreaProps> = ({
       window.clearTimeout(timer);
     };
   }, [client, isHiddenProjectPath, isPathWithinRoot, projectFileFilter, projectFilePickerOpen, projectRootForFilePicker]);
+
+  const loadAvailableMcpConfigs = useCallback(async () => {
+    setMcpConfigsLoading(true);
+    setMcpConfigsError(null);
+    try {
+      const rows = await client.getMcpConfigs();
+      const seenIds = new Set<string>();
+      const normalized = (Array.isArray(rows) ? rows : [])
+        .map((item: any) => {
+          const id = typeof item?.id === 'string' ? item.id.trim() : '';
+          if (!id || id === AGENT_BUILDER_MCP_ID) {
+            return null;
+          }
+          if (seenIds.has(id)) {
+            return null;
+          }
+          seenIds.add(id);
+          const enabled = typeof item?.enabled === 'boolean' ? item.enabled : true;
+          if (!enabled) {
+            return null;
+          }
+          const displayNameRaw = typeof item?.display_name === 'string' ? item.display_name.trim() : '';
+          const nameRaw = typeof item?.name === 'string' ? item.name.trim() : '';
+          return {
+            id,
+            name: nameRaw || id,
+            displayName: displayNameRaw || nameRaw || id,
+            builtin: item?.builtin === true,
+          } satisfies SelectableMcpConfig;
+        })
+        .filter((item: SelectableMcpConfig | null): item is SelectableMcpConfig => item !== null)
+        .sort((left, right) => {
+          if (left.builtin !== right.builtin) {
+            return left.builtin ? -1 : 1;
+          }
+          return left.displayName.localeCompare(right.displayName, 'zh-Hans-CN');
+        });
+
+      setAvailableMcpConfigs(normalized);
+    } catch (error: any) {
+      setMcpConfigsError(error?.message || '加载 MCP 列表失败');
+      setAvailableMcpConfigs([]);
+    } finally {
+      setMcpConfigsLoading(false);
+    }
+  }, [client]);
+
+  useEffect(() => {
+    if (!mcpEnabled) {
+      return;
+    }
+    if (availableMcpConfigs.length > 0 || mcpConfigsLoading) {
+      return;
+    }
+    void loadAvailableMcpConfigs();
+  }, [availableMcpConfigs.length, loadAvailableMcpConfigs, mcpConfigsLoading, mcpEnabled]);
+
+  useEffect(() => {
+    if (!mcpPickerOpen) {
+      return;
+    }
+    if (availableMcpConfigs.length > 0 || mcpConfigsLoading) {
+      return;
+    }
+    void loadAvailableMcpConfigs();
+  }, [availableMcpConfigs.length, loadAvailableMcpConfigs, mcpConfigsLoading, mcpPickerOpen]);
+
+  useEffect(() => {
+    if (!onEnabledMcpIdsChange) {
+      return;
+    }
+    if (enabledMcpIds.length === 0 || availableMcpIds.length === 0) {
+      return;
+    }
+    if (sanitizedEnabledMcpIds.length === enabledMcpIds.length) {
+      return;
+    }
+    onEnabledMcpIdsChange(sanitizedEnabledMcpIds);
+  }, [availableMcpIds.length, enabledMcpIds, onEnabledMcpIdsChange, sanitizedEnabledMcpIds]);
+
+  const handleToggleMcpPicker = useCallback(() => {
+    if (disabled || isStreaming || isStopping) return;
+    setMcpPickerOpen((prev) => !prev);
+  }, [disabled, isStopping, isStreaming]);
+
+  const applySelectedMcpIds = useCallback((ids: string[]) => {
+    if (!onEnabledMcpIdsChange) {
+      return;
+    }
+    const uniqueIds: string[] = [];
+    for (const id of ids) {
+      const trimmed = id.trim();
+      if (!trimmed || uniqueIds.includes(trimmed)) {
+        continue;
+      }
+      uniqueIds.push(trimmed);
+    }
+    if (uniqueIds.length === availableMcpIds.length) {
+      onEnabledMcpIdsChange([]);
+      return;
+    }
+    onEnabledMcpIdsChange(uniqueIds);
+  }, [availableMcpIds.length, onEnabledMcpIdsChange]);
+
+  const handleSelectAllMcp = useCallback(() => {
+    if (!onEnabledMcpIdsChange) {
+      return;
+    }
+    onEnabledMcpIdsChange([]);
+  }, [onEnabledMcpIdsChange]);
+
+  const handleToggleMcpSelection = useCallback((mcpId: string) => {
+    if (!onEnabledMcpIdsChange) {
+      return;
+    }
+    if (!availableMcpIdSet.has(mcpId)) {
+      return;
+    }
+    const baseSelected = isAllMcpSelected ? [...availableMcpIds] : [...sanitizedEnabledMcpIds];
+    const exists = baseSelected.includes(mcpId);
+    const nextSelected = exists
+      ? baseSelected.filter((id) => id !== mcpId)
+      : [...baseSelected, mcpId];
+    if (nextSelected.length === 0) {
+      onMcpEnabledChange?.(false);
+      onEnabledMcpIdsChange([]);
+      return;
+    }
+    applySelectedMcpIds(nextSelected);
+  }, [
+    applySelectedMcpIds,
+    availableMcpIdSet,
+    availableMcpIds,
+    isAllMcpSelected,
+    onEnabledMcpIdsChange,
+    onMcpEnabledChange,
+    sanitizedEnabledMcpIds,
+  ]);
 
   const isFileTypeAllowed = useCallback((file: File) => {
     if (!supportedFileTypes || supportedFileTypes.length === 0) return true;
@@ -592,7 +781,7 @@ export const InputArea: React.FC<InputAreaProps> = ({
 
     onSend(trimmedMessage, attachments, {
       mcpEnabled,
-      enabledMcpIds,
+      enabledMcpIds: sanitizedEnabledMcpIds,
       projectId: selectedRuntimeProject?.id || null,
       projectRoot: selectedRuntimeProject?.rootPath || null,
     });
@@ -877,21 +1066,144 @@ export const InputArea: React.FC<InputAreaProps> = ({
           </select>
         )}
 
-        <button
-          type="button"
-          onClick={() => onMcpEnabledChange?.(!mcpEnabled)}
-          disabled={disabled || isStreaming || isStopping}
-          className={cn(
-            'flex-shrink-0 px-2 py-1 text-xs rounded-md transition-colors',
-            mcpEnabled
-              ? 'bg-primary text-primary-foreground hover:bg-primary/90'
-              : 'bg-muted text-muted-foreground hover:text-foreground',
-            (disabled || isStreaming || isStopping) && 'opacity-50 cursor-not-allowed'
+        <div className="relative flex-shrink-0" ref={mcpPickerRef}>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => onMcpEnabledChange?.(!mcpEnabled)}
+              disabled={disabled || isStreaming || isStopping}
+              className={cn(
+                'flex-shrink-0 px-2 py-1 text-xs rounded-md transition-colors',
+                mcpEnabled
+                  ? 'bg-primary text-primary-foreground hover:bg-primary/90'
+                  : 'bg-muted text-muted-foreground hover:text-foreground',
+                (disabled || isStreaming || isStopping) && 'opacity-50 cursor-not-allowed'
+              )}
+              title={mcpEnabled ? 'MCP 已开启' : 'MCP 已关闭'}
+            >
+              MCP {mcpEnabled ? '开' : '关'}
+            </button>
+            <button
+              type="button"
+              onClick={handleToggleMcpPicker}
+              disabled={disabled || isStreaming || isStopping}
+              className={cn(
+                'px-2 py-1 rounded-md border text-xs transition-colors',
+                'text-muted-foreground hover:text-foreground hover:bg-accent',
+                (disabled || isStreaming || isStopping) && 'opacity-50 cursor-not-allowed'
+              )}
+              title="选择当前对话可用 MCP"
+            >
+              MCP 选择
+              <span className="ml-1">▾</span>
+            </button>
+          </div>
+          {mcpPickerOpen && (
+            <div className="absolute right-0 bottom-full mb-2 z-30 w-80 bg-popover text-popover-foreground border rounded-md shadow-lg">
+              <div className="px-3 py-2 border-b flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="text-xs font-medium">MCP 选择</div>
+                  <div className="text-[11px] text-muted-foreground">
+                    {mcpEnabled
+                      ? (isAllMcpSelected
+                        ? `已选全部 (${availableMcpIds.length || 0})`
+                        : `已选 ${selectedMcpCount}/${availableMcpIds.length || 0}`)
+                      : 'MCP 总开关已关闭'}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { void loadAvailableMcpConfigs(); }}
+                  disabled={mcpConfigsLoading}
+                  className="px-2 py-0.5 text-[11px] rounded border text-muted-foreground hover:text-foreground hover:bg-accent disabled:opacity-50"
+                >
+                  刷新
+                </button>
+              </div>
+
+              <div className="max-h-72 overflow-auto py-1">
+                {mcpConfigsLoading ? (
+                  <div className="px-3 py-3 text-xs text-muted-foreground">加载中...</div>
+                ) : mcpConfigsError ? (
+                  <div className="px-3 py-3 text-xs text-destructive">{mcpConfigsError}</div>
+                ) : availableMcpConfigs.length === 0 ? (
+                  <div className="px-3 py-3 text-xs text-muted-foreground">暂无可用 MCP</div>
+                ) : (
+                  <>
+                    <label className="w-full px-3 py-2 text-sm flex items-center gap-2 border-b">
+                      <input
+                        type="checkbox"
+                        checked={isAllMcpSelected}
+                        onChange={() => {
+                          if (!mcpEnabled) {
+                            onMcpEnabledChange?.(true);
+                          }
+                          handleSelectAllMcp();
+                        }}
+                        disabled={disabled || isStreaming || isStopping}
+                      />
+                      <span>全部可用</span>
+                    </label>
+
+                    {builtinMcpConfigs.length > 0 && (
+                      <>
+                        <div className="px-3 pt-2 pb-1 text-[11px] uppercase tracking-wide text-muted-foreground">
+                          内置 MCP
+                        </div>
+                        {builtinMcpConfigs.map((item) => {
+                          const checked = isAllMcpSelected || sanitizedEnabledMcpIds.includes(item.id);
+                          return (
+                            <label key={item.id} className="w-full px-3 py-1.5 text-sm flex items-center gap-2 hover:bg-accent">
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() => {
+                                  if (!mcpEnabled) {
+                                    onMcpEnabledChange?.(true);
+                                  }
+                                  handleToggleMcpSelection(item.id);
+                                }}
+                                disabled={disabled || isStreaming || isStopping}
+                              />
+                              <span className="truncate" title={item.displayName}>{item.displayName}</span>
+                            </label>
+                          );
+                        })}
+                      </>
+                    )}
+
+                    {customMcpConfigs.length > 0 && (
+                      <>
+                        <div className="px-3 pt-2 pb-1 text-[11px] uppercase tracking-wide text-muted-foreground">
+                          自定义 MCP
+                        </div>
+                        {customMcpConfigs.map((item) => {
+                          const checked = isAllMcpSelected || sanitizedEnabledMcpIds.includes(item.id);
+                          return (
+                            <label key={item.id} className="w-full px-3 py-1.5 text-sm flex items-center gap-2 hover:bg-accent">
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() => {
+                                  if (!mcpEnabled) {
+                                    onMcpEnabledChange?.(true);
+                                  }
+                                  handleToggleMcpSelection(item.id);
+                                }}
+                                disabled={disabled || isStreaming || isStopping}
+                              />
+                              <span className="truncate" title={item.displayName}>{item.displayName}</span>
+                            </label>
+                          );
+                        })}
+                      </>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
           )}
-          title={mcpEnabled ? 'MCP 已开启' : 'MCP 已关闭'}
-        >
-          MCP {mcpEnabled ? '开' : '关'}
-        </button>
+        </div>
 
         {reasoningSupported && (
           <button

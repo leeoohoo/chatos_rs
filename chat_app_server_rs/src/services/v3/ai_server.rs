@@ -54,6 +54,11 @@ impl AiServer {
         self.ai_client.set_system_prompt(prompt);
     }
 
+    pub fn set_mcp_tool_execute(&mut self, mcp_tool_execute: McpToolExecute) {
+        self.mcp_tool_execute = mcp_tool_execute.clone();
+        self.ai_client.set_mcp_tool_execute(mcp_tool_execute);
+    }
+
     pub async fn chat(
         &mut self,
         session_id: &str,

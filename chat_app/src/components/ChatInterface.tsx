@@ -1082,6 +1082,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                       mcpEnabled={composerMcpEnabled}
                       enabledMcpIds={composerEnabledMcpIds}
                       onMcpEnabledChange={setComposerMcpEnabled}
+                      onEnabledMcpIdsChange={setComposerEnabledMcpIds}
                     />
                   )}
                 </div>

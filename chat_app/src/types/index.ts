@@ -384,6 +384,7 @@ export interface InputAreaProps {
   mcpEnabled?: boolean;
   enabledMcpIds?: string[];
   onMcpEnabledChange?: (enabled: boolean) => void;
+  onEnabledMcpIdsChange?: (ids: string[]) => void;
 }
 
 export interface SessionListProps {

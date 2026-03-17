@@ -103,6 +103,10 @@ impl AiClient {
         self.system_prompt = prompt;
     }
 
+    pub fn set_mcp_tool_execute(&mut self, mcp_tool_execute: McpToolExecute) {
+        self.mcp_tool_execute = mcp_tool_execute;
+    }
+
     pub async fn process_request(
         &mut self,
         messages: Vec<Value>,
@@ -167,6 +171,11 @@ impl AiClient {
             .unwrap_or(false);
         let available_tools = self.mcp_tool_execute.get_available_tools();
         let include_tool_items = !available_tools.is_empty();
+        info!(
+            "[AI_V3] tools prepared: count={}, session={}",
+            available_tools.len(),
+            session_id.clone().unwrap_or_else(|| "n/a".to_string())
+        );
 
         let allow_prev_id = session_id
             .as_ref()

@@ -63,6 +63,7 @@ interface ChatComposerPanelProps {
   mcpEnabled: boolean;
   enabledMcpIds?: string[];
   onMcpEnabledChange: (enabled: boolean) => void;
+  onEnabledMcpIdsChange: (ids: string[]) => void;
 }
 
 const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
@@ -108,6 +109,7 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
   mcpEnabled,
   enabledMcpIds,
   onMcpEnabledChange,
+  onEnabledMcpIdsChange,
 }) => (
   <div className="border-t border-border">
     <TaskWorkbar
@@ -165,6 +167,7 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
       mcpEnabled={mcpEnabled}
       enabledMcpIds={enabledMcpIds}
       onMcpEnabledChange={onMcpEnabledChange}
+      onEnabledMcpIdsChange={onEnabledMcpIdsChange}
     />
   </div>
 );

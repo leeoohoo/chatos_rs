@@ -66,6 +66,10 @@ impl AiClient {
         self.system_prompt = prompt;
     }
 
+    pub fn set_mcp_tool_execute(&mut self, mcp_tool_execute: McpToolExecute) {
+        self.mcp_tool_execute = mcp_tool_execute;
+    }
+
     async fn load_memory_context_messages_for_scope(
         &self,
         session_id: Option<&str>,

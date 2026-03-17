@@ -288,7 +288,7 @@ async fn stream_chat_v2(
     if use_tools {
         let _ = mcp_exec.init().await;
     }
-    ai_server.mcp_tool_execute = mcp_exec;
+    ai_server.set_mcp_tool_execute(mcp_exec);
 
     let effective_settings = get_effective_user_settings(effective_user_id.clone())
         .await
