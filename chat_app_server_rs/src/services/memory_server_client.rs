@@ -91,6 +91,59 @@ pub struct MemoryContactDto {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct MemoryProjectDto {
+    pub id: String,
+    pub user_id: String,
+    pub project_id: String,
+    pub name: String,
+    pub root_path: Option<String>,
+    pub description: Option<String>,
+    pub status: String,
+    pub is_virtual: i64,
+    pub created_at: String,
+    pub updated_at: String,
+    pub archived_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SyncMemoryProjectRequestDto {
+    pub user_id: Option<String>,
+    pub project_id: Option<String>,
+    pub name: Option<String>,
+    pub root_path: Option<String>,
+    pub description: Option<String>,
+    pub status: Option<String>,
+    pub is_virtual: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct MemoryProjectAgentLinkDto {
+    pub id: String,
+    pub user_id: String,
+    pub project_id: String,
+    pub agent_id: String,
+    pub contact_id: Option<String>,
+    pub latest_session_id: Option<String>,
+    pub first_bound_at: String,
+    pub last_bound_at: String,
+    pub last_message_at: Option<String>,
+    pub status: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SyncProjectAgentLinkRequestDto {
+    pub user_id: Option<String>,
+    pub project_id: Option<String>,
+    pub agent_id: Option<String>,
+    pub contact_id: Option<String>,
+    pub session_id: Option<String>,
+    pub last_message_at: Option<String>,
+    pub status: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct MemoryProjectMemoryDto {
     pub id: String,
     pub user_id: String,
@@ -665,6 +718,26 @@ pub async fn delete_memory_contact(contact_id: &str) -> Result<bool, String> {
     Ok(true)
 }
 
+pub async fn sync_memory_project(
+    payload: &SyncMemoryProjectRequestDto,
+) -> Result<MemoryProjectDto, String> {
+    let req = MEMORY_SERVER_HTTP
+        .post(build_url("/projects/sync").as_str())
+        .timeout(timeout_duration())
+        .json(payload);
+    send_json(req).await
+}
+
+pub async fn sync_project_agent_link(
+    payload: &SyncProjectAgentLinkRequestDto,
+) -> Result<MemoryProjectAgentLinkDto, String> {
+    let req = MEMORY_SERVER_HTTP
+        .post(build_url("/project-agent-links/sync").as_str())
+        .timeout(timeout_duration())
+        .json(payload);
+    send_json(req).await
+}
+
 pub async fn list_contact_project_memories(
     contact_id: &str,
     project_id: &str,
@@ -718,6 +791,33 @@ pub async fn list_contact_project_memories_by_contact(
         .timeout(timeout_duration())
         .query(&params);
     let resp: ListResponse<MemoryProjectMemoryDto> = send_json(req).await?;
+    Ok(resp.items)
+}
+
+pub async fn list_contact_projects(
+    contact_id: &str,
+    limit: Option<i64>,
+    offset: i64,
+) -> Result<Vec<Value>, String> {
+    let mut params: Vec<(String, String)> = Vec::new();
+    if let Some(value) = limit {
+        params.push(("limit".to_string(), value.max(1).to_string()));
+    }
+    if offset > 0 {
+        params.push(("offset".to_string(), offset.to_string()));
+    }
+
+    let req = MEMORY_SERVER_HTTP
+        .get(
+            build_url(&format!(
+                "/contacts/{}/projects",
+                urlencoding::encode(contact_id)
+            ))
+            .as_str(),
+        )
+        .timeout(timeout_duration())
+        .query(&params);
+    let resp: ListResponse<Value> = send_json(req).await?;
     Ok(resp.items)
 }
 

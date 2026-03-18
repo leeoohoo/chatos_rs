@@ -17,6 +17,7 @@ use crate::core::session_access::{ensure_owned_session, map_session_access_error
 use crate::core::user_scope::resolve_user_id;
 use crate::core::validation::normalize_non_empty;
 use crate::models::session_mcp_server::SessionMcpServer;
+use crate::repositories::projects as projects_repo;
 use crate::repositories::session_mcp_servers as session_mcp_repo;
 use crate::services::memory_server_client;
 
@@ -72,6 +73,37 @@ struct PageQuery {
     offset: Option<String>,
     compact: Option<String>,
     strategy: Option<String>,
+}
+
+fn normalize_optional_text(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|raw| !raw.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn normalize_project_scope(project_id: Option<&str>) -> String {
+    normalize_optional_text(project_id).unwrap_or_else(|| "0".to_string())
+}
+
+fn metadata_string(metadata: Option<&Value>, path: &[&str]) -> Option<String> {
+    let mut cursor = metadata?;
+    for key in path {
+        cursor = cursor.get(*key)?;
+    }
+    normalize_optional_text(cursor.as_str())
+}
+
+fn contact_id_from_metadata(metadata: Option<&Value>) -> Option<String> {
+    metadata_string(metadata, &["contact", "contact_id"])
+        .or_else(|| metadata_string(metadata, &["ui_contact", "contact_id"]))
+}
+
+fn contact_agent_id_from_metadata(metadata: Option<&Value>) -> Option<String> {
+    metadata_string(metadata, &["contact", "agent_id"])
+        .or_else(|| metadata_string(metadata, &["ui_contact", "agent_id"]))
+        .or_else(|| metadata_string(metadata, &["ui_chat_selection", "selected_agent_id"]))
+        .or_else(|| metadata_string(metadata, &["ui_chat_selection", "selectedAgentId"]))
 }
 
 pub fn router() -> Router {
@@ -193,11 +225,82 @@ async fn create_session(
     };
 
     let _ = description;
-    match memory_server_client::create_session(user_id, title, project_id, metadata).await {
-        Ok(saved) => (
-            StatusCode::CREATED,
-            Json(serde_json::to_value(saved).unwrap_or(Value::Null)),
-        ),
+    match memory_server_client::create_session(user_id.clone(), title, project_id, metadata).await
+    {
+        Ok(saved) => {
+            let metadata = saved.metadata.as_ref();
+            let project_id = normalize_project_scope(saved.project_id.as_deref());
+            if project_id != "0" {
+                if let Ok(Some(project)) = projects_repo::get_project_by_id(project_id.as_str()).await {
+                    let same_owner = project
+                        .user_id
+                        .as_deref()
+                        .map(|owner| owner == user_id.as_str())
+                        .unwrap_or(true);
+                    if same_owner {
+                        if let Err(err) = memory_server_client::sync_memory_project(
+                            &memory_server_client::SyncMemoryProjectRequestDto {
+                                user_id: Some(user_id.clone()),
+                                project_id: Some(project.id.clone()),
+                                name: Some(project.name.clone()),
+                                root_path: Some(project.root_path.clone()),
+                                description: project.description.clone(),
+                                status: Some("active".to_string()),
+                                is_virtual: Some(false),
+                            },
+                        )
+                        .await
+                        {
+                            eprintln!(
+                                "[SESSIONS] sync memory project failed while creating session: project_id={} err={}",
+                                project.id, err
+                            );
+                        }
+                    }
+                }
+            } else if let Err(err) = memory_server_client::sync_memory_project(
+                &memory_server_client::SyncMemoryProjectRequestDto {
+                    user_id: Some(user_id.clone()),
+                    project_id: Some("0".to_string()),
+                    name: Some("未指定项目".to_string()),
+                    root_path: None,
+                    description: None,
+                    status: Some("active".to_string()),
+                    is_virtual: Some(true),
+                },
+            )
+            .await
+            {
+                eprintln!(
+                    "[SESSIONS] sync virtual memory project failed while creating session: err={}",
+                    err
+                );
+            }
+            if let Some(agent_id) = contact_agent_id_from_metadata(metadata) {
+                if let Err(err) = memory_server_client::sync_project_agent_link(
+                    &memory_server_client::SyncProjectAgentLinkRequestDto {
+                        user_id: Some(user_id.clone()),
+                        project_id: Some(project_id),
+                        agent_id: Some(agent_id),
+                        contact_id: contact_id_from_metadata(metadata),
+                        session_id: Some(saved.id.clone()),
+                        last_message_at: None,
+                        status: Some("active".to_string()),
+                    },
+                )
+                .await
+                {
+                    eprintln!(
+                        "[SESSIONS] sync project-agent link failed: session_id={} err={}",
+                        saved.id, err
+                    );
+                }
+            }
+            (
+                StatusCode::CREATED,
+                Json(serde_json::to_value(saved).unwrap_or(Value::Null)),
+            )
+        }
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": err})),

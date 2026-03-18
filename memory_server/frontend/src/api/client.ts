@@ -7,6 +7,8 @@ import type {
   JobRun,
   MemoryAgent,
   MemoryContact,
+  ContactProject,
+  MemoryProject,
   MemorySkill,
   MemorySkillPlugin,
   Message,
@@ -495,6 +497,38 @@ export const api = {
         offset: params?.offset ?? 0,
       },
     });
+    return data.items ?? [];
+  },
+
+  async listProjects(
+    userId?: string,
+    params?: { status?: string; include_virtual?: boolean; limit?: number; offset?: number },
+  ): Promise<MemoryProject[]> {
+    const { data } = await client.get('/projects', {
+      params: {
+        user_id: userId,
+        status: params?.status,
+        include_virtual: params?.include_virtual ?? true,
+        limit: params?.limit ?? 500,
+        offset: params?.offset ?? 0,
+      },
+    });
+    return data.items ?? [];
+  },
+
+  async listContactProjects(
+    contactId: string,
+    params?: { limit?: number; offset?: number },
+  ): Promise<ContactProject[]> {
+    const { data } = await client.get(
+      `/contacts/${encodeURIComponent(contactId)}/projects`,
+      {
+        params: {
+          limit: params?.limit ?? 200,
+          offset: params?.offset ?? 0,
+        },
+      },
+    );
     return data.items ?? [];
   },
 

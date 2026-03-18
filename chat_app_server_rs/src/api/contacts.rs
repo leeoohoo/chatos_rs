@@ -43,6 +43,10 @@ pub fn router() -> Router {
             get(list_contact_project_memories_by_contact),
         )
         .route(
+            "/api/contacts/:contact_id/projects",
+            get(list_contact_projects),
+        )
+        .route(
             "/api/contacts/:contact_id/project-memories/:project_id",
             get(list_contact_project_memories),
         )
@@ -174,6 +178,26 @@ async fn list_contact_project_memories_by_contact(
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": "list contact project memories failed", "detail": err})),
+        ),
+    }
+}
+
+async fn list_contact_projects(
+    _auth: AuthUser,
+    Path(contact_id): Path<String>,
+    Query(query): Query<ContactMemoryQuery>,
+) -> (StatusCode, Json<Value>) {
+    match memory_server_client::list_contact_projects(
+        contact_id.as_str(),
+        query.limit,
+        query.offset.unwrap_or(0),
+    )
+    .await
+    {
+        Ok(items) => (StatusCode::OK, Json(json!(items))),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "list contact projects failed", "detail": err})),
         ),
     }
 }

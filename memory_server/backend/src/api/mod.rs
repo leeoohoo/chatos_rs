@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path as FsPath, PathBuf};
 use std::process::Command;
@@ -24,7 +24,8 @@ use crate::models::{
 };
 use crate::repositories::{
     agents as agents_repo, auth as auth_repo, configs, contacts as contacts_repo, jobs as job_repo,
-    memories as memories_repo, messages, sessions, skills as skills_repo, summaries,
+    memories as memories_repo, messages, project_agent_links as project_agent_links_repo,
+    projects as projects_repo, sessions, skills as skills_repo, summaries,
 };
 use crate::services::context;
 use crate::state::AppState;
@@ -89,8 +90,18 @@ pub fn router(state: SharedState) -> Router {
             get(list_contact_project_memories_by_project),
         )
         .route(
+            "/api/memory/v1/contacts/:contact_id/projects",
+            get(list_contact_projects),
+        )
+        .route(
             "/api/memory/v1/contacts/:contact_id/agent-recalls",
             get(list_contact_agent_recalls),
+        )
+        .route("/api/memory/v1/projects", get(list_projects))
+        .route("/api/memory/v1/projects/sync", post(sync_project))
+        .route(
+            "/api/memory/v1/project-agent-links/sync",
+            post(sync_project_agent_link),
         )
         .route("/api/memory/v1/agents", get(list_agents).post(create_agent))
         .route("/api/memory/v1/skills", get(list_skills))
@@ -612,6 +623,40 @@ fn resolve_visible_user_ids(scope_user_id: &str) -> Vec<String> {
     vec![normalized.to_string(), auth_repo::ADMIN_USER_ID.to_string()]
 }
 
+fn normalize_optional_text(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn normalize_project_scope_id(value: Option<&str>) -> String {
+    normalize_optional_text(value).unwrap_or_else(|| "0".to_string())
+}
+
+fn default_project_name(project_id: &str) -> String {
+    if project_id == "0" {
+        "未指定项目".to_string()
+    } else {
+        format!("项目 {}", project_id)
+    }
+}
+
+fn pick_latest_timestamp(candidates: &[Option<&str>]) -> Option<String> {
+    let mut best: Option<&str> = None;
+    for candidate in candidates.iter().flatten() {
+        let trimmed = candidate.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        match best {
+            Some(current) if current >= trimmed => {}
+            _ => best = Some(trimmed),
+        }
+    }
+    best.map(ToOwned::to_owned)
+}
+
 async fn ensure_session_access(
     state: &AppState,
     auth: &AuthIdentity,
@@ -970,6 +1015,43 @@ struct ListContactMemoriesQuery {
 }
 
 #[derive(Debug, Deserialize)]
+struct ListContactProjectsQuery {
+    limit: Option<i64>,
+    offset: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ListProjectsQuery {
+    user_id: Option<String>,
+    status: Option<String>,
+    include_virtual: Option<bool>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SyncProjectRequest {
+    user_id: Option<String>,
+    project_id: Option<String>,
+    name: Option<String>,
+    root_path: Option<String>,
+    description: Option<String>,
+    status: Option<String>,
+    is_virtual: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SyncProjectAgentLinkRequest {
+    user_id: Option<String>,
+    project_id: Option<String>,
+    agent_id: Option<String>,
+    contact_id: Option<String>,
+    session_id: Option<String>,
+    last_message_at: Option<String>,
+    status: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct ListAgentsQuery {
     user_id: Option<String>,
     enabled: Option<bool>,
@@ -1181,6 +1263,353 @@ async fn delete_contact(
             Json(json!({"error": "delete contact failed", "detail": err})),
         ),
     }
+}
+
+async fn list_projects(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Query(q): Query<ListProjectsQuery>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match resolve_identity(&headers, state.as_ref()) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    let scope_user_id = resolve_scope_user_id(&auth, q.user_id);
+    let limit = q.limit.unwrap_or(200);
+    let offset = q.offset.unwrap_or(0);
+    let include_virtual = q.include_virtual.unwrap_or(true);
+    let status = normalize_optional_text(q.status.as_deref());
+
+    match projects_repo::list_projects(
+        &state.pool,
+        scope_user_id.as_str(),
+        status.as_deref(),
+        include_virtual,
+        limit,
+        offset,
+    )
+    .await
+    {
+        Ok(items) => (StatusCode::OK, Json(json!({"items": items}))),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "list projects failed", "detail": err})),
+        ),
+    }
+}
+
+async fn sync_project(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Json(req): Json<SyncProjectRequest>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match resolve_identity(&headers, state.as_ref()) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+
+    let scope_user_id = resolve_scope_user_id(&auth, req.user_id);
+    let project_id = normalize_project_scope_id(req.project_id.as_deref());
+    let is_virtual = req
+        .is_virtual
+        .map(|v| if v { 1 } else { 0 })
+        .or_else(|| if project_id == "0" { Some(1) } else { None });
+    let name = normalize_optional_text(req.name.as_deref())
+        .unwrap_or_else(|| default_project_name(project_id.as_str()));
+
+    match projects_repo::upsert_project(
+        &state.pool,
+        projects_repo::UpsertMemoryProjectInput {
+            user_id: scope_user_id,
+            project_id,
+            name,
+            root_path: normalize_optional_text(req.root_path.as_deref()),
+            description: normalize_optional_text(req.description.as_deref()),
+            status: normalize_optional_text(req.status.as_deref()),
+            is_virtual,
+        },
+    )
+    .await
+    {
+        Ok(Some(project)) => (StatusCode::OK, Json(json!(project))),
+        Ok(None) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "sync project failed", "detail": "project not found after upsert"})),
+        ),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "sync project failed", "detail": err})),
+        ),
+    }
+}
+
+async fn sync_project_agent_link(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Json(req): Json<SyncProjectAgentLinkRequest>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match resolve_identity(&headers, state.as_ref()) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+
+    let scope_user_id = resolve_scope_user_id(&auth, req.user_id);
+    let project_id = normalize_project_scope_id(req.project_id.as_deref());
+    let Some(agent_id) = normalize_optional_text(req.agent_id.as_deref()) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "agent_id is required"})),
+        );
+    };
+    let contact_id = normalize_optional_text(req.contact_id.as_deref());
+    if let Some(contact_id) = contact_id.as_deref() {
+        match contacts_repo::get_contact_by_id(&state.pool, contact_id).await {
+            Ok(Some(contact)) => {
+                if contact.user_id != scope_user_id {
+                    return (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"})));
+                }
+            }
+            Ok(None) => {
+                return (
+                    StatusCode::NOT_FOUND,
+                    Json(json!({"error": "contact not found"})),
+                )
+            }
+            Err(err) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": "load contact failed", "detail": err})),
+                )
+            }
+        }
+    }
+
+    match projects_repo::get_project_by_user_and_project_id(
+        &state.pool,
+        scope_user_id.as_str(),
+        project_id.as_str(),
+    )
+    .await
+    {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            let _ = projects_repo::upsert_project(
+                &state.pool,
+                projects_repo::UpsertMemoryProjectInput {
+                    user_id: scope_user_id.clone(),
+                    project_id: project_id.clone(),
+                    name: default_project_name(project_id.as_str()),
+                    root_path: None,
+                    description: None,
+                    status: Some("active".to_string()),
+                    is_virtual: Some(if project_id == "0" { 1 } else { 0 }),
+                },
+            )
+            .await;
+        }
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "load project failed", "detail": err})),
+            )
+        }
+    }
+
+    match project_agent_links_repo::upsert_project_agent_link(
+        &state.pool,
+        project_agent_links_repo::UpsertProjectAgentLinkInput {
+            user_id: scope_user_id,
+            project_id,
+            agent_id,
+            contact_id,
+            latest_session_id: normalize_optional_text(req.session_id.as_deref()),
+            last_message_at: normalize_optional_text(req.last_message_at.as_deref()),
+            status: normalize_optional_text(req.status.as_deref()),
+        },
+    )
+    .await
+    {
+        Ok(Some(link)) => (StatusCode::OK, Json(json!(link))),
+        Ok(None) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "sync project-agent link failed", "detail": "link not found after upsert"})),
+        ),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "sync project-agent link failed", "detail": err})),
+        ),
+    }
+}
+
+async fn list_contact_projects(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Path(contact_id): Path<String>,
+    Query(q): Query<ListContactProjectsQuery>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match resolve_identity(&headers, state.as_ref()) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    let contact = match ensure_contact_access(state.as_ref(), &auth, contact_id.as_str()).await {
+        Ok(contact) => contact,
+        Err(err) => return err,
+    };
+
+    let limit = q.limit.unwrap_or(200);
+    let offset = q.offset.unwrap_or(0);
+    let links = match project_agent_links_repo::list_project_agent_links_by_contact(
+        &state.pool,
+        contact.user_id.as_str(),
+        contact.id.as_str(),
+        Some("active"),
+        limit,
+        offset,
+    )
+    .await
+    {
+        Ok(items) => items,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "list contact projects failed", "detail": err})),
+            )
+        }
+    };
+
+    let memories =
+        match memories_repo::list_project_memories_by_contact(
+            &state.pool,
+            contact.user_id.as_str(),
+            contact.id.as_str(),
+            2_000,
+            0,
+        )
+        .await
+        {
+            Ok(items) => items,
+            Err(err) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": "list contact project memories failed", "detail": err})),
+                )
+            }
+        };
+
+    let mut latest_memory_by_project: HashMap<String, crate::models::ProjectMemory> = HashMap::new();
+    for memory in memories {
+        let pid = normalize_project_scope_id(Some(memory.project_id.as_str()));
+        let should_replace = latest_memory_by_project
+            .get(pid.as_str())
+            .map(|existing| existing.updated_at.as_str() <= memory.updated_at.as_str())
+            .unwrap_or(true);
+        if should_replace {
+            latest_memory_by_project.insert(pid, memory);
+        }
+    }
+
+    let mut ordered_project_ids: Vec<String> = Vec::new();
+    let mut link_by_project: HashMap<String, crate::models::MemoryProjectAgentLink> = HashMap::new();
+    for link in links {
+        let pid = normalize_project_scope_id(Some(link.project_id.as_str()));
+        if !link_by_project.contains_key(pid.as_str()) {
+            ordered_project_ids.push(pid.clone());
+            link_by_project.insert(pid, link);
+        }
+    }
+    for pid in latest_memory_by_project.keys() {
+        if !link_by_project.contains_key(pid.as_str()) {
+            ordered_project_ids.push(pid.clone());
+        }
+    }
+    if let Ok(session_rows) = sessions::list_sessions_by_agent(
+        &state.pool,
+        contact.user_id.as_str(),
+        contact.agent_id.as_str(),
+        None,
+        Some("active"),
+        500,
+        0,
+    )
+    .await
+    {
+        for session in session_rows {
+            let pid = normalize_project_scope_id(session.project_id.as_deref());
+            if !ordered_project_ids.iter().any(|existing| existing == pid.as_str()) {
+                ordered_project_ids.push(pid);
+            }
+        }
+    }
+
+    if ordered_project_ids.is_empty() {
+        return (StatusCode::OK, Json(json!({"items": []})));
+    }
+
+    let projects = match projects_repo::list_projects_by_ids(
+        &state.pool,
+        contact.user_id.as_str(),
+        ordered_project_ids.as_slice(),
+    )
+    .await
+    {
+        Ok(items) => items,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "load projects failed", "detail": err})),
+            )
+        }
+    };
+    let project_map: HashMap<String, crate::models::MemoryProject> = projects
+        .into_iter()
+        .map(|project| (project.project_id.clone(), project))
+        .collect();
+
+    let mut items: Vec<Value> = Vec::new();
+    for project_id in ordered_project_ids {
+        let project = project_map.get(project_id.as_str());
+        let link = link_by_project.get(project_id.as_str());
+        let latest_memory = latest_memory_by_project.get(project_id.as_str());
+        let updated_at = pick_latest_timestamp(&[
+            link.map(|v| v.updated_at.as_str()),
+            latest_memory.map(|v| v.updated_at.as_str()),
+            project.map(|v| v.updated_at.as_str()),
+        ])
+        .unwrap_or_else(crate::repositories::now_rfc3339);
+
+        items.push(json!({
+            "project_id": project_id,
+            "project_name": project
+                .map(|v| v.name.clone())
+                .unwrap_or_else(|| default_project_name(project_id.as_str())),
+            "project_root": project.and_then(|v| v.root_path.clone()),
+            "status": project
+                .map(|v| v.status.clone())
+                .unwrap_or_else(|| "active".to_string()),
+            "is_virtual": project
+                .map(|v| v.is_virtual)
+                .unwrap_or_else(|| if project_id == "0" { 1 } else { 0 }),
+            "has_memory": latest_memory.is_some(),
+            "memory_version": latest_memory.map(|v| v.memory_version).unwrap_or(0),
+            "recall_summarized": latest_memory.map(|v| v.recall_summarized).unwrap_or(0),
+            "last_source_at": latest_memory.and_then(|v| v.last_source_at.clone()),
+            "updated_at": updated_at,
+        }));
+    }
+
+    items.sort_by(|left, right| {
+        let left_updated = left
+            .get("updated_at")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let right_updated = right
+            .get("updated_at")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        right_updated.cmp(left_updated)
+    });
+
+    (StatusCode::OK, Json(json!({"items": items})))
 }
 
 async fn list_contact_project_memories(

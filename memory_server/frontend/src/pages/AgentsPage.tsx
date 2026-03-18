@@ -69,13 +69,19 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
   const [conversationSessionId, setConversationSessionId] = useState<string | null>(null);
   const [conversationMessages, setConversationMessages] = useState<Message[]>([]);
   const [conversationMessagesLoading, setConversationMessagesLoading] = useState(false);
+  const [conversationProjectNames, setConversationProjectNames] = useState<Record<string, string>>({});
+
+  const normalizeProjectId = (projectId?: string | null): string => {
+    const rawProjectId = typeof projectId === 'string'
+      ? projectId.trim()
+      : '';
+    return rawProjectId || '0';
+  };
+
   const groupedConversationSessions = useMemo(() => {
     const latestByProject = new Map<string, Session>();
     for (const session of conversationSessions) {
-      const rawProjectId = typeof session.project_id === 'string'
-        ? session.project_id.trim()
-        : '';
-      const projectId = rawProjectId || '0';
+      const projectId = normalizeProjectId(session.project_id);
       const existing = latestByProject.get(projectId);
       if (!existing) {
         latestByProject.set(projectId, session);
@@ -90,6 +96,9 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
     return Array.from(latestByProject.entries())
       .map(([projectId, session]) => ({
         projectId,
+        projectName: (session.project_name || '').trim()
+          || (conversationProjectNames[projectId] || '').trim()
+          || (projectId === '0' ? t('memory.unassignedProject') : t('memory.unnamedProject')),
         session,
       }))
       .sort((left, right) => {
@@ -97,7 +106,7 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
         const rightTs = new Date(right.session.updated_at || 0).getTime();
         return rightTs - leftTs;
       });
-  }, [conversationSessions]);
+  }, [conversationProjectNames, conversationSessions, t]);
 
   const scopeUserId = useMemo(() => {
     if (!isAdmin) {
@@ -268,12 +277,33 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
     setConversationLoading(true);
     setConversationMessages([]);
     setConversationSessionId(null);
+    setConversationProjectNames({});
     try {
-      const rows = await api.listAgentSessions(agent.id, scopeUserId, {
-        status: 'active',
-        limit: 120,
-        offset: 0,
-      });
+      const [rows, projects] = await Promise.all([
+        api.listAgentSessions(agent.id, scopeUserId, {
+          status: 'active',
+          limit: 120,
+          offset: 0,
+        }),
+        api.listProjects(scopeUserId, {
+          status: 'active',
+          include_virtual: true,
+          limit: 500,
+          offset: 0,
+        }),
+      ]);
+      const nextProjectNames: Record<string, string> = {};
+      for (const project of projects) {
+        const projectId = normalizeProjectId(project.project_id);
+        const projectName = project.name?.trim();
+        if (projectName) {
+          nextProjectNames[projectId] = projectName;
+        }
+      }
+      if (!nextProjectNames['0']) {
+        nextProjectNames['0'] = t('memory.unassignedProject');
+      }
+      setConversationProjectNames(nextProjectNames);
       setConversationSessions(rows);
       const firstSession = rows[0];
       if (firstSession?.id) {
@@ -445,10 +475,12 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
           setConversationOpen(false);
           setConversationAgent(null);
           setConversationSessions([]);
+          setConversationProjectNames({});
           setConversationSessionId(null);
           setConversationMessages([]);
         }}
         width={980}
+        styles={{ body: { paddingTop: 12, overflow: 'hidden' } }}
         title={`${t('agents.conversationsTitle')}: ${conversationAgent?.name || '-'}`}
       >
         {conversationLoading ? (
@@ -458,13 +490,26 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
         ) : conversationSessions.length === 0 ? (
           <Empty description={t('agents.noConversations')} />
         ) : (
-          <Space align="start" size={12} style={{ width: '100%' }}>
-            <Card title={t('agents.projectSessions')} style={{ width: 320 }}>
+          <div
+            style={{
+              display: 'flex',
+              gap: 12,
+              width: '100%',
+              height: 'calc(100vh - 210px)',
+              minHeight: 420,
+              overflow: 'hidden',
+            }}
+          >
+            <Card
+              title={t('agents.projectSessions')}
+              style={{ width: 320, height: '100%', flexShrink: 0 }}
+              styles={{ body: { height: '100%', overflowY: 'auto' } }}
+            >
               <Space direction="vertical" size={10} style={{ width: '100%' }}>
                 {groupedConversationSessions.map((group) => (
                   <div key={group.projectId}>
-                    <Text type="secondary" style={{ fontSize: 12 }}>
-                      project_id: {group.projectId}
+                    <Text strong style={{ color: '#0958d9', fontSize: 13 }}>
+                      {group.projectName}
                     </Text>
                     <List
                       size="small"
@@ -484,7 +529,7 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
                             }}
                           >
                             <Space direction="vertical" size={0} style={{ width: '100%' }}>
-                              <Text strong>{session.title || session.id.slice(0, 8)}</Text>
+                              <Text strong>{session.title || t('agents.untitledSession')}</Text>
                               <Text type="secondary" style={{ fontSize: 12 }}>
                                 {new Date(session.updated_at).toLocaleString()}
                               </Text>
@@ -498,7 +543,11 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
               </Space>
             </Card>
 
-            <Card title={t('agents.messages')} style={{ flex: 1 }}>
+            <Card
+              title={t('agents.messages')}
+              style={{ flex: 1, minWidth: 0, height: '100%' }}
+              styles={{ body: { height: '100%', overflowY: 'auto' } }}
+            >
               {conversationMessagesLoading ? (
                 <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 24 }}>
                   <Spin />
@@ -527,7 +576,7 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
                 />
               )}
             </Card>
-          </Space>
+          </div>
         )}
       </Drawer>
 

@@ -297,9 +297,6 @@ pub async fn upsert_project_memory(
                 "$inc": {"memory_version": 1},
                 "$setOnInsert": {
                     "id": Uuid::new_v4().to_string(),
-                    "memory_version": 0,
-                    "recall_summarized": 0,
-                    "recall_summarized_at": Bson::Null,
                 }
             },
         )
@@ -359,10 +356,6 @@ pub async fn upsert_agent_recall(
             "user_id": input.user_id.as_str(),
             "agent_id": input.agent_id.as_str(),
             "recall_key": input.recall_key.as_str(),
-            "source_project_ids": Vec::<String>::new(),
-            "rolled_up": 0,
-            "rollup_recall_key": Bson::Null,
-            "rolled_up_at": Bson::Null,
         }
     };
     let source_project_ids: Vec<String> = input

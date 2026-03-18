@@ -17,6 +17,7 @@ use crate::core::validation::{
 };
 use crate::models::project::{Project, ProjectService};
 use crate::repositories::change_logs;
+use crate::services::memory_server_client;
 
 #[derive(Debug, Deserialize)]
 struct ProjectQuery {
@@ -137,6 +138,28 @@ async fn create_project(
         .ok()
         .flatten()
         .unwrap_or(project);
+    if let Err(err) = memory_server_client::sync_memory_project(
+        &memory_server_client::SyncMemoryProjectRequestDto {
+            user_id: saved.user_id.clone(),
+            project_id: Some(saved.id.clone()),
+            name: Some(saved.name.clone()),
+            root_path: Some(saved.root_path.clone()),
+            description: saved.description.clone(),
+            status: Some("active".to_string()),
+            is_virtual: Some(false),
+        },
+    )
+    .await
+    {
+        let _ = ProjectService::delete(saved.id.as_str()).await;
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "error": "sync memory project failed",
+                "detail": err,
+            })),
+        );
+    }
     (
         StatusCode::CREATED,
         Json(serde_json::to_value(saved).unwrap_or(Value::Null)),
@@ -186,10 +209,30 @@ async fn update_project(
         );
     }
     match ProjectService::get_by_id(&id).await {
-        Ok(Some(project)) => (
-            StatusCode::OK,
-            Json(serde_json::to_value(project).unwrap_or(Value::Null)),
-        ),
+        Ok(Some(project)) => {
+            if let Err(err) = memory_server_client::sync_memory_project(
+                &memory_server_client::SyncMemoryProjectRequestDto {
+                    user_id: project.user_id.clone(),
+                    project_id: Some(project.id.clone()),
+                    name: Some(project.name.clone()),
+                    root_path: Some(project.root_path.clone()),
+                    description: project.description.clone(),
+                    status: Some("active".to_string()),
+                    is_virtual: Some(false),
+                },
+            )
+            .await
+            {
+                eprintln!(
+                    "[PROJECTS] sync memory project failed after update: project_id={} err={}",
+                    project.id, err
+                );
+            }
+            (
+                StatusCode::OK,
+                Json(serde_json::to_value(project).unwrap_or(Value::Null)),
+            )
+        }
         Ok(None) => (StatusCode::OK, Json(Value::Null)),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -199,14 +242,35 @@ async fn update_project(
 }
 
 async fn delete_project(auth: AuthUser, Path(id): Path<String>) -> (StatusCode, Json<Value>) {
-    if let Err(err) = ensure_owned_project(&id, &auth).await {
-        return map_project_access_error(err);
-    }
+    let project = match ensure_owned_project(&id, &auth).await {
+        Ok(project) => project,
+        Err(err) => return map_project_access_error(err),
+    };
     match ProjectService::delete(&id).await {
-        Ok(_) => (
-            StatusCode::OK,
-            Json(serde_json::json!({"success": true, "message": "项目已删除"})),
-        ),
+        Ok(_) => {
+            if let Err(err) = memory_server_client::sync_memory_project(
+                &memory_server_client::SyncMemoryProjectRequestDto {
+                    user_id: project.user_id.clone(),
+                    project_id: Some(project.id.clone()),
+                    name: Some(project.name.clone()),
+                    root_path: Some(project.root_path.clone()),
+                    description: project.description.clone(),
+                    status: Some("archived".to_string()),
+                    is_virtual: Some(false),
+                },
+            )
+            .await
+            {
+                eprintln!(
+                    "[PROJECTS] sync memory project failed after delete: project_id={} err={}",
+                    project.id, err
+                );
+            }
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({"success": true, "message": "项目已删除"})),
+            )
+        }
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": err})),

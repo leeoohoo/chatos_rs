@@ -5,6 +5,8 @@ pub mod contacts;
 pub mod jobs;
 pub mod memories;
 pub mod messages;
+pub mod project_agent_links;
+pub mod projects;
 pub mod sessions;
 pub mod skills;
 pub mod summaries;

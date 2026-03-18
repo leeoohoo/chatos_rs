@@ -2,6 +2,7 @@ export interface Session {
   id: string;
   user_id: string;
   project_id?: string | null;
+  project_name?: string | null;
   title?: string | null;
   status: string;
   created_at: string;
@@ -187,6 +188,32 @@ export interface ProjectMemory {
   recall_summarized: number;
   recall_summarized_at?: string | null;
   last_source_at?: string | null;
+  updated_at: string;
+}
+
+export interface ContactProject {
+  project_id: string;
+  project_name?: string | null;
+  project_root?: string | null;
+  status?: string;
+  is_virtual?: number;
+  has_memory?: boolean;
+  memory_version?: number;
+  recall_summarized?: number;
+  last_source_at?: string | null;
+  updated_at: string;
+}
+
+export interface MemoryProject {
+  id: string;
+  user_id: string;
+  project_id: string;
+  name: string;
+  root_path?: string | null;
+  description?: string | null;
+  status?: string | null;
+  is_virtual?: number;
+  created_at: string;
   updated_at: string;
 }
 
