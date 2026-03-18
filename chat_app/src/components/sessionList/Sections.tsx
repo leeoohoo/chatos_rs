@@ -229,7 +229,8 @@ interface ProjectSectionProps {
   onToggle: () => void;
   onCreate: () => void;
   onSelect: (projectId: string) => void;
-  onDelete: (projectId: string) => void;
+  onAddContact: (projectId: string) => void;
+  onArchive: (projectId: string) => void;
   onToggleActionMenu: (event: React.MouseEvent<HTMLButtonElement>) => void;
   closeActionMenus: () => void;
 }
@@ -241,7 +242,8 @@ export const ProjectSection: React.FC<ProjectSectionProps> = ({
   onToggle,
   onCreate,
   onSelect,
-  onDelete,
+  onAddContact,
+  onArchive,
   onToggleActionMenu,
   closeActionMenus,
 }) => {
@@ -300,18 +302,29 @@ export const ProjectSection: React.FC<ProjectSectionProps> = ({
                     >
                       <DotsVerticalIcon className="w-4 h-4" />
                     </button>
-                    <div className="js-inline-action-menu hidden absolute right-0 z-10 mt-1 w-32 bg-popover border border-border rounded-md shadow-lg">
+                    <div className="js-inline-action-menu hidden absolute right-0 z-10 mt-1 w-40 bg-popover border border-border rounded-md shadow-lg">
                       <div className="py-1">
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            onDelete(project.id);
+                            onAddContact(project.id);
+                            closeActionMenus();
+                          }}
+                          className="flex items-center w-full px-3 py-2 text-sm text-foreground hover:bg-accent/60"
+                        >
+                          <PlusIcon className="w-4 h-4 mr-2" />
+                          添加联系人
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onArchive(project.id);
                             closeActionMenus();
                           }}
                           className="flex items-center w-full px-3 py-2 text-sm text-destructive hover:bg-destructive/10"
                         >
                           <TrashIcon className="w-4 h-4 mr-2" />
-                          删除
+                          归档
                         </button>
                       </div>
                     </div>

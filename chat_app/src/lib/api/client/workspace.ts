@@ -130,6 +130,20 @@ export const getContactProjectMemories = (
   );
 };
 
+export const getContactProjects = (
+  request: ApiRequestFn,
+  contactId: string,
+  paging?: ContactPaging,
+): Promise<any[]> => {
+  const query = buildQuery({
+    limit: paging?.limit,
+    offset: paging?.offset,
+  });
+  return request<any[]>(
+    `/contacts/${encodeURIComponent(contactId)}/projects${query}`,
+  );
+};
+
 export const getContactAgentRecalls = (
   request: ApiRequestFn,
   contactId: string,

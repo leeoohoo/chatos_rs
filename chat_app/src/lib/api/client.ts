@@ -173,6 +173,13 @@ class ApiClient {
     return workspaceApi.getContactProjectMemories(this.requestFn, contactId, projectId, paging);
   }
 
+  async getContactProjects(
+    contactId: string,
+    paging?: { limit?: number; offset?: number },
+  ): Promise<any[]> {
+    return workspaceApi.getContactProjects(this.requestFn, contactId, paging);
+  }
+
   async getContactAgentRecalls(
     contactId: string,
     paging?: { limit?: number; offset?: number },

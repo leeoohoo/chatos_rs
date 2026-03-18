@@ -94,8 +94,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     hasMoreMessages,
     error,
     loadProjects,
-    createSession,
-    selectSession,
     loadMoreMessages,
     toggleTurnProcess,
     sendMessage,
@@ -131,8 +129,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     hasMoreMessages: state.hasMoreMessages,
     error: state.error,
     loadProjects: state.loadProjects,
-    createSession: state.createSession,
-    selectSession: state.selectSession,
     loadMoreMessages: state.loadMoreMessages,
     toggleTurnProcess: state.toggleTurnProcess,
     sendMessage: state.sendMessage,
@@ -211,26 +207,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     const matched = (contacts || []).find((item: any) => item?.agentId === contactAgentId);
     return typeof matched?.id === 'string' ? matched.id : '';
   }, [contacts, currentSession]);
-  const currentContactAgentId = useMemo(() => {
-    if (!currentSession) {
-      return '';
-    }
-    const runtime = readSessionRuntimeFromMetadata((currentSession as any).metadata);
-    const directContactAgentId = typeof runtime?.contactAgentId === 'string'
-      ? runtime.contactAgentId.trim()
-      : '';
-    if (directContactAgentId) {
-      return directContactAgentId;
-    }
-    const directContactId = typeof runtime?.contactId === 'string'
-      ? runtime.contactId.trim()
-      : '';
-    if (!directContactId) {
-      return '';
-    }
-    const matched = (contacts || []).find((item: any) => item?.id === directContactId);
-    return typeof matched?.agentId === 'string' ? matched.agentId : '';
-  }, [contacts, currentSession]);
   const chatIsLoading = currentChatState?.isLoading ?? false;
   const chatIsStreaming = currentChatState?.isStreaming ?? false;
   const chatIsStopping = currentChatState?.isStopping ?? false;
@@ -270,6 +246,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [composerProjectId, setComposerProjectId] = useState<string | null>(null);
   const [composerMcpEnabled, setComposerMcpEnabled] = useState(true);
   const [composerEnabledMcpIds, setComposerEnabledMcpIds] = useState<string[]>([]);
+  const [contactScopedProjectIds, setContactScopedProjectIds] = useState<string[]>([]);
   const currentProjectIdForMemory = useMemo(() => {
     if (!currentSession) {
       return '';
@@ -294,11 +271,19 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     const matched = (projects || []).find((item) => item.id === currentProjectIdForMemory);
     return matched?.name || '';
   }, [currentProjectIdForMemory, projects]);
+  const composerAvailableProjects = useMemo(() => {
+    if (!currentContactId) {
+      return [];
+    }
+    const allowedIds = new Set(contactScopedProjectIds);
+    return (projects || []).filter((item) => allowedIds.has(item.id));
+  }, [contactScopedProjectIds, currentContactId, projects]);
   const currentSessionRef = useRef<string | null>(null);
   const lastHydratedChatSessionRef = useRef<string | null>(null);
   const currentTurnLoadSeqRef = useRef(0);
   const historyLoadSeqRef = useRef(0);
   const memoryLoadSeqRef = useRef(0);
+  const contactProjectsLoadSeqRef = useRef(0);
   const uiPromptHistoryLoadSeqRef = useRef(0);
   const uiPromptHistoryCacheRef = useRef<Map<string, UiPromptHistoryItem[]>>(new Map());
 
@@ -364,6 +349,45 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     setComposerMcpEnabled(runtime?.mcpEnabled ?? true);
     setComposerEnabledMcpIds(runtime?.enabledMcpIds ?? []);
   }, [currentSession?.id, currentSession?.metadata]);
+
+  useEffect(() => {
+    const contactId = currentContactId.trim();
+    if (!contactId) {
+      setContactScopedProjectIds([]);
+      return;
+    }
+
+    const loadSeq = ++contactProjectsLoadSeqRef.current;
+    void apiClient.getContactProjects(contactId, { limit: 1000, offset: 0 })
+      .then((rows) => {
+        if (loadSeq !== contactProjectsLoadSeqRef.current) {
+          return;
+        }
+        const ids = Array.from(new Set(
+          (Array.isArray(rows) ? rows : [])
+            .map((item: any) => (typeof item?.project_id === 'string' ? item.project_id.trim() : ''))
+            .filter((projectId: string) => projectId.length > 0 && projectId !== '0'),
+        ));
+        setContactScopedProjectIds(ids);
+      })
+      .catch((error) => {
+        if (loadSeq !== contactProjectsLoadSeqRef.current) {
+          return;
+        }
+        console.error('Failed to load contact projects:', error);
+        setContactScopedProjectIds([]);
+      });
+  }, [apiClient, currentContactId]);
+
+  useEffect(() => {
+    if (!composerProjectId) {
+      return;
+    }
+    const exists = composerAvailableProjects.some((item) => item.id === composerProjectId);
+    if (!exists) {
+      setComposerProjectId(null);
+    }
+  }, [composerAvailableProjects, composerProjectId]);
 
   useEffect(() => {
     if (!currentSessionIdForUiPrompts || activePanel !== 'chat') {
@@ -910,60 +934,15 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const handleComposerProjectChange = useCallback((projectId: string | null) => {
     const normalizedProjectId = typeof projectId === 'string' ? projectId.trim() : '';
     const nextComposerProjectId = normalizedProjectId.length > 0 ? normalizedProjectId : null;
+    if (
+      nextComposerProjectId
+      && !composerAvailableProjects.some((item) => item.id === nextComposerProjectId)
+    ) {
+      return;
+    }
     setComposerProjectId(nextComposerProjectId);
-
-    if (!currentSession) {
-      return;
-    }
-
-    const contactAgentId = currentContactAgentId.trim();
-    const contactId = currentContactId.trim();
-    if (!contactAgentId && !contactId) {
-      return;
-    }
-
-    const currentScopeProjectId = resolveSessionProjectScopeId(currentSession as any);
-    const targetScopeProjectId = normalizeProjectScopeId(nextComposerProjectId);
-    if (currentScopeProjectId === targetScopeProjectId) {
-      return;
-    }
-
-    const targetProject = nextComposerProjectId
-      ? (projects || []).find((item) => item.id === nextComposerProjectId) || null
-      : null;
-
-    void createSession({
-      title: currentContactName || currentSession.title || '联系人',
-      contactAgentId: contactAgentId || null,
-      contactId: contactId || null,
-      selectedModelId: selectedModelId || null,
-      projectId: targetScopeProjectId,
-      projectRoot: targetScopeProjectId === '0' ? null : (targetProject?.rootPath || null),
-      mcpEnabled: composerMcpEnabled,
-      enabledMcpIds: composerEnabledMcpIds,
-    })
-      .then((sessionId) => {
-        if (!sessionId) {
-          return;
-        }
-        void selectSession(sessionId).catch((error) => {
-          console.error('Failed to switch session for project:', error);
-        });
-      })
-      .catch((error) => {
-        console.error('Failed to create/select session for project switch:', error);
-      });
   }, [
-    composerEnabledMcpIds,
-    composerMcpEnabled,
-    createSession,
-    currentContactAgentId,
-    currentContactId,
-    currentContactName,
-    currentSession,
-    projects,
-    selectSession,
-    selectedModelId,
+    composerAvailableProjects,
   ]);
 
   const handleLoadMore = useCallback(() => {
@@ -1182,7 +1161,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                       selectedModelId={selectedModelId}
                       availableModels={aiModelConfigs}
                       onModelChange={setSelectedModel}
-                      availableProjects={projects}
+                      availableProjects={composerAvailableProjects}
                       currentProject={currentProject}
                       selectedProjectId={composerProjectId}
                       onProjectChange={handleComposerProjectChange}

@@ -12,6 +12,7 @@ import { DirPickerDialog, KeyFilePickerDialog } from './sessionList/Pickers';
 import { CreateContactModal } from './sessionList/CreateContactModal';
 import { RemoteConnectionModal } from './sessionList/RemoteConnectionModal';
 import { CreateProjectModal, CreateTerminalModal } from './sessionList/CreateResourceModals';
+import { ProjectContactPickerModal } from './sessionList/ProjectContactPickerModal';
 import {
   ProjectSection,
   RemoteSection,
@@ -269,6 +270,10 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
   const [createContactModalOpen, setCreateContactModalOpen] = useState(false);
   const [selectedContactAgentId, setSelectedContactAgentId] = useState<string | null>(null);
   const [contactError, setContactError] = useState<string | null>(null);
+  const [projectContactModalOpen, setProjectContactModalOpen] = useState(false);
+  const [projectContactTargetProjectId, setProjectContactTargetProjectId] = useState<string | null>(null);
+  const [projectContactSelectedId, setProjectContactSelectedId] = useState<string | null>(null);
+  const [projectContactError, setProjectContactError] = useState<string | null>(null);
 
   const [projectModalOpen, setProjectModalOpen] = useState(false);
   const [projectRoot, setProjectRoot] = useState('');
@@ -369,15 +374,15 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     [contacts],
   );
 
-  const resolveContactProjectKey = useCallback((contact: ContactItem): string => {
-    const projectId = normalizeProjectScopeId(currentProject?.id || null);
-    return `${contact.id}::${projectId}`;
+  const resolveContactProjectKey = useCallback((contact: ContactItem, projectId?: string | null): string => {
+    const scopedProjectId = normalizeProjectScopeId(projectId ?? currentProject?.id ?? null);
+    return `${contact.id}::${scopedProjectId}`;
   }, [currentProject?.id]);
 
-  const findExistingSessionIdInStore = useCallback((contact: ContactItem): string | null => {
-    const projectId = normalizeProjectScopeId(currentProject?.id || null);
+  const findExistingSessionIdInStoreForProject = useCallback((contact: ContactItem, projectId: string | null): string | null => {
+    const normalizedProjectId = normalizeProjectScopeId(projectId);
     const candidates = (sessions || []).filter((session: Session) =>
-      isSessionMatchedContactAndProject(session, contact, projectId),
+      isSessionMatchedContactAndProject(session, contact, normalizedProjectId),
     );
     if (candidates.length === 0) {
       return null;
@@ -385,16 +390,23 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     candidates.sort((a, b) => resolveSessionTimestamp(b) - resolveSessionTimestamp(a));
     const id = typeof candidates[0]?.id === 'string' ? candidates[0].id.trim() : '';
     return id || null;
-  }, [currentProject?.id, sessions]);
+  }, [sessions]);
 
-  const findExistingSessionIdFromApi = useCallback(async (contact: ContactItem): Promise<string | null> => {
-    const projectId = normalizeProjectScopeId(currentProject?.id || null);
+  const findExistingSessionIdInStore = useCallback((contact: ContactItem): string | null => {
+    return findExistingSessionIdInStoreForProject(contact, currentProject?.id || null);
+  }, [findExistingSessionIdInStoreForProject, currentProject?.id]);
+
+  const findExistingSessionIdFromApiForProject = useCallback(async (
+    contact: ContactItem,
+    projectId: string | null,
+  ): Promise<string | null> => {
+    const normalizedProjectId = normalizeProjectScopeId(projectId);
     const pageSize = 200;
     const maxPages = 8;
     const candidates: any[] = [];
 
     for (let page = 0; page < maxPages; page += 1) {
-      const rows = await apiClient.getSessions(undefined, projectId, {
+      const rows = await apiClient.getSessions(undefined, normalizedProjectId, {
         limit: pageSize,
         offset: page * pageSize,
       });
@@ -403,7 +415,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
       }
 
       for (const row of rows) {
-        if (isSessionMatchedContactAndProject(row, contact, projectId)) {
+        if (isSessionMatchedContactAndProject(row, contact, normalizedProjectId)) {
           candidates.push(row);
         }
       }
@@ -440,10 +452,14 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
 
     const fallback = shortlist.find((item) => typeof item?.id === 'string' && item.id.trim());
     return fallback ? fallback.id.trim() : null;
-  }, [apiClient, currentProject?.id]);
+  }, [apiClient]);
+
+  const findExistingSessionIdFromApi = useCallback(async (contact: ContactItem): Promise<string | null> => {
+    return findExistingSessionIdFromApiForProject(contact, currentProject?.id || null);
+  }, [findExistingSessionIdFromApiForProject, currentProject?.id]);
 
   const ensureSessionForContact = useCallback(async (contact: ContactItem): Promise<string | null> => {
-    const cacheKey = resolveContactProjectKey(contact);
+    const cacheKey = resolveContactProjectKey(contact, currentProject?.id || null);
     const cachedSessionId = contactSessionCacheRef.current[cacheKey];
     if (cachedSessionId && cachedSessionId.trim()) {
       return cachedSessionId.trim();
@@ -831,19 +847,117 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     });
   };
 
-  const handleDeleteProject = async (projectId: string) => {
+  const handleAddContactToProject = async (projectId: string) => {
+    const project = projects.find((p: Project) => p.id === projectId);
+    if (!project) {
+      return;
+    }
+    const currentContactId = resolveContactIdFromSession(currentSession);
+    const defaultContact = currentContactId
+      ? (contacts || []).find((item: ContactItem) => item.id === currentContactId) || null
+      : null;
+    const existingContactIds = new Set(
+      (contacts || [])
+        .filter((item: ContactItem) => !!findExistingSessionIdInStoreForProject(item, project.id))
+        .map((item: ContactItem) => item.id),
+    );
+
+    let initialContactId = defaultContact?.id || null;
+    if (initialContactId && existingContactIds.has(initialContactId)) {
+      initialContactId = null;
+    }
+    if (!initialContactId) {
+      const firstAvailable = (contacts || []).find((item: ContactItem) => !existingContactIds.has(item.id));
+      initialContactId = firstAvailable?.id || null;
+    }
+
+    setProjectContactTargetProjectId(project.id);
+    setProjectContactSelectedId(initialContactId);
+    setProjectContactError(null);
+    setProjectContactModalOpen(true);
+  };
+
+  const handleConfirmProjectContactAdd = async () => {
+    const projectId = projectContactTargetProjectId?.trim() || '';
+    const contactId = projectContactSelectedId?.trim() || '';
+    if (!projectId) {
+      setProjectContactError('缺少目标项目');
+      return;
+    }
+    if (!contactId) {
+      setProjectContactError('请先选择联系人');
+      return;
+    }
+    const project = projects.find((p: Project) => p.id === projectId);
+    if (!project) {
+      setProjectContactError('项目不存在');
+      return;
+    }
+    const contact = (contacts || []).find((item: ContactItem) => item.id === contactId);
+    if (!contact) {
+      setProjectContactError('联系人不存在');
+      return;
+    }
+
+    const runtime = readSessionRuntimeFromMetadata(currentSession?.metadata);
+    try {
+      await selectProject(projectId);
+      const existingLocalSessionId = findExistingSessionIdInStoreForProject(contact, project.id);
+      if (existingLocalSessionId) {
+        await selectSession(existingLocalSessionId);
+        setProjectContactModalOpen(false);
+        setProjectContactTargetProjectId(null);
+        setProjectContactSelectedId(null);
+        setProjectContactError(null);
+        return;
+      }
+
+      const existingApiSessionId = await findExistingSessionIdFromApiForProject(contact, project.id);
+      if (existingApiSessionId) {
+        await selectSession(existingApiSessionId);
+        setProjectContactModalOpen(false);
+        setProjectContactTargetProjectId(null);
+        setProjectContactSelectedId(null);
+        setProjectContactError(null);
+        return;
+      }
+
+      const nextSessionId = await createSession({
+        title: contact.name || '联系人',
+        contactAgentId: contact.agentId,
+        contactId: contact.id,
+        selectedModelId: runtime?.selectedModelId ?? null,
+        projectId: normalizeProjectScopeId(project.id),
+        projectRoot: project.rootPath || null,
+        mcpEnabled: runtime?.mcpEnabled ?? true,
+        enabledMcpIds: Array.isArray(runtime?.enabledMcpIds) ? runtime.enabledMcpIds : [],
+      });
+      if (nextSessionId) {
+        await selectSession(nextSessionId);
+      }
+      setProjectContactModalOpen(false);
+      setProjectContactTargetProjectId(null);
+      setProjectContactSelectedId(null);
+      setProjectContactError(null);
+    } catch (error) {
+      console.error('Failed to add selected contact into project:', error);
+      setProjectContactError(error instanceof Error ? error.message : '添加联系人失败');
+    }
+  };
+
+  const handleArchiveProject = async (projectId: string) => {
     const project = projects.find((p: Project) => p.id === projectId);
     showConfirmDialog({
-      title: '删除确认',
-      message: `确定要删除项目 "${project?.name || 'Untitled'}" 吗？此操作无法撤销。`,
-      confirmText: '删除',
+      title: '归档确认',
+      message: `确定要归档项目 "${project?.name || 'Untitled'}" 吗？归档后将从项目列表移除。`,
+      confirmText: '归档',
       cancelText: '取消',
       type: 'danger',
       onConfirm: async () => {
         try {
           await deleteProject(projectId);
         } catch (error) {
-          console.error('Failed to delete project:', error);
+          console.error('Failed to archive project:', error);
         }
       }
     });
@@ -1180,6 +1294,21 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     .filter((entry) => showHiddenDirs || !entry.name.startsWith('.'));
   const keyFilePickerItems = keyFilePickerPath ? keyFilePickerEntries : keyFilePickerRoots;
   const keyFilePickerTitle = getKeyFilePickerTitle(keyFilePickerTarget);
+  const projectContactTargetProject = useMemo(
+    () => (projectContactTargetProjectId
+      ? (projects || []).find((item: Project) => item.id === projectContactTargetProjectId) || null
+      : null),
+    [projectContactTargetProjectId, projects],
+  );
+  const projectContactDisabledContactIds = useMemo(() => {
+    const targetProjectId = projectContactTargetProjectId?.trim() || '';
+    if (!targetProjectId) {
+      return [];
+    }
+    return (contacts || [])
+      .filter((item: ContactItem) => !!findExistingSessionIdInStoreForProject(item, targetProjectId))
+      .map((item: ContactItem) => item.id);
+  }, [contacts, projectContactTargetProjectId, findExistingSessionIdInStoreForProject]);
 
   return (
     <div
@@ -1231,7 +1360,12 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
             onSelect={(projectId) => {
               void handleSelectProject(projectId);
             }}
-            onDelete={handleDeleteProject}
+            onAddContact={(projectId) => {
+              void handleAddContactToProject(projectId);
+            }}
+            onArchive={(projectId) => {
+              void handleArchiveProject(projectId);
+            }}
             onToggleActionMenu={toggleActionMenu}
             closeActionMenus={() => closeActionMenus()}
           />
@@ -1301,6 +1435,32 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
         }}
         onCreate={() => {
           void handleCreateContactSession();
+        }}
+      />
+
+      <ProjectContactPickerModal
+        isOpen={projectContactModalOpen}
+        projectName={projectContactTargetProject?.name || ''}
+        contacts={(contacts || []).map((item: ContactItem) => ({
+          id: item.id,
+          name: item.name,
+          agentId: item.agentId,
+        }))}
+        disabledContactIds={projectContactDisabledContactIds}
+        selectedContactId={projectContactSelectedId}
+        error={projectContactError}
+        onClose={() => {
+          setProjectContactModalOpen(false);
+          setProjectContactTargetProjectId(null);
+          setProjectContactSelectedId(null);
+          setProjectContactError(null);
+        }}
+        onSelectedContactChange={(contactId) => {
+          setProjectContactSelectedId(contactId);
+          setProjectContactError(null);
+        }}
+        onConfirm={() => {
+          void handleConfirmProjectContactAdd();
         }}
       />
 
