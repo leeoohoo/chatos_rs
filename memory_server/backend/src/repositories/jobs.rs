@@ -21,6 +21,15 @@ fn doc_i64(doc: &Document, key: &str) -> i64 {
     }
 }
 
+fn is_duplicate_key_error(err: &mongodb::error::Error) -> bool {
+    let text = err.to_string().to_ascii_lowercase();
+    text.contains("e11000") || text.contains("duplicate key")
+}
+
+pub fn is_already_running_error(err: &str) -> bool {
+    err.to_ascii_lowercase().contains("job already running")
+}
+
 pub async fn create_job_run(
     db: &Db,
     job_type: &str,
@@ -41,10 +50,16 @@ pub async fn create_job_run(
         finished_at: None,
     };
 
-    collection(db)
-        .insert_one(job.clone())
-        .await
-        .map_err(|e| e.to_string())?;
+    if let Err(err) = collection(db).insert_one(job.clone()).await {
+        if session_id.is_some() && is_duplicate_key_error(&err) {
+            return Err(format!(
+                "job already running: job_type={} session_id={}",
+                job_type,
+                session_id.unwrap_or("")
+            ));
+        }
+        return Err(err.to_string());
+    }
 
     Ok(job)
 }

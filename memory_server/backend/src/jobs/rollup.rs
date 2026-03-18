@@ -214,14 +214,25 @@ async fn process_session(
 
     let trigger = format!("rollup_level_{}_to_{}", level, target_level);
     let trigger_with_reason = format!("{}+{}", trigger, trigger_reason);
-    let job_run = jobs::create_job_run(
+    let job_run = match jobs::create_job_run(
         pool,
         "summary_rollup",
         Some(session_id),
         Some(trigger_with_reason.as_str()),
         selected.len() as i64,
     )
-    .await?;
+    .await
+    {
+        Ok(v) => v,
+        Err(err) if jobs::is_already_running_error(err.as_str()) => {
+            info!(
+                "[MEMORY-SUMMARY-ROLLUP] skip session already running: session_id={}",
+                session_id
+            );
+            return Ok((0, 0));
+        }
+        Err(err) => return Err(err),
+    };
 
     let mut overflow_retry_count = 0usize;
     let mut forced_truncated = false;

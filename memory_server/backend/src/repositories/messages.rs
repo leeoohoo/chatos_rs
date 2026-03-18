@@ -206,6 +206,7 @@ pub async fn mark_messages_summarized(
             doc! {
                 "session_id": session_id,
                 "id": {"$in": message_ids.to_vec()},
+                "summary_status": "pending",
             },
             doc! {
                 "$set": {
@@ -226,6 +227,15 @@ pub async fn list_session_ids_with_pending_messages_by_user(
     user_id: &str,
     limit: i64,
 ) -> Result<Vec<String>, String> {
+    let contact_match = doc! {
+        "$or": [
+            {"session.metadata.contact.contact_id": {"$exists": true, "$type": "string"}},
+            {"session.metadata.ui_contact.contact_id": {"$exists": true, "$type": "string"}},
+            {"session.metadata.contact.agent_id": {"$exists": true, "$type": "string"}},
+            {"session.metadata.ui_contact.agent_id": {"$exists": true, "$type": "string"}},
+            {"session.metadata.ui_chat_selection.selected_agent_id": {"$exists": true, "$type": "string"}}
+        ]
+    };
     let pipeline = vec![
         doc! {"$match": {"summary_status": "pending"}},
         doc! {"$lookup": {
@@ -236,6 +246,7 @@ pub async fn list_session_ids_with_pending_messages_by_user(
         }},
         doc! {"$unwind": "$session"},
         doc! {"$match": {"session.user_id": user_id, "session.status": "active"}},
+        doc! {"$match": contact_match},
         doc! {"$group": {"_id": "$session_id", "min_created_at": {"$min": "$created_at"}}},
         doc! {"$sort": {"min_created_at": 1}},
         doc! {"$limit": limit.max(1).min(5000)},

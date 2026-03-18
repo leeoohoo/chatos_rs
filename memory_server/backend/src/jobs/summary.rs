@@ -210,14 +210,25 @@ async fn process_session(
         .map(|m| estimate_tokens_text(message_to_summary_block(m).as_str()))
         .sum::<i64>();
 
-    let job_run = jobs::create_job_run(
+    let job_run = match jobs::create_job_run(
         pool,
         "summary_l0",
         Some(session_id),
         Some(trigger.as_str()),
         selected.len() as i64,
     )
-    .await?;
+    .await
+    {
+        Ok(v) => v,
+        Err(err) if jobs::is_already_running_error(err.as_str()) => {
+            info!(
+                "[MEMORY-SUMMARY-L0] skip session already running: session_id={}",
+                session_id
+            );
+            return Ok((0, 0));
+        }
+        Err(err) => return Err(err),
+    };
 
     let mut overflow_retry_count = 0usize;
     let mut forced_truncated = false;

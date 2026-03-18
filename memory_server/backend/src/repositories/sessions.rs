@@ -526,8 +526,18 @@ pub async fn archive_sessions_by_contact(
 }
 
 pub async fn list_active_user_ids(db: &Db, limit: i64) -> Result<Vec<String>, String> {
+    let contact_match = doc! {
+        "$or": [
+            {"metadata.contact.contact_id": {"$exists": true, "$type": "string"}},
+            {"metadata.ui_contact.contact_id": {"$exists": true, "$type": "string"}},
+            {"metadata.contact.agent_id": {"$exists": true, "$type": "string"}},
+            {"metadata.ui_contact.agent_id": {"$exists": true, "$type": "string"}},
+            {"metadata.ui_chat_selection.selected_agent_id": {"$exists": true, "$type": "string"}}
+        ]
+    };
     let pipeline = vec![
         doc! {"$match": {"status": "active"}},
+        doc! {"$match": contact_match},
         doc! {"$group": {"_id": "$user_id", "max_updated_at": {"$max": "$updated_at"}}},
         doc! {"$sort": {"max_updated_at": -1}},
         doc! {"$limit": limit.max(1).min(2000)},

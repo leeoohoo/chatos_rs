@@ -158,6 +158,16 @@ pub async fn init_schema(db: &Db) -> Result<(), String> {
         doc! {"session_id": 1, "started_at": -1},
     )
     .await?;
+    normalize_running_job_runs(db).await?;
+    ensure_unique_partial_index(
+        db.collection::<mongodb::bson::Document>("job_runs"),
+        doc! {"job_type": 1, "session_id": 1},
+        doc! {
+            "status": "running",
+            "session_id": {"$exists": true, "$type": "string"},
+        },
+    )
+    .await?;
 
     ensure_unique_index(
         db.collection::<mongodb::bson::Document>("memory_agents"),
@@ -365,6 +375,33 @@ async fn normalize_summary_status(db: &Db) -> Result<(), String> {
         info!(
             "[MEMORY-SERVER] summary status normalized: summarized={}, pending={}",
             to_summarized.modified_count, to_pending.modified_count
+        );
+    }
+
+    Ok(())
+}
+
+async fn normalize_running_job_runs(db: &Db) -> Result<(), String> {
+    let collection = db.collection::<mongodb::bson::Document>("job_runs");
+    let now = chrono::Utc::now().to_rfc3339();
+    let result = collection
+        .update_many(
+            doc! {"status": "running"},
+            doc! {
+                "$set": {
+                    "status": "failed",
+                    "error_message": "interrupted: memory_server restarted",
+                    "finished_at": &now,
+                }
+            },
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if result.modified_count > 0 {
+        info!(
+            "[MEMORY-SERVER] recovered interrupted running job_runs: {}",
+            result.modified_count
         );
     }
 
