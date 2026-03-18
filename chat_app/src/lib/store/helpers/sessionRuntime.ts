@@ -6,6 +6,7 @@ export interface SessionRuntimeMetadata {
   enabledMcpIds: string[];
   projectId: string | null;
   projectRoot: string | null;
+  workspaceRoot: string | null;
 }
 
 const normalizeId = (value: unknown): string | null => {
@@ -87,6 +88,9 @@ export const readSessionRuntimeFromMetadata = (
   const projectRoot = normalizeId(
     runtime?.project_root ?? runtime?.projectRoot,
   );
+  const workspaceRoot = normalizeId(
+    runtime?.workspace_root ?? runtime?.workspaceRoot,
+  );
   const mcpEnabledRaw = runtime?.mcp_enabled ?? runtime?.mcpEnabled;
   const mcpEnabled = typeof mcpEnabledRaw === 'boolean' ? mcpEnabledRaw : true;
   const enabledMcpIds = normalizeIdArray(runtime?.enabled_mcp_ids ?? runtime?.enabledMcpIds);
@@ -97,6 +101,7 @@ export const readSessionRuntimeFromMetadata = (
     && !contactId
     && !projectId
     && !projectRoot
+    && !workspaceRoot
     && enabledMcpIds.length === 0
     && mcpEnabled
   ) {
@@ -111,6 +116,7 @@ export const readSessionRuntimeFromMetadata = (
     enabledMcpIds,
     projectId,
     projectRoot,
+    workspaceRoot,
   };
 };
 
@@ -126,6 +132,7 @@ export const mergeSessionRuntimeIntoMetadata = (
   const contactId = normalizeId(runtime.contactId ?? existingRuntime?.contactId);
   const projectId = normalizeId(runtime.projectId ?? existingRuntime?.projectId);
   const projectRoot = normalizeId(runtime.projectRoot ?? existingRuntime?.projectRoot);
+  const workspaceRoot = normalizeId(runtime.workspaceRoot ?? existingRuntime?.workspaceRoot);
   const mcpEnabled = typeof runtime.mcpEnabled === 'boolean'
     ? runtime.mcpEnabled
     : (existingRuntime?.mcpEnabled ?? true);
@@ -139,6 +146,7 @@ export const mergeSessionRuntimeIntoMetadata = (
     enabled_mcp_ids: enabledMcpIds,
     project_id: projectId,
     project_root: projectRoot,
+    workspace_root: workspaceRoot,
   };
   next.contact = {
     type: 'memory_agent',

@@ -10,7 +10,12 @@ import {
   mergeSessionRuntimeIntoMetadata,
   readSessionRuntimeFromMetadata,
 } from '../helpers/sessionRuntime';
-import type { SessionAiSelection, SessionCreatePayload } from '../types';
+import type {
+  SessionAiSelection,
+  SessionCreateOptions,
+  SessionCreatePayload,
+  SessionSelectOptions,
+} from '../types';
 import { debugLog, generateId } from '@/lib/utils';
 
 const SESSION_MESSAGES_CACHE_MAX_ENTRIES = 16;
@@ -471,7 +476,10 @@ export function createSessionActions({
       }
     },
 
-    createSession: async (payload: string | SessionCreatePayload = 'New Chat') => {
+    createSession: async (
+      payload: string | SessionCreatePayload = 'New Chat',
+      options: SessionCreateOptions = {},
+    ) => {
       try {
         const payloadObject: SessionCreatePayload = typeof payload === 'string'
           ? { title: payload }
@@ -527,7 +535,9 @@ export function createSessionActions({
             return resolveSessionProjectScopeId(session) === effectiveProjectId;
           });
           if (existingSession) {
-            await get().selectSession(existingSession.id);
+            await get().selectSession(existingSession.id, {
+              keepActivePanel: options.keepActivePanel,
+            });
             return existingSession.id;
           }
 
@@ -569,7 +579,9 @@ export function createSessionActions({
 
             const remoteExisting = remoteMatched[0];
             if (remoteExisting?.id) {
-              await get().selectSession(remoteExisting.id);
+              await get().selectSession(remoteExisting.id, {
+                keepActivePanel: options.keepActivePanel,
+              });
               return remoteExisting.id;
             }
           } catch (error) {
@@ -653,7 +665,9 @@ export function createSessionActions({
             state.sessionStreamingMessageDrafts = {};
           }
           state.sessionStreamingMessageDrafts[formattedSession.id] = null;
-          state.activePanel = 'chat';
+          if (!options.keepActivePanel) {
+            state.activePanel = 'chat';
+          }
           state.error = null;
         });
 
@@ -671,7 +685,10 @@ export function createSessionActions({
       }
     },
 
-    selectSession: async (sessionId: string) => {
+    selectSession: async (
+      sessionId: string,
+      options: SessionSelectOptions = {},
+    ) => {
       const selectStartedAt = Date.now();
       const stopPerfMeasure = createPerfMeasureStopper(`store.selectSession.${sessionId}.${selectStartedAt}`);
       const beforeSelect = get();
@@ -679,7 +696,7 @@ export function createSessionActions({
       const sameSessionState = beforeSelect.sessionChatState?.[sessionId];
       if (beforeSelect.currentSessionId === sessionId && sameSessionState?.isStreaming) {
         // 同一会话流式过程中仍允许切回聊天面板，避免在项目/终端面板点击会话无响应
-        if (beforeSelect.activePanel !== 'chat') {
+        if (!options.keepActivePanel && beforeSelect.activePanel !== 'chat') {
           set((state: any) => {
             state.activePanel = 'chat';
           });
@@ -840,6 +857,15 @@ export function createSessionActions({
           const index = state.sessions.findIndex((s: any) => s.id === sessionId);
           if (index !== -1 && session) {
             state.sessions[index] = session;
+          } else if (session) {
+            const status = typeof (session as any).status === 'string'
+              ? (session as any).status.toLowerCase()
+              : '';
+            const isActive = !(session.archived || status === 'archived' || status === 'archiving');
+            if (isActive) {
+              const merged = [session, ...(state.sessions || []).filter((s: any) => s?.id !== session.id)];
+              state.sessions = normalizeContactSessions(merged);
+            }
           }
           const savedAiSelection = state.sessionAiSelectionBySession?.[sessionId];
           if (savedAiSelection) {
@@ -871,7 +897,9 @@ export function createSessionActions({
             state.selectedAgentId = null;
           }
           state.messages = nextMessages;
-          state.activePanel = 'chat';
+          if (!options.keepActivePanel) {
+            state.activePanel = 'chat';
+          }
           state.isLoading = false;
           state.hasMoreMessages = messages.length >= 50;
           state.isStreaming = chatState?.isStreaming ?? false;

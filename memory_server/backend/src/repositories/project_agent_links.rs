@@ -117,7 +117,36 @@ pub async fn list_project_agent_links_by_contact(
     cursor.try_collect().await.map_err(|e| e.to_string())
 }
 
+pub async fn list_project_agent_links_by_project(
+    db: &Db,
+    user_id: &str,
+    project_id: &str,
+    status: Option<&str>,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<MemoryProjectAgentLink>, String> {
+    let mut filter = doc! {
+        "user_id": user_id,
+        "project_id": project_id,
+    };
+    if let Some(status) = normalize_optional_text(status) {
+        filter.insert("status", status);
+    }
+
+    let options = FindOptions::builder()
+        .sort(doc! {"last_bound_at": -1, "updated_at": -1})
+        .limit(Some(limit.max(1).min(500)))
+        .skip(Some(offset.max(0) as u64))
+        .build();
+
+    let cursor = collection(db)
+        .find(filter)
+        .with_options(options)
+        .await
+        .map_err(|e| e.to_string())?;
+    cursor.try_collect().await.map_err(|e| e.to_string())
+}
+
 fn default_active() -> String {
     "active".to_string()
 }
-

@@ -31,7 +31,10 @@ import {
 } from './chatInterface/helpers';
 import { usePanelActions } from './chatInterface/usePanelActions';
 import { useWorkbarMutations } from './chatInterface/useWorkbarMutations';
-import { readSessionRuntimeFromMetadata } from '../lib/store/helpers/sessionRuntime';
+import {
+  mergeSessionRuntimeIntoMetadata,
+  readSessionRuntimeFromMetadata,
+} from '../lib/store/helpers/sessionRuntime';
 import type { UiPromptHistoryItem } from './chatInterface/types';
 import type { TaskWorkbarItem } from './TaskWorkbar';
 import { apiClient as globalApiClient } from '../lib/api/client';
@@ -39,12 +42,12 @@ import { cn } from '../lib/utils';
 import type { ChatInterfaceProps } from '../types';
 import { useAuthStore } from '../lib/auth/authStore';
 
-interface ContactProjectMemory {
+interface SessionMemorySummary {
   id: string;
-  projectId: string;
-  memoryText: string;
-  memoryVersion: number;
-  lastSourceAt?: string | null;
+  summaryText: string;
+  status: string;
+  level: number;
+  createdAt: string;
   updatedAt: string;
 }
 
@@ -52,6 +55,7 @@ interface ContactAgentRecall {
   id: string;
   recallKey: string;
   recallText: string;
+  level: number;
   sourceProjectIds: string[];
   confidence?: number | null;
   lastSeenAt?: string | null;
@@ -97,6 +101,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     loadMoreMessages,
     toggleTurnProcess,
     sendMessage,
+    updateSession,
     clearError,
     sidebarOpen,
     toggleSidebar,
@@ -132,6 +137,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     loadMoreMessages: state.loadMoreMessages,
     toggleTurnProcess: state.toggleTurnProcess,
     sendMessage: state.sendMessage,
+    updateSession: state.updateSession,
     clearError: state.clearError,
     sidebarOpen: state.sidebarOpen,
     toggleSidebar: state.toggleSidebar,
@@ -230,7 +236,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [workbarHistoryLoadedSessionId, setWorkbarHistoryLoadedSessionId] = useState<string | null>(null);
   const [workbarLoading, setWorkbarLoading] = useState(false);
   const [workbarHistoryLoading, setWorkbarHistoryLoading] = useState(false);
-  const [projectMemories, setProjectMemories] = useState<ContactProjectMemory[]>([]);
+  const [sessionMemorySummaries, setSessionMemorySummaries] = useState<SessionMemorySummary[]>([]);
   const [agentRecalls, setAgentRecalls] = useState<ContactAgentRecall[]>([]);
   const [memoryLoadedKey, setMemoryLoadedKey] = useState<string | null>(null);
   const [memoryLoading, setMemoryLoading] = useState(false);
@@ -244,6 +250,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [uiPromptHistoryError, setUiPromptHistoryError] = useState<string | null>(null);
   const [uiPromptHistoryLoadedSessionId, setUiPromptHistoryLoadedSessionId] = useState<string | null>(null);
   const [composerProjectId, setComposerProjectId] = useState<string | null>(null);
+  const [composerWorkspaceRoot, setComposerWorkspaceRoot] = useState<string | null>(null);
   const [composerMcpEnabled, setComposerMcpEnabled] = useState(true);
   const [composerEnabledMcpIds, setComposerEnabledMcpIds] = useState<string[]>([]);
   const [contactScopedProjectIds, setContactScopedProjectIds] = useState<string[]>([]);
@@ -346,6 +353,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     const runtime = readSessionRuntimeFromMetadata(currentSession?.metadata);
     const sessionProjectId = resolveSessionProjectScopeId(currentSession as any);
     setComposerProjectId(sessionProjectId !== '0' ? sessionProjectId : null);
+    setComposerWorkspaceRoot(runtime?.workspaceRoot ?? null);
     setComposerMcpEnabled(runtime?.mcpEnabled ?? true);
     setComposerEnabledMcpIds(runtime?.enabledMcpIds ?? []);
   }, [currentSession?.id, currentSession?.metadata]);
@@ -654,7 +662,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
   const loadContactMemoryContext = useCallback(async (sessionId: string, force = false) => {
     if (!sessionId || !currentSession || currentSession.id !== sessionId) {
-      setProjectMemories([]);
+      setSessionMemorySummaries([]);
       setAgentRecalls([]);
       setMemoryLoadedKey(null);
       setMemoryError(null);
@@ -670,7 +678,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     }
 
     if (!normalizedContactId) {
-      setProjectMemories([]);
+      setSessionMemorySummaries([]);
       setAgentRecalls([]);
       setMemoryLoadedKey(loadKey);
       setMemoryError('当前会话未绑定联系人，无法加载记忆。');
@@ -683,14 +691,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     setMemoryLoading(true);
     setMemoryError(null);
     try {
-      const [projectRows, recallRows] = await Promise.all([
-        normalizedProjectId
-          ? apiClient.getContactProjectMemories(
-            normalizedContactId,
-            normalizedProjectId,
-            { limit: 50, offset: 0 },
-          )
-          : Promise.resolve([]),
+      const [summaryRows, recallRows] = await Promise.all([
+        apiClient.getSessionSummaries(sessionId, { limit: 300, offset: 0 }),
         apiClient.getContactAgentRecalls(normalizedContactId, { limit: 200, offset: 0 }),
       ]);
 
@@ -701,22 +703,54 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         return;
       }
 
-      const normalizedProjectMemories: ContactProjectMemory[] = (Array.isArray(projectRows) ? projectRows : [])
+      const toTimestamp = (value: string | null | undefined): number => {
+        const parsed = value ? new Date(value).getTime() : Number.NaN;
+        return Number.isFinite(parsed) ? parsed : 0;
+      };
+      const compareByNewestTime = (
+        left: { createdAt?: string; updatedAt?: string },
+        right: { createdAt?: string; updatedAt?: string },
+      ): number => {
+        const leftTs = Math.max(toTimestamp(left.updatedAt), toTimestamp(left.createdAt));
+        const rightTs = Math.max(toTimestamp(right.updatedAt), toTimestamp(right.createdAt));
+        return rightTs - leftTs;
+      };
+      const normalizedSessionSummaries: SessionMemorySummary[] = (Array.isArray(summaryRows?.items) ? summaryRows.items : [])
         .map((item: any) => ({
           id: String(item?.id || ''),
-          projectId: String(item?.project_id || ''),
-          memoryText: String(item?.memory_text || ''),
-          memoryVersion: Number.isFinite(Number(item?.memory_version)) ? Number(item.memory_version) : 0,
-          lastSourceAt: typeof item?.last_source_at === 'string' ? item.last_source_at : null,
-          updatedAt: String(item?.updated_at || ''),
+          summaryText: String(item?.summary_text ?? item?.summaryText ?? ''),
+          status: String(item?.status || ''),
+          level: Number.isFinite(Number(item?.level)) ? Number(item.level) : 0,
+          createdAt: String(item?.created_at ?? item?.createdAt ?? ''),
+          updatedAt: String(item?.updated_at ?? item?.updatedAt ?? ''),
         }))
-        .filter((item) => item.id && item.projectId);
+        .filter((item) => item.id && item.summaryText.trim().length > 0);
+
+      const retainedLevel0Summaries = normalizedSessionSummaries
+        .filter((item) => item.level === 0)
+        .sort(compareByNewestTime);
+      const topLevelSummaries = [...normalizedSessionSummaries]
+        .sort((left, right) => {
+          if (right.level !== left.level) {
+            return right.level - left.level;
+          }
+          return compareByNewestTime(left, right);
+        })
+        .slice(0, 2);
+      const selectedSummariesMap = new Map<string, SessionMemorySummary>();
+      for (const item of [...retainedLevel0Summaries, ...topLevelSummaries]) {
+        if (!selectedSummariesMap.has(item.id)) {
+          selectedSummariesMap.set(item.id, item);
+        }
+      }
+      const selectedSessionSummaries = Array.from(selectedSummariesMap.values());
 
       const normalizedAgentRecalls: ContactAgentRecall[] = (Array.isArray(recallRows) ? recallRows : [])
         .map((item: any) => ({
           id: String(item?.id || ''),
           recallKey: String(item?.recall_key || ''),
           recallText: String(item?.recall_text || ''),
+          level: Number.isFinite(Number(item?.level)) ? Number(item.level) : 0,
           sourceProjectIds: Array.isArray(item?.source_project_ids)
             ? item.source_project_ids.map((v: any) => String(v || '')).filter((v: string) => v.length > 0)
             : [],
@@ -725,9 +759,17 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
           updatedAt: String(item?.updated_at || ''),
         }))
         .filter((item) => item.id && item.recallKey);
+      const selectedAgentRecalls = [...normalizedAgentRecalls]
+        .sort((left, right) => {
+          if (right.level !== left.level) {
+            return right.level - left.level;
+          }
+          return toTimestamp(right.updatedAt) - toTimestamp(left.updatedAt);
+        })
+        .slice(0, 1);
 
-      setProjectMemories(normalizedProjectMemories);
-      setAgentRecalls(normalizedAgentRecalls);
+      setSessionMemorySummaries(selectedSessionSummaries);
+      setAgentRecalls(selectedAgentRecalls);
       setMemoryLoadedKey(loadKey);
     } catch (error) {
       if (
@@ -854,7 +896,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       lastHydratedChatSessionRef.current = null;
       setWorkbarCurrentTurnTasks([]);
       setWorkbarHistoryTasks([]);
-      setProjectMemories([]);
+      setSessionMemorySummaries([]);
       setAgentRecalls([]);
       setWorkbarError(null);
       setWorkbarHistoryError(null);
@@ -882,7 +924,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       setWorkbarHistoryError(null);
       setWorkbarHistoryLoadedSessionId(null);
       setWorkbarHistoryLoading(false);
-      setProjectMemories([]);
+      setSessionMemorySummaries([]);
       setAgentRecalls([]);
       setMemoryError(null);
       setMemoryLoadedKey(null);
@@ -920,6 +962,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       mcpEnabled?: boolean;
       projectId?: string | null;
       projectRoot?: string | null;
+      workspaceRoot?: string | null;
       enabledMcpIds?: string[];
     },
   ) => {
@@ -930,6 +973,92 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       console.error('Failed to send message:', error);
     }
   }, [onMessageSend, sendMessage]);
+
+  const handleComposerWorkspaceRootChange = useCallback((path: string | null) => {
+    const normalizedPath = typeof path === 'string' && path.trim().length > 0
+      ? path.trim()
+      : null;
+    setComposerWorkspaceRoot(normalizedPath);
+    if (!currentSession?.id) {
+      return;
+    }
+    const runtime = readSessionRuntimeFromMetadata(currentSession.metadata);
+    const currentWorkspaceRoot = typeof runtime?.workspaceRoot === 'string' && runtime.workspaceRoot.trim().length > 0
+      ? runtime.workspaceRoot.trim()
+      : null;
+    if (currentWorkspaceRoot === normalizedPath) {
+      return;
+    }
+    const metadata = mergeSessionRuntimeIntoMetadata(currentSession.metadata, {
+      workspaceRoot: normalizedPath,
+      mcpEnabled: composerMcpEnabled,
+      enabledMcpIds: composerEnabledMcpIds,
+    });
+    void updateSession(currentSession.id, { metadata } as any);
+  }, [composerEnabledMcpIds, composerMcpEnabled, currentSession, updateSession]);
+
+  const handleComposerMcpEnabledChange = useCallback((enabled: boolean) => {
+    setComposerMcpEnabled(enabled);
+    if (!currentSession?.id) {
+      return;
+    }
+    const runtime = readSessionRuntimeFromMetadata(currentSession.metadata);
+    const currentEnabled = runtime?.mcpEnabled ?? true;
+    const currentIds = Array.isArray(runtime?.enabledMcpIds) ? runtime.enabledMcpIds : [];
+    const nextIds = [...composerEnabledMcpIds];
+    const sameIds = currentIds.length === nextIds.length
+      && currentIds.every((id, index) => id === nextIds[index]);
+    if (currentEnabled === enabled && sameIds) {
+      return;
+    }
+    const metadata = mergeSessionRuntimeIntoMetadata(currentSession.metadata, {
+      mcpEnabled: enabled,
+      enabledMcpIds: nextIds,
+      workspaceRoot: composerWorkspaceRoot,
+    });
+    void updateSession(currentSession.id, { metadata } as any);
+  }, [
+    composerEnabledMcpIds,
+    composerWorkspaceRoot,
+    currentSession,
+    updateSession,
+  ]);
+
+  const handleComposerEnabledMcpIdsChange = useCallback((ids: string[]) => {
+    const normalized: string[] = [];
+    for (const item of Array.isArray(ids) ? ids : []) {
+      const trimmed = typeof item === 'string' ? item.trim() : '';
+      if (!trimmed || normalized.includes(trimmed)) {
+        continue;
+      }
+      normalized.push(trimmed);
+    }
+    setComposerEnabledMcpIds(normalized);
+    if (!currentSession?.id) {
+      return;
+    }
+    const runtime = readSessionRuntimeFromMetadata(currentSession.metadata);
+    const currentIds = Array.isArray(runtime?.enabledMcpIds)
+      ? runtime.enabledMcpIds
+      : [];
+    const currentEnabled = runtime?.mcpEnabled ?? true;
+    const sameIds = currentIds.length === normalized.length
+      && currentIds.every((id, index) => id === normalized[index]);
+    if (sameIds && currentEnabled === composerMcpEnabled) {
+      return;
+    }
+    const metadata = mergeSessionRuntimeIntoMetadata(currentSession.metadata, {
+      enabledMcpIds: normalized,
+      mcpEnabled: composerMcpEnabled,
+      workspaceRoot: composerWorkspaceRoot,
+    });
+    void updateSession(currentSession.id, { metadata } as any);
+  }, [
+    composerMcpEnabled,
+    composerWorkspaceRoot,
+    currentSession,
+    updateSession,
+  ]);
 
   const handleComposerProjectChange = useCallback((projectId: string | null) => {
     const normalizedProjectId = typeof projectId === 'string' ? projectId.trim() : '';
@@ -1029,6 +1158,10 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
             collapsed={!sidebarOpen}
             onToggleCollapse={toggleSidebar}
             onSelectSession={() => setSummaryPaneSessionId(null)}
+            onOpenSessionSummary={(sessionId) => {
+              setSummaryPaneSessionId((prev) => (prev === sessionId ? null : sessionId));
+            }}
+            activeSummarySessionId={summaryPaneSessionId}
           />
 
           {/* 宸茬Щ闄ゅ乏渚у簲鐢ㄦ娊灞夐潰鏉匡紝鏀逛负寮圭獥 */}
@@ -1065,7 +1198,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                           onLoadMore={handleLoadMore}
                           onToggleTurnProcess={handleToggleTurnProcess}
                           customRenderer={customRenderer}
-                          projectMemories={projectMemories}
+                          sessionSummaries={sessionMemorySummaries}
                           agentRecalls={agentRecalls}
                           memoryLoading={memoryLoading}
                           memoryError={memoryError}
@@ -1161,14 +1294,19 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                       selectedModelId={selectedModelId}
                       availableModels={aiModelConfigs}
                       onModelChange={setSelectedModel}
-                      availableProjects={composerAvailableProjects}
+                      availableProjects={[]}
                       currentProject={currentProject}
-                      selectedProjectId={composerProjectId}
+                      selectedProjectId={null}
                       onProjectChange={handleComposerProjectChange}
+                      showProjectSelector={false}
+                      showProjectFileButton={false}
+                      workspaceRoot={composerWorkspaceRoot}
+                      onWorkspaceRootChange={handleComposerWorkspaceRootChange}
+                      showWorkspaceRootPicker={true}
                       mcpEnabled={composerMcpEnabled}
                       enabledMcpIds={composerEnabledMcpIds}
-                      onMcpEnabledChange={setComposerMcpEnabled}
-                      onEnabledMcpIdsChange={setComposerEnabledMcpIds}
+                      onMcpEnabledChange={handleComposerMcpEnabledChange}
+                      onEnabledMcpIdsChange={handleComposerEnabledMcpIdsChange}
                     />
                   )}
                 </div>

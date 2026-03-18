@@ -42,6 +42,7 @@ interface ChatComposerPanelProps {
       mcpEnabled?: boolean;
       projectId?: string | null;
       projectRoot?: string | null;
+      workspaceRoot?: string | null;
       enabledMcpIds?: string[];
     },
   ) => void;
@@ -60,6 +61,11 @@ interface ChatComposerPanelProps {
   currentProject: Project | null;
   selectedProjectId: string | null;
   onProjectChange: (projectId: string | null) => void;
+  showProjectSelector?: boolean;
+  showProjectFileButton?: boolean;
+  workspaceRoot?: string | null;
+  onWorkspaceRootChange?: (path: string | null) => void;
+  showWorkspaceRootPicker?: boolean;
   mcpEnabled: boolean;
   enabledMcpIds?: string[];
   onMcpEnabledChange: (enabled: boolean) => void;
@@ -106,6 +112,11 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
   currentProject,
   selectedProjectId,
   onProjectChange,
+  showProjectSelector = true,
+  showProjectFileButton = true,
+  workspaceRoot = null,
+  onWorkspaceRootChange,
+  showWorkspaceRootPicker = false,
   mcpEnabled,
   enabledMcpIds,
   onMcpEnabledChange,
@@ -164,6 +175,11 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
       currentProject={currentProject}
       selectedProjectId={selectedProjectId}
       onProjectChange={onProjectChange}
+      showProjectSelector={showProjectSelector}
+      showProjectFileButton={showProjectFileButton}
+      workspaceRoot={workspaceRoot}
+      onWorkspaceRootChange={onWorkspaceRootChange}
+      showWorkspaceRootPicker={showWorkspaceRootPicker}
       mcpEnabled={mcpEnabled}
       enabledMcpIds={enabledMcpIds}
       onMcpEnabledChange={onMcpEnabledChange}

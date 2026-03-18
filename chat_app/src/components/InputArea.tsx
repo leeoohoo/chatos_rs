@@ -55,6 +55,11 @@ export const InputArea: React.FC<InputAreaProps> = ({
   availableProjects = [],
   selectedProjectId = null,
   onProjectChange,
+  showProjectSelector = true,
+  showProjectFileButton = true,
+  workspaceRoot = null,
+  onWorkspaceRootChange,
+  showWorkspaceRootPicker = false,
   mcpEnabled = true,
   enabledMcpIds = [],
   onMcpEnabledChange,
@@ -90,6 +95,14 @@ export const InputArea: React.FC<InputAreaProps> = ({
   const [projectFileSearchTruncated, setProjectFileSearchTruncated] = useState(false);
   const [projectFileError, setProjectFileError] = useState<string | null>(null);
   const [projectFileAttachingPath, setProjectFileAttachingPath] = useState<string | null>(null);
+  const workspacePickerRef = useRef<HTMLDivElement>(null);
+  const [workspacePickerOpen, setWorkspacePickerOpen] = useState(false);
+  const [workspacePath, setWorkspacePath] = useState<string | null>(null);
+  const [workspaceParent, setWorkspaceParent] = useState<string | null>(null);
+  const [workspaceEntries, setWorkspaceEntries] = useState<FsEntry[]>([]);
+  const [workspaceRoots, setWorkspaceRoots] = useState<FsEntry[]>([]);
+  const [workspaceLoading, setWorkspaceLoading] = useState(false);
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
 
   const normalizePath = useCallback((value: string) => {
     const normalized = value.replace(/\\/g, '/').replace(/\/+/g, '/');
@@ -111,7 +124,12 @@ export const InputArea: React.FC<InputAreaProps> = ({
     }
     return (availableProjects || []).find((p: any) => p.id === selectedProjectId) || null;
   }, [availableProjects, selectedProjectId]);
+  const normalizedWorkspaceRoot = useMemo(() => {
+    const raw = typeof workspaceRoot === 'string' ? workspaceRoot.trim() : '';
+    return raw ? normalizePath(raw) : null;
+  }, [normalizePath, workspaceRoot]);
   const hasRuntimeProject = Boolean(selectedRuntimeProject?.id && selectedRuntimeProject?.rootPath);
+  const hasDirectoryContext = hasRuntimeProject || Boolean(normalizedWorkspaceRoot);
   const selectedModel = useMemo(
     () => (selectedModelId ? (availableModels || []).find(m => (m as any).id === selectedModelId) : null),
     [availableModels, selectedModelId]
@@ -126,8 +144,8 @@ export const InputArea: React.FC<InputAreaProps> = ({
     [availableMcpConfigs],
   );
   const selectableMcpIds = useMemo(
-    () => availableMcpIds.filter((id) => hasRuntimeProject || !PROJECT_REQUIRED_MCP_IDS.has(id)),
-    [availableMcpIds, hasRuntimeProject],
+    () => availableMcpIds.filter((id) => hasDirectoryContext || !PROJECT_REQUIRED_MCP_IDS.has(id)),
+    [availableMcpIds, hasDirectoryContext],
   );
   const selectableMcpIdSet = useMemo(
     () => new Set(selectableMcpIds),
@@ -138,13 +156,13 @@ export const InputArea: React.FC<InputAreaProps> = ({
       return enabledMcpIds;
     }
     if (enabledMcpIds.length === 0) {
-      return hasRuntimeProject ? [] : [...selectableMcpIds];
+      return hasDirectoryContext ? [] : [...selectableMcpIds];
     }
     return enabledMcpIds.filter((id) => selectableMcpIdSet.has(id));
   }, [
     availableMcpIds.length,
     enabledMcpIds,
-    hasRuntimeProject,
+    hasDirectoryContext,
     selectableMcpIdSet,
     selectableMcpIds,
   ]);
@@ -184,7 +202,18 @@ export const InputArea: React.FC<InputAreaProps> = ({
     if (!relativePath) return false;
     return relativePath.split('/').some((segment) => segment.startsWith('.'));
   }, [normalizePath, projectRootForFilePicker]);
-  const showProjectFilePicker = Boolean(projectRootForFilePicker);
+  const showProjectFilePicker = showProjectFileButton && Boolean(projectRootForFilePicker);
+  const workspaceRootDisplayName = useMemo(() => {
+    if (!normalizedWorkspaceRoot) {
+      return '未选择';
+    }
+    const normalized = normalizePath(normalizedWorkspaceRoot);
+    const segments = normalized.split('/').filter((segment) => segment.length > 0);
+    if (segments.length === 0) {
+      return normalized;
+    }
+    return segments[segments.length - 1] || normalized;
+  }, [normalizePath, normalizedWorkspaceRoot]);
   const currentAiLabel = useMemo(
     () => (selectedModel ? `Model: ${(selectedModel as any).name}` : '选择模型'),
     [selectedModel]
@@ -302,6 +331,18 @@ export const InputArea: React.FC<InputAreaProps> = ({
   }, [mcpPickerOpen]);
 
   useEffect(() => {
+    if (!workspacePickerOpen) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (!workspacePickerRef.current) return;
+      if (!workspacePickerRef.current.contains(e.target as Node)) {
+        setWorkspacePickerOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [workspacePickerOpen]);
+
+  useEffect(() => {
     setProjectFilePickerOpen(false);
     setProjectFileEntries([]);
     setProjectFileSearchResults([]);
@@ -313,6 +354,13 @@ export const InputArea: React.FC<InputAreaProps> = ({
     setProjectFileError(null);
     setProjectFileAttachingPath(null);
   }, [projectRootForFilePicker]);
+
+  useEffect(() => {
+    if (!showWorkspaceRootPicker) {
+      setWorkspacePickerOpen(false);
+      setWorkspaceError(null);
+    }
+  }, [showWorkspaceRootPicker]);
 
   useEffect(() => {
     if (!projectFilePickerOpen || !projectRootForFilePicker) return;
@@ -466,23 +514,23 @@ export const InputArea: React.FC<InputAreaProps> = ({
       }
       uniqueIds.push(trimmed);
     }
-    if (hasRuntimeProject && uniqueIds.length === selectableMcpIds.length) {
+    if (hasDirectoryContext && uniqueIds.length === selectableMcpIds.length) {
       onEnabledMcpIdsChange([]);
       return;
     }
     onEnabledMcpIdsChange(uniqueIds);
-  }, [hasRuntimeProject, onEnabledMcpIdsChange, selectableMcpIds.length]);
+  }, [hasDirectoryContext, onEnabledMcpIdsChange, selectableMcpIds.length]);
 
   const handleSelectAllMcp = useCallback(() => {
     if (!onEnabledMcpIdsChange) {
       return;
     }
-    if (hasRuntimeProject) {
+    if (hasDirectoryContext) {
       onEnabledMcpIdsChange([]);
       return;
     }
     onEnabledMcpIdsChange([...selectableMcpIds]);
-  }, [hasRuntimeProject, onEnabledMcpIdsChange, selectableMcpIds]);
+  }, [hasDirectoryContext, onEnabledMcpIdsChange, selectableMcpIds]);
 
   const handleToggleMcpSelection = useCallback((mcpId: string) => {
     if (!onEnabledMcpIdsChange) {
@@ -685,6 +733,55 @@ export const InputArea: React.FC<InputAreaProps> = ({
     }
   }, [addFiles, client, loadProjectFileEntries, projectRootForFilePicker, toRelativeProjectPath]);
 
+  const loadWorkspaceDirectories = useCallback(async (nextPath?: string | null) => {
+    setWorkspaceLoading(true);
+    setWorkspaceError(null);
+    try {
+      const data = await client.listFsDirectories(nextPath || undefined);
+      const path = typeof data?.path === 'string' ? data.path : null;
+      const parent = typeof data?.parent === 'string' ? data.parent : null;
+      const entries = Array.isArray(data?.entries)
+        ? data.entries.map((entry: any) => normalizeFsEntry(entry)).filter((entry: FsEntry) => entry.isDir)
+        : [];
+      const roots = Array.isArray(data?.roots)
+        ? data.roots.map((entry: any) => normalizeFsEntry(entry)).filter((entry: FsEntry) => entry.isDir)
+        : [];
+      setWorkspacePath(path);
+      setWorkspaceParent(parent);
+      setWorkspaceEntries(entries);
+      setWorkspaceRoots(roots);
+    } catch (error: any) {
+      setWorkspaceError(error?.message || '加载目录失败');
+    } finally {
+      setWorkspaceLoading(false);
+    }
+  }, [client]);
+
+  const handleToggleWorkspacePicker = useCallback(async () => {
+    if (!showWorkspaceRootPicker || disabled || isStreaming || isStopping) {
+      return;
+    }
+    if (workspacePickerOpen) {
+      setWorkspacePickerOpen(false);
+      return;
+    }
+    setWorkspacePickerOpen(true);
+    await loadWorkspaceDirectories(normalizedWorkspaceRoot || null);
+  }, [
+    disabled,
+    isStopping,
+    isStreaming,
+    loadWorkspaceDirectories,
+    normalizedWorkspaceRoot,
+    showWorkspaceRootPicker,
+    workspacePickerOpen,
+  ]);
+
+  const handleSelectWorkspaceRoot = useCallback((path: string | null) => {
+    onWorkspaceRootChange?.(path && path.trim().length > 0 ? path : null);
+    setWorkspacePickerOpen(false);
+  }, [onWorkspaceRootChange]);
+
   // 全局拖拽支持：允许把文件拖到整个应用任意位置
   useEffect(() => {
     if (!allowAttachments || disabled) return;
@@ -814,12 +911,14 @@ export const InputArea: React.FC<InputAreaProps> = ({
     const runtimeProjectRoot = runtimeProjectId === '0'
       ? null
       : (selectedRuntimeProject?.rootPath || null);
+    const runtimeWorkspaceRoot = normalizedWorkspaceRoot || null;
 
     onSend(trimmedMessage, attachments, {
       mcpEnabled,
       enabledMcpIds: sanitizedEnabledMcpIds,
       projectId: runtimeProjectId,
       projectRoot: runtimeProjectRoot,
+      workspaceRoot: runtimeWorkspaceRoot,
     });
     setMessage('');
     setAttachments([]);
@@ -901,6 +1000,9 @@ export const InputArea: React.FC<InputAreaProps> = ({
       )}
       {projectFileError && (
         <div className="-mt-2 mb-3 text-xs text-destructive">{projectFileError}</div>
+      )}
+      {workspaceError && (
+        <div className="-mt-2 mb-3 text-xs text-destructive">{workspaceError}</div>
       )}
 
       {/* 输入区域 */}
@@ -1081,7 +1183,7 @@ export const InputArea: React.FC<InputAreaProps> = ({
           </div>
         )}
 
-        {availableProjects.length > 0 && (
+        {showProjectSelector && availableProjects.length > 0 && (
           <select
             value={selectedProjectId || ''}
             onChange={(event) => onProjectChange?.(event.target.value || null)}
@@ -1100,6 +1202,93 @@ export const InputArea: React.FC<InputAreaProps> = ({
               </option>
             ))}
           </select>
+        )}
+
+        {showWorkspaceRootPicker && (
+          <div className="relative flex-shrink-0" ref={workspacePickerRef}>
+            <button
+              type="button"
+              onClick={() => { void handleToggleWorkspacePicker(); }}
+              disabled={disabled || isStreaming || isStopping}
+              className={cn(
+                'px-2 py-1 rounded-md border text-xs transition-colors',
+                'text-muted-foreground hover:text-foreground hover:bg-accent',
+                (disabled || isStreaming || isStopping) && 'opacity-50 cursor-not-allowed'
+              )}
+              title={normalizedWorkspaceRoot || '选择工作目录'}
+            >
+              {`工作目录: ${workspaceRootDisplayName}`}
+              <span className="ml-1">▾</span>
+            </button>
+            {workspacePickerOpen && (
+              <div className="absolute left-0 bottom-full mb-2 z-30 w-80 bg-popover text-popover-foreground border rounded-md shadow-lg">
+                <div className="px-3 py-2 border-b space-y-2">
+                  <div className="text-[11px] text-muted-foreground truncate" title={workspacePath || '请选择目录'}>
+                    当前路径: {workspacePath || '请选择目录'}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      className="px-2 py-1 rounded border text-[11px] text-muted-foreground hover:text-foreground hover:bg-accent disabled:opacity-50"
+                      onClick={() => { void loadWorkspaceDirectories(workspaceParent || null); }}
+                      disabled={workspaceLoading || !workspaceParent}
+                    >
+                      返回上级
+                    </button>
+                    <button
+                      type="button"
+                      className="px-2 py-1 rounded border text-[11px] text-muted-foreground hover:text-foreground hover:bg-accent disabled:opacity-50"
+                      onClick={() => { void loadWorkspaceDirectories(workspacePath || normalizedWorkspaceRoot || null); }}
+                      disabled={workspaceLoading}
+                    >
+                      刷新
+                    </button>
+                    <button
+                      type="button"
+                      className="px-2 py-1 rounded border text-[11px] text-muted-foreground hover:text-foreground hover:bg-accent disabled:opacity-50"
+                      onClick={() => handleSelectWorkspaceRoot(workspacePath)}
+                      disabled={workspaceLoading || !workspacePath}
+                    >
+                      选择当前目录
+                    </button>
+                    <button
+                      type="button"
+                      className="px-2 py-1 rounded border text-[11px] text-muted-foreground hover:text-foreground hover:bg-accent disabled:opacity-50"
+                      onClick={() => handleSelectWorkspaceRoot(null)}
+                      disabled={workspaceLoading && !normalizedWorkspaceRoot}
+                    >
+                      清空
+                    </button>
+                  </div>
+                </div>
+                <div className="max-h-64 overflow-auto py-1">
+                  {workspaceLoading ? (
+                    <div className="px-3 py-2 text-xs text-muted-foreground">加载中...</div>
+                  ) : (
+                    (() => {
+                      const items = workspacePath ? workspaceEntries : workspaceRoots;
+                      if (!items || items.length === 0) {
+                        return <div className="px-3 py-2 text-xs text-muted-foreground">没有可用目录</div>;
+                      }
+                      return items.map((entry) => (
+                        <button
+                          key={entry.path}
+                          type="button"
+                          className="w-full px-3 py-1.5 text-left text-sm hover:bg-accent flex items-center gap-2"
+                          onClick={() => { void loadWorkspaceDirectories(entry.path); }}
+                        >
+                          <svg className="w-4 h-4 text-muted-foreground shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
+                          </svg>
+                          <span className="truncate">{entry.name}</span>
+                        </button>
+                      ));
+                    })()
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
         )}
 
         <div className="relative flex-shrink-0" ref={mcpPickerRef}>
@@ -1135,7 +1324,7 @@ export const InputArea: React.FC<InputAreaProps> = ({
             </button>
           </div>
           {mcpPickerOpen && (
-            <div className="absolute right-0 bottom-full mb-2 z-30 w-80 bg-popover text-popover-foreground border rounded-md shadow-lg">
+            <div className="absolute left-0 bottom-full mb-2 z-30 w-80 max-w-[calc(100vw-2rem)] bg-popover text-popover-foreground border rounded-md shadow-lg">
               <div className="px-3 py-2 border-b flex items-center justify-between gap-2">
                 <div className="min-w-0">
                   <div className="text-xs font-medium">MCP 选择</div>
@@ -1187,7 +1376,7 @@ export const InputArea: React.FC<InputAreaProps> = ({
                           内置 MCP
                         </div>
                         {builtinMcpConfigs.map((item) => {
-                          const projectDisabled = !hasRuntimeProject && PROJECT_REQUIRED_MCP_IDS.has(item.id);
+                          const projectDisabled = !hasDirectoryContext && PROJECT_REQUIRED_MCP_IDS.has(item.id);
                           const checked = !projectDisabled && (isAllMcpSelected || sanitizedEnabledMcpIds.includes(item.id));
                           return (
                             <label
@@ -1213,7 +1402,7 @@ export const InputArea: React.FC<InputAreaProps> = ({
                               />
                               <span className="truncate" title={item.displayName}>{item.displayName}</span>
                               {projectDisabled && (
-                                <span className="text-[11px] text-muted-foreground">需选择项目</span>
+                                <span className="text-[11px] text-muted-foreground">需选择目录</span>
                               )}
                             </label>
                           );

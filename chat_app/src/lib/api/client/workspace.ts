@@ -224,6 +224,39 @@ export const getProject = (request: ApiRequestFn, id: string): Promise<any> => {
   return request<any>(`/projects/${id}`);
 };
 
+export const listProjectContacts = (
+  request: ApiRequestFn,
+  projectId: string,
+  paging?: ContactPaging,
+): Promise<any[]> => {
+  const query = buildQuery({
+    limit: paging?.limit,
+    offset: paging?.offset,
+  });
+  return request<any[]>(`/projects/${encodeURIComponent(projectId)}/contacts${query}`);
+};
+
+export const addProjectContact = (
+  request: ApiRequestFn,
+  projectId: string,
+  data: { contact_id: string },
+): Promise<any> => {
+  return request<any>(`/projects/${encodeURIComponent(projectId)}/contacts`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+};
+
+export const removeProjectContact = (
+  request: ApiRequestFn,
+  projectId: string,
+  contactId: string,
+): Promise<any> => {
+  return request<any>(`/projects/${encodeURIComponent(projectId)}/contacts/${encodeURIComponent(contactId)}`, {
+    method: 'DELETE',
+  });
+};
+
 export const listProjectChangeLogs = (
   request: ApiRequestFn,
   projectId: string,

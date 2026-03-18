@@ -98,6 +98,10 @@ pub fn router(state: SharedState) -> Router {
             get(list_contact_agent_recalls),
         )
         .route("/api/memory/v1/projects", get(list_projects))
+        .route(
+            "/api/memory/v1/projects/:project_id/contacts",
+            get(list_project_contacts),
+        )
         .route("/api/memory/v1/projects/sync", post(sync_project))
         .route(
             "/api/memory/v1/project-agent-links/sync",
@@ -1030,6 +1034,12 @@ struct ListProjectsQuery {
 }
 
 #[derive(Debug, Deserialize)]
+struct ListProjectContactsQuery {
+    limit: Option<i64>,
+    offset: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
 struct SyncProjectRequest {
     user_id: Option<String>,
     project_id: Option<String>,
@@ -1341,6 +1351,116 @@ async fn sync_project(
             Json(json!({"error": "sync project failed", "detail": err})),
         ),
     }
+}
+
+async fn list_project_contacts(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Path(project_id): Path<String>,
+    Query(q): Query<ListProjectContactsQuery>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match resolve_identity(&headers, state.as_ref()) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+
+    let scope_user_id = resolve_scope_user_id(&auth, None);
+    let normalized_project_id = normalize_project_scope_id(Some(project_id.as_str()));
+    let limit = q.limit.unwrap_or(200);
+    let offset = q.offset.unwrap_or(0);
+
+    let links = match project_agent_links_repo::list_project_agent_links_by_project(
+        &state.pool,
+        scope_user_id.as_str(),
+        normalized_project_id.as_str(),
+        Some("active"),
+        limit,
+        offset,
+    )
+    .await
+    {
+        Ok(items) => items,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "list project contacts failed", "detail": err})),
+            )
+        }
+    };
+
+    if links.is_empty() {
+        return (StatusCode::OK, Json(json!({"items": []})));
+    }
+
+    let mut ordered_contact_ids: Vec<String> = Vec::new();
+    let mut link_by_contact_id: HashMap<String, crate::models::MemoryProjectAgentLink> =
+        HashMap::new();
+    for link in links {
+        let contact_id = normalize_optional_text(link.contact_id.as_deref());
+        let Some(contact_id) = contact_id else {
+            continue;
+        };
+        if !link_by_contact_id.contains_key(contact_id.as_str()) {
+            ordered_contact_ids.push(contact_id.clone());
+            link_by_contact_id.insert(contact_id, link);
+        }
+    }
+
+    if ordered_contact_ids.is_empty() {
+        return (StatusCode::OK, Json(json!({"items": []})));
+    }
+
+    let contacts = match contacts_repo::list_contacts_by_ids(
+        &state.pool,
+        scope_user_id.as_str(),
+        ordered_contact_ids.as_slice(),
+        Some("active"),
+    )
+    .await
+    {
+        Ok(items) => items,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "load project contacts failed", "detail": err})),
+            )
+        }
+    };
+    let contact_map: HashMap<String, crate::models::Contact> = contacts
+        .into_iter()
+        .map(|contact| (contact.id.clone(), contact))
+        .collect();
+
+    let mut items: Vec<Value> = Vec::new();
+    for contact_id in ordered_contact_ids {
+        let Some(contact) = contact_map.get(contact_id.as_str()) else {
+            continue;
+        };
+        let link = link_by_contact_id.get(contact_id.as_str());
+        let updated_at = pick_latest_timestamp(&[
+            link.map(|v| v.updated_at.as_str()),
+            Some(contact.updated_at.as_str()),
+        ])
+        .unwrap_or_else(crate::repositories::now_rfc3339);
+
+        items.push(json!({
+            "project_id": normalized_project_id,
+            "contact_id": contact.id,
+            "agent_id": contact.agent_id,
+            "agent_name_snapshot": contact.agent_name_snapshot,
+            "contact_status": contact.status,
+            "link_status": link
+                .map(|v| v.status.clone())
+                .unwrap_or_else(|| "active".to_string()),
+            "latest_session_id": link.and_then(|v| v.latest_session_id.clone()),
+            "last_bound_at": link.map(|v| v.last_bound_at.clone()),
+            "last_message_at": link.and_then(|v| v.last_message_at.clone()),
+            "created_at": contact.created_at,
+            "updated_at": updated_at,
+        }));
+    }
+
+    (StatusCode::OK, Json(json!({"items": items})))
 }
 
 async fn sync_project_agent_link(

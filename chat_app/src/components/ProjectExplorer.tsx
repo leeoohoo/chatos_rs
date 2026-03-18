@@ -28,6 +28,8 @@ import {
 import type { MoveConflictState } from './projectExplorer/Overlays';
 import { ProjectPreviewPane } from './projectExplorer/PreviewPane';
 import { ProjectTreePane } from './projectExplorer/TreePane';
+import TeamMembersPane from './projectExplorer/TeamMembersPane';
+import WorkspaceTabs, { type WorkspaceTab } from './projectExplorer/WorkspaceTabs';
 import { useProjectTreeActions } from './projectExplorer/useProjectTreeActions';
 
 interface ProjectExplorerProps {
@@ -78,6 +80,7 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
   const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
   const [expandedReady, setExpandedReady] = useState(false);
   const [showOnlyChanged, setShowOnlyChanged] = useState(false);
+  const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>('files');
   const [treeWidth, setTreeWidth] = useState(() => {
     if (typeof window === 'undefined') return 288;
     const saved = window.localStorage.getItem('project_explorer_tree_width');
@@ -665,6 +668,24 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
   }, [project?.id, showOnlyChanged]);
 
   useEffect(() => {
+    if (!project?.id || typeof window === 'undefined') {
+      setWorkspaceTab('files');
+      return;
+    }
+    const saved = window.localStorage.getItem(`project_workspace_tab_${project.id}`);
+    if (saved === 'team') {
+      setWorkspaceTab('team');
+      return;
+    }
+    setWorkspaceTab('files');
+  }, [project?.id]);
+
+  useEffect(() => {
+    if (!project?.id || typeof window === 'undefined') return;
+    window.localStorage.setItem(`project_workspace_tab_${project.id}`, workspaceTab);
+  }, [project?.id, workspaceTab]);
+
+  useEffect(() => {
     if (!contextMenu) return undefined;
     const closeMenu = () => setContextMenu(null);
     const onKeyDown = (event: KeyboardEvent) => {
@@ -770,146 +791,162 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
   }
 
   return (
-    <div ref={containerRef} className={cn('flex h-full overflow-hidden', className)}>
-      <ProjectTreePane
-        project={project}
-        treeWidth={treeWidth}
-        treeScrollRef={treeScrollRef}
-        entriesMap={entriesMap}
-        expandedPaths={expandedPaths}
-        loadingPaths={loadingPaths}
-        selectedPath={selectedPath}
-        selectedEntry={selectedEntry}
-        draggingEntryPath={draggingEntryPath}
-        dropTargetDirPath={dropTargetDirPath}
-        actionLoading={actionLoading}
-        actionReloadPath={actionReloadPath}
-        canConfirmCurrent={canConfirmCurrent}
-        showOnlyChanged={showOnlyChanged}
-        changeSummary={changeSummary}
-        loadingSummary={loadingSummary}
-        summaryError={summaryError}
-        actionMessage={actionMessage}
-        actionError={actionError}
-        aggregatedChangeKindByPath={aggregatedChangeKindByPath}
-        normalizePath={normalizePath}
-        toExpandedKey={toExpandedKey}
-        canDropToDirectory={canDropToDirectory}
-        onSelectProjectRoot={() => {
-          void selectProjectRoot();
-        }}
-        onToggleShowOnlyChanged={() => {
-          setShowOnlyChanged((prev) => !prev);
-        }}
-        onCreateDirectoryAtRoot={() => {
-          void handleCreateDirectory(project.rootPath);
-        }}
-        onCreateFileAtRoot={() => {
-          void handleCreateFile(project.rootPath);
-        }}
-        onRefresh={() => {
-          void handleRefresh();
-        }}
-        onConfirmCurrent={() => {
-          void handleConfirmCurrentChanges();
-        }}
-        onConfirmAll={() => {
-          void handleConfirmAllChanges();
-        }}
-        onOpenContextMenu={openEntryContextMenu}
-        onSelectDeletedPath={(path) => {
-          setSelectedPath(path);
-          setSelectedFile(null);
-        }}
-        onToggleDir={(entry) => {
-          void toggleDir(entry);
-        }}
-        onOpenFile={(entry) => {
-          void openFile(entry);
-        }}
-        onDragStart={handleDragStart}
-        onDragEnd={handleDragEnd}
-        onSetDropTargetDirPath={setDropTargetDirPath}
-        onSetDraggingEntryPath={setDraggingEntryPath}
-        onMoveEntryByDrop={(sourcePath, targetDirPath) => {
-          void handleMoveEntryByDrop(sourcePath, targetDirPath);
-        }}
-        onScheduleDragExpand={scheduleDragExpand}
-        onCancelDragExpandIfMatches={cancelDragExpandIfMatches}
-        onClearDragExpandTimer={clearDragExpandTimer}
-        onStartDragAutoScroll={startDragAutoScroll}
-        onClearDragAutoScroll={clearDragAutoScroll}
+    <div ref={containerRef} className={cn('flex h-full flex-col overflow-hidden', className)}>
+      <WorkspaceTabs
+        activeTab={workspaceTab}
+        onChange={setWorkspaceTab}
       />
-      <div
-        className={cn('w-1 cursor-col-resize bg-border/60 hover:bg-border', isResizing && 'bg-border')}
-        onMouseDown={(event) => {
-          resizeStartX.current = event.clientX;
-          resizeStartWidth.current = treeWidth;
-          setIsResizing(true);
-        }}
-      />
-      <div className="flex-1 flex overflow-hidden">
-        <ProjectPreviewPane
-          selectedFile={selectedFile}
-          selectedPath={selectedPath}
-          selectedEntry={selectedEntry}
-          loadingFile={loadingFile}
-          error={error}
-          selectedLog={selectedLog}
-        />
-        {(loadingLogs || logsError || changeLogs.length > 0) && (
-          <div className="w-72 border-l border-border bg-card/60 flex flex-col overflow-hidden">
-            <div className="px-4 py-2 text-xs font-medium text-foreground border-b border-border">变更记录</div>
-            <div className="flex-1 min-h-0 overflow-auto">
-              <ChangeLogPanel
+
+      <div className="flex-1 min-h-0 overflow-hidden">
+        {workspaceTab === 'team' ? (
+          <TeamMembersPane
+            project={project}
+            className="h-full"
+          />
+        ) : (
+          <div className="flex h-full overflow-hidden">
+            <ProjectTreePane
+              project={project}
+              treeWidth={treeWidth}
+              treeScrollRef={treeScrollRef}
+              entriesMap={entriesMap}
+              expandedPaths={expandedPaths}
+              loadingPaths={loadingPaths}
+              selectedPath={selectedPath}
+              selectedEntry={selectedEntry}
+              draggingEntryPath={draggingEntryPath}
+              dropTargetDirPath={dropTargetDirPath}
+              actionLoading={actionLoading}
+              actionReloadPath={actionReloadPath}
+              canConfirmCurrent={canConfirmCurrent}
+              showOnlyChanged={showOnlyChanged}
+              changeSummary={changeSummary}
+              loadingSummary={loadingSummary}
+              summaryError={summaryError}
+              actionMessage={actionMessage}
+              actionError={actionError}
+              aggregatedChangeKindByPath={aggregatedChangeKindByPath}
+              normalizePath={normalizePath}
+              toExpandedKey={toExpandedKey}
+              canDropToDirectory={canDropToDirectory}
+              onSelectProjectRoot={() => {
+                void selectProjectRoot();
+              }}
+              onToggleShowOnlyChanged={() => {
+                setShowOnlyChanged((prev) => !prev);
+              }}
+              onCreateDirectoryAtRoot={() => {
+                void handleCreateDirectory(project.rootPath);
+              }}
+              onCreateFileAtRoot={() => {
+                void handleCreateFile(project.rootPath);
+              }}
+              onRefresh={() => {
+                void handleRefresh();
+              }}
+              onConfirmCurrent={() => {
+                void handleConfirmCurrentChanges();
+              }}
+              onConfirmAll={() => {
+                void handleConfirmAllChanges();
+              }}
+              onOpenContextMenu={openEntryContextMenu}
+              onSelectDeletedPath={(path) => {
+                setSelectedPath(path);
+                setSelectedFile(null);
+              }}
+              onToggleDir={(entry) => {
+                void toggleDir(entry);
+              }}
+              onOpenFile={(entry) => {
+                void openFile(entry);
+              }}
+              onDragStart={handleDragStart}
+              onDragEnd={handleDragEnd}
+              onSetDropTargetDirPath={setDropTargetDirPath}
+              onSetDraggingEntryPath={setDraggingEntryPath}
+              onMoveEntryByDrop={(sourcePath, targetDirPath) => {
+                void handleMoveEntryByDrop(sourcePath, targetDirPath);
+              }}
+              onScheduleDragExpand={scheduleDragExpand}
+              onCancelDragExpandIfMatches={cancelDragExpandIfMatches}
+              onClearDragExpandTimer={clearDragExpandTimer}
+              onStartDragAutoScroll={startDragAutoScroll}
+              onClearDragAutoScroll={clearDragAutoScroll}
+            />
+            <div
+              className={cn('w-1 cursor-col-resize bg-border/60 hover:bg-border', isResizing && 'bg-border')}
+              onMouseDown={(event) => {
+                resizeStartX.current = event.clientX;
+                resizeStartWidth.current = treeWidth;
+                setIsResizing(true);
+              }}
+            />
+            <div className="flex-1 flex overflow-hidden">
+              <ProjectPreviewPane
+                selectedFile={selectedFile}
                 selectedPath={selectedPath}
-                loadingLogs={loadingLogs}
-                logsError={logsError}
-                changeLogs={changeLogs}
-                selectedLogId={selectedLogId}
-                onToggleLog={(logId) => {
-                  setSelectedLogId((prev) => (prev === logId ? null : logId));
-                }}
+                selectedEntry={selectedEntry}
+                loadingFile={loadingFile}
+                error={error}
+                selectedLog={selectedLog}
               />
+              {(loadingLogs || logsError || changeLogs.length > 0) && (
+                <div className="w-72 border-l border-border bg-card/60 flex flex-col overflow-hidden">
+                  <div className="px-4 py-2 text-xs font-medium text-foreground border-b border-border">变更记录</div>
+                  <div className="flex-1 min-h-0 overflow-auto">
+                    <ChangeLogPanel
+                      selectedPath={selectedPath}
+                      loadingLogs={loadingLogs}
+                      logsError={logsError}
+                      changeLogs={changeLogs}
+                      selectedLogId={selectedLogId}
+                      onToggleLog={(logId) => {
+                        setSelectedLogId((prev) => (prev === logId ? null : logId));
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
+            <MoveConflictModal
+              moveConflict={moveConflict}
+              actionLoading={actionLoading}
+              onCancel={handleMoveConflictCancel}
+              onRenameChange={(value) => {
+                setMoveConflict((prev) => (prev ? { ...prev, renameTo: value } : prev));
+              }}
+              onOverwrite={() => {
+                void handleMoveConflictOverwrite(moveConflict);
+              }}
+              onRename={() => {
+                void handleMoveConflictRename(moveConflict);
+              }}
+            />
+            <EntryContextMenu
+              contextMenu={contextMenu}
+              contextMenuStyle={contextMenuStyle}
+              isContextRootEntry={isContextRootEntry}
+              onCreateDirectory={(path) => {
+                setContextMenu(null);
+                void handleCreateDirectory(path);
+              }}
+              onCreateFile={(path) => {
+                setContextMenu(null);
+                void handleCreateFile(path);
+              }}
+              onDownload={(entry) => {
+                setContextMenu(null);
+                void handleDownloadSelected(entry);
+              }}
+              onDelete={(entry) => {
+                setContextMenu(null);
+                void handleDeleteSelected(entry);
+              }}
+            />
           </div>
         )}
       </div>
-      <MoveConflictModal
-        moveConflict={moveConflict}
-        actionLoading={actionLoading}
-        onCancel={handleMoveConflictCancel}
-        onRenameChange={(value) => {
-          setMoveConflict((prev) => (prev ? { ...prev, renameTo: value } : prev));
-        }}
-        onOverwrite={() => {
-          void handleMoveConflictOverwrite(moveConflict);
-        }}
-        onRename={() => {
-          void handleMoveConflictRename(moveConflict);
-        }}
-      />
-      <EntryContextMenu
-        contextMenu={contextMenu}
-        contextMenuStyle={contextMenuStyle}
-        isContextRootEntry={isContextRootEntry}
-        onCreateDirectory={(path) => {
-          setContextMenu(null);
-          void handleCreateDirectory(path);
-        }}
-        onCreateFile={(path) => {
-          setContextMenu(null);
-          void handleCreateFile(path);
-        }}
-        onDownload={(entry) => {
-          setContextMenu(null);
-          void handleDownloadSelected(entry);
-        }}
-        onDelete={(entry) => {
-          setContextMenu(null);
-          void handleDeleteSelected(entry);
-        }}
-      />
     </div>
   );
 };

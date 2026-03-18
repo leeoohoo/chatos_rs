@@ -89,9 +89,17 @@ export function createSendMessageHandler({
     const sessionProjectRoot = typeof sessionRuntime?.projectRoot === 'string'
       ? sessionRuntime.projectRoot.trim()
       : '';
+    const requestedWorkspaceRoot = typeof runtimeOptions?.workspaceRoot === 'string'
+      ? runtimeOptions.workspaceRoot.trim()
+      : '';
+    const sessionWorkspaceRoot = typeof sessionRuntime?.workspaceRoot === 'string'
+      ? sessionRuntime.workspaceRoot.trim()
+      : '';
+    const effectiveWorkspaceRoot = requestedWorkspaceRoot || sessionWorkspaceRoot || null;
     const effectiveProjectRoot = effectiveProjectId === '0'
       ? null
       : (requestedProjectRoot || sessionProjectRoot || null);
+    const effectiveExecutionRoot = effectiveWorkspaceRoot || effectiveProjectRoot;
     const effectiveMcpEnabled = typeof runtimeOptions?.mcpEnabled === 'boolean'
       ? runtimeOptions.mcpEnabled
       : (sessionRuntime?.mcpEnabled ?? true);
@@ -115,6 +123,7 @@ export function createSendMessageHandler({
       contactAgentId: effectiveContactAgentId,
       projectId: effectiveProjectId,
       projectRoot: effectiveProjectRoot,
+      workspaceRoot: effectiveWorkspaceRoot,
       mcpEnabled: effectiveMcpEnabled,
       enabledMcpIds: effectiveEnabledMcpIds,
     });
@@ -435,7 +444,7 @@ export function createSendMessageHandler({
         reasoning_enabled: reasoningEnabled,
         contact_agent_id: effectiveContactAgentId,
         project_id: effectiveProjectId,
-        project_root: effectiveProjectRoot,
+        project_root: effectiveExecutionRoot,
         mcp_enabled: effectiveMcpEnabled,
         enabled_mcp_ids: effectiveEnabledMcpIds,
       };
@@ -453,7 +462,7 @@ export function createSendMessageHandler({
           turnId: conversationTurnId,
           contactAgentId: effectiveContactAgentId,
           projectId: effectiveProjectId,
-          projectRoot: effectiveProjectRoot,
+          projectRoot: effectiveExecutionRoot,
           mcpEnabled: effectiveMcpEnabled,
           enabledMcpIds: effectiveEnabledMcpIds,
         }

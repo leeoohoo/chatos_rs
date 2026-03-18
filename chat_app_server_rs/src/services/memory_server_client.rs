@@ -132,6 +132,21 @@ pub struct MemoryProjectAgentLinkDto {
     pub updated_at: String,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct MemoryProjectContactDto {
+    pub project_id: String,
+    pub contact_id: String,
+    pub agent_id: String,
+    pub agent_name_snapshot: Option<String>,
+    pub contact_status: String,
+    pub link_status: String,
+    pub latest_session_id: Option<String>,
+    pub last_bound_at: Option<String>,
+    pub last_message_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct SyncProjectAgentLinkRequestDto {
     pub user_id: Option<String>,
@@ -736,6 +751,33 @@ pub async fn sync_project_agent_link(
         .timeout(timeout_duration())
         .json(payload);
     send_json(req).await
+}
+
+pub async fn list_project_contacts(
+    project_id: &str,
+    limit: Option<i64>,
+    offset: i64,
+) -> Result<Vec<MemoryProjectContactDto>, String> {
+    let mut params: Vec<(String, String)> = Vec::new();
+    if let Some(value) = limit {
+        params.push(("limit".to_string(), value.max(1).to_string()));
+    }
+    if offset > 0 {
+        params.push(("offset".to_string(), offset.to_string()));
+    }
+
+    let req = MEMORY_SERVER_HTTP
+        .get(
+            build_url(&format!(
+                "/projects/{}/contacts",
+                urlencoding::encode(project_id)
+            ))
+            .as_str(),
+        )
+        .timeout(timeout_duration())
+        .query(&params);
+    let resp: ListResponse<MemoryProjectContactDto> = send_json(req).await?;
+    Ok(resp.items)
 }
 
 pub async fn list_contact_project_memories(

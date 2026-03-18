@@ -95,8 +95,17 @@ export interface SendMessageRuntimeOptions {
   contactId?: string | null;
   projectId?: string | null;
   projectRoot?: string | null;
+  workspaceRoot?: string | null;
   mcpEnabled?: boolean;
   enabledMcpIds?: string[];
+}
+
+export interface SessionSelectOptions {
+  keepActivePanel?: boolean;
+}
+
+export interface SessionCreateOptions {
+  keepActivePanel?: boolean;
 }
 
 export interface SessionChatState {
@@ -184,8 +193,11 @@ export interface ChatActions {
 
   // 会话操作
   loadSessions: (options?: { limit?: number; offset?: number; append?: boolean; silent?: boolean }) => Promise<Session[]>;
-  createSession: (payload?: string | SessionCreatePayload) => Promise<string>;
-  selectSession: (sessionId: string) => Promise<void>;
+  createSession: (
+    payload?: string | SessionCreatePayload,
+    options?: SessionCreateOptions,
+  ) => Promise<string>;
+  selectSession: (sessionId: string, options?: SessionSelectOptions) => Promise<void>;
   updateSession: (sessionId: string, updates: Partial<Session>) => Promise<void>;
   deleteSession: (sessionId: string) => Promise<void>;
 

@@ -18,6 +18,8 @@ interface SessionSectionProps {
   expanded: boolean;
   sessions: Session[];
   currentSessionId?: string | null;
+  summarySessionId?: string | null;
+  displaySessionRuntimeIdMap?: Record<string, string>;
   sessionChatState?: SessionChatStateMap;
   taskReviewPanelsBySession?: Record<string, any[]>;
   uiPromptPanelsBySession?: Record<string, any[]>;
@@ -28,6 +30,7 @@ interface SessionSectionProps {
   onRefresh: () => void;
   onCreateSession: () => void;
   onSelectSession: (sessionId: string) => void;
+  onOpenSummary: (sessionId: string) => void;
   onDeleteSession: (sessionId: string) => void;
   onLoadMore: () => void;
   onToggleActionMenu: (event: React.MouseEvent<HTMLButtonElement>) => void;
@@ -40,6 +43,8 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
   expanded,
   sessions,
   currentSessionId,
+  summarySessionId,
+  displaySessionRuntimeIdMap = {},
   sessionChatState,
   taskReviewPanelsBySession = {},
   uiPromptPanelsBySession = {},
@@ -50,6 +55,7 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
   onRefresh,
   onCreateSession,
   onSelectSession,
+  onOpenSummary,
   onDeleteSession,
   onLoadMore,
   onToggleActionMenu,
@@ -107,9 +113,10 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
                 const sessionStatus = getSessionStatus(session);
                 const isArchivedSession = sessionStatus !== 'active';
                 const isArchivingSession = sessionStatus === 'archiving';
+                const runtimeSessionId = displaySessionRuntimeIdMap[session.id] || session.id;
 
-                return (
-                  <div
+	                return (
+	                  <div
                     key={session.id}
                     className={cn(
                       'group relative flex items-center p-3 rounded-lg transition-colors',
@@ -124,11 +131,11 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
                       }
                       onSelectSession(session.id);
                     }}
-                  >
-                    <div className="flex-1 min-w-0">
-                      <h3 className="text-sm font-medium text-foreground truncate">
-                        {session.title}
-                      </h3>
+	                  >
+	                    <div className="flex-1 min-w-0">
+	                      <h3 className="text-sm font-medium text-foreground truncate">
+	                        {session.title}
+	                      </h3>
                       <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
                         <span>{formatTimeAgo(session.updatedAt)}</span>
                         <span className="text-muted-foreground/60">·</span>
@@ -139,7 +146,7 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
                           </span>
                         ) : (
                           (() => {
-                            const chatState = sessionChatState?.[session.id];
+                            const chatState = sessionChatState?.[runtimeSessionId];
                             const isBusy = !!(chatState?.isLoading || chatState?.isStreaming);
                             return (
                               <span className={cn('inline-flex items-center gap-1', isBusy ? 'text-amber-600' : 'text-muted-foreground')}>
@@ -153,11 +160,11 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
                           if (isArchivedSession) {
                             return null;
                           }
-                          const taskReviewCount = Array.isArray(taskReviewPanelsBySession?.[session.id])
-                            ? taskReviewPanelsBySession[session.id].length
+                          const taskReviewCount = Array.isArray(taskReviewPanelsBySession?.[runtimeSessionId])
+                            ? taskReviewPanelsBySession[runtimeSessionId].length
                             : 0;
-                          const uiPromptCount = Array.isArray(uiPromptPanelsBySession?.[session.id])
-                            ? uiPromptPanelsBySession[session.id].length
+                          const uiPromptCount = Array.isArray(uiPromptPanelsBySession?.[runtimeSessionId])
+                            ? uiPromptPanelsBySession[runtimeSessionId].length
                             : 0;
                           const pendingCount = taskReviewCount + uiPromptCount;
                           if (pendingCount <= 0) {
@@ -171,13 +178,32 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
                           );
                         })()}
                       </div>
-                    </div>
+	                    </div>
 
-                    <div className="relative" data-action-menu-root="true">
+	                    <div className="flex items-center gap-1 shrink-0">
                       <button
-                        className="p-1 text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 transition-opacity"
-                        onClick={onToggleActionMenu}
+                        type="button"
+                        className={cn(
+                          'px-1.5 py-0.5 text-[11px] rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent',
+                          summarySessionId === session.id && 'text-blue-600 border-blue-200',
+                        )}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (isArchivedSession) {
+                            return;
+                          }
+                          onOpenSummary(session.id);
+                        }}
+                        disabled={isArchivedSession}
+                        title={summarySessionId === session.id ? '关闭总结视图' : '打开总结视图'}
                       >
+                        {summarySessionId === session.id ? '关闭总结' : '总结'}
+                      </button>
+	                    <div className="relative" data-action-menu-root="true">
+	                      <button
+	                        className="p-1 text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 transition-opacity"
+	                        onClick={onToggleActionMenu}
+	                      >
                         <DotsVerticalIcon className="w-4 h-4" />
                       </button>
                       <div className="js-inline-action-menu hidden absolute right-0 z-10 mt-1 w-32 bg-popover border border-border rounded-md shadow-lg">
@@ -197,12 +223,13 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
                             <TrashIcon className="w-4 h-4 mr-2" />
                             {isArchivedSession ? '已归档' : '删除联系人'}
                           </button>
-                        </div>
+	                        </div>
+	                      </div>
+	                    </div>
                       </div>
-                    </div>
-                  </div>
-                );
-              })}
+	                  </div>
+	                );
+	              })}
               {hasMore && (
                 <div className="pt-2">
                   <button
@@ -229,7 +256,6 @@ interface ProjectSectionProps {
   onToggle: () => void;
   onCreate: () => void;
   onSelect: (projectId: string) => void;
-  onAddContact: (projectId: string) => void;
   onArchive: (projectId: string) => void;
   onToggleActionMenu: (event: React.MouseEvent<HTMLButtonElement>) => void;
   closeActionMenus: () => void;
@@ -242,7 +268,6 @@ export const ProjectSection: React.FC<ProjectSectionProps> = ({
   onToggle,
   onCreate,
   onSelect,
-  onAddContact,
   onArchive,
   onToggleActionMenu,
   closeActionMenus,
@@ -304,17 +329,6 @@ export const ProjectSection: React.FC<ProjectSectionProps> = ({
                     </button>
                     <div className="js-inline-action-menu hidden absolute right-0 z-10 mt-1 w-40 bg-popover border border-border rounded-md shadow-lg">
                       <div className="py-1">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onAddContact(project.id);
-                            closeActionMenus();
-                          }}
-                          className="flex items-center w-full px-3 py-2 text-sm text-foreground hover:bg-accent/60"
-                        >
-                          <PlusIcon className="w-4 h-4 mr-2" />
-                          添加联系人
-                        </button>
                         <button
                           onClick={(e) => {
                             e.stopPropagation();

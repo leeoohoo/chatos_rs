@@ -65,6 +65,35 @@ pub async fn get_contact_by_user_and_agent(
         .map_err(|e| e.to_string())
 }
 
+pub async fn list_contacts_by_ids(
+    db: &Db,
+    user_id: &str,
+    contact_ids: &[String],
+    status: Option<&str>,
+) -> Result<Vec<Contact>, String> {
+    if contact_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut filter = doc! {
+        "user_id": user_id,
+        "id": { "$in": contact_ids.to_vec() },
+    };
+    if let Some(value) = status {
+        filter.insert("status", value);
+    }
+
+    let options = FindOptions::builder()
+        .sort(doc! {"updated_at": -1})
+        .build();
+    let cursor = collection(db)
+        .find(filter)
+        .with_options(options)
+        .await
+        .map_err(|e| e.to_string())?;
+    cursor.try_collect().await.map_err(|e| e.to_string())
+}
+
 pub async fn create_contact_idempotent(
     db: &Db,
     req: CreateContactRequest,

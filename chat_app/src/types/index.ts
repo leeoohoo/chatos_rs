@@ -362,6 +362,7 @@ export interface InputAreaProps {
       mcpEnabled?: boolean;
       projectId?: string | null;
       projectRoot?: string | null;
+      workspaceRoot?: string | null;
       enabledMcpIds?: string[];
     },
   ) => void;
@@ -385,6 +386,11 @@ export interface InputAreaProps {
   currentProject?: Project | null;
   selectedProjectId?: string | null;
   onProjectChange?: (projectId: string | null) => void;
+  showProjectSelector?: boolean;
+  showProjectFileButton?: boolean;
+  workspaceRoot?: string | null;
+  onWorkspaceRootChange?: (path: string | null) => void;
+  showWorkspaceRootPicker?: boolean;
   mcpEnabled?: boolean;
   enabledMcpIds?: string[];
   onMcpEnabledChange?: (enabled: boolean) => void;

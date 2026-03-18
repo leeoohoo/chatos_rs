@@ -223,6 +223,27 @@ class ApiClient {
     return workspaceApi.getProject(this.requestFn, id);
   }
 
+  async listProjectContacts(
+    projectId: string,
+    paging?: { limit?: number; offset?: number },
+  ): Promise<any[]> {
+    return workspaceApi.listProjectContacts(this.requestFn, projectId, paging);
+  }
+
+  async addProjectContact(
+    projectId: string,
+    data: { contact_id: string },
+  ): Promise<any> {
+    return workspaceApi.addProjectContact(this.requestFn, projectId, data);
+  }
+
+  async removeProjectContact(
+    projectId: string,
+    contactId: string,
+  ): Promise<any> {
+    return workspaceApi.removeProjectContact(this.requestFn, projectId, contactId);
+  }
+
   async listProjectChangeLogs(
     projectId: string,
     params?: { path?: string; limit?: number; offset?: number }
