@@ -401,12 +401,6 @@ fn join_stream_text(current: &str, chunk: &str) -> String {
     if current.starts_with(chunk) {
         return current.to_string();
     }
-    if current.contains(chunk) {
-        return current.to_string();
-    }
-    if chunk.contains(current) {
-        return chunk.to_string();
-    }
 
     let max_overlap = std::cmp::min(current.len(), chunk.len());
     for overlap in (8..=max_overlap).rev() {

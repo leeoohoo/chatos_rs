@@ -113,14 +113,28 @@ export const createStreamingMessageStateHelpers = ({
     set((state: any) => {
       const message = ensureStreamingMessage(state);
       if (message && message.metadata) {
-        const currentIndex = message.metadata.currentSegmentIndex || 0;
+        const currentIndex = Number.isInteger(message.metadata.currentSegmentIndex)
+          ? Number(message.metadata.currentSegmentIndex)
+          : -1;
         const segments = message.metadata.contentSegments || [];
+        let textIndex = -1;
 
-        if (segments[currentIndex] && segments[currentIndex].type === 'text') {
-          const currentText = typeof segments[currentIndex].content === 'string'
-            ? segments[currentIndex].content
+        if (currentIndex >= 0 && segments[currentIndex] && segments[currentIndex].type === 'text') {
+          textIndex = currentIndex;
+        } else {
+          for (let i = segments.length - 1; i >= 0; i -= 1) {
+            if (segments[i]?.type === 'text') {
+              textIndex = i;
+              break;
+            }
+          }
+        }
+
+        if (textIndex >= 0) {
+          const currentText = typeof segments[textIndex].content === 'string'
+            ? segments[textIndex].content
             : '';
-          segments[currentIndex].content = normalizeStreamedText(
+          segments[textIndex].content = normalizeStreamedText(
             joinStreamingText(currentText, contentStr),
           );
         } else {
@@ -128,9 +142,10 @@ export const createStreamingMessageStateHelpers = ({
             content: normalizeStreamedText(contentStr),
             type: 'text' as const,
           });
-          message.metadata.currentSegmentIndex = segments.length - 1;
+          textIndex = segments.length - 1;
         }
 
+        message.metadata.currentSegmentIndex = textIndex;
         message.metadata.contentSegments = segments;
         message.content = segments
           .filter((s: any) => s.type === 'text')
@@ -163,10 +178,8 @@ export const createStreamingMessageStateHelpers = ({
           ? segments[lastIdx].content
           : '';
         segments[lastIdx].content = `${currentContent}${contentStr}`;
-        message.metadata.currentSegmentIndex = lastIdx;
       } else {
         segments.push({ content: contentStr, type: 'thinking' as const });
-        message.metadata.currentSegmentIndex = segments.length - 1;
         createdThinkingSegment = true;
       }
 
