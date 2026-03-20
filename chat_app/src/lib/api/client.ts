@@ -2,13 +2,43 @@
 import * as accountApi from './client/account';
 import * as conversationApi from './client/conversation';
 import * as configsApi from './client/configs';
+import * as fsApi from './client/fs';
+import * as memoryApi from './client/memory';
+import * as messagesApi from './client/messages';
 import * as notepadApi from './client/notepad';
-import {
-  ApiRequestError,
-  buildQuery,
-  guessFilenameFromPath,
-  parseFilenameFromContentDisposition,
-} from './client/shared';
+import type {
+  AiModelConfigCreatePayload,
+  ApplicationCreatePayload,
+  ApplicationUpdatePayload,
+  FsMoveOptions,
+  McpConfigCreatePayload,
+  McpConfigUpdatePayload,
+  MemoryAgentsQueryOptions,
+  MessageCreatePayload,
+  NotepadCreatePayload,
+  NotepadListOptions,
+  NotepadSearchOptions,
+  NotepadUpdatePayload,
+  PagingOptions,
+  RegisterPayload,
+  RemoteConnectionDraftPayload,
+  RemoteConnectionUpdatePayload,
+  SessionPagingOptions,
+  SessionSummaryJobConfigPayload,
+  SessionUpdatePayload,
+  SessionUpsertPayload,
+  SftpTransferStartPayload,
+  StreamChatOptions,
+  SystemContextCreatePayload,
+  SystemContextDraftEvaluatePayload,
+  SystemContextDraftGeneratePayload,
+  SystemContextDraftOptimizePayload,
+  SystemContextUpdatePayload,
+  TaskManagerUpdatePayload,
+  TaskReviewDecisionPayload,
+  UiPromptResponsePayload,
+} from './client/types';
+import { ApiRequestError } from './client/shared';
 import * as streamApi from './client/stream';
 import * as summaryApi from './client/summary';
 import * as tasksApi from './client/tasks';
@@ -122,16 +152,24 @@ class ApiClient {
     };
   }
 
+  private getBinaryContext(): fsApi.BinaryApiContext {
+    return {
+      baseUrl: this.baseUrl,
+      accessToken: this.accessToken,
+      applyRefreshedAccessToken: (response: Response) => this.applyRefreshedAccessToken(response),
+    };
+  }
+
   // 会话相关API
   async getSessions(
     userId?: string,
     projectId?: string,
-    paging?: { limit?: number; offset?: number; includeArchived?: boolean; includeArchiving?: boolean }
+    paging?: SessionPagingOptions,
   ): Promise<any[]> {
     return workspaceApi.getSessions(this.requestFn, userId, projectId, paging);
   }
 
-  async createSession(data: { id: string; title: string; user_id: string; project_id?: string; metadata?: any }): Promise<any> {
+  async createSession(data: SessionUpsertPayload): Promise<any> {
     return workspaceApi.createSession(this.requestFn, data);
   }
 
@@ -141,7 +179,7 @@ class ApiClient {
 
   async updateSession(
     id: string,
-    data: { title?: string; description?: string; metadata?: any },
+    data: SessionUpdatePayload,
   ): Promise<any> {
     return workspaceApi.updateSession(this.requestFn, id, data);
   }
@@ -152,7 +190,7 @@ class ApiClient {
 
   async getContacts(
     userId?: string,
-    paging?: { limit?: number; offset?: number },
+    paging?: PagingOptions,
   ): Promise<any[]> {
     return workspaceApi.getContacts(this.requestFn, userId, paging);
   }
@@ -168,21 +206,21 @@ class ApiClient {
   async getContactProjectMemories(
     contactId: string,
     projectId: string,
-    paging?: { limit?: number; offset?: number },
+    paging?: PagingOptions,
   ): Promise<any[]> {
     return workspaceApi.getContactProjectMemories(this.requestFn, contactId, projectId, paging);
   }
 
   async getContactProjects(
     contactId: string,
-    paging?: { limit?: number; offset?: number },
+    paging?: PagingOptions,
   ): Promise<any[]> {
     return workspaceApi.getContactProjects(this.requestFn, contactId, paging);
   }
 
   async getContactAgentRecalls(
     contactId: string,
-    paging?: { limit?: number; offset?: number },
+    paging?: PagingOptions,
   ): Promise<any[]> {
     return workspaceApi.getContactAgentRecalls(this.requestFn, contactId, paging);
   }
@@ -225,7 +263,7 @@ class ApiClient {
 
   async listProjectContacts(
     projectId: string,
-    paging?: { limit?: number; offset?: number },
+    paging?: PagingOptions,
   ): Promise<any[]> {
     return workspaceApi.listProjectContacts(this.requestFn, projectId, paging);
   }
@@ -291,25 +329,7 @@ class ApiClient {
     return workspaceApi.listRemoteConnections(this.requestFn, userId);
   }
 
-  async createRemoteConnection(data: {
-    name?: string;
-    host: string;
-    port?: number;
-    username: string;
-    auth_type?: 'private_key' | 'private_key_cert' | 'password';
-    password?: string;
-    private_key_path?: string;
-    certificate_path?: string;
-    default_remote_path?: string;
-    host_key_policy?: 'strict' | 'accept_new';
-    jump_enabled?: boolean;
-    jump_host?: string;
-    jump_port?: number;
-    jump_username?: string;
-    jump_private_key_path?: string;
-    jump_password?: string;
-    user_id?: string;
-  }): Promise<any> {
+  async createRemoteConnection(data: RemoteConnectionDraftPayload): Promise<any> {
     return workspaceApi.createRemoteConnection(this.requestFn, data);
   }
 
@@ -317,24 +337,7 @@ class ApiClient {
     return workspaceApi.getRemoteConnection(this.requestFn, id);
   }
 
-  async updateRemoteConnection(id: string, data: {
-    name?: string;
-    host?: string;
-    port?: number;
-    username?: string;
-    auth_type?: 'private_key' | 'private_key_cert' | 'password';
-    password?: string;
-    private_key_path?: string;
-    certificate_path?: string;
-    default_remote_path?: string;
-    host_key_policy?: 'strict' | 'accept_new';
-    jump_enabled?: boolean;
-    jump_host?: string;
-    jump_port?: number;
-    jump_username?: string;
-    jump_private_key_path?: string;
-    jump_password?: string;
-  }): Promise<any> {
+  async updateRemoteConnection(id: string, data: RemoteConnectionUpdatePayload): Promise<any> {
     return workspaceApi.updateRemoteConnection(this.requestFn, id, data);
   }
 
@@ -346,25 +349,7 @@ class ApiClient {
     return workspaceApi.disconnectRemoteTerminal(this.requestFn, id);
   }
 
-  async testRemoteConnectionDraft(data: {
-    name?: string;
-    host: string;
-    port?: number;
-    username: string;
-    auth_type?: 'private_key' | 'private_key_cert' | 'password';
-    password?: string;
-    private_key_path?: string;
-    certificate_path?: string;
-    default_remote_path?: string;
-    host_key_policy?: 'strict' | 'accept_new';
-    jump_enabled?: boolean;
-    jump_host?: string;
-    jump_port?: number;
-    jump_username?: string;
-    jump_private_key_path?: string;
-    jump_password?: string;
-    user_id?: string;
-  }): Promise<any> {
+  async testRemoteConnectionDraft(data: RemoteConnectionDraftPayload): Promise<any> {
     return workspaceApi.testRemoteConnectionDraft(this.requestFn, data);
   }
 
@@ -386,11 +371,7 @@ class ApiClient {
 
   async startRemoteSftpTransfer(
     connectionId: string,
-    data: {
-      direction: 'upload' | 'download';
-      local_path: string;
-      remote_path: string;
-    },
+    data: SftpTransferStartPayload,
   ): Promise<any> {
     return workspaceApi.startRemoteSftpTransfer(this.requestFn, connectionId, data);
   }
@@ -447,82 +428,18 @@ class ApiClient {
   async moveFsEntry(
     sourcePath: string,
     targetParentPath: string,
-    options?: { targetName?: string; replaceExisting?: boolean }
+    options?: FsMoveOptions,
   ): Promise<any> {
     return workspaceApi.moveFsEntry(this.requestFn, sourcePath, targetParentPath, options);
   }
 
   async downloadFsEntry(path: string): Promise<{ blob: Blob; filename: string; contentType: string }> {
-    const qs = `?path=${encodeURIComponent(path)}`;
-    const headers = new Headers();
-    if (this.accessToken) {
-      headers.set('Authorization', `Bearer ${this.accessToken}`);
-    }
-    const response = await fetch(`${this.baseUrl}/fs/download${qs}`, {
-      method: 'GET',
-      headers,
-    });
-
-    this.applyRefreshedAccessToken(response);
-
-    if (!response.ok) {
-      const text = await response.text();
-      let message = `HTTP error! status: ${response.status}`;
-      let code: string | undefined;
-      let payload: any = null;
-      if (text) {
-        try {
-          const parsed = JSON.parse(text);
-          payload = parsed;
-          code = typeof parsed?.code === 'string' ? parsed.code : undefined;
-          message =
-            (typeof parsed?.error === 'string' && parsed.error) ||
-            (typeof parsed?.message === 'string' && parsed.message) ||
-            message;
-        } catch {
-          message = text;
-        }
-      }
-      throw new ApiRequestError(message, {
-        status: response.status,
-        code,
-        payload,
-      });
-    }
-
-    const blob = await response.blob();
-    const contentType = response.headers.get('content-type') || blob.type || 'application/octet-stream';
-    const nameFromHeader = parseFilenameFromContentDisposition(response.headers.get('content-disposition'));
-    let filename = nameFromHeader || guessFilenameFromPath(path);
-    if (contentType.includes('application/zip') && !filename.toLowerCase().endsWith('.zip')) {
-      filename = `${filename}.zip`;
-    }
-    return {
-      blob,
-      filename,
-      contentType,
-    };
+    return fsApi.downloadFsEntry(this.getBinaryContext(), path);
   }
 
   // 消息相关API
-  async createMessage(data: {
-    id: string;
-    sessionId: string;
-    role: string;
-    content: string;
-    metadata?: any;
-    toolCalls?: any[];
-    createdAt?: Date;
-    status?: string;
-  }): Promise<any> {
-    const requestData = {
-      ...data,
-      createdAt: data.createdAt ? data.createdAt.toISOString() : undefined
-    };
-    return this.request<any>(`/sessions/${data.sessionId}/messages`, {
-      method: 'POST',
-      body: JSON.stringify(requestData),
-    });
+  async createMessage(data: MessageCreatePayload): Promise<any> {
+    return messagesApi.createMessage(this.requestFn, data);
   }
 
   // MCP配置相关API
@@ -530,31 +447,11 @@ class ApiClient {
     return configsApi.getMcpConfigs(this.requestFn, userId);
   }
 
-  async createMcpConfig(data: {
-    id: string;
-    name: string;
-    command: string;
-    type: 'http' | 'stdio';
-    args?: string[] | null;
-    env?: Record<string, string> | null;
-    cwd?: string | null;
-    enabled: boolean;
-    user_id?: string;
-  }) {
+  async createMcpConfig(data: McpConfigCreatePayload) {
     return configsApi.createMcpConfig(this.requestFn, data);
   }
 
-  async updateMcpConfig(id: string, data: {
-    id?: string;
-    name?: string;
-    command?: string;
-    type?: 'http' | 'stdio';
-    args?: string[] | null;
-    env?: Record<string, string> | null;
-    cwd?: string | null;
-    enabled?: boolean;
-    userId?: string;
-  }) {
+  async updateMcpConfig(id: string, data: McpConfigUpdatePayload) {
     return configsApi.updateMcpConfig(this.requestFn, id, data);
   }
 
@@ -567,20 +464,7 @@ class ApiClient {
     return configsApi.getAiModelConfigs(this.requestFn, userId);
   }
 
-  async createAiModelConfig(data: {
-    id: string;
-    name: string;
-    provider: string;
-    model: string;
-    thinking_level?: string;
-    api_key: string;
-    base_url: string;
-    user_id?: string;
-    enabled: boolean;
-    supports_images?: boolean;
-    supports_reasoning?: boolean;
-    supports_responses?: boolean;
-  }) {
+  async createAiModelConfig(data: AiModelConfigCreatePayload) {
     return configsApi.createAiModelConfig(this.requestFn, data);
   }
 
@@ -601,20 +485,11 @@ class ApiClient {
     return configsApi.getActiveSystemContext(this.requestFn, userId);
   }
 
-  async createSystemContext(data: {
-    name: string;
-    content: string;
-    user_id: string;
-    app_ids?: string[];
-  }): Promise<any> {
+  async createSystemContext(data: SystemContextCreatePayload): Promise<any> {
     return configsApi.createSystemContext(this.requestFn, data);
   }
 
-  async updateSystemContext(id: string, data: {
-    name: string;
-    content: string;
-    app_ids?: string[];
-  }): Promise<any> {
+  async updateSystemContext(id: string, data: SystemContextUpdatePayload): Promise<any> {
     return configsApi.updateSystemContext(this.requestFn, id, data);
   }
 
@@ -626,33 +501,15 @@ class ApiClient {
     return configsApi.activateSystemContext(this.requestFn, id, userId);
   }
 
-  async generateSystemContextDraft(data: {
-    user_id: string;
-    scene: string;
-    style?: string;
-    language?: string;
-    output_format?: string;
-    constraints?: string[];
-    forbidden?: string[];
-    candidate_count?: number;
-    ai_model_config?: any;
-  }): Promise<any> {
+  async generateSystemContextDraft(data: SystemContextDraftGeneratePayload): Promise<any> {
     return configsApi.generateSystemContextDraft(this.requestFn, data);
   }
 
-  async optimizeSystemContextDraft(data: {
-    user_id: string;
-    content: string;
-    goal?: string;
-    keep_intent?: boolean;
-    ai_model_config?: any;
-  }): Promise<any> {
+  async optimizeSystemContextDraft(data: SystemContextDraftOptimizePayload): Promise<any> {
     return configsApi.optimizeSystemContextDraft(this.requestFn, data);
   }
 
-  async evaluateSystemContextDraft(data: {
-    content: string;
-  }): Promise<any> {
+  async evaluateSystemContextDraft(data: SystemContextDraftEvaluatePayload): Promise<any> {
     return configsApi.evaluateSystemContextDraft(this.requestFn, data);
   }
 
@@ -665,20 +522,11 @@ class ApiClient {
     return configsApi.getApplication(this.requestFn, id);
   }
 
-  async createApplication(data: {
-    name: string;
-    url: string;
-    icon_url?: string | null;
-    user_id?: string;
-  }): Promise<any> {
+  async createApplication(data: ApplicationCreatePayload): Promise<any> {
     return configsApi.createApplication(this.requestFn, data);
   }
 
-  async updateApplication(id: string, data: {
-    name?: string;
-    url?: string;
-    icon_url?: string | null;
-  }): Promise<any> {
+  async updateApplication(id: string, data: ApplicationUpdatePayload): Promise<any> {
     return configsApi.updateApplication(this.requestFn, id, data);
   }
 
@@ -688,19 +536,13 @@ class ApiClient {
 
   async getMemoryAgents(
     userId?: string,
-    options?: { enabled?: boolean; limit?: number; offset?: number },
+    options?: MemoryAgentsQueryOptions,
   ): Promise<any[]> {
-    const query = buildQuery({
-      user_id: userId,
-      enabled: typeof options?.enabled === 'boolean' ? options.enabled : undefined,
-      limit: options?.limit,
-      offset: options?.offset,
-    });
-    return this.request<any[]>(`/memory-agents${query}`);
+    return memoryApi.getMemoryAgents(this.requestFn, userId, options);
   }
 
   async getMemoryAgentRuntimeContext(agentId: string): Promise<any> {
-    return this.request<any>(`/memory-agents/${encodeURIComponent(agentId)}/runtime-context`);
+    return memoryApi.getMemoryAgentRuntimeContext(this.requestFn, agentId);
   }
 
   // 会话详情和助手相关API (从index.ts合并)
@@ -751,14 +593,7 @@ class ApiClient {
     userId?: string,
     attachments?: any[],
     reasoningEnabled?: boolean,
-    options?: {
-      turnId?: string;
-      contactAgentId?: string | null;
-      projectId?: string | null;
-      projectRoot?: string | null;
-      mcpEnabled?: boolean;
-      enabledMcpIds?: string[];
-    }
+    options?: StreamChatOptions,
   ): Promise<ReadableStream> {
     return streamApi.streamChat(
       this.getStreamContext(),
@@ -782,14 +617,7 @@ class ApiClient {
   async updateTaskManagerTask(
     sessionId: string,
     taskId: string,
-    payload: {
-      title?: string;
-      details?: string;
-      priority?: 'high' | 'medium' | 'low';
-      status?: 'todo' | 'doing' | 'blocked' | 'done';
-      tags?: string[];
-      due_at?: string | null;
-    }
+    payload: TaskManagerUpdatePayload,
   ): Promise<any> {
     return tasksApi.updateTaskManagerTask(this.requestFn, sessionId, taskId, payload);
   }
@@ -804,7 +632,7 @@ class ApiClient {
 
   async submitTaskReviewDecision(
     reviewId: string,
-    payload: { action: 'confirm' | 'cancel'; tasks?: any[]; reason?: string }
+    payload: TaskReviewDecisionPayload,
   ): Promise<any> {
     return tasksApi.submitTaskReviewDecision(this.requestFn, reviewId, payload);
   }
@@ -825,12 +653,7 @@ class ApiClient {
 
   async submitUiPromptResponse(
     promptId: string,
-    payload: {
-      status: 'ok' | 'canceled' | 'timeout';
-      values?: Record<string, string>;
-      selection?: string | string[];
-      reason?: string;
-    }
+    payload: UiPromptResponsePayload,
   ): Promise<any> {
     return tasksApi.submitUiPromptResponse(this.requestFn, promptId, payload);
   }
@@ -855,23 +678,11 @@ class ApiClient {
     return notepadApi.deleteNotepadFolder(this.requestFn, options);
   }
 
-  async listNotepadNotes(options?: {
-    folder?: string;
-    recursive?: boolean;
-    tags?: string[];
-    match?: 'all' | 'any';
-    query?: string;
-    limit?: number;
-  }): Promise<any> {
+  async listNotepadNotes(options?: NotepadListOptions): Promise<any> {
     return notepadApi.listNotepadNotes(this.requestFn, options);
   }
 
-  async createNotepadNote(payload: {
-    folder?: string;
-    title?: string;
-    content?: string;
-    tags?: string[];
-  }): Promise<any> {
+  async createNotepadNote(payload: NotepadCreatePayload): Promise<any> {
     return notepadApi.createNotepadNote(this.requestFn, payload);
   }
 
@@ -879,12 +690,7 @@ class ApiClient {
     return notepadApi.getNotepadNote(this.requestFn, noteId);
   }
 
-  async updateNotepadNote(noteId: string, payload: {
-    title?: string;
-    content?: string;
-    folder?: string;
-    tags?: string[];
-  }): Promise<any> {
+  async updateNotepadNote(noteId: string, payload: NotepadUpdatePayload): Promise<any> {
     return notepadApi.updateNotepadNote(this.requestFn, noteId, payload);
   }
 
@@ -896,15 +702,7 @@ class ApiClient {
     return notepadApi.listNotepadTags(this.requestFn);
   }
 
-  async searchNotepadNotes(options: {
-    query: string;
-    folder?: string;
-    recursive?: boolean;
-    tags?: string[];
-    match?: 'all' | 'any';
-    include_content?: boolean;
-    limit?: number;
-  }): Promise<any> {
+  async searchNotepadNotes(options: NotepadSearchOptions): Promise<any> {
     return notepadApi.searchNotepadNotes(this.requestFn, options);
   }
 
@@ -912,29 +710,11 @@ class ApiClient {
     return summaryApi.getSessionSummaryJobConfig(this.requestFn, userId);
   }
 
-  async updateSessionSummaryJobConfig(payload: {
-    user_id?: string;
-    enabled?: boolean;
-    summary_model_config_id?: string | null;
-    token_limit?: number;
-    message_count_limit?: number;
-    round_limit?: number;
-    target_summary_tokens?: number;
-    job_interval_seconds?: number;
-  }): Promise<any> {
+  async updateSessionSummaryJobConfig(payload: SessionSummaryJobConfigPayload): Promise<any> {
     return summaryApi.updateSessionSummaryJobConfig(this.requestFn, payload);
   }
 
-  async patchSessionSummaryJobConfig(payload: {
-    user_id?: string;
-    enabled?: boolean;
-    summary_model_config_id?: string | null;
-    token_limit?: number;
-    message_count_limit?: number;
-    round_limit?: number;
-    target_summary_tokens?: number;
-    job_interval_seconds?: number;
-  }): Promise<any> {
+  async patchSessionSummaryJobConfig(payload: SessionSummaryJobConfigPayload): Promise<any> {
     return summaryApi.patchSessionSummaryJobConfig(this.requestFn, payload);
   }
 
@@ -953,14 +733,11 @@ class ApiClient {
     return summaryApi.clearSessionSummaries(this.requestFn, sessionId);
   }
 
-  async register(data: {
-    username: string;
-    password: string;
-  }): Promise<any> {
+  async register(data: RegisterPayload): Promise<any> {
     return accountApi.register(this.requestFn, data);
   }
 
-  async login(data: { username: string; password: string }): Promise<any> {
+  async login(data: RegisterPayload): Promise<any> {
     return accountApi.login(this.requestFn, data);
   }
 

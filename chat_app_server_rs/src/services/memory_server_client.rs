@@ -358,25 +358,15 @@ pub async fn list_sessions(
     if let Some(v) = project_id {
         params.push(("project_id".to_string(), v.to_string()));
     }
-    if let Some(v) = limit {
-        params.push(("limit".to_string(), v.max(1).to_string()));
-    }
-    if offset > 0 {
-        params.push(("offset".to_string(), offset.to_string()));
-    }
+    push_limit_offset_params(&mut params, limit, offset);
 
     if !include_archived && !include_archiving {
         params.push(("status".to_string(), "active".to_string()));
     }
 
-    let req = MEMORY_SERVER_HTTP
-        .get(build_url("/sessions").as_str())
-        .timeout(timeout_duration())
-        .query(&params);
+    let memory_sessions: Vec<MemorySession> = send_list("/sessions", &params).await?;
 
-    let resp: ListResponse<MemorySession> = send_json(req).await?;
-
-    let mut sessions: Vec<Session> = resp.items.into_iter().map(map_memory_session).collect();
+    let mut sessions: Vec<Session> = memory_sessions.into_iter().map(map_memory_session).collect();
 
     if include_archiving && !include_archived {
         sessions.retain(|s| s.status != "archived");
@@ -442,16 +432,7 @@ pub async fn delete_session(session_id: &str) -> Result<bool, String> {
         .delete(build_url(&format!("/sessions/{}", urlencoding::encode(session_id))).as_str())
         .timeout(timeout_duration());
 
-    let resp = apply_auth(req).send().await.map_err(|e| e.to_string())?;
-    if resp.status().as_u16() == 404 {
-        return Ok(false);
-    }
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let detail = resp.text().await.unwrap_or_default();
-        return Err(format!("status={} detail={}", status, detail));
-    }
-    Ok(true)
+    send_delete_result(req).await
 }
 
 pub async fn upsert_message(message: &Message) -> Result<Message, String> {
@@ -487,26 +468,10 @@ pub async fn list_messages(
 ) -> Result<Vec<Message>, String> {
     let order = if asc { "asc" } else { "desc" };
     let mut params = vec![("order".to_string(), order.to_string())];
-    if let Some(v) = limit {
-        params.push(("limit".to_string(), v.max(1).to_string()));
-    }
-    if offset > 0 {
-        params.push(("offset".to_string(), offset.to_string()));
-    }
+    push_limit_offset_params(&mut params, limit, offset);
 
-    let req = MEMORY_SERVER_HTTP
-        .get(
-            build_url(&format!(
-                "/sessions/{}/messages",
-                urlencoding::encode(session_id)
-            ))
-            .as_str(),
-        )
-        .timeout(timeout_duration())
-        .query(&params);
-
-    let resp: ListResponse<Message> = send_json(req).await?;
-    Ok(resp.items)
+    let path = format!("/sessions/{}/messages", urlencoding::encode(session_id));
+    send_list(path.as_str(), &params).await
 }
 
 pub async fn delete_messages_by_session(session_id: &str) -> Result<i64, String> {
@@ -537,16 +502,7 @@ pub async fn delete_message(message_id: &str) -> Result<bool, String> {
         .delete(build_url(&format!("/messages/{}", urlencoding::encode(message_id))).as_str())
         .timeout(timeout_duration());
 
-    let resp = apply_auth(req).send().await.map_err(|e| e.to_string())?;
-    if resp.status().as_u16() == 404 {
-        return Ok(false);
-    }
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let detail = resp.text().await.unwrap_or_default();
-        return Err(format!("status={} detail={}", status, detail));
-    }
-    Ok(true)
+    send_delete_result(req).await
 }
 
 pub async fn list_summaries(
@@ -555,26 +511,10 @@ pub async fn list_summaries(
     offset: i64,
 ) -> Result<Vec<SessionSummaryV2>, String> {
     let mut params: Vec<(String, String)> = Vec::new();
-    if let Some(v) = limit {
-        params.push(("limit".to_string(), v.max(1).to_string()));
-    }
-    if offset > 0 {
-        params.push(("offset".to_string(), offset.to_string()));
-    }
+    push_limit_offset_params(&mut params, limit, offset);
 
-    let req = MEMORY_SERVER_HTTP
-        .get(
-            build_url(&format!(
-                "/sessions/{}/summaries",
-                urlencoding::encode(session_id)
-            ))
-            .as_str(),
-        )
-        .timeout(timeout_duration())
-        .query(&params);
-
-    let resp: ListResponse<SessionSummaryV2> = send_json(req).await?;
-    Ok(resp.items)
+    let path = format!("/sessions/{}/summaries", urlencoding::encode(session_id));
+    send_list(path.as_str(), &params).await
 }
 
 pub async fn delete_summary(session_id: &str, summary_id: &str) -> Result<bool, String> {
@@ -589,16 +529,7 @@ pub async fn delete_summary(session_id: &str, summary_id: &str) -> Result<bool, 
         )
         .timeout(timeout_duration());
 
-    let resp = apply_auth(req).send().await.map_err(|e| e.to_string())?;
-    if resp.status().as_u16() == 404 {
-        return Ok(false);
-    }
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let detail = resp.text().await.unwrap_or_default();
-        return Err(format!("status={} detail={}", status, detail));
-    }
-    Ok(true)
+    send_delete_result(req).await
 }
 
 pub async fn clear_summaries(session_id: &str) -> Result<i64, String> {
@@ -667,19 +598,9 @@ pub async fn list_memory_agents(
     if let Some(value) = enabled {
         params.push(("enabled".to_string(), value.to_string()));
     }
-    if let Some(value) = limit {
-        params.push(("limit".to_string(), value.max(1).to_string()));
-    }
-    if offset > 0 {
-        params.push(("offset".to_string(), offset.to_string()));
-    }
+    push_limit_offset_params(&mut params, limit, offset);
 
-    let req = MEMORY_SERVER_HTTP
-        .get(build_url("/agents").as_str())
-        .timeout(timeout_duration())
-        .query(&params);
-    let resp: ListResponse<MemoryAgentDto> = send_json(req).await?;
-    Ok(resp.items)
+    send_list("/agents", &params).await
 }
 
 pub async fn list_memory_contacts(
@@ -691,19 +612,9 @@ pub async fn list_memory_contacts(
     if let Some(value) = user_id {
         params.push(("user_id".to_string(), value.to_string()));
     }
-    if let Some(value) = limit {
-        params.push(("limit".to_string(), value.max(1).to_string()));
-    }
-    if offset > 0 {
-        params.push(("offset".to_string(), offset.to_string()));
-    }
+    push_limit_offset_params(&mut params, limit, offset);
 
-    let req = MEMORY_SERVER_HTTP
-        .get(build_url("/contacts").as_str())
-        .timeout(timeout_duration())
-        .query(&params);
-    let resp: ListResponse<MemoryContactDto> = send_json(req).await?;
-    Ok(resp.items)
+    send_list("/contacts", &params).await
 }
 
 pub async fn create_memory_contact(
@@ -721,16 +632,7 @@ pub async fn delete_memory_contact(contact_id: &str) -> Result<bool, String> {
         .delete(build_url(&format!("/contacts/{}", urlencoding::encode(contact_id))).as_str())
         .timeout(timeout_duration());
 
-    let resp = apply_auth(req).send().await.map_err(|e| e.to_string())?;
-    if resp.status().as_u16() == 404 {
-        return Ok(false);
-    }
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let detail = resp.text().await.unwrap_or_default();
-        return Err(format!("status={} detail={}", status, detail));
-    }
-    Ok(true)
+    send_delete_result(req).await
 }
 
 pub async fn sync_memory_project(
@@ -759,25 +661,10 @@ pub async fn list_project_contacts(
     offset: i64,
 ) -> Result<Vec<MemoryProjectContactDto>, String> {
     let mut params: Vec<(String, String)> = Vec::new();
-    if let Some(value) = limit {
-        params.push(("limit".to_string(), value.max(1).to_string()));
-    }
-    if offset > 0 {
-        params.push(("offset".to_string(), offset.to_string()));
-    }
+    push_limit_offset_params(&mut params, limit, offset);
 
-    let req = MEMORY_SERVER_HTTP
-        .get(
-            build_url(&format!(
-                "/projects/{}/contacts",
-                urlencoding::encode(project_id)
-            ))
-            .as_str(),
-        )
-        .timeout(timeout_duration())
-        .query(&params);
-    let resp: ListResponse<MemoryProjectContactDto> = send_json(req).await?;
-    Ok(resp.items)
+    let path = format!("/projects/{}/contacts", urlencoding::encode(project_id));
+    send_list(path.as_str(), &params).await
 }
 
 pub async fn list_contact_project_memories(
@@ -787,26 +674,14 @@ pub async fn list_contact_project_memories(
     offset: i64,
 ) -> Result<Vec<MemoryProjectMemoryDto>, String> {
     let mut params: Vec<(String, String)> = Vec::new();
-    if let Some(value) = limit {
-        params.push(("limit".to_string(), value.max(1).to_string()));
-    }
-    if offset > 0 {
-        params.push(("offset".to_string(), offset.to_string()));
-    }
+    push_limit_offset_params(&mut params, limit, offset);
 
-    let req = MEMORY_SERVER_HTTP
-        .get(
-            build_url(&format!(
-                "/contacts/{}/project-memories/{}",
-                urlencoding::encode(contact_id),
-                urlencoding::encode(project_id)
-            ))
-            .as_str(),
-        )
-        .timeout(timeout_duration())
-        .query(&params);
-    let resp: ListResponse<MemoryProjectMemoryDto> = send_json(req).await?;
-    Ok(resp.items)
+    let path = format!(
+        "/contacts/{}/project-memories/{}",
+        urlencoding::encode(contact_id),
+        urlencoding::encode(project_id)
+    );
+    send_list(path.as_str(), &params).await
 }
 
 pub async fn list_contact_project_memories_by_contact(
@@ -815,25 +690,10 @@ pub async fn list_contact_project_memories_by_contact(
     offset: i64,
 ) -> Result<Vec<MemoryProjectMemoryDto>, String> {
     let mut params: Vec<(String, String)> = Vec::new();
-    if let Some(value) = limit {
-        params.push(("limit".to_string(), value.max(1).to_string()));
-    }
-    if offset > 0 {
-        params.push(("offset".to_string(), offset.to_string()));
-    }
+    push_limit_offset_params(&mut params, limit, offset);
 
-    let req = MEMORY_SERVER_HTTP
-        .get(
-            build_url(&format!(
-                "/contacts/{}/project-memories",
-                urlencoding::encode(contact_id)
-            ))
-            .as_str(),
-        )
-        .timeout(timeout_duration())
-        .query(&params);
-    let resp: ListResponse<MemoryProjectMemoryDto> = send_json(req).await?;
-    Ok(resp.items)
+    let path = format!("/contacts/{}/project-memories", urlencoding::encode(contact_id));
+    send_list(path.as_str(), &params).await
 }
 
 pub async fn list_contact_projects(
@@ -842,25 +702,10 @@ pub async fn list_contact_projects(
     offset: i64,
 ) -> Result<Vec<Value>, String> {
     let mut params: Vec<(String, String)> = Vec::new();
-    if let Some(value) = limit {
-        params.push(("limit".to_string(), value.max(1).to_string()));
-    }
-    if offset > 0 {
-        params.push(("offset".to_string(), offset.to_string()));
-    }
+    push_limit_offset_params(&mut params, limit, offset);
 
-    let req = MEMORY_SERVER_HTTP
-        .get(
-            build_url(&format!(
-                "/contacts/{}/projects",
-                urlencoding::encode(contact_id)
-            ))
-            .as_str(),
-        )
-        .timeout(timeout_duration())
-        .query(&params);
-    let resp: ListResponse<Value> = send_json(req).await?;
-    Ok(resp.items)
+    let path = format!("/contacts/{}/projects", urlencoding::encode(contact_id));
+    send_list(path.as_str(), &params).await
 }
 
 pub async fn list_contact_agent_recalls(
@@ -869,25 +714,10 @@ pub async fn list_contact_agent_recalls(
     offset: i64,
 ) -> Result<Vec<MemoryAgentRecallDto>, String> {
     let mut params: Vec<(String, String)> = Vec::new();
-    if let Some(value) = limit {
-        params.push(("limit".to_string(), value.max(1).to_string()));
-    }
-    if offset > 0 {
-        params.push(("offset".to_string(), offset.to_string()));
-    }
+    push_limit_offset_params(&mut params, limit, offset);
 
-    let req = MEMORY_SERVER_HTTP
-        .get(
-            build_url(&format!(
-                "/contacts/{}/agent-recalls",
-                urlencoding::encode(contact_id)
-            ))
-            .as_str(),
-        )
-        .timeout(timeout_duration())
-        .query(&params);
-    let resp: ListResponse<MemoryAgentRecallDto> = send_json(req).await?;
-    Ok(resp.items)
+    let path = format!("/contacts/{}/agent-recalls", urlencoding::encode(contact_id));
+    send_list(path.as_str(), &params).await
 }
 
 pub async fn get_memory_agent(agent_id: &str) -> Result<Option<MemoryAgentDto>, String> {
@@ -923,16 +753,7 @@ pub async fn delete_memory_agent(agent_id: &str) -> Result<bool, String> {
         .delete(build_url(&format!("/agents/{}", urlencoding::encode(agent_id))).as_str())
         .timeout(timeout_duration());
 
-    let resp = apply_auth(req).send().await.map_err(|e| e.to_string())?;
-    if resp.status().as_u16() == 404 {
-        return Ok(false);
-    }
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let detail = resp.text().await.unwrap_or_default();
-        return Err(format!("status={} detail={}", status, detail));
-    }
-    Ok(true)
+    send_delete_result(req).await
 }
 
 pub async fn get_memory_agent_runtime_context(
@@ -1064,6 +885,44 @@ fn apply_auth(req: RequestBuilder) -> RequestBuilder {
     } else {
         req.header("X-Service-Token", token)
     }
+}
+
+fn push_limit_offset_params(
+    params: &mut Vec<(String, String)>,
+    limit: Option<i64>,
+    offset: i64,
+) {
+    if let Some(value) = limit {
+        params.push(("limit".to_string(), value.max(1).to_string()));
+    }
+    if offset > 0 {
+        params.push(("offset".to_string(), offset.to_string()));
+    }
+}
+
+async fn send_delete_result(req: RequestBuilder) -> Result<bool, String> {
+    let resp = apply_auth(req).send().await.map_err(|e| e.to_string())?;
+    if resp.status().as_u16() == 404 {
+        return Ok(false);
+    }
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let detail = resp.text().await.unwrap_or_default();
+        return Err(format!("status={} detail={}", status, detail));
+    }
+    Ok(true)
+}
+
+async fn send_list<T: DeserializeOwned>(
+    path: &str,
+    params: &[(String, String)],
+) -> Result<Vec<T>, String> {
+    let req = MEMORY_SERVER_HTTP
+        .get(build_url(path).as_str())
+        .timeout(timeout_duration())
+        .query(params);
+    let resp: ListResponse<T> = send_json(req).await?;
+    Ok(resp.items)
 }
 
 async fn send_json<T: DeserializeOwned>(req: RequestBuilder) -> Result<T, String> {

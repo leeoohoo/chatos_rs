@@ -48,6 +48,7 @@ where
     Ok(items)
 }
 
+#[cfg(test)]
 pub async fn collect_map_sorted_asc<T, N, K>(
     cursor: Cursor<Document>,
     normalize: N,
@@ -69,6 +70,7 @@ where
     items.sort_by(|a, b| key(b).cmp(key(a)));
 }
 
+#[cfg(test)]
 pub fn sort_by_str_key_asc<T, F>(items: &mut [T], key: F)
 where
     F: Fn(&T) -> &str,
@@ -76,6 +78,7 @@ where
     items.sort_by(|a, b| key(a).cmp(key(b)));
 }
 
+#[cfg(test)]
 pub fn apply_offset_limit<T>(mut items: Vec<T>, offset: i64, limit: Option<i64>) -> Vec<T> {
     if offset > 0 {
         items = items.into_iter().skip(offset as usize).collect();

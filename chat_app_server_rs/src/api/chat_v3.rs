@@ -334,6 +334,7 @@ async fn stream_chat_v3(sender: SseSender, req: ChatRequest) {
         &sender,
         &session_id,
         Some(&chunk_sent),
+        Some(&callback_bundle.streamed_content),
         result,
         || log_chat_cancelled(&session_id),
         |err| log_chat_error(err),

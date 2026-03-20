@@ -1,5 +1,5 @@
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
 
@@ -12,25 +12,32 @@ use crate::utils::sse::SseSender;
 pub struct StreamCallbacksV2 {
     pub callbacks: V2AiClientCallbacks,
     pub chunk_sent: Arc<AtomicBool>,
+    pub streamed_content: Arc<Mutex<String>>,
 }
 
 pub struct StreamCallbacksV3 {
     pub callbacks: V3AiClientCallbacks,
     pub chunk_sent: Arc<AtomicBool>,
+    pub streamed_content: Arc<Mutex<String>>,
 }
 
 pub fn build_v2_callbacks(sender: &SseSender, session_id: &str) -> StreamCallbacksV2 {
     let sid = session_id.to_string();
     let chunk_sent = Arc::new(AtomicBool::new(false));
+    let streamed_content = Arc::new(Mutex::new(String::new()));
 
     let sender_chunk = sender.clone();
     let sid_chunk = sid.clone();
     let chunk_flag = chunk_sent.clone();
+    let streamed_content_chunk = streamed_content.clone();
     let on_chunk = move |chunk: String| {
         if abort_registry::is_aborted(&sid_chunk) {
             return;
         }
         chunk_flag.store(true, Ordering::Relaxed);
+        if let Ok(mut acc) = streamed_content_chunk.lock() {
+            *acc = join_stream_text(acc.as_str(), chunk.as_str());
+        }
         sender_chunk.send_json(
             &json!({ "type": Events::CHUNK, "timestamp": crate::core::time::now_rfc3339(), "content": chunk }),
         );
@@ -121,6 +128,7 @@ pub fn build_v2_callbacks(sender: &SseSender, session_id: &str) -> StreamCallbac
     StreamCallbacksV2 {
         callbacks,
         chunk_sent,
+        streamed_content,
     }
 }
 
@@ -131,15 +139,20 @@ pub fn build_v3_callbacks(
 ) -> StreamCallbacksV3 {
     let sid = session_id.to_string();
     let chunk_sent = Arc::new(AtomicBool::new(false));
+    let streamed_content = Arc::new(Mutex::new(String::new()));
 
     let sender_chunk = sender.clone();
     let sid_chunk = sid.clone();
     let chunk_flag = chunk_sent.clone();
+    let streamed_content_chunk = streamed_content.clone();
     let on_chunk = move |chunk: String| {
         if abort_registry::is_aborted(&sid_chunk) {
             return;
         }
         chunk_flag.store(true, Ordering::Relaxed);
+        if let Ok(mut acc) = streamed_content_chunk.lock() {
+            *acc = join_stream_text(acc.as_str(), chunk.as_str());
+        }
         sender_chunk.send_json(
             &json!({ "type": Events::CHUNK, "timestamp": crate::core::time::now_rfc3339(), "content": chunk }),
         );
@@ -240,6 +253,7 @@ pub fn build_v3_callbacks(
     StreamCallbacksV3 {
         callbacks,
         chunk_sent,
+        streamed_content,
     }
 }
 
@@ -295,6 +309,7 @@ pub fn handle_chat_result(
     sender: &SseSender,
     session_id: &str,
     chunk_sent: Option<&Arc<AtomicBool>>,
+    streamed_content: Option<&Arc<Mutex<String>>>,
     result: Result<Value, String>,
     mut on_cancelled: impl FnMut(),
     mut on_error: impl FnMut(&str),
@@ -310,7 +325,8 @@ pub fn handle_chat_result(
             if let Some(flag) = chunk_sent {
                 send_fallback_chunk_if_needed(sender, flag, &res);
             }
-            send_complete_event(sender, &res);
+            let complete_result = ensure_complete_event_content(&res, streamed_content);
+            send_complete_event(sender, &complete_result);
             true
         }
         Err(err) => {
@@ -323,5 +339,123 @@ pub fn handle_chat_result(
             }
             false
         }
+    }
+}
+
+fn ensure_complete_event_content(
+    result: &Value,
+    streamed_content: Option<&Arc<Mutex<String>>>,
+) -> Value {
+    let Some(streamed_content) = streamed_content else {
+        return result.clone();
+    };
+    let streamed_text = streamed_content
+        .lock()
+        .ok()
+        .map(|guard| guard.clone())
+        .unwrap_or_default();
+    let streamed_text = normalize_streamed_text(streamed_text.as_str());
+    if streamed_text.is_empty() {
+        return result.clone();
+    }
+
+    let result_content = result
+        .get("content")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    let normalized_result_content = normalize_streamed_text(result_content);
+    let merged_content = if normalized_result_content.is_empty() {
+        streamed_text
+    } else {
+        join_stream_text(streamed_text.as_str(), normalized_result_content.as_str())
+    };
+
+    let mut patched = result.clone();
+    if let Some(obj) = patched.as_object_mut() {
+        obj.insert("content".to_string(), Value::String(merged_content));
+    }
+    patched
+}
+
+fn normalize_streamed_text(value: &str) -> String {
+    if value.is_empty() {
+        return String::new();
+    }
+    value
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .replace("\n\n\n\n\n\n", "\n\n\n\n")
+}
+
+fn join_stream_text(current: &str, chunk: &str) -> String {
+    if chunk.is_empty() {
+        return current.to_string();
+    }
+    if current.is_empty() {
+        return chunk.to_string();
+    }
+
+    if chunk.starts_with(current) {
+        return chunk.to_string();
+    }
+    if current.starts_with(chunk) {
+        return current.to_string();
+    }
+    if current.contains(chunk) {
+        return current.to_string();
+    }
+    if chunk.contains(current) {
+        return chunk.to_string();
+    }
+
+    let max_overlap = std::cmp::min(current.len(), chunk.len());
+    for overlap in (8..=max_overlap).rev() {
+        let Some(current_tail) = current.get(current.len() - overlap..) else {
+            continue;
+        };
+        let Some(chunk_head) = chunk.get(..overlap) else {
+            continue;
+        };
+        if current_tail == chunk_head {
+            let rest = chunk.get(overlap..).unwrap_or_default();
+            return format!("{}{}", current, rest);
+        }
+    }
+
+    format!("{}{}", current, chunk)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ensure_complete_event_content_prefers_longer_streamed_text() {
+        let acc = Arc::new(Mutex::new("你好，世界。完整内容".to_string()));
+        let result = json!({
+            "success": true,
+            "content": "世界。完整内容"
+        });
+
+        let patched = ensure_complete_event_content(&result, Some(&acc));
+        assert_eq!(
+            patched.get("content").and_then(|v| v.as_str()),
+            Some("你好，世界。完整内容")
+        );
+    }
+
+    #[test]
+    fn ensure_complete_event_content_keeps_longer_result_text() {
+        let acc = Arc::new(Mutex::new("hello".to_string()));
+        let result = json!({
+            "success": true,
+            "content": "hello world"
+        });
+
+        let patched = ensure_complete_event_content(&result, Some(&acc));
+        assert_eq!(
+            patched.get("content").and_then(|v| v.as_str()),
+            Some("hello world")
+        );
     }
 }

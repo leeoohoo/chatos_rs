@@ -1,136 +1,21 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiClient as globalApiClient } from '../lib/api/client';
 import { useChatApiClientFromContext } from '../lib/store/ChatStoreContext';
-import { MarkdownRenderer } from './MarkdownRenderer';
+import { NotepadContextMenu, type ContextMenuState, type ContextMenuTarget } from './notepad/NotepadContextMenu';
+import { NotepadEditor, type NotepadViewMode } from './notepad/NotepadEditor';
+import { NotepadSidebar } from './notepad/NotepadSidebar';
+import {
+  buildFolderTree,
+  normalizeFolderPath,
+  parseTags,
+  sanitizeFileName,
+  type NoteMeta,
+} from './notepad/utils';
 
 interface NotepadPanelProps {
   isOpen: boolean;
   onClose: () => void;
 }
-
-interface NoteMeta {
-  id: string;
-  title: string;
-  folder: string;
-  tags: string[];
-  updated_at: string;
-}
-
-type ViewMode = 'edit' | 'preview' | 'split';
-
-interface FolderNode {
-  name: string;
-  path: string;
-  folders: FolderNode[];
-  notes: NoteMeta[];
-}
-
-type ContextMenuTarget =
-  | { type: 'folder'; folderPath: string }
-  | { type: 'note'; note: NoteMeta };
-
-interface ContextMenuState {
-  x: number;
-  y: number;
-  target: ContextMenuTarget;
-}
-
-const createFolderNode = (name: string, path: string): FolderNode => ({
-  name,
-  path,
-  folders: [],
-  notes: [],
-});
-
-const parseTags = (raw: string): string[] => (
-  raw
-    .split(',')
-    .map((item) => item.trim())
-    .filter((item) => item.length > 0)
-);
-
-const formatTime = (raw: string | undefined): string => {
-  if (!raw) return '';
-  const date = new Date(raw);
-  if (Number.isNaN(date.getTime())) return raw;
-  return date.toLocaleString();
-};
-
-const normalizeFolderPath = (raw: string | undefined | null): string => {
-  const input = String(raw || '');
-  return input.trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
-};
-
-const sanitizeFileName = (raw: string): string => {
-  const cleaned = String(raw || '')
-    .replace(/[\\/:*?"<>|]+/g, '_')
-    .replace(/\s+/g, ' ')
-    .trim();
-  return cleaned || 'note';
-};
-
-const noteUpdatedAtTs = (note: NoteMeta): number => {
-  const value = Date.parse(note.updated_at || '');
-  return Number.isNaN(value) ? 0 : value;
-};
-
-const buildFolderTree = (folders: string[], notes: NoteMeta[]): FolderNode => {
-  const root = createFolderNode('', '');
-  const nodeMap = new Map<string, FolderNode>();
-  nodeMap.set('', root);
-
-  const ensureNode = (rawPath: string): FolderNode => {
-    const normalized = rawPath.trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
-    if (!normalized) {
-      return root;
-    }
-    const cached = nodeMap.get(normalized);
-    if (cached) {
-      return cached;
-    }
-
-    const parts = normalized.split('/').filter((item) => item.trim().length > 0);
-    let currentPath = '';
-    let parentNode = root;
-    for (const part of parts) {
-      currentPath = currentPath ? `${currentPath}/${part}` : part;
-      let currentNode = nodeMap.get(currentPath);
-      if (!currentNode) {
-        currentNode = createFolderNode(part, currentPath);
-        parentNode.folders.push(currentNode);
-        nodeMap.set(currentPath, currentNode);
-      }
-      parentNode = currentNode;
-    }
-    return parentNode;
-  };
-
-  for (const folder of folders) {
-    ensureNode(folder);
-  }
-
-  for (const note of notes) {
-    const folderNode = ensureNode(note.folder || '');
-    folderNode.notes.push(note);
-  }
-
-  const sortNode = (node: FolderNode) => {
-    node.folders.sort((left, right) => left.name.localeCompare(right.name, 'zh-Hans-CN'));
-    node.notes.sort((left, right) => {
-      const delta = noteUpdatedAtTs(right) - noteUpdatedAtTs(left);
-      if (delta !== 0) {
-        return delta;
-      }
-      return (left.title || '').localeCompare(right.title || '', 'zh-Hans-CN');
-    });
-    for (const child of node.folders) {
-      sortNode(child);
-    }
-  };
-
-  sortNode(root);
-  return root;
-};
 
 const NotepadPanel: React.FC<NotepadPanelProps> = ({ isOpen, onClose }) => {
   const apiClientFromContext = useChatApiClientFromContext();
@@ -144,7 +29,7 @@ const NotepadPanel: React.FC<NotepadPanelProps> = ({ isOpen, onClose }) => {
   const [tagsText, setTagsText] = useState('');
   const [content, setContent] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
-  const [viewMode, setViewMode] = useState<ViewMode>('split');
+  const [viewMode, setViewMode] = useState<NotepadViewMode>('split');
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set(['']));
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [loading, setLoading] = useState(false);
@@ -523,6 +408,25 @@ const NotepadPanel: React.FC<NotepadPanelProps> = ({ isOpen, onClose }) => {
     });
   }, []);
 
+  const handleTreeSelectFolder = useCallback((folderPath: string) => {
+    setSelectedFolder(folderPath);
+    ensureFolderExpanded(folderPath);
+  }, [ensureFolderExpanded]);
+
+  const handleTreeOpenNote = useCallback((noteId: string) => {
+    void openNote(noteId);
+  }, [openNote]);
+
+  const handleTreeFolderContextMenu = useCallback((event: React.MouseEvent, folderPath: string) => {
+    setSelectedFolder(folderPath);
+    ensureFolderExpanded(folderPath);
+    openContextMenu(event, { type: 'folder', folderPath });
+  }, [ensureFolderExpanded, openContextMenu]);
+
+  const handleTreeNoteContextMenu = useCallback((event: React.MouseEvent, note: NoteMeta) => {
+    openContextMenu(event, { type: 'note', note });
+  }, [openContextMenu]);
+
   const handleContextCreateFolder = useCallback(async () => {
     if (!contextMenu) return;
     const baseFolder = contextMenu.target.type === 'folder'
@@ -602,357 +506,65 @@ const NotepadPanel: React.FC<NotepadPanelProps> = ({ isOpen, onClose }) => {
     <>
       <div className="fixed inset-0 bg-black/50 z-40" onClick={onClose} />
       <div className="fixed inset-x-10 top-10 bottom-10 bg-card z-50 rounded-lg border border-border shadow-xl flex overflow-hidden">
-        <div className="w-[320px] border-r border-border flex flex-col">
-          <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-            <div className="text-sm font-semibold text-foreground">记事本</div>
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-2 py-1 text-xs rounded border border-border hover:bg-accent"
-            >
-              关闭
-            </button>
-          </div>
-
-          <div className="p-3 border-b border-border space-y-2">
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => { void handleCreateFolder(); }}
-                className="flex-1 px-2 py-1.5 text-xs rounded border border-border hover:bg-accent"
-              >
-                新建文件夹
-              </button>
-              <button
-                type="button"
-                onClick={() => { void handleCreateNote(); }}
-                className="flex-1 px-2 py-1.5 text-xs rounded bg-indigo-600 text-white hover:bg-indigo-700"
-              >
-                新建笔记
-              </button>
-            </div>
-            <input
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder="搜索标题/文件夹"
-              className="w-full h-9 rounded border border-input bg-background px-2 text-sm"
-            />
-            <div className="text-[11px] text-muted-foreground truncate" title={selectedFolder || 'root'}>
-              当前目录：{selectedFolder || 'root'}
-            </div>
-          </div>
-
-          <div className="flex-1 overflow-y-auto p-2">
-            {loading && notes.length === 0 ? (
-              <div className="text-xs text-muted-foreground p-2">加载中...</div>
-            ) : notes.length === 0 && availableFolders.length === 0 ? (
-              <div className="text-xs text-muted-foreground p-2">暂无笔记</div>
-            ) : (
-              <div className="space-y-0.5">
-                {folderTree.folders.map((folder) => {
-                  const renderFolder = (node: FolderNode, depth: number): React.ReactNode => {
-                    const folderKey = node.path || '__root__';
-                    const expanded = expandedFolders.has(node.path);
-                    const hasChildren = node.folders.length > 0 || node.notes.length > 0;
-                    const indent = 8 + depth * 14;
-
-                    return (
-                      <div key={folderKey}>
-                        <div
-                          className={`group flex items-center gap-1 rounded px-1 py-1 ${
-                            selectedFolder === node.path
-                              ? 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-300'
-                              : 'hover:bg-accent'
-                          }`}
-                          style={{ paddingLeft: `${indent}px` }}
-                          onContextMenu={(event) => {
-                            setSelectedFolder(node.path);
-                            ensureFolderExpanded(node.path);
-                            openContextMenu(event, { type: 'folder', folderPath: node.path });
-                          }}
-                        >
-                          <button
-                            type="button"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              if (hasChildren) {
-                                toggleFolderExpanded(node.path);
-                              }
-                            }}
-                            className="w-4 h-4 text-[10px] text-muted-foreground hover:text-foreground"
-                            title={hasChildren ? (expanded ? '收起目录' : '展开目录') : '空目录'}
-                          >
-                            {hasChildren ? (expanded ? '▾' : '▸') : '·'}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSelectedFolder(node.path);
-                              ensureFolderExpanded(node.path);
-                            }}
-                            className="flex-1 min-w-0 text-left text-sm truncate"
-                            title={node.path}
-                          >
-                            {node.name}
-                          </button>
-                        </div>
-                        {expanded && (
-                          <>
-                            {node.folders.map((child) => renderFolder(child, depth + 1))}
-                            {node.notes.map((note) => (
-                              <button
-                                key={note.id}
-                                type="button"
-                                onClick={() => { void openNote(note.id); }}
-                                onContextMenu={(event) => {
-                                  openContextMenu(event, { type: 'note', note });
-                                }}
-                                className={`w-full text-left rounded px-2 py-1.5 ${
-                                  selectedNoteId === note.id
-                                    ? 'bg-indigo-500/10 border border-indigo-500/50'
-                                    : 'hover:bg-accent border border-transparent'
-                                }`}
-                                style={{ paddingLeft: `${indent + 18}px` }}
-                                title={note.title || 'Untitled'}
-                              >
-                                <div className="text-sm text-foreground truncate">📄 {note.title || 'Untitled'}</div>
-                                <div className="text-[10px] text-muted-foreground truncate">
-                                  {note.updated_at ? formatTime(note.updated_at) : ''}
-                                </div>
-                              </button>
-                            ))}
-                          </>
-                        )}
-                      </div>
-                    );
-                  };
-
-                  return renderFolder(folder, 0);
-                })}
-
-                {folderTree.notes.map((note) => (
-                  <button
-                    key={note.id}
-                    type="button"
-                    onClick={() => { void openNote(note.id); }}
-                    onContextMenu={(event) => {
-                      openContextMenu(event, { type: 'note', note });
-                    }}
-                    className={`w-full text-left rounded px-2 py-1.5 ${
-                      selectedNoteId === note.id
-                        ? 'bg-indigo-500/10 border border-indigo-500/50'
-                        : 'hover:bg-accent border border-transparent'
-                    }`}
-                    style={{ paddingLeft: '26px' }}
-                    title={note.title || 'Untitled'}
-                  >
-                    <div className="text-sm text-foreground truncate">📄 {note.title || 'Untitled'}</div>
-                    <div className="text-[10px] text-muted-foreground truncate">
-                      {note.updated_at ? formatTime(note.updated_at) : ''}
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="flex-1 flex flex-col min-w-0">
-          <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-            <div className="text-sm text-foreground font-medium">
-              {selectedNoteId ? '编辑笔记' : '请选择或创建笔记'}
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="flex items-center rounded border border-border overflow-hidden">
-                <button
-                  type="button"
-                  onClick={() => setViewMode('edit')}
-                  className={`px-2 py-1 text-xs ${
-                    viewMode === 'edit' ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-accent/70'
-                  }`}
-                >
-                  编辑
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setViewMode('preview')}
-                  className={`px-2 py-1 text-xs border-l border-border ${
-                    viewMode === 'preview' ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-accent/70'
-                  }`}
-                >
-                  预览
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setViewMode('split')}
-                  className={`px-2 py-1 text-xs border-l border-border ${
-                    viewMode === 'split' ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-accent/70'
-                  }`}
-                >
-                  分栏
-                </button>
-              </div>
-              <button
-                type="button"
-                onClick={() => { void refreshAll(); }}
-                className="px-3 py-1.5 text-xs rounded border border-border hover:bg-accent"
-              >
-                刷新
-              </button>
-              <button
-                type="button"
-                onClick={() => { void handleCopyText(selectedNoteMeta); }}
-                disabled={!selectedNoteId}
-                className="px-3 py-1.5 text-xs rounded border border-border hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                复制文本
-              </button>
-              <button
-                type="button"
-                onClick={() => { void handleCopyAsMdFile(selectedNoteMeta); }}
-                disabled={!selectedNoteId}
-                className="px-3 py-1.5 text-xs rounded border border-border hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                复制为.md
-              </button>
-              <button
-                type="button"
-                onClick={() => { void handleSaveNote(); }}
-                disabled={!selectedNoteId || !dirty}
-                className="px-3 py-1.5 text-xs rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                保存
-              </button>
-              <button
-                type="button"
-                onClick={() => { void handleDeleteNote(); }}
-                disabled={!selectedNoteId}
-                className="px-3 py-1.5 text-xs rounded bg-destructive text-destructive-foreground hover:bg-destructive/90 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                删除
-              </button>
-            </div>
-          </div>
-
-          {error ? (
-            <div className="mx-4 mt-3 px-3 py-2 text-xs rounded border border-destructive/30 bg-destructive/10 text-destructive">
-              {error}
-            </div>
-          ) : null}
-
-          {selectedNoteId ? (
-            <div className="flex-1 min-h-0 flex flex-col p-4 gap-3">
-              <input
-                value={title}
-                onChange={(event) => {
-                  setTitle(event.target.value);
-                  setDirty(true);
-                }}
-                placeholder="标题"
-                className="h-10 rounded border border-input bg-background px-3 text-sm"
-              />
-              <input
-                value={tagsText}
-                onChange={(event) => {
-                  setTagsText(event.target.value);
-                  setDirty(true);
-                }}
-                placeholder="标签（用逗号分隔）"
-                className="h-10 rounded border border-input bg-background px-3 text-sm"
-              />
-              <div className={`flex-1 min-h-0 ${viewMode === 'split' ? 'grid grid-cols-2 gap-3' : 'flex'}`}>
-                {(viewMode === 'edit' || viewMode === 'split') && (
-                  <textarea
-                    value={content}
-                    onChange={(event) => {
-                      setContent(event.target.value);
-                      setDirty(true);
-                    }}
-                    placeholder="Markdown 内容"
-                    className={`min-h-0 rounded border border-input bg-background p-3 text-sm leading-6 resize-none ${
-                      viewMode === 'split' ? 'h-full w-full' : 'flex-1 w-full'
-                    }`}
-                  />
-                )}
-                {(viewMode === 'preview' || viewMode === 'split') && (
-                  <div className={`min-h-0 rounded border border-input bg-background p-3 overflow-y-auto ${
-                    viewMode === 'split' ? 'h-full w-full' : 'flex-1 w-full'
-                  }`}>
-                    <MarkdownRenderer content={content || '（空内容）'} />
-                  </div>
-                )}
-              </div>
-            </div>
-          ) : (
-            <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
-              在左侧选择笔记，或点击“新建笔记”。
-            </div>
-          )}
-        </div>
+        <NotepadSidebar
+          onClose={onClose}
+          onCreateFolder={() => { void handleCreateFolder(); }}
+          onCreateNote={() => { void handleCreateNote(); }}
+          searchQuery={searchQuery}
+          onSearchQueryChange={setSearchQuery}
+          selectedFolder={selectedFolder}
+          loading={loading}
+          notesCount={notes.length}
+          availableFoldersCount={availableFolders.length}
+          folderTree={folderTree}
+          selectedNoteId={selectedNoteId}
+          expandedFolders={expandedFolders}
+          onToggleFolderExpanded={toggleFolderExpanded}
+          onSelectFolder={handleTreeSelectFolder}
+          onOpenNote={handleTreeOpenNote}
+          onFolderContextMenu={handleTreeFolderContextMenu}
+          onNoteContextMenu={handleTreeNoteContextMenu}
+        />
+        <NotepadEditor
+          selectedNoteId={selectedNoteId}
+          viewMode={viewMode}
+          onViewModeChange={setViewMode}
+          onRefresh={() => { void refreshAll(); }}
+          onCopyText={() => { void handleCopyText(selectedNoteMeta); }}
+          onCopyAsMd={() => { void handleCopyAsMdFile(selectedNoteMeta); }}
+          onSave={() => { void handleSaveNote(); }}
+          onDelete={() => { void handleDeleteNote(); }}
+          dirty={dirty}
+          error={error}
+          title={title}
+          onTitleChange={(value) => {
+            setTitle(value);
+            setDirty(true);
+          }}
+          tagsText={tagsText}
+          onTagsTextChange={(value) => {
+            setTagsText(value);
+            setDirty(true);
+          }}
+          content={content}
+          onContentChange={(value) => {
+            setContent(value);
+            setDirty(true);
+          }}
+        />
       </div>
 
-      {contextMenu && contextMenuStyle && (
-        <div
-          className="fixed z-[80] w-56 rounded-md border border-border bg-popover text-popover-foreground shadow-lg p-1"
-          style={contextMenuStyle}
-          onClick={(event) => event.stopPropagation()}
-          onContextMenu={(event) => event.preventDefault()}
-        >
-          <div className="px-2 py-1 text-[11px] text-muted-foreground truncate">
-            {contextMenu.target.type === 'folder'
-              ? `目录：${contextMenu.target.folderPath || 'root'}`
-              : `笔记：${contextMenu.target.note.title || 'Untitled'}`}
-          </div>
-          <button
-            type="button"
-            onClick={() => { void handleContextCreateFolder(); }}
-            className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent"
-          >
-            新建目录
-          </button>
-          <button
-            type="button"
-            onClick={() => { void handleContextCreateNote(); }}
-            className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent"
-          >
-            新建笔记
-          </button>
-          {(contextMenu.target.type === 'note' || selectedNoteMeta) && (
-            <button
-              type="button"
-              onClick={() => { void handleContextCopyText(); }}
-              className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent"
-            >
-              复制文本
-            </button>
-          )}
-          {(contextMenu.target.type === 'note' || selectedNoteMeta) && (
-            <button
-              type="button"
-              onClick={() => { void handleContextCopyAsMd(); }}
-              className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent"
-            >
-              复制为.md 文件
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={() => { void handleContextDelete(); }}
-            className="w-full text-left px-2 py-1.5 text-sm rounded text-destructive hover:bg-destructive/10"
-          >
-            {contextMenu.target.type === 'folder' ? '删除当前目录' : '删除当前笔记'}
-          </button>
-          {contextMenu.target.type === 'folder' && selectedNoteMeta && (
-            <button
-              type="button"
-              onClick={() => { void handleContextDeleteSelectedNote(); }}
-              className="w-full text-left px-2 py-1.5 text-sm rounded text-destructive hover:bg-destructive/10"
-            >
-              删除当前选中笔记
-            </button>
-          )}
-        </div>
-      )}
+      <NotepadContextMenu
+        contextMenu={contextMenu}
+        contextMenuStyle={contextMenuStyle}
+        selectedNoteMeta={selectedNoteMeta}
+        onContextCreateFolder={() => { void handleContextCreateFolder(); }}
+        onContextCreateNote={() => { void handleContextCreateNote(); }}
+        onContextCopyText={() => { void handleContextCopyText(); }}
+        onContextCopyAsMd={() => { void handleContextCopyAsMd(); }}
+        onContextDelete={() => { void handleContextDelete(); }}
+        onContextDeleteSelectedNote={() => { void handleContextDeleteSelectedNote(); }}
+      />
     </>
   );
 };

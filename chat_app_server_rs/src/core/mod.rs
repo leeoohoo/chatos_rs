@@ -1,6 +1,5 @@
 pub mod ai_model_access;
 pub mod ai_model_config;
-pub mod ai_response;
 pub mod ai_settings;
 pub mod application_access;
 pub mod async_bridge;
