@@ -115,7 +115,7 @@ export const normalizeTurnId = (value: unknown): string => (
 );
 
 export const getConversationTurnId = (message: any): string => (
-  normalizeTurnId(message?.metadata?.conversation_turn_id)
+  normalizeTurnId(message?.metadata?.conversation_turn_id || message?.metadata?.conversationTurnId)
 );
 
 const normalizeAttachments = (metadata: any, messageId: string, createdAt: Date): any[] | undefined => {

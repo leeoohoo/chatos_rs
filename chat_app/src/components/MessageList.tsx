@@ -33,6 +33,9 @@ export const MessageList: React.FC<MessageListProps> = ({
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const scrollRafRef = useRef<number | null>(null);
   const initialScrollRafRef = useRef<number | null>(null);
+  const streamEndScrollRafRef = useRef<number | null>(null);
+  const streamEndSettleRafRef = useRef<number | null>(null);
+  const prevIsStreamingRef = useRef<boolean>(isStreaming);
   const pendingSessionInitialScrollRef = useRef<boolean>(true);
   const expandingWindowRef = useRef(false);
   const prevVisibleCountRef = useRef(0);
@@ -240,13 +243,13 @@ export const MessageList: React.FC<MessageListProps> = ({
       if (prev === 0) {
         return 0;
       }
-      // 在底部连续对话时，窗口跟随最新消息，避免渲染集合持续膨胀
-      if (isStreaming || autoScroll || isAtBottom) {
+      // 连续流式或自动滚动时，窗口跟随最新消息；手动展开过程消息时保持当前位置
+      if (isStreaming || autoScroll) {
         return latestStart;
       }
       return Math.min(prev, latestStart);
     });
-  }, [visibleMessages.length, isStreaming, autoScroll, isAtBottom, windowSize, windowThreshold]);
+  }, [visibleMessages.length, isStreaming, autoScroll, windowSize, windowThreshold]);
 
   useEffect(() => {
     const nextCount = visibleMessages.length;
@@ -255,7 +258,7 @@ export const MessageList: React.FC<MessageListProps> = ({
       return;
     }
     setRenderStartIndex(Math.max(0, nextCount - windowSize));
-  }, [sessionId, visibleMessages.length, windowSize, windowThreshold]);
+  }, [sessionId, windowSize, windowThreshold]);
 
   const expandRenderedWindow = useCallback(() => {
     if (!shouldWindowMessages || boundedRenderStartIndex <= 0) {
@@ -289,22 +292,88 @@ export const MessageList: React.FC<MessageListProps> = ({
     });
   }, [boundedRenderStartIndex, shouldWindowMessages, windowStep]);
 
-  const measureAtBottom = () => {
+  const cancelPendingStreamEndScroll = useCallback(() => {
+    if (streamEndScrollRafRef.current !== null) {
+      cancelAnimationFrame(streamEndScrollRafRef.current);
+      streamEndScrollRafRef.current = null;
+    }
+    if (streamEndSettleRafRef.current !== null) {
+      cancelAnimationFrame(streamEndSettleRafRef.current);
+      streamEndSettleRafRef.current = null;
+    }
+  }, []);
+
+  const measureAtBottom = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return true;
     const threshold = 40;
     return el.scrollHeight - el.scrollTop - el.clientHeight <= threshold;
-  };
+  }, []);
 
-  const scrollToBottom = (smooth = true) => {
-    bottomRef.current?.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto' });
-  };
+  const scrollToBottom = useCallback((smooth = true) => {
+    const el = scrollRef.current;
+    if (!el) {
+      return;
+    }
+    if (smooth) {
+      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+      return;
+    }
+    el.scrollTop = el.scrollHeight;
+  }, []);
+
+  const scheduleStreamEndBottomLock = useCallback((frames = 8) => {
+    cancelPendingStreamEndScroll();
+    if (frames <= 0) {
+      return;
+    }
+
+    const lockBottom = (remaining: number) => {
+      scrollToBottom(false);
+      setIsAtBottom(true);
+      if (remaining <= 1) {
+        return;
+      }
+      streamEndSettleRafRef.current = requestAnimationFrame(() => {
+        streamEndSettleRafRef.current = null;
+        lockBottom(remaining - 1);
+      });
+    };
+
+    streamEndScrollRafRef.current = requestAnimationFrame(() => {
+      streamEndScrollRafRef.current = null;
+      lockBottom(frames);
+    });
+  }, [cancelPendingStreamEndScroll, scrollToBottom]);
 
   useEffect(() => {
     if (isStreaming && autoScroll) {
       scrollToBottom(false);
     }
-  }, [messages, isStreaming, autoScroll]);
+  }, [messages, isStreaming, autoScroll, scrollToBottom]);
+
+  useEffect(() => {
+    const wasStreaming = prevIsStreamingRef.current;
+    prevIsStreamingRef.current = isStreaming;
+    if (!wasStreaming || isStreaming) {
+      return;
+    }
+
+    if (!(autoScroll || isAtBottom || measureAtBottom())) {
+      return;
+    }
+
+    scheduleStreamEndBottomLock();
+
+    return cancelPendingStreamEndScroll;
+  }, [
+    isStreaming,
+    autoScroll,
+    isAtBottom,
+    measureAtBottom,
+    scheduleStreamEndBottomLock,
+    cancelPendingStreamEndScroll,
+  ]);
 
   useEffect(() => {
     const next = measureAtBottom();
@@ -356,6 +425,14 @@ export const MessageList: React.FC<MessageListProps> = ({
       if (initialScrollRafRef.current !== null) {
         cancelAnimationFrame(initialScrollRafRef.current);
         initialScrollRafRef.current = null;
+      }
+      if (streamEndScrollRafRef.current !== null) {
+        cancelAnimationFrame(streamEndScrollRafRef.current);
+        streamEndScrollRafRef.current = null;
+      }
+      if (streamEndSettleRafRef.current !== null) {
+        cancelAnimationFrame(streamEndSettleRafRef.current);
+        streamEndSettleRafRef.current = null;
       }
       expandingWindowRef.current = false;
     };

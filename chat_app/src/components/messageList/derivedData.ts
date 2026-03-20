@@ -87,14 +87,18 @@ export const parseMessageForList = (message: Message): ParsedMessageForList => {
   }
 
   const toolResultCallIdRaw = raw.tool_call_id || raw.toolCallId || metadata.tool_call_id || metadata.toolCallId;
-  const conversationTurnId = normalizeTurnId(metadata.conversation_turn_id);
+  const conversationTurnId = normalizeTurnId(
+    metadata.conversation_turn_id || metadata.conversationTurnId,
+  );
   const historyProcessTurnId = normalizeTurnId(metadata.historyProcessTurnId || metadata.historyProcess?.turnId);
   const historyProcessUserMessageId = normalizeMetaId(metadata.historyProcessUserMessageId);
   const historyFinalForUserMessageId = normalizeMetaId(metadata.historyFinalForUserMessageId);
   const historyFinalForTurnId = normalizeTurnId(metadata.historyFinalForTurnId);
   const historyProcessPlaceholder = metadata.historyProcessPlaceholder === true;
   const userExpanded = metadata?.historyProcess?.expanded === true;
-  const userTurnId = normalizeTurnId(metadata.conversation_turn_id || metadata.historyProcess?.turnId);
+  const userTurnId = normalizeTurnId(
+    metadata.conversation_turn_id || metadata.conversationTurnId || metadata.historyProcess?.turnId,
+  );
   const userFinalAssistantMessageId = normalizeMetaId(metadata?.historyProcess?.finalAssistantMessageId);
 
   return {
