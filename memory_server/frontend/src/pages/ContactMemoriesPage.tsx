@@ -310,6 +310,12 @@ export function ContactMemoriesPage({
     return named || contact.agent_id;
   };
 
+  const getRecallDirectSourceLabel = (level?: number): string => {
+    return Number(level) > 0
+      ? t('memory.directSourceLowerRecall')
+      : t('memory.directSourceProjectSummary');
+  };
+
   const listPaneHeight = screens.lg ? 620 : undefined;
   const gridTemplateColumns = screens.xl
     ? '280px 320px minmax(0, 1fr)'
@@ -544,9 +550,6 @@ export function ContactMemoriesPage({
                   locale={{ emptyText: t('memory.emptyRecall') }}
                   renderItem={(recall) => {
                     const selected = recall.id === selectedRecallId;
-                    const sourceProjects = recall.source_project_ids?.length
-                      ? recall.source_project_ids.join(', ')
-                      : '-';
                     return (
                       <List.Item style={{ border: 'none', padding: '0 0 10px' }}>
                         <div
@@ -556,13 +559,13 @@ export function ContactMemoriesPage({
                           <Space direction="vertical" size={6} style={{ width: '100%' }}>
                             <Space size={8} wrap>
                               <Tag color="blue">L{Number(recall.level) || 0}</Tag>
+                              <Tag bordered={false}>
+                                {t('memory.directSource')}: {getRecallDirectSourceLabel(recall.level)}
+                              </Tag>
                               <Text strong style={{ color: selected ? '#0958d9' : undefined }}>
                                 {recall.recall_key || '-'}
                               </Text>
                             </Space>
-                            <Text type="secondary" ellipsis>
-                              {t('memory.sourceProjects')}: {sourceProjects}
-                            </Text>
                             <Space size={8} wrap>
                               <Tag bordered={false}>
                                 {t('memory.updatedAt')}: {formatDateTime(recall.updated_at)}
@@ -598,6 +601,9 @@ export function ContactMemoriesPage({
                       </Text>
                       <Space size={8} wrap>
                         <Tag color="blue">L{Number(selectedRecall.level) || 0}</Tag>
+                        <Tag bordered={false}>
+                          {t('memory.directSource')}: {getRecallDirectSourceLabel(selectedRecall.level)}
+                        </Tag>
                         <Text code>{selectedRecall.recall_key || '-'}</Text>
                       </Space>
                       <Text type="secondary">
@@ -605,11 +611,6 @@ export function ContactMemoriesPage({
                       </Text>
                       <Text type="secondary">
                         {t('memory.updatedAt')}: {formatDateTime(selectedRecall.updated_at)}
-                      </Text>
-                      <Text type="secondary">
-                        {t('memory.sourceProjects')}: {selectedRecall.source_project_ids?.length
-                          ? selectedRecall.source_project_ids.join(', ')
-                          : '-'}
                       </Text>
                       <Text type="secondary">
                         {t('memory.confidence')}: {typeof selectedRecall.confidence === 'number'

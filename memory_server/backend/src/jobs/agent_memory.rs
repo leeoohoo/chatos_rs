@@ -189,12 +189,6 @@ async fn generate_level0_recall_from_summaries(
     };
 
     let selected_ids: Vec<String> = selected.iter().map(|item| item.id.clone()).collect();
-    let selected_project_ids = dedup_non_empty(
-        selected
-            .iter()
-            .filter_map(|item| item.project_id.clone())
-            .collect(),
-    );
     let selected_texts: Vec<String> = selected
         .iter()
         .map(|item| {
@@ -268,7 +262,6 @@ async fn generate_level0_recall_from_summaries(
             recall_key,
             recall_text,
             level: 0,
-            source_project_ids: selected_project_ids,
             confidence: None,
             last_seen_at: Some(crate::repositories::now_rfc3339()),
         },
@@ -341,12 +334,6 @@ async fn generate_rollup_recall(
     }
 
     let selected_ids: Vec<String> = selected.iter().map(|item| item.id.clone()).collect();
-    let selected_source_project_ids = dedup_non_empty(
-        selected
-            .iter()
-            .flat_map(|item| item.source_project_ids.clone())
-            .collect(),
-    );
     let selected_tokens = selected
         .iter()
         .map(|item| estimate_tokens_text(item.recall_text.as_str()))
@@ -425,7 +412,6 @@ async fn generate_rollup_recall(
             recall_key: rollup_recall_key.clone(),
             recall_text,
             level: target_level,
-            source_project_ids: selected_source_project_ids,
             confidence: None,
             last_seen_at: Some(crate::repositories::now_rfc3339()),
         },
@@ -548,23 +534,6 @@ async fn select_rollup_batch(
     }
 
     Ok(None)
-}
-
-fn dedup_non_empty(values: Vec<String>) -> Vec<String> {
-    let mut seen = HashSet::new();
-    let mut out = Vec::new();
-
-    for value in values {
-        let normalized = value.trim().to_string();
-        if normalized.is_empty() {
-            continue;
-        }
-        if seen.insert(normalized.clone()) {
-            out.push(normalized);
-        }
-    }
-
-    out
 }
 
 async fn finish_failed_job_run(pool: &Db, job_run_id: &str, error_message: &str) {

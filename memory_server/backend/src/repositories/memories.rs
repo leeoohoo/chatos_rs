@@ -239,7 +239,6 @@ pub struct UpsertAgentRecallInput {
     pub recall_key: String,
     pub recall_text: String,
     pub level: i64,
-    pub source_project_ids: Vec<String>,
     pub confidence: Option<f64>,
     pub last_seen_at: Option<String>,
 }
@@ -272,7 +271,7 @@ pub async fn upsert_agent_recall(
         }
     }
 
-    let mut update_doc = doc! {
+    let update_doc = doc! {
         "$set": set_doc,
         "$setOnInsert": {
             "id": Uuid::new_v4().to_string(),
@@ -281,18 +280,6 @@ pub async fn upsert_agent_recall(
             "recall_key": input.recall_key.as_str(),
         }
     };
-    let source_project_ids: Vec<String> = input
-        .source_project_ids
-        .iter()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .collect();
-    if !source_project_ids.is_empty() {
-        update_doc.insert(
-            "$addToSet",
-            doc! {"source_project_ids": {"$each": source_project_ids}},
-        );
-    }
 
     agent_recalls_collection(db)
         .update_one(filter.clone(), update_doc)

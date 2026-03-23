@@ -227,7 +227,6 @@ export interface AgentRecall {
   recall_key: string;
   recall_text: string;
   level: number;
-  source_project_ids: string[];
   rolled_up?: number;
   rollup_recall_key?: string | null;
   rolled_up_at?: string | null;

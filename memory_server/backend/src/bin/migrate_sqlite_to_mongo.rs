@@ -1,15 +1,16 @@
 use std::env;
 
 use mongodb::bson::{doc, Bson, Document};
-use mongodb::options::ClientOptions;
-use mongodb::{Client, Collection, Database};
+use mongodb::{Collection, Database};
 use rusqlite::Connection;
+
+#[path = "../bin_support/mongo_maintenance.rs"]
+mod mongo_maintenance;
 
 #[derive(Debug, Clone)]
 struct CliArgs {
     sqlite_path: String,
-    mongo_uri: String,
-    mongo_db: String,
+    mongo: mongo_maintenance::MongoTargetArgs,
     drop_target: bool,
 }
 
@@ -18,22 +19,13 @@ async fn main() -> Result<(), String> {
     let args = parse_args()?;
 
     println!("[MIGRATE] sqlite path = {}", args.sqlite_path);
-    println!("[MIGRATE] mongo uri   = {}", args.mongo_uri);
-    println!("[MIGRATE] mongo db    = {}", args.mongo_db);
+    println!("[MIGRATE] mongo uri   = {}", args.mongo.mongo_uri);
+    println!("[MIGRATE] mongo db    = {}", args.mongo.mongo_db);
     println!("[MIGRATE] drop target = {}", args.drop_target);
 
     let conn = Connection::open(args.sqlite_path.as_str()).map_err(|e| e.to_string())?;
 
-    let mut options = ClientOptions::parse(args.mongo_uri.as_str())
-        .await
-        .map_err(|e| format!("invalid mongo uri: {e}"))?;
-    options.app_name = Some("memory_server_migrator".to_string());
-    let client = Client::with_options(options).map_err(|e| e.to_string())?;
-    let db = client.database(args.mongo_db.as_str());
-
-    db.run_command(doc! {"ping": 1})
-        .await
-        .map_err(|e| format!("mongo ping failed: {e}"))?;
+    let db = mongo_maintenance::connect_database(&args.mongo, "memory_server_migrator").await?;
 
     if args.drop_target {
         drop_target_collections(&db).await?;
@@ -77,15 +69,7 @@ fn parse_args() -> Result<CliArgs, String> {
         }
     }
 
-    let mut mongo_uri = env::var("MEMORY_SERVER_MONGODB_URI")
-        .ok()
-        .filter(|v| !v.trim().is_empty())
-        .unwrap_or_else(|| "mongodb://admin:admin@127.0.0.1:27018/admin".to_string());
-
-    let mut mongo_db = env::var("MEMORY_SERVER_MONGODB_DATABASE")
-        .ok()
-        .filter(|v| !v.trim().is_empty())
-        .unwrap_or_else(|| "memory_server".to_string());
+    let mut mongo = mongo_maintenance::default_mongo_target();
 
     let mut drop_target = false;
 
@@ -98,12 +82,12 @@ fn parse_args() -> Result<CliArgs, String> {
                     .ok_or_else(|| "--sqlite requires value".to_string())?;
             }
             "--mongo-uri" => {
-                mongo_uri = args
+                mongo.mongo_uri = args
                     .next()
                     .ok_or_else(|| "--mongo-uri requires value".to_string())?;
             }
             "--mongo-db" => {
-                mongo_db = args
+                mongo.mongo_db = args
                     .next()
                     .ok_or_else(|| "--mongo-db requires value".to_string())?;
             }
@@ -122,8 +106,7 @@ fn parse_args() -> Result<CliArgs, String> {
 
     Ok(CliArgs {
         sqlite_path,
-        mongo_uri,
-        mongo_db,
+        mongo,
         drop_target,
     })
 }

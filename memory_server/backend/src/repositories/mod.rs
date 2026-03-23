@@ -11,6 +11,17 @@ pub mod sessions;
 pub mod skills;
 pub mod summaries;
 
+pub fn normalize_optional_text(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+pub fn default_active_status() -> String {
+    "active".to_string()
+}
+
 pub fn now_rfc3339() -> String {
     chrono::Utc::now().to_rfc3339()
 }

@@ -14,7 +14,6 @@ export interface ContactAgentRecall {
   recallKey: string;
   recallText: string;
   level: number;
-  sourceProjectIds: string[];
   confidence?: number | null;
   lastSeenAt?: string | null;
   updatedAt: string;
@@ -117,17 +116,11 @@ const normalizeAgentRecalls = (rows: unknown[]): ContactAgentRecall[] => {
   const normalized = rows
     .map((item) => {
       const record = asRecord(item);
-      const sourceProjectIdsRaw = Array.isArray(record?.source_project_ids)
-        ? record?.source_project_ids
-        : [];
       return {
         id: String(record?.id || ''),
         recallKey: String(record?.recall_key || ''),
         recallText: String(record?.recall_text || ''),
         level: Number.isFinite(Number(record?.level)) ? Number(record?.level) : 0,
-        sourceProjectIds: sourceProjectIdsRaw
-          .map((value) => String(value || ''))
-          .filter((value) => value.length > 0),
         confidence: typeof record?.confidence === 'number' ? record.confidence : null,
         lastSeenAt: readString(record, 'last_seen_at') || null,
         updatedAt: String(record?.updated_at || ''),

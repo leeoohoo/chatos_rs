@@ -1,16 +1,17 @@
 use std::collections::HashMap;
-use std::env;
 
 use futures_util::TryStreamExt;
 use mongodb::bson::{doc, Bson, Document};
-use mongodb::options::{ClientOptions, FindOptions};
-use mongodb::{Client, Collection, Database};
+use mongodb::options::FindOptions;
+use mongodb::{Collection, Database};
 use uuid::Uuid;
+
+#[path = "../bin_support/mongo_maintenance.rs"]
+mod mongo_maintenance;
 
 #[derive(Debug, Clone)]
 struct CliArgs {
-    mongo_uri: String,
-    mongo_db: String,
+    mongo: mongo_maintenance::MongoCliArgs,
     dry_run: bool,
 }
 
@@ -26,20 +27,13 @@ struct BackfillStats {
 #[tokio::main]
 async fn main() -> Result<(), String> {
     let args = parse_args()?;
-    println!("[BACKFILL] mongo uri = {}", args.mongo_uri);
-    println!("[BACKFILL] mongo db  = {}", args.mongo_db);
-    println!("[BACKFILL] dry run   = {}", args.dry_run);
+    mongo_maintenance::print_mongo_cli_header("BACKFILL", &args.mongo);
 
-    let mut options = ClientOptions::parse(args.mongo_uri.as_str())
-        .await
-        .map_err(|e| format!("invalid mongo uri: {e}"))?;
-    options.app_name = Some("memory_project_agent_backfill".to_string());
-    let client = Client::with_options(options).map_err(|e| e.to_string())?;
-    let db = client.database(args.mongo_db.as_str());
-
-    db.run_command(doc! {"ping": 1})
-        .await
-        .map_err(|e| format!("mongo ping failed: {e}"))?;
+    let db = mongo_maintenance::connect_database(
+        &args.mongo.target,
+        "memory_project_agent_backfill",
+    )
+    .await?;
 
     let contact_map = load_contact_map(&db).await?;
     println!("[BACKFILL] contacts loaded: {}", contact_map.len());
@@ -58,51 +52,11 @@ async fn main() -> Result<(), String> {
 }
 
 fn parse_args() -> Result<CliArgs, String> {
-    let mut mongo_uri = env::var("MEMORY_SERVER_MONGODB_URI")
-        .ok()
-        .filter(|v| !v.trim().is_empty())
-        .unwrap_or_else(|| "mongodb://admin:admin@127.0.0.1:27018/admin".to_string());
-    let mut mongo_db = env::var("MEMORY_SERVER_MONGODB_DATABASE")
-        .ok()
-        .filter(|v| !v.trim().is_empty())
-        .unwrap_or_else(|| "memory_server".to_string());
-    let mut dry_run = false;
-
-    let mut args = env::args().skip(1);
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--mongo-uri" => {
-                mongo_uri = args
-                    .next()
-                    .ok_or_else(|| "--mongo-uri requires value".to_string())?;
-            }
-            "--mongo-db" => {
-                mongo_db = args
-                    .next()
-                    .ok_or_else(|| "--mongo-db requires value".to_string())?;
-            }
-            "--dry-run" => {
-                dry_run = true;
-            }
-            "--help" | "-h" => {
-                print_usage();
-                std::process::exit(0);
-            }
-            _ => return Err(format!("unknown arg: {arg}")),
-        }
-    }
-
+    let mongo = mongo_maintenance::parse_mongo_cli_args("backfill_project_agent_indexes")?;
     Ok(CliArgs {
-        mongo_uri,
-        mongo_db,
-        dry_run,
+        dry_run: mongo.dry_run,
+        mongo,
     })
-}
-
-fn print_usage() {
-    println!(
-        "Usage:\n  cargo run --bin backfill_project_agent_indexes -- [--mongo-uri <uri>] [--mongo-db <name>] [--dry-run]"
-    );
 }
 
 async fn load_contact_map(db: &Database) -> Result<HashMap<(String, String), String>, String> {
@@ -466,4 +420,3 @@ fn default_project_name(project_id: &str) -> String {
 fn now_rfc3339() -> String {
     chrono::Utc::now().to_rfc3339()
 }
-

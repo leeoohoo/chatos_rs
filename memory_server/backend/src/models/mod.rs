@@ -133,8 +133,6 @@ pub struct AgentRecall {
     pub recall_text: String,
     #[serde(default = "default_i64_0")]
     pub level: i64,
-    #[serde(default)]
-    pub source_project_ids: Vec<String>,
     #[serde(default = "default_i64_0")]
     pub rolled_up: i64,
     pub rollup_recall_key: Option<String>,

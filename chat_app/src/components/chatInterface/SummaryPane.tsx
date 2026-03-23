@@ -17,7 +17,6 @@ interface AgentRecallViewItem {
   recallKey: string;
   recallText: string;
   level: number;
-  sourceProjectIds: string[];
   confidence?: number | null;
   lastSeenAt?: string | null;
   updatedAt: string;

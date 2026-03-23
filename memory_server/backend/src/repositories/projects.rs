@@ -6,17 +6,10 @@ use uuid::Uuid;
 use crate::db::Db;
 use crate::models::MemoryProject;
 
-use super::now_rfc3339;
+use super::{default_active_status, normalize_optional_text, now_rfc3339};
 
 fn collection(db: &Db) -> mongodb::Collection<MemoryProject> {
     db.collection::<MemoryProject>("memory_projects")
-}
-
-fn normalize_optional_text(value: Option<&str>) -> Option<String> {
-    value
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-        .map(ToOwned::to_owned)
 }
 
 pub struct UpsertMemoryProjectInput {
@@ -50,7 +43,8 @@ pub async fn upsert_project(
     let now = now_rfc3339();
     let project_id = normalize_optional_text(Some(input.project_id.as_str()))
         .unwrap_or_else(|| "0".to_string());
-    let status = normalize_optional_text(input.status.as_deref()).unwrap_or_else(default_active);
+    let status =
+        normalize_optional_text(input.status.as_deref()).unwrap_or_else(default_active_status);
     let archived_at = if status == "archived" || status == "deleted" {
         Some(now.clone())
     } else {
@@ -162,9 +156,5 @@ pub async fn list_projects_by_ids(
         .await
         .map_err(|e| e.to_string())?;
     cursor.try_collect().await.map_err(|e| e.to_string())
-}
-
-fn default_active() -> String {
-    "active".to_string()
 }
 

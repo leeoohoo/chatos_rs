@@ -7,17 +7,10 @@ use uuid::Uuid;
 use crate::db::Db;
 use crate::models::{CreateSessionRequest, Session, UpdateSessionRequest};
 
-use super::now_rfc3339;
+use super::{normalize_optional_text, now_rfc3339};
 
 fn collection(db: &Db) -> mongodb::Collection<Session> {
     db.collection::<Session>("sessions")
-}
-
-fn normalize_optional_text(value: Option<&str>) -> Option<String> {
-    value
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-        .map(|v| v.to_string())
 }
 
 fn normalize_project_scope(project_id: Option<String>) -> String {

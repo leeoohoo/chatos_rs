@@ -144,7 +144,6 @@
 - `agent_id`
 - `recall_key`（去重键，如偏好/约束哈希）
 - `recall_text`
-- `source_project_ids`
 - `confidence`
 - `last_seen_at`
 - `updated_at`
@@ -292,4 +291,3 @@
 3. 第 6-8 天：前端切换到 contacts + 输入区参数收敛。
 4. 第 9-10 天：历史迁移脚本 + 校验报表。
 5. 第 11-12 天：灰度、回归、清理旧路由。
-
