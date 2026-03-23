@@ -16,6 +16,7 @@ use crate::core::pagination::{parse_non_negative_offset, parse_positive_limit};
 use crate::core::session_access::{ensure_owned_session, map_session_access_error};
 use crate::core::user_scope::resolve_user_id;
 use crate::core::validation::normalize_non_empty;
+use crate::models::message::Message;
 use crate::models::session_mcp_server::SessionMcpServer;
 use crate::repositories::projects as projects_repo;
 use crate::repositories::session_mcp_servers as session_mcp_repo;
@@ -73,6 +74,37 @@ struct PageQuery {
     offset: Option<String>,
     compact: Option<String>,
     strategy: Option<String>,
+}
+
+const FULL_SESSION_MESSAGES_PAGE_SIZE: i64 = 500;
+
+async fn list_all_session_messages(session_id: &str) -> Result<Vec<Message>, String> {
+    let mut offset = 0i64;
+    let mut all_messages: Vec<Message> = Vec::new();
+
+    loop {
+        let batch = memory_server_client::list_messages(
+            session_id,
+            Some(FULL_SESSION_MESSAGES_PAGE_SIZE),
+            offset,
+            true,
+        )
+        .await?;
+
+        let batch_len = batch.len();
+        if batch_len == 0 {
+            break;
+        }
+
+        offset += batch_len as i64;
+        all_messages.extend(batch);
+
+        if batch_len < FULL_SESSION_MESSAGES_PAGE_SIZE as usize {
+            break;
+        }
+    }
+
+    Ok(all_messages)
 }
 
 fn normalize_optional_text(value: Option<&str>) -> Option<String> {
@@ -506,7 +538,7 @@ async fn get_session_turn_process_messages(
     if let Err(err) = ensure_owned_session(&session_id, &auth).await {
         return map_session_access_error(err);
     }
-    let result = memory_server_client::list_messages(&session_id, None, 0, true).await;
+    let result = list_all_session_messages(&session_id).await;
 
     match result {
         Ok(messages) => {
@@ -544,7 +576,7 @@ async fn get_session_turn_process_messages_by_turn(
     if let Err(err) = ensure_owned_session(&session_id, &auth).await {
         return map_session_access_error(err);
     }
-    let result = memory_server_client::list_messages(&session_id, None, 0, true).await;
+    let result = list_all_session_messages(&session_id).await;
 
     match result {
         Ok(messages) => {

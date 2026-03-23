@@ -6,30 +6,28 @@ pub(super) fn should_use_prev_id_for_next_turn(
     !prefer_stateless && can_use_prev_id && has_next_response_id
 }
 
+pub(super) fn should_prefer_stateless_context(
+    purpose: &str,
+    supports_responses: bool,
+    history_limit: i64,
+) -> bool {
+    if supports_responses {
+        return false;
+    }
+    if purpose == "chat" {
+        return true;
+    }
+    history_limit != 0
+}
+
+pub(super) fn model_supports_prev_response_id(supports_responses: bool) -> bool {
+    supports_responses
+}
+
 pub(super) fn is_unsupported_previous_response_id_error(err: &str) -> bool {
     let message = err.to_lowercase();
     message.contains("previous_response_id")
         && (message.contains("unsupported parameter") || message.contains("invalid parameter"))
-}
-
-pub(super) fn base_url_allows_prev(base_url: &str) -> bool {
-    let url = base_url.trim().to_lowercase();
-
-    if url.contains("api.openai.com") {
-        return true;
-    }
-    if url.contains("relay.nf.video") || url.contains("nf.video") {
-        return true;
-    }
-
-    if let Ok(value) = std::env::var("ALLOW_PREV_ID_FOR_PROXY") {
-        let normalized = value.trim().to_lowercase();
-        if normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on" {
-            return true;
-        }
-    }
-
-    false
 }
 
 pub(super) fn base_url_disallows_system_messages(base_url: &str) -> bool {
@@ -139,7 +137,8 @@ mod tests {
         is_request_body_too_large_error, is_response_parse_error,
         is_system_messages_not_allowed_error, is_transient_network_error,
         is_transient_transport_or_parse_error, reduce_history_limit,
-        should_use_prev_id_for_next_turn,
+        should_prefer_stateless_context, should_use_prev_id_for_next_turn,
+        model_supports_prev_response_id,
     };
 
     #[test]
@@ -153,6 +152,18 @@ mod tests {
         assert!(should_use_prev_id_for_next_turn(false, true, true));
         assert!(!should_use_prev_id_for_next_turn(false, true, false));
         assert!(!should_use_prev_id_for_next_turn(false, false, true));
+    }
+
+    #[test]
+    fn chat_with_responses_prefers_stateful_prev_id_mode() {
+        assert!(!should_prefer_stateless_context("chat", true, 20));
+        assert!(model_supports_prev_response_id(true));
+    }
+
+    #[test]
+    fn chat_without_responses_keeps_stateless_mode() {
+        assert!(should_prefer_stateless_context("chat", false, 20));
+        assert!(!model_supports_prev_response_id(false));
     }
 
     #[test]

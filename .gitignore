@@ -19,3 +19,4 @@ target/
 data/
 /chat_app_server_rs/docs
 /chat_app_server_rs/docs/*
+__pycache__

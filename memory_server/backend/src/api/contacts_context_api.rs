@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 use crate::models::{MemoryProject, MemoryProjectAgentLink, ProjectMemory};
 use crate::repositories::{
     memories as memories_repo, project_agent_links as project_agent_links_repo,
-    projects as projects_repo, sessions,
+    projects as projects_repo, sessions, summaries as summaries_repo,
 };
 
 use super::{
@@ -297,6 +297,64 @@ pub(super) async fn list_contact_project_memories_by_project(
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": "list project memories failed", "detail": err})),
+        ),
+    }
+}
+
+pub(super) async fn list_contact_project_summaries(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Path((contact_id, project_id)): Path<(String, String)>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match require_auth(&state, &headers) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    let contact = match ensure_contact_access(state.as_ref(), &auth, contact_id.as_str()).await {
+        Ok(contact) => contact,
+        Err(err) => return err,
+    };
+
+    let normalized_project_id = normalize_project_scope_id(Some(project_id.as_str()));
+    let session = match sessions::get_active_session_by_contact_project(
+        &state.pool,
+        contact.user_id.as_str(),
+        normalized_project_id.as_str(),
+        Some(contact.id.as_str()),
+        Some(contact.agent_id.as_str()),
+    )
+    .await
+    {
+        Ok(value) => value,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "resolve contact project session failed", "detail": err})),
+            )
+        }
+    };
+
+    let Some(session) = session else {
+        return (
+            StatusCode::OK,
+            Json(json!({
+                "session_id": Value::Null,
+                "items": [],
+            })),
+        );
+    };
+
+    match summaries_repo::list_all_summaries_by_session(&state.pool, session.id.as_str()).await {
+        Ok(items) => (
+            StatusCode::OK,
+            Json(json!({
+                "session_id": session.id,
+                "items": items,
+            })),
+        ),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "list contact project summaries failed", "detail": err})),
         ),
     }
 }

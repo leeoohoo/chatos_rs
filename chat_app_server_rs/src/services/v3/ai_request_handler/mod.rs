@@ -229,6 +229,17 @@ impl AiRequestHandler {
             .get("id")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
+        info!(
+            "[AI_V3][prev-id] normal response parsed: session_id={}, turn_id={}, response_id={}, tool_call_count={}",
+            session_id.clone().unwrap_or_else(|| "n/a".to_string()),
+            turn_id.clone().unwrap_or_else(|| "n/a".to_string()),
+            response_id.as_deref().unwrap_or("none"),
+            tool_calls
+                .as_ref()
+                .and_then(|value| value.as_array())
+                .map(|items| items.len())
+                .unwrap_or(0)
+        );
 
         if persist_messages {
             if let Some(session_id) = session_id.clone() {
@@ -376,6 +387,17 @@ impl AiRequestHandler {
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
         }
+        info!(
+            "[AI_V3][prev-id] stream response parsed: session_id={}, turn_id={}, response_id={}, tool_call_count={}",
+            session_id.clone().unwrap_or_else(|| "n/a".to_string()),
+            turn_id.clone().unwrap_or_else(|| "n/a".to_string()),
+            stream_state.response_id.as_deref().unwrap_or("none"),
+            tool_calls
+                .as_ref()
+                .and_then(|value| value.as_array())
+                .map(|items| items.len())
+                .unwrap_or(0)
+        );
         if stream_state.usage.is_none() {
             stream_state.usage = response_val.get("usage").cloned();
         }

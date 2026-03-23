@@ -154,6 +154,16 @@ async fn find_active_session_by_contact_project(
         .map_err(|e| e.to_string())
 }
 
+pub async fn get_active_session_by_contact_project(
+    db: &Db,
+    user_id: &str,
+    project_id: &str,
+    contact_id: Option<&str>,
+    agent_id: Option<&str>,
+) -> Result<Option<Session>, String> {
+    find_active_session_by_contact_project(db, user_id, project_id, contact_id, agent_id).await
+}
+
 pub async fn create_session(db: &Db, req: CreateSessionRequest) -> Result<Session, String> {
     let normalized_project_id = normalize_project_scope(req.project_id.clone());
     let user_id = req.user_id;

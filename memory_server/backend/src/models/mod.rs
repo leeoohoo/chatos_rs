@@ -312,6 +312,9 @@ pub struct SessionSummary {
     pub level: i64,
     pub rollup_summary_id: Option<String>,
     pub rolled_up_at: Option<String>,
+    #[serde(default = "default_i64_0")]
+    pub agent_memory_summarized: i64,
+    pub agent_memory_summarized_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }

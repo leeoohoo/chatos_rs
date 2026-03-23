@@ -1,4 +1,5 @@
 use serde_json::Value;
+use tracing::info;
 
 use crate::core::mcp_tools::ToolResult;
 use crate::models::message::Message;
@@ -124,6 +125,12 @@ impl MessageManager {
         let (_summaries, messages) = self
             .get_session_memory_history(session_id, Some(limit), memory_summary_limit)
             .await;
+        info!(
+            "[AI_V3][prev-id] scan start: session_id={}, limit={}, message_count={}",
+            session_id,
+            limit,
+            messages.len()
+        );
 
         for message in messages.iter().rev() {
             if message.role != "assistant" {
@@ -148,6 +155,11 @@ impl MessageManager {
                     .map(|array| !array.is_empty())
                     .unwrap_or(false)
                 {
+                    info!(
+                        "[AI_V3][prev-id] skip assistant with tool_calls: session_id={}, message_id={}",
+                        session_id,
+                        message.id
+                    );
                     continue;
                 }
             }
@@ -156,16 +168,32 @@ impl MessageManager {
                 if let Some(response_id) =
                     metadata.get("response_id").and_then(|value| value.as_str())
                 {
+                    info!(
+                        "[AI_V3][prev-id] hit metadata.response_id: session_id={}, message_id={}, response_id={}",
+                        session_id,
+                        message.id,
+                        response_id
+                    );
                     return Some(response_id.to_string());
                 }
                 if let Some(response_id) =
                     metadata.get("responseId").and_then(|value| value.as_str())
                 {
+                    info!(
+                        "[AI_V3][prev-id] hit metadata.responseId: session_id={}, message_id={}, response_id={}",
+                        session_id,
+                        message.id,
+                        response_id
+                    );
                     return Some(response_id.to_string());
                 }
             }
         }
 
+        info!(
+            "[AI_V3][prev-id] miss: session_id={}, no reusable response_id found",
+            session_id
+        );
         None
     }
 }

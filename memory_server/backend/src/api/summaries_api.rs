@@ -34,7 +34,9 @@ pub(super) async fn list_summaries(
         &state.pool,
         session_id.as_str(),
         q.level,
-        q.status.as_deref().or(Some("pending")),
+        q.status
+            .as_deref()
+            .and_then(|status| if status.eq_ignore_ascii_case("all") { None } else { Some(status) }),
         q.limit.unwrap_or(100),
         q.offset.unwrap_or(0),
     )

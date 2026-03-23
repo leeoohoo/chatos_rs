@@ -101,6 +101,16 @@ pub async fn init_schema(db: &Db) -> Result<(), String> {
     .await?;
     ensure_index(
         db.collection::<mongodb::bson::Document>("session_summaries_v2"),
+        doc! {"status": 1, "level": 1, "agent_memory_summarized": 1, "created_at": 1},
+    )
+    .await?;
+    ensure_index(
+        db.collection::<mongodb::bson::Document>("session_summaries_v2"),
+        doc! {"level": 1, "agent_memory_summarized": 1, "created_at": 1},
+    )
+    .await?;
+    ensure_index(
+        db.collection::<mongodb::bson::Document>("session_summaries_v2"),
         doc! {"rollup_summary_id": 1},
     )
     .await?;
@@ -375,6 +385,26 @@ async fn normalize_summary_status(db: &Db) -> Result<(), String> {
         info!(
             "[MEMORY-SERVER] summary status normalized: summarized={}, pending={}",
             to_summarized.modified_count, to_pending.modified_count
+        );
+    }
+
+    let to_unsummarized = collection
+        .update_many(
+            doc! {
+                "$or": [
+                    {"agent_memory_summarized": {"$exists": false}},
+                    {"agent_memory_summarized": Bson::Null}
+                ]
+            },
+            doc! { "$set": { "agent_memory_summarized": 0, "agent_memory_summarized_at": Bson::Null } },
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if to_unsummarized.modified_count > 0 {
+        info!(
+            "[MEMORY-SERVER] agent memory summary flags normalized: unsummarized={}",
+            to_unsummarized.modified_count
         );
     }
 

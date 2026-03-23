@@ -36,7 +36,10 @@ export interface SessionSummary {
   status: string;
   level: number;
   rollup_summary_id?: string | null;
+  agent_memory_summarized?: number;
+  agent_memory_summarized_at?: string | null;
   created_at: string;
+  updated_at?: string;
 }
 
 export interface AiModelConfig {

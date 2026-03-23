@@ -152,9 +152,17 @@ export const api = {
     return data;
   },
 
-  async listSummaries(sessionId: string): Promise<SessionSummary[]> {
+  async listSummaries(
+    sessionId: string,
+    params?: { status?: string; level?: number; limit?: number; offset?: number },
+  ): Promise<SessionSummary[]> {
     const { data } = await client.get(`/sessions/${sessionId}/summaries`, {
-      params: { status: 'pending', limit: 200, offset: 0 },
+      params: {
+        status: params?.status,
+        level: params?.level,
+        limit: params?.limit ?? 200,
+        offset: params?.offset ?? 0,
+      },
     });
     return data.items ?? [];
   },
@@ -564,6 +572,19 @@ export const api = {
       },
     );
     return data.items ?? [];
+  },
+
+  async listContactProjectSummaries(
+    contactId: string,
+    projectId: string,
+  ): Promise<{ session_id?: string | null; items: SessionSummary[] }> {
+    const { data } = await client.get(
+      `/contacts/${encodeURIComponent(contactId)}/projects/${encodeURIComponent(projectId)}/summaries`,
+    );
+    return {
+      session_id: data.session_id ?? null,
+      items: data.items ?? [],
+    };
   },
 
   async listContactAgentRecalls(

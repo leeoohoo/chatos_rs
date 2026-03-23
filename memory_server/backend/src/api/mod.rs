@@ -99,6 +99,10 @@ pub fn router(state: SharedState) -> Router {
             get(contacts_api::list_contact_projects),
         )
         .route(
+            "/api/memory/v1/contacts/:contact_id/projects/:project_id/summaries",
+            get(contacts_api::list_contact_project_summaries),
+        )
+        .route(
             "/api/memory/v1/contacts/:contact_id/agent-recalls",
             get(contacts_api::list_contact_agent_recalls),
         )

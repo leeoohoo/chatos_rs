@@ -66,54 +66,6 @@ pub async fn list_project_memories_by_contact(
     cursor.try_collect().await.map_err(|e| e.to_string())
 }
 
-pub async fn list_agent_ids_with_pending_project_memories_by_user(
-    db: &Db,
-    user_id: &str,
-    limit: i64,
-) -> Result<Vec<String>, String> {
-    let pipeline = vec![
-        doc! {"$match": {
-            "user_id": user_id,
-            "recall_summarized": {"$ne": 1},
-        }},
-        doc! {"$group": {"_id": "$agent_id", "min_updated_at": {"$min": "$updated_at"}}},
-        doc! {"$sort": {"min_updated_at": 1}},
-        doc! {"$limit": limit.max(1).min(5000)},
-        doc! {"$project": {"_id": 0, "agent_id": "$_id"}},
-    ];
-
-    let cursor = db
-        .collection::<mongodb::bson::Document>("project_memories")
-        .aggregate(pipeline)
-        .await
-        .map_err(|e| e.to_string())?;
-    let docs: Vec<mongodb::bson::Document> =
-        cursor.try_collect().await.map_err(|e| e.to_string())?;
-
-    Ok(docs
-        .into_iter()
-        .filter_map(|doc| doc.get_str("agent_id").ok().map(|value| value.to_string()))
-        .collect())
-}
-
-pub async fn list_pending_project_memories_by_agent(
-    db: &Db,
-    user_id: &str,
-    agent_id: &str,
-) -> Result<Vec<ProjectMemory>, String> {
-    let options = FindOptions::builder().sort(doc! {"updated_at": 1}).build();
-    let cursor = project_memories_collection(db)
-        .find(doc! {
-            "user_id": user_id,
-            "agent_id": agent_id,
-            "recall_summarized": {"$ne": 1},
-        })
-        .with_options(options)
-        .await
-        .map_err(|e| e.to_string())?;
-    cursor.try_collect().await.map_err(|e| e.to_string())
-}
-
 pub async fn list_agent_ids_with_pending_recall_rollup_by_user(
     db: &Db,
     user_id: &str,
@@ -144,35 +96,6 @@ pub async fn list_agent_ids_with_pending_recall_rollup_by_user(
         .into_iter()
         .filter_map(|doc| doc.get_str("agent_id").ok().map(|value| value.to_string()))
         .collect())
-}
-
-pub async fn mark_project_memories_recalled(
-    db: &Db,
-    user_id: &str,
-    memory_ids: &[String],
-) -> Result<usize, String> {
-    if memory_ids.is_empty() {
-        return Ok(0);
-    }
-
-    let now = now_rfc3339();
-    let result = project_memories_collection(db)
-        .update_many(
-            doc! {
-                "user_id": user_id,
-                "id": {"$in": memory_ids.to_vec()},
-            },
-            doc! {
-                "$set": {
-                    "recall_summarized": 1,
-                    "recall_summarized_at": &now,
-                    "updated_at": &now,
-                }
-            },
-        )
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(result.modified_count as usize)
 }
 
 pub async fn list_agent_recalls(

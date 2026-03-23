@@ -80,7 +80,7 @@ export function JobConfigsPage({
     round_limit: 50,
     target_summary_tokens: 700,
     job_interval_seconds: 60,
-    keep_raw_level0_count: 5,
+    keep_raw_level0_count: 0,
     max_level: 4,
     max_sessions_per_tick: 50,
   });
@@ -93,7 +93,7 @@ export function JobConfigsPage({
     round_limit: 20,
     target_summary_tokens: 700,
     job_interval_seconds: 60,
-    keep_raw_level0_count: 5,
+    keep_raw_level0_count: 0,
     max_level: 4,
     max_agents_per_tick: 50,
   });
@@ -124,6 +124,39 @@ export function JobConfigsPage({
   };
 
   const disabled = useMemo(() => !targetUserId.trim(), [targetUserId]);
+  const rollupTriggerHint = useMemo(() => {
+    if (!rollupCfg) {
+      return null;
+    }
+    const keep = Math.max(0, rollupCfg.keep_raw_level0_count ?? 0);
+    const round = Math.max(1, rollupCfg.round_limit ?? 1);
+    if (keep <= 0) {
+      return null;
+    }
+    return `${t('jobConfigs.rollupKeepRawHint')} ${keep + round}`;
+  }, [rollupCfg, t]);
+  const rollupKeepRawWarning = useMemo(() => {
+    if (!rollupCfg) {
+      return null;
+    }
+    const keep = Math.max(0, rollupCfg.keep_raw_level0_count ?? 0);
+    const round = Math.max(1, rollupCfg.round_limit ?? 1);
+    if (keep < round) {
+      return null;
+    }
+    return t('jobConfigs.rollupKeepRawWarning');
+  }, [rollupCfg, t]);
+  const agentMemoryRollupHint = useMemo(() => {
+    if (!agentMemoryCfg) {
+      return null;
+    }
+    const keep = Math.max(0, agentMemoryCfg.keep_raw_level0_count ?? 0);
+    const round = Math.max(1, agentMemoryCfg.round_limit ?? 1);
+    if (keep <= 0) {
+      return null;
+    }
+    return `${t('jobConfigs.agentMemoryKeepRawHint')} ${keep + round}`;
+  }, [agentMemoryCfg, t]);
 
   const load = async () => {
     if (disabled) {
@@ -483,6 +516,22 @@ export function JobConfigsPage({
               <Card size="small" title={t('jobConfigs.rollupConfig')}>
                 {rollupCfg && (
                   <Form layout="vertical">
+                    {rollupKeepRawWarning && (
+                      <Alert
+                        type="warning"
+                        showIcon
+                        message={rollupKeepRawWarning}
+                        style={{ marginBottom: 12 }}
+                      />
+                    )}
+                    {rollupTriggerHint && (
+                      <Alert
+                        type="info"
+                        showIcon
+                        message={rollupTriggerHint}
+                        style={{ marginBottom: 12 }}
+                      />
+                    )}
                     <Form.Item label={t('common.enabled')}>
                       <Switch
                         checked={rollupCfg.enabled === 1}
@@ -597,6 +646,20 @@ export function JobConfigsPage({
               <Card size="small" title={t('jobConfigs.agentMemoryConfig')}>
                 {agentMemoryCfg && (
                   <Form layout="vertical">
+                    <Alert
+                      type="info"
+                      showIcon
+                      message={t('jobConfigs.agentMemoryProjectHint')}
+                      style={{ marginBottom: 12 }}
+                    />
+                    {agentMemoryRollupHint && (
+                      <Alert
+                        type="info"
+                        showIcon
+                        message={agentMemoryRollupHint}
+                        style={{ marginBottom: 12 }}
+                      />
+                    )}
                     <Form.Item label={t('common.enabled')}>
                       <Switch
                         checked={agentMemoryCfg.enabled === 1}

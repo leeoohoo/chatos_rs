@@ -5,8 +5,9 @@ use uuid::Uuid;
 
 use crate::ai::AiClient;
 use crate::db::Db;
-use crate::models::{AgentRecall, AiModelConfig, ProjectMemory};
-use crate::repositories::{auth::ADMIN_USER_ID, configs, jobs, memories};
+use crate::models::{AgentRecall, AiModelConfig};
+use crate::repositories::{auth::ADMIN_USER_ID, configs, jobs, memories, summaries};
+use crate::repositories::summaries::AgentMemorySummarySource;
 use crate::services::summarizer::{estimate_tokens_text, summarize_texts_with_split};
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -14,7 +15,7 @@ pub struct AgentMemoryRunResult {
     pub processed_agents: usize,
     pub summarized_agents: usize,
     pub generated_recalls: usize,
-    pub marked_project_memories: usize,
+    pub marked_source_summaries: usize,
     pub marked_source_recalls: usize,
     pub failed_agents: usize,
 }
@@ -37,7 +38,7 @@ pub async fn run_once(
             processed_agents: 0,
             summarized_agents: 0,
             generated_recalls: 0,
-            marked_project_memories: 0,
+            marked_source_summaries: 0,
             marked_source_recalls: 0,
             failed_agents: 0,
         });
@@ -47,7 +48,7 @@ pub async fn run_once(
         resolve_model_config(pool, user_id, config.summary_model_config_id.as_deref()).await?;
 
     let max_agents_per_tick = config.max_agents_per_tick.max(1);
-    let project_agents = memories::list_agent_ids_with_pending_project_memories_by_user(
+    let summary_agents = summaries::list_agent_ids_with_pending_agent_memory_by_user(
         pool,
         user_id,
         max_agents_per_tick,
@@ -63,7 +64,7 @@ pub async fn run_once(
 
     let mut seen = HashSet::new();
     let mut agent_ids = Vec::new();
-    for agent_id in project_agents.into_iter().chain(recall_agents.into_iter()) {
+    for agent_id in summary_agents.into_iter().chain(recall_agents.into_iter()) {
         if seen.insert(agent_id.clone()) {
             agent_ids.push(agent_id);
             if agent_ids.len() >= max_agents_per_tick as usize {
@@ -76,7 +77,7 @@ pub async fn run_once(
         processed_agents: agent_ids.len(),
         summarized_agents: 0,
         generated_recalls: 0,
-        marked_project_memories: 0,
+        marked_source_summaries: 0,
         marked_source_recalls: 0,
         failed_agents: 0,
     };
@@ -96,12 +97,12 @@ pub async fn run_once(
         )
         .await
         {
-            Ok((generated, marked_projects, marked_recalls)) => {
+            Ok((generated, marked_summaries, marked_recalls)) => {
                 if generated > 0 {
                     out.summarized_agents += 1;
                 }
                 out.generated_recalls += generated;
-                out.marked_project_memories += marked_projects;
+                out.marked_source_summaries += marked_summaries;
                 out.marked_source_recalls += marked_recalls;
             }
             Err(err) => {
@@ -130,10 +131,10 @@ async fn process_agent(
     max_level: i64,
 ) -> Result<(usize, usize, usize), String> {
     let mut generated_recalls = 0usize;
-    let mut marked_project_memories = 0usize;
+    let mut marked_source_summaries = 0usize;
     let mut marked_source_recalls = 0usize;
 
-    let (generated_l0, marked_projects) = generate_level0_recall_from_project_memories(
+    let (generated_l0, marked_summaries) = generate_level0_recall_from_summaries(
         pool,
         ai,
         user_id,
@@ -145,7 +146,7 @@ async fn process_agent(
     )
     .await?;
     generated_recalls += generated_l0;
-    marked_project_memories += marked_projects;
+    marked_source_summaries += marked_summaries;
 
     let (generated_rollup, marked_recalls) = generate_rollup_recall(
         pool,
@@ -165,12 +166,12 @@ async fn process_agent(
 
     Ok((
         generated_recalls,
-        marked_project_memories,
+        marked_source_summaries,
         marked_source_recalls,
     ))
 }
 
-async fn generate_level0_recall_from_project_memories(
+async fn generate_level0_recall_from_summaries(
     pool: &Db,
     ai: &AiClient,
     user_id: &str,
@@ -180,8 +181,9 @@ async fn generate_level0_recall_from_project_memories(
     token_limit: i64,
     target_summary_tokens: i64,
 ) -> Result<(usize, usize), String> {
-    let candidates = memories::list_pending_project_memories_by_agent(pool, user_id, agent_id).await?;
-    let selected = select_project_memory_batch(candidates.as_slice(), round_limit, token_limit);
+    let candidates =
+        summaries::list_pending_agent_memory_summaries_by_agent(pool, user_id, agent_id).await?;
+    let selected = select_summary_batch(candidates.as_slice(), round_limit, token_limit);
     let Some(selected) = selected else {
         return Ok((0, 0));
     };
@@ -190,15 +192,19 @@ async fn generate_level0_recall_from_project_memories(
     let selected_project_ids = dedup_non_empty(
         selected
             .iter()
-            .map(|item| item.project_id.trim().to_string())
+            .filter_map(|item| item.project_id.clone())
             .collect(),
     );
     let selected_texts: Vec<String> = selected
         .iter()
         .map(|item| {
             format!(
-                "[project_id={}][updated_at={}]\n{}",
-                item.project_id, item.updated_at, item.memory_text
+                "[project_id={}][summary_id={}][created_at={}][trigger_type={}]\n{}",
+                item.project_id.clone().unwrap_or_else(|| "0".to_string()),
+                item.id,
+                item.created_at,
+                item.trigger_type,
+                item.summary_text
             )
         })
         .collect();
@@ -208,7 +214,7 @@ async fn generate_level0_recall_from_project_memories(
         .sum::<i64>();
 
     let trigger_reason = if selected.len() as i64 >= round_limit {
-        "message_count_limit"
+        "summary_count_limit"
     } else {
         "token_limit"
     };
@@ -270,7 +276,7 @@ async fn generate_level0_recall_from_project_memories(
     .await?;
 
     let marked =
-        memories::mark_project_memories_recalled(pool, user_id, selected_ids.as_slice()).await?;
+        summaries::mark_summaries_agent_memory_summarized(pool, selected_ids.as_slice()).await?;
 
     if let Err(err) = jobs::finish_job_run(pool, job_run.id.as_str(), "done", 1, None).await {
         warn!(
@@ -280,7 +286,7 @@ async fn generate_level0_recall_from_project_memories(
     }
 
     info!(
-        "[MEMORY-AGENT-RECALL] l0 done user_id={} agent_id={} selected={} tokens={} marked={}",
+        "[MEMORY-AGENT-RECALL] l0 done user_id={} agent_id={} selected_summaries={} tokens={} marked_summaries={}",
         user_id,
         agent_id,
         selected.len(),
@@ -463,11 +469,11 @@ fn recall_to_rollup_block(recall: &AgentRecall) -> String {
     )
 }
 
-fn select_project_memory_batch(
-    candidates: &[ProjectMemory],
+fn select_summary_batch(
+    candidates: &[AgentMemorySummarySource],
     round_limit: i64,
     token_limit: i64,
-) -> Option<Vec<ProjectMemory>> {
+) -> Option<Vec<AgentMemorySummarySource>> {
     if candidates.is_empty() {
         return None;
     }
@@ -478,7 +484,7 @@ fn select_project_memory_batch(
 
     let token_sum = candidates
         .iter()
-        .map(|item| estimate_tokens_text(item.memory_text.as_str()))
+        .map(|item| estimate_tokens_text(item.summary_text.as_str()))
         .sum::<i64>();
     if token_sum >= token_limit {
         return Some(candidates.to_vec());

@@ -1,6 +1,7 @@
 use futures_util::TryStreamExt;
 use mongodb::bson::{doc, Bson, Document};
 use mongodb::options::FindOptions;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::db::Db;
@@ -21,6 +22,65 @@ fn doc_i64(doc: &Document, key: &str) -> i64 {
     }
 }
 
+fn summary_agent_id_expr() -> Document {
+    doc! {
+        "$ifNull": [
+            "$session.metadata.contact.agent_id",
+            {
+                "$ifNull": [
+                    "$session.metadata.ui_contact.agent_id",
+                    {
+                        "$ifNull": [
+                            "$session.metadata.ui_chat_selection.selected_agent_id",
+                            "$session.metadata.ui_chat_selection.selectedAgentId"
+                        ]
+                    }
+                ]
+            }
+        ]
+    }
+}
+
+fn summary_project_id_expr() -> Document {
+    doc! {
+        "$ifNull": [
+            "$session.project_id",
+            {
+                "$ifNull": [
+                    "$session.metadata.chat_runtime.project_id",
+                    {
+                        "$ifNull": [
+                            "$session.metadata.chat_runtime.projectId",
+                            "0"
+                        ]
+                    }
+                ]
+            }
+        ]
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentMemorySummarySource {
+    pub id: String,
+    pub session_id: String,
+    pub summary_text: String,
+    pub summary_model: String,
+    pub trigger_type: String,
+    pub source_start_message_id: Option<String>,
+    pub source_end_message_id: Option<String>,
+    #[serde(default)]
+    pub source_message_count: i64,
+    #[serde(default)]
+    pub source_estimated_tokens: i64,
+    pub status: String,
+    #[serde(default)]
+    pub level: i64,
+    pub project_id: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 pub async fn create_summary(db: &Db, input: CreateSummaryInput) -> Result<SessionSummary, String> {
     let now = now_rfc3339();
     let summary = SessionSummary {
@@ -38,6 +98,8 @@ pub async fn create_summary(db: &Db, input: CreateSummaryInput) -> Result<Sessio
         level: input.level,
         rollup_summary_id: None,
         rolled_up_at: None,
+        agent_memory_summarized: 0,
+        agent_memory_summarized_at: None,
         created_at: now.clone(),
         updated_at: now,
     };
@@ -203,6 +265,101 @@ pub async fn list_session_ids_with_pending_rollup_by_user(
         .collect())
 }
 
+pub async fn list_agent_ids_with_pending_agent_memory_by_user(
+    db: &Db,
+    user_id: &str,
+    limit: i64,
+) -> Result<Vec<String>, String> {
+    let pipeline = vec![
+        doc! {"$match": {
+            "level": 0,
+            "agent_memory_summarized": {"$ne": 1},
+        }},
+        doc! {"$lookup": {
+            "from": "sessions",
+            "localField": "session_id",
+            "foreignField": "id",
+            "as": "session"
+        }},
+        doc! {"$unwind": "$session"},
+        doc! {"$match": {"session.user_id": user_id, "session.status": "active"}},
+        doc! {"$addFields": {"agent_id": summary_agent_id_expr()}},
+        doc! {"$match": {"agent_id": {"$exists": true, "$type": "string", "$ne": ""}}},
+        doc! {"$group": {"_id": "$agent_id", "min_created_at": {"$min": "$created_at"}}},
+        doc! {"$sort": {"min_created_at": 1}},
+        doc! {"$limit": limit.max(1).min(5000)},
+        doc! {"$project": {"_id": 0, "agent_id": "$_id"}},
+    ];
+
+    let cursor = db
+        .collection::<mongodb::bson::Document>("session_summaries_v2")
+        .aggregate(pipeline)
+        .await
+        .map_err(|e| e.to_string())?;
+    let docs: Vec<mongodb::bson::Document> =
+        cursor.try_collect().await.map_err(|e| e.to_string())?;
+
+    Ok(docs
+        .into_iter()
+        .filter_map(|doc| doc.get_str("agent_id").ok().map(|value| value.to_string()))
+        .collect())
+}
+
+pub async fn list_pending_agent_memory_summaries_by_agent(
+    db: &Db,
+    user_id: &str,
+    agent_id: &str,
+) -> Result<Vec<AgentMemorySummarySource>, String> {
+    let pipeline = vec![
+        doc! {"$match": {
+            "level": 0,
+            "agent_memory_summarized": {"$ne": 1},
+        }},
+        doc! {"$lookup": {
+            "from": "sessions",
+            "localField": "session_id",
+            "foreignField": "id",
+            "as": "session"
+        }},
+        doc! {"$unwind": "$session"},
+        doc! {"$match": {"session.user_id": user_id, "session.status": "active"}},
+        doc! {"$addFields": {
+            "agent_id": summary_agent_id_expr(),
+            "project_id": summary_project_id_expr(),
+        }},
+        doc! {"$match": {"agent_id": agent_id}},
+        doc! {"$sort": {"created_at": 1}},
+        doc! {"$project": {
+            "_id": 0,
+            "id": 1,
+            "session_id": 1,
+            "summary_text": 1,
+            "summary_model": 1,
+            "trigger_type": 1,
+            "source_start_message_id": 1,
+            "source_end_message_id": 1,
+            "source_message_count": 1,
+            "source_estimated_tokens": 1,
+            "status": 1,
+            "level": 1,
+            "project_id": 1,
+            "created_at": 1,
+            "updated_at": 1,
+        }},
+    ];
+
+    let cursor = db
+        .collection::<mongodb::bson::Document>("session_summaries_v2")
+        .aggregate(pipeline)
+        .await
+        .map_err(|e| e.to_string())?;
+    let docs: Vec<mongodb::bson::Document> =
+        cursor.try_collect().await.map_err(|e| e.to_string())?;
+    docs.into_iter()
+        .map(|doc| mongodb::bson::from_document::<AgentMemorySummarySource>(doc).map_err(|e| e.to_string()))
+        .collect()
+}
+
 pub async fn mark_summaries_rolled_up(
     db: &Db,
     summary_ids: &[String],
@@ -224,6 +381,35 @@ pub async fn mark_summaries_rolled_up(
                     "status": "summarized",
                     "rollup_summary_id": rollup_summary_id,
                     "rolled_up_at": &now,
+                    "updated_at": &now,
+                }
+            },
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(result.modified_count as usize)
+}
+
+pub async fn mark_summaries_agent_memory_summarized(
+    db: &Db,
+    summary_ids: &[String],
+) -> Result<usize, String> {
+    if summary_ids.is_empty() {
+        return Ok(0);
+    }
+
+    let now = now_rfc3339();
+    let result = collection(db)
+        .update_many(
+            doc! {
+                "id": {"$in": summary_ids.to_vec()},
+                "agent_memory_summarized": {"$ne": 1},
+            },
+            doc! {
+                "$set": {
+                    "agent_memory_summarized": 1,
+                    "agent_memory_summarized_at": &now,
                     "updated_at": &now,
                 }
             },

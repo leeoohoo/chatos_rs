@@ -59,7 +59,7 @@ export function SessionDetailPage({ sessionId, onBack }: SessionDetailPageProps)
     try {
       const [msg, sum, ctx, levels, graph] = await Promise.all([
         api.listMessages(sessionId),
-        api.listSummaries(sessionId),
+        api.listSummaries(sessionId, { status: 'all', limit: 500 }),
         api.composeContext(sessionId),
         api.listSummaryLevels(sessionId),
         api.getSummaryGraph(sessionId),
@@ -125,6 +125,7 @@ export function SessionDetailPage({ sessionId, onBack }: SessionDetailPageProps)
       dataIndex: 'level',
       key: 'level',
       width: 80,
+      render: (value: number) => <Tag color="blue">L{value ?? 0}</Tag>,
     },
     {
       title: t('sessionDetail.summaries'),
@@ -138,7 +139,34 @@ export function SessionDetailPage({ sessionId, onBack }: SessionDetailPageProps)
       key: 'source_message_count',
       width: 120,
     },
-    { title: t('summaryLevels.status'), dataIndex: 'status', key: 'status', width: 120 },
+    {
+      title: t('summaryLevels.status'),
+      dataIndex: 'status',
+      key: 'status',
+      width: 120,
+      render: (value: string, record: SessionSummary) => {
+        const summarized = value === 'summarized' || Boolean(record.rollup_summary_id);
+        return <Tag color={summarized ? 'default' : 'processing'}>{summarized ? 'summarized' : value}</Tag>;
+      },
+    },
+    {
+      title: t('memory.agentMemoryStatus'),
+      dataIndex: 'agent_memory_summarized',
+      key: 'agent_memory_summarized',
+      width: 120,
+      render: (value?: number) => (
+        <Tag color={Number(value) === 1 ? 'green' : 'default'}>
+          {Number(value) === 1 ? t('memory.agentMemoryDone') : t('memory.agentMemoryPending')}
+        </Tag>
+      ),
+    },
+    {
+      title: t('memory.rollupTarget'),
+      dataIndex: 'rollup_summary_id',
+      key: 'rollup_summary_id',
+      width: 120,
+      render: (value?: string | null) => (value ? <Tag color="purple">linked</Tag> : '-'),
+    },
     {
       title: t('sessionDetail.createdAt'),
       dataIndex: 'created_at',

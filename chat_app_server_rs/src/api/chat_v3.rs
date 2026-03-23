@@ -316,6 +316,7 @@ async fn stream_chat_v3(sender: SseSender, req: ChatRequest) {
                 model: Some(model_runtime.model.clone()),
                 provider: Some(model_runtime.provider.clone()),
                 thinking_level: model_runtime.thinking_level.clone(),
+                supports_responses: Some(model_runtime.supports_responses),
                 temperature: Some(model_runtime.temperature),
                 max_tokens,
                 use_tools: Some(use_tools),
