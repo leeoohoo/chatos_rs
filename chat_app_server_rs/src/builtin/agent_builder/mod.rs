@@ -1,3 +1,6 @@
+mod profile;
+mod support;
+
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -6,7 +9,13 @@ use serde_json::{json, Value};
 use crate::core::async_bridge::block_on_result;
 use crate::core::tool_io::text_result;
 use crate::services::memory_server_client::{
-    self, CreateMemoryAgentRequestDto, MemoryAgentSkillDto, UpdateMemoryAgentRequestDto,
+    self, CreateMemoryAgentRequestDto, UpdateMemoryAgentRequestDto,
+};
+
+use self::profile::recommend_profile;
+use self::support::{
+    normalize_optional_string, normalize_tool_name, optional_object_value, optional_skill_array,
+    optional_string, optional_string_array, required_string, truncate_text,
 };
 
 #[derive(Debug, Clone)]
@@ -40,7 +49,64 @@ impl AgentBuilderService {
         };
 
         let server_name = opts.server_name;
-        service.register_tool(
+        service.register_recommend_agent_profile(server_name.as_str());
+        service.register_list_available_skills();
+        service.register_create_memory_agent();
+        service.register_update_memory_agent();
+        service.register_preview_agent_context();
+
+        Ok(service)
+    }
+
+    pub fn list_tools(&self) -> Vec<Value> {
+        self.tools
+            .values()
+            .map(|tool| {
+                json!({
+                    "name": tool.name,
+                    "description": tool.description,
+                    "inputSchema": tool.input_schema,
+                })
+            })
+            .collect()
+    }
+
+    pub fn call_tool(
+        &self,
+        name: &str,
+        args: Value,
+        _session_id: Option<&str>,
+        _conversation_turn_id: Option<&str>,
+        _on_stream_chunk: Option<crate::core::mcp_tools::ToolStreamChunkCallback>,
+    ) -> Result<Value, String> {
+        let normalized = normalize_tool_name(name);
+        let tool = self
+            .tools
+            .get(normalized.as_str())
+            .ok_or_else(|| format!("Unknown tool: {}", name))?;
+        (tool.handler)(args, self.default_user_id.as_deref())
+    }
+
+    fn register_tool(
+        &mut self,
+        name: &str,
+        description: &str,
+        input_schema: Value,
+        handler: ToolHandler,
+    ) {
+        self.tools.insert(
+            name.to_string(),
+            Tool {
+                name: name.to_string(),
+                description: description.to_string(),
+                input_schema,
+                handler,
+            },
+        );
+    }
+
+    fn register_recommend_agent_profile(&mut self, server_name: &str) {
+        self.register_tool(
             "recommend_agent_profile",
             &format!(
                 "Analyze user intent and propose an agent profile (server: {}).",
@@ -60,8 +126,10 @@ impl AgentBuilderService {
                 Ok(text_result(json!(recommendation)))
             }),
         );
+    }
 
-        service.register_tool(
+    fn register_list_available_skills(&mut self) {
+        self.register_tool(
             "list_available_skills",
             "List available skills from Memory agents for the current user.",
             json!({
@@ -127,8 +195,10 @@ impl AgentBuilderService {
                 Ok(text_result(result))
             }),
         );
+    }
 
-        service.register_tool(
+    fn register_create_memory_agent(&mut self) {
+        self.register_tool(
             "create_memory_agent",
             "Create a Memory agent with role definition and skills.",
             json!({
@@ -187,8 +257,10 @@ impl AgentBuilderService {
                 })))
             }),
         );
+    }
 
-        service.register_tool(
+    fn register_update_memory_agent(&mut self) {
+        self.register_tool(
             "update_memory_agent",
             "Update an existing Memory agent configuration.",
             json!({
@@ -249,8 +321,10 @@ impl AgentBuilderService {
                 }
             }),
         );
+    }
 
-        service.register_tool(
+    fn register_preview_agent_context(&mut self) {
+        self.register_tool(
             "preview_agent_context",
             "Preview final runtime context text from role and skills.",
             json!({
@@ -304,212 +378,5 @@ impl AgentBuilderService {
                 })))
             }),
         );
-
-        Ok(service)
     }
-
-    pub fn list_tools(&self) -> Vec<Value> {
-        self.tools
-            .values()
-            .map(|tool| {
-                json!({
-                    "name": tool.name,
-                    "description": tool.description,
-                    "inputSchema": tool.input_schema,
-                })
-            })
-            .collect()
-    }
-
-    pub fn call_tool(
-        &self,
-        name: &str,
-        args: Value,
-        _session_id: Option<&str>,
-        _conversation_turn_id: Option<&str>,
-        _on_stream_chunk: Option<crate::core::mcp_tools::ToolStreamChunkCallback>,
-    ) -> Result<Value, String> {
-        let normalized = normalize_tool_name(name);
-        let tool = self
-            .tools
-            .get(normalized.as_str())
-            .ok_or_else(|| format!("Unknown tool: {}", name))?;
-        (tool.handler)(args, self.default_user_id.as_deref())
-    }
-
-    fn register_tool(
-        &mut self,
-        name: &str,
-        description: &str,
-        input_schema: Value,
-        handler: ToolHandler,
-    ) {
-        self.tools.insert(
-            name.to_string(),
-            Tool {
-                name: name.to_string(),
-                description: description.to_string(),
-                input_schema,
-                handler,
-            },
-        );
-    }
-}
-
-fn normalize_optional_string(value: Option<String>) -> Option<String> {
-    value
-        .map(|raw| raw.trim().to_string())
-        .filter(|raw| !raw.is_empty())
-}
-
-fn required_string(args: &Value, key: &str) -> Result<String, String> {
-    optional_string(args, key).ok_or_else(|| format!("missing required field: {}", key))
-}
-
-fn optional_string(args: &Value, key: &str) -> Option<String> {
-    args.get(key)
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-}
-
-fn optional_string_array(args: &Value, key: &str) -> Option<Vec<String>> {
-    let values = args.get(key)?.as_array()?;
-    let mut out = Vec::new();
-    for value in values {
-        let Some(item) = value.as_str() else {
-            continue;
-        };
-        let trimmed = item.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        if out.iter().any(|existing: &String| existing == trimmed) {
-            continue;
-        }
-        out.push(trimmed.to_string());
-    }
-    Some(out)
-}
-
-fn optional_skill_array(args: &Value, key: &str) -> Option<Vec<MemoryAgentSkillDto>> {
-    let values = args.get(key)?.as_array()?;
-    let mut out = Vec::new();
-    for item in values {
-        let Some(object) = item.as_object() else {
-            continue;
-        };
-        let id = object
-            .get("id")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToOwned::to_owned);
-        let name = object
-            .get("name")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToOwned::to_owned);
-        let content = object
-            .get("content")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToOwned::to_owned);
-        let (Some(id), Some(name), Some(content)) = (id, name, content) else {
-            continue;
-        };
-        out.push(MemoryAgentSkillDto { id, name, content });
-    }
-    Some(out)
-}
-
-fn optional_object_value(args: &Value, key: &str) -> Option<Value> {
-    let value = args.get(key)?;
-    if !value.is_object() {
-        return None;
-    }
-    Some(value.clone())
-}
-
-fn normalize_tool_name(raw: &str) -> String {
-    let trimmed = raw.trim();
-    if let Some((_, suffix)) = trimmed.rsplit_once("__") {
-        return suffix.trim().to_string();
-    }
-    trimmed.to_string()
-}
-
-fn truncate_text(raw: &str, max_chars: usize) -> String {
-    if raw.chars().count() <= max_chars {
-        return raw.to_string();
-    }
-    let mut out: String = raw.chars().take(max_chars).collect();
-    out.push_str("...");
-    out
-}
-
-fn recommend_profile(requirement: &str) -> Value {
-    let normalized = requirement.trim();
-    let category = if contains_any(normalized, &["代码", "开发", "编程", "code", "debug"]) {
-        "engineering"
-    } else if contains_any(normalized, &["产品", "需求", "roadmap", "用户"]) {
-        "product"
-    } else if contains_any(normalized, &["运营", "增长", "营销", "campaign"]) {
-        "growth"
-    } else {
-        "general"
-    };
-
-    let name = match category {
-        "engineering" => "研发协作助手",
-        "product" => "产品分析助手",
-        "growth" => "增长运营助手",
-        _ => "通用业务助手",
-    };
-    let description = format!(
-        "根据需求“{}”生成的建议智能体。",
-        truncate_text(normalized, 80)
-    );
-    let role_definition = format!(
-        "你是{name}。请围绕用户目标拆解任务、明确约束、给出可执行步骤，并在必要时主动澄清信息缺口。"
-    );
-    let skill_suggestions = match category {
-        "engineering" => vec![
-            "code_review".to_string(),
-            "bug_fix".to_string(),
-            "test_design".to_string(),
-        ],
-        "product" => vec![
-            "requirement_analysis".to_string(),
-            "roadmap_planning".to_string(),
-            "prd_writing".to_string(),
-        ],
-        "growth" => vec![
-            "campaign_planning".to_string(),
-            "funnel_analysis".to_string(),
-            "copywriting".to_string(),
-        ],
-        _ => vec![
-            "task_planning".to_string(),
-            "knowledge_summary".to_string(),
-            "decision_support".to_string(),
-        ],
-    };
-    json!({
-        "name": name,
-        "description": description,
-        "category": category,
-        "role_definition": role_definition,
-        "suggested_skill_ids": skill_suggestions,
-    })
-}
-
-fn contains_any(text: &str, patterns: &[&str]) -> bool {
-    let lowered = text.to_ascii_lowercase();
-    patterns
-        .iter()
-        .any(|pattern| lowered.contains(pattern.to_ascii_lowercase().as_str()))
 }
