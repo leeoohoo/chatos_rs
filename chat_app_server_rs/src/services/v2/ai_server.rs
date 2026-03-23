@@ -145,18 +145,3 @@ pub struct ChatOptions {
     pub message_mode: Option<String>,
     pub message_source: Option<String>,
 }
-
-impl Default for AiClientCallbacks {
-    fn default() -> Self {
-        AiClientCallbacks {
-            on_chunk: None,
-            on_thinking: None,
-            on_tools_start: None,
-            on_tools_stream: None,
-            on_tools_end: None,
-            on_context_summarized_start: None,
-            on_context_summarized_stream: None,
-            on_context_summarized_end: None,
-        }
-    }
-}

@@ -29,7 +29,8 @@ pub async fn build_skills_from_plugin_async(
 
         let mut skills = Vec::new();
         for entry in entries.iter() {
-            let Some(file_path) = normalize_skill_entry_to_file(plugin_root.as_path(), entry.as_str())
+            let Some(file_path) =
+                normalize_skill_entry_to_file(plugin_root.as_path(), entry.as_str())
             else {
                 continue;
             };
@@ -41,7 +42,12 @@ pub async fn build_skills_from_plugin_async(
             if content.is_empty() {
                 continue;
             }
-            let id = hash_id(&["skill", user_id.as_str(), plugin_source.as_str(), entry.as_str()]);
+            let id = hash_id(&[
+                "skill",
+                user_id.as_str(),
+                plugin_source.as_str(),
+                entry.as_str(),
+            ]);
             let skill = MemorySkill {
                 id,
                 user_id: user_id.clone(),
@@ -69,13 +75,17 @@ fn discover_skill_entries(plugin_root: &FsPath) -> Vec<String> {
 
     let mut seen = HashSet::new();
     for path in collect_markdown_entries(root.as_path()) {
-        let file_name = path.file_name().and_then(|name| name.to_str()).unwrap_or("");
+        let file_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("");
 
         if file_name.eq_ignore_ascii_case("README.md") {
             continue;
         }
 
-        if file_name.eq_ignore_ascii_case("SKILL.md") || file_name.eq_ignore_ascii_case("index.md") {
+        if file_name.eq_ignore_ascii_case("SKILL.md") || file_name.eq_ignore_ascii_case("index.md")
+        {
             let parent = path.parent().unwrap_or_else(|| root.as_path());
             if let Some(rel) = path_to_unix_relative(plugin_root, parent) {
                 if !rel.trim().is_empty() {

@@ -78,7 +78,10 @@ pub fn print_mongo_cli_header(prefix: &str, args: &MongoCliArgs) {
     println!("[{prefix}] dry run   = {}", args.dry_run);
 }
 
-pub async fn connect_database(target: &MongoTargetArgs, app_name: &str) -> Result<Database, String> {
+pub async fn connect_database(
+    target: &MongoTargetArgs,
+    app_name: &str,
+) -> Result<Database, String> {
     let mut options = ClientOptions::parse(target.mongo_uri.as_str())
         .await
         .map_err(|e| format!("invalid mongo uri: {e}"))?;

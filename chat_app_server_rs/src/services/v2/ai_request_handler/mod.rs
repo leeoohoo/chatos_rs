@@ -5,17 +5,19 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
 use crate::services::ai_common::{
-    await_with_optional_abort, build_assistant_message_metadata, consume_sse_stream,
-    normalize_reasoning_effort, truncate_log,
+    await_with_optional_abort, build_abort_token, build_assistant_message_metadata,
+    build_bearer_post_request, consume_sse_stream, normalize_reasoning_effort, truncate_log,
+    validate_request_payload_size,
 };
 use crate::services::v2::message_manager::MessageManager;
-use crate::utils::abort_registry;
 
 mod parser;
 
 use self::parser::{
     apply_stream_event, collect_tool_calls, normalize_reasoning_value, StreamState,
 };
+
+const REQUEST_BODY_LIMIT_ENV: &str = "AI_V2_REQUEST_BODY_MAX_BYTES";
 
 #[derive(Debug, Clone)]
 pub struct AiResponse {
@@ -94,7 +96,7 @@ impl AiRequestHandler {
             payload["stream_options"] = json!({"include_usage": true});
         }
 
-        if let Err(err) = validate_request_payload_size(&payload) {
+        if let Err(err) = validate_request_payload_size(&payload, REQUEST_BODY_LIMIT_ENV) {
             error!(
                 "[AI] request payload rejected before send: purpose={}, detail={}",
                 purpose, err
@@ -103,13 +105,7 @@ impl AiRequestHandler {
         }
 
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
-        let token = if let Some(session_id) = session_id.as_ref() {
-            let token = CancellationToken::new();
-            abort_registry::set_controller(session_id, token.clone());
-            Some(token)
-        } else {
-            None
-        };
+        let token = build_abort_token(session_id.as_deref());
 
         info!(
             "[AI] handleRequest start: purpose={}, model={}, stream={}, baseURL={}, session={}",
@@ -168,13 +164,8 @@ impl AiRequestHandler {
         message_mode: Option<String>,
         message_source: Option<String>,
     ) -> Result<AiResponse, String> {
-        let mut req = self.client.post(&url).bearer_auth(&self.api_key);
-        if force_identity_encoding {
-            req = req
-                .header(reqwest::header::ACCEPT_ENCODING, "identity")
-                .header(reqwest::header::CONNECTION, "close")
-                .version(reqwest::Version::HTTP_11);
-        }
+        let req =
+            build_bearer_post_request(&self.client, &url, &self.api_key, force_identity_encoding);
         let resp = await_with_optional_abort(req.json(&payload).send(), token).await?;
 
         let status = resp.status();
@@ -272,13 +263,8 @@ impl AiRequestHandler {
         message_mode: Option<String>,
         message_source: Option<String>,
     ) -> Result<AiResponse, String> {
-        let mut req = self.client.post(&url).bearer_auth(&self.api_key);
-        if force_identity_encoding {
-            req = req
-                .header(reqwest::header::ACCEPT_ENCODING, "identity")
-                .header(reqwest::header::CONNECTION, "close")
-                .version(reqwest::Version::HTTP_11);
-        }
+        let req =
+            build_bearer_post_request(&self.client, &url, &self.api_key, force_identity_encoding);
         let resp = await_with_optional_abort(req.json(&payload).send(), token.clone()).await?;
 
         let status = resp.status();
@@ -366,32 +352,13 @@ impl AiRequestHandler {
     }
 }
 
-fn request_payload_max_bytes() -> usize {
-    std::env::var("AI_V2_REQUEST_BODY_MAX_BYTES")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(1_500_000)
-}
-
-fn validate_request_payload_size(payload: &Value) -> Result<(), String> {
-    let bytes = serde_json::to_vec(payload).map_err(|err| err.to_string())?;
-    let max_bytes = request_payload_max_bytes();
-    if bytes.len() > max_bytes {
-        return Err(format!(
-            "request body too large (precheck): payload_bytes={}, limit_bytes={}",
-            bytes.len(),
-            max_bytes
-        ));
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
-    use super::validate_request_payload_size;
+    use crate::services::ai_common::validate_request_payload_size;
+
+    use super::REQUEST_BODY_LIMIT_ENV;
 
     #[test]
     fn payload_precheck_accepts_small_payload() {
@@ -399,7 +366,7 @@ mod tests {
             "model": "gpt-4o",
             "messages": [{"role": "user", "content": "hello"}]
         });
-        assert!(validate_request_payload_size(&payload).is_ok());
+        assert!(validate_request_payload_size(&payload, REQUEST_BODY_LIMIT_ENV).is_ok());
     }
 
     #[test]
@@ -408,7 +375,8 @@ mod tests {
             "model": "gpt-4o",
             "messages": [{"role": "user", "content": "a".repeat(1_700_000)}]
         });
-        let err = validate_request_payload_size(&payload).expect_err("should reject");
+        let err = validate_request_payload_size(&payload, REQUEST_BODY_LIMIT_ENV)
+            .expect_err("should reject");
         assert!(err.contains("request body too large"));
     }
 }

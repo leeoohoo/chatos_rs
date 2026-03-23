@@ -5,18 +5,18 @@ use axum::{Json, Router};
 use serde_json::{json, Value};
 
 use crate::state::AppState;
+mod agents_ai_api;
+mod agents_api;
 mod auth_api;
 mod auth_session_api;
 mod auth_users_api;
-mod agents_ai_api;
-mod agents_api;
 mod configs_api;
 mod configs_job_configs_api;
 mod configs_models_api;
-mod context_api;
 mod contacts_api;
 mod contacts_context_api;
 mod contacts_crud_api;
+mod context_api;
 mod jobs_api;
 mod messages_api;
 mod messages_summaries_api;
@@ -29,10 +29,10 @@ mod skills_api;
 mod skills_manage_api;
 mod summaries_api;
 use self::shared::{
-    build_ai_client, build_auth_token, default_project_name, ensure_admin, ensure_agent_manage_access,
-    ensure_agent_read_access, ensure_contact_access, ensure_session_access,
-    normalize_optional_text, normalize_project_scope_id, pick_latest_timestamp, require_auth,
-    resolve_scope_user_id, resolve_visible_user_ids,
+    build_ai_client, build_auth_token, default_project_name, ensure_admin,
+    ensure_agent_manage_access, ensure_agent_read_access, ensure_contact_access,
+    ensure_session_access, normalize_optional_text, normalize_project_scope_id,
+    pick_latest_timestamp, require_auth, resolve_scope_user_id, resolve_visible_user_ids,
 };
 
 pub type SharedState = Arc<AppState>;
@@ -111,7 +111,10 @@ pub fn router(state: SharedState) -> Router {
             "/api/memory/v1/projects/:project_id/contacts",
             get(projects_api::list_project_contacts),
         )
-        .route("/api/memory/v1/projects/sync", post(projects_api::sync_project))
+        .route(
+            "/api/memory/v1/projects/sync",
+            post(projects_api::sync_project),
+        )
         .route(
             "/api/memory/v1/project-agent-links/sync",
             post(projects_api::sync_project_agent_link),
@@ -194,7 +197,8 @@ pub fn router(state: SharedState) -> Router {
         )
         .route(
             "/api/memory/v1/configs/agent-memory-job",
-            get(configs_api::get_agent_memory_job_config).put(configs_api::put_agent_memory_job_config),
+            get(configs_api::get_agent_memory_job_config)
+                .put(configs_api::put_agent_memory_job_config),
         )
         .route(
             "/api/memory/v1/jobs/summary/run-once",
@@ -210,7 +214,10 @@ pub fn router(state: SharedState) -> Router {
         )
         .route("/api/memory/v1/jobs/runs", get(jobs_api::list_job_runs))
         .route("/api/memory/v1/jobs/stats", get(jobs_api::job_stats))
-        .route("/api/memory/v1/context/compose", post(context_api::compose_context))
+        .route(
+            "/api/memory/v1/context/compose",
+            post(context_api::compose_context),
+        )
         .with_state(state)
 }
 

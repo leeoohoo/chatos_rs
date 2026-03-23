@@ -1,3 +1,4 @@
+pub(crate) mod ai_client_common;
 pub(crate) mod ai_common;
 pub mod ai_prompt_tool;
 pub mod builtin_mcp;

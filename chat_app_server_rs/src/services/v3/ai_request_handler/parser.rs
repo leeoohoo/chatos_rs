@@ -193,12 +193,8 @@ fn merge_tool_call_name(entry: &mut Value, name: &str) {
     if name.trim().is_empty() {
         return;
     }
-    let current = entry["function"]["name"]
-        .as_str()
-        .unwrap_or("")
-        .to_string();
-    entry["function"]["name"] =
-        Value::String(join_stream_text(current.as_str(), name));
+    let current = entry["function"]["name"].as_str().unwrap_or("").to_string();
+    entry["function"]["name"] = Value::String(join_stream_text(current.as_str(), name));
 }
 
 fn merge_tool_call_arguments(entry: &mut Value, arguments_piece: &str) {
@@ -627,7 +623,8 @@ pub(super) fn apply_stream_event(state: &mut StreamState, event: &Value) -> Stre
                 let index = resolve_tool_call_index(event, None, &state.tool_call_index_map)
                     .unwrap_or_else(|| state.tool_calls_map.len());
                 remember_tool_call_index(&mut state.tool_call_index_map, index, item_id, call_id);
-                let entry = ensure_tool_call_entry(&mut state.tool_calls_map, index, item_id, call_id);
+                let entry =
+                    ensure_tool_call_entry(&mut state.tool_calls_map, index, item_id, call_id);
                 merge_tool_call_arguments(entry, arguments_piece.as_str());
             }
         } else if event_type == "response.function_call_arguments.done"

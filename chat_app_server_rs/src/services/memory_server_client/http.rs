@@ -78,7 +78,9 @@ pub async fn send_json<T: DeserializeOwned>(req: RequestBuilder) -> Result<T, St
     resp.json::<T>().await.map_err(|e| e.to_string())
 }
 
-pub async fn send_optional_json<T: DeserializeOwned>(req: RequestBuilder) -> Result<Option<T>, String> {
+pub async fn send_optional_json<T: DeserializeOwned>(
+    req: RequestBuilder,
+) -> Result<Option<T>, String> {
     let resp = apply_auth(req).send().await.map_err(|e| e.to_string())?;
     if resp.status().as_u16() == 404 {
         return Ok(None);

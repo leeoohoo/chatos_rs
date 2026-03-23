@@ -232,7 +232,9 @@ pub(super) async fn sync_project_agent_link(
         Ok(Some(link)) => (StatusCode::OK, Json(json!(link))),
         Ok(None) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": "sync project-agent link failed", "detail": "link not found after upsert"})),
+            Json(
+                json!({"error": "sync project-agent link failed", "detail": "link not found after upsert"}),
+            ),
         ),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,

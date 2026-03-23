@@ -83,9 +83,7 @@ pub async fn list_contacts_by_ids(
         filter.insert("status", value);
     }
 
-    let options = FindOptions::builder()
-        .sort(doc! {"updated_at": -1})
-        .build();
+    let options = FindOptions::builder().sort(doc! {"updated_at": -1}).build();
     let cursor = collection(db)
         .find(filter)
         .with_options(options)

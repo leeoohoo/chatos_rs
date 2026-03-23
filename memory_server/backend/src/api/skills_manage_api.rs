@@ -148,7 +148,8 @@ pub(super) async fn install_skill_plugins(
         );
     };
 
-    match install_skill_plugins_service(state.as_ref(), scope_user_id.as_str(), &target_sources).await
+    match install_skill_plugins_service(state.as_ref(), scope_user_id.as_str(), &target_sources)
+        .await
     {
         Ok(value) => (StatusCode::OK, Json(value)),
         Err(err) => (

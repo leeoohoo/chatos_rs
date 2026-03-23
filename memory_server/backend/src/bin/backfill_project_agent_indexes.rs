@@ -29,11 +29,9 @@ async fn main() -> Result<(), String> {
     let args = parse_args()?;
     mongo_maintenance::print_mongo_cli_header("BACKFILL", &args.mongo);
 
-    let db = mongo_maintenance::connect_database(
-        &args.mongo.target,
-        "memory_project_agent_backfill",
-    )
-    .await?;
+    let db =
+        mongo_maintenance::connect_database(&args.mongo.target, "memory_project_agent_backfill")
+            .await?;
 
     let contact_map = load_contact_map(&db).await?;
     println!("[BACKFILL] contacts loaded: {}", contact_map.len());
@@ -130,7 +128,11 @@ async fn backfill_from_sessions(
         };
         let contact_id = metadata_string(metadata, &["contact", "contact_id"])
             .or_else(|| metadata_string(metadata, &["ui_contact", "contact_id"]))
-            .or_else(|| contact_map.get(&(user_id.clone(), agent_id.clone())).cloned());
+            .or_else(|| {
+                contact_map
+                    .get(&(user_id.clone(), agent_id.clone()))
+                    .cloned()
+            });
 
         upsert_project_agent_link(
             db,

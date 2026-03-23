@@ -136,9 +136,8 @@ mod tests {
         base_url_disallows_system_messages, is_context_length_exceeded_error,
         is_request_body_too_large_error, is_response_parse_error,
         is_system_messages_not_allowed_error, is_transient_network_error,
-        is_transient_transport_or_parse_error, reduce_history_limit,
-        should_prefer_stateless_context, should_use_prev_id_for_next_turn,
-        model_supports_prev_response_id,
+        is_transient_transport_or_parse_error, model_supports_prev_response_id,
+        reduce_history_limit, should_prefer_stateless_context, should_use_prev_id_for_next_turn,
     };
 
     #[test]

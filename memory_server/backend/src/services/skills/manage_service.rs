@@ -7,8 +7,8 @@ use crate::state::AppState;
 use super::io::{
     build_skills_from_plugin_async, copy_plugin_source_from_repo_async,
     discover_skill_entries_async, ensure_dir_async, ensure_git_repo_async,
-    load_plugin_candidates_from_repo_async, normalize_plugin_source, resolve_plugin_root_from_cache,
-    resolve_skill_state_root, unique_strings,
+    load_plugin_candidates_from_repo_async, normalize_plugin_source,
+    resolve_plugin_root_from_cache, resolve_skill_state_root, unique_strings,
 };
 use super::io_helpers::hash_id;
 
@@ -43,13 +43,10 @@ pub(crate) async fn import_skills_from_git(
             .await
             .map_err(|err| format!("git import failed: {}", err))?;
 
-    let candidates = load_plugin_candidates_from_repo_async(
-        repo_root.clone(),
-        marketplace_path,
-        plugins_path,
-    )
-    .await
-    .map_err(|err| format!("parse plugin definitions failed: {}", err))?;
+    let candidates =
+        load_plugin_candidates_from_repo_async(repo_root.clone(), marketplace_path, plugins_path)
+            .await
+            .map_err(|err| format!("parse plugin definitions failed: {}", err))?;
     if candidates.is_empty() {
         return Err("no plugins discovered from repository".to_string());
     }
@@ -101,9 +98,9 @@ pub(crate) async fn import_skills_from_git(
         };
         let previous = existing_by_source.get(candidate.source.as_str());
         let plugin = MemorySkillPlugin {
-            id: previous.map(|item| item.id.clone()).unwrap_or_else(|| {
-                hash_id(&["plugin", scope_user_id, candidate.source.as_str()])
-            }),
+            id: previous
+                .map(|item| item.id.clone())
+                .unwrap_or_else(|| hash_id(&["plugin", scope_user_id, candidate.source.as_str()])),
             user_id: scope_user_id.to_string(),
             source: candidate.source.clone(),
             name: candidate.name.clone(),
@@ -154,7 +151,10 @@ pub(crate) async fn list_all_plugin_sources(
     user_id: &str,
 ) -> Result<Vec<String>, String> {
     let items = skills_repo::list_plugins(&state.pool, user_id, 500, 0).await?;
-    Ok(items.into_iter().map(|item| item.source).collect::<Vec<_>>())
+    Ok(items
+        .into_iter()
+        .map(|item| item.source)
+        .collect::<Vec<_>>())
 }
 
 pub(crate) async fn install_skill_plugins(
@@ -173,7 +173,8 @@ pub(crate) async fn install_skill_plugins(
         return Err("no plugin sources specified".to_string());
     }
 
-    let plugins = skills_repo::get_plugins_by_sources(&state.pool, user_id, &normalized_sources).await?;
+    let plugins =
+        skills_repo::get_plugins_by_sources(&state.pool, user_id, &normalized_sources).await?;
     if plugins.is_empty() {
         return Err("plugins not found".to_string());
     }

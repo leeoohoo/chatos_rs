@@ -76,10 +76,13 @@ pub(super) async fn sync_project(
 
     let scope_user_id = resolve_scope_user_id(&auth, req.user_id);
     let project_id = normalize_project_scope_id(req.project_id.as_deref());
-    let is_virtual = req
-        .is_virtual
-        .map(|v| if v { 1 } else { 0 })
-        .or_else(|| if project_id == "0" { Some(1) } else { None });
+    let is_virtual = req.is_virtual.map(|v| if v { 1 } else { 0 }).or_else(|| {
+        if project_id == "0" {
+            Some(1)
+        } else {
+            None
+        }
+    });
     let name = normalize_optional_text(req.name.as_deref())
         .unwrap_or_else(|| default_project_name(project_id.as_str()));
 
@@ -100,7 +103,9 @@ pub(super) async fn sync_project(
         Ok(Some(project)) => (StatusCode::OK, Json(json!(project))),
         Ok(None) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": "sync project failed", "detail": "project not found after upsert"})),
+            Json(
+                json!({"error": "sync project failed", "detail": "project not found after upsert"}),
+            ),
         ),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,

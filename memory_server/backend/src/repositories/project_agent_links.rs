@@ -27,8 +27,8 @@ pub async fn upsert_project_agent_link(
     input: UpsertProjectAgentLinkInput,
 ) -> Result<Option<MemoryProjectAgentLink>, String> {
     let now = now_rfc3339();
-    let project_id = normalize_optional_text(Some(input.project_id.as_str()))
-        .unwrap_or_else(|| "0".to_string());
+    let project_id =
+        normalize_optional_text(Some(input.project_id.as_str())).unwrap_or_else(|| "0".to_string());
     let status =
         normalize_optional_text(input.status.as_deref()).unwrap_or_else(default_active_status);
     let filter = doc! {

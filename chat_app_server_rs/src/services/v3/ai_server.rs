@@ -105,16 +105,7 @@ impl AiServer {
 
         let messages = vec![json!({"role": "user", "content": content_parts})];
 
-        let callbacks = options.callbacks.unwrap_or_else(|| AiClientCallbacks {
-            on_chunk: None,
-            on_thinking: None,
-            on_tools_start: None,
-            on_tools_stream: None,
-            on_tools_end: None,
-            on_context_summarized_start: None,
-            on_context_summarized_stream: None,
-            on_context_summarized_end: None,
-        });
+        let callbacks = options.callbacks.unwrap_or_default();
 
         let result = self
             .ai_client
@@ -138,16 +129,7 @@ impl AiServer {
                     callbacks: Some(if use_tools {
                         callbacks
                     } else {
-                        AiClientCallbacks {
-                            on_chunk: callbacks.on_chunk,
-                            on_thinking: callbacks.on_thinking,
-                            on_tools_start: None,
-                            on_tools_stream: None,
-                            on_tools_end: None,
-                            on_context_summarized_start: callbacks.on_context_summarized_start,
-                            on_context_summarized_stream: callbacks.on_context_summarized_stream,
-                            on_context_summarized_end: callbacks.on_context_summarized_end,
-                        }
+                        callbacks.without_tool_callbacks()
                     }),
                 },
             )

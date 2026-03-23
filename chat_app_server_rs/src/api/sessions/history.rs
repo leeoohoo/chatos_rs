@@ -185,7 +185,9 @@ fn extract_process_segments_from_message(message: &Message) -> Vec<Value> {
             };
 
             match map.get("type").and_then(Value::as_str) {
-                Some("thinking") => is_meaningful_reasoning(map.get("content").and_then(Value::as_str)),
+                Some("thinking") => {
+                    is_meaningful_reasoning(map.get("content").and_then(Value::as_str))
+                }
                 Some("tool_call") => map
                     .get("toolCallId")
                     .or_else(|| map.get("tool_call_id"))

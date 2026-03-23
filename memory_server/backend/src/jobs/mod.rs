@@ -1,5 +1,11 @@
 pub mod agent_memory;
+mod agent_memory_generation;
+mod agent_memory_support;
+mod job_support;
 pub mod memory_sync;
 pub mod rollup;
+mod rollup_generation;
 pub mod summary;
+mod summary_generation;
+mod summary_support;
 pub mod worker;

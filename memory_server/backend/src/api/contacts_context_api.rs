@@ -66,24 +66,23 @@ pub(super) async fn list_contact_projects(
         }
     };
 
-    let memories =
-        match memories_repo::list_project_memories_by_contact(
-            &state.pool,
-            contact.user_id.as_str(),
-            contact.id.as_str(),
-            2_000,
-            0,
-        )
-        .await
-        {
-            Ok(items) => items,
-            Err(err) => {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({"error": "list contact project memories failed", "detail": err})),
-                )
-            }
-        };
+    let memories = match memories_repo::list_project_memories_by_contact(
+        &state.pool,
+        contact.user_id.as_str(),
+        contact.id.as_str(),
+        2_000,
+        0,
+    )
+    .await
+    {
+        Ok(items) => items,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "list contact project memories failed", "detail": err})),
+            )
+        }
+    };
 
     let mut latest_memory_by_project: HashMap<String, ProjectMemory> = HashMap::new();
     for memory in memories {
@@ -124,7 +123,10 @@ pub(super) async fn list_contact_projects(
     {
         for session in session_rows {
             let pid = normalize_project_scope_id(session.project_id.as_deref());
-            if !ordered_project_ids.iter().any(|existing| existing == pid.as_str()) {
+            if !ordered_project_ids
+                .iter()
+                .any(|existing| existing == pid.as_str())
+            {
                 ordered_project_ids.push(pid);
             }
         }

@@ -15,9 +15,8 @@ async fn main() -> Result<(), String> {
     let args = parse_args()?;
     mongo_maintenance::print_mongo_cli_header("CLEANUP", &args.mongo);
 
-    let db =
-        mongo_maintenance::connect_database(&args.mongo.target, "memory_agent_recall_cleanup")
-            .await?;
+    let db = mongo_maintenance::connect_database(&args.mongo.target, "memory_agent_recall_cleanup")
+        .await?;
 
     let coll: Collection<Document> = db.collection("agent_recalls");
     let filter = doc! {
@@ -36,7 +35,10 @@ async fn main() -> Result<(), String> {
     }
 
     let result = coll
-        .update_many(filter.clone(), doc! { "$unset": { "source_project_ids": "" } })
+        .update_many(
+            filter.clone(),
+            doc! { "$unset": { "source_project_ids": "" } },
+        )
         .await
         .map_err(|e| e.to_string())?;
 
