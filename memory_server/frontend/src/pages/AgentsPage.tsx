@@ -37,7 +37,7 @@ interface AgentEditorState {
   description: string;
   category: string;
   roleDefinition: string;
-  skillIdsText: string;
+  skillIds: string[];
   enabled: boolean;
 }
 
@@ -46,7 +46,7 @@ const EMPTY_EDITOR: AgentEditorState = {
   description: '',
   category: '',
   roleDefinition: '',
-  skillIdsText: '',
+  skillIds: [],
   enabled: true,
 };
 
@@ -58,6 +58,7 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
   const [error, setError] = useState<string | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editor, setEditor] = useState<AgentEditorState>(EMPTY_EDITOR);
+  const [editorInlineSkillNames, setEditorInlineSkillNames] = useState<Record<string, string>>({});
   const [aiOpen, setAiOpen] = useState(false);
   const [aiRequirement, setAiRequirement] = useState('');
   const [aiName, setAiName] = useState('');
@@ -66,6 +67,7 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
   const [aiModelConfigs, setAiModelConfigs] = useState<AiModelConfig[]>([]);
   const [aiModelsLoading, setAiModelsLoading] = useState(false);
   const [aiModelConfigId, setAiModelConfigId] = useState('');
+  const [skillCatalog, setSkillCatalog] = useState<Record<string, MemorySkill>>({});
   const [skillPreviewOpen, setSkillPreviewOpen] = useState(false);
   const [skillPreviewLoading, setSkillPreviewLoading] = useState(false);
   const [skillPreview, setSkillPreview] = useState<MemorySkill | null>(null);
@@ -131,8 +133,17 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
     setLoading(true);
     setError(null);
     try {
-      const data = await api.listAgents(scopeUserId, { limit: 200, offset: 0 });
-      setItems(data);
+      const [agents, skills] = await Promise.all([
+        api.listAgents(scopeUserId, { limit: 200, offset: 0 }),
+        api.listSkills(scopeUserId, { limit: 1000, offset: 0 }),
+      ]);
+      setItems(agents);
+      setSkillCatalog(
+        skills.reduce<Record<string, MemorySkill>>((acc, skill) => {
+          acc[skill.id] = skill;
+          return acc;
+        }, {}),
+      );
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -189,16 +200,9 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
     };
   }, [aiOpen, scopeUserId]);
 
-  const parseSkillIds = (raw: string): string[] => {
-    const segments = raw
-      .split(/[\n,]/g)
-      .map((item) => item.trim())
-      .filter((item) => item.length > 0);
-    return Array.from(new Set(segments));
-  };
-
   const openCreate = () => {
     setEditor(EMPTY_EDITOR);
+    setEditorInlineSkillNames({});
     setEditorOpen(true);
   };
 
@@ -207,15 +211,24 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
   };
 
   const openEdit = (agent: MemoryAgent) => {
+    const inlineNames = (agent.skills || []).reduce<Record<string, string>>((acc, skill) => {
+      const skillId = skill.id?.trim();
+      if (!skillId) {
+        return acc;
+      }
+      acc[skillId] = skill.name?.trim() || t('agents.unnamedSkill');
+      return acc;
+    }, {});
     setEditor({
       id: agent.id,
       name: agent.name || '',
       description: agent.description || '',
       category: agent.category || '',
       roleDefinition: agent.role_definition || '',
-      skillIdsText: (agent.skill_ids || []).join(', '),
+      skillIds: Array.from(new Set((agent.skill_ids || []).map((item) => item.trim()).filter(Boolean))),
       enabled: agent.enabled !== false,
     });
+    setEditorInlineSkillNames(inlineNames);
     setEditorOpen(true);
   };
 
@@ -227,7 +240,7 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
       return;
     }
 
-    const skillIds = parseSkillIds(editor.skillIdsText);
+    const skillIds = Array.from(new Set(editor.skillIds.map((item) => item.trim()).filter(Boolean)));
     setSaving(true);
     setError(null);
     try {
@@ -282,6 +295,54 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
     })),
     [aiModelConfigs],
   );
+
+  const editorSkillOptions = useMemo(() => {
+    const options = new Map<string, { value: string; label: string }>();
+
+    Object.values(skillCatalog).forEach((skill) => {
+      const skillId = skill.id?.trim();
+      if (!skillId) {
+        return;
+      }
+      options.set(skillId, {
+        value: skillId,
+        label: skill.name?.trim() || t('agents.unnamedSkill'),
+      });
+    });
+
+    Object.entries(editorInlineSkillNames).forEach(([skillId, skillName]) => {
+      const normalizedSkillId = skillId.trim();
+      if (!normalizedSkillId || options.has(normalizedSkillId)) {
+        return;
+      }
+      const displayName = skillName.trim() || t('agents.unnamedSkill');
+      options.set(normalizedSkillId, {
+        value: normalizedSkillId,
+        label: `${displayName} (${t('agents.inlineSkillSuffix')})`,
+      });
+    });
+
+    return Array.from(options.values()).sort((left, right) => left.label.localeCompare(right.label));
+  }, [editorInlineSkillNames, skillCatalog, t]);
+
+  const resolveSkillDisplayName = (agent: MemoryAgent, skillId: string): string => {
+    const normalizedSkillId = skillId.trim();
+    if (!normalizedSkillId) {
+      return t('agents.unnamedSkill');
+    }
+
+    const embedded = (agent.skills || []).find((item) => item.id === normalizedSkillId);
+    if (embedded?.name?.trim()) {
+      return embedded.name.trim();
+    }
+
+    const catalogItem = skillCatalog[normalizedSkillId];
+    if (catalogItem?.name?.trim()) {
+      return catalogItem.name.trim();
+    }
+
+    return t('agents.unnamedSkill');
+  };
 
   const openSkillPreview = async (agent: MemoryAgent, skillId: string) => {
     const normalizedSkillId = skillId.trim();
@@ -491,7 +552,7 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
                   void openSkillPreview(record, skillId);
                 }}
               >
-                {skillId}
+                {resolveSkillDisplayName(record, skillId)}
               </Button>
             ))}
           </Space>
@@ -723,7 +784,10 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
       <Modal
         open={editorOpen}
         title={editor.id ? t('agents.edit') : t('agents.create')}
-        onCancel={() => setEditorOpen(false)}
+        onCancel={() => {
+          setEditorOpen(false);
+          setEditorInlineSkillNames({});
+        }}
         onOk={saveEditor}
         confirmLoading={saving}
         width={760}
@@ -753,13 +817,16 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
             placeholder={t('agents.roleDefinition')}
             rows={6}
           />
-          <Input.TextArea
-            value={editor.skillIdsText}
-            onChange={(event) =>
-              setEditor((prev) => ({ ...prev, skillIdsText: event.target.value }))
-            }
-            placeholder={t('agents.skillIds')}
-            rows={2}
+          <Select
+            mode="multiple"
+            showSearch
+            allowClear
+            value={editor.skillIds}
+            onChange={(value) => setEditor((prev) => ({ ...prev, skillIds: value }))}
+            options={editorSkillOptions}
+            placeholder={t('agents.skillSelectPlaceholder')}
+            optionFilterProp="label"
+            style={{ width: '100%' }}
           />
           <Space>
             <Text>{t('agents.status')}</Text>

@@ -31,6 +31,8 @@ const client = axios.create({
   timeout: 30000,
 });
 
+const AI_CREATE_AGENT_TIMEOUT_MS = 180000;
+
 type RawUserItem = {
   username: string;
   role: string;
@@ -439,7 +441,9 @@ export const api = {
     default_skill_ids?: string[];
     enabled?: boolean;
   }): Promise<{ created: boolean; agent: MemoryAgent; source?: string }> {
-    const { data } = await client.post('/agents/ai-create', payload);
+    const { data } = await client.post('/agents/ai-create', payload, {
+      timeout: AI_CREATE_AGENT_TIMEOUT_MS,
+    });
     return data;
   },
 

@@ -107,6 +107,36 @@ pub async fn list_plugins(
     cursor.try_collect().await.map_err(|e| e.to_string())
 }
 
+pub async fn list_plugins_by_user_ids(
+    db: &Db,
+    user_ids: &[String],
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<MemorySkillPlugin>, String> {
+    if user_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let filter = if user_ids.len() == 1 {
+        doc! { "user_id": user_ids[0].clone() }
+    } else {
+        doc! { "user_id": { "$in": user_ids } }
+    };
+
+    let options = FindOptions::builder()
+        .sort(doc! {"updated_at": -1})
+        .limit(Some(limit.max(1).min(1000)))
+        .skip(Some(offset.max(0) as u64))
+        .build();
+
+    let cursor = plugin_collection(db)
+        .find(filter)
+        .with_options(options)
+        .await
+        .map_err(|e| e.to_string())?;
+    cursor.try_collect().await.map_err(|e| e.to_string())
+}
+
 pub async fn get_plugins_by_sources(
     db: &Db,
     user_id: &str,

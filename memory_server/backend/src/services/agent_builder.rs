@@ -8,7 +8,10 @@ use serde_json::{json, Map, Value};
 
 use crate::config::AppConfig;
 use crate::db::Db;
-use crate::models::{AiModelConfig, CreateMemoryAgentRequest, MemoryAgent, MemoryAgentSkill};
+use crate::models::{
+    AiModelConfig, CreateMemoryAgentRequest, MemoryAgent, MemoryAgentSkill, MemorySkill,
+    MemorySkillPlugin,
+};
 use crate::repositories::{
     agents as agents_repo, auth::ADMIN_USER_ID, configs, skills as skills_repo,
 };
@@ -195,9 +198,45 @@ async fn run_tool_loop(
     runtime: &ModelRuntime,
     context: &mut ToolContext<'_>,
 ) -> Result<ToolLoopOutcome, (StatusCode, String)> {
+    let visible_skills = skills_repo::list_skills(
+        context.db,
+        context.visible_user_ids.as_slice(),
+        None,
+        None,
+        1000,
+        0,
+    )
+    .await
+    .map_err(|err| internal_error(format!("load skills for tool loop failed: {err}")))?;
+    let visible_agents = agents_repo::list_agents(
+        context.db,
+        context.visible_user_ids.as_slice(),
+        Some(true),
+        200,
+        0,
+    )
+    .await
+    .map_err(|err| internal_error(format!("load agents for tool loop failed: {err}")))?;
+    let visible_plugins = skills_repo::list_plugins_by_user_ids(
+        context.db,
+        context.visible_user_ids.as_slice(),
+        300,
+        0,
+    )
+    .await
+    .map_err(|err| internal_error(format!("load skill plugins for tool loop failed: {err}")))?;
+
     let mut messages = vec![
         json!({"role": "system", "content": build_tool_loop_system_prompt()}),
-        json!({"role": "user", "content": build_tool_loop_user_prompt(context.request)}),
+        json!({
+            "role": "user",
+            "content": build_tool_loop_user_prompt(
+                context.request,
+                visible_skills.as_slice(),
+                visible_agents.as_slice(),
+                visible_plugins.as_slice(),
+            )
+        }),
     ];
     let tools = build_agent_builder_tools();
     let mut created_agent = None;
@@ -298,7 +337,7 @@ async fn run_plain_json_fallback(
         context.visible_user_ids.as_slice(),
         None,
         None,
-        80,
+        1000,
         0,
     )
     .await
@@ -307,11 +346,19 @@ async fn run_plain_json_fallback(
         context.db,
         context.visible_user_ids.as_slice(),
         Some(true),
-        24,
+        200,
         0,
     )
     .await
     .map_err(|err| internal_error(format!("load agents for fallback failed: {err}")))?;
+    let visible_plugins = skills_repo::list_plugins_by_user_ids(
+        context.db,
+        context.visible_user_ids.as_slice(),
+        300,
+        0,
+    )
+    .await
+    .map_err(|err| internal_error(format!("load skill plugins for fallback failed: {err}")))?;
     context.state.listed_skills = true;
 
     let response = request_chat_completion(
@@ -321,7 +368,12 @@ async fn run_plain_json_fallback(
             json!({"role": "system", "content": build_plain_system_prompt()}),
             json!({
                 "role": "user",
-                "content": build_plain_user_prompt(context.request, visible_skills.as_slice(), visible_agents.as_slice()),
+                "content": build_plain_user_prompt(
+                    context.request,
+                    visible_skills.as_slice(),
+                    visible_agents.as_slice(),
+                    visible_plugins.as_slice(),
+                ),
             }),
         ],
         None,
@@ -406,7 +458,9 @@ async fn list_available_skills(
 ) -> Result<ToolExecution, String> {
     let query = optional_string(arguments, "query");
     let plugin_source = optional_string(arguments, "plugin_source");
-    let limit = optional_i64(arguments, "limit").unwrap_or(60).clamp(1, 120);
+    let limit = optional_i64(arguments, "limit")
+        .unwrap_or(300)
+        .clamp(1, 1000);
 
     let skills = skills_repo::list_skills(
         context.db,
@@ -947,7 +1001,7 @@ fn build_agent_builder_tools() -> Vec<Value> {
                     "properties": {
                         "query": { "type": "string" },
                         "plugin_source": { "type": "string" },
-                        "limit": { "type": "integer", "minimum": 1, "maximum": 120 }
+                        "limit": { "type": "integer", "minimum": 1, "maximum": 1000 }
                     },
                     "additionalProperties": false
                 }
@@ -1024,7 +1078,15 @@ fn build_tool_loop_system_prompt() -> String {
     .join("\n")
 }
 
-fn build_tool_loop_user_prompt(request: &NormalizedRequest) -> String {
+fn build_tool_loop_user_prompt(
+    request: &NormalizedRequest,
+    skills: &[MemorySkill],
+    agents: &[MemoryAgent],
+    plugins: &[MemorySkillPlugin],
+) -> String {
+    let skill_index = build_skill_index(skills);
+    let agent_index = build_agent_index(agents);
+    let plugin_index = build_plugin_index(plugins);
     let payload = json!({
         "target_user_id": request.scope_user_id,
         "requirement": request.requirement,
@@ -1047,7 +1109,10 @@ fn build_tool_loop_user_prompt(request: &NormalizedRequest) -> String {
         "skill_selection_policy": {
             "prefer_installed_skill_ids": true,
             "allow_inline_skills_only_when_skill_center_empty_or_explicit_prompts": true,
-        }
+        },
+        "visible_skill_plugins": plugin_index,
+        "visible_skills": skill_index,
+        "reference_agents": agent_index,
     });
 
     format!(
@@ -1068,36 +1133,13 @@ fn build_plain_system_prompt() -> String {
 
 fn build_plain_user_prompt(
     request: &NormalizedRequest,
-    skills: &[crate::models::MemorySkill],
+    skills: &[MemorySkill],
     agents: &[MemoryAgent],
+    plugins: &[MemorySkillPlugin],
 ) -> String {
-    let skills_view = skills
-        .iter()
-        .map(|skill| {
-            json!({
-                "id": skill.id,
-                "name": skill.name,
-                "description": skill.description,
-                "plugin_source": skill.plugin_source,
-                "source_path": skill.source_path,
-                "content_preview": truncate_text(skill.content.as_str(), 320),
-            })
-        })
-        .collect::<Vec<_>>();
-    let agents_view = agents
-        .iter()
-        .map(|agent| {
-            json!({
-                "id": agent.id,
-                "name": agent.name,
-                "category": agent.category,
-                "description": agent.description,
-                "skill_ids": agent.skill_ids,
-                "default_skill_ids": agent.default_skill_ids,
-                "role_definition_preview": truncate_text(agent.role_definition.as_str(), 220),
-            })
-        })
-        .collect::<Vec<_>>();
+    let skills_view = build_skill_index(skills);
+    let agents_view = build_agent_index(agents);
+    let plugins_view = build_plugin_index(plugins);
     let payload = json!({
         "request": {
             "target_user_id": request.scope_user_id,
@@ -1119,6 +1161,7 @@ fn build_plain_user_prompt(
                 "project_root": request.project_root,
             }
         },
+        "visible_skill_plugins": plugins_view,
         "visible_skills": skills_view,
         "reference_agents": agents_view,
         "skill_selection_policy": {
@@ -1129,6 +1172,57 @@ fn build_plain_user_prompt(
     });
 
     serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string())
+}
+
+fn build_skill_index(skills: &[MemorySkill]) -> Vec<Value> {
+    skills
+        .iter()
+        .map(|skill| {
+            json!({
+                "id": skill.id,
+                "name": skill.name,
+                "description": skill.description.as_deref().map(|value| truncate_text(value, 180)),
+                "plugin_source": skill.plugin_source,
+                "source_path": skill.source_path,
+                "content_preview": truncate_text(skill.content.as_str(), 220),
+            })
+        })
+        .collect::<Vec<_>>()
+}
+
+fn build_agent_index(agents: &[MemoryAgent]) -> Vec<Value> {
+    agents
+        .iter()
+        .map(|agent| {
+            json!({
+                "id": agent.id,
+                "name": agent.name,
+                "category": agent.category,
+                "description": agent.description.as_deref().map(|value| truncate_text(value, 160)),
+                "skill_ids": agent.skill_ids,
+                "default_skill_ids": agent.default_skill_ids,
+                "role_definition_preview": truncate_text(agent.role_definition.as_str(), 220),
+            })
+        })
+        .collect::<Vec<_>>()
+}
+
+fn build_plugin_index(plugins: &[MemorySkillPlugin]) -> Vec<Value> {
+    plugins
+        .iter()
+        .map(|plugin| {
+            json!({
+                "id": plugin.id,
+                "source": plugin.source,
+                "name": plugin.name,
+                "category": plugin.category,
+                "description": plugin.description.as_deref().map(|value| truncate_text(value, 160)),
+                "installed": plugin.installed,
+                "discoverable_skills": plugin.discoverable_skills,
+                "installed_skill_count": plugin.installed_skill_count,
+            })
+        })
+        .collect::<Vec<_>>()
 }
 
 fn parse_tool_calls(value: Option<&Value>) -> Vec<ToolCall> {
