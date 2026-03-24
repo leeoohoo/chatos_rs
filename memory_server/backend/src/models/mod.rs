@@ -40,8 +40,9 @@ mod sessions;
 mod summaries;
 
 pub use self::agents::{
-    CreateMemoryAgentRequest, MemoryAgent, MemoryAgentRuntimeContext, MemoryAgentSkill,
-    MemorySkill, MemorySkillPlugin, UpdateMemoryAgentRequest,
+    CreateMemoryAgentRequest, MemoryAgent, MemoryAgentRuntimeContext,
+    MemoryAgentRuntimePluginSummary, MemoryAgentRuntimeSkillSummary, MemoryAgentSkill, MemorySkill,
+    MemorySkillPlugin, UpdateMemoryAgentRequest,
 };
 pub use self::ai_models::{AiModelConfig, UpsertAiModelConfigRequest};
 pub use self::compose::{ComposeContextMeta, ComposeContextRequest, ComposeContextResponse};

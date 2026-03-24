@@ -210,6 +210,7 @@ impl AgentBuilderService {
                     "category": { "type": "string" },
                     "user_id": { "type": "string" },
                     "enabled": { "type": "boolean" },
+                    "plugin_sources": { "type": "array", "items": { "type": "string" } },
                     "skill_ids": { "type": "array", "items": { "type": "string" } },
                     "default_skill_ids": { "type": "array", "items": { "type": "string" } },
                     "skills": {
@@ -242,6 +243,7 @@ impl AgentBuilderService {
                     description: optional_string(&args, "description"),
                     category: optional_string(&args, "category"),
                     role_definition,
+                    plugin_sources: optional_string_array(&args, "plugin_sources"),
                     skills: optional_skill_array(&args, "skills"),
                     skill_ids: optional_string_array(&args, "skill_ids"),
                     default_skill_ids: optional_string_array(&args, "default_skill_ids"),
@@ -272,6 +274,7 @@ impl AgentBuilderService {
                     "description": { "type": "string" },
                     "category": { "type": "string" },
                     "enabled": { "type": "boolean" },
+                    "plugin_sources": { "type": "array", "items": { "type": "string" } },
                     "skill_ids": { "type": "array", "items": { "type": "string" } },
                     "default_skill_ids": { "type": "array", "items": { "type": "string" } },
                     "skills": {
@@ -300,6 +303,7 @@ impl AgentBuilderService {
                     description: optional_string(&args, "description"),
                     category: optional_string(&args, "category"),
                     role_definition: optional_string(&args, "role_definition"),
+                    plugin_sources: optional_string_array(&args, "plugin_sources"),
                     skills: optional_skill_array(&args, "skills"),
                     skill_ids: optional_string_array(&args, "skill_ids"),
                     default_skill_ids: optional_string_array(&args, "default_skill_ids"),
@@ -344,6 +348,7 @@ impl AgentBuilderService {
                             "additionalProperties": false
                         }
                     },
+                    "plugin_sources": { "type": "array", "items": { "type": "string" } },
                     "skill_ids": { "type": "array", "items": { "type": "string" } }
                 },
                 "required": ["role_definition"],
@@ -352,10 +357,16 @@ impl AgentBuilderService {
             Arc::new(move |args, _default_user_id| {
                 let role_definition = required_string(&args, "role_definition")?;
                 let skills = optional_skill_array(&args, "skills").unwrap_or_default();
+                let plugin_sources =
+                    optional_string_array(&args, "plugin_sources").unwrap_or_default();
                 let skill_ids = optional_string_array(&args, "skill_ids").unwrap_or_default();
                 let mut text = String::new();
                 text.push_str("角色定义:\n");
                 text.push_str(role_definition.as_str());
+                if !plugin_sources.is_empty() {
+                    text.push_str("\n\n插件范围: ");
+                    text.push_str(plugin_sources.join(", ").as_str());
+                }
                 if !skills.is_empty() {
                     text.push_str("\n\n技能上下文:\n");
                     for (index, skill) in skills.iter().enumerate() {
@@ -373,6 +384,7 @@ impl AgentBuilderService {
                 Ok(text_result(json!({
                     "preview": text,
                     "role_definition_chars": role_definition.chars().count(),
+                    "plugin_sources_count": plugin_sources.len(),
                     "skills_count": skills.len(),
                     "skill_ids_count": skill_ids.len(),
                 })))

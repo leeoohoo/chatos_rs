@@ -2,7 +2,9 @@ use mongodb::bson::doc;
 use tracing::info;
 
 use super::index_helpers::{ensure_index, ensure_unique_index, ensure_unique_partial_index};
-use super::normalize::{normalize_running_job_runs, normalize_summary_status};
+use super::normalize::{
+    normalize_agent_plugin_sources, normalize_running_job_runs, normalize_summary_status,
+};
 use super::Db;
 
 pub async fn init_schema(db: &Db) -> Result<(), String> {
@@ -15,6 +17,7 @@ pub async fn init_schema(db: &Db) -> Result<(), String> {
     ensure_project_memory_indexes(db).await?;
 
     normalize_summary_status(db).await?;
+    normalize_agent_plugin_sources(db).await?;
 
     info!("[MEMORY-SERVER] mongodb indexes initialized");
     Ok(())

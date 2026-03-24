@@ -7,6 +7,7 @@ mod dto;
 mod http;
 mod mapping;
 mod session_ops;
+mod skill_ops;
 #[cfg(test)]
 mod tests;
 
@@ -32,6 +33,7 @@ pub use self::session_ops::{
     list_messages, list_sessions, list_summaries, update_session, upsert_message,
     upsert_summary_job_config,
 };
+pub use self::skill_ops::get_memory_skill;
 
 pub async fn with_access_token_scope<T, Fut>(access_token: Option<String>, future: Fut) -> T
 where

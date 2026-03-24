@@ -23,7 +23,8 @@ use crate::core::chat_stream::{
     build_v3_callbacks, handle_chat_result, send_error_event, send_start_event,
 };
 use crate::core::mcp_runtime::{
-    has_any_mcp_server, load_mcp_servers_by_selection, normalize_mcp_ids,
+    contact_agent_skill_reader_server, has_any_mcp_server, load_mcp_servers_by_selection,
+    normalize_mcp_ids,
 };
 use crate::core::user_scope::{ensure_and_set_user_id, resolve_user_id};
 use crate::services::memory_server_client;
@@ -234,11 +235,22 @@ async fn stream_chat_v3(sender: SseSender, req: ChatRequest) {
         effective_user_id.clone(),
     )
     .await;
-    let final_system_prompt =
-        compose_contact_system_prompt(base_system_prompt, contact_runtime_context.as_ref());
-    if final_system_prompt.is_some() {
-        ai_server.set_system_prompt(final_system_prompt);
+    let contact_system_prompt = compose_contact_system_prompt(contact_runtime_context.as_ref());
+    if base_system_prompt.is_some() {
+        ai_server.set_system_prompt(base_system_prompt);
     }
+    let prefixed_input_items = contact_system_prompt.as_ref().map(|prompt| {
+        vec![json!({
+            "type": "message",
+            "role": "system",
+            "content": [
+                {
+                    "type": "input_text",
+                    "text": prompt,
+                }
+            ]
+        })]
+    });
 
     let requested_project_id = normalize_id(req.project_id)
         .or_else(|| project_id_from_metadata(session_metadata))
@@ -263,7 +275,7 @@ async fn stream_chat_v3(sender: SseSender, req: ChatRequest) {
         .mcp_enabled
         .or_else(|| mcp_enabled_from_metadata(session_metadata))
         .unwrap_or(true);
-    let (http_servers, stdio_servers, builtin_servers) = if mcp_enabled {
+    let (http_servers, stdio_servers, mut builtin_servers) = if mcp_enabled {
         load_mcp_servers_by_selection(
             effective_user_id.clone(),
             !normalized_mcp_ids.is_empty(),
@@ -275,6 +287,18 @@ async fn stream_chat_v3(sender: SseSender, req: ChatRequest) {
     } else {
         (Vec::new(), Vec::new(), Vec::new())
     };
+    if let Some(agent_id) = contact_runtime_context
+        .as_ref()
+        .map(|context| context.agent_id.as_str())
+    {
+        if let Some(server) = contact_agent_skill_reader_server(
+            effective_user_id.clone(),
+            resolved_project_id.clone(),
+            agent_id,
+        ) {
+            builtin_servers.push(server);
+        }
+    }
     let use_tools = has_any_mcp_server(&http_servers, &stdio_servers, &builtin_servers);
     let mut mcp_exec = McpToolExecute::new(
         http_servers.clone(),
@@ -327,6 +351,7 @@ async fn stream_chat_v3(sender: SseSender, req: ChatRequest) {
                 turn_id: req.turn_id.clone(),
                 message_mode: Some("model".to_string()),
                 message_source: Some(model_runtime.model.clone()),
+                prefixed_input_items,
             },
         )
         .await;

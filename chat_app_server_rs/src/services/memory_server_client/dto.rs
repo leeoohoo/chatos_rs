@@ -44,6 +44,39 @@ pub struct MemoryAgentSkillDto {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct MemorySkillDto {
+    pub id: String,
+    pub user_id: String,
+    pub plugin_source: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub content: String,
+    pub source_path: String,
+    pub version: Option<String>,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct MemoryAgentRuntimePluginSummaryDto {
+    pub source: String,
+    pub name: String,
+    pub category: Option<String>,
+    pub description: Option<String>,
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct MemoryAgentRuntimeSkillSummaryDto {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub plugin_source: Option<String>,
+    pub source_type: String,
+    pub source_path: Option<String>,
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct MemoryAgentDto {
     pub id: String,
     pub user_id: String,
@@ -51,6 +84,8 @@ pub struct MemoryAgentDto {
     pub description: Option<String>,
     pub category: Option<String>,
     pub role_definition: String,
+    #[serde(default)]
+    pub plugin_sources: Vec<String>,
     #[serde(default)]
     pub skills: Vec<MemoryAgentSkillDto>,
     #[serde(default)]
@@ -187,11 +222,19 @@ pub struct CreateMemoryContactResponseDto {
 pub struct MemoryAgentRuntimeContextDto {
     pub agent_id: String,
     pub name: String,
+    pub description: Option<String>,
+    pub category: Option<String>,
     pub role_definition: String,
+    #[serde(default)]
+    pub plugin_sources: Vec<String>,
+    #[serde(default)]
+    pub runtime_plugins: Vec<MemoryAgentRuntimePluginSummaryDto>,
     #[serde(default)]
     pub skills: Vec<MemoryAgentSkillDto>,
     #[serde(default)]
     pub skill_ids: Vec<String>,
+    #[serde(default)]
+    pub runtime_skills: Vec<MemoryAgentRuntimeSkillSummaryDto>,
     pub mcp_policy: Option<Value>,
     pub project_policy: Option<Value>,
     pub updated_at: String,
@@ -238,6 +281,7 @@ pub struct CreateMemoryAgentRequestDto {
     pub description: Option<String>,
     pub category: Option<String>,
     pub role_definition: String,
+    pub plugin_sources: Option<Vec<String>>,
     pub skills: Option<Vec<MemoryAgentSkillDto>>,
     pub skill_ids: Option<Vec<String>>,
     pub default_skill_ids: Option<Vec<String>>,
@@ -252,6 +296,7 @@ pub struct UpdateMemoryAgentRequestDto {
     pub description: Option<String>,
     pub category: Option<String>,
     pub role_definition: Option<String>,
+    pub plugin_sources: Option<Vec<String>>,
     pub skills: Option<Vec<MemoryAgentSkillDto>>,
     pub skill_ids: Option<Vec<String>>,
     pub default_skill_ids: Option<Vec<String>>,

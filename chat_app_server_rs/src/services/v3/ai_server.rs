@@ -126,6 +126,7 @@ impl AiServer {
                     conversation_turn_id: turn_id.clone(),
                     message_mode: options.message_mode.clone(),
                     message_source: options.message_source.clone(),
+                    prefixed_input_items: options.prefixed_input_items.clone(),
                     callbacks: Some(if use_tools {
                         callbacks
                     } else {
@@ -155,4 +156,5 @@ pub struct ChatOptions {
     pub turn_id: Option<String>,
     pub message_mode: Option<String>,
     pub message_source: Option<String>,
+    pub prefixed_input_items: Option<Vec<Value>>,
 }

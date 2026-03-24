@@ -18,6 +18,7 @@ impl AiClient {
         raw_input: &Value,
         stable_prefix_mode: bool,
         include_tool_items: bool,
+        prefixed_input_items: &[Value],
         pending_tool_calls: Option<&Vec<Value>>,
         pending_tool_outputs: Option<&Vec<Value>>,
         use_prev_id: &mut bool,
@@ -57,6 +58,7 @@ impl AiClient {
                     *adaptive_history_limit,
                     stable_prefix_mode,
                     include_tool_items,
+                    prefixed_input_items,
                 )
                 .await;
             if !stateless.is_empty() {
@@ -86,6 +88,7 @@ impl AiClient {
                     *adaptive_history_limit,
                     stable_prefix_mode,
                     include_tool_items,
+                    prefixed_input_items,
                 )
                 .await
             };
@@ -119,7 +122,12 @@ impl AiClient {
             let normalized_items = if let Some(items) = input.as_array() {
                 items.clone()
             } else {
-                super::super::build_current_input_items(input, *force_text_content)
+                let mut items = prefixed_input_items.to_vec();
+                items.extend(super::super::build_current_input_items(
+                    input,
+                    *force_text_content,
+                ));
+                items
             };
             *input = Value::Array(normalized_items.clone());
             *stateless_context_items = Some(normalized_items);
@@ -155,6 +163,7 @@ impl AiClient {
                     *adaptive_history_limit,
                     stable_prefix_mode,
                     include_tool_items,
+                    prefixed_input_items,
                 )
                 .await;
             if !stateless.is_empty() {

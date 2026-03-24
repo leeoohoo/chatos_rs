@@ -26,6 +26,7 @@ impl AiClient {
         let purpose = options.purpose.unwrap_or_else(|| "chat".to_string());
         let message_mode = options.message_mode;
         let message_source = options.message_source;
+        let prefixed_input_items = options.prefixed_input_items.unwrap_or_default();
         let turn_id = options
             .conversation_turn_id
             .as_deref()
@@ -119,6 +120,7 @@ impl AiClient {
                     stateless_history_limit,
                     stable_prefix_mode,
                     force_text_content,
+                    prefixed_input_items.as_slice(),
                     &current_items,
                     include_tool_items,
                 )
@@ -148,6 +150,7 @@ impl AiClient {
             stateless_history_limit,
             stable_prefix_mode,
             force_text_content,
+            prefixed_input_items,
             prefer_stateless,
             message_mode,
             message_source,

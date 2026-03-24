@@ -80,6 +80,7 @@ impl AiClient {
         purpose: Option<String>,
         message_mode: Option<String>,
         message_source: Option<String>,
+        prefixed_messages: Vec<Value>,
     ) -> Result<Value, String> {
         let resolved_purpose = purpose.unwrap_or_else(|| "chat".to_string());
         let mut all_messages: Vec<Value> = Vec::new();
@@ -87,6 +88,7 @@ impl AiClient {
         if let Some(prompt) = self.system_prompt.clone() {
             all_messages.push(json!({"role": "system", "content": prompt}));
         }
+        all_messages.extend(prefixed_messages);
 
         let mut history_messages: Vec<Value> = Vec::new();
         if session_id.is_some() {

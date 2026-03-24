@@ -36,7 +36,11 @@ pub(super) fn optional_string_array(args: &Value, key: &str) -> Option<Vec<Strin
         }
         out.push(trimmed.to_string());
     }
-    Some(out)
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
+    }
 }
 
 pub(super) fn optional_skill_array(args: &Value, key: &str) -> Option<Vec<MemoryAgentSkillDto>> {

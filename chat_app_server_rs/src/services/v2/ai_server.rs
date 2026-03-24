@@ -122,6 +122,7 @@ impl AiServer {
                 Some("chat".to_string()),
                 options.message_mode.clone(),
                 options.message_source.clone(),
+                options.prefixed_messages.unwrap_or_default(),
             )
             .await?;
 
@@ -144,4 +145,5 @@ pub struct ChatOptions {
     pub turn_id: Option<String>,
     pub message_mode: Option<String>,
     pub message_source: Option<String>,
+    pub prefixed_messages: Option<Vec<Value>>,
 }

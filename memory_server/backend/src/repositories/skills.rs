@@ -87,6 +87,28 @@ pub async fn get_skill_by_id(
         .map_err(|e| e.to_string())
 }
 
+pub async fn list_skills_by_ids(
+    db: &Db,
+    user_ids: &[String],
+    skill_ids: &[String],
+) -> Result<Vec<MemorySkill>, String> {
+    if user_ids.is_empty() || skill_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let filter = if user_ids.len() == 1 {
+        doc! { "user_id": user_ids[0].clone(), "id": { "$in": skill_ids } }
+    } else {
+        doc! { "user_id": { "$in": user_ids }, "id": { "$in": skill_ids } }
+    };
+
+    let cursor = skill_collection(db)
+        .find(filter)
+        .await
+        .map_err(|e| e.to_string())?;
+    cursor.try_collect().await.map_err(|e| e.to_string())
+}
+
 pub async fn list_plugins(
     db: &Db,
     user_id: &str,
@@ -148,6 +170,28 @@ pub async fn get_plugins_by_sources(
 
     let cursor = plugin_collection(db)
         .find(doc! { "user_id": user_id, "source": { "$in": sources } })
+        .await
+        .map_err(|e| e.to_string())?;
+    cursor.try_collect().await.map_err(|e| e.to_string())
+}
+
+pub async fn get_plugins_by_sources_for_user_ids(
+    db: &Db,
+    user_ids: &[String],
+    sources: &[String],
+) -> Result<Vec<MemorySkillPlugin>, String> {
+    if user_ids.is_empty() || sources.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let filter = if user_ids.len() == 1 {
+        doc! { "user_id": user_ids[0].clone(), "source": { "$in": sources } }
+    } else {
+        doc! { "user_id": { "$in": user_ids }, "source": { "$in": sources } }
+    };
+
+    let cursor = plugin_collection(db)
+        .find(filter)
         .await
         .map_err(|e| e.to_string())?;
     cursor.try_collect().await.map_err(|e| e.to_string())

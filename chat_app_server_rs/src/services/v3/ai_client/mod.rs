@@ -39,6 +39,7 @@ pub struct ProcessOptions {
     pub conversation_turn_id: Option<String>,
     pub message_mode: Option<String>,
     pub message_source: Option<String>,
+    pub prefixed_input_items: Option<Vec<Value>>,
     pub callbacks: Option<AiClientCallbacks>,
 }
 

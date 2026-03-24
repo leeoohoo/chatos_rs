@@ -25,6 +25,7 @@ pub struct AiCreateAgentRequest {
     pub category: Option<String>,
     pub description: Option<String>,
     pub role_definition: Option<String>,
+    pub plugin_sources: Option<Vec<String>>,
     pub skill_ids: Option<Vec<String>>,
     pub default_skill_ids: Option<Vec<String>>,
     pub skill_prompts: Option<Vec<String>>,
@@ -55,6 +56,7 @@ struct NormalizedRequest {
     category: Option<String>,
     description: Option<String>,
     role_definition: Option<String>,
+    plugin_sources: Option<Vec<String>>,
     skill_ids: Option<Vec<String>>,
     default_skill_ids: Option<Vec<String>>,
     skill_prompts: Option<Vec<String>>,
@@ -164,6 +166,7 @@ impl NormalizedRequest {
             category: normalize_optional_text(req.category),
             description: normalize_optional_text(req.description),
             role_definition: normalize_optional_text(req.role_definition),
+            plugin_sources: normalize_optional_string_array(req.plugin_sources),
             skill_ids: normalize_optional_string_array(req.skill_ids),
             default_skill_ids: normalize_optional_string_array(req.default_skill_ids),
             skill_prompts: normalize_optional_string_array(req.skill_prompts),
@@ -553,6 +556,7 @@ async fn list_existing_agents(
                 "name": agent.name,
                 "description": agent.description,
                 "category": agent.category,
+                "plugin_sources": agent.plugin_sources,
                 "role_definition_preview": truncate_text(agent.role_definition.as_str(), 320),
                 "skill_ids": agent.skill_ids,
                 "default_skill_ids": agent.default_skill_ids,
@@ -601,6 +605,7 @@ async fn create_memory_agent(
                 "name": created.name,
                 "description": created.description,
                 "category": created.category,
+                "plugin_sources": created.plugin_sources,
                 "skill_ids": created.skill_ids,
                 "default_skill_ids": created.default_skill_ids,
                 "enabled": created.enabled,
@@ -728,6 +733,32 @@ async fn build_create_agent_request(
         };
     }
 
+    let mut plugin_sources = context
+        .request
+        .plugin_sources
+        .clone()
+        .or_else(|| {
+            payload
+                .get("plugin_sources")
+                .and_then(parse_string_array_from_value)
+        })
+        .unwrap_or_default();
+    dedupe_strings(&mut plugin_sources);
+
+    for skill in visible_skills
+        .items
+        .iter()
+        .filter(|skill| skill_ids.iter().any(|item| item == &skill.id))
+    {
+        if plugin_sources
+            .iter()
+            .any(|item| item == &skill.plugin_source)
+        {
+            continue;
+        }
+        plugin_sources.push(skill.plugin_source.clone());
+    }
+
     validate_skill_ids(
         &visible_skills,
         skill_ids.as_slice(),
@@ -752,6 +783,11 @@ async fn build_create_agent_request(
         description,
         category,
         role_definition,
+        plugin_sources: if plugin_sources.is_empty() {
+            None
+        } else {
+            Some(plugin_sources)
+        },
         skills: if inline_skills.is_empty() {
             None
         } else {
@@ -1037,6 +1073,7 @@ fn build_agent_builder_tools() -> Vec<Value> {
                         "description": { "type": "string" },
                         "category": { "type": "string" },
                         "enabled": { "type": "boolean" },
+                        "plugin_sources": { "type": "array", "items": { "type": "string" } },
                         "skill_ids": { "type": "array", "items": { "type": "string" } },
                         "default_skill_ids": { "type": "array", "items": { "type": "string" } },
                         "skills": {
@@ -1070,10 +1107,11 @@ fn build_tool_loop_system_prompt() -> String {
         "1. 必须先调用 list_available_skills。",
         "2. 如有必要再调用 list_existing_agents。",
         "3. 严禁虚构不存在的 skill_id。",
-        "4. 只有技能中心为空，或者用户显式提供了 skill_prompts 时，才允许创建内联 skills。",
-        "5. 最终必须调用 create_memory_agent，且只能成功一次。",
-        "6. 用户显式给出的 name/category/description/role_definition/skill_ids/default_skill_ids/mcp/project 约束必须优先尊重。",
-        "7. 最终回复必须是紧凑 JSON，不要输出 markdown。",
+        "4. plugin_sources 表示能力包范围，skill_ids 表示具体技能引用；最终输出应尽量同时包含两者。",
+        "5. 只有技能中心为空，或者用户显式提供了 skill_prompts 时，才允许创建内联 skills。",
+        "6. 最终必须调用 create_memory_agent，且只能成功一次。",
+        "7. 用户显式给出的 name/category/description/role_definition/plugin_sources/skill_ids/default_skill_ids/mcp/project 约束必须优先尊重。",
+        "8. 最终回复必须是紧凑 JSON，不要输出 markdown。",
     ]
     .join("\n")
 }
@@ -1094,6 +1132,7 @@ fn build_tool_loop_user_prompt(
         "explicit_category": request.category,
         "explicit_description": request.description,
         "explicit_role_definition": request.role_definition,
+        "preferred_plugin_sources": request.plugin_sources,
         "preferred_skill_ids": request.skill_ids,
         "preferred_default_skill_ids": request.default_skill_ids,
         "skill_prompts": request.skill_prompts,
@@ -1126,7 +1165,7 @@ fn build_plain_system_prompt() -> String {
         "你是 Memory 服务内部的 AI 智能体创建器。",
         "当前模型不支持工具调用，下面会直接给你可用技能和参考 agent。",
         "请输出一个紧凑 JSON 对象，字段遵循 create_memory_agent 的参数结构。",
-        "规则：优先复用已安装 skill_ids；只有当技能中心为空，或者用户显式提供了 skill_prompts 时，才允许输出 inline skills；不要输出 markdown。",
+        "规则：优先输出 plugin_sources + 已安装 skill_ids；只有当技能中心为空，或者用户显式提供了 skill_prompts 时，才允许输出 inline skills；不要输出 markdown。",
     ]
     .join("\n")
 }
@@ -1148,6 +1187,7 @@ fn build_plain_user_prompt(
             "explicit_category": request.category,
             "explicit_description": request.description,
             "explicit_role_definition": request.role_definition,
+            "preferred_plugin_sources": request.plugin_sources,
             "preferred_skill_ids": request.skill_ids,
             "preferred_default_skill_ids": request.default_skill_ids,
             "skill_prompts": request.skill_prompts,
@@ -1199,6 +1239,7 @@ fn build_agent_index(agents: &[MemoryAgent]) -> Vec<Value> {
                 "name": agent.name,
                 "category": agent.category,
                 "description": agent.description.as_deref().map(|value| truncate_text(value, 160)),
+                "plugin_sources": agent.plugin_sources,
                 "skill_ids": agent.skill_ids,
                 "default_skill_ids": agent.default_skill_ids,
                 "role_definition_preview": truncate_text(agent.role_definition.as_str(), 220),

@@ -19,6 +19,8 @@ pub struct MemoryAgent {
     pub category: Option<String>,
     pub role_definition: String,
     #[serde(default)]
+    pub plugin_sources: Vec<String>,
+    #[serde(default)]
     pub skills: Vec<MemoryAgentSkill>,
     #[serde(default)]
     pub skill_ids: Vec<String>,
@@ -39,6 +41,7 @@ pub struct CreateMemoryAgentRequest {
     pub description: Option<String>,
     pub category: Option<String>,
     pub role_definition: String,
+    pub plugin_sources: Option<Vec<String>>,
     pub skills: Option<Vec<MemoryAgentSkill>>,
     pub skill_ids: Option<Vec<String>>,
     pub default_skill_ids: Option<Vec<String>>,
@@ -53,6 +56,7 @@ pub struct UpdateMemoryAgentRequest {
     pub description: Option<String>,
     pub category: Option<String>,
     pub role_definition: Option<String>,
+    pub plugin_sources: Option<Vec<String>>,
     pub skills: Option<Vec<MemoryAgentSkill>>,
     pub skill_ids: Option<Vec<String>>,
     pub default_skill_ids: Option<Vec<String>>,
@@ -62,12 +66,40 @@ pub struct UpdateMemoryAgentRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryAgentRuntimePluginSummary {
+    pub source: String,
+    pub name: String,
+    pub category: Option<String>,
+    pub description: Option<String>,
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryAgentRuntimeSkillSummary {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub plugin_source: Option<String>,
+    pub source_type: String,
+    pub source_path: Option<String>,
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryAgentRuntimeContext {
     pub agent_id: String,
     pub name: String,
+    pub description: Option<String>,
+    pub category: Option<String>,
     pub role_definition: String,
+    #[serde(default)]
+    pub plugin_sources: Vec<String>,
+    #[serde(default)]
+    pub runtime_plugins: Vec<MemoryAgentRuntimePluginSummary>,
     pub skills: Vec<MemoryAgentSkill>,
     pub skill_ids: Vec<String>,
+    #[serde(default)]
+    pub runtime_skills: Vec<MemoryAgentRuntimeSkillSummary>,
     pub mcp_policy: Option<Value>,
     pub project_policy: Option<Value>,
     pub updated_at: String,

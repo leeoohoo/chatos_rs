@@ -201,8 +201,8 @@ pub(super) async fn run_process_with_tools(
             args.history_limit,
             args.stable_prefix_mode,
             false,
+            Vec::new(),
             args.prefer_stateless,
-            None,
             None,
             None,
         )

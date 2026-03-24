@@ -16,6 +16,7 @@ impl AiClient {
         force_text_content: bool,
         history_limit: i64,
         include_tool_items: bool,
+        prefixed_input_items: &[Value],
         stateless_context_items: &mut Option<Vec<Value>>,
         input: &mut Value,
     ) {
@@ -34,6 +35,7 @@ impl AiClient {
                 history_limit,
                 stable_prefix_mode,
                 force_text_content,
+                prefixed_input_items,
                 &current_items,
                 include_tool_items,
             )
@@ -64,6 +66,7 @@ impl AiClient {
         history_limit: i64,
         stable_prefix_mode: bool,
         force_text: bool,
+        prefixed_input_items: &[Value],
         current_input_items: &[Value],
         include_tool_items: bool,
     ) -> Vec<Value> {
@@ -84,6 +87,9 @@ impl AiClient {
         let use_full_pending_history = stable_prefix_mode && history_limit >= self.history_limit;
         let (merged_summary, merged_summary_count, mut pending_history) = context_data;
         memory_summary_count = merged_summary_count;
+        if !prefixed_input_items.is_empty() {
+            items.extend(prefixed_input_items.iter().cloned());
+        }
         if let Some(summary_text) = merged_summary {
             memory_summary_used = true;
             items.push(to_message_item(

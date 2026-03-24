@@ -1,5 +1,6 @@
 use crate::builtin::agent_builder::{AgentBuilderOptions, AgentBuilderService};
 use crate::builtin::code_maintainer::{CodeMaintainerOptions, CodeMaintainerService};
+use crate::builtin::memory_skill_reader::{MemorySkillReaderOptions, MemorySkillReaderService};
 use crate::builtin::notepad::{NotepadBuiltinService, NotepadOptions};
 use crate::builtin::task_manager::{TaskManagerOptions, TaskManagerService};
 use crate::builtin::terminal_controller::{TerminalControllerOptions, TerminalControllerService};
@@ -17,6 +18,7 @@ pub enum BuiltinToolService {
     Notepad(NotepadBuiltinService),
     AgentBuilder(AgentBuilderService),
     UiPrompter(UiPrompterService),
+    MemorySkillReader(MemorySkillReaderService),
 }
 
 impl BuiltinToolService {
@@ -28,6 +30,7 @@ impl BuiltinToolService {
             Self::Notepad(service) => service.list_tools(),
             Self::AgentBuilder(service) => service.list_tools(),
             Self::UiPrompter(service) => service.list_tools(),
+            Self::MemorySkillReader(service) => service.list_tools(),
         }
     }
 
@@ -64,6 +67,7 @@ impl BuiltinToolService {
                 conversation_turn_id,
                 on_stream_chunk,
             ),
+            Self::MemorySkillReader(service) => service.call_tool(name, args),
         }
     }
 }
@@ -142,6 +146,19 @@ pub fn build_builtin_tool_service(server: &McpBuiltinServer) -> Result<BuiltinTo
                 prompt_timeout_ms: crate::services::ui_prompt_manager::UI_PROMPT_TIMEOUT_MS_DEFAULT,
             })?;
             Ok(BuiltinToolService::UiPrompter(service))
+        }
+        BuiltinMcpKind::MemorySkillReader => {
+            let agent_id = server
+                .contact_agent_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| "missing contact agent id for memory_skill_reader".to_string())?;
+            let service = MemorySkillReaderService::new(MemorySkillReaderOptions {
+                server_name: server.name.clone(),
+                agent_id: agent_id.to_string(),
+            })?;
+            Ok(BuiltinToolService::MemorySkillReader(service))
         }
     }
 }

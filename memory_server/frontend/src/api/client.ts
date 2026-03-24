@@ -400,6 +400,7 @@ export const api = {
     description?: string;
     category?: string;
     role_definition: string;
+    plugin_sources?: string[];
     skill_ids?: string[];
     default_skill_ids?: string[];
     enabled?: boolean;
@@ -415,6 +416,7 @@ export const api = {
       description?: string;
       category?: string;
       role_definition?: string;
+      plugin_sources?: string[];
       skill_ids?: string[];
       default_skill_ids?: string[];
       enabled?: boolean;

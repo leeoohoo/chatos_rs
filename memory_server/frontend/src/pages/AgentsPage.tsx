@@ -21,7 +21,14 @@ import type { ColumnsType } from 'antd/es/table';
 
 import { api } from '../api/client';
 import { useI18n } from '../i18n';
-import type { AiModelConfig, MemoryAgent, MemorySkill, Message, Session } from '../types';
+import type {
+  AiModelConfig,
+  MemoryAgent,
+  MemorySkill,
+  MemorySkillPlugin,
+  Message,
+  Session,
+} from '../types';
 
 const { Text } = Typography;
 
@@ -37,6 +44,7 @@ interface AgentEditorState {
   description: string;
   category: string;
   roleDefinition: string;
+  pluginSources: string[];
   skillIds: string[];
   enabled: boolean;
 }
@@ -46,6 +54,7 @@ const EMPTY_EDITOR: AgentEditorState = {
   description: '',
   category: '',
   roleDefinition: '',
+  pluginSources: [],
   skillIds: [],
   enabled: true,
 };
@@ -67,6 +76,7 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
   const [aiModelConfigs, setAiModelConfigs] = useState<AiModelConfig[]>([]);
   const [aiModelsLoading, setAiModelsLoading] = useState(false);
   const [aiModelConfigId, setAiModelConfigId] = useState('');
+  const [pluginCatalog, setPluginCatalog] = useState<Record<string, MemorySkillPlugin>>({});
   const [skillCatalog, setSkillCatalog] = useState<Record<string, MemorySkill>>({});
   const [skillPreviewOpen, setSkillPreviewOpen] = useState(false);
   const [skillPreviewLoading, setSkillPreviewLoading] = useState(false);
@@ -129,15 +139,49 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
     !isAdmin && agent.user_id !== scopeUserId
   );
 
+  const normalizeStringArray = (items: string[]): string[] => Array.from(
+    new Set(items.map((item) => item.trim()).filter(Boolean)),
+  );
+
+  const derivePluginSourcesForSkillIds = (skillIds: string[]): string[] => normalizeStringArray(
+    skillIds
+      .map((skillId) => skillCatalog[skillId]?.plugin_source || '')
+      .filter(Boolean),
+  );
+
+  const mergePluginSourcesWithSkills = (pluginSources: string[], skillIds: string[]): string[] => (
+    normalizeStringArray([...pluginSources, ...derivePluginSourcesForSkillIds(skillIds)])
+  );
+
+  const resolvePluginDisplayName = (pluginSource: string): string => {
+    const normalized = pluginSource.trim();
+    if (!normalized) {
+      return '-';
+    }
+    const plugin = pluginCatalog[normalized];
+    return plugin?.name?.trim() || normalized;
+  };
+
   const load = async () => {
     setLoading(true);
     setError(null);
     try {
-      const [agents, skills] = await Promise.all([
+      const [agents, plugins, skills] = await Promise.all([
         api.listAgents(scopeUserId, { limit: 200, offset: 0 }),
+        api.listSkillPlugins(scopeUserId, { limit: 1000, offset: 0 }),
         api.listSkills(scopeUserId, { limit: 1000, offset: 0 }),
       ]);
       setItems(agents);
+      setPluginCatalog(
+        plugins.reduce<Record<string, MemorySkillPlugin>>((acc, plugin) => {
+          const source = plugin.source?.trim();
+          if (!source) {
+            return acc;
+          }
+          acc[source] = plugin;
+          return acc;
+        }, {}),
+      );
       setSkillCatalog(
         skills.reduce<Record<string, MemorySkill>>((acc, skill) => {
           acc[skill.id] = skill;
@@ -225,6 +269,10 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
       description: agent.description || '',
       category: agent.category || '',
       roleDefinition: agent.role_definition || '',
+      pluginSources: mergePluginSourcesWithSkills(
+        Array.isArray(agent.plugin_sources) ? agent.plugin_sources : [],
+        Array.isArray(agent.skill_ids) ? agent.skill_ids : [],
+      ),
       skillIds: Array.from(new Set((agent.skill_ids || []).map((item) => item.trim()).filter(Boolean))),
       enabled: agent.enabled !== false,
     });
@@ -240,7 +288,8 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
       return;
     }
 
-    const skillIds = Array.from(new Set(editor.skillIds.map((item) => item.trim()).filter(Boolean)));
+    const skillIds = normalizeStringArray(editor.skillIds);
+    const pluginSources = mergePluginSourcesWithSkills(editor.pluginSources, skillIds);
     setSaving(true);
     setError(null);
     try {
@@ -250,6 +299,7 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
           description: editor.description.trim() || undefined,
           category: editor.category.trim() || undefined,
           role_definition: roleDefinition,
+          plugin_sources: pluginSources,
           skill_ids: skillIds,
           default_skill_ids: skillIds,
           enabled: editor.enabled,
@@ -261,6 +311,7 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
           description: editor.description.trim() || undefined,
           category: editor.category.trim() || undefined,
           role_definition: roleDefinition,
+          plugin_sources: pluginSources,
           skill_ids: skillIds,
           default_skill_ids: skillIds,
           enabled: editor.enabled,
@@ -296,17 +347,34 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
     [aiModelConfigs],
   );
 
+  const editorPluginOptions = useMemo(
+    () => Object.values(pluginCatalog)
+      .map((plugin) => ({
+        value: plugin.source,
+        label: [plugin.name, plugin.source, plugin.category].filter((part) => part && `${part}`.trim()).join(' | '),
+      }))
+      .sort((left, right) => left.label.localeCompare(right.label)),
+    [pluginCatalog],
+  );
+
   const editorSkillOptions = useMemo(() => {
     const options = new Map<string, { value: string; label: string }>();
+    const selectedPluginSources = new Set(editor.pluginSources);
 
     Object.values(skillCatalog).forEach((skill) => {
       const skillId = skill.id?.trim();
       if (!skillId) {
         return;
       }
+      const pluginSource = skill.plugin_source?.trim() || '';
+      if (!selectedPluginSources.has(pluginSource) && !editor.skillIds.includes(skillId)) {
+        return;
+      }
       options.set(skillId, {
         value: skillId,
-        label: skill.name?.trim() || t('agents.unnamedSkill'),
+        label: [skill.name?.trim() || t('agents.unnamedSkill'), resolvePluginDisplayName(pluginSource)]
+          .filter(Boolean)
+          .join(' | '),
       });
     });
 
@@ -323,7 +391,7 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
     });
 
     return Array.from(options.values()).sort((left, right) => left.label.localeCompare(right.label));
-  }, [editorInlineSkillNames, skillCatalog, t]);
+  }, [editor.pluginSources, editor.skillIds, editorInlineSkillNames, pluginCatalog, skillCatalog, t]);
 
   const resolveSkillDisplayName = (agent: MemoryAgent, skillId: string): string => {
     const normalizedSkillId = skillId.trim();
@@ -529,6 +597,24 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
       key: 'category',
       width: 140,
       render: (value?: string | null) => <Tag>{value || '-'}</Tag>,
+    },
+    {
+      title: t('agents.plugins'),
+      dataIndex: 'plugin_sources',
+      key: 'plugin_sources',
+      width: 220,
+      render: (value: string[] | undefined) => {
+        if (!value || value.length === 0) {
+          return '-';
+        }
+        return (
+          <Space size={[4, 4]} wrap>
+            {value.map((pluginSource) => (
+              <Tag key={pluginSource}>{resolvePluginDisplayName(pluginSource)}</Tag>
+            ))}
+          </Space>
+        );
+      },
     },
     {
       title: t('agents.skills'),
@@ -821,12 +907,33 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
             mode="multiple"
             showSearch
             allowClear
-            value={editor.skillIds}
-            onChange={(value) => setEditor((prev) => ({ ...prev, skillIds: value }))}
-            options={editorSkillOptions}
-            placeholder={t('agents.skillSelectPlaceholder')}
+            value={editor.pluginSources}
+            onChange={(value) => setEditor((prev) => ({
+              ...prev,
+              pluginSources: mergePluginSourcesWithSkills(value, prev.skillIds),
+            }))}
+            options={editorPluginOptions}
+            placeholder={t('agents.pluginSelectPlaceholder')}
             optionFilterProp="label"
             style={{ width: '100%' }}
+          />
+          <Select
+            mode="multiple"
+            showSearch
+            allowClear
+            value={editor.skillIds}
+            onChange={(value) => setEditor((prev) => ({
+              ...prev,
+              skillIds: value,
+              pluginSources: mergePluginSourcesWithSkills(prev.pluginSources, value),
+            }))}
+            options={editorSkillOptions}
+            placeholder={editor.pluginSources.length > 0
+              ? t('agents.skillSelectPlaceholder')
+              : t('agents.skillSelectPluginFirst')}
+            optionFilterProp="label"
+            style={{ width: '100%' }}
+            disabled={editor.pluginSources.length === 0 && editor.skillIds.length === 0}
           />
           <Space>
             <Text>{t('agents.status')}</Text>

@@ -112,10 +112,18 @@ pub(super) async fn list_skill_plugins(
     };
 
     let scope_user_id = resolve_scope_user_id(&auth, q.user_id);
+    let visible_user_ids = resolve_visible_user_ids(scope_user_id.as_str());
     let limit = q.limit.unwrap_or(200);
     let offset = q.offset.unwrap_or(0);
 
-    match skills_repo::list_plugins(&state.pool, scope_user_id.as_str(), limit, offset).await {
+    match skills_repo::list_plugins_by_user_ids(
+        &state.pool,
+        visible_user_ids.as_slice(),
+        limit,
+        offset,
+    )
+    .await
+    {
         Ok(items) => (StatusCode::OK, Json(json!({"items": items}))),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,

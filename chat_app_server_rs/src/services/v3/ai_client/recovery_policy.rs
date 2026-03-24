@@ -15,6 +15,7 @@ impl AiClient {
         history_limit: i64,
         stable_prefix_mode: bool,
         include_tool_items: bool,
+        prefixed_input_items: &[Value],
     ) -> Vec<Value> {
         let current_items = build_current_input_items(raw_input, force_text_content);
         self.build_stateless_items(
@@ -22,6 +23,7 @@ impl AiClient {
             history_limit,
             stable_prefix_mode,
             force_text_content,
+            prefixed_input_items,
             &current_items,
             include_tool_items,
         )

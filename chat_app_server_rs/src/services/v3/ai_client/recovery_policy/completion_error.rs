@@ -16,6 +16,7 @@ impl AiClient {
         raw_input: &Value,
         stable_prefix_mode: bool,
         include_tool_items: bool,
+        prefixed_input_items: &[Value],
         pending_tool_calls: Option<&Vec<Value>>,
         pending_tool_outputs: Option<&Vec<Value>>,
         force_text_content: bool,
@@ -44,6 +45,7 @@ impl AiClient {
                     *adaptive_history_limit,
                     stable_prefix_mode,
                     include_tool_items,
+                    prefixed_input_items,
                 )
                 .await
             };
@@ -94,6 +96,7 @@ impl AiClient {
                         *adaptive_history_limit,
                         stable_prefix_mode,
                         include_tool_items,
+                        prefixed_input_items,
                     )
                     .await;
                 if !stateless.is_empty() {

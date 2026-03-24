@@ -131,6 +131,7 @@ export interface MemoryAgent {
   description?: string | null;
   category?: string | null;
   role_definition: string;
+  plugin_sources: string[];
   skills: MemoryAgentSkill[];
   skill_ids: string[];
   default_skill_ids: string[];

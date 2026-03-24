@@ -40,6 +40,8 @@ pub const UI_PROMPTER_DISPLAY_NAME: &str = "UI Prompter (Builtin)";
 pub const UI_PROMPTER_SERVER_NAME: &str = "ui_prompter";
 pub const UI_PROMPTER_COMMAND: &str = "builtin:ui_prompter";
 
+pub const MEMORY_SKILL_READER_SERVER_NAME: &str = "memory_skill_reader";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuiltinMcpKind {
     CodeMaintainerRead,
@@ -49,6 +51,7 @@ pub enum BuiltinMcpKind {
     Notepad,
     AgentBuilder,
     UiPrompter,
+    MemorySkillReader,
 }
 
 pub fn builtin_kind_by_id(id: &str) -> Option<BuiltinMcpKind> {
