@@ -129,6 +129,85 @@ export type DerivedProcessStats = {
   processMessageCount: number;
 };
 
+type RenderSegment = {
+  type: 'text' | 'thinking' | 'tool_call';
+  content?: string;
+  toolCallId?: string;
+};
+
+const compactTextChunks = (chunks: string[]): string => {
+  let merged = '';
+  for (const rawChunk of chunks) {
+    const chunk = typeof rawChunk === 'string' ? rawChunk : '';
+    if (!chunk) {
+      continue;
+    }
+    if (!merged) {
+      merged = chunk;
+      continue;
+    }
+    if (chunk.startsWith(merged)) {
+      merged = chunk;
+      continue;
+    }
+    if (merged.startsWith(chunk) || merged.endsWith(chunk)) {
+      continue;
+    }
+    merged += chunk;
+  }
+  return merged;
+};
+
+const normalizeContentSegmentsForRender = (segments: any[]): RenderSegment[] => {
+  if (!Array.isArray(segments) || segments.length === 0) {
+    return [];
+  }
+
+  const normalized: RenderSegment[] = [];
+  let index = 0;
+  while (index < segments.length) {
+    const segment = segments[index];
+    const type = String(segment?.type || '').trim();
+    if (type === 'text') {
+      const textChunks: string[] = [];
+      while (index < segments.length && String(segments[index]?.type || '').trim() === 'text') {
+        const chunk = typeof segments[index]?.content === 'string' ? segments[index].content : '';
+        if (chunk) {
+          textChunks.push(chunk);
+        }
+        index += 1;
+      }
+      const mergedText = compactTextChunks(textChunks);
+      if (mergedText.trim().length > 0) {
+        normalized.push({ type: 'text', content: mergedText });
+      }
+      continue;
+    }
+
+    if (type === 'thinking') {
+      const content = typeof segment?.content === 'string' ? segment.content : '';
+      if (content.trim().length > 0) {
+        normalized.push({ type: 'thinking', content });
+      }
+      index += 1;
+      continue;
+    }
+
+    if (type === 'tool_call') {
+      const toolCallId = typeof segment?.toolCallId === 'string' ? segment.toolCallId.trim() : '';
+      if (toolCallId) {
+        normalized.push({ type: 'tool_call', toolCallId });
+      }
+      index += 1;
+      continue;
+    }
+
+    index += 1;
+  }
+
+  return normalized;
+};
+
 
 interface MessageItemProps {
   message: Message;
@@ -294,6 +373,10 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
   const attachments = message.metadata?.attachments || [];
   // 获取工具调用数据 - 同时检查顶层和metadata中的toolCalls（兼容不同的数据格式）
   const toolCalls = (message as any).toolCalls || message.metadata?.toolCalls || [];
+  const renderContentSegments = useMemo(
+    () => normalizeContentSegmentsForRender(Array.isArray(message.metadata?.contentSegments) ? message.metadata.contentSegments : []),
+    [message.metadata?.contentSegments],
+  );
   const toolCallsById = useMemo(() => {
     if (!toolCalls || toolCalls.length === 0) return new Map<string, any>();
     const map = new Map<string, any>();
@@ -440,7 +523,7 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
           <div className="space-y-3">
             {/* 使用新的内容分段渲染机制 */}
             {(() => {
-              const contentSegments = message.metadata?.contentSegments || [];
+              const contentSegments = renderContentSegments;
               const hasContent = message.content && message.content.trim().length > 0;
               const isCurrentlyStreaming = isStreaming && isLast;
               
@@ -503,13 +586,13 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
                   }
 
                   if (segment.type === 'text') {
-                    const rawSegmentContent = typeof segment.content === 'string' ? segment.content : '';
-                    const renderSegmentContent = rawSegmentContent.trim().length > 0
-                      ? rawSegmentContent
+                    const renderSegmentContent = typeof segment.content === 'string' && segment.content.trim().length > 0
+                      ? segment.content
                       : '';
-                    const shouldRenderStreamingCursor = isCurrentlyStreaming && index === contentSegments.length - 1;
+                    const nextIndex = index + 1;
+                    const shouldRenderStreamingCursor = isCurrentlyStreaming && nextIndex === contentSegments.length;
                     if (!renderSegmentContent && !shouldRenderStreamingCursor) {
-                      index += 1;
+                      index = nextIndex;
                       continue;
                     }
                     nodes.push(
@@ -521,10 +604,9 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
                         />
                       </div>
                     );
-                    index += 1;
+                    index = nextIndex;
                     continue;
                   }
-
                   if (segment.type === 'thinking') {
                     if (collapseAssistantProcessByDefault) {
                       index += 1;

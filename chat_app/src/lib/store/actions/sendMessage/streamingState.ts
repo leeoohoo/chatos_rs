@@ -107,7 +107,7 @@ export const createStreamingMessageStateHelpers = ({
     }
   };
 
-  const appendTextToStreamingMessage = (contentStr: string) => {
+  const applyTextDeltaToMessage = (contentStr: string) => {
     if (!contentStr) return;
 
     set((state: any) => {
@@ -158,10 +158,69 @@ export const createStreamingMessageStateHelpers = ({
     });
   };
 
+  const STREAM_TEXT_FLUSH_INTERVAL_MS = 40;
+  let pendingTextDelta = '';
+  let flushScheduledAt = 0;
+  let flushTimeoutId: ReturnType<typeof setTimeout> | null = null;
+  let flushRafId: number | null = null;
+
+  const clearTextFlushHandles = () => {
+    if (flushTimeoutId !== null) {
+      clearTimeout(flushTimeoutId);
+      flushTimeoutId = null;
+    }
+    if (flushRafId !== null && typeof cancelAnimationFrame === 'function') {
+      cancelAnimationFrame(flushRafId);
+      flushRafId = null;
+    }
+  };
+
+  const flushPendingTextToStreamingMessage = () => {
+    if (!pendingTextDelta) {
+      clearTextFlushHandles();
+      return;
+    }
+    const nextDelta = pendingTextDelta;
+    pendingTextDelta = '';
+    clearTextFlushHandles();
+    flushScheduledAt = Date.now();
+    applyTextDeltaToMessage(nextDelta);
+  };
+
+  const schedulePendingTextFlush = () => {
+    if (flushTimeoutId !== null || flushRafId !== null) {
+      return;
+    }
+
+    const elapsed = Date.now() - flushScheduledAt;
+    const wait = Math.max(0, STREAM_TEXT_FLUSH_INTERVAL_MS - elapsed);
+
+    flushTimeoutId = setTimeout(() => {
+      flushTimeoutId = null;
+      if (typeof requestAnimationFrame === 'function') {
+        flushRafId = requestAnimationFrame(() => {
+          flushRafId = null;
+          flushPendingTextToStreamingMessage();
+        });
+      } else {
+        flushPendingTextToStreamingMessage();
+      }
+    }, wait);
+  };
+
+  const appendTextToStreamingMessage = (contentStr: string) => {
+    if (!contentStr) return;
+    pendingTextDelta = pendingTextDelta
+      ? normalizeStreamedText(joinStreamingText(pendingTextDelta, contentStr))
+      : normalizeStreamedText(contentStr);
+    schedulePendingTextFlush();
+  };
+
   const appendThinkingToStreamingMessage = (contentStr: string) => {
     if (!contentStr) {
       return;
     }
+    flushPendingTextToStreamingMessage();
 
     set((state: any) => {
       const message = ensureStreamingMessage(state);
@@ -201,15 +260,15 @@ export const createStreamingMessageStateHelpers = ({
 
   const applyCompleteContent = (finalContent: string) => {
     if (!finalContent) return;
+    pendingTextDelta = '';
+    clearTextFlushHandles();
     const normalizedFinalContent = normalizeStreamedText(finalContent);
     const normalizedCurrentContent = normalizeStreamedText(streamedTextRef.value || '');
-    const mergedContent = normalizedCurrentContent
-      ? normalizeStreamedText(joinStreamingText(normalizedCurrentContent, normalizedFinalContent))
-      : normalizedFinalContent;
-    // 防御式兜底：若 complete 事件内容意外短于已接收 chunk，优先保留更完整文本。
-    const safeFinalContent = mergedContent.length >= normalizedFinalContent.length
-      ? mergedContent
-      : normalizedFinalContent;
+    // complete 事件在后端已经做过流式文本合并，这里不要再做一次拼接，避免正文重复。
+    // 若 complete 内容意外更短，保留已接收的更长内容兜底。
+    const safeFinalContent = normalizedFinalContent.length >= normalizedCurrentContent.length
+      ? normalizedFinalContent
+      : normalizedCurrentContent;
     streamedTextRef.value = safeFinalContent;
 
     set((state: any) => {
@@ -250,6 +309,7 @@ export const createStreamingMessageStateHelpers = ({
     persistStreamingMessageDraft,
     updateTurnHistoryProcess,
     appendTextToStreamingMessage,
+    flushPendingTextToStreamingMessage,
     appendThinkingToStreamingMessage,
     applyCompleteContent,
   };

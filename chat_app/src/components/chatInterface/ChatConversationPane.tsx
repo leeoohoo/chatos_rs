@@ -76,6 +76,116 @@ interface ChatConversationPaneProps {
   onEnabledMcpIdsChange: (ids: string[]) => void;
 }
 
+interface ChatMessagesPaneProps {
+  currentSession: any;
+  sessionSummaryPaneVisible: boolean;
+  currentContactName: string;
+  currentProjectNameForMemory: string;
+  currentProjectIdForMemory: string | null;
+  messages: any[];
+  chatIsLoading: boolean;
+  chatIsStreaming: boolean;
+  chatIsStopping: boolean;
+  hasMoreMessages: boolean;
+  onLoadMore: () => void;
+  onToggleTurnProcess: (userMessageId: string) => void;
+  customRenderer?: any;
+  sessionMemorySummaries: any[];
+  agentRecalls: any[];
+  memoryLoading: boolean;
+  memoryError: string | null;
+  onRefreshMemory: (sessionId: string) => void;
+  onCloseSummary: () => void;
+  toggleSidebar: () => void;
+}
+
+const ChatMessagesPane: React.FC<ChatMessagesPaneProps> = React.memo(({
+  currentSession,
+  sessionSummaryPaneVisible,
+  currentContactName,
+  currentProjectNameForMemory,
+  currentProjectIdForMemory,
+  messages,
+  chatIsLoading,
+  chatIsStreaming,
+  chatIsStopping,
+  hasMoreMessages,
+  onLoadMore,
+  onToggleTurnProcess,
+  customRenderer,
+  sessionMemorySummaries,
+  agentRecalls,
+  memoryLoading,
+  memoryError,
+  onRefreshMemory,
+  onCloseSummary,
+  toggleSidebar,
+}) => {
+  if (!currentSession) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <div className="text-center">
+          <h2 className="text-xl font-semibold text-muted-foreground mb-2">
+            欢迎使用 AI 聊天
+          </h2>
+          <p className="text-muted-foreground mb-4">
+            点击左上角按钮选择联系人，或先添加联系人开始对话
+          </p>
+          <button
+            onClick={toggleSidebar}
+            className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
+          >
+            展开联系人列表
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (sessionSummaryPaneVisible) {
+    return (
+      <SummaryPane
+        sessionId={currentSession.id}
+        sessionTitle={currentSession.title}
+        contactName={currentContactName}
+        projectName={currentProjectNameForMemory}
+        projectId={currentProjectIdForMemory || null}
+        messages={messages}
+        isLoading={chatIsLoading}
+        isStreaming={chatIsStreaming}
+        isStopping={chatIsStopping}
+        hasMore={hasMoreMessages}
+        onLoadMore={onLoadMore}
+        onToggleTurnProcess={onToggleTurnProcess}
+        customRenderer={customRenderer}
+        sessionSummaries={sessionMemorySummaries}
+        agentRecalls={agentRecalls}
+        memoryLoading={memoryLoading}
+        memoryError={memoryError}
+        onRefresh={() => onRefreshMemory(currentSession.id)}
+        onClose={onCloseSummary}
+      />
+    );
+  }
+
+  return (
+    <MessageList
+      key={`messages-${currentSession?.id || 'none'}-chat`}
+      sessionId={currentSession?.id}
+      messages={messages}
+      isLoading={chatIsLoading}
+      isStreaming={chatIsStreaming}
+      isStopping={chatIsStopping}
+      hasMore={hasMoreMessages}
+      onLoadMore={onLoadMore}
+      onToggleTurnProcess={onToggleTurnProcess}
+      customRenderer={customRenderer}
+    />
+  );
+});
+
+ChatMessagesPane.displayName = 'ChatMessagesPane';
+
 const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
   currentSession,
   sessionSummaryPaneVisible,
@@ -144,61 +254,28 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
   <div className="flex-1 min-h-0 flex overflow-hidden">
     <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
       <div className="flex-1 overflow-hidden">
-        {currentSession ? (
-          sessionSummaryPaneVisible ? (
-            <SummaryPane
-              sessionId={currentSession.id}
-              sessionTitle={currentSession.title}
-              contactName={currentContactName}
-              projectName={currentProjectNameForMemory}
-              projectId={currentProjectIdForMemory || null}
-              messages={messages}
-              isLoading={chatIsLoading}
-              isStreaming={chatIsStreaming}
-              isStopping={chatIsStopping}
-              hasMore={hasMoreMessages}
-              onLoadMore={onLoadMore}
-              onToggleTurnProcess={onToggleTurnProcess}
-              customRenderer={customRenderer}
-              sessionSummaries={sessionMemorySummaries}
-              agentRecalls={agentRecalls}
-              memoryLoading={memoryLoading}
-              memoryError={memoryError}
-              onRefresh={() => onRefreshMemory(currentSession.id)}
-              onClose={onCloseSummary}
-            />
-          ) : (
-            <MessageList
-              key={`messages-${currentSession?.id || 'none'}-chat`}
-              sessionId={currentSession?.id}
-              messages={messages}
-              isLoading={chatIsLoading}
-              isStreaming={chatIsStreaming}
-              isStopping={chatIsStopping}
-              hasMore={hasMoreMessages}
-              onLoadMore={onLoadMore}
-              onToggleTurnProcess={onToggleTurnProcess}
-              customRenderer={customRenderer}
-            />
-          )
-        ) : (
-          <div className="flex items-center justify-center h-full">
-            <div className="text-center">
-              <h2 className="text-xl font-semibold text-muted-foreground mb-2">
-                欢迎使用 AI 聊天
-              </h2>
-              <p className="text-muted-foreground mb-4">
-                点击左上角按钮选择联系人，或先添加联系人开始对话
-              </p>
-              <button
-                onClick={toggleSidebar}
-                className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
-              >
-                展开联系人列表
-              </button>
-            </div>
-          </div>
-        )}
+        <ChatMessagesPane
+          currentSession={currentSession}
+          sessionSummaryPaneVisible={sessionSummaryPaneVisible}
+          currentContactName={currentContactName}
+          currentProjectNameForMemory={currentProjectNameForMemory}
+          currentProjectIdForMemory={currentProjectIdForMemory}
+          messages={messages}
+          chatIsLoading={chatIsLoading}
+          chatIsStreaming={chatIsStreaming}
+          chatIsStopping={chatIsStopping}
+          hasMoreMessages={hasMoreMessages}
+          onLoadMore={onLoadMore}
+          onToggleTurnProcess={onToggleTurnProcess}
+          customRenderer={customRenderer}
+          sessionMemorySummaries={sessionMemorySummaries}
+          agentRecalls={agentRecalls}
+          memoryLoading={memoryLoading}
+          memoryError={memoryError}
+          onRefreshMemory={onRefreshMemory}
+          onCloseSummary={onCloseSummary}
+          toggleSidebar={toggleSidebar}
+        />
       </div>
 
       {currentSession && (

@@ -272,11 +272,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     resetHistoryWorkbarState,
   } = useWorkbarState({
     apiClient,
-    activePanel,
     currentSession,
     messages: messages as any[],
-    sessionSummaryPaneVisible,
-    loadContactMemoryContext,
   });
 
   const {
@@ -324,7 +321,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       hydrateUiPromptHistoryFromCache(currentSession.id);
     }
 
-    void loadCurrentTurnWorkbarTasks(currentSession.id, activeConversationTurnId);
     if (sessionSummaryPaneVisible) {
       void loadContactMemoryContext(currentSession.id);
     }
@@ -332,14 +328,12 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       void loadUiPromptHistory(currentSession.id);
     }
   }, [
-    activeConversationTurnId,
     activePanel,
     cancelPendingMemoryLoad,
     cancelPendingUiPromptHistoryLoad,
     currentSession,
     hydrateUiPromptHistoryFromCache,
     loadContactMemoryContext,
-    loadCurrentTurnWorkbarTasks,
     loadUiPromptHistory,
     resetAllWorkbarState,
     resetHistoryWorkbarState,
@@ -384,6 +378,29 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         console.error('Failed to toggle turn process messages:', error);
       });
   }, [toggleTurnProcess]);
+
+  const handleRefreshMemory = useCallback((sessionId: string) => {
+    void loadContactMemoryContext(sessionId, true);
+  }, [loadContactMemoryContext]);
+
+  const handleCloseSummary = useCallback(() => {
+    setSummaryPaneSessionId(null);
+  }, []);
+
+  const handleRefreshWorkbar = useCallback(() => {
+    void refreshWorkbarTasks();
+  }, [refreshWorkbarTasks]);
+
+  const handleOpenHistory = useCallback((sessionId: string) => {
+    setSummaryPaneSessionId(sessionId);
+    void loadHistoryWorkbarTasks(sessionId);
+    void loadContactMemoryContext(sessionId, true);
+  }, [loadContactMemoryContext, loadHistoryWorkbarTasks]);
+
+  const handleOpenUiPromptHistory = useCallback((sessionId: string) => {
+    setUiPromptHistoryOpen(true);
+    void loadUiPromptHistory(sessionId);
+  }, [loadUiPromptHistory]);
 
   const {
     handleTaskReviewConfirm,
@@ -492,10 +509,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 agentRecalls={agentRecalls}
                 memoryLoading={memoryLoading}
                 memoryError={memoryError}
-                onRefreshMemory={(sessionId) => {
-                  void loadContactMemoryContext(sessionId, true);
-                }}
-                onCloseSummary={() => setSummaryPaneSessionId(null)}
+                onRefreshMemory={handleRefreshMemory}
+                onCloseSummary={handleCloseSummary}
                 toggleSidebar={toggleSidebar}
                 mergedCurrentTurnTasks={mergedCurrentTurnTasks}
                 workbarHistoryTasks={workbarHistoryTasks}
@@ -505,18 +520,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 workbarError={workbarError}
                 workbarHistoryError={workbarHistoryError}
                 workbarActionLoadingTaskId={workbarActionLoadingTaskId}
-                onRefreshWorkbarTasks={() => {
-                  void refreshWorkbarTasks();
-                }}
-                onOpenHistory={(sessionId) => {
-                  setSummaryPaneSessionId(sessionId);
-                  void loadHistoryWorkbarTasks(sessionId);
-                  void loadContactMemoryContext(sessionId, true);
-                }}
-                onOpenUiPromptHistory={(sessionId) => {
-                  setUiPromptHistoryOpen(true);
-                  void loadUiPromptHistory(sessionId);
-                }}
+                onRefreshWorkbarTasks={handleRefreshWorkbar}
+                onOpenHistory={handleOpenHistory}
+                onOpenUiPromptHistory={handleOpenUiPromptHistory}
                 uiPromptHistoryCount={uiPromptHistoryItems.length}
                 uiPromptHistoryLoading={uiPromptHistoryLoading}
                 onCompleteTask={(task) => {

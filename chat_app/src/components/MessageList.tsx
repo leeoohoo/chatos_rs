@@ -10,13 +10,13 @@ import {
   type ParsedMessageCacheEntry,
 } from './messageList/derivedData';
 const MESSAGE_WINDOW_EXPAND_TOP_OFFSET = 120;
-const ESTIMATED_MESSAGE_ROW_HEIGHT = 88;
-const MESSAGE_WINDOW_MIN_SIZE = 56;
-const MESSAGE_WINDOW_MAX_SIZE = 180;
-const MESSAGE_WINDOW_OVERSCAN_ROWS = 12;
-const MESSAGE_WINDOW_THRESHOLD_EXTRA = 24;
+const ESTIMATED_MESSAGE_ROW_HEIGHT = 120;
+const MESSAGE_WINDOW_MIN_SIZE = 20;
+const MESSAGE_WINDOW_MAX_SIZE = 72;
+const MESSAGE_WINDOW_OVERSCAN_ROWS = 6;
+const MESSAGE_WINDOW_THRESHOLD_EXTRA = 8;
 
-export const MessageList: React.FC<MessageListProps> = ({
+const MessageListComponent: React.FC<MessageListProps> = ({
   sessionId,
   messages,
   isLoading = false,
@@ -35,6 +35,7 @@ export const MessageList: React.FC<MessageListProps> = ({
   const initialScrollRafRef = useRef<number | null>(null);
   const streamEndScrollRafRef = useRef<number | null>(null);
   const streamEndSettleRafRef = useRef<number | null>(null);
+  const autoScrollRafRef = useRef<number | null>(null);
   const prevIsStreamingRef = useRef<boolean>(isStreaming);
   const pendingSessionInitialScrollRef = useRef<boolean>(true);
   const expandingWindowRef = useRef(false);
@@ -91,6 +92,22 @@ export const MessageList: React.FC<MessageListProps> = ({
     processSignalByUserMessageId,
     linkedUserExpandedByAssistantId,
   } = useMemo(() => buildVisibleMessageState(parsedMessages), [parsedMessages]);
+  const dedupedVisibleMessages = useMemo(() => {
+    if (!visibleMessages || visibleMessages.length <= 1) {
+      return visibleMessages;
+    }
+    const seenIds = new Set<string>();
+    const list: typeof visibleMessages = [];
+    for (const message of visibleMessages) {
+      const id = String(message.id || '');
+      if (!id || seenIds.has(id)) {
+        continue;
+      }
+      seenIds.add(id);
+      list.push(message);
+    }
+    return list;
+  }, [visibleMessages]);
 
   const windowSize = useMemo(() => {
     const estimatedRows = Math.ceil((viewportHeight || 960) / ESTIMATED_MESSAGE_ROW_HEIGHT);
@@ -99,17 +116,17 @@ export const MessageList: React.FC<MessageListProps> = ({
   }, [viewportHeight]);
   const windowThreshold = windowSize + MESSAGE_WINDOW_THRESHOLD_EXTRA;
   const windowStep = Math.max(32, Math.floor(windowSize * 0.6));
-  const shouldWindowMessages = visibleMessages.length > windowThreshold;
+  const shouldWindowMessages = dedupedVisibleMessages.length > windowThreshold;
   const boundedRenderStartIndex = shouldWindowMessages
-    ? Math.min(renderStartIndex, Math.max(0, visibleMessages.length - 1))
+    ? Math.min(renderStartIndex, Math.max(0, dedupedVisibleMessages.length - 1))
     : 0;
   const renderedMessages = useMemo(
     () => (shouldWindowMessages
-      ? visibleMessages.slice(boundedRenderStartIndex)
-      : visibleMessages),
-    [shouldWindowMessages, visibleMessages, boundedRenderStartIndex],
+      ? dedupedVisibleMessages.slice(boundedRenderStartIndex)
+      : dedupedVisibleMessages),
+    [shouldWindowMessages, dedupedVisibleMessages, boundedRenderStartIndex],
   );
-  const lastVisibleIndex = visibleMessages.length - 1;
+  const lastVisibleIndex = dedupedVisibleMessages.length - 1;
   const toolResultKeyByMessageId = useMemo(() => {
     const map = new Map<string, string>();
     for (const message of renderedMessages) {
@@ -166,7 +183,7 @@ export const MessageList: React.FC<MessageListProps> = ({
       return;
     }
 
-    if (visibleMessages.length === 0 && !isLoading && !hasMore) {
+    if (dedupedVisibleMessages.length === 0 && !isLoading && !hasMore) {
       pendingSessionInitialScrollRef.current = false;
       return;
     }
@@ -194,7 +211,7 @@ export const MessageList: React.FC<MessageListProps> = ({
         initialScrollRafRef.current = null;
       }
     };
-  }, [sessionId, visibleMessages.length, isLoading, hasMore, isStreaming]);
+  }, [sessionId, dedupedVisibleMessages.length, isLoading, hasMore, isStreaming]);
 
   useEffect(() => {
     const target = scrollRef.current;
@@ -224,7 +241,7 @@ export const MessageList: React.FC<MessageListProps> = ({
   }, [sessionId]);
 
   useEffect(() => {
-    const nextCount = visibleMessages.length;
+    const nextCount = dedupedVisibleMessages.length;
     const previousCount = prevVisibleCountRef.current;
     prevVisibleCountRef.current = nextCount;
 
@@ -239,26 +256,26 @@ export const MessageList: React.FC<MessageListProps> = ({
       if (previousCount === 0) {
         return latestStart;
       }
-      // 用户已展开到最前面时，保持不折叠
-      if (prev === 0) {
+      // 用户正在查看更早消息时保持位置；回到底部后自动恢复紧凑窗口，避免长列表常驻造成滚动卡顿
+      if (prev === 0 && !isAtBottom) {
         return 0;
       }
       // 连续流式或自动滚动时，窗口跟随最新消息；手动展开过程消息时保持当前位置
-      if (isStreaming || autoScroll) {
+      if (isStreaming || autoScroll || isAtBottom) {
         return latestStart;
       }
       return Math.min(prev, latestStart);
     });
-  }, [visibleMessages.length, isStreaming, autoScroll, windowSize, windowThreshold]);
+  }, [dedupedVisibleMessages.length, isStreaming, autoScroll, isAtBottom, windowSize, windowThreshold]);
 
   useEffect(() => {
-    const nextCount = visibleMessages.length;
+    const nextCount = dedupedVisibleMessages.length;
     if (nextCount <= windowThreshold) {
       setRenderStartIndex(0);
       return;
     }
     setRenderStartIndex(Math.max(0, nextCount - windowSize));
-  }, [sessionId, windowSize, windowThreshold]);
+  }, [sessionId, dedupedVisibleMessages.length, windowSize, windowThreshold]);
 
   const expandRenderedWindow = useCallback(() => {
     if (!shouldWindowMessages || boundedRenderStartIndex <= 0) {
@@ -303,13 +320,6 @@ export const MessageList: React.FC<MessageListProps> = ({
     }
   }, []);
 
-  const measureAtBottom = useCallback(() => {
-    const el = scrollRef.current;
-    if (!el) return true;
-    const threshold = 40;
-    return el.scrollHeight - el.scrollTop - el.clientHeight <= threshold;
-  }, []);
-
   const scrollToBottom = useCallback((smooth = true) => {
     const el = scrollRef.current;
     if (!el) {
@@ -321,6 +331,16 @@ export const MessageList: React.FC<MessageListProps> = ({
     }
     el.scrollTop = el.scrollHeight;
   }, []);
+
+  const scheduleAutoScrollToBottom = useCallback(() => {
+    if (autoScrollRafRef.current !== null) {
+      return;
+    }
+    autoScrollRafRef.current = requestAnimationFrame(() => {
+      autoScrollRafRef.current = null;
+      scrollToBottom(false);
+    });
+  }, [scrollToBottom]);
 
   const scheduleStreamEndBottomLock = useCallback((frames = 8) => {
     cancelPendingStreamEndScroll();
@@ -347,10 +367,39 @@ export const MessageList: React.FC<MessageListProps> = ({
   }, [cancelPendingStreamEndScroll, scrollToBottom]);
 
   useEffect(() => {
-    if (isStreaming && autoScroll) {
-      scrollToBottom(false);
+    const root = scrollRef.current;
+    const target = bottomRef.current;
+    if (!root || !target || typeof IntersectionObserver === 'undefined') {
+      return;
     }
-  }, [messages, isStreaming, autoScroll, scrollToBottom]);
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const atBottom = Boolean(entries[0]?.isIntersecting);
+        setIsAtBottom((prev) => (prev === atBottom ? prev : atBottom));
+        if (!atBottom) {
+          setAutoScroll((prev) => (prev ? false : prev));
+          return;
+        }
+        if (isStreaming) {
+          setAutoScroll((prev) => (prev ? prev : true));
+        }
+      },
+      {
+        root,
+        threshold: 0.98,
+      },
+    );
+
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [sessionId, isStreaming, renderedMessages.length]);
+
+  useEffect(() => {
+    if (isStreaming && autoScroll) {
+      scheduleAutoScrollToBottom();
+    }
+  }, [messages, isStreaming, autoScroll, scheduleAutoScrollToBottom]);
 
   useEffect(() => {
     const wasStreaming = prevIsStreamingRef.current;
@@ -359,7 +408,7 @@ export const MessageList: React.FC<MessageListProps> = ({
       return;
     }
 
-    if (!(autoScroll || isAtBottom || measureAtBottom())) {
+    if (!(autoScroll || isAtBottom)) {
       return;
     }
 
@@ -370,15 +419,9 @@ export const MessageList: React.FC<MessageListProps> = ({
     isStreaming,
     autoScroll,
     isAtBottom,
-    measureAtBottom,
     scheduleStreamEndBottomLock,
     cancelPendingStreamEndScroll,
   ]);
-
-  useEffect(() => {
-    const next = measureAtBottom();
-    setIsAtBottom(prev => (prev === next ? prev : next));
-  }, [messages, isStreaming]);
 
   useEffect(() => {
     if (isStreaming && isAtBottom) {
@@ -391,19 +434,16 @@ export const MessageList: React.FC<MessageListProps> = ({
   }, [isStreaming, isAtBottom]);
 
   const handleScroll = () => {
+    if (!shouldWindowMessages) {
+      return;
+    }
     if (scrollRafRef.current !== null) return;
     scrollRafRef.current = requestAnimationFrame(() => {
       scrollRafRef.current = null;
       const el = scrollRef.current;
       if (!el) return;
-      const atBottom = measureAtBottom();
-      setIsAtBottom(prev => (prev === atBottom ? prev : atBottom));
-      if (!atBottom) {
-        setAutoScroll(prev => (prev ? false : prev));
-      }
       if (
-        shouldWindowMessages
-        && boundedRenderStartIndex > 0
+        boundedRenderStartIndex > 0
         && el.scrollTop <= MESSAGE_WINDOW_EXPAND_TOP_OFFSET
       ) {
         expandRenderedWindow();
@@ -434,11 +474,15 @@ export const MessageList: React.FC<MessageListProps> = ({
         cancelAnimationFrame(streamEndSettleRafRef.current);
         streamEndSettleRafRef.current = null;
       }
+      if (autoScrollRafRef.current !== null) {
+        cancelAnimationFrame(autoScrollRafRef.current);
+        autoScrollRafRef.current = null;
+      }
       expandingWindowRef.current = false;
     };
   }, []);
 
-  if (visibleMessages.length === 0 && !isLoading && !hasMore) {
+  if (dedupedVisibleMessages.length === 0 && !isLoading && !hasMore) {
     return (
       <div className="flex items-center justify-center h-full">
         <div className="text-center space-y-4">
@@ -463,12 +507,8 @@ export const MessageList: React.FC<MessageListProps> = ({
     <div className="flex flex-col h-full relative">
       <div
         ref={scrollRef}
-        onScroll={handleScroll}
+        onScroll={shouldWindowMessages ? handleScroll : undefined}
         className="flex-1 overflow-y-auto px-4 py-6 space-y-1"
-        style={{
-          willChange: 'scroll-position',
-          transform: 'translateZ(0)',
-        }}
       >
         {hasMore && (
           <div className="flex justify-center mb-2">
@@ -545,5 +585,22 @@ export const MessageList: React.FC<MessageListProps> = ({
     </div>
   );
 };
+
+const areMessageListPropsEqual = (prevProps: MessageListProps, nextProps: MessageListProps): boolean => (
+  prevProps.sessionId === nextProps.sessionId
+  && prevProps.messages === nextProps.messages
+  && (prevProps.isLoading ?? false) === (nextProps.isLoading ?? false)
+  && (prevProps.isStreaming ?? false) === (nextProps.isStreaming ?? false)
+  && (prevProps.isStopping ?? false) === (nextProps.isStopping ?? false)
+  && (prevProps.hasMore ?? false) === (nextProps.hasMore ?? false)
+  && prevProps.onLoadMore === nextProps.onLoadMore
+  && prevProps.onToggleTurnProcess === nextProps.onToggleTurnProcess
+  && prevProps.onMessageEdit === nextProps.onMessageEdit
+  && prevProps.onMessageDelete === nextProps.onMessageDelete
+  && prevProps.customRenderer === nextProps.customRenderer
+);
+
+export const MessageList = React.memo(MessageListComponent, areMessageListPropsEqual);
+MessageList.displayName = 'MessageList';
 
 export default MessageList;

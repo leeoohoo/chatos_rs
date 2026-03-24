@@ -14,20 +14,14 @@ const CURRENT_TURN_MUTATION_FALLBACK_LIMIT = 8;
 
 interface UseWorkbarStateParams {
   apiClient: any;
-  activePanel: string;
   currentSession: any | null;
   messages: any[];
-  sessionSummaryPaneVisible: boolean;
-  loadContactMemoryContext: (sessionId: string, force?: boolean) => Promise<any> | void;
 }
 
 export const useWorkbarState = ({
   apiClient,
-  activePanel,
   currentSession,
   messages,
-  sessionSummaryPaneVisible,
-  loadContactMemoryContext,
 }: UseWorkbarStateParams) => {
   const [workbarCurrentTurnTasks, setWorkbarCurrentTurnTasks] = useState<TaskWorkbarItem[]>([]);
   const [workbarHistoryTasks, setWorkbarHistoryTasks] = useState<TaskWorkbarItem[]>([]);
@@ -40,7 +34,6 @@ export const useWorkbarState = ({
   const currentSessionRef = useRef<string | null>(null);
   const currentTurnLoadSeqRef = useRef(0);
   const historyLoadSeqRef = useRef(0);
-  const handledTaskMutationKeysRef = useRef<Set<string>>(new Set());
 
   const activeConversationTurnId = useMemo(() => {
     if (!currentSession) {
@@ -247,67 +240,8 @@ export const useWorkbarState = ({
     await Promise.all([
       loadCurrentTurnWorkbarTasks(currentSession.id, activeConversationTurnId),
       loadHistoryWorkbarTasks(currentSession.id, true),
-      loadContactMemoryContext(currentSession.id, true),
     ]);
-  }, [activeConversationTurnId, currentSession, loadContactMemoryContext, loadCurrentTurnWorkbarTasks, loadHistoryWorkbarTasks]);
-
-  useEffect(() => {
-    if (!currentSession || activePanel !== 'chat') {
-      return;
-    }
-
-    const handled = handledTaskMutationKeysRef.current;
-    const pendingKeys: string[] = [];
-
-    for (const message of messages as any[]) {
-      if (message?.sessionId && message.sessionId !== currentSession.id) {
-        continue;
-      }
-
-      const toolCalls = collectMessageToolCalls(message);
-      for (const toolCall of toolCalls) {
-        if (!shouldRefreshForTaskMutationToolCall(toolCall)) {
-          continue;
-        }
-        if (toolCall?.completed !== true) {
-          continue;
-        }
-        if (hasToolCallError(toolCall)) {
-          continue;
-        }
-
-        const toolCallId = String(toolCall?.id || toolCall?.tool_call_id || toolCall?.toolCallId || '').trim();
-        const key = currentSession.id + ':' + String(message?.id || '') + ':' + (toolCallId || String(toolCall?.name || ''));
-        if (handled.has(key)) {
-          continue;
-        }
-        pendingKeys.push(key);
-      }
-    }
-
-    if (pendingKeys.length === 0) {
-      return;
-    }
-
-    pendingKeys.forEach((key) => handled.add(key));
-    if (handled.size > 2048) {
-      const tail = Array.from(handled).slice(-1024);
-      handled.clear();
-      tail.forEach((key) => handled.add(key));
-    }
-    void loadCurrentTurnWorkbarTasks(currentSession.id, activeConversationTurnId);
-    if (sessionSummaryPaneVisible) {
-      void loadContactMemoryContext(currentSession.id, true);
-    }
-  }, [
-    activeConversationTurnId,
-    activePanel,
-    currentSession,
-    loadContactMemoryContext,
-    loadCurrentTurnWorkbarTasks,
-    messages,
-    sessionSummaryPaneVisible,
-  ]);
+  }, [activeConversationTurnId, currentSession, loadCurrentTurnWorkbarTasks, loadHistoryWorkbarTasks]);
 
   const resetAllWorkbarState = useCallback(() => {
     currentTurnLoadSeqRef.current += 1;

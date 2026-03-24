@@ -278,6 +278,7 @@ export function createSendMessageHandler({
         persistStreamingMessageDraft,
         updateTurnHistoryProcess,
         appendTextToStreamingMessage,
+        flushPendingTextToStreamingMessage,
         appendThinkingToStreamingMessage,
         applyCompleteContent,
       } = createStreamingMessageStateHelpers({
@@ -309,6 +310,7 @@ export function createSendMessageHandler({
             if (data === '') continue;
 
             if (data === '[DONE]') {
+                flushPendingTextToStreamingMessage();
                 debugLog('✅ 收到完成信号');
                 sawDone = true;
                 break;
@@ -329,9 +331,15 @@ export function createSendMessageHandler({
 
             // 兼容后端以字符串形式发送的 [DONE]
             if (typeof parsed === 'string' && parsed === '[DONE]') {
+              flushPendingTextToStreamingMessage();
               debugLog('✅ 收到完成信号');
               sawDone = true;
               break;
+            }
+
+            const isTextDeltaEvent = parsed.type === 'chunk' || parsed.type === 'content';
+            if (!isTextDeltaEvent) {
+              flushPendingTextToStreamingMessage();
             }
 
             // 处理后端发送的数据格式
@@ -508,10 +516,12 @@ export function createSendMessageHandler({
                   sawCancelled = true;
                   continue;
             } else if (parsed.type === 'done') {
+                  flushPendingTextToStreamingMessage();
                   debugLog('✅ 收到完成信号');
                   sawDone = true;
                   break;
             } else if (parsed.type === 'complete') {
+                  flushPendingTextToStreamingMessage();
                   const finalContent = parsed?.result?.content;
                   if (typeof finalContent === 'string' && finalContent.length > 0) {
                     applyCompleteContent(finalContent);
@@ -522,6 +532,7 @@ export function createSendMessageHandler({
           }
 
           if (done) {
+            flushPendingTextToStreamingMessage();
             debugLog('✅ 流式响应完成');
             if (!sawDone) {
               if (sawCancelled) {
@@ -549,6 +560,7 @@ export function createSendMessageHandler({
           }
         }
       } finally {
+        flushPendingTextToStreamingMessage();
         reader.releaseLock();
 
         // 更新状态，结束流式传输

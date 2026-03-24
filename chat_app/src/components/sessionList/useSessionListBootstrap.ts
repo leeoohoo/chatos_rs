@@ -59,19 +59,7 @@ export const useSessionListBootstrap = ({
     void loadRemoteConnections();
   }, [loadRemoteConnections]);
 
-  useEffect(() => {
-    if (isCollapsed || !terminalsExpanded) return;
-    const timer = window.setInterval(() => {
-      void loadTerminals();
-    }, 10000);
-    return () => window.clearInterval(timer);
-  }, [isCollapsed, terminalsExpanded, loadTerminals]);
-
-  useEffect(() => {
-    if (isCollapsed || !remoteExpanded) return;
-    const timer = window.setInterval(() => {
-      void loadRemoteConnections();
-    }, 12000);
-    return () => window.clearInterval(timer);
-  }, [isCollapsed, remoteExpanded, loadRemoteConnections]);
+  void isCollapsed;
+  void terminalsExpanded;
+  void remoteExpanded;
 };
