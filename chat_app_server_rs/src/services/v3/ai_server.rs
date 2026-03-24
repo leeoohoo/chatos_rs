@@ -127,6 +127,8 @@ impl AiServer {
                     message_mode: options.message_mode.clone(),
                     message_source: options.message_source.clone(),
                     prefixed_input_items: options.prefixed_input_items.clone(),
+                    request_cwd: options.request_cwd.clone(),
+                    use_codex_gateway_mcp_passthrough: options.use_codex_gateway_mcp_passthrough,
                     callbacks: Some(if use_tools {
                         callbacks
                     } else {
@@ -157,4 +159,6 @@ pub struct ChatOptions {
     pub message_mode: Option<String>,
     pub message_source: Option<String>,
     pub prefixed_input_items: Option<Vec<Value>>,
+    pub request_cwd: Option<String>,
+    pub use_codex_gateway_mcp_passthrough: Option<bool>,
 }

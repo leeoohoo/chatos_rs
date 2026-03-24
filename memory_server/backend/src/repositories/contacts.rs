@@ -139,3 +139,27 @@ pub async fn delete_contact_by_id(db: &Db, contact_id: &str) -> Result<bool, Str
         .map_err(|e| e.to_string())?;
     Ok(result.deleted_count > 0)
 }
+
+pub async fn update_contact_agent(
+    db: &Db,
+    contact_id: &str,
+    agent_id: &str,
+    agent_name_snapshot: Option<String>,
+) -> Result<Option<Contact>, String> {
+    let mut set_doc = doc! {
+        "agent_id": agent_id,
+        "updated_at": now_rfc3339(),
+    };
+    if let Some(snapshot) = agent_name_snapshot {
+        set_doc.insert("agent_name_snapshot", snapshot);
+    }
+
+    let result = collection(db)
+        .update_one(doc! {"id": contact_id}, doc! {"$set": set_doc})
+        .await
+        .map_err(|e| e.to_string())?;
+    if result.matched_count == 0 {
+        return Ok(None);
+    }
+    get_contact_by_id(db, contact_id).await
+}

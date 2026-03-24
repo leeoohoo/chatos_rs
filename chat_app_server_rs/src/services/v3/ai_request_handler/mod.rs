@@ -64,6 +64,7 @@ impl AiRequestHandler {
         instructions: Option<String>,
         previous_response_id: Option<String>,
         tools: Option<Vec<Value>>,
+        request_cwd: Option<String>,
         temperature: Option<f64>,
         max_output_tokens: Option<i64>,
         callbacks: StreamCallbacks,
@@ -76,40 +77,19 @@ impl AiRequestHandler {
         message_source: Option<String>,
         purpose: &str,
     ) -> Result<AiResponse, String> {
-        let mut payload = json!({
-            "model": model,
-            "input": input
-        });
-        if let Some(instr) = instructions {
-            payload["instructions"] = Value::String(instr);
-        }
-        if let Some(prev) = previous_response_id {
-            payload["previous_response_id"] = Value::String(prev);
-        }
-        if let Some(t) = tools {
-            if !t.is_empty() {
-                payload["tools"] = Value::Array(t);
-                payload["tool_choice"] = Value::String("auto".to_string());
-            }
-        }
-        if let Some(t) = temperature {
-            payload["temperature"] = json!(t);
-        }
-        if let Some(max) = max_output_tokens {
-            payload["max_output_tokens"] = json!(max);
-        }
-        if let Some(level) =
-            normalize_reasoning_effort(provider.as_deref(), thinking_level.as_deref())
-        {
-            let mut reasoning_payload = json!({ "effort": level });
-            if is_gpt_provider(provider.as_deref().unwrap_or("gpt")) {
-                reasoning_payload["summary"] = Value::String("auto".to_string());
-            }
-            payload["reasoning"] = reasoning_payload;
-        }
-        if stream {
-            payload["stream"] = Value::Bool(true);
-        }
+        let payload = build_request_payload(
+            input,
+            model,
+            instructions,
+            previous_response_id,
+            tools,
+            request_cwd,
+            temperature,
+            max_output_tokens,
+            provider.clone(),
+            thinking_level.clone(),
+            stream,
+        );
 
         if let Err(err) = validate_request_payload_size(&payload, REQUEST_BODY_LIMIT_ENV) {
             error!(
@@ -123,7 +103,7 @@ impl AiRequestHandler {
         let token = build_abort_token(session_id.as_deref());
 
         info!(
-            "[AI_V3] handleRequest start: purpose={}, model={}, stream={}, baseURL={}, session={}, tools={}",
+            "[AI_V3] handleRequest start: purpose={}, model={}, stream={}, baseURL={}, session={}, tools={}, cwd={}",
             purpose,
             payload.get("model").and_then(|v| v.as_str()).unwrap_or(""),
             stream,
@@ -133,7 +113,8 @@ impl AiRequestHandler {
                 .get("tools")
                 .and_then(|value| value.as_array())
                 .map(|items| items.len())
-                .unwrap_or(0)
+                .unwrap_or(0),
+            payload.get("cwd").and_then(|value| value.as_str()).unwrap_or("")
         );
 
         let persist_messages = purpose != "agent_builder";
@@ -168,4 +149,60 @@ impl AiRequestHandler {
             .await
         }
     }
+}
+
+fn build_request_payload(
+    input: Value,
+    model: String,
+    instructions: Option<String>,
+    previous_response_id: Option<String>,
+    tools: Option<Vec<Value>>,
+    request_cwd: Option<String>,
+    temperature: Option<f64>,
+    max_output_tokens: Option<i64>,
+    provider: Option<String>,
+    thinking_level: Option<String>,
+    stream: bool,
+) -> Value {
+    let mut payload = json!({
+        "model": model,
+        "input": input
+    });
+    if let Some(instr) = instructions {
+        payload["instructions"] = Value::String(instr);
+    }
+    if let Some(prev) = previous_response_id {
+        payload["previous_response_id"] = Value::String(prev);
+    }
+    if let Some(t) = tools {
+        if !t.is_empty() {
+            payload["tools"] = Value::Array(t);
+            payload["tool_choice"] = Value::String("auto".to_string());
+        }
+    }
+    if let Some(cwd) = request_cwd
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        payload["cwd"] = Value::String(cwd.to_string());
+    }
+    if let Some(t) = temperature {
+        payload["temperature"] = json!(t);
+    }
+    if let Some(max) = max_output_tokens {
+        payload["max_output_tokens"] = json!(max);
+    }
+    if let Some(level) = normalize_reasoning_effort(provider.as_deref(), thinking_level.as_deref())
+    {
+        let mut reasoning_payload = json!({ "effort": level });
+        if is_gpt_provider(provider.as_deref().unwrap_or("gpt")) {
+            reasoning_payload["summary"] = Value::String("auto".to_string());
+        }
+        payload["reasoning"] = reasoning_payload;
+    }
+    if stream {
+        payload["stream"] = Value::Bool(true);
+    }
+    payload
 }

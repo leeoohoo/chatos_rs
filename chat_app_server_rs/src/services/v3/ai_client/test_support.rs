@@ -153,6 +153,7 @@ pub(super) struct RunProcessWithToolsArgs {
     pub history_limit: i64,
     pub stable_prefix_mode: bool,
     pub prefer_stateless: bool,
+    pub request_cwd: Option<String>,
 }
 
 impl Default for RunProcessWithToolsArgs {
@@ -169,6 +170,7 @@ impl Default for RunProcessWithToolsArgs {
             history_limit: 8,
             stable_prefix_mode: false,
             prefer_stateless: false,
+            request_cwd: None,
         }
     }
 }
@@ -205,6 +207,7 @@ pub(super) async fn run_process_with_tools(
             args.prefer_stateless,
             None,
             None,
+            args.request_cwd,
         )
         .await
 }

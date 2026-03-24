@@ -137,6 +137,53 @@ pub async fn list_sessions_by_agent(
     Ok(deduped)
 }
 
+pub async fn list_sessions_by_contact(
+    db: &Db,
+    user_id: &str,
+    contact_id: &str,
+    project_id: Option<&str>,
+    status: Option<&str>,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<Session>, String> {
+    let limit = limit.max(1).min(200) as u64;
+    let offset = offset.max(0) as u64;
+
+    let mut filter = doc! {
+        "user_id": user_id,
+        "$or": build_contact_or_conditions(Some(contact_id), None),
+    };
+    if let Some(v) = status {
+        filter.insert("status", v);
+    }
+
+    if let Some(project_id) = normalize_optional_text(project_id) {
+        insert_project_scope_filter(&mut filter, project_id.as_str());
+    }
+
+    let options = FindOptions::builder()
+        .sort(doc! {"updated_at": -1, "created_at": -1})
+        .limit(Some(limit as i64))
+        .skip(Some(offset))
+        .build();
+
+    let cursor = collection(db)
+        .find(filter)
+        .with_options(options)
+        .await
+        .map_err(|e| e.to_string())?;
+    let rows: Vec<Session> = cursor.try_collect().await.map_err(|e| e.to_string())?;
+    let mut seen_projects = HashSet::new();
+    let mut deduped = Vec::with_capacity(rows.len());
+    for session in rows {
+        let project_id = normalize_project_scope(session.project_id.clone());
+        if seen_projects.insert(project_id) {
+            deduped.push(session);
+        }
+    }
+    Ok(deduped)
+}
+
 pub async fn get_session_by_id(db: &Db, session_id: &str) -> Result<Option<Session>, String> {
     collection(db)
         .find_one(doc! {"id": session_id})
@@ -148,10 +195,19 @@ pub async fn list_active_user_ids(db: &Db, limit: i64) -> Result<Vec<String>, St
     let contact_match = doc! {
         "$or": [
             {"metadata.contact.contact_id": {"$exists": true, "$type": "string"}},
+            {"metadata.contact.contactId": {"$exists": true, "$type": "string"}},
             {"metadata.ui_contact.contact_id": {"$exists": true, "$type": "string"}},
+            {"metadata.ui_contact.contactId": {"$exists": true, "$type": "string"}},
             {"metadata.contact.agent_id": {"$exists": true, "$type": "string"}},
+            {"metadata.contact.agentId": {"$exists": true, "$type": "string"}},
             {"metadata.ui_contact.agent_id": {"$exists": true, "$type": "string"}},
-            {"metadata.ui_chat_selection.selected_agent_id": {"$exists": true, "$type": "string"}}
+            {"metadata.ui_contact.agentId": {"$exists": true, "$type": "string"}},
+            {"metadata.ui_chat_selection.selected_agent_id": {"$exists": true, "$type": "string"}},
+            {"metadata.ui_chat_selection.selectedAgentId": {"$exists": true, "$type": "string"}},
+            {"metadata.chat_runtime.contact_agent_id": {"$exists": true, "$type": "string"}},
+            {"metadata.chat_runtime.contactAgentId": {"$exists": true, "$type": "string"}},
+            {"selected_agent_id": {"$exists": true, "$type": "string"}},
+            {"selectedAgentId": {"$exists": true, "$type": "string"}}
         ]
     };
     let pipeline = vec![

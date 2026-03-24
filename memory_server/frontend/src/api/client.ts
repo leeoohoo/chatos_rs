@@ -364,11 +364,12 @@ export const api = {
 
   async listAgents(
     userId?: string,
-    params?: { enabled?: boolean; limit?: number; offset?: number },
+    params?: { include_shared?: boolean; enabled?: boolean; limit?: number; offset?: number },
   ): Promise<MemoryAgent[]> {
     const { data } = await client.get('/agents', {
       params: {
         user_id: userId,
+        include_shared: params?.include_shared,
         enabled: params?.enabled,
         limit: params?.limit ?? 200,
         offset: params?.offset ?? 0,
@@ -382,11 +383,12 @@ export const api = {
     userId?: string,
     params?: { project_id?: string; status?: string; limit?: number; offset?: number },
   ): Promise<Session[]> {
+    const normalizedStatus = params?.status?.trim();
     const { data } = await client.get(`/agents/${encodeURIComponent(agentId)}/sessions`, {
       params: {
         user_id: userId,
         project_id: params?.project_id,
-        status: params?.status ?? 'active',
+        status: normalizedStatus && normalizedStatus.length > 0 ? normalizedStatus : undefined,
         limit: params?.limit ?? 100,
         offset: params?.offset ?? 0,
       },

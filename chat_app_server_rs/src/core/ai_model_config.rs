@@ -16,6 +16,16 @@ pub struct ResolvedChatModelConfig {
     pub base_url: String,
     pub system_prompt: Option<String>,
     pub use_active_system_context: bool,
+    pub use_codex_gateway_mcp_passthrough: bool,
+}
+
+fn default_codex_gateway_mcp_passthrough(base_url: &str, model: &str) -> bool {
+    let normalized_base_url = base_url.trim().to_ascii_lowercase();
+    let normalized_model = model.trim().to_ascii_lowercase();
+
+    normalized_model.contains("codex")
+        && !normalized_base_url.contains("api.openai.com")
+        && !normalized_base_url.contains("api.chatgpt.com")
 }
 
 pub fn resolve_chat_model_config(
@@ -106,6 +116,10 @@ pub fn resolve_chat_model_config(
     } else {
         true
     };
+    let use_codex_gateway_mcp_passthrough = model_cfg
+        .get("use_codex_gateway_mcp_passthrough")
+        .and_then(|value| value.as_bool())
+        .unwrap_or_else(|| default_codex_gateway_mcp_passthrough(&base_url, &model));
 
     ResolvedChatModelConfig {
         model,
@@ -119,6 +133,7 @@ pub fn resolve_chat_model_config(
         base_url,
         system_prompt,
         use_active_system_context,
+        use_codex_gateway_mcp_passthrough,
     }
 }
 
@@ -147,6 +162,7 @@ mod tests {
         assert_eq!(resolved.api_key, "k");
         assert_eq!(resolved.base_url, "https://example.com");
         assert!(resolved.use_active_system_context);
+        assert!(!resolved.use_codex_gateway_mcp_passthrough);
     }
 
     #[test]
@@ -175,5 +191,40 @@ mod tests {
         );
 
         assert!(resolved.use_active_system_context);
+    }
+
+    #[test]
+    fn enables_codex_gateway_passthrough_for_non_openai_codex_models() {
+        let resolved = resolve_chat_model_config(
+            &json!({
+                "model_name": "gpt-5.3-codex",
+                "base_url": "http://127.0.0.1:8088/v1"
+            }),
+            "gpt-4o-mini",
+            "k",
+            "https://api.openai.com/v1",
+            None,
+            true,
+        );
+
+        assert!(resolved.use_codex_gateway_mcp_passthrough);
+    }
+
+    #[test]
+    fn honors_explicit_passthrough_override() {
+        let resolved = resolve_chat_model_config(
+            &json!({
+                "model_name": "gpt-5.3-codex",
+                "base_url": "https://api.openai.com/v1",
+                "use_codex_gateway_mcp_passthrough": true
+            }),
+            "gpt-4o-mini",
+            "k",
+            "https://api.openai.com/v1",
+            None,
+            true,
+        );
+
+        assert!(resolved.use_codex_gateway_mcp_passthrough);
     }
 }

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde_json::{json, Value};
 use tracing::{info, warn};
@@ -42,6 +42,25 @@ impl McpToolExecute {
 
     pub async fn init(&mut self) -> Result<(), String> {
         self.build_tools().await
+    }
+
+    pub async fn init_builtin_only(&mut self) -> Result<(), String> {
+        self.tools.clear();
+        self.tool_metadata.clear();
+        self.builtin_services.clear();
+
+        let builtin_servers = self.builtin_mcp_servers.clone();
+        for server in &builtin_servers {
+            if let Err(err) = self.build_tools_from_builtin(server) {
+                warn!(
+                    "failed to build tools from builtin {}: {}",
+                    server.name, err
+                );
+            }
+        }
+
+        info!("Builtin MCP tools built: {}", self.tools.len());
+        Ok(())
     }
 
     pub async fn build_tools(&mut self) -> Result<(), String> {
@@ -171,6 +190,59 @@ impl McpToolExecute {
         self.get_available_tools()
     }
 
+    pub fn get_codex_gateway_request_tools(&self) -> Vec<Value> {
+        let mut out = Vec::new();
+
+        for server in &self.mcp_servers {
+            out.push(json!({
+                "type": "mcp",
+                "server_label": server.name.clone(),
+                "server_url": server.url.clone(),
+            }));
+        }
+
+        for server in &self.stdio_mcp_servers {
+            let mut tool = json!({
+                "type": "mcp",
+                "server_label": server.name.clone(),
+                "command": server.command.clone(),
+            });
+            if let Some(args) = server.args.as_ref() {
+                tool["args"] = json!(args);
+            }
+            if let Some(cwd) = server.cwd.as_ref() {
+                tool["cwd"] = json!(cwd);
+            }
+            if let Some(env) = server.env.as_ref() {
+                tool["env"] = json!(env);
+            }
+            out.push(tool);
+        }
+
+        let builtin_tool_names: HashSet<&str> = self
+            .tool_metadata
+            .iter()
+            .filter_map(|(name, info)| {
+                if info.server_type == "builtin" {
+                    Some(name.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        for tool in &self.tools {
+            let Some(tool_name) = response_tool_name(tool) else {
+                continue;
+            };
+            if builtin_tool_names.contains(tool_name) {
+                out.push(tool.clone());
+            }
+        }
+
+        out
+    }
+
     pub async fn execute_tools_stream(
         &self,
         tool_calls: &[Value],
@@ -253,5 +325,77 @@ impl McpToolExecute {
             .await?;
             Ok(to_text(&result))
         }
+    }
+}
+
+fn response_tool_name(tool: &Value) -> Option<&str> {
+    tool.get("name")
+        .and_then(|value| value.as_str())
+        .or_else(|| {
+            tool.get("function")
+                .and_then(|value| value.get("name"))
+                .and_then(|value| value.as_str())
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::McpToolExecute;
+    use crate::services::builtin_mcp::BuiltinMcpKind;
+    use crate::services::mcp_loader::{McpBuiltinServer, McpHttpServer, McpStdioServer};
+
+    #[tokio::test]
+    async fn codex_gateway_request_tools_include_mcp_servers_and_builtin_functions() {
+        let mut exec = McpToolExecute::new(
+            vec![McpHttpServer {
+                name: "alpha_http".to_string(),
+                url: "http://127.0.0.1:9000/mcp".to_string(),
+            }],
+            vec![McpStdioServer {
+                name: "beta_stdio".to_string(),
+                command: "node".to_string(),
+                args: Some(vec!["server.js".to_string()]),
+                cwd: Some("/tmp/demo".to_string()),
+                env: Some(std::collections::HashMap::from([(
+                    "DEMO_TOKEN".to_string(),
+                    "secret".to_string(),
+                )])),
+            }],
+            vec![McpBuiltinServer {
+                name: "memory_skill_reader".to_string(),
+                kind: BuiltinMcpKind::MemorySkillReader,
+                workspace_dir: String::new(),
+                user_id: Some("user_1".to_string()),
+                project_id: Some("project_1".to_string()),
+                contact_agent_id: Some("agent_1".to_string()),
+                allow_writes: false,
+                max_file_bytes: 0,
+                max_write_bytes: 0,
+                search_limit: 0,
+            }],
+        );
+        exec.init_builtin_only().await.expect("init builtin tools");
+
+        let tools = exec.get_codex_gateway_request_tools();
+        assert_eq!(tools.len(), 3);
+        assert!(tools.iter().any(|tool| {
+            tool.get("type").and_then(|value| value.as_str()) == Some("mcp")
+                && tool.get("server_label").and_then(|value| value.as_str()) == Some("alpha_http")
+                && tool.get("server_url").and_then(|value| value.as_str())
+                    == Some("http://127.0.0.1:9000/mcp")
+        }));
+        assert!(tools.iter().any(|tool| {
+            tool.get("type").and_then(|value| value.as_str()) == Some("mcp")
+                && tool.get("server_label").and_then(|value| value.as_str()) == Some("beta_stdio")
+                && tool.get("command").and_then(|value| value.as_str()) == Some("node")
+                && tool.get("cwd").and_then(|value| value.as_str()) == Some("/tmp/demo")
+        }));
+        assert!(tools.iter().any(|tool| {
+            tool.get("type").and_then(|value| value.as_str()) == Some("function")
+                && tool
+                    .get("name")
+                    .and_then(|value| value.as_str())
+                    .is_some_and(|name| name.starts_with("memory_skill_reader_"))
+        }));
     }
 }

@@ -51,6 +51,7 @@ impl AiClient {
         prefer_stateless: bool,
         message_mode: Option<String>,
         message_source: Option<String>,
+        request_cwd: Option<String>,
     ) -> Result<Value, String> {
         let include_tool_items = !tools.is_empty();
         let persist_tool_messages = purpose != "agent_builder";
@@ -134,6 +135,7 @@ impl AiClient {
                         } else {
                             Some(tools.clone())
                         },
+                        request_cwd.clone(),
                         Some(temperature),
                         max_tokens,
                         StreamCallbacks {

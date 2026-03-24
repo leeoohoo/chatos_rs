@@ -301,6 +301,7 @@ class CodexBridge:
         reasoning_summary: str | None,
         previous_response_id: str | None,
         api_key: str | None,
+        request_cwd: str | None,
         request_config_overrides: dict[str, Any] | None,
         function_tools: list[dict[str, Any]],
         provided_tool_outputs: dict[str, list[dict[str, Any]]],
@@ -327,6 +328,7 @@ class CodexBridge:
             f"reasoning_effort={reasoning_effort or 'default'}",
             f"reasoning_summary={reasoning_summary or 'default'}",
             f"prev={'yes' if previous_response_id else 'no'}",
+            f"cwd={request_cwd or self._cfg.cwd or 'default'}",
             f"function_tools={len(function_tools)}",
             f"provided_outputs={len(provided_tool_outputs)}",
         )
@@ -400,6 +402,7 @@ class CodexBridge:
                     "approvalPolicy": self._cfg.approval_policy,
                     "sandbox": self._cfg.sandbox,
                     **({"model": model} if model else {}),
+                    **({"cwd": request_cwd} if request_cwd else {}),
                     **({"config": request_config_overrides} if request_config_overrides else {}),
                 }
                 if function_tools:
@@ -411,6 +414,7 @@ class CodexBridge:
                     "approvalPolicy": self._cfg.approval_policy,
                     "sandbox": self._cfg.sandbox,
                     **({"model": model} if model else {}),
+                    **({"cwd": request_cwd} if request_cwd else {}),
                     **({"config": request_config_overrides} if request_config_overrides else {}),
                 }
                 if function_tools:
@@ -422,6 +426,7 @@ class CodexBridge:
                 thread_id,
                 [{"type": "text", "text": prompt}],
                 params={
+                    **({"cwd": request_cwd} if request_cwd else {}),
                     **({"model": model} if model else {}),
                     **({"effort": reasoning_effort} if reasoning_effort else {}),
                     **({"summary": reasoning_summary} if reasoning_summary else {}),
@@ -608,6 +613,7 @@ class CodexBridge:
         *,
         payload: dict[str, Any],
         api_key: str | None,
+        request_cwd: str | None,
         request_config_overrides: dict[str, Any] | None,
         function_tools: list[dict[str, Any]],
         provided_tool_outputs: dict[str, list[dict[str, Any]]],
@@ -642,6 +648,7 @@ class CodexBridge:
             reasoning_summary=reasoning_summary,
             previous_response_id=previous_response_id,
             api_key=api_key,
+            request_cwd=request_cwd,
             request_config_overrides=request_config_overrides,
             function_tools=function_tools,
             provided_tool_outputs=provided_tool_outputs,
@@ -780,6 +787,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
 
         try:
             payload = self._read_json_body()
+            request_cwd = extract_request_cwd(payload)
             request_config_overrides = extract_request_config_overrides(payload)
             function_tools = extract_function_tools(payload)
             provided_tool_outputs = extract_function_call_outputs(payload)
@@ -793,6 +801,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 "http.request",
                 "POST /v1/responses",
                 f"stream={stream}",
+                f"cwd={request_cwd or self.gateway.cfg.cwd or 'default'}",
                 f"tools={requested_tools_count}",
                 f"function_tools={len(function_tools)}",
                 f"tool_outputs={len(provided_tool_outputs)}",
@@ -812,6 +821,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 self._handle_stream(
                     payload,
                     api_key,
+                    request_cwd,
                     request_config_overrides,
                     function_tools,
                     provided_tool_outputs,
@@ -821,6 +831,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
             _, body = self.gateway.bridge.create_response(
                 payload=payload,
                 api_key=api_key,
+                request_cwd=request_cwd,
                 request_config_overrides=request_config_overrides,
                 function_tools=function_tools,
                 provided_tool_outputs=provided_tool_outputs,
@@ -839,6 +850,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
         self,
         payload: dict[str, Any],
         api_key: str | None,
+        request_cwd: str | None,
         request_config_overrides: dict[str, Any] | None,
         function_tools: list[dict[str, Any]],
         provided_tool_outputs: dict[str, list[dict[str, Any]]],
@@ -868,6 +880,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
             f"response_id={response_id}",
             f"effort={reasoning_effort or 'none'}",
             f"summary={reasoning_summary or 'none'}",
+            f"cwd={request_cwd or self.gateway.cfg.cwd or 'default'}",
             f"function_tools={len(function_tools)}",
             f"tool_outputs={len(provided_tool_outputs)}",
         )
@@ -1038,6 +1051,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
                     reasoning_summary=reasoning_summary,
                     previous_response_id=previous_response_id,
                     api_key=api_key,
+                    request_cwd=request_cwd,
                     request_config_overrides=request_config_overrides,
                     function_tools=function_tools,
                     provided_tool_outputs=provided_tool_outputs,
@@ -1306,6 +1320,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 reasoning_summary=reasoning_summary,
                 previous_response_id=previous_response_id,
                 api_key=api_key,
+                request_cwd=request_cwd,
                 request_config_overrides=request_config_overrides,
                 function_tools=function_tools,
                 provided_tool_outputs=provided_tool_outputs,
@@ -1641,6 +1656,10 @@ def extract_reasoning_options(payload: dict[str, Any]) -> tuple[str | None, str 
         summary = None
 
     return effort, summary
+
+
+def extract_request_cwd(payload: dict[str, Any]) -> str | None:
+    return normalize_non_empty_string(payload.get("cwd"), "request `cwd`")
 
 
 def extract_request_config_overrides(payload: dict[str, Any]) -> dict[str, Any] | None:

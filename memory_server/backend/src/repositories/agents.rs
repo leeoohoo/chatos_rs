@@ -326,6 +326,24 @@ pub async fn get_agent_by_id(db: &Db, agent_id: &str) -> Result<Option<MemoryAge
     }
 }
 
+pub async fn get_user_clone_by_source_agent_id(
+    db: &Db,
+    user_id: &str,
+    source_agent_id: &str,
+) -> Result<Option<MemoryAgent>, String> {
+    let item = collection(db)
+        .find_one(doc! {
+            "user_id": user_id,
+            "project_policy.__chatos_clone_meta.source_agent_id": source_agent_id,
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+    match item {
+        Some(agent) => Ok(Some(hydrate_agent_for_read(db, agent).await?)),
+        None => Ok(None),
+    }
+}
+
 pub async fn update_agent(
     db: &Db,
     agent_id: &str,

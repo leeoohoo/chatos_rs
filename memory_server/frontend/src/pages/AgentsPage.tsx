@@ -135,8 +135,11 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
     return filtered && filtered.length > 0 ? filtered : currentUserId.trim();
   }, [isAdmin, filterUserId, currentUserId]);
 
+  const currentUserIdTrimmed = currentUserId.trim();
+  const crossScopeReadonly = isAdmin && scopeUserId !== currentUserIdTrimmed;
+
   const isReadonlyForScope = (agent: MemoryAgent): boolean => (
-    !isAdmin && agent.user_id !== scopeUserId
+    agent.user_id !== currentUserIdTrimmed
   );
 
   const normalizeStringArray = (items: string[]): string[] => Array.from(
@@ -167,7 +170,7 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
     setError(null);
     try {
       const [agents, plugins, skills] = await Promise.all([
-        api.listAgents(scopeUserId, { limit: 200, offset: 0 }),
+        api.listAgents(scopeUserId, { include_shared: false, limit: 200, offset: 0 }),
         api.listSkillPlugins(scopeUserId, { limit: 1000, offset: 0 }),
         api.listSkills(scopeUserId, { limit: 1000, offset: 0 }),
       ]);
@@ -528,7 +531,6 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
     try {
       const [rows, projects] = await Promise.all([
         api.listAgentSessions(agent.id, scopeUserId, {
-          status: 'active',
           limit: 120,
           offset: 0,
         }),
@@ -718,8 +720,10 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
           <Button onClick={load} loading={loading}>
             {t('common.refresh')}
           </Button>
-          <Button onClick={openAiCreate}>{t('agents.aiCreate')}</Button>
-          <Button type="primary" onClick={openCreate}>
+          <Button onClick={openAiCreate} disabled={crossScopeReadonly}>
+            {t('agents.aiCreate')}
+          </Button>
+          <Button type="primary" onClick={openCreate} disabled={crossScopeReadonly}>
             {t('agents.create')}
           </Button>
         </Space>

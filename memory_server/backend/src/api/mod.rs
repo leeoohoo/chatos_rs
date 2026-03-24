@@ -31,8 +31,9 @@ mod summaries_api;
 use self::shared::{
     build_ai_client, build_auth_token, default_project_name, ensure_admin,
     ensure_agent_manage_access, ensure_agent_read_access, ensure_contact_access,
-    ensure_session_access, normalize_optional_text, normalize_project_scope_id,
-    pick_latest_timestamp, require_auth, resolve_scope_user_id, resolve_visible_user_ids,
+    ensure_contact_manage_access, ensure_session_access, normalize_optional_text,
+    normalize_project_scope_id, pick_latest_timestamp, require_auth, resolve_scope_user_id,
+    resolve_visible_user_ids,
 };
 
 pub type SharedState = Arc<AppState>;

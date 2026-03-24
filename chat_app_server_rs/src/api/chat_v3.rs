@@ -306,7 +306,11 @@ async fn stream_chat_v3(sender: SseSender, req: ChatRequest) {
         builtin_servers.clone(),
     );
     if use_tools {
-        let _ = mcp_exec.init().await;
+        let _ = if model_runtime.use_codex_gateway_mcp_passthrough {
+            mcp_exec.init_builtin_only().await
+        } else {
+            mcp_exec.init().await
+        };
     }
     ai_server.set_mcp_tool_execute(mcp_exec);
 
@@ -352,6 +356,14 @@ async fn stream_chat_v3(sender: SseSender, req: ChatRequest) {
                 message_mode: Some("model".to_string()),
                 message_source: Some(model_runtime.model.clone()),
                 prefixed_input_items,
+                request_cwd: if model_runtime.use_codex_gateway_mcp_passthrough {
+                    resolved_project_root.clone()
+                } else {
+                    None
+                },
+                use_codex_gateway_mcp_passthrough: Some(
+                    model_runtime.use_codex_gateway_mcp_passthrough,
+                ),
             },
         )
         .await;

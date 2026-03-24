@@ -83,6 +83,11 @@ Authorization: Bearer <API_KEY>   # 可选
 
 支持续聊：传 `previous_response_id`，网关会把它映射到同一个 Codex thread。
 
+额外支持：
+
+- `cwd`：请求级工作目录。网关会把它传给 `thread_start/thread_resume/turn_start`，
+  用来把本轮以及后续续聊绑定到指定项目目录，而不是服务启动时的默认 `--cwd`。
+
 ## OpenAI Python SDK 调用示例
 
 ```python

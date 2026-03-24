@@ -27,6 +27,9 @@ impl AiClient {
         let message_mode = options.message_mode;
         let message_source = options.message_source;
         let prefixed_input_items = options.prefixed_input_items.unwrap_or_default();
+        let request_cwd = options.request_cwd;
+        let use_codex_gateway_mcp_passthrough =
+            options.use_codex_gateway_mcp_passthrough.unwrap_or(false);
         let turn_id = options
             .conversation_turn_id
             .as_deref()
@@ -78,12 +81,17 @@ impl AiClient {
             .as_ref()
             .map(|s| self.force_text_content_sessions.contains(s))
             .unwrap_or(false);
-        let available_tools = self.mcp_tool_execute.get_available_tools();
+        let available_tools = if use_codex_gateway_mcp_passthrough {
+            self.mcp_tool_execute.get_codex_gateway_request_tools()
+        } else {
+            self.mcp_tool_execute.get_available_tools()
+        };
         let include_tool_items = !available_tools.is_empty();
         info!(
-            "[AI_V3] tools prepared: count={}, session={}",
+            "[AI_V3] tools prepared: count={}, session={}, codex_gateway_passthrough={}",
             available_tools.len(),
-            session_id.clone().unwrap_or_else(|| "n/a".to_string())
+            session_id.clone().unwrap_or_else(|| "n/a".to_string()),
+            use_codex_gateway_mcp_passthrough
         );
 
         let allow_prev_id = session_id
@@ -154,6 +162,7 @@ impl AiClient {
             prefer_stateless,
             message_mode,
             message_source,
+            request_cwd,
         )
         .await
     }

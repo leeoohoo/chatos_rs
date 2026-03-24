@@ -4,11 +4,13 @@ use axum::Json;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::models::CreateContactRequest;
-use crate::repositories::{contacts as contacts_repo, sessions};
+use crate::models::{CreateContactRequest, CreateMemoryAgentRequest, MemoryAgent};
+use crate::repositories::{
+    agents as agents_repo, auth as auth_repo, contacts as contacts_repo, sessions,
+};
 
 use super::{
-    ensure_agent_read_access, ensure_contact_access, require_auth, resolve_scope_user_id,
+    ensure_agent_read_access, ensure_contact_manage_access, require_auth, resolve_scope_user_id,
     SharedState,
 };
 
@@ -25,6 +27,114 @@ pub(super) struct CreateContactPayload {
     user_id: Option<String>,
     agent_id: String,
     agent_name_snapshot: Option<String>,
+}
+
+const CLONE_META_KEY: &str = "__chatos_clone_meta";
+
+fn with_clone_meta_project_policy(project_policy: Option<Value>, source_agent_id: &str) -> Option<Value> {
+    let mut root = match project_policy {
+        Some(Value::Object(map)) => map,
+        Some(other) => {
+            let mut map = serde_json::Map::new();
+            map.insert("__original_project_policy".to_string(), other);
+            map
+        }
+        None => serde_json::Map::new(),
+    };
+    root.insert(
+        CLONE_META_KEY.to_string(),
+        json!({
+            "source_agent_id": source_agent_id,
+            "source_user_id": auth_repo::ADMIN_USER_ID,
+        }),
+    );
+    Some(Value::Object(root))
+}
+
+async fn ensure_user_managed_agent_for_contact(
+    state: &SharedState,
+    scope_user_id: &str,
+    source_agent: &MemoryAgent,
+) -> Result<MemoryAgent, (StatusCode, Json<Value>)> {
+    if source_agent.user_id == scope_user_id {
+        return Ok(source_agent.clone());
+    }
+    if source_agent.user_id != auth_repo::ADMIN_USER_ID {
+        return Err((StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"}))));
+    }
+
+    match agents_repo::get_user_clone_by_source_agent_id(
+        &state.pool,
+        scope_user_id,
+        source_agent.id.as_str(),
+    )
+    .await
+    {
+        Ok(Some(existing)) => return Ok(existing),
+        Ok(None) => {}
+        Err(err) => {
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "load cloned agent failed", "detail": err})),
+            ))
+        }
+    }
+
+    let req = CreateMemoryAgentRequest {
+        user_id: scope_user_id.to_string(),
+        name: source_agent.name.clone(),
+        description: source_agent.description.clone(),
+        category: source_agent.category.clone(),
+        role_definition: source_agent.role_definition.clone(),
+        plugin_sources: Some(source_agent.plugin_sources.clone()),
+        skills: Some(source_agent.skills.clone()),
+        skill_ids: Some(source_agent.skill_ids.clone()),
+        default_skill_ids: Some(source_agent.default_skill_ids.clone()),
+        mcp_policy: source_agent.mcp_policy.clone(),
+        project_policy: with_clone_meta_project_policy(
+            source_agent.project_policy.clone(),
+            source_agent.id.as_str(),
+        ),
+        enabled: Some(source_agent.enabled),
+    };
+
+    match agents_repo::create_agent(&state.pool, req.clone()).await {
+        Ok(agent) => Ok(agent),
+        Err(err)
+            if err.contains("unknown skill_ids") || err.contains("unknown plugin_sources") =>
+        {
+            let fallback_req = CreateMemoryAgentRequest {
+                user_id: req.user_id,
+                name: req.name,
+                description: req.description,
+                category: req.category,
+                role_definition: req.role_definition,
+                plugin_sources: Some(Vec::new()),
+                skills: req.skills,
+                skill_ids: Some(Vec::new()),
+                default_skill_ids: Some(Vec::new()),
+                mcp_policy: req.mcp_policy,
+                project_policy: req.project_policy,
+                enabled: req.enabled,
+            };
+            agents_repo::create_agent(&state.pool, fallback_req)
+                .await
+                .map_err(|fallback_err| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({
+                            "error": "clone admin agent for user failed",
+                            "detail": fallback_err,
+                            "source_detail": err,
+                        })),
+                    )
+                })
+        }
+        Err(err) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "clone admin agent for user failed", "detail": err})),
+        )),
+    }
 }
 
 pub(super) async fn list_contacts(
@@ -94,16 +204,94 @@ pub(super) async fn create_contact(
         );
     }
 
+    let managed_agent =
+        match ensure_user_managed_agent_for_contact(&state, scope_user_id.as_str(), &agent).await {
+            Ok(value) => value,
+            Err(err) => return err,
+        };
+    if !managed_agent.enabled {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "agent is disabled"})),
+        );
+    }
+
+    let snapshot_name = req
+        .agent_name_snapshot
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| Some(managed_agent.name.clone()));
+
+    if managed_agent.id != agent.id {
+        match contacts_repo::get_contact_by_user_and_agent(
+            &state.pool,
+            scope_user_id.as_str(),
+            managed_agent.id.as_str(),
+        )
+        .await
+        {
+            Ok(Some(contact)) => {
+                return (
+                    StatusCode::OK,
+                    Json(json!({"created": false, "contact": contact})),
+                )
+            }
+            Ok(None) => {}
+            Err(err) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": "load cloned contact failed", "detail": err})),
+                )
+            }
+        }
+
+        match contacts_repo::get_contact_by_user_and_agent(
+            &state.pool,
+            scope_user_id.as_str(),
+            agent.id.as_str(),
+        )
+        .await
+        {
+            Ok(Some(legacy_contact)) => {
+                match contacts_repo::update_contact_agent(
+                    &state.pool,
+                    legacy_contact.id.as_str(),
+                    managed_agent.id.as_str(),
+                    snapshot_name.clone(),
+                )
+                .await
+                {
+                    Ok(Some(contact)) => {
+                        return (
+                            StatusCode::OK,
+                            Json(json!({"created": false, "contact": contact})),
+                        )
+                    }
+                    Ok(None) => {}
+                    Err(err) => {
+                        return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(json!({"error": "rebind legacy contact agent failed", "detail": err})),
+                        )
+                    }
+                }
+            }
+            Ok(None) => {}
+            Err(err) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": "load legacy contact failed", "detail": err})),
+                )
+            }
+        }
+    }
+
     let create_req = CreateContactRequest {
         user_id: scope_user_id,
-        agent_id,
-        agent_name_snapshot: req
-            .agent_name_snapshot
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToOwned::to_owned)
-            .or_else(|| Some(agent.name)),
+        agent_id: managed_agent.id,
+        agent_name_snapshot: snapshot_name,
     };
 
     match contacts_repo::create_contact_idempotent(&state.pool, create_req).await {
@@ -135,7 +323,8 @@ pub(super) async fn delete_contact(
         Err(err) => return err,
     };
 
-    let contact = match ensure_contact_access(state.as_ref(), &auth, contact_id.as_str()).await {
+    let contact =
+        match ensure_contact_manage_access(state.as_ref(), &auth, contact_id.as_str()).await {
         Ok(contact) => contact,
         Err(err) => return err,
     };

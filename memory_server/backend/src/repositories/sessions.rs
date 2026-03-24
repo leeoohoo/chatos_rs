@@ -8,7 +8,7 @@ mod write_ops;
 
 pub use self::read_ops::{
     get_active_session_by_contact_project, get_session_by_id, list_active_user_ids, list_sessions,
-    list_sessions_by_agent,
+    list_sessions_by_agent, list_sessions_by_contact,
 };
 pub use self::write_ops::{
     archive_sessions_by_contact, create_session, delete_session, update_session,
