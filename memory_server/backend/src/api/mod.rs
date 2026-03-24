@@ -125,6 +125,10 @@ pub fn router(state: SharedState) -> Router {
         )
         .route("/api/memory/v1/skills", get(skills_api::list_skills))
         .route(
+            "/api/memory/v1/skills/:skill_id",
+            get(skills_api::get_skill),
+        )
+        .route(
             "/api/memory/v1/skills/plugins",
             get(skills_api::list_skill_plugins),
         )

@@ -1,4 +1,4 @@
-use axum::extract::{Query, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
 use serde::Deserialize;
@@ -63,6 +63,40 @@ pub(super) async fn list_skills(
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": "list skills failed", "detail": err})),
+        ),
+    }
+}
+
+pub(super) async fn get_skill(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Path(skill_id): Path<String>,
+    Query(q): Query<ListSkillsQuery>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match require_auth(&state, &headers) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+
+    let scope_user_id = resolve_scope_user_id(&auth, q.user_id);
+    let visible_user_ids = resolve_visible_user_ids(scope_user_id.as_str());
+    let skill_id = skill_id.trim();
+    if skill_id.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "skill_id is required"})),
+        );
+    }
+
+    match skills_repo::get_skill_by_id(&state.pool, visible_user_ids.as_slice(), skill_id).await {
+        Ok(Some(item)) => (StatusCode::OK, Json(json!(item))),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "skill not found"})),
+        ),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "get skill failed", "detail": err})),
         ),
     }
 }

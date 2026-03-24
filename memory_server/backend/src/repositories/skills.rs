@@ -67,6 +67,26 @@ pub async fn list_skills(
     cursor.try_collect().await.map_err(|e| e.to_string())
 }
 
+pub async fn get_skill_by_id(
+    db: &Db,
+    user_ids: &[String],
+    skill_id: &str,
+) -> Result<Option<MemorySkill>, String> {
+    if user_ids.is_empty() {
+        return Ok(None);
+    }
+    let filter = if user_ids.len() == 1 {
+        doc! { "id": skill_id, "user_id": user_ids[0].clone() }
+    } else {
+        doc! { "id": skill_id, "user_id": { "$in": user_ids } }
+    };
+
+    skill_collection(db)
+        .find_one(filter)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 pub async fn list_plugins(
     db: &Db,
     user_id: &str,

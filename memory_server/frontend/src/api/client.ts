@@ -429,6 +429,7 @@ export const api = {
 
   async aiCreateAgent(payload: {
     user_id?: string;
+    model_config_id?: string;
     requirement: string;
     name?: string;
     category?: string;
@@ -470,6 +471,13 @@ export const api = {
       },
     });
     return data.items ?? [];
+  },
+
+  async getSkill(skillId: string, userId?: string): Promise<MemorySkill | null> {
+    const { data } = await client.get(`/skills/${encodeURIComponent(skillId)}`, {
+      params: { user_id: userId },
+    });
+    return data ?? null;
   },
 
   async importSkillsFromGit(payload: {

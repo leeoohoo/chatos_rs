@@ -9,6 +9,7 @@ import {
   List,
   Modal,
   Popconfirm,
+  Select,
   Space,
   Spin,
   Switch,
@@ -20,7 +21,7 @@ import type { ColumnsType } from 'antd/es/table';
 
 import { api } from '../api/client';
 import { useI18n } from '../i18n';
-import type { MemoryAgent, Message, Session } from '../types';
+import type { AiModelConfig, MemoryAgent, MemorySkill, Message, Session } from '../types';
 
 const { Text } = Typography;
 
@@ -62,6 +63,12 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
   const [aiName, setAiName] = useState('');
   const [aiCategory, setAiCategory] = useState('');
   const [aiEnabled, setAiEnabled] = useState(true);
+  const [aiModelConfigs, setAiModelConfigs] = useState<AiModelConfig[]>([]);
+  const [aiModelsLoading, setAiModelsLoading] = useState(false);
+  const [aiModelConfigId, setAiModelConfigId] = useState('');
+  const [skillPreviewOpen, setSkillPreviewOpen] = useState(false);
+  const [skillPreviewLoading, setSkillPreviewLoading] = useState(false);
+  const [skillPreview, setSkillPreview] = useState<MemorySkill | null>(null);
   const [conversationOpen, setConversationOpen] = useState(false);
   const [conversationAgent, setConversationAgent] = useState<MemoryAgent | null>(null);
   const [conversationLoading, setConversationLoading] = useState(false);
@@ -138,6 +145,50 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scopeUserId]);
 
+  useEffect(() => {
+    if (!aiOpen) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    const loadAiModels = async () => {
+      setAiModelsLoading(true);
+      try {
+        const rows = await api.listModelConfigs(scopeUserId);
+        if (cancelled) {
+          return;
+        }
+        const enabledRows = rows.filter((item) => item.enabled === 1);
+        setAiModelConfigs(enabledRows);
+        setAiModelConfigId((prev) => {
+          if (prev && enabledRows.some((item) => item.id === prev)) {
+            return prev;
+          }
+          if (enabledRows.length === 1) {
+            return enabledRows[0].id;
+          }
+          return '';
+        });
+      } catch (err) {
+        if (cancelled) {
+          return;
+        }
+        setAiModelConfigs([]);
+        setAiModelConfigId('');
+        setError((err as Error).message);
+      } finally {
+        if (!cancelled) {
+          setAiModelsLoading(false);
+        }
+      }
+    };
+
+    loadAiModels();
+    return () => {
+      cancelled = true;
+    };
+  }, [aiOpen, scopeUserId]);
+
   const parseSkillIds = (raw: string): string[] => {
     const segments = raw
       .split(/[\n,]/g)
@@ -149,6 +200,10 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
   const openCreate = () => {
     setEditor(EMPTY_EDITOR);
     setEditorOpen(true);
+  };
+
+  const openAiCreate = () => {
+    setAiOpen(true);
   };
 
   const openEdit = (agent: MemoryAgent) => {
@@ -220,10 +275,72 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
     }
   };
 
+  const aiModelOptions = useMemo(
+    () => aiModelConfigs.map((item) => ({
+      label: [item.name, item.provider, item.model].filter((part) => part && `${part}`.trim()).join(' | '),
+      value: item.id,
+    })),
+    [aiModelConfigs],
+  );
+
+  const openSkillPreview = async (agent: MemoryAgent, skillId: string) => {
+    const normalizedSkillId = skillId.trim();
+    if (!normalizedSkillId) {
+      return;
+    }
+
+    const embedded = (agent.skills || []).find((item) => item.id === normalizedSkillId);
+    setSkillPreviewOpen(true);
+    setSkillPreview(null);
+    setSkillPreviewLoading(true);
+    try {
+      try {
+        const item = await api.getSkill(normalizedSkillId, scopeUserId);
+        if (item) {
+          setSkillPreview(item);
+          return;
+        }
+      } catch (err) {
+        if (!embedded) {
+          throw err;
+        }
+      }
+
+      if (embedded) {
+        setSkillPreview({
+          id: embedded.id,
+          user_id: agent.user_id,
+          plugin_source: 'inline',
+          name: embedded.name || embedded.id,
+          description: `Inline skill from agent ${agent.name || agent.id}`,
+          content: embedded.content || '',
+          source_path: '',
+          version: null,
+          updated_at: agent.updated_at,
+        });
+        return;
+      }
+
+      throw new Error(t('agents.skillNotFound'));
+    } catch (err) {
+      setSkillPreviewOpen(false);
+      setError((err as Error).message);
+    } finally {
+      setSkillPreviewLoading(false);
+    }
+  };
+
   const runAiCreate = async () => {
     const requirement = aiRequirement.trim();
     if (!requirement) {
       setError(t('agents.aiRequired'));
+      return;
+    }
+
+    const selectedModelConfigId = aiModelConfigId
+      || (aiModelConfigs.length === 1 ? aiModelConfigs[0].id : '');
+    if (aiModelConfigs.length > 1 && !selectedModelConfigId) {
+      setError(t('agents.aiModelRequired'));
       return;
     }
 
@@ -232,6 +349,7 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
     try {
       await api.aiCreateAgent({
         user_id: scopeUserId,
+        model_config_id: selectedModelConfigId || undefined,
         requirement,
         name: aiName.trim() || undefined,
         category: aiCategory.trim() || undefined,
@@ -356,7 +474,29 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
       dataIndex: 'skill_ids',
       key: 'skill_ids',
       width: 220,
-      render: (value?: string[]) => (value && value.length > 0 ? value.join(', ') : '-'),
+      render: (value: string[] | undefined, record) => {
+        if (!value || value.length === 0) {
+          return '-';
+        }
+        return (
+          <Space size={[4, 4]} wrap>
+            {value.map((skillId) => (
+              <Button
+                key={skillId}
+                type="link"
+                size="small"
+                style={{ paddingInline: 0, height: 20 }}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void openSkillPreview(record, skillId);
+                }}
+              >
+                {skillId}
+              </Button>
+            ))}
+          </Space>
+        );
+      },
     },
     {
       title: t('agents.status'),
@@ -431,7 +571,7 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
           <Button onClick={load} loading={loading}>
             {t('common.refresh')}
           </Button>
-          <Button onClick={() => setAiOpen(true)}>{t('agents.aiCreate')}</Button>
+          <Button onClick={openAiCreate}>{t('agents.aiCreate')}</Button>
           <Button type="primary" onClick={openCreate}>
             {t('agents.create')}
           </Button>
@@ -645,6 +785,16 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
             placeholder={t('agents.aiRequirement')}
             rows={5}
           />
+          <Select
+            showSearch
+            allowClear={aiModelConfigs.length !== 1}
+            loading={aiModelsLoading}
+            value={aiModelConfigId || undefined}
+            onChange={(value) => setAiModelConfigId(value ?? '')}
+            options={aiModelOptions}
+            placeholder={t('agents.aiModelPlaceholder')}
+            optionFilterProp="label"
+          />
           <Input
             value={aiName}
             onChange={(event) => setAiName(event.target.value)}
@@ -660,6 +810,65 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
             <Switch checked={aiEnabled} onChange={setAiEnabled} />
           </Space>
         </Space>
+      </Modal>
+
+      <Modal
+        open={skillPreviewOpen}
+        title={`${t('agents.skillPreview')}: ${skillPreview?.name || skillPreview?.id || '-'}`}
+        footer={null}
+        onCancel={() => {
+          setSkillPreviewOpen(false);
+          setSkillPreview(null);
+        }}
+        width={860}
+      >
+        {skillPreviewLoading ? (
+          <div style={{ display: 'flex', justifyContent: 'center', padding: '32px 0' }}>
+            <Spin />
+          </div>
+        ) : !skillPreview ? (
+          <Empty description={t('agents.skillNotFound')} />
+        ) : (
+          <Space direction="vertical" size={10} style={{ width: '100%' }}>
+            <Text strong>{skillPreview.id}</Text>
+            <Text type="secondary">
+              {t('agents.skillSourceType')}: {
+                skillPreview.plugin_source === 'inline'
+                  ? t('agents.skillSourceInline')
+                  : t('agents.skillSourceCenter')
+              }
+            </Text>
+            <Text type="secondary">
+              {t('agents.skillPluginSource')}: {skillPreview.plugin_source || '-'}
+            </Text>
+            <Text type="secondary">
+              {t('agents.skillSourcePath')}: {skillPreview.source_path || '-'}
+            </Text>
+            <div
+              style={{
+                maxHeight: 520,
+                overflow: 'auto',
+                padding: 12,
+                border: '1px solid #f0f0f0',
+                borderRadius: 8,
+                background: '#fafafa',
+              }}
+            >
+              <pre
+                style={{
+                  margin: 0,
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                  fontFamily: 'SFMono-Regular, Consolas, Liberation Mono, Menlo, monospace',
+                  fontSize: 13,
+                  lineHeight: 1.6,
+                }}
+              >
+                {skillPreview.content || t('agents.skillContentEmpty')}
+              </pre>
+            </div>
+          </Space>
+        )}
       </Modal>
     </Card>
   );
