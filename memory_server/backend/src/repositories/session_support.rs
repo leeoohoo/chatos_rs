@@ -182,8 +182,8 @@ mod tests {
                 "selectedAgentId": "agent_001"
             }
         });
-        let normalized = normalize_session_metadata(Some(metadata))
-            .expect("normalized metadata should exist");
+        let normalized =
+            normalize_session_metadata(Some(metadata)).expect("normalized metadata should exist");
         assert_eq!(
             normalized
                 .get("contact")

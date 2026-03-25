@@ -198,6 +198,15 @@ export interface TurnRuntimeSnapshotTool {
   description?: string | null;
 }
 
+export interface TurnRuntimeSnapshotSelectedCommand {
+  command_ref?: string | null;
+  name?: string | null;
+  plugin_source: string;
+  source_path: string;
+  trigger?: string | null;
+  arguments?: string | null;
+}
+
 export interface TurnRuntimeSnapshotRuntime {
   model?: string | null;
   provider?: string | null;
@@ -206,6 +215,7 @@ export interface TurnRuntimeSnapshotRuntime {
   project_root?: string | null;
   mcp_enabled?: boolean | null;
   enabled_mcp_ids?: string[];
+  selected_commands?: TurnRuntimeSnapshotSelectedCommand[];
 }
 
 export interface TurnRuntimeSnapshot {

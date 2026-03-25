@@ -87,6 +87,18 @@ pub struct MemoryAgentRuntimeSkillSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryAgentRuntimeCommandSummary {
+    pub command_ref: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub argument_hint: Option<String>,
+    pub plugin_source: String,
+    pub source_path: String,
+    pub content: String,
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryAgentRuntimeContext {
     pub agent_id: String,
     pub name: String,
@@ -101,6 +113,8 @@ pub struct MemoryAgentRuntimeContext {
     pub skill_ids: Vec<String>,
     #[serde(default)]
     pub runtime_skills: Vec<MemoryAgentRuntimeSkillSummary>,
+    #[serde(default)]
+    pub runtime_commands: Vec<MemoryAgentRuntimeCommandSummary>,
     pub mcp_policy: Option<Value>,
     pub project_policy: Option<Value>,
     pub updated_at: String,
@@ -123,6 +137,10 @@ pub struct MemorySkill {
 pub struct MemorySkillPluginCommand {
     pub name: String,
     pub source_path: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub argument_hint: Option<String>,
     pub content: String,
 }
 

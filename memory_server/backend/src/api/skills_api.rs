@@ -208,7 +208,8 @@ pub(super) async fn get_skill_plugin(
                             changed = true;
                         }
                         if changed {
-                            if let Ok(saved) = skills_repo::upsert_plugin(&state.pool, item.clone()).await
+                            if let Ok(saved) =
+                                skills_repo::upsert_plugin(&state.pool, item.clone()).await
                             {
                                 item = saved;
                             }

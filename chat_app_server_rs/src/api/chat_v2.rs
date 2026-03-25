@@ -1,3 +1,5 @@
+use std::sync::{Arc, Mutex};
+
 use axum::http::StatusCode;
 use axum::{
     extract::{Path, Query},
@@ -15,12 +17,15 @@ use crate::core::chat_context::{
     maybe_spawn_session_title_rename, resolve_effective_user_id, resolve_system_prompt,
 };
 use crate::core::chat_runtime::{
-    compose_contact_system_prompt, contact_agent_id_from_metadata, contact_id_from_metadata,
-    enabled_mcp_ids_from_metadata, mcp_enabled_from_metadata, normalize_id,
+    compose_contact_command_system_prompt, compose_contact_system_prompt,
+    contact_agent_id_from_metadata, contact_id_from_metadata, enabled_mcp_ids_from_metadata,
+    mcp_enabled_from_metadata, normalize_id, parse_contact_command_invocation,
+    parse_implicit_command_selections_from_tools_end,
     project_id_from_metadata, project_root_from_metadata, resolve_project_runtime,
 };
 use crate::core::chat_stream::{build_v2_callbacks, handle_chat_result, send_start_event};
 use crate::core::mcp_runtime::{
+    contact_agent_command_reader_server, contact_agent_plugin_reader_server,
     contact_agent_skill_reader_server, has_any_mcp_server, load_mcp_servers_by_selection,
     normalize_mcp_ids,
 };
@@ -286,15 +291,45 @@ async fn stream_chat_v2(
     )
     .await;
     let contact_system_prompt = compose_contact_system_prompt(contact_runtime_context.as_ref());
+    let selected_command =
+        parse_contact_command_invocation(content.as_str(), contact_runtime_context.as_ref());
+    let command_system_prompt = compose_contact_command_system_prompt(selected_command.as_ref());
+    let selected_commands_for_snapshot = Arc::new(Mutex::new(
+        selected_command
+            .as_ref()
+            .map(|command| {
+                vec![memory_server_client::TurnRuntimeSnapshotSelectedCommandDto {
+                    command_ref: Some(command.command_ref.clone()),
+                    name: Some(command.name.clone()),
+                    plugin_source: command.plugin_source.clone(),
+                    source_path: command.source_path.clone(),
+                    trigger: Some("explicit".to_string()),
+                    arguments: command.arguments.clone(),
+                }]
+            })
+            .unwrap_or_default(),
+    ));
     if base_system_prompt.is_some() {
         ai_server.set_system_prompt(base_system_prompt.clone());
     }
-    let prefixed_messages = contact_system_prompt.as_ref().map(|prompt| {
-        vec![json!({
+    let mut prefixed_messages_items = Vec::new();
+    if let Some(prompt) = contact_system_prompt.as_ref() {
+        prefixed_messages_items.push(json!({
             "role": "system",
             "content": prompt,
-        })]
-    });
+        }));
+    }
+    if let Some(prompt) = command_system_prompt.as_ref() {
+        prefixed_messages_items.push(json!({
+            "role": "system",
+            "content": prompt,
+        }));
+    }
+    let prefixed_messages = if prefixed_messages_items.is_empty() {
+        None
+    } else {
+        Some(prefixed_messages_items)
+    };
 
     let requested_project_id = normalize_id(req.project_id)
         .or_else(|| project_id_from_metadata(session_metadata))
@@ -343,6 +378,20 @@ async fn stream_chat_v2(
         ) {
             builtin_servers.push(server);
         }
+        if let Some(server) = contact_agent_command_reader_server(
+            effective_user_id.clone(),
+            resolved_project_id.clone(),
+            agent_id,
+        ) {
+            builtin_servers.push(server);
+        }
+        if let Some(server) = contact_agent_plugin_reader_server(
+            effective_user_id.clone(),
+            resolved_project_id.clone(),
+            agent_id,
+        ) {
+            builtin_servers.push(server);
+        }
     }
     let use_tools = has_any_mcp_server(&http_servers, &stdio_servers, &builtin_servers);
     let mut mcp_exec = McpToolExecute::new(
@@ -373,6 +422,29 @@ async fn stream_chat_v2(
     );
 
     let callback_bundle = build_v2_callbacks(&sender, &session_id);
+    let mut callbacks = callback_bundle.callbacks.clone();
+    let original_on_tools_end = callbacks.on_tools_end.clone();
+    let selected_commands_for_snapshot_on_tools_end = selected_commands_for_snapshot.clone();
+    callbacks.on_tools_end = Some(Arc::new(move |result: Value| {
+        let implicit_items = parse_implicit_command_selections_from_tools_end(&result);
+        if !implicit_items.is_empty() {
+            if let Ok(mut snapshot_items) = selected_commands_for_snapshot_on_tools_end.lock() {
+                for item in implicit_items {
+                    snapshot_items.push(memory_server_client::TurnRuntimeSnapshotSelectedCommandDto {
+                        command_ref: item.command_ref,
+                        name: item.name,
+                        plugin_source: item.plugin_source,
+                        source_path: item.source_path,
+                        trigger: Some("implicit".to_string()),
+                        arguments: None,
+                    });
+                }
+            }
+        }
+        if let Some(callback) = original_on_tools_end.as_ref() {
+            callback(result);
+        }
+    }));
     let chunk_sent = callback_bundle.chunk_sent;
 
     let attachments_list = req.attachments.unwrap_or_default();
@@ -393,6 +465,10 @@ async fn stream_chat_v2(
     let resolved_turn_id = normalize_turn_id(req.turn_id.as_deref()).unwrap_or_else(|| {
         user_message_id.clone()
     });
+    let running_selected_commands = selected_commands_for_snapshot
+        .lock()
+        .map(|items| items.clone())
+        .unwrap_or_default();
     let running_snapshot_payload = build_turn_runtime_snapshot_payload(BuildTurnRuntimeSnapshotInput {
         user_message_id: Some(user_message_id.clone()),
         status: "running",
@@ -407,6 +483,7 @@ async fn stream_chat_v2(
         project_root: resolved_project_root.as_deref(),
         mcp_enabled,
         enabled_mcp_ids: &enabled_mcp_ids_for_snapshot,
+        selected_commands: running_selected_commands.as_slice(),
     });
     if let Err(err) = memory_server_client::sync_turn_runtime_snapshot(
         &session_id,
@@ -435,7 +512,7 @@ async fn stream_chat_v2(
                 attachments: Some(att),
                 supports_images: Some(model_runtime.supports_images),
                 reasoning_enabled: Some(model_runtime.effective_reasoning),
-                callbacks: Some(callback_bundle.callbacks),
+                callbacks: Some(callbacks),
                 turn_id: Some(resolved_turn_id.clone()),
                 user_message_id: Some(user_message_id),
                 message_mode: Some("model".to_string()),
@@ -445,6 +522,10 @@ async fn stream_chat_v2(
         )
         .await;
 
+    let completed_selected_commands = selected_commands_for_snapshot
+        .lock()
+        .map(|items| items.clone())
+        .unwrap_or_default();
     let completed_snapshot_payload =
         build_turn_runtime_snapshot_payload(BuildTurnRuntimeSnapshotInput {
             user_message_id: running_snapshot_payload.user_message_id.clone(),
@@ -460,6 +541,7 @@ async fn stream_chat_v2(
             project_root: resolved_project_root.as_deref(),
             mcp_enabled,
             enabled_mcp_ids: &enabled_mcp_ids_for_snapshot,
+            selected_commands: completed_selected_commands.as_slice(),
         });
     if let Err(err) = memory_server_client::sync_turn_runtime_snapshot(
         &session_id,

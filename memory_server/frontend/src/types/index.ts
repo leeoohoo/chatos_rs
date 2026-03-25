@@ -64,6 +64,7 @@ export interface SummaryJobConfig {
   user_id: string;
   enabled: number;
   summary_model_config_id?: string | null;
+  summary_prompt?: string | null;
   token_limit: number;
   round_limit: number;
   target_summary_tokens: number;
@@ -75,6 +76,7 @@ export interface RollupJobConfig {
   user_id: string;
   enabled: number;
   summary_model_config_id?: string | null;
+  summary_prompt?: string | null;
   token_limit: number;
   round_limit: number;
   target_summary_tokens: number;
@@ -249,6 +251,7 @@ export interface AgentMemoryJobConfig {
   user_id: string;
   enabled: number;
   summary_model_config_id?: string | null;
+  summary_prompt?: string | null;
   token_limit: number;
   round_limit: number;
   target_summary_tokens: number;

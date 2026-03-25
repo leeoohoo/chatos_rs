@@ -34,7 +34,7 @@ pub use self::session_ops::{
     list_sessions, list_summaries, sync_turn_runtime_snapshot, update_session, upsert_message,
     upsert_summary_job_config,
 };
-pub use self::skill_ops::get_memory_skill;
+pub use self::skill_ops::{get_memory_skill, get_memory_skill_plugin};
 
 pub async fn with_access_token_scope<T, Fut>(access_token: Option<String>, future: Fut) -> T
 where

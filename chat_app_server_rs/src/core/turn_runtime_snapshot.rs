@@ -5,6 +5,7 @@ use serde_json::Value;
 use crate::core::mcp_tools::ToolInfo;
 use crate::services::memory_server_client::{
     SyncTurnRuntimeSnapshotRequestDto, TurnRuntimeSnapshotRuntimeDto,
+    TurnRuntimeSnapshotSelectedCommandDto,
     TurnRuntimeSnapshotSystemMessageDto, TurnRuntimeSnapshotToolDto,
 };
 
@@ -22,6 +23,7 @@ pub struct BuildTurnRuntimeSnapshotInput<'a> {
     pub project_root: Option<&'a str>,
     pub mcp_enabled: bool,
     pub enabled_mcp_ids: &'a [String],
+    pub selected_commands: &'a [TurnRuntimeSnapshotSelectedCommandDto],
 }
 
 pub fn build_turn_runtime_snapshot_payload(
@@ -78,6 +80,7 @@ pub fn build_turn_runtime_snapshot_payload(
             project_root: normalize_optional_text(input.project_root),
             mcp_enabled: Some(input.mcp_enabled),
             enabled_mcp_ids: normalize_string_list(input.enabled_mcp_ids),
+            selected_commands: normalize_selected_commands(input.selected_commands),
         }),
     }
 }
@@ -128,4 +131,39 @@ fn normalize_optional_text(value: Option<&str>) -> Option<String> {
         .map(str::trim)
         .filter(|raw| !raw.is_empty())
         .map(ToOwned::to_owned)
+}
+
+fn normalize_selected_commands(
+    selected_commands: &[TurnRuntimeSnapshotSelectedCommandDto],
+) -> Vec<TurnRuntimeSnapshotSelectedCommandDto> {
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for item in selected_commands {
+        let plugin_source = item.plugin_source.trim();
+        let source_path = item.source_path.trim();
+        if plugin_source.is_empty() || source_path.is_empty() {
+            continue;
+        }
+        let dedup_key = format!(
+            "{}::{}::{}",
+            item.command_ref
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or_default(),
+            plugin_source,
+            source_path
+        );
+        if !seen.insert(dedup_key) {
+            continue;
+        }
+        out.push(TurnRuntimeSnapshotSelectedCommandDto {
+            command_ref: normalize_optional_text(item.command_ref.as_deref()),
+            name: normalize_optional_text(item.name.as_deref()),
+            plugin_source: plugin_source.to_string(),
+            source_path: source_path.to_string(),
+            trigger: normalize_optional_text(item.trigger.as_deref()),
+            arguments: normalize_optional_text(item.arguments.as_deref()),
+        });
+    }
+    out
 }

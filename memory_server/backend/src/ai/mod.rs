@@ -4,7 +4,7 @@ use reqwest::Client;
 use serde_json::json;
 
 use crate::config::AppConfig;
-use crate::models::AiModelConfig;
+use crate::models::{AiModelConfig, DEFAULT_SUMMARY_PROMPT_TEMPLATE};
 
 #[derive(Clone)]
 pub struct AiClient {
@@ -38,6 +38,7 @@ impl AiClient {
         target_tokens: i64,
         prompt_title: &str,
         chunks: &[String],
+        summary_prompt: Option<&str>,
     ) -> Result<String, String> {
         if chunks.is_empty() {
             return Err("empty summarize input".to_string());
@@ -52,10 +53,7 @@ impl AiClient {
             .collect::<Vec<_>>()
             .join("\n\n---\n\n");
 
-        let system_prompt = format!(
-            "你是 Memory Server 的总结引擎。请输出结构化简洁总结，重点保留事实、决策、风险、待办。目标长度约 {} tokens。",
-            max_tokens
-        );
+        let system_prompt = build_summary_system_prompt(summary_prompt, max_tokens, prompt_title);
         let user_prompt = format!(
             "任务：{}\n\n请基于以下内容生成高质量总结：\n\n{}",
             prompt_title, context
@@ -177,6 +175,22 @@ impl AiClient {
 
         Ok(text)
     }
+}
+
+fn build_summary_system_prompt(
+    summary_prompt: Option<&str>,
+    target_tokens: i64,
+    prompt_title: &str,
+) -> String {
+    let template = summary_prompt
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(DEFAULT_SUMMARY_PROMPT_TEMPLATE);
+
+    let target_tokens_str = target_tokens.to_string();
+    template
+        .replace("{{target_tokens}}", target_tokens_str.as_str())
+        .replace("{{prompt_title}}", prompt_title)
 }
 
 fn normalize_base_url(base_url: &str) -> String {

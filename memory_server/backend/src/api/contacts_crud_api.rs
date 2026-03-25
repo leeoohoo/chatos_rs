@@ -31,7 +31,10 @@ pub(super) struct CreateContactPayload {
 
 const CLONE_META_KEY: &str = "__chatos_clone_meta";
 
-fn with_clone_meta_project_policy(project_policy: Option<Value>, source_agent_id: &str) -> Option<Value> {
+fn with_clone_meta_project_policy(
+    project_policy: Option<Value>,
+    source_agent_id: &str,
+) -> Option<Value> {
     let mut root = match project_policy {
         Some(Value::Object(map)) => map,
         Some(other) => {
@@ -100,9 +103,7 @@ async fn ensure_user_managed_agent_for_contact(
 
     match agents_repo::create_agent(&state.pool, req.clone()).await {
         Ok(agent) => Ok(agent),
-        Err(err)
-            if err.contains("unknown skill_ids") || err.contains("unknown plugin_sources") =>
-        {
+        Err(err) if err.contains("unknown skill_ids") || err.contains("unknown plugin_sources") => {
             let fallback_req = CreateMemoryAgentRequest {
                 user_id: req.user_id,
                 name: req.name,
@@ -273,7 +274,9 @@ pub(super) async fn create_contact(
                     Err(err) => {
                         return (
                             StatusCode::INTERNAL_SERVER_ERROR,
-                            Json(json!({"error": "rebind legacy contact agent failed", "detail": err})),
+                            Json(
+                                json!({"error": "rebind legacy contact agent failed", "detail": err}),
+                            ),
                         )
                     }
                 }
@@ -325,9 +328,9 @@ pub(super) async fn delete_contact(
 
     let contact =
         match ensure_contact_manage_access(state.as_ref(), &auth, contact_id.as_str()).await {
-        Ok(contact) => contact,
-        Err(err) => return err,
-    };
+            Ok(contact) => contact,
+            Err(err) => return err,
+        };
 
     if let Err(err) = sessions::archive_sessions_by_contact(
         &state.pool,

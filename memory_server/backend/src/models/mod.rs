@@ -41,16 +41,17 @@ mod summaries;
 mod turn_runtime_snapshots;
 
 pub use self::agents::{
-    CreateMemoryAgentRequest, MemoryAgent, MemoryAgentRuntimeContext,
-    MemoryAgentRuntimePluginSummary, MemoryAgentRuntimeSkillSummary, MemoryAgentSkill, MemorySkill,
-    MemorySkillPlugin, MemorySkillPluginCommand, UpdateMemoryAgentRequest,
+    CreateMemoryAgentRequest, MemoryAgent, MemoryAgentRuntimeCommandSummary,
+    MemoryAgentRuntimeContext, MemoryAgentRuntimePluginSummary, MemoryAgentRuntimeSkillSummary,
+    MemoryAgentSkill, MemorySkill, MemorySkillPlugin, MemorySkillPluginCommand,
+    UpdateMemoryAgentRequest,
 };
 pub use self::ai_models::{AiModelConfig, UpsertAiModelConfigRequest};
 pub use self::compose::{ComposeContextMeta, ComposeContextRequest, ComposeContextResponse};
 pub use self::job_configs::{
     AgentMemoryJobConfig, JobRun, SummaryJobConfig, SummaryRollupJobConfig,
     UpsertAgentMemoryJobConfigRequest, UpsertSummaryJobConfigRequest,
-    UpsertSummaryRollupJobConfigRequest,
+    UpsertSummaryRollupJobConfigRequest, DEFAULT_SUMMARY_PROMPT_TEMPLATE,
 };
 pub use self::memories::{AgentRecall, ProjectMemory};
 pub use self::messages::{BatchCreateMessagesRequest, CreateMessageRequest, Message};

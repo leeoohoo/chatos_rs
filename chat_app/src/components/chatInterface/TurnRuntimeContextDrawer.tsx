@@ -30,6 +30,19 @@ const TurnRuntimeContextDrawer: React.FC<TurnRuntimeContextDrawerProps> = ({
     : [];
   const tools = Array.isArray(snapshot?.tools) ? snapshot?.tools : [];
   const runtime = snapshot?.runtime || null;
+  const selectedCommands = Array.isArray(runtime?.selected_commands)
+    ? runtime?.selected_commands
+    : [];
+  const explicitSelectedCommands = selectedCommands.filter(
+    (item) => (item?.trigger || '').toLowerCase() === 'explicit',
+  );
+  const implicitSelectedCommands = selectedCommands.filter(
+    (item) => (item?.trigger || '').toLowerCase() === 'implicit',
+  );
+  const otherSelectedCommands = selectedCommands.filter((item) => {
+    const trigger = (item?.trigger || '').toLowerCase();
+    return trigger !== 'explicit' && trigger !== 'implicit';
+  });
   const snapshotSource = data?.snapshot_source || 'missing';
   const status = data?.status || 'unknown';
 
@@ -126,6 +139,90 @@ const TurnRuntimeContextDrawer: React.FC<TurnRuntimeContextDrawerProps> = ({
                           ) : null}
                         </div>
                       ))}
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <div className="mb-2 text-sm font-medium text-foreground">命令使用</div>
+                  {selectedCommands.length === 0 ? (
+                    <div className="text-xs text-muted-foreground">本轮未命中 command</div>
+                  ) : (
+                    <div className="space-y-3">
+                      <div>
+                        <div className="mb-1 text-xs font-medium text-foreground">显式触发（/command）</div>
+                        {explicitSelectedCommands.length === 0 ? (
+                          <div className="text-xs text-muted-foreground">无</div>
+                        ) : (
+                          <div className="space-y-2">
+                            {explicitSelectedCommands.map((item, index) => (
+                              <div
+                                key={`explicit:${item.command_ref || '-'}:${item.plugin_source}:${item.source_path}:${index}`}
+                                className="rounded-md border border-border bg-background/80 p-2"
+                              >
+                                <div className="text-xs font-medium text-foreground">
+                                  {item.command_ref || '-'}{item.name ? ` · ${item.name}` : ''}
+                                </div>
+                                <div className="mt-0.5 text-[11px] text-muted-foreground">
+                                  {`${item.plugin_source} · ${item.source_path}`}
+                                </div>
+                                {item.arguments ? (
+                                  <pre className="mt-1 whitespace-pre-wrap break-words text-xs text-muted-foreground">
+{`args: ${item.arguments}`}
+                                  </pre>
+                                ) : null}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      <div>
+                        <div className="mb-1 text-xs font-medium text-foreground">隐式触发（工具读取）</div>
+                        {implicitSelectedCommands.length === 0 ? (
+                          <div className="text-xs text-muted-foreground">无</div>
+                        ) : (
+                          <div className="space-y-2">
+                            {implicitSelectedCommands.map((item, index) => (
+                              <div
+                                key={`implicit:${item.command_ref || '-'}:${item.plugin_source}:${item.source_path}:${index}`}
+                                className="rounded-md border border-border bg-background/80 p-2"
+                              >
+                                <div className="text-xs font-medium text-foreground">
+                                  {item.command_ref || '-'}{item.name ? ` · ${item.name}` : ''}
+                                </div>
+                                <div className="mt-0.5 text-[11px] text-muted-foreground">
+                                  {`${item.plugin_source} · ${item.source_path}`}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {otherSelectedCommands.length > 0 ? (
+                        <div>
+                          <div className="mb-1 text-xs font-medium text-foreground">其他触发</div>
+                          <div className="space-y-2">
+                            {otherSelectedCommands.map((item, index) => (
+                              <div
+                                key={`other:${item.command_ref || '-'}:${item.plugin_source}:${item.source_path}:${index}`}
+                                className="rounded-md border border-border bg-background/80 p-2"
+                              >
+                                <div className="text-xs font-medium text-foreground">
+                                  {item.command_ref || '-'}{item.name ? ` · ${item.name}` : ''}
+                                </div>
+                                <div className="mt-0.5 text-[11px] text-muted-foreground">
+                                  {`${item.plugin_source} · ${item.source_path}`}
+                                </div>
+                                <div className="mt-1 text-[11px] text-muted-foreground">
+                                  {`trigger: ${item.trigger || '-'}`}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
                   )}
                 </div>

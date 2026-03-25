@@ -57,12 +57,58 @@ pub struct MemorySkillDto {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct MemorySkillPluginCommandDto {
+    pub name: String,
+    pub source_path: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub argument_hint: Option<String>,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct MemorySkillPluginDto {
+    pub id: String,
+    pub user_id: String,
+    pub source: String,
+    pub name: String,
+    pub category: Option<String>,
+    pub description: Option<String>,
+    pub version: Option<String>,
+    pub repository: Option<String>,
+    pub branch: Option<String>,
+    pub cache_path: Option<String>,
+    #[serde(default)]
+    pub content: Option<String>,
+    #[serde(default)]
+    pub commands: Vec<MemorySkillPluginCommandDto>,
+    pub command_count: i64,
+    pub installed: bool,
+    pub discoverable_skills: i64,
+    pub installed_skill_count: i64,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct MemoryAgentRuntimePluginSummaryDto {
     pub source: String,
     pub name: String,
     pub category: Option<String>,
     pub description: Option<String>,
     pub content_summary: Option<String>,
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct MemoryAgentRuntimeCommandSummaryDto {
+    pub command_ref: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub argument_hint: Option<String>,
+    pub plugin_source: String,
+    pub source_path: String,
+    pub content: String,
     pub updated_at: Option<String>,
 }
 
@@ -236,9 +282,21 @@ pub struct MemoryAgentRuntimeContextDto {
     pub skill_ids: Vec<String>,
     #[serde(default)]
     pub runtime_skills: Vec<MemoryAgentRuntimeSkillSummaryDto>,
+    #[serde(default)]
+    pub runtime_commands: Vec<MemoryAgentRuntimeCommandSummaryDto>,
     pub mcp_policy: Option<Value>,
     pub project_policy: Option<Value>,
     pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TurnRuntimeSnapshotSelectedCommandDto {
+    pub command_ref: Option<String>,
+    pub name: Option<String>,
+    pub plugin_source: String,
+    pub source_path: String,
+    pub trigger: Option<String>,
+    pub arguments: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -266,6 +324,8 @@ pub struct TurnRuntimeSnapshotRuntimeDto {
     pub mcp_enabled: Option<bool>,
     #[serde(default)]
     pub enabled_mcp_ids: Vec<String>,
+    #[serde(default)]
+    pub selected_commands: Vec<TurnRuntimeSnapshotSelectedCommandDto>,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -1,7 +1,9 @@
 use mongodb::bson::doc;
 
 use crate::db::Db;
-use crate::models::{SummaryJobConfig, UpsertSummaryJobConfigRequest};
+use crate::models::{
+    SummaryJobConfig, UpsertSummaryJobConfigRequest, DEFAULT_SUMMARY_PROMPT_TEMPLATE,
+};
 
 use super::super::super::{auth::ADMIN_USER_ID, now_rfc3339};
 use super::shared::summary_job_collection;
@@ -11,6 +13,7 @@ fn default_summary_job_config(user_id: &str) -> SummaryJobConfig {
         user_id: user_id.to_string(),
         enabled: 1,
         summary_model_config_id: None,
+        summary_prompt: Some(DEFAULT_SUMMARY_PROMPT_TEMPLATE.to_string()),
         token_limit: 6000,
         round_limit: 8,
         target_summary_tokens: 700,
@@ -51,6 +54,7 @@ pub async fn get_effective_summary_job_config(
                 user_id: user_id.to_string(),
                 enabled: admin_cfg.enabled,
                 summary_model_config_id: admin_cfg.summary_model_config_id,
+                summary_prompt: admin_cfg.summary_prompt,
                 token_limit: admin_cfg.token_limit,
                 round_limit: admin_cfg.round_limit,
                 target_summary_tokens: admin_cfg.target_summary_tokens,
@@ -78,6 +82,9 @@ pub async fn upsert_summary_job_config(
     if let Some(v) = req.summary_model_config_id {
         current.summary_model_config_id = v.filter(|s| !s.trim().is_empty());
     }
+    if let Some(v) = req.summary_prompt {
+        current.summary_prompt = v.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    }
     if let Some(v) = req.token_limit {
         current.token_limit = v.max(500);
     }
@@ -92,6 +99,9 @@ pub async fn upsert_summary_job_config(
     }
     if let Some(v) = req.max_sessions_per_tick {
         current.max_sessions_per_tick = v.max(1);
+    }
+    if current.summary_prompt.is_none() {
+        current.summary_prompt = Some(DEFAULT_SUMMARY_PROMPT_TEMPLATE.to_string());
     }
 
     current.updated_at = now_rfc3339();

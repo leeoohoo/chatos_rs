@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path as FsPath, PathBuf};
 
@@ -38,10 +38,17 @@ pub async fn build_skills_from_plugin_async(
                 Ok(value) => value,
                 Err(_) => continue,
             };
-            let content = raw.trim().to_string();
-            if content.is_empty() {
+            let trimmed_raw = raw.trim();
+            if trimmed_raw.is_empty() {
                 continue;
             }
+            let (metadata, body) = parse_markdown_metadata(trimmed_raw);
+            let normalized_body = body.trim();
+            let content = if normalized_body.is_empty() {
+                trimmed_raw.to_string()
+            } else {
+                normalized_body.to_string()
+            };
             let id = hash_id(&[
                 "skill",
                 user_id.as_str(),
@@ -52,8 +59,11 @@ pub async fn build_skills_from_plugin_async(
                 id,
                 user_id: user_id.clone(),
                 plugin_source: plugin_source.clone(),
-                name: build_skill_name_from_entry(entry.as_str()),
-                description: None,
+                name: metadata_value(&metadata, &["name"])
+                    .map(ToOwned::to_owned)
+                    .or_else(|| first_markdown_heading(body).map(ToOwned::to_owned))
+                    .unwrap_or_else(|| build_skill_name_from_entry(entry.as_str())),
+                description: metadata_value(&metadata, &["description"]).map(ToOwned::to_owned),
                 content,
                 source_path: entry.clone(),
                 version: plugin_version.clone(),
@@ -201,4 +211,209 @@ fn build_skill_name_from_entry(entry: &str) -> String {
         return stem.to_string();
     }
     last.to_string()
+}
+
+fn parse_markdown_frontmatter(raw: &str) -> (HashMap<String, String>, &str) {
+    let mut out = HashMap::new();
+    if !raw.starts_with("---\n") && !raw.starts_with("---\r\n") {
+        return (out, raw);
+    }
+
+    let mut lines = raw.lines();
+    let first = lines.next().unwrap_or_default();
+    if first.trim() != "---" {
+        return (out, raw);
+    }
+
+    let mut consumed = first.len();
+    if raw.as_bytes().get(consumed) == Some(&b'\r') {
+        consumed += 1;
+    }
+    if raw.as_bytes().get(consumed) == Some(&b'\n') {
+        consumed += 1;
+    }
+
+    for line in lines {
+        consumed += line.len();
+        if raw.as_bytes().get(consumed) == Some(&b'\r') {
+            consumed += 1;
+        }
+        if raw.as_bytes().get(consumed) == Some(&b'\n') {
+            consumed += 1;
+        }
+        if line.trim() == "---" {
+            let body = raw.get(consumed..).unwrap_or_default();
+            return (out, body);
+        }
+
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Some((key, value)) = trimmed.split_once(':') else {
+            continue;
+        };
+        let key = normalize_metadata_key(key);
+        let value = value.trim().trim_matches('"').trim_matches('\'');
+        if key.is_empty() || value.is_empty() {
+            continue;
+        }
+        out.insert(key, value.to_string());
+    }
+
+    (HashMap::new(), raw)
+}
+
+fn parse_markdown_metadata(raw: &str) -> (HashMap<String, String>, &str) {
+    let (mut metadata, body) = parse_markdown_frontmatter(raw);
+    let table_metadata = parse_leading_markdown_meta_table(body);
+    for (key, value) in table_metadata {
+        metadata.entry(key).or_insert(value);
+    }
+    (metadata, body)
+}
+
+fn metadata_value<'a>(metadata: &'a HashMap<String, String>, keys: &[&str]) -> Option<&'a str> {
+    for key in keys {
+        let normalized_key = normalize_metadata_key(key);
+        if let Some(value) = metadata
+            .get(normalized_key.as_str())
+            .map(String::as_str)
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+        {
+            return Some(value);
+        }
+    }
+    None
+}
+
+fn parse_leading_markdown_meta_table(raw: &str) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    let lines = raw.lines().collect::<Vec<_>>();
+    if lines.len() < 2 {
+        return out;
+    }
+
+    let mut start = 0usize;
+    while start < lines.len() && lines[start].trim().is_empty() {
+        start += 1;
+    }
+    if start + 1 >= lines.len() {
+        return out;
+    }
+
+    let header = lines[start].trim();
+    let separator = lines[start + 1].trim();
+    if !is_markdown_table_row(header) || !is_markdown_table_separator(separator) {
+        return out;
+    }
+
+    for cells in std::iter::once(split_markdown_table_cells(header)).chain(
+        lines
+            .iter()
+            .skip(start + 2)
+            .map(|line| line.trim())
+            .take_while(|line| is_markdown_table_row(line))
+            .map(split_markdown_table_cells),
+    ) {
+        if cells.len() < 2 {
+            continue;
+        }
+        let key = normalize_metadata_key(cells[0]);
+        if !is_supported_metadata_key(key.as_str()) {
+            continue;
+        }
+        let value = cells[1].trim().trim_matches('"').trim_matches('\'');
+        if value.is_empty() {
+            continue;
+        }
+        out.entry(key).or_insert_with(|| value.to_string());
+    }
+
+    out
+}
+
+fn split_markdown_table_cells(line: &str) -> Vec<&str> {
+    line.trim()
+        .trim_start_matches('|')
+        .trim_end_matches('|')
+        .split('|')
+        .map(str::trim)
+        .collect::<Vec<_>>()
+}
+
+fn is_markdown_table_row(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.is_empty() || !trimmed.contains('|') {
+        return false;
+    }
+    split_markdown_table_cells(trimmed)
+        .iter()
+        .any(|cell| !cell.trim().is_empty())
+}
+
+fn is_markdown_table_separator(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.is_empty() || !trimmed.contains('|') {
+        return false;
+    }
+    let cells = split_markdown_table_cells(trimmed);
+    if cells.is_empty() {
+        return false;
+    }
+    cells.iter().all(|cell| {
+        let normalized = cell.trim().trim_matches(':').trim_matches('-').trim();
+        !cell.trim().is_empty() && normalized.is_empty()
+    })
+}
+
+fn first_markdown_heading(raw: &str) -> Option<&str> {
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix('#') {
+            let heading = rest.trim_start_matches('#').trim();
+            if !heading.is_empty() {
+                return Some(heading);
+            }
+        }
+    }
+    None
+}
+
+fn normalize_metadata_key(raw: &str) -> String {
+    raw.trim().to_ascii_lowercase()
+}
+
+fn is_supported_metadata_key(key: &str) -> bool {
+    matches!(
+        key,
+        "name" | "description" | "version" | "argument-hint" | "argument_hint"
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{metadata_value, parse_markdown_metadata};
+
+    #[test]
+    fn parses_skill_description_from_leading_markdown_table() {
+        let raw = r#"
+| name | parallel-feature-development |
+| --- | --- |
+| description | Coordinate parallel feature development with file ownership strategies |
+| version | 1.0.2 |
+
+# Parallel Feature Development
+"#;
+        let (metadata, _body) = parse_markdown_metadata(raw.trim());
+        assert_eq!(
+            metadata_value(&metadata, &["name"]),
+            Some("parallel-feature-development")
+        );
+        assert_eq!(
+            metadata_value(&metadata, &["description"]),
+            Some("Coordinate parallel feature development with file ownership strategies")
+        );
+    }
 }

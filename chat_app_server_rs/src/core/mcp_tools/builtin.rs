@@ -1,5 +1,11 @@
 use crate::builtin::agent_builder::{AgentBuilderOptions, AgentBuilderService};
 use crate::builtin::code_maintainer::{CodeMaintainerOptions, CodeMaintainerService};
+use crate::builtin::memory_command_reader::{
+    MemoryCommandReaderOptions, MemoryCommandReaderService,
+};
+use crate::builtin::memory_plugin_reader::{
+    MemoryPluginReaderOptions, MemoryPluginReaderService,
+};
 use crate::builtin::memory_skill_reader::{MemorySkillReaderOptions, MemorySkillReaderService};
 use crate::builtin::notepad::{NotepadBuiltinService, NotepadOptions};
 use crate::builtin::task_manager::{TaskManagerOptions, TaskManagerService};
@@ -19,6 +25,8 @@ pub enum BuiltinToolService {
     AgentBuilder(AgentBuilderService),
     UiPrompter(UiPrompterService),
     MemorySkillReader(MemorySkillReaderService),
+    MemoryCommandReader(MemoryCommandReaderService),
+    MemoryPluginReader(MemoryPluginReaderService),
 }
 
 impl BuiltinToolService {
@@ -31,6 +39,8 @@ impl BuiltinToolService {
             Self::AgentBuilder(service) => service.list_tools(),
             Self::UiPrompter(service) => service.list_tools(),
             Self::MemorySkillReader(service) => service.list_tools(),
+            Self::MemoryCommandReader(service) => service.list_tools(),
+            Self::MemoryPluginReader(service) => service.list_tools(),
         }
     }
 
@@ -68,6 +78,8 @@ impl BuiltinToolService {
                 on_stream_chunk,
             ),
             Self::MemorySkillReader(service) => service.call_tool(name, args),
+            Self::MemoryCommandReader(service) => service.call_tool(name, args),
+            Self::MemoryPluginReader(service) => service.call_tool(name, args),
         }
     }
 }
@@ -159,6 +171,32 @@ pub fn build_builtin_tool_service(server: &McpBuiltinServer) -> Result<BuiltinTo
                 agent_id: agent_id.to_string(),
             })?;
             Ok(BuiltinToolService::MemorySkillReader(service))
+        }
+        BuiltinMcpKind::MemoryCommandReader => {
+            let agent_id = server
+                .contact_agent_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| "missing contact agent id for memory_command_reader".to_string())?;
+            let service = MemoryCommandReaderService::new(MemoryCommandReaderOptions {
+                server_name: server.name.clone(),
+                agent_id: agent_id.to_string(),
+            })?;
+            Ok(BuiltinToolService::MemoryCommandReader(service))
+        }
+        BuiltinMcpKind::MemoryPluginReader => {
+            let agent_id = server
+                .contact_agent_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| "missing contact agent id for memory_plugin_reader".to_string())?;
+            let service = MemoryPluginReaderService::new(MemoryPluginReaderOptions {
+                server_name: server.name.clone(),
+                agent_id: agent_id.to_string(),
+            })?;
+            Ok(BuiltinToolService::MemoryPluginReader(service))
         }
     }
 }

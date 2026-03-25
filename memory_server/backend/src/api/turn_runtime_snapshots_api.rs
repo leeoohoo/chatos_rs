@@ -75,16 +75,20 @@ pub(super) async fn get_latest_turn_runtime_snapshot(
         return err;
     }
 
-    let latest_user_message =
-        match messages::get_latest_user_message_by_session(&state.pool, session_id.as_str()).await {
-            Ok(value) => value,
-            Err(err) => {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({"error": "load latest user message failed", "detail": err})),
-                )
-            }
-        };
+    let latest_user_message = match messages::get_latest_user_message_by_session(
+        &state.pool,
+        session_id.as_str(),
+    )
+    .await
+    {
+        Ok(value) => value,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "load latest user message failed", "detail": err})),
+            )
+        }
+    };
 
     let Some(user_message) = latest_user_message else {
         return (

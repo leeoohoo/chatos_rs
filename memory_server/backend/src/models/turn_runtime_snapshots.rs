@@ -23,6 +23,16 @@ pub struct TurnRuntimeSnapshotTool {
     pub description: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TurnRuntimeSnapshotSelectedCommand {
+    pub command_ref: Option<String>,
+    pub name: Option<String>,
+    pub plugin_source: String,
+    pub source_path: String,
+    pub trigger: Option<String>,
+    pub arguments: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TurnRuntimeSnapshotRuntime {
     pub model: Option<String>,
@@ -33,6 +43,8 @@ pub struct TurnRuntimeSnapshotRuntime {
     pub mcp_enabled: Option<bool>,
     #[serde(default)]
     pub enabled_mcp_ids: Vec<String>,
+    #[serde(default)]
+    pub selected_commands: Vec<TurnRuntimeSnapshotSelectedCommand>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

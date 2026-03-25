@@ -109,6 +109,7 @@ pub async fn list_skills_by_ids(
     cursor.try_collect().await.map_err(|e| e.to_string())
 }
 
+#[allow(dead_code)]
 pub async fn list_skills_by_plugin_sources_for_user_ids(
     db: &Db,
     user_ids: &[String],
@@ -239,9 +240,7 @@ pub async fn get_plugin_by_source_for_user_ids(
     } else {
         doc! { "user_id": { "$in": user_ids }, "source": source }
     };
-    let options = FindOptions::builder()
-        .sort(doc! {"updated_at": -1})
-        .build();
+    let options = FindOptions::builder().sort(doc! {"updated_at": -1}).build();
     let cursor = plugin_collection(db)
         .find(filter)
         .with_options(options)

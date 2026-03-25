@@ -249,6 +249,7 @@ pub(super) async fn test_model_config(
             128,
             "模型连通性测试",
             &["这是一段连通性测试文本，请返回简短摘要。".to_string()],
+            None,
         )
         .await
     {

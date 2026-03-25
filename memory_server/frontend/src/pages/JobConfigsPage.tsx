@@ -5,6 +5,7 @@ import {
   Card,
   Col,
   Form,
+  Input,
   InputNumber,
   Row,
   Select,
@@ -22,6 +23,9 @@ import type {
   SummaryJobConfig,
   UserItem,
 } from '../types';
+
+const DEFAULT_SUMMARY_PROMPT_TEMPLATE =
+  '你是 Memory Server 的总结引擎。请输出结构化简洁总结，重点保留事实、决策、风险、待办。目标长度约 {{target_tokens}} tokens。';
 
 interface JobConfigsPageProps {
   userId: string;
@@ -65,6 +69,7 @@ export function JobConfigsPage({
     user_id: uid,
     enabled: 1,
     summary_model_config_id: null,
+    summary_prompt: DEFAULT_SUMMARY_PROMPT_TEMPLATE,
     token_limit: 6000,
     round_limit: 8,
     target_summary_tokens: 700,
@@ -76,6 +81,7 @@ export function JobConfigsPage({
     user_id: uid,
     enabled: 1,
     summary_model_config_id: null,
+    summary_prompt: DEFAULT_SUMMARY_PROMPT_TEMPLATE,
     token_limit: 6000,
     round_limit: 50,
     target_summary_tokens: 700,
@@ -89,6 +95,7 @@ export function JobConfigsPage({
     user_id: uid,
     enabled: 1,
     summary_model_config_id: null,
+    summary_prompt: DEFAULT_SUMMARY_PROMPT_TEMPLATE,
     token_limit: 6000,
     round_limit: 20,
     target_summary_tokens: 700,
@@ -133,7 +140,7 @@ export function JobConfigsPage({
     if (keep <= 0) {
       return null;
     }
-    return `${t('jobConfigs.rollupKeepRawHint')} ${keep + round}`;
+    return `${t('jobConfigs.rollupKeepRawHint')} ${keep} + ${round} = ${keep + round}`;
   }, [rollupCfg, t]);
   const rollupKeepRawWarning = useMemo(() => {
     if (!rollupCfg) {
@@ -146,18 +153,6 @@ export function JobConfigsPage({
     }
     return t('jobConfigs.rollupKeepRawWarning');
   }, [rollupCfg, t]);
-  const agentMemoryRollupHint = useMemo(() => {
-    if (!agentMemoryCfg) {
-      return null;
-    }
-    const keep = Math.max(0, agentMemoryCfg.keep_raw_level0_count ?? 0);
-    const round = Math.max(1, agentMemoryCfg.round_limit ?? 1);
-    if (keep <= 0) {
-      return null;
-    }
-    return `${t('jobConfigs.agentMemoryKeepRawHint')} ${keep + round}`;
-  }, [agentMemoryCfg, t]);
-
   const load = async () => {
     if (disabled) {
       setSummaryCfg(null);
@@ -182,7 +177,11 @@ export function JobConfigsPage({
       } else {
         setSummaryCfg(null);
       }
-      setRollupCfg(r);
+      if (r) {
+        setRollupCfg({ ...createRollupConfig(uid), ...r });
+      } else {
+        setRollupCfg(null);
+      }
       if (a) {
         setAgentMemoryCfg({
           ...createAgentMemoryConfig(uid),
@@ -441,6 +440,34 @@ export function JobConfigsPage({
                         }
                       />
                     </Form.Item>
+                    <Form.Item
+                      label={t('jobConfigs.summaryPrompt')}
+                      extra={t('jobConfigs.summaryPromptHint')}
+                    >
+                      <Space direction="vertical" style={{ width: '100%' }}>
+                        <Input.TextArea
+                          value={summaryCfg.summary_prompt ?? ''}
+                          autoSize={{ minRows: 3, maxRows: 10 }}
+                          onChange={(event) =>
+                            setSummaryCfg({
+                              ...summaryCfg,
+                              summary_prompt: event.target.value,
+                            })
+                          }
+                        />
+                        <Button
+                          size="small"
+                          onClick={() =>
+                            setSummaryCfg({
+                              ...summaryCfg,
+                              summary_prompt: DEFAULT_SUMMARY_PROMPT_TEMPLATE,
+                            })
+                          }
+                        >
+                          {t('jobConfigs.resetSummaryPrompt')}
+                        </Button>
+                      </Space>
+                    </Form.Item>
                     <Form.Item label={t('jobConfigs.roundLimit')}>
                       <InputNumber
                         min={1}
@@ -553,6 +580,34 @@ export function JobConfigsPage({
                         }
                       />
                     </Form.Item>
+                    <Form.Item
+                      label={t('jobConfigs.summaryPrompt')}
+                      extra={t('jobConfigs.summaryPromptHint')}
+                    >
+                      <Space direction="vertical" style={{ width: '100%' }}>
+                        <Input.TextArea
+                          value={rollupCfg.summary_prompt ?? ''}
+                          autoSize={{ minRows: 3, maxRows: 10 }}
+                          onChange={(event) =>
+                            setRollupCfg({
+                              ...rollupCfg,
+                              summary_prompt: event.target.value,
+                            })
+                          }
+                        />
+                        <Button
+                          size="small"
+                          onClick={() =>
+                            setRollupCfg({
+                              ...rollupCfg,
+                              summary_prompt: DEFAULT_SUMMARY_PROMPT_TEMPLATE,
+                            })
+                          }
+                        >
+                          {t('jobConfigs.resetSummaryPrompt')}
+                        </Button>
+                      </Space>
+                    </Form.Item>
                     <Form.Item label={t('jobConfigs.roundLimit')}>
                       <InputNumber
                         min={3}
@@ -652,14 +707,6 @@ export function JobConfigsPage({
                       message={t('jobConfigs.agentMemoryProjectHint')}
                       style={{ marginBottom: 12 }}
                     />
-                    {agentMemoryRollupHint && (
-                      <Alert
-                        type="info"
-                        showIcon
-                        message={agentMemoryRollupHint}
-                        style={{ marginBottom: 12 }}
-                      />
-                    )}
                     <Form.Item label={t('common.enabled')}>
                       <Switch
                         checked={agentMemoryCfg.enabled === 1}
@@ -680,6 +727,34 @@ export function JobConfigsPage({
                           })
                         }
                       />
+                    </Form.Item>
+                    <Form.Item
+                      label={t('jobConfigs.summaryPrompt')}
+                      extra={t('jobConfigs.summaryPromptHint')}
+                    >
+                      <Space direction="vertical" style={{ width: '100%' }}>
+                        <Input.TextArea
+                          value={agentMemoryCfg.summary_prompt ?? ''}
+                          autoSize={{ minRows: 3, maxRows: 10 }}
+                          onChange={(event) =>
+                            setAgentMemoryCfg({
+                              ...agentMemoryCfg,
+                              summary_prompt: event.target.value,
+                            })
+                          }
+                        />
+                        <Button
+                          size="small"
+                          onClick={() =>
+                            setAgentMemoryCfg({
+                              ...agentMemoryCfg,
+                              summary_prompt: DEFAULT_SUMMARY_PROMPT_TEMPLATE,
+                            })
+                          }
+                        >
+                          {t('jobConfigs.resetSummaryPrompt')}
+                        </Button>
+                      </Space>
                     </Form.Item>
                     <Form.Item label={t('jobConfigs.roundLimit')}>
                       <InputNumber

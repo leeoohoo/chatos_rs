@@ -1,9 +1,33 @@
 use serde_json::Value;
 
 use crate::repositories::projects;
-use crate::services::memory_server_client::MemoryAgentRuntimeContextDto;
+use crate::services::memory_server_client::{
+    MemoryAgentRuntimeCommandSummaryDto, MemoryAgentRuntimeContextDto,
+};
 
 pub const CONTACT_SKILL_READER_TOOL_NAME: &str = "memory_skill_reader_get_skill_detail";
+pub const CONTACT_COMMAND_READER_TOOL_NAME: &str = "memory_command_reader_get_command_detail";
+pub const CONTACT_PLUGIN_READER_TOOL_NAME: &str = "memory_plugin_reader_get_plugin_detail";
+
+#[derive(Debug, Clone)]
+pub struct ParsedContactCommandInvocation {
+    pub command_ref: String,
+    pub name: String,
+    pub plugin_source: String,
+    pub source_path: String,
+    pub description: Option<String>,
+    pub argument_hint: Option<String>,
+    pub content: String,
+    pub arguments: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ParsedImplicitCommandSelection {
+    pub command_ref: Option<String>,
+    pub name: Option<String>,
+    pub plugin_source: String,
+    pub source_path: String,
+}
 
 fn normalize_optional_string(value: Option<String>) -> Option<String> {
     value
@@ -106,11 +130,220 @@ pub fn enabled_mcp_ids_from_metadata(metadata: Option<&Value>) -> Vec<String> {
     metadata_string_list(metadata, &["chat_runtime", "enabledMcpIds"])
 }
 
+fn normalize_lookup_token(value: &str) -> String {
+    value.trim().to_ascii_lowercase()
+}
+
+fn command_aliases(command: &MemoryAgentRuntimeCommandSummaryDto) -> Vec<String> {
+    let mut out = Vec::new();
+    let command_ref = command.command_ref.trim();
+    if !command_ref.is_empty() {
+        out.push(command_ref.to_ascii_lowercase());
+    }
+    let command_name = command.name.trim();
+    if !command_name.is_empty() {
+        out.push(command_name.to_ascii_lowercase());
+    }
+
+    let normalized_source_path = command.source_path.trim().replace('\\', "/");
+    if !normalized_source_path.is_empty() {
+        let file_name = normalized_source_path
+            .rsplit('/')
+            .next()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(normalized_source_path.as_str());
+        let file_name = file_name
+            .strip_suffix(".md")
+            .unwrap_or(file_name)
+            .trim()
+            .to_ascii_lowercase();
+        if !file_name.is_empty() {
+            out.push(file_name);
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+pub fn parse_contact_command_invocation(
+    user_message: &str,
+    runtime_context: Option<&MemoryAgentRuntimeContextDto>,
+) -> Option<ParsedContactCommandInvocation> {
+    let trimmed = user_message.trim();
+    let command_line = trimmed.strip_prefix('/')?;
+    let command_line = command_line.trim();
+    if command_line.is_empty() {
+        return None;
+    }
+
+    let mut parts = command_line.splitn(2, char::is_whitespace);
+    let command_token = parts.next().unwrap_or_default().trim();
+    if command_token.is_empty() {
+        return None;
+    }
+    let command_arguments = parts
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+    let runtime_context = runtime_context?;
+    if runtime_context.runtime_commands.is_empty() {
+        return None;
+    }
+    let expected = normalize_lookup_token(command_token);
+    let command = runtime_context
+        .runtime_commands
+        .iter()
+        .find(|item| command_aliases(item).iter().any(|alias| alias == &expected))?;
+
+    Some(ParsedContactCommandInvocation {
+        command_ref: command.command_ref.trim().to_string(),
+        name: command.name.trim().to_string(),
+        plugin_source: command.plugin_source.trim().to_string(),
+        source_path: command.source_path.trim().to_string(),
+        description: command
+            .description
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned),
+        argument_hint: command
+            .argument_hint
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned),
+        content: command.content.trim().to_string(),
+        arguments: command_arguments,
+    })
+}
+
+pub fn compose_contact_command_system_prompt(
+    command: Option<&ParsedContactCommandInvocation>,
+) -> Option<String> {
+    let command = command?;
+    if command.command_ref.trim().is_empty()
+        || command.plugin_source.trim().is_empty()
+        || command.source_path.trim().is_empty()
+    {
+        return None;
+    }
+
+    let mut lines = vec![
+        "用户在本轮显式触发了联系人命令，请优先按照命令内容执行。".to_string(),
+        format!("command_ref={}", command.command_ref.trim()),
+        format!("命令名称={}", command.name.trim()),
+        format!("plugin_source={}", command.plugin_source.trim()),
+        format!("source_path={}", command.source_path.trim()),
+    ];
+    if let Some(description) = command.description.as_deref().map(str::trim) {
+        if !description.is_empty() {
+            lines.push(format!("命令简介={}", description));
+        }
+    }
+    if let Some(argument_hint) = command.argument_hint.as_deref().map(str::trim) {
+        if !argument_hint.is_empty() {
+            lines.push(format!("参数提示={}", argument_hint));
+        }
+    }
+    if let Some(arguments) = command.arguments.as_deref().map(str::trim) {
+        if !arguments.is_empty() {
+            lines.push(format!("用户附加参数={}", arguments));
+        }
+    }
+    let content = command.content.trim();
+    if !content.is_empty() {
+        lines.push("命令完整内容：".to_string());
+        for item in content.lines() {
+            lines.push(item.to_string());
+        }
+    }
+    Some(lines.join("\n").trim().to_string())
+}
+
+pub fn parse_implicit_command_selections_from_tools_end(
+    payload: &Value,
+) -> Vec<ParsedImplicitCommandSelection> {
+    let mut out = Vec::new();
+    let Some(tool_results) = payload.get("tool_results").and_then(Value::as_array) else {
+        return out;
+    };
+
+    for tool_result in tool_results {
+        let Some(name) = tool_result.get("name").and_then(Value::as_str) else {
+            continue;
+        };
+        if name.trim() != CONTACT_COMMAND_READER_TOOL_NAME {
+            continue;
+        }
+        if tool_result
+            .get("is_error")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        if tool_result
+            .get("success")
+            .and_then(Value::as_bool)
+            .unwrap_or(true)
+            == false
+        {
+            continue;
+        }
+        let Some(content) = tool_result.get("content").and_then(Value::as_str) else {
+            continue;
+        };
+        let Ok(content_value) = serde_json::from_str::<Value>(content) else {
+            continue;
+        };
+        let plugin_source = content_value
+            .get("plugin_source")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned);
+        let source_path = content_value
+            .get("source_path")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned);
+        let (Some(plugin_source), Some(source_path)) = (plugin_source, source_path) else {
+            continue;
+        };
+
+        out.push(ParsedImplicitCommandSelection {
+            command_ref: content_value
+                .get("command_ref")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned),
+            name: content_value
+                .get("name")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned),
+            plugin_source,
+            source_path,
+        });
+    }
+
+    out
+}
+
 pub fn compose_contact_system_prompt(
     runtime_context: Option<&MemoryAgentRuntimeContextDto>,
 ) -> Option<String> {
     fn skill_ref(index: usize) -> String {
         format!("SK{}", index + 1)
+    }
+    fn plugin_ref(index: usize) -> String {
+        format!("PL{}", index + 1)
     }
 
     #[derive(Clone)]
@@ -120,6 +353,11 @@ pub fn compose_contact_system_prompt(
         plugin_source: Option<String>,
         description: Option<String>,
         source_type: String,
+    }
+    #[derive(Clone)]
+    struct PluginPromptEntry {
+        plugin_ref: String,
+        name: Option<String>,
     }
 
     let agent = runtime_context?;
@@ -177,9 +415,13 @@ pub fn compose_contact_system_prompt(
             if let Some(plugin_source) = entry.plugin_source.as_deref() {
                 parts.push(format!("plugin_source={}", plugin_source));
             }
-            if let Some(description) = entry.description.as_deref() {
-                parts.push(format!("简介={}", description));
-            }
+            parts.push(format!(
+                "简介={}",
+                entry
+                    .description
+                    .as_deref()
+                    .unwrap_or("未提供")
+            ));
             parts.push(format!("来源类型={}", entry.source_type));
             lines.push(format!("{}. {}", index + 1, parts.join(" | ")));
             skill_entries.push(entry);
@@ -194,7 +436,7 @@ pub fn compose_contact_system_prompt(
                 source_type: "skill_center".to_string(),
             };
             lines.push(format!(
-                "{}. skill_ref={} | 来源类型={} | 详情可通过工具查询",
+                "{}. skill_ref={} | 简介=未提供 | 来源类型={} | 详情可通过工具查询",
                 index + 1,
                 entry.skill_ref,
                 entry.source_type
@@ -206,11 +448,13 @@ pub fn compose_contact_system_prompt(
     }
 
     lines.push(String::new());
-    lines.push("关联插件（直接给出能力内容）：".to_string());
+    lines.push("关联插件（使用 plugin_ref，仅给简介）：".to_string());
+    let mut plugin_entries: Vec<PluginPromptEntry> = Vec::new();
     if !agent.runtime_plugins.is_empty() {
         for (index, plugin) in agent.runtime_plugins.iter().enumerate() {
             let plugin_source = plugin.source.trim().to_string();
             let mut parts = vec![
+                format!("plugin_ref={}", plugin_ref(index)),
                 format!("plugin_source={}", plugin_source),
                 format!("名称={}", plugin.name.trim()),
             ];
@@ -219,11 +463,20 @@ pub fn compose_contact_system_prompt(
                     parts.push(format!("分类={}", category));
                 }
             }
-            if let Some(description) = plugin.description.as_deref().map(str::trim) {
-                if !description.is_empty() {
-                    parts.push(format!("能力说明={}", description));
-                }
-            }
+            let description = plugin
+                .description
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .or_else(|| {
+                    plugin
+                        .content_summary
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                })
+                .unwrap_or("未提供");
+            parts.push(format!("简介={}", description));
             let related_skills = skill_entries
                 .iter()
                 .filter(|entry| {
@@ -244,14 +497,10 @@ pub fn compose_contact_system_prompt(
                 parts.push(format!("覆盖技能={}", related_skills.join(", ")));
             }
             lines.push(format!("{}. {}", index + 1, parts.join(" | ")));
-            if let Some(content_summary) = plugin.content_summary.as_deref().map(str::trim) {
-                if !content_summary.is_empty() {
-                    lines.push("   插件能力内容：".to_string());
-                    for item in content_summary.lines() {
-                        lines.push(format!("   {}", item));
-                    }
-                }
-            }
+            plugin_entries.push(PluginPromptEntry {
+                plugin_ref: plugin_ref(index),
+                name: normalize_optional_string(Some(plugin.name.clone())),
+            });
         }
     } else if !agent.plugin_sources.is_empty() {
         for (index, source) in agent.plugin_sources.iter().enumerate() {
@@ -272,14 +521,86 @@ pub fn compose_contact_system_prompt(
                     format!("{}({})", entry.skill_ref, skill_name)
                 })
                 .collect::<Vec<_>>();
-            let mut parts = vec![format!("plugin_source={}", source)];
+            let mut parts = vec![
+                format!("plugin_ref={}", plugin_ref(index)),
+                format!("plugin_source={}", source),
+                "简介=未提供".to_string(),
+            ];
             if !related_skills.is_empty() {
                 parts.push(format!("覆盖技能={}", related_skills.join(", ")));
+            }
+            lines.push(format!("{}. {}", index + 1, parts.join(" | ")));
+            plugin_entries.push(PluginPromptEntry {
+                plugin_ref: plugin_ref(index),
+                name: None,
+            });
+        }
+    } else {
+        lines.push("无".to_string());
+    }
+
+    lines.push(String::new());
+    lines.push("关联命令（使用 command_ref）：".to_string());
+    if !agent.runtime_commands.is_empty() {
+        for (index, command) in agent.runtime_commands.iter().enumerate() {
+            let mut parts = vec![
+                format!("command_ref={}", command.command_ref.trim()),
+                format!("名称={}", command.name.trim()),
+                format!("plugin_source={}", command.plugin_source.trim()),
+            ];
+            parts.push(format!(
+                "简介={}",
+                command
+                    .description
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or("未提供")
+            ));
+            if let Some(argument_hint) = command.argument_hint.as_deref().map(str::trim) {
+                if !argument_hint.is_empty() {
+                    parts.push(format!("参数提示={}", argument_hint));
+                }
+            }
+            if let Some(source_path) = normalize_optional_string(Some(command.source_path.clone())) {
+                parts.push(format!("source_path={}", source_path));
             }
             lines.push(format!("{}. {}", index + 1, parts.join(" | ")));
         }
     } else {
         lines.push("无".to_string());
+    }
+
+    if !agent.runtime_commands.is_empty() {
+        lines.push(String::new());
+        lines.push(format!(
+            "如果需要查看某个 command 的完整内容，请调用内置工具 `{}`，仅传 `command_ref`（如 `CMD1`）。",
+            CONTACT_COMMAND_READER_TOOL_NAME
+        ));
+    }
+
+    if !plugin_entries.is_empty() {
+        lines.push(String::new());
+        let plugin_examples = plugin_entries
+            .iter()
+            .take(3)
+            .map(|entry| match entry.name.as_deref() {
+                Some(name) => format!("{}({})", entry.plugin_ref, name),
+                None => entry.plugin_ref.clone(),
+            })
+            .collect::<Vec<_>>();
+        if plugin_examples.is_empty() {
+            lines.push(format!(
+                "如果需要查看某个 plugin 的完整内容，请调用内置工具 `{}`，仅传 `plugin_ref`（如 `PL1`）。",
+                CONTACT_PLUGIN_READER_TOOL_NAME
+            ));
+        } else {
+            lines.push(format!(
+                "如果需要查看某个 plugin 的完整内容，请调用内置工具 `{}`，仅传 `plugin_ref`（如 {}）。",
+                CONTACT_PLUGIN_READER_TOOL_NAME,
+                plugin_examples.join(", ")
+            ));
+        }
     }
 
     if !skill_entries.is_empty() {
@@ -345,9 +666,15 @@ pub async fn resolve_project_runtime(
 
 #[cfg(test)]
 mod tests {
-    use super::{compose_contact_system_prompt, CONTACT_SKILL_READER_TOOL_NAME};
+    use super::{
+        compose_contact_command_system_prompt, compose_contact_system_prompt,
+        parse_contact_command_invocation, parse_implicit_command_selections_from_tools_end,
+        CONTACT_COMMAND_READER_TOOL_NAME, CONTACT_PLUGIN_READER_TOOL_NAME,
+        CONTACT_SKILL_READER_TOOL_NAME,
+    };
     use crate::services::memory_server_client::{
-        MemoryAgentRuntimeContextDto, MemoryAgentRuntimePluginSummaryDto,
+        MemoryAgentRuntimeCommandSummaryDto, MemoryAgentRuntimeContextDto,
+        MemoryAgentRuntimePluginSummaryDto,
         MemoryAgentRuntimeSkillSummaryDto,
     };
 
@@ -379,6 +706,16 @@ mod tests {
                 source_path: Some("skills/ui/SKILL.md".to_string()),
                 updated_at: Some("2026-03-24T00:00:00Z".to_string()),
             }],
+            runtime_commands: vec![MemoryAgentRuntimeCommandSummaryDto {
+                command_ref: "CMD1".to_string(),
+                name: "team-debug".to_string(),
+                description: Some("并行调试命令".to_string()),
+                argument_hint: Some("<error> [--hypotheses 3]".to_string()),
+                plugin_source: "frontend_toolkit".to_string(),
+                source_path: "commands/team-debug.md".to_string(),
+                content: "# Team Debug".to_string(),
+                updated_at: Some("2026-03-24T00:00:00Z".to_string()),
+            }],
             mcp_policy: None,
             project_policy: None,
             updated_at: "2026-03-24T00:00:00Z".to_string(),
@@ -387,9 +724,74 @@ mod tests {
 
         assert!(prompt.contains("联系人名称：小林"));
         assert!(prompt.contains("plugin_source=frontend_toolkit"));
+        assert!(prompt.contains("plugin_ref=PL1"));
         assert!(prompt.contains("skill_ref=SK1"));
         assert!(prompt.contains("覆盖技能=SK1(组件排障)"));
-        assert!(prompt.contains("插件能力内容"));
+        assert!(prompt.contains("command_ref=CMD1"));
+        assert!(prompt.contains(CONTACT_COMMAND_READER_TOOL_NAME));
+        assert!(prompt.contains(CONTACT_PLUGIN_READER_TOOL_NAME));
         assert!(prompt.contains(CONTACT_SKILL_READER_TOOL_NAME));
+    }
+
+    #[test]
+    fn parses_explicit_contact_command_invocation() {
+        let runtime_context = MemoryAgentRuntimeContextDto {
+            agent_id: "agent_1".to_string(),
+            name: "小林".to_string(),
+            description: None,
+            category: None,
+            role_definition: "专注问题排查".to_string(),
+            plugin_sources: vec!["frontend_toolkit".to_string()],
+            runtime_plugins: vec![],
+            skills: vec![],
+            skill_ids: vec![],
+            runtime_skills: vec![],
+            runtime_commands: vec![MemoryAgentRuntimeCommandSummaryDto {
+                command_ref: "CMD1".to_string(),
+                name: "team-debug".to_string(),
+                description: Some("并行调试命令".to_string()),
+                argument_hint: Some("<error>".to_string()),
+                plugin_source: "frontend_toolkit".to_string(),
+                source_path: "commands/team-debug.md".to_string(),
+                content: "debug steps".to_string(),
+                updated_at: None,
+            }],
+            mcp_policy: None,
+            project_policy: None,
+            updated_at: "2026-03-24T00:00:00Z".to_string(),
+        };
+        let command = parse_contact_command_invocation("/team-debug button not render", Some(&runtime_context))
+            .expect("command");
+        assert_eq!(command.command_ref, "CMD1");
+        assert_eq!(command.name, "team-debug");
+        assert_eq!(command.arguments.as_deref(), Some("button not render"));
+        let prompt = compose_contact_command_system_prompt(Some(&command)).expect("prompt");
+        assert!(prompt.contains("command_ref=CMD1"));
+        assert!(prompt.contains("用户附加参数=button not render"));
+    }
+
+    #[test]
+    fn parses_implicit_command_selection_from_tools_end_payload() {
+        let payload = serde_json::json!({
+            "tool_results": [
+                {
+                    "name": CONTACT_COMMAND_READER_TOOL_NAME,
+                    "success": true,
+                    "is_error": false,
+                    "content": r#"{
+                      "command_ref": "CMD2",
+                      "name": "team-feature",
+                      "plugin_source": "plugins/agent-teams",
+                      "source_path": "commands/team-feature.md"
+                    }"#
+                }
+            ]
+        });
+        let items = parse_implicit_command_selections_from_tools_end(&payload);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].command_ref.as_deref(), Some("CMD2"));
+        assert_eq!(items[0].name.as_deref(), Some("team-feature"));
+        assert_eq!(items[0].plugin_source, "plugins/agent-teams");
+        assert_eq!(items[0].source_path, "commands/team-feature.md");
     }
 }

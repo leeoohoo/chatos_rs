@@ -50,6 +50,7 @@ pub async fn summarize_texts_with_split(
     ai: &AiClient,
     model_cfg: Option<&AiModelConfig>,
     prompt_title: &str,
+    summary_prompt: Option<&str>,
     items: &[String],
     token_limit: i64,
     target_tokens: i64,
@@ -66,6 +67,7 @@ pub async fn summarize_texts_with_split(
             ai,
             model_cfg,
             prompt_title,
+            summary_prompt,
             items,
             effective_token_limit,
             target_tokens,
@@ -107,6 +109,7 @@ async fn summarize_texts_once(
     ai: &AiClient,
     model_cfg: Option<&AiModelConfig>,
     prompt_title: &str,
+    summary_prompt: Option<&str>,
     items: &[String],
     token_limit: i64,
     target_tokens: i64,
@@ -119,7 +122,13 @@ async fn summarize_texts_once(
     let mut chunk_summaries = Vec::with_capacity(chunks.len());
     for chunk in &chunks {
         let text = ai
-            .summarize(model_cfg, target_tokens, prompt_title, chunk)
+            .summarize(
+                model_cfg,
+                target_tokens,
+                prompt_title,
+                chunk,
+                summary_prompt,
+            )
             .await?;
         chunk_summaries.push(text);
     }
@@ -128,6 +137,7 @@ async fn summarize_texts_once(
         ai,
         model_cfg,
         prompt_title,
+        summary_prompt,
         chunk_summaries,
         token_limit,
         target_tokens,
@@ -141,6 +151,7 @@ async fn merge_chunk_summaries(
     ai: &AiClient,
     model_cfg: Option<&AiModelConfig>,
     prompt_title: &str,
+    summary_prompt: Option<&str>,
     summaries: Vec<String>,
     token_limit: i64,
     target_tokens: i64,
@@ -183,6 +194,7 @@ async fn merge_chunk_summaries(
                         group_idx + 1
                     ),
                     group.as_slice(),
+                    summary_prompt,
                 )
                 .await?;
             next.push(text);

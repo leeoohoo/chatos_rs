@@ -61,29 +61,16 @@ fn extract_plugin_content(plugin_root: &FsPath) -> SkillPluginExtractedContent {
             }
             let rel = path_to_unix_relative(plugin_root, path.as_path())
                 .unwrap_or_else(|| path.to_string_lossy().to_string());
-            let (frontmatter, body) = parse_markdown_frontmatter(trimmed_raw);
+            let (metadata, body) = parse_markdown_metadata(trimmed_raw);
             if extracted.name.is_none() {
-                extracted.name = frontmatter
-                    .get("name")
-                    .map(String::as_str)
-                    .map(str::trim)
-                    .filter(|item| !item.is_empty())
-                    .map(ToOwned::to_owned);
+                extracted.name = metadata_value(&metadata, &["name"]).map(ToOwned::to_owned);
             }
             if extracted.description.is_none() {
-                extracted.description = frontmatter
-                    .get("description")
-                    .map(String::as_str)
-                    .map(str::trim)
-                    .filter(|item| !item.is_empty())
-                    .map(ToOwned::to_owned);
+                extracted.description =
+                    metadata_value(&metadata, &["description"]).map(ToOwned::to_owned);
             }
 
-            let name = frontmatter
-                .get("name")
-                .map(String::as_str)
-                .map(str::trim)
-                .filter(|item| !item.is_empty())
+            let name = metadata_value(&metadata, &["name"])
                 .map(ToOwned::to_owned)
                 .or_else(|| first_markdown_heading(body).map(ToOwned::to_owned))
                 .or_else(|| {
@@ -96,12 +83,7 @@ fn extract_plugin_content(plugin_root: &FsPath) -> SkillPluginExtractedContent {
                 .unwrap_or_else(|| rel.clone());
 
             let mut section = vec![format!("### {} ({})", name, rel)];
-            if let Some(description) = frontmatter
-                .get("description")
-                .map(String::as_str)
-                .map(str::trim)
-                .filter(|item| !item.is_empty())
-            {
+            if let Some(description) = metadata_value(&metadata, &["description"]) {
                 section.push(format!("简介：{}", description));
             }
             let normalized_body = body.trim();
@@ -133,12 +115,8 @@ fn extract_plugin_content(plugin_root: &FsPath) -> SkillPluginExtractedContent {
             }
             let rel = path_to_unix_relative(plugin_root, path.as_path())
                 .unwrap_or_else(|| path.to_string_lossy().to_string());
-            let (frontmatter, body) = parse_markdown_frontmatter(trimmed_raw);
-            let name = frontmatter
-                .get("name")
-                .map(String::as_str)
-                .map(str::trim)
-                .filter(|item| !item.is_empty())
+            let (metadata, body) = parse_markdown_metadata(trimmed_raw);
+            let name = metadata_value(&metadata, &["name"])
                 .map(ToOwned::to_owned)
                 .or_else(|| first_markdown_heading(body).map(ToOwned::to_owned))
                 .or_else(|| {
@@ -153,6 +131,9 @@ fn extract_plugin_content(plugin_root: &FsPath) -> SkillPluginExtractedContent {
             extracted.commands.push(MemorySkillPluginCommand {
                 name,
                 source_path: rel,
+                description: metadata_value(&metadata, &["description"]).map(ToOwned::to_owned),
+                argument_hint: metadata_value(&metadata, &["argument-hint", "argument_hint"])
+                    .map(ToOwned::to_owned),
                 content: if content.is_empty() {
                     trimmed_raw.to_string()
                 } else {
@@ -249,15 +230,130 @@ fn parse_markdown_frontmatter(raw: &str) -> (HashMap<String, String>, &str) {
         let Some((key, value)) = trimmed.split_once(':') else {
             continue;
         };
-        let key = key.trim();
+        let key = normalize_metadata_key(key);
         let value = value.trim().trim_matches('"').trim_matches('\'');
         if key.is_empty() || value.is_empty() {
             continue;
         }
-        out.insert(key.to_string(), value.to_string());
+        out.insert(key, value.to_string());
     }
 
     (HashMap::new(), raw)
+}
+
+fn parse_markdown_metadata(raw: &str) -> (HashMap<String, String>, &str) {
+    let (mut metadata, body) = parse_markdown_frontmatter(raw);
+    let table_metadata = parse_leading_markdown_meta_table(body);
+    for (key, value) in table_metadata {
+        metadata.entry(key).or_insert(value);
+    }
+    (metadata, body)
+}
+
+fn metadata_value<'a>(metadata: &'a HashMap<String, String>, keys: &[&str]) -> Option<&'a str> {
+    for key in keys {
+        let normalized_key = normalize_metadata_key(key);
+        if let Some(value) = metadata
+            .get(normalized_key.as_str())
+            .map(String::as_str)
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+        {
+            return Some(value);
+        }
+    }
+    None
+}
+
+fn parse_leading_markdown_meta_table(raw: &str) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    let lines = raw.lines().collect::<Vec<_>>();
+    if lines.len() < 2 {
+        return out;
+    }
+
+    let mut start = 0usize;
+    while start < lines.len() && lines[start].trim().is_empty() {
+        start += 1;
+    }
+    if start + 1 >= lines.len() {
+        return out;
+    }
+
+    let header = lines[start].trim();
+    let separator = lines[start + 1].trim();
+    if !is_markdown_table_row(header) || !is_markdown_table_separator(separator) {
+        return out;
+    }
+
+    for cells in std::iter::once(split_markdown_table_cells(header)).chain(
+        lines
+            .iter()
+            .skip(start + 2)
+            .map(|line| line.trim())
+            .take_while(|line| is_markdown_table_row(line))
+            .map(split_markdown_table_cells),
+    ) {
+        if cells.len() < 2 {
+            continue;
+        }
+        let key = normalize_metadata_key(cells[0]);
+        if !is_supported_metadata_key(key.as_str()) {
+            continue;
+        }
+        let value = cells[1].trim().trim_matches('"').trim_matches('\'');
+        if value.is_empty() {
+            continue;
+        }
+        out.entry(key).or_insert_with(|| value.to_string());
+    }
+
+    out
+}
+
+fn split_markdown_table_cells(line: &str) -> Vec<&str> {
+    line.trim()
+        .trim_start_matches('|')
+        .trim_end_matches('|')
+        .split('|')
+        .map(str::trim)
+        .collect::<Vec<_>>()
+}
+
+fn is_markdown_table_row(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.is_empty() || !trimmed.contains('|') {
+        return false;
+    }
+    split_markdown_table_cells(trimmed)
+        .iter()
+        .any(|cell| !cell.trim().is_empty())
+}
+
+fn is_markdown_table_separator(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.is_empty() || !trimmed.contains('|') {
+        return false;
+    }
+    let cells = split_markdown_table_cells(trimmed);
+    if cells.is_empty() {
+        return false;
+    }
+    cells.iter().all(|cell| {
+        let normalized = cell.trim().trim_matches(':').trim_matches('-').trim();
+        !cell.trim().is_empty() && normalized.is_empty()
+    })
+}
+
+fn normalize_metadata_key(raw: &str) -> String {
+    raw.trim().to_ascii_lowercase()
+}
+
+fn is_supported_metadata_key(key: &str) -> bool {
+    matches!(
+        key,
+        "name" | "description" | "version" | "argument-hint" | "argument_hint"
+    )
 }
 
 fn first_markdown_heading(raw: &str) -> Option<&str> {
@@ -271,4 +367,29 @@ fn first_markdown_heading(raw: &str) -> Option<&str> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{metadata_value, parse_markdown_metadata};
+
+    #[test]
+    fn parses_command_metadata_from_leading_markdown_table() {
+        let raw = r#"
+| description | Debug issues using competing hypotheses |
+| --- | --- |
+| argument-hint | <error-description-or-file> [--hypotheses N] |
+
+# Team Debug
+"#;
+        let (metadata, _body) = parse_markdown_metadata(raw.trim());
+        assert_eq!(
+            metadata_value(&metadata, &["description"]),
+            Some("Debug issues using competing hypotheses")
+        );
+        assert_eq!(
+            metadata_value(&metadata, &["argument-hint", "argument_hint"]),
+            Some("<error-description-or-file> [--hypotheses N]")
+        );
+    }
 }

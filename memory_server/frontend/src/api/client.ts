@@ -49,6 +49,17 @@ function normalizeUserItem(raw: RawUserItem): UserItem {
   };
 }
 
+function normalizeOptionalPrompt(value: string | null | undefined): string | null | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null) {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
 client.interceptors.request.use((config) => {
   const authToken = localStorage.getItem('memory_auth_token');
   if (authToken) {
@@ -253,6 +264,7 @@ export const api = {
             ? payload.enabled === 1
             : Boolean(payload.enabled),
       summary_model_config_id: payload.summary_model_config_id,
+      summary_prompt: normalizeOptionalPrompt(payload.summary_prompt),
       token_limit: payload.token_limit,
       round_limit: payload.round_limit,
       target_summary_tokens: payload.target_summary_tokens,
@@ -280,6 +292,7 @@ export const api = {
             ? payload.enabled === 1
             : Boolean(payload.enabled),
       summary_model_config_id: payload.summary_model_config_id,
+      summary_prompt: normalizeOptionalPrompt(payload.summary_prompt),
       token_limit: payload.token_limit,
       round_limit: payload.round_limit,
       target_summary_tokens: payload.target_summary_tokens,
@@ -322,6 +335,7 @@ export const api = {
             ? payload.enabled === 1
             : Boolean(payload.enabled),
       summary_model_config_id: payload.summary_model_config_id,
+      summary_prompt: normalizeOptionalPrompt(payload.summary_prompt),
       token_limit: payload.token_limit,
       round_limit: payload.round_limit,
       target_summary_tokens: payload.target_summary_tokens,

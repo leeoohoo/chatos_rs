@@ -88,6 +88,7 @@ pub async fn run_once(pool: &Db, ai: &AiClient, user_id: &str) -> Result<Summary
         let ai = ai.clone();
         let model_name = model_name.clone();
         let model_cfg = model_cfg.clone();
+        let summary_prompt = config.summary_prompt.clone();
         let round_limit = config.round_limit;
         let token_limit = config.token_limit;
         let target_summary_tokens = config.target_summary_tokens;
@@ -100,6 +101,7 @@ pub async fn run_once(pool: &Db, ai: &AiClient, user_id: &str) -> Result<Summary
                 session_id.as_str(),
                 &model_name,
                 model_cfg.as_ref(),
+                summary_prompt.as_deref(),
                 round_limit,
                 token_limit,
                 target_summary_tokens,
@@ -166,6 +168,7 @@ pub async fn run_once_for_session(
         session_id,
         &model_name,
         model_cfg.as_ref(),
+        config.summary_prompt.as_deref(),
         config.round_limit,
         config.token_limit,
         config.target_summary_tokens,

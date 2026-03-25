@@ -101,7 +101,6 @@ pub async fn list_agent_ids_with_pending_agent_memory_by_user(
 ) -> Result<Vec<String>, String> {
     let pipeline = vec![
         doc! {"$match": {
-            "level": 0,
             "agent_memory_summarized": {"$ne": 1},
         }},
         doc! {"$lookup": {
@@ -141,7 +140,6 @@ pub async fn list_pending_agent_memory_summaries_by_agent(
 ) -> Result<Vec<AgentMemorySummarySource>, String> {
     let pipeline = vec![
         doc! {"$match": {
-            "level": 0,
             "agent_memory_summarized": {"$ne": 1},
         }},
         doc! {"$lookup": {

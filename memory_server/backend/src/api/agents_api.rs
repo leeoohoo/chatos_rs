@@ -50,7 +50,10 @@ pub(super) struct CreateAgentRequest {
 
 const CLONE_META_KEY: &str = "__chatos_clone_meta";
 
-fn with_clone_meta_project_policy(project_policy: Option<Value>, source_agent_id: &str) -> Option<Value> {
+fn with_clone_meta_project_policy(
+    project_policy: Option<Value>,
+    source_agent_id: &str,
+) -> Option<Value> {
     let mut root = match project_policy {
         Some(Value::Object(map)) => map,
         Some(other) => {
@@ -111,9 +114,7 @@ async fn ensure_user_clone_for_source_agent(
     };
     match agents_repo::create_agent(&state.pool, req.clone()).await {
         Ok(agent) => Ok(agent),
-        Err(err)
-            if err.contains("unknown skill_ids") || err.contains("unknown plugin_sources") =>
-        {
+        Err(err) if err.contains("unknown skill_ids") || err.contains("unknown plugin_sources") => {
             let fallback_req = CreateMemoryAgentRequest {
                 user_id: req.user_id,
                 name: req.name,
@@ -142,10 +143,12 @@ async fn backfill_contact_agent_clones_for_user(
         return Ok(());
     }
 
-    let contacts = contacts_repo::list_contacts(&state.pool, scope_user_id, Some("active"), 2000, 0)
-        .await?;
+    let contacts =
+        contacts_repo::list_contacts(&state.pool, scope_user_id, Some("active"), 2000, 0).await?;
     for contact in contacts {
-        let Some(source_agent) = agents_repo::get_agent_by_id(&state.pool, contact.agent_id.as_str()).await? else {
+        let Some(source_agent) =
+            agents_repo::get_agent_by_id(&state.pool, contact.agent_id.as_str()).await?
+        else {
             continue;
         };
         if source_agent.user_id == scope_user_id {
@@ -187,7 +190,8 @@ pub(super) async fn list_agents(
     let scope_user_id = resolve_scope_user_id(&auth, q.user_id);
     let include_shared = q.include_shared.unwrap_or(true);
     if !include_shared {
-        if let Err(err) = backfill_contact_agent_clones_for_user(&state, scope_user_id.as_str()).await
+        if let Err(err) =
+            backfill_contact_agent_clones_for_user(&state, scope_user_id.as_str()).await
         {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -279,14 +283,18 @@ pub(super) async fn list_agent_sessions(
                         Ok(rows) => (StatusCode::OK, Json(json!({"items": rows}))),
                         Err(err) => (
                             StatusCode::INTERNAL_SERVER_ERROR,
-                            Json(json!({"error": "list agent sessions by contact failed", "detail": err})),
+                            Json(
+                                json!({"error": "list agent sessions by contact failed", "detail": err}),
+                            ),
                         ),
                     }
                 }
                 Ok(None) => (StatusCode::OK, Json(json!({"items": []}))),
                 Err(err) => (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({"error": "resolve contact for agent sessions failed", "detail": err})),
+                    Json(
+                        json!({"error": "resolve contact for agent sessions failed", "detail": err}),
+                    ),
                 ),
             }
         }
