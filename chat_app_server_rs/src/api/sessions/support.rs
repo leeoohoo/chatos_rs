@@ -55,12 +55,18 @@ fn metadata_string(metadata: Option<&Value>, path: &[&str]) -> Option<String> {
 
 pub(super) fn contact_id_from_metadata(metadata: Option<&Value>) -> Option<String> {
     metadata_string(metadata, &["contact", "contact_id"])
+        .or_else(|| metadata_string(metadata, &["contact", "contactId"]))
         .or_else(|| metadata_string(metadata, &["ui_contact", "contact_id"]))
+        .or_else(|| metadata_string(metadata, &["ui_contact", "contactId"]))
 }
 
 pub(super) fn contact_agent_id_from_metadata(metadata: Option<&Value>) -> Option<String> {
     metadata_string(metadata, &["contact", "agent_id"])
+        .or_else(|| metadata_string(metadata, &["contact", "agentId"]))
         .or_else(|| metadata_string(metadata, &["ui_contact", "agent_id"]))
+        .or_else(|| metadata_string(metadata, &["ui_contact", "agentId"]))
         .or_else(|| metadata_string(metadata, &["ui_chat_selection", "selected_agent_id"]))
         .or_else(|| metadata_string(metadata, &["ui_chat_selection", "selectedAgentId"]))
+        .or_else(|| metadata_string(metadata, &["chat_runtime", "contact_agent_id"]))
+        .or_else(|| metadata_string(metadata, &["chat_runtime", "contactAgentId"]))
 }

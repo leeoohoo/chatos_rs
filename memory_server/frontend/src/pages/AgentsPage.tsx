@@ -3,6 +3,7 @@ import {
   Alert,
   Button,
   Card,
+  Collapse,
   Drawer,
   Empty,
   Input,
@@ -78,6 +79,11 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
   const [aiModelConfigId, setAiModelConfigId] = useState('');
   const [pluginCatalog, setPluginCatalog] = useState<Record<string, MemorySkillPlugin>>({});
   const [skillCatalog, setSkillCatalog] = useState<Record<string, MemorySkill>>({});
+  const [pluginPreviewOpen, setPluginPreviewOpen] = useState(false);
+  const [pluginPreviewLoading, setPluginPreviewLoading] = useState(false);
+  const [pluginPreviewSource, setPluginPreviewSource] = useState('');
+  const [pluginPreview, setPluginPreview] = useState<MemorySkillPlugin | null>(null);
+  const [pluginPreviewSkills, setPluginPreviewSkills] = useState<MemorySkill[]>([]);
   const [skillPreviewOpen, setSkillPreviewOpen] = useState(false);
   const [skillPreviewLoading, setSkillPreviewLoading] = useState(false);
   const [skillPreview, setSkillPreview] = useState<MemorySkill | null>(null);
@@ -415,6 +421,61 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
     return t('agents.unnamedSkill');
   };
 
+  const loadAllPluginSkills = async (pluginSource: string): Promise<MemorySkill[]> => {
+    const normalizedPluginSource = pluginSource.trim();
+    if (!normalizedPluginSource) {
+      return [];
+    }
+
+    const pageSize = 500;
+    let offset = 0;
+    const rows: MemorySkill[] = [];
+
+    while (true) {
+      const pageRows = await api.listSkills(scopeUserId, {
+        plugin_source: normalizedPluginSource,
+        limit: pageSize,
+        offset,
+      });
+      if (pageRows.length === 0) {
+        break;
+      }
+      rows.push(...pageRows);
+      if (pageRows.length < pageSize) {
+        break;
+      }
+      offset += pageRows.length;
+    }
+
+    return rows;
+  };
+
+  const openPluginPreview = async (pluginSource: string) => {
+    const normalizedPluginSource = pluginSource.trim();
+    if (!normalizedPluginSource) {
+      return;
+    }
+
+    setPluginPreviewOpen(true);
+    setPluginPreviewLoading(true);
+    setPluginPreviewSource(normalizedPluginSource);
+    setPluginPreview(pluginCatalog[normalizedPluginSource] ?? null);
+    setPluginPreviewSkills([]);
+    try {
+      const [pluginDetail, skills] = await Promise.all([
+        api.getSkillPlugin(normalizedPluginSource, scopeUserId).catch(() => null),
+        loadAllPluginSkills(normalizedPluginSource),
+      ]);
+      setPluginPreview(pluginDetail || pluginCatalog[normalizedPluginSource] || null);
+      setPluginPreviewSkills(skills);
+    } catch (err) {
+      setPluginPreviewOpen(false);
+      setError((err as Error).message);
+    } finally {
+      setPluginPreviewLoading(false);
+    }
+  };
+
   const openSkillPreview = async (agent: MemoryAgent, skillId: string) => {
     const normalizedSkillId = skillId.trim();
     if (!normalizedSkillId) {
@@ -612,7 +673,18 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
         return (
           <Space size={[4, 4]} wrap>
             {value.map((pluginSource) => (
-              <Tag key={pluginSource}>{resolvePluginDisplayName(pluginSource)}</Tag>
+              <Button
+                key={pluginSource}
+                type="link"
+                size="small"
+                style={{ paddingInline: 0, height: 20 }}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void openPluginPreview(pluginSource);
+                }}
+              >
+                {resolvePluginDisplayName(pluginSource)}
+              </Button>
             ))}
           </Space>
         );
@@ -988,6 +1060,173 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
             <Switch checked={aiEnabled} onChange={setAiEnabled} />
           </Space>
         </Space>
+      </Modal>
+
+      <Modal
+        open={pluginPreviewOpen}
+        title={`${t('agents.pluginPreview')}: ${
+          pluginPreview?.name?.trim()
+            || resolvePluginDisplayName(pluginPreviewSource)
+            || '-'
+        }`}
+        footer={null}
+        onCancel={() => {
+          setPluginPreviewOpen(false);
+          setPluginPreviewSource('');
+          setPluginPreview(null);
+          setPluginPreviewSkills([]);
+        }}
+        width={920}
+      >
+        {pluginPreviewLoading ? (
+          <div style={{ display: 'flex', justifyContent: 'center', padding: '32px 0' }}>
+            <Spin />
+          </div>
+        ) : (
+          <Space direction="vertical" size={10} style={{ width: '100%' }}>
+            <Text strong>{pluginPreviewSource || '-'}</Text>
+            <Text type="secondary">
+              {t('agents.pluginCategory')}: {pluginPreview?.category?.trim() || '-'}
+            </Text>
+            <Text type="secondary">
+              {t('agents.pluginVersion')}: {pluginPreview?.version?.trim() || '-'}
+            </Text>
+            <Text type="secondary">
+              {t('agents.pluginRepository')}: {pluginPreview?.repository?.trim() || '-'}
+            </Text>
+            <Text type="secondary">
+              {t('agents.pluginBranch')}: {pluginPreview?.branch?.trim() || '-'}
+            </Text>
+            <Text strong>{t('agents.pluginDescription')}</Text>
+            <div
+              style={{
+                maxHeight: 220,
+                overflow: 'auto',
+                padding: 12,
+                border: '1px solid #f0f0f0',
+                borderRadius: 8,
+                background: '#fafafa',
+              }}
+            >
+              <pre
+                style={{
+                  margin: 0,
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                  fontFamily: 'SFMono-Regular, Consolas, Liberation Mono, Menlo, monospace',
+                  fontSize: 13,
+                  lineHeight: 1.6,
+                }}
+              >
+                {pluginPreview?.description?.trim() || t('agents.pluginDescriptionEmpty')}
+              </pre>
+            </div>
+            <Text strong>{t('agents.pluginMainContent')}</Text>
+            <div
+              style={{
+                maxHeight: 280,
+                overflow: 'auto',
+                padding: 12,
+                border: '1px solid #f0f0f0',
+                borderRadius: 8,
+                background: '#fafafa',
+              }}
+            >
+              <pre
+                style={{
+                  margin: 0,
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                  fontFamily: 'SFMono-Regular, Consolas, Liberation Mono, Menlo, monospace',
+                  fontSize: 13,
+                  lineHeight: 1.6,
+                }}
+              >
+                {pluginPreview?.content?.trim() || t('agents.pluginMainContentEmpty')}
+              </pre>
+            </div>
+            <Text strong>{t('agents.pluginCommands')}</Text>
+            {(pluginPreview?.commands || []).length === 0 ? (
+              <Empty description={t('agents.pluginNoCommands')} />
+            ) : (
+              <Collapse
+                size="small"
+                items={(pluginPreview?.commands || []).map((command, index) => ({
+                  key: `${command.source_path || command.name || index}`,
+                  label: `${command.name || '-'} (${command.source_path || '-'})`,
+                  children: (
+                    <div
+                      style={{
+                        maxHeight: 260,
+                        overflow: 'auto',
+                        padding: 10,
+                        border: '1px solid #f0f0f0',
+                        borderRadius: 8,
+                        background: '#fafafa',
+                      }}
+                    >
+                      <pre
+                        style={{
+                          margin: 0,
+                          whiteSpace: 'pre-wrap',
+                          wordBreak: 'break-word',
+                          fontFamily: 'SFMono-Regular, Consolas, Liberation Mono, Menlo, monospace',
+                          fontSize: 13,
+                          lineHeight: 1.6,
+                        }}
+                      >
+                        {command.content || t('agents.pluginCommandContentEmpty')}
+                      </pre>
+                    </div>
+                  ),
+                }))}
+              />
+            )}
+            <Text strong>{t('agents.pluginSkills')}</Text>
+            {pluginPreviewSkills.length === 0 ? (
+              <Empty description={t('agents.pluginNoSkills')} />
+            ) : (
+              <Collapse
+                size="small"
+                defaultActiveKey={pluginPreviewSkills.map((skill) => skill.id)}
+                items={pluginPreviewSkills.map((skill) => ({
+                  key: skill.id,
+                  label: `${skill.name || t('agents.unnamedSkill')} (${skill.id})`,
+                  children: (
+                    <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                      <Text type="secondary">
+                        {t('agents.skillSourcePath')}: {skill.source_path || '-'}
+                      </Text>
+                      <div
+                        style={{
+                          maxHeight: 280,
+                          overflow: 'auto',
+                          padding: 10,
+                          border: '1px solid #f0f0f0',
+                          borderRadius: 8,
+                          background: '#fafafa',
+                        }}
+                      >
+                        <pre
+                          style={{
+                            margin: 0,
+                            whiteSpace: 'pre-wrap',
+                            wordBreak: 'break-word',
+                            fontFamily: 'SFMono-Regular, Consolas, Liberation Mono, Menlo, monospace',
+                            fontSize: 13,
+                            lineHeight: 1.6,
+                          }}
+                        >
+                          {skill.content || t('agents.skillContentEmpty')}
+                        </pre>
+                      </div>
+                    </Space>
+                  ),
+                }))}
+              />
+            )}
+          </Space>
+        )}
       </Modal>
 
       <Modal

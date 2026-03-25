@@ -28,6 +28,7 @@ mod shared;
 mod skills_api;
 mod skills_manage_api;
 mod summaries_api;
+mod turn_runtime_snapshots_api;
 use self::shared::{
     build_ai_client, build_auth_token, default_project_name, ensure_admin,
     ensure_agent_manage_access, ensure_agent_read_access, ensure_contact_access,
@@ -80,6 +81,18 @@ pub fn router(state: SharedState) -> Router {
             post(messages_summaries_api::batch_create_messages),
         )
         .route(
+            "/api/memory/v1/sessions/:session_id/turn-runtime-snapshots/:turn_id/sync",
+            put(turn_runtime_snapshots_api::sync_turn_runtime_snapshot),
+        )
+        .route(
+            "/api/memory/v1/sessions/:session_id/turn-runtime-snapshots/latest",
+            get(turn_runtime_snapshots_api::get_latest_turn_runtime_snapshot),
+        )
+        .route(
+            "/api/memory/v1/sessions/:session_id/turn-runtime-snapshots/by-turn/:turn_id",
+            get(turn_runtime_snapshots_api::get_turn_runtime_snapshot_by_turn),
+        )
+        .route(
             "/api/memory/v1/contacts",
             get(contacts_api::list_contacts).post(contacts_api::create_contact),
         )
@@ -128,6 +141,10 @@ pub fn router(state: SharedState) -> Router {
         .route(
             "/api/memory/v1/skills/:skill_id",
             get(skills_api::get_skill),
+        )
+        .route(
+            "/api/memory/v1/skills/plugins/detail",
+            get(skills_api::get_skill_plugin),
         )
         .route(
             "/api/memory/v1/skills/plugins",

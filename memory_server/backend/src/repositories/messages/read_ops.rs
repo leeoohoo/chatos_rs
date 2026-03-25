@@ -1,6 +1,6 @@
 use futures_util::TryStreamExt;
 use mongodb::bson::doc;
-use mongodb::options::FindOptions;
+use mongodb::options::{FindOneOptions, FindOptions};
 
 use crate::db::Db;
 use crate::models::Message;
@@ -58,4 +58,19 @@ pub async fn list_pending_messages(
         .map_err(|e| e.to_string())?;
 
     cursor.try_collect().await.map_err(|e| e.to_string())
+}
+
+pub async fn get_latest_user_message_by_session(
+    db: &Db,
+    session_id: &str,
+) -> Result<Option<Message>, String> {
+    let options = FindOneOptions::builder()
+        .sort(doc! {"created_at": -1})
+        .build();
+
+    collection(db)
+        .find_one(doc! {"session_id": session_id, "role": "user"})
+        .with_options(options)
+        .await
+        .map_err(|e| e.to_string())
 }

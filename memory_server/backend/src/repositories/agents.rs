@@ -9,7 +9,10 @@ use crate::db::Db;
 use crate::models::{
     CreateMemoryAgentRequest, MemoryAgent, MemoryAgentRuntimeContext,
     MemoryAgentRuntimePluginSummary, MemoryAgentRuntimeSkillSummary, MemoryAgentSkill,
-    UpdateMemoryAgentRequest,
+    MemorySkill, MemorySkillPlugin, UpdateMemoryAgentRequest,
+};
+use crate::services::skills::{
+    extract_plugin_content_async, resolve_plugin_root_from_cache, resolve_skill_state_root,
 };
 
 use super::{auth::ADMIN_USER_ID, now_rfc3339, skills as skills_repo};
@@ -418,6 +421,90 @@ pub async fn get_runtime_context(
     db: &Db,
     agent_id: &str,
 ) -> Result<Option<MemoryAgentRuntimeContext>, String> {
+    fn normalize_optional_text(value: Option<&str>) -> Option<String> {
+        value
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+            .map(ToOwned::to_owned)
+    }
+
+    fn build_plugin_content_summary(
+        plugin: &MemorySkillPlugin,
+        skills: &[&MemorySkill],
+    ) -> Option<String> {
+        let has_plugin_content = plugin
+            .content
+            .as_deref()
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+            .is_some();
+        let has_commands = !plugin.commands.is_empty();
+        if skills.is_empty() && !has_plugin_content && !has_commands {
+            return None;
+        }
+        let mut lines = Vec::new();
+        if let Some(plugin_content) = plugin
+            .content
+            .as_deref()
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+        {
+            lines.push("插件主内容：".to_string());
+            for line in plugin_content.lines() {
+                lines.push(format!("  {}", line));
+            }
+        }
+        if !plugin.commands.is_empty() {
+            if !lines.is_empty() {
+                lines.push(String::new());
+            }
+            lines.push("插件命令：".to_string());
+            for (index, command) in plugin.commands.iter().enumerate() {
+                let command_name = command.name.trim();
+                let title = if command_name.is_empty() {
+                    command.source_path.trim()
+                } else {
+                    command_name
+                };
+                lines.push(format!("{}. 命令={}", index + 1, title));
+                if let Some(source_path) = normalize_optional_text(Some(command.source_path.as_str()))
+                {
+                    lines.push(format!("   路径={}", source_path));
+                }
+                let content = command.content.trim();
+                if content.is_empty() {
+                    lines.push("   内容：（空）".to_string());
+                } else {
+                    lines.push("   内容：".to_string());
+                    for line in content.lines() {
+                        lines.push(format!("   {}", line));
+                    }
+                }
+            }
+        }
+        if !skills.is_empty() {
+            if !lines.is_empty() {
+                lines.push(String::new());
+            }
+            lines.push("插件关联技能内容：".to_string());
+            for (index, skill) in skills.iter().enumerate() {
+                lines.push(format!("{}. 技能={}", index + 1, skill.name.trim()));
+                if let Some(description) = normalize_optional_text(skill.description.as_deref()) {
+                    lines.push(format!("   简介={}", description));
+                }
+                if skill.content.trim().is_empty() {
+                    lines.push("   完整内容：（空）".to_string());
+                    continue;
+                }
+                lines.push("   完整内容：".to_string());
+                for item in skill.content.lines() {
+                    lines.push(format!("   {}", item));
+                }
+            }
+        }
+        Some(lines.join("\n"))
+    }
+
     let Some(agent) = get_agent_by_id(db, agent_id).await? else {
         return Ok(None);
     };
@@ -429,23 +516,60 @@ pub async fn get_runtime_context(
         agent.plugin_sources.as_slice(),
     )
     .await?;
-    let plugin_map = plugins
+    let mut plugin_map = plugins
         .into_iter()
         .map(|plugin| (plugin.source.clone(), plugin))
         .collect::<HashMap<_, _>>();
-    let runtime_plugins = agent
-        .plugin_sources
-        .iter()
-        .filter_map(|source| plugin_map.get(source))
-        .map(|plugin| MemoryAgentRuntimePluginSummary {
-            source: plugin.source.clone(),
-            name: plugin.name.clone(),
-            category: plugin.category.clone(),
-            description: plugin.description.clone(),
-            updated_at: Some(plugin.updated_at.clone()),
-        })
-        .collect::<Vec<_>>();
-
+    let plugins_root = resolve_skill_state_root(agent.user_id.as_str()).join("plugins");
+    for source in &agent.plugin_sources {
+        let Some(existing) = plugin_map.get(source).cloned() else {
+            continue;
+        };
+        let content_missing = existing
+            .content
+            .as_deref()
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+            .is_none();
+        let commands_missing = existing.commands.is_empty();
+        if !content_missing && !commands_missing {
+            continue;
+        }
+        let Some(plugin_root) = resolve_plugin_root_from_cache(
+            plugins_root.as_path(),
+            existing.cache_path.as_deref(),
+            existing.source.as_str(),
+        ) else {
+            continue;
+        };
+        let Ok(extracted) = extract_plugin_content_async(plugin_root).await else {
+            continue;
+        };
+        let mut refreshed = existing.clone();
+        let mut changed = false;
+        if content_missing {
+            if let Some(content) = extracted
+                .content
+                .as_deref()
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+            {
+                refreshed.content = Some(content.to_string());
+                changed = true;
+            }
+        }
+        if commands_missing && !extracted.commands.is_empty() {
+            refreshed.commands = extracted.commands;
+            refreshed.command_count = refreshed.commands.len().min(i64::MAX as usize) as i64;
+            changed = true;
+        }
+        if !changed {
+            continue;
+        }
+        if let Ok(saved) = skills_repo::upsert_plugin(db, refreshed).await {
+            plugin_map.insert(source.clone(), saved);
+        }
+    }
     let skills = skills_repo::list_skills_by_ids(
         db,
         visible_user_ids.as_slice(),
@@ -456,6 +580,45 @@ pub async fn get_runtime_context(
         .into_iter()
         .map(|skill| (skill.id.clone(), skill))
         .collect::<HashMap<_, _>>();
+    let all_plugin_skills = skills_repo::list_skills_by_plugin_sources_for_user_ids(
+        db,
+        visible_user_ids.as_slice(),
+        agent.plugin_sources.as_slice(),
+    )
+    .await?;
+    let mut plugin_skills: HashMap<String, Vec<&MemorySkill>> = HashMap::new();
+    for skill in &all_plugin_skills {
+        let plugin_source = skill.plugin_source.trim();
+        if plugin_source.is_empty() {
+            continue;
+        }
+        plugin_skills
+            .entry(plugin_source.to_string())
+            .or_default()
+            .push(skill);
+    }
+    for items in plugin_skills.values_mut() {
+        items.sort_by(|left, right| left.name.cmp(&right.name));
+    }
+    let runtime_plugins = agent
+        .plugin_sources
+        .iter()
+        .filter_map(|source| plugin_map.get(source))
+        .map(|plugin| {
+            let content_summary = plugin_skills
+                .get(plugin.source.as_str())
+                .and_then(|items| build_plugin_content_summary(plugin, items.as_slice()))
+                .or_else(|| build_plugin_content_summary(plugin, &[]));
+            MemoryAgentRuntimePluginSummary {
+                source: plugin.source.clone(),
+                name: plugin.name.clone(),
+                category: plugin.category.clone(),
+                description: plugin.description.clone(),
+                content_summary,
+                updated_at: Some(plugin.updated_at.clone()),
+            }
+        })
+        .collect::<Vec<_>>();
     let inline_skill_map = agent
         .skills
         .iter()

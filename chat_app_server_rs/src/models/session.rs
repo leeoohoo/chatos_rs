@@ -82,12 +82,22 @@ fn extract_selection_from_metadata(metadata: Option<&Value>) -> (Option<String>,
     let selected_agent_id = metadata_map
         .get("contact")
         .and_then(Value::as_object)
-        .and_then(|contact| contact.get("agent_id"))
+        .and_then(|contact| contact.get("agent_id").or_else(|| contact.get("agentId")))
+        .or_else(|| {
+            metadata_map
+                .get("chat_runtime")
+                .and_then(Value::as_object)
+                .and_then(|runtime| {
+                    runtime
+                        .get("contact_agent_id")
+                        .or_else(|| runtime.get("contactAgentId"))
+                })
+        })
         .or_else(|| {
             metadata_map
                 .get("ui_contact")
                 .and_then(Value::as_object)
-                .and_then(|contact| contact.get("agent_id"))
+                .and_then(|contact| contact.get("agent_id").or_else(|| contact.get("agentId")))
         })
         .and_then(Value::as_str)
         .map(str::trim)

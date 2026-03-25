@@ -153,10 +153,19 @@ export interface MemorySkillPlugin {
   repository?: string | null;
   branch?: string | null;
   cache_path?: string | null;
+  content?: string | null;
+  commands?: MemorySkillPluginCommand[];
+  command_count?: number;
   installed: boolean;
   discoverable_skills: number;
   installed_skill_count: number;
   updated_at: string;
+}
+
+export interface MemorySkillPluginCommand {
+  name: string;
+  source_path: string;
+  content: string;
 }
 
 export interface MemorySkill {

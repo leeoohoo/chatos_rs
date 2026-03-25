@@ -80,7 +80,7 @@ impl AiServer {
             .save_user_message(
                 session_id,
                 user_message,
-                None,
+                options.user_message_id.clone(),
                 options.message_mode.clone(),
                 options.message_source.clone(),
                 meta,
@@ -156,6 +156,7 @@ pub struct ChatOptions {
     pub reasoning_enabled: Option<bool>,
     pub callbacks: Option<AiClientCallbacks>,
     pub turn_id: Option<String>,
+    pub user_message_id: Option<String>,
     pub message_mode: Option<String>,
     pub message_source: Option<String>,
     pub prefixed_input_items: Option<Vec<Value>>,

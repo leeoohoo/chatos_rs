@@ -109,6 +109,33 @@ pub async fn list_skills_by_ids(
     cursor.try_collect().await.map_err(|e| e.to_string())
 }
 
+pub async fn list_skills_by_plugin_sources_for_user_ids(
+    db: &Db,
+    user_ids: &[String],
+    plugin_sources: &[String],
+) -> Result<Vec<MemorySkill>, String> {
+    if user_ids.is_empty() || plugin_sources.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let filter = if user_ids.len() == 1 {
+        doc! { "user_id": user_ids[0].clone(), "plugin_source": { "$in": plugin_sources } }
+    } else {
+        doc! { "user_id": { "$in": user_ids }, "plugin_source": { "$in": plugin_sources } }
+    };
+
+    let options = FindOptions::builder()
+        .sort(doc! {"plugin_source": 1, "name": 1, "source_path": 1})
+        .build();
+
+    let cursor = skill_collection(db)
+        .find(filter)
+        .with_options(options)
+        .await
+        .map_err(|e| e.to_string())?;
+    cursor.try_collect().await.map_err(|e| e.to_string())
+}
+
 pub async fn list_plugins(
     db: &Db,
     user_id: &str,
@@ -119,6 +146,7 @@ pub async fn list_plugins(
         .sort(doc! {"updated_at": -1})
         .limit(Some(limit.max(1).min(500)))
         .skip(Some(offset.max(0) as u64))
+        .projection(doc! { "content": 0, "commands": 0 })
         .build();
 
     let cursor = plugin_collection(db)
@@ -149,6 +177,7 @@ pub async fn list_plugins_by_user_ids(
         .sort(doc! {"updated_at": -1})
         .limit(Some(limit.max(1).min(1000)))
         .skip(Some(offset.max(0) as u64))
+        .projection(doc! { "content": 0, "commands": 0 })
         .build();
 
     let cursor = plugin_collection(db)
@@ -195,6 +224,43 @@ pub async fn get_plugins_by_sources_for_user_ids(
         .await
         .map_err(|e| e.to_string())?;
     cursor.try_collect().await.map_err(|e| e.to_string())
+}
+
+pub async fn get_plugin_by_source_for_user_ids(
+    db: &Db,
+    user_ids: &[String],
+    source: &str,
+) -> Result<Option<MemorySkillPlugin>, String> {
+    if user_ids.is_empty() {
+        return Ok(None);
+    }
+    let filter = if user_ids.len() == 1 {
+        doc! { "user_id": user_ids[0].clone(), "source": source }
+    } else {
+        doc! { "user_id": { "$in": user_ids }, "source": source }
+    };
+    let options = FindOptions::builder()
+        .sort(doc! {"updated_at": -1})
+        .build();
+    let cursor = plugin_collection(db)
+        .find(filter)
+        .with_options(options)
+        .await
+        .map_err(|e| e.to_string())?;
+    let items = cursor
+        .try_collect::<Vec<MemorySkillPlugin>>()
+        .await
+        .map_err(|e| e.to_string())?;
+    if items.is_empty() {
+        return Ok(None);
+    }
+
+    for user_id in user_ids {
+        if let Some(item) = items.iter().find(|item| item.user_id == *user_id) {
+            return Ok(Some(item.clone()));
+        }
+    }
+    Ok(items.first().cloned())
 }
 
 pub async fn upsert_plugin(

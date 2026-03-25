@@ -16,6 +16,7 @@ import NotepadPanel from './NotepadPanel';
 import ChatConversationPane from './chatInterface/ChatConversationPane';
 import HeaderBar from './chatInterface/HeaderBar';
 import UiPromptHistoryDrawer from './chatInterface/UiPromptHistoryDrawer';
+import TurnRuntimeContextDrawer from './chatInterface/TurnRuntimeContextDrawer';
 import {
   formatSummaryCreatedAt,
   toUiPromptPanelFromRecord,
@@ -32,6 +33,7 @@ import { useSessionRuntimeSettings } from '../features/sessionRuntime/useSession
 import { useContactMemoryContext } from './chatInterface/useContactMemoryContext';
 import { useUiPromptHistory } from './chatInterface/useUiPromptHistory';
 import { useContactProjectScope } from './chatInterface/useContactProjectScope';
+import type { TurnRuntimeSnapshotLookupResponse } from '../lib/api/client/types';
 
 export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   className,
@@ -153,6 +155,12 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const didInitRef = useRef(false);
   const [summaryPaneSessionId, setSummaryPaneSessionId] = useState<string | null>(null);
   const [uiPromptHistoryOpen, setUiPromptHistoryOpen] = useState(false);
+  const [runtimeContextOpen, setRuntimeContextOpen] = useState(false);
+  const [runtimeContextSessionId, setRuntimeContextSessionId] = useState<string | null>(null);
+  const [runtimeContextData, setRuntimeContextData] =
+    useState<TurnRuntimeSnapshotLookupResponse | null>(null);
+  const [runtimeContextLoading, setRuntimeContextLoading] = useState(false);
+  const [runtimeContextError, setRuntimeContextError] = useState<string | null>(null);
   const {
     workspaceRoot: composerWorkspaceRoot,
     mcpEnabled: composerMcpEnabled,
@@ -402,6 +410,40 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     void loadUiPromptHistory(sessionId);
   }, [loadUiPromptHistory]);
 
+  const loadLatestRuntimeContext = useCallback(async (sessionId: string) => {
+    if (!sessionId) {
+      return;
+    }
+    setRuntimeContextLoading(true);
+    setRuntimeContextError(null);
+    try {
+      const payload = await apiClient.getSessionLatestTurnRuntimeContext(sessionId);
+      setRuntimeContextData(payload);
+    } catch (error) {
+      console.error('Failed to load turn runtime context:', error);
+      setRuntimeContextError(error instanceof Error ? error.message : '加载上下文失败');
+    } finally {
+      setRuntimeContextLoading(false);
+    }
+  }, [apiClient]);
+
+  const handleOpenRuntimeContext = useCallback((sessionId: string) => {
+    if (!sessionId) {
+      return;
+    }
+    setRuntimeContextOpen(true);
+    setRuntimeContextSessionId(sessionId);
+    setRuntimeContextData(null);
+    void loadLatestRuntimeContext(sessionId);
+  }, [loadLatestRuntimeContext]);
+
+  const handleRefreshRuntimeContext = useCallback(() => {
+    if (!runtimeContextSessionId) {
+      return;
+    }
+    void loadLatestRuntimeContext(runtimeContextSessionId);
+  }, [loadLatestRuntimeContext, runtimeContextSessionId]);
+
   const {
     handleTaskReviewConfirm,
     handleTaskReviewCancel,
@@ -473,7 +515,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
             onOpenSessionSummary={(sessionId) => {
               setSummaryPaneSessionId((prev) => (prev === sessionId ? null : sessionId));
             }}
+            onOpenSessionRuntimeContext={handleOpenRuntimeContext}
             activeSummarySessionId={summaryPaneSessionId}
+            activeRuntimeContextSessionId={runtimeContextOpen ? runtimeContextSessionId : null}
           />
 
           {/* 宸茬Щ闄ゅ乏渚у簲鐢ㄦ娊灞夐潰鏉匡紝鏀逛负寮圭獥 */}
@@ -581,6 +625,16 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
           }}
           onClose={() => setUiPromptHistoryOpen(false)}
           formatCreatedAt={formatSummaryCreatedAt}
+        />
+
+        <TurnRuntimeContextDrawer
+          open={runtimeContextOpen}
+          sessionId={runtimeContextSessionId}
+          loading={runtimeContextLoading}
+          error={runtimeContextError}
+          data={runtimeContextData}
+          onRefresh={handleRefreshRuntimeContext}
+          onClose={() => setRuntimeContextOpen(false)}
         />
 
         {/* MCP绠＄悊鍣?*/}

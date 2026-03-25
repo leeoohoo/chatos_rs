@@ -62,6 +62,7 @@ pub struct MemoryAgentRuntimePluginSummaryDto {
     pub name: String,
     pub category: Option<String>,
     pub description: Option<String>,
+    pub content_summary: Option<String>,
     pub updated_at: Option<String>,
 }
 
@@ -238,6 +239,73 @@ pub struct MemoryAgentRuntimeContextDto {
     pub mcp_policy: Option<Value>,
     pub project_policy: Option<Value>,
     pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TurnRuntimeSnapshotSystemMessageDto {
+    pub id: String,
+    pub source: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TurnRuntimeSnapshotToolDto {
+    pub name: String,
+    pub server_name: String,
+    pub server_type: String,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct TurnRuntimeSnapshotRuntimeDto {
+    pub model: Option<String>,
+    pub provider: Option<String>,
+    pub contact_agent_id: Option<String>,
+    pub project_id: Option<String>,
+    pub project_root: Option<String>,
+    pub mcp_enabled: Option<bool>,
+    #[serde(default)]
+    pub enabled_mcp_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SyncTurnRuntimeSnapshotRequestDto {
+    pub user_message_id: Option<String>,
+    pub status: Option<String>,
+    pub snapshot_source: Option<String>,
+    pub snapshot_version: Option<i64>,
+    pub captured_at: Option<String>,
+    pub system_messages: Option<Vec<TurnRuntimeSnapshotSystemMessageDto>>,
+    pub tools: Option<Vec<TurnRuntimeSnapshotToolDto>>,
+    pub runtime: Option<TurnRuntimeSnapshotRuntimeDto>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TurnRuntimeSnapshotDto {
+    pub id: String,
+    pub session_id: String,
+    pub user_id: String,
+    pub turn_id: String,
+    pub user_message_id: Option<String>,
+    pub status: String,
+    pub snapshot_source: String,
+    pub snapshot_version: i64,
+    pub captured_at: String,
+    pub updated_at: String,
+    #[serde(default)]
+    pub system_messages: Vec<TurnRuntimeSnapshotSystemMessageDto>,
+    #[serde(default)]
+    pub tools: Vec<TurnRuntimeSnapshotToolDto>,
+    pub runtime: Option<TurnRuntimeSnapshotRuntimeDto>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TurnRuntimeSnapshotLookupResponseDto {
+    pub session_id: String,
+    pub turn_id: Option<String>,
+    pub status: String,
+    pub snapshot_source: String,
+    pub snapshot: Option<TurnRuntimeSnapshotDto>,
 }
 
 #[derive(Debug, Deserialize)]

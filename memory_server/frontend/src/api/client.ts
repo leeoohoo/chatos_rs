@@ -465,6 +465,16 @@ export const api = {
     return data.items ?? [];
   },
 
+  async getSkillPlugin(source: string, userId?: string): Promise<MemorySkillPlugin | null> {
+    const { data } = await client.get('/skills/plugins/detail', {
+      params: {
+        user_id: userId,
+        source,
+      },
+    });
+    return data ?? null;
+  },
+
   async listSkills(
     userId?: string,
     params?: { plugin_source?: string; query?: string; limit?: number; offset?: number },

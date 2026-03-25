@@ -46,7 +46,9 @@ interface SessionListProps {
   store?: typeof useChatStore;
   onSelectSession?: (sessionId: string) => void;
   onOpenSessionSummary?: (sessionId: string) => void;
+  onOpenSessionRuntimeContext?: (sessionId: string) => void;
   activeSummarySessionId?: string | null;
+  activeRuntimeContextSessionId?: string | null;
 }
 
 export const SessionList: React.FC<SessionListProps> = (props) => {
@@ -57,7 +59,9 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     store,
     onSelectSession,
     onOpenSessionSummary,
+    onOpenSessionRuntimeContext,
     activeSummarySessionId,
+    activeRuntimeContextSessionId,
   } = props;
   // 尝试从Context获取store hook（如果可用）
   let contextStoreHook: typeof useChatStore | null = null;
@@ -273,6 +277,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
   const {
     handleSelectSession,
     handleOpenSummary,
+    handleOpenRuntimeContext,
     handleRefreshSessions,
     handleRefreshTerminals,
     handleRefreshRemote,
@@ -298,6 +303,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     selectSession,
     setActivePanel,
     onOpenSessionSummary,
+    onOpenSessionRuntimeContext,
     loadContactsAction,
     loadTerminals,
     loadRemoteConnections,
@@ -383,6 +389,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
             sessions={displaySessions}
             currentSessionId={currentDisplaySessionId}
             summarySessionId={activeSummaryDisplaySessionId}
+            runtimeContextSessionId={activeRuntimeContextSessionId}
             displaySessionRuntimeIdMap={displaySessionRuntimeIdMap}
             sessionChatState={sessionChatState}
             taskReviewPanelsBySession={taskReviewPanelsBySession}
@@ -403,6 +410,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
               });
             }}
             onOpenSummary={handleOpenSummary}
+            onOpenRuntimeContext={handleOpenRuntimeContext}
             onDeleteSession={handleDeleteSession}
             onLoadMore={() => {}}
             onToggleActionMenu={toggleActionMenu}

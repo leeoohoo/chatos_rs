@@ -38,11 +38,12 @@ mod memories;
 mod messages;
 mod sessions;
 mod summaries;
+mod turn_runtime_snapshots;
 
 pub use self::agents::{
     CreateMemoryAgentRequest, MemoryAgent, MemoryAgentRuntimeContext,
     MemoryAgentRuntimePluginSummary, MemoryAgentRuntimeSkillSummary, MemoryAgentSkill, MemorySkill,
-    MemorySkillPlugin, UpdateMemoryAgentRequest,
+    MemorySkillPlugin, MemorySkillPluginCommand, UpdateMemoryAgentRequest,
 };
 pub use self::ai_models::{AiModelConfig, UpsertAiModelConfigRequest};
 pub use self::compose::{ComposeContextMeta, ComposeContextRequest, ComposeContextResponse};
@@ -58,3 +59,6 @@ pub use self::sessions::{
     Session, UpdateSessionRequest,
 };
 pub use self::summaries::{CreateSummaryInput, SessionSummary};
+pub use self::turn_runtime_snapshots::{
+    SyncTurnRuntimeSnapshotRequest, TurnRuntimeSnapshot, TurnRuntimeSnapshotLookupResponse,
+};

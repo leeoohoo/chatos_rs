@@ -3,10 +3,13 @@ import {
   Alert,
   Button,
   Card,
+  Collapse,
+  Empty,
   Input,
   Modal,
   Select,
   Space,
+  Spin,
   Switch,
   Table,
   Tag,
@@ -39,6 +42,13 @@ export function SkillsPage({ filterUserId, currentUserId, isAdmin }: SkillsPageP
   const [repository, setRepository] = useState('');
   const [branch, setBranch] = useState('');
   const [autoInstall, setAutoInstall] = useState(true);
+  const [pluginDetailOpen, setPluginDetailOpen] = useState(false);
+  const [pluginDetailLoading, setPluginDetailLoading] = useState(false);
+  const [pluginDetail, setPluginDetail] = useState<MemorySkillPlugin | null>(null);
+  const [pluginDetailSkills, setPluginDetailSkills] = useState<MemorySkill[]>([]);
+  const [skillDetailOpen, setSkillDetailOpen] = useState(false);
+  const [skillDetailLoading, setSkillDetailLoading] = useState(false);
+  const [skillDetail, setSkillDetail] = useState<MemorySkill | null>(null);
 
   const scopeUserId = useMemo(() => {
     if (!isAdmin) {
@@ -137,6 +147,78 @@ export function SkillsPage({ filterUserId, currentUserId, isAdmin }: SkillsPageP
     }
   };
 
+  const loadAllPluginSkills = async (pluginSource: string): Promise<MemorySkill[]> => {
+    const normalizedPluginSource = pluginSource.trim();
+    if (!normalizedPluginSource) {
+      return [];
+    }
+
+    const pageSize = 500;
+    let offset = 0;
+    const rows: MemorySkill[] = [];
+
+    while (true) {
+      const pageRows = await api.listSkills(scopeUserId, {
+        plugin_source: normalizedPluginSource,
+        limit: pageSize,
+        offset,
+      });
+      if (pageRows.length === 0) {
+        break;
+      }
+      rows.push(...pageRows);
+      if (pageRows.length < pageSize) {
+        break;
+      }
+      offset += pageRows.length;
+    }
+
+    return rows;
+  };
+
+  const openPluginDetail = async (record: MemorySkillPlugin) => {
+    setPluginDetailOpen(true);
+    setPluginDetailLoading(true);
+    setPluginDetail(record);
+    setPluginDetailSkills([]);
+    try {
+      const [detail, detailSkills] = await Promise.all([
+        api.getSkillPlugin(record.source, scopeUserId).catch(() => record),
+        loadAllPluginSkills(record.source),
+      ]);
+      const resolved = detail || record;
+      setPluginDetail(resolved);
+      setPluginDetailSkills(detailSkills);
+      const resolvedCommandCount = resolved.command_count
+        ?? resolved.commands?.length
+        ?? 0;
+      setPlugins((prev) => prev.map((item) => (
+        item.source === record.source
+          ? { ...item, command_count: resolvedCommandCount }
+          : item
+      )));
+    } catch (err) {
+      setPluginDetailOpen(false);
+      setError((err as Error).message);
+    } finally {
+      setPluginDetailLoading(false);
+    }
+  };
+
+  const openSkillDetail = async (record: MemorySkill) => {
+    setSkillDetailOpen(true);
+    setSkillDetailLoading(true);
+    setSkillDetail(record);
+    try {
+      const detail = await api.getSkill(record.id, scopeUserId);
+      setSkillDetail(detail || record);
+    } catch {
+      setSkillDetail(record);
+    } finally {
+      setSkillDetailLoading(false);
+    }
+  };
+
   const pluginColumns: ColumnsType<MemorySkillPlugin> = [
     {
       title: t('skills.pluginName'),
@@ -144,7 +226,16 @@ export function SkillsPage({ filterUserId, currentUserId, isAdmin }: SkillsPageP
       key: 'name',
       render: (value: string, record) => (
         <Space direction="vertical" size={0}>
-          <Text strong>{value || '-'}</Text>
+          <Button
+            type="link"
+            size="small"
+            style={{ paddingInline: 0, height: 20, fontWeight: 600 }}
+            onClick={() => {
+              void openPluginDetail(record);
+            }}
+          >
+            {value || '-'}
+          </Button>
           <Text type="secondary" style={{ fontSize: 12 }}>
             {record.source}
           </Text>
@@ -173,6 +264,15 @@ export function SkillsPage({ filterUserId, currentUserId, isAdmin }: SkillsPageP
       width: 120,
     },
     {
+      title: t('skills.commands'),
+      dataIndex: 'command_count',
+      key: 'command_count',
+      width: 120,
+      render: (_: number | undefined, record) => (
+        record.command_count ?? record.commands?.length ?? 0
+      ),
+    },
+    {
       title: t('skills.updatedAt'),
       dataIndex: 'updated_at',
       key: 'updated_at',
@@ -198,7 +298,16 @@ export function SkillsPage({ filterUserId, currentUserId, isAdmin }: SkillsPageP
       key: 'name',
       render: (value: string, record) => (
         <Space direction="vertical" size={0}>
-          <Text strong>{value}</Text>
+          <Button
+            type="link"
+            size="small"
+            style={{ paddingInline: 0, height: 20, fontWeight: 600 }}
+            onClick={() => {
+              void openSkillDetail(record);
+            }}
+          >
+            {value}
+          </Button>
           <Text type="secondary" style={{ fontSize: 12 }}>
             {record.plugin_source}
           </Text>
@@ -296,6 +405,192 @@ export function SkillsPage({ filterUserId, currentUserId, isAdmin }: SkillsPageP
       </Card>
 
       <Modal
+        open={pluginDetailOpen}
+        title={`${t('skills.pluginDetail')}: ${pluginDetail?.name || pluginDetail?.source || '-'}`}
+        footer={null}
+        onCancel={() => {
+          setPluginDetailOpen(false);
+          setPluginDetail(null);
+          setPluginDetailSkills([]);
+        }}
+        width={920}
+      >
+        {pluginDetailLoading ? (
+          <div style={{ display: 'flex', justifyContent: 'center', padding: '32px 0' }}>
+            <Spin />
+          </div>
+        ) : !pluginDetail ? (
+          <Empty description={t('skills.pluginDetail')} />
+        ) : (
+          <Space direction="vertical" size={10} style={{ width: '100%' }}>
+            <Text strong>{pluginDetail.source}</Text>
+            <Text type="secondary">
+              {t('skills.pluginName')}: {pluginDetail.name || '-'}
+            </Text>
+            <Text type="secondary">
+              {t('skills.status')}: {pluginDetail.installed ? t('skills.installed') : t('skills.notInstalled')}
+            </Text>
+            <Text type="secondary">
+              {t('skills.updatedAt')}: {new Date(pluginDetail.updated_at).toLocaleString()}
+            </Text>
+            <Text strong>{t('skills.pluginMainContent')}</Text>
+            <div
+              style={{
+                maxHeight: 260,
+                overflow: 'auto',
+                padding: 12,
+                border: '1px solid #f0f0f0',
+                borderRadius: 8,
+                background: '#fafafa',
+              }}
+            >
+              <pre
+                style={{
+                  margin: 0,
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                  fontFamily: 'SFMono-Regular, Consolas, Liberation Mono, Menlo, monospace',
+                  fontSize: 13,
+                  lineHeight: 1.6,
+                }}
+              >
+                {pluginDetail.content?.trim()
+                  || pluginDetail.description?.trim()
+                  || t('skills.pluginMainContentEmpty')}
+              </pre>
+            </div>
+            <Text strong>{t('skills.pluginCommands')}</Text>
+            {(pluginDetail.commands || []).length === 0 ? (
+              <Empty description={t('skills.pluginNoCommands')} />
+            ) : (
+              <Collapse
+                size="small"
+                items={(pluginDetail.commands || []).map((command, index) => ({
+                  key: `${command.source_path || command.name || index}`,
+                  label: `${command.name || '-'} (${command.source_path || '-'})`,
+                  children: (
+                    <div
+                      style={{
+                        maxHeight: 260,
+                        overflow: 'auto',
+                        padding: 10,
+                        border: '1px solid #f0f0f0',
+                        borderRadius: 8,
+                        background: '#fafafa',
+                      }}
+                    >
+                      <pre
+                        style={{
+                          margin: 0,
+                          whiteSpace: 'pre-wrap',
+                          wordBreak: 'break-word',
+                          fontFamily: 'SFMono-Regular, Consolas, Liberation Mono, Menlo, monospace',
+                          fontSize: 13,
+                          lineHeight: 1.6,
+                        }}
+                      >
+                        {command.content || t('skills.pluginCommandContentEmpty')}
+                      </pre>
+                    </div>
+                  ),
+                }))}
+              />
+            )}
+            <Text strong>{t('skills.pluginSkills')}</Text>
+            {pluginDetailSkills.length === 0 ? (
+              <Empty description={t('skills.pluginNoSkills')} />
+            ) : (
+              <Collapse
+                size="small"
+                items={pluginDetailSkills.map((item) => ({
+                  key: item.id,
+                  label: `${item.name} (${item.id})`,
+                  children: (
+                    <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                      <Text type="secondary">
+                        {t('skills.path')}: {item.source_path || '-'}
+                      </Text>
+                      <div
+                        style={{
+                          maxHeight: 280,
+                          overflow: 'auto',
+                          padding: 10,
+                          border: '1px solid #f0f0f0',
+                          borderRadius: 8,
+                          background: '#fafafa',
+                        }}
+                      >
+                        <pre
+                          style={{
+                            margin: 0,
+                            whiteSpace: 'pre-wrap',
+                            wordBreak: 'break-word',
+                            fontFamily: 'SFMono-Regular, Consolas, Liberation Mono, Menlo, monospace',
+                            fontSize: 13,
+                            lineHeight: 1.6,
+                          }}
+                        >
+                          {item.content || t('skills.skillContentEmpty')}
+                        </pre>
+                      </div>
+                    </Space>
+                  ),
+                }))}
+              />
+            )}
+          </Space>
+        )}
+      </Modal>
+
+      <Modal
+        open={skillDetailOpen}
+        title={`${t('skills.skillDetail')}: ${skillDetail?.name || skillDetail?.id || '-'}`}
+        footer={null}
+        onCancel={() => {
+          setSkillDetailOpen(false);
+          setSkillDetail(null);
+        }}
+        width={860}
+      >
+        {skillDetailLoading ? (
+          <div style={{ display: 'flex', justifyContent: 'center', padding: '32px 0' }}>
+            <Spin />
+          </div>
+        ) : !skillDetail ? (
+          <Empty description={t('skills.skillNotFound')} />
+        ) : (
+          <Space direction="vertical" size={10} style={{ width: '100%' }}>
+            <Text strong>{skillDetail.id}</Text>
+            <Text type="secondary">{t('skills.pluginName')}: {skillDetail.plugin_source || '-'}</Text>
+            <Text type="secondary">{t('skills.path')}: {skillDetail.source_path || '-'}</Text>
+            <div
+              style={{
+                maxHeight: 520,
+                overflow: 'auto',
+                padding: 12,
+                border: '1px solid #f0f0f0',
+                borderRadius: 8,
+                background: '#fafafa',
+              }}
+            >
+              <pre
+                style={{
+                  margin: 0,
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                  fontFamily: 'SFMono-Regular, Consolas, Liberation Mono, Menlo, monospace',
+                  fontSize: 13,
+                  lineHeight: 1.6,
+                }}
+              >
+                {skillDetail.content || t('skills.skillContentEmpty')}
+              </pre>
+            </div>
+          </Space>
+        )}
+      </Modal>
+
+      <Modal
         open={importOpen}
         title={t('skills.importGit')}
         onCancel={() => setImportOpen(false)}
@@ -322,4 +617,3 @@ export function SkillsPage({ filterUserId, currentUserId, isAdmin }: SkillsPageP
     </Space>
   );
 }
-

@@ -29,6 +29,7 @@ import type {
   SessionUpsertPayload,
   SftpTransferStartPayload,
   StreamChatOptions,
+  TurnRuntimeSnapshotLookupResponse,
   SystemContextCreatePayload,
   SystemContextDraftEvaluatePayload,
   SystemContextDraftGeneratePayload,
@@ -238,6 +239,19 @@ class ApiClient {
 
   async getSessionTurnProcessMessagesByTurn(sessionId: string, turnId: string): Promise<any[]> {
     return workspaceApi.getSessionTurnProcessMessagesByTurn(this.requestFn, sessionId, turnId);
+  }
+
+  async getSessionLatestTurnRuntimeContext(
+    sessionId: string,
+  ): Promise<TurnRuntimeSnapshotLookupResponse> {
+    return workspaceApi.getSessionLatestTurnRuntimeContext(this.requestFn, sessionId);
+  }
+
+  async getSessionTurnRuntimeContextByTurn(
+    sessionId: string,
+    turnId: string,
+  ): Promise<TurnRuntimeSnapshotLookupResponse> {
+    return workspaceApi.getSessionTurnRuntimeContextByTurn(this.requestFn, sessionId, turnId);
   }
 
   // 项目相关API

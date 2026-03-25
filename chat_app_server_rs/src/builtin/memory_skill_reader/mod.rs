@@ -28,6 +28,14 @@ struct Tool {
 
 type ToolHandler = Arc<dyn Fn(Value) -> Result<Value, String> + Send + Sync>;
 
+fn normalize_lookup_token(value: &str) -> String {
+    value.trim().to_ascii_lowercase()
+}
+
+fn skill_ref(index: usize) -> String {
+    format!("SK{}", index + 1)
+}
+
 impl MemorySkillReaderService {
     pub fn new(opts: MemorySkillReaderOptions) -> Result<Self, String> {
         let mut service = Self {
@@ -87,19 +95,20 @@ impl MemorySkillReaderService {
             json!({
                 "type": "object",
                 "properties": {
-                    "skill_id": { "type": "string" }
+                    "skill_ref": { "type": "string" }
                 },
-                "required": ["skill_id"],
-                "additionalProperties": false
+                "additionalProperties": false,
+                "required": ["skill_ref"]
             }),
             Arc::new(move |args| {
-                let skill_id = args
-                    .get("skill_id")
+                let requested_skill_ref = args
+                    .get("skill_ref")
                     .and_then(Value::as_str)
                     .map(str::trim)
                     .filter(|value| !value.is_empty())
-                    .ok_or_else(|| "missing required field: skill_id".to_string())?
+                    .ok_or_else(|| "missing required field: skill_ref".to_string())?
                     .to_string();
+                let requested_token = normalize_lookup_token(requested_skill_ref.as_str());
                 let agent_id = bound_agent_id.clone();
 
                 let payload = block_on_result(async move {
@@ -108,14 +117,60 @@ impl MemorySkillReaderService {
                             .await?
                             .ok_or_else(|| format!("agent runtime context not found: {}", agent_id))?;
 
+                    let mut resolved_skill_id: Option<String> = None;
+                    let mut resolved_skill_ref: Option<String> = None;
+
+                    for (index, runtime_skill) in runtime_context.runtime_skills.iter().enumerate() {
+                        let current_ref = skill_ref(index);
+                        let by_ref = requested_token == normalize_lookup_token(current_ref.as_str());
+                        if by_ref {
+                            resolved_skill_id = Some(runtime_skill.id.clone());
+                            resolved_skill_ref = Some(current_ref);
+                            break;
+                        }
+                    }
+
+                    if resolved_skill_id.is_none() {
+                        for (index, raw_skill_id) in runtime_context.skill_ids.iter().enumerate() {
+                            let current_ref = skill_ref(index);
+                            let by_ref =
+                                requested_token == normalize_lookup_token(current_ref.as_str());
+                            if by_ref {
+                                resolved_skill_id = Some(raw_skill_id.clone());
+                                resolved_skill_ref = Some(current_ref);
+                                break;
+                            }
+                        }
+                    }
+
+                    if resolved_skill_id.is_none() {
+                        for (index, inline_skill) in runtime_context.skills.iter().enumerate() {
+                            let current_ref = skill_ref(index);
+                            let by_ref =
+                                requested_token == normalize_lookup_token(current_ref.as_str());
+                            if by_ref {
+                                resolved_skill_id = Some(inline_skill.id.clone());
+                                resolved_skill_ref = Some(current_ref);
+                                break;
+                            }
+                        }
+                    }
+
+                    let resolved_skill_id = resolved_skill_id.ok_or_else(|| {
+                        format!(
+                            "skill_ref does not belong to current contact agent: {}",
+                            requested_skill_ref
+                        )
+                    })?;
+
                     if let Some(skill) = runtime_context
                         .skills
                         .iter()
-                        .find(|skill| skill.id.trim() == skill_id)
+                        .find(|skill| skill.id.trim() == resolved_skill_id.as_str())
                     {
                         return Ok::<Value, String>(json!({
                             "agent_id": agent_id,
-                            "skill_id": skill.id.clone(),
+                            "skill_ref": resolved_skill_ref,
                             "name": skill.name.clone(),
                             "description": Value::Null,
                             "content": skill.content.clone(),
@@ -129,28 +184,30 @@ impl MemorySkillReaderService {
                     let runtime_skill = runtime_context
                         .runtime_skills
                         .iter()
-                        .find(|skill| skill.id.trim() == skill_id)
-                        .ok_or_else(|| {
-                            format!(
-                                "skill_id does not belong to current contact agent: {}",
-                                skill_id
-                            )
-                        })?;
+                        .find(|skill| skill.id.trim() == resolved_skill_id.as_str());
 
-                    let full_skill = memory_server_client::get_memory_skill(skill_id.as_str())
+                    let full_skill = memory_server_client::get_memory_skill(resolved_skill_id.as_str())
                         .await?
-                        .ok_or_else(|| format!("skill not found: {}", skill_id))?;
+                        .ok_or_else(|| format!("skill not found: {}", resolved_skill_id))?;
 
                     Ok::<Value, String>(json!({
                         "agent_id": agent_id,
-                        "skill_id": full_skill.id,
+                        "skill_ref": resolved_skill_ref,
                         "name": full_skill.name,
                         "description": full_skill.description,
                         "content": full_skill.content,
-                        "plugin_source": runtime_skill.plugin_source.clone().or(Some(full_skill.plugin_source.clone())),
-                        "source_path": runtime_skill.source_path.clone().or(Some(full_skill.source_path.clone())),
-                        "source_type": runtime_skill.source_type.clone(),
-                        "updated_at": runtime_skill.updated_at.clone().or(Some(full_skill.updated_at.clone())),
+                        "plugin_source": runtime_skill
+                            .and_then(|value| value.plugin_source.clone())
+                            .or(Some(full_skill.plugin_source.clone())),
+                        "source_path": runtime_skill
+                            .and_then(|value| value.source_path.clone())
+                            .or(Some(full_skill.source_path.clone())),
+                        "source_type": runtime_skill
+                            .map(|value| value.source_type.clone())
+                            .unwrap_or_else(|| "skill_center".to_string()),
+                        "updated_at": runtime_skill
+                            .and_then(|value| value.updated_at.clone())
+                            .or(Some(full_skill.updated_at.clone())),
                     }))
                 })?;
 

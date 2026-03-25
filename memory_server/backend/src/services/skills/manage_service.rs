@@ -7,7 +7,7 @@ use crate::state::AppState;
 use super::io::{
     build_skills_from_plugin_async, copy_plugin_source_from_repo_async,
     discover_skill_entries_async, ensure_dir_async, ensure_git_repo_async,
-    load_plugin_candidates_from_repo_async, normalize_plugin_source,
+    extract_plugin_content_async, load_plugin_candidates_from_repo_async, normalize_plugin_source,
     resolve_plugin_root_from_cache, resolve_skill_state_root, unique_strings,
 };
 use super::io_helpers::hash_id;
@@ -85,6 +85,7 @@ pub(crate) async fn import_skills_from_git(
         };
 
         let plugin_root = plugins_root.join(cache_rel.as_str());
+        let extracted_content = extract_plugin_content_async(plugin_root.clone()).await;
         let discoverable_skills = match discover_skill_entries_async(plugin_root.clone()).await {
             Ok(entries) => entries.len().min(i64::MAX as usize) as i64,
             Err(err) => {
@@ -97,6 +98,39 @@ pub(crate) async fn import_skills_from_git(
             }
         };
         let previous = existing_by_source.get(candidate.source.as_str());
+        let extracted_name = extracted_content
+            .as_ref()
+            .ok()
+            .and_then(|item| item.name.as_deref())
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+            .map(ToOwned::to_owned);
+        let extracted_description = extracted_content
+            .as_ref()
+            .ok()
+            .and_then(|item| item.description.as_deref())
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+            .map(ToOwned::to_owned);
+        let extracted_version = extracted_content
+            .as_ref()
+            .ok()
+            .and_then(|item| item.version.as_deref())
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+            .map(ToOwned::to_owned);
+        let extracted_main_content = extracted_content
+            .as_ref()
+            .ok()
+            .and_then(|item| item.content.as_deref())
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+            .map(ToOwned::to_owned);
+        let extracted_commands = extracted_content
+            .as_ref()
+            .ok()
+            .map(|item| item.commands.clone())
+            .unwrap_or_default();
         let plugin = MemorySkillPlugin {
             id: previous
                 .map(|item| item.id.clone())
@@ -105,15 +139,26 @@ pub(crate) async fn import_skills_from_git(
             source: candidate.source.clone(),
             name: candidate.name.clone(),
             category: candidate.category.clone(),
-            description: candidate.description.clone(),
-            version: candidate.version.clone(),
+            description: candidate.description.clone().or(extracted_description),
+            version: candidate.version.clone().or(extracted_version),
             repository: Some(repository.clone()),
             branch: branch.clone(),
             cache_path: Some(cache_rel.clone()),
+            content: extracted_main_content,
+            command_count: extracted_commands.len().min(i64::MAX as usize) as i64,
+            commands: extracted_commands,
             installed: previous.map(|item| item.installed).unwrap_or(false),
             discoverable_skills,
             installed_skill_count: previous.map(|item| item.installed_skill_count).unwrap_or(0),
             updated_at: crate::repositories::now_rfc3339(),
+        };
+        let plugin = if plugin.name.trim().is_empty() {
+            MemorySkillPlugin {
+                name: extracted_name.unwrap_or_else(|| candidate.source.clone()),
+                ..plugin
+            }
+        } else {
+            plugin
         };
 
         match skills_repo::upsert_plugin(&state.pool, plugin).await {
@@ -123,6 +168,7 @@ pub(crate) async fn import_skills_from_git(
                     "source": saved.source,
                     "name": saved.name,
                     "discoverable_skills": saved.discoverable_skills,
+                    "commands": saved.commands.len(),
                     "installed": saved.installed,
                     "cache_path": saved.cache_path,
                     "ok": true
@@ -201,6 +247,56 @@ pub(crate) async fn install_skill_plugins(
             continue;
         };
 
+        let mut plugin_has_main_content = false;
+        let mut plugin_command_count = 0usize;
+        if let Ok(extracted) = extract_plugin_content_async(plugin_root.clone()).await {
+            let mut refreshed_plugin = plugin.clone();
+            let extracted_content = extracted
+                .content
+                .as_deref()
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+                .map(ToOwned::to_owned);
+            plugin_has_main_content = extracted_content.is_some();
+            if extracted_content.is_some() {
+                refreshed_plugin.content = extracted_content;
+            }
+            if !extracted.commands.is_empty() {
+                plugin_command_count = extracted.commands.len();
+                refreshed_plugin.commands = extracted.commands;
+            }
+            refreshed_plugin.command_count = plugin_command_count.min(i64::MAX as usize) as i64;
+            if refreshed_plugin.description.is_none() {
+                refreshed_plugin.description = extracted
+                    .description
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|item| !item.is_empty())
+                    .map(ToOwned::to_owned);
+            }
+            if refreshed_plugin.version.is_none() {
+                refreshed_plugin.version = extracted
+                    .version
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|item| !item.is_empty())
+                    .map(ToOwned::to_owned);
+            }
+            if let Some(name) = extracted
+                .name
+                .as_deref()
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+            {
+                if refreshed_plugin.name.trim().is_empty()
+                    || refreshed_plugin.name.trim() == refreshed_plugin.source.trim()
+                {
+                    refreshed_plugin.name = name.to_string();
+                }
+            }
+            let _ = skills_repo::upsert_plugin(&state.pool, refreshed_plugin).await;
+        }
+
         let (skills, discoverable_count) = build_skills_from_plugin_async(
             plugin_root.clone(),
             user_id.to_string(),
@@ -224,12 +320,23 @@ pub(crate) async fn install_skill_plugins(
                 0,
             )
             .await;
-            skipped += 1;
-            details.push(json!({
-                "source": plugin.source,
-                "ok": false,
-                "reason": "no skills discovered in plugin"
-            }));
+            if plugin_has_main_content || plugin_command_count > 0 {
+                installed += 1;
+                details.push(json!({
+                    "source": plugin.source,
+                    "ok": true,
+                    "installed_skills": 0,
+                    "commands": plugin_command_count,
+                    "note": "no skills discovered; plugin content/commands still available"
+                }));
+            } else {
+                skipped += 1;
+                details.push(json!({
+                    "source": plugin.source,
+                    "ok": false,
+                    "reason": "no skills discovered in plugin"
+                }));
+            }
             continue;
         }
 

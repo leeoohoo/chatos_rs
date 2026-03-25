@@ -19,6 +19,7 @@ interface SessionSectionProps {
   sessions: Session[];
   currentSessionId?: string | null;
   summarySessionId?: string | null;
+  runtimeContextSessionId?: string | null;
   displaySessionRuntimeIdMap?: Record<string, string>;
   sessionChatState?: SessionChatStateMap;
   taskReviewPanelsBySession?: Record<string, any[]>;
@@ -31,6 +32,7 @@ interface SessionSectionProps {
   onCreateSession: () => void;
   onSelectSession: (sessionId: string) => void;
   onOpenSummary: (sessionId: string) => void;
+  onOpenRuntimeContext: (sessionId: string) => void;
   onDeleteSession: (sessionId: string) => void;
   onLoadMore: () => void;
   onToggleActionMenu: (event: React.MouseEvent<HTMLButtonElement>) => void;
@@ -44,6 +46,7 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
   sessions,
   currentSessionId,
   summarySessionId,
+  runtimeContextSessionId,
   displaySessionRuntimeIdMap = {},
   sessionChatState,
   taskReviewPanelsBySession = {},
@@ -56,6 +59,7 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
   onCreateSession,
   onSelectSession,
   onOpenSummary,
+  onOpenRuntimeContext,
   onDeleteSession,
   onLoadMore,
   onToggleActionMenu,
@@ -193,6 +197,24 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
                         title={summarySessionId === session.id ? '关闭总结视图' : '打开总结视图'}
                       >
                         {summarySessionId === session.id ? '关闭总结' : '总结'}
+                      </button>
+                      <button
+                        type="button"
+                        className={cn(
+                          'px-1.5 py-0.5 text-[11px] rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent',
+                          runtimeContextSessionId === session.id && 'text-blue-600 border-blue-200',
+                        )}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (isArchivedSession) {
+                            return;
+                          }
+                          onOpenRuntimeContext(session.id);
+                        }}
+                        disabled={isArchivedSession}
+                        title="查看当前轮次上下文快照"
+                      >
+                        上下文
                       </button>
                       <div className="relative" data-action-menu-root="true">
                         <button

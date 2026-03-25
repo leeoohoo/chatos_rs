@@ -71,6 +71,7 @@ pub struct MemoryAgentRuntimePluginSummary {
     pub name: String,
     pub category: Option<String>,
     pub description: Option<String>,
+    pub content_summary: Option<String>,
     pub updated_at: Option<String>,
 }
 
@@ -119,6 +120,13 @@ pub struct MemorySkill {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemorySkillPluginCommand {
+    pub name: String,
+    pub source_path: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemorySkillPlugin {
     pub id: String,
     pub user_id: String,
@@ -130,6 +138,12 @@ pub struct MemorySkillPlugin {
     pub repository: Option<String>,
     pub branch: Option<String>,
     pub cache_path: Option<String>,
+    #[serde(default)]
+    pub content: Option<String>,
+    #[serde(default)]
+    pub commands: Vec<MemorySkillPluginCommand>,
+    #[serde(default = "default_i64_0")]
+    pub command_count: i64,
     #[serde(default = "default_false")]
     pub installed: bool,
     #[serde(default = "default_i64_0")]

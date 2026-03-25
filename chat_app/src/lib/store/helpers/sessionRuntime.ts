@@ -76,10 +76,15 @@ export const readSessionRuntimeFromMetadata = (
   ) || readUiChatSelectionModelId(meta);
 
   const contactAgentId = normalizeId(
-    contact?.agent_id ?? meta?.ui_contact?.agent_id,
+    contact?.agent_id
+      ?? contact?.agentId
+      ?? runtime?.contact_agent_id
+      ?? runtime?.contactAgentId
+      ?? meta?.ui_contact?.agent_id
+      ?? meta?.ui_contact?.agentId,
   ) || readUiChatSelectionAgentId(meta);
   const contactId = normalizeId(
-    contact?.contact_id ?? meta?.ui_contact?.contact_id,
+    contact?.contact_id ?? contact?.contactId ?? meta?.ui_contact?.contact_id ?? meta?.ui_contact?.contactId,
   );
 
   const projectId = normalizeId(
@@ -142,6 +147,7 @@ export const mergeSessionRuntimeIntoMetadata = (
 
   next.chat_runtime = {
     selected_model_id: selectedModelId,
+    contact_agent_id: contactAgentId,
     mcp_enabled: mcpEnabled,
     enabled_mcp_ids: enabledMcpIds,
     project_id: projectId,

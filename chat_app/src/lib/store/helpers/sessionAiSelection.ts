@@ -39,7 +39,11 @@ export const readSessionAiSelectionFromMetadata = (
   );
   const selectedAgentId = normalizeId(
     contact?.agent_id
+      ?? contact?.agentId
+      ?? runtime?.contact_agent_id
+      ?? runtime?.contactAgentId
       ?? meta?.ui_contact?.agent_id
+      ?? meta?.ui_contact?.agentId
       ?? (raw as any)?.selected_agent_id
       ?? (raw as any)?.selectedAgentId,
   );
@@ -71,6 +75,7 @@ export const mergeSessionAiSelectionIntoMetadata = (
       ? next.chat_runtime
       : {}),
     selected_model_id: selectedModelId,
+    contact_agent_id: selectedAgentId,
   };
   next.contact = {
     ...(next.contact && typeof next.contact === 'object' && !Array.isArray(next.contact)

@@ -6,7 +6,8 @@ use crate::models::session_summary_v2::SessionSummaryV2;
 
 use super::dto::{
     ComposeContextResponse, CreateSessionRequest, MemorySession, PatchSessionRequest,
-    SummaryJobConfigDto, SyncMessageRequest, UpsertSummaryJobConfigRequestDto,
+    SummaryJobConfigDto, SyncMessageRequest, SyncTurnRuntimeSnapshotRequestDto,
+    TurnRuntimeSnapshotDto, TurnRuntimeSnapshotLookupResponseDto, UpsertSummaryJobConfigRequestDto,
 };
 use super::http::{
     build_url, client, context_timeout_duration, push_limit_offset_params, send_delete_result,
@@ -131,6 +132,53 @@ pub async fn upsert_message(message: &Message) -> Result<Message, String> {
             created_at: Some(message.created_at.clone()),
         });
 
+    send_json(req).await
+}
+
+pub async fn sync_turn_runtime_snapshot(
+    session_id: &str,
+    turn_id: &str,
+    payload: &SyncTurnRuntimeSnapshotRequestDto,
+) -> Result<TurnRuntimeSnapshotDto, String> {
+    let path = format!(
+        "/sessions/{}/turn-runtime-snapshots/{}/sync",
+        urlencoding::encode(session_id),
+        urlencoding::encode(turn_id)
+    );
+
+    let req = client()
+        .put(build_url(path.as_str()).as_str())
+        .timeout(timeout_duration())
+        .json(payload);
+
+    send_json(req).await
+}
+
+pub async fn get_latest_turn_runtime_snapshot(
+    session_id: &str,
+) -> Result<TurnRuntimeSnapshotLookupResponseDto, String> {
+    let path = format!(
+        "/sessions/{}/turn-runtime-snapshots/latest",
+        urlencoding::encode(session_id)
+    );
+    let req = client()
+        .get(build_url(path.as_str()).as_str())
+        .timeout(timeout_duration());
+    send_json(req).await
+}
+
+pub async fn get_turn_runtime_snapshot_by_turn(
+    session_id: &str,
+    turn_id: &str,
+) -> Result<TurnRuntimeSnapshotLookupResponseDto, String> {
+    let path = format!(
+        "/sessions/{}/turn-runtime-snapshots/by-turn/{}",
+        urlencoding::encode(session_id),
+        urlencoding::encode(turn_id)
+    );
+    let req = client()
+        .get(build_url(path.as_str()).as_str())
+        .timeout(timeout_duration());
     send_json(req).await
 }
 

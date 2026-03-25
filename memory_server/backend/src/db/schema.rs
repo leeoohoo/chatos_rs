@@ -15,6 +15,7 @@ pub async fn init_schema(db: &Db) -> Result<(), String> {
     ensure_job_run_indexes(db).await?;
     ensure_agent_skill_indexes(db).await?;
     ensure_project_memory_indexes(db).await?;
+    ensure_turn_runtime_snapshot_indexes(db).await?;
 
     normalize_summary_status(db).await?;
     normalize_agent_plugin_sources(db).await?;
@@ -279,6 +280,26 @@ async fn ensure_project_memory_indexes(db: &Db) -> Result<(), String> {
     ensure_index(
         db.collection("agent_recalls"),
         doc! {"user_id": 1, "agent_id": 1, "level": 1, "rolled_up": 1, "updated_at": 1},
+    )
+    .await?;
+    Ok(())
+}
+
+async fn ensure_turn_runtime_snapshot_indexes(db: &Db) -> Result<(), String> {
+    ensure_unique_index(db.collection("turn_runtime_snapshots"), doc! {"id": 1}).await?;
+    ensure_unique_index(
+        db.collection("turn_runtime_snapshots"),
+        doc! {"session_id": 1, "turn_id": 1},
+    )
+    .await?;
+    ensure_index(
+        db.collection("turn_runtime_snapshots"),
+        doc! {"session_id": 1, "user_message_id": 1},
+    )
+    .await?;
+    ensure_index(
+        db.collection("turn_runtime_snapshots"),
+        doc! {"session_id": 1, "captured_at": -1},
     )
     .await?;
     Ok(())

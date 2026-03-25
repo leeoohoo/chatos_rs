@@ -76,6 +76,7 @@ export function createSendMessageHandler({
       currentSessionId,
       currentSession,
       selectedModelId,
+      selectedAgentId,
       aiModelConfigs,
       chatConfig,
       sessionChatState,
@@ -97,6 +98,23 @@ export function createSendMessageHandler({
     const sessionAiSelection = sessionAiSelectionBySession?.[currentSessionId];
     const effectiveSelectedModelId = sessionAiSelection?.selectedModelId ?? selectedModelId;
     const sessionRuntime = readSessionRuntimeFromMetadata(currentSession?.metadata);
+    const fallbackContactAgentId = (
+      typeof runtimeOptions?.contactAgentId === 'string'
+        ? runtimeOptions.contactAgentId.trim()
+        : ''
+    ) || (
+      typeof sessionAiSelection?.selectedAgentId === 'string'
+        ? sessionAiSelection.selectedAgentId.trim()
+        : ''
+    ) || (
+      typeof selectedAgentId === 'string'
+        ? selectedAgentId.trim()
+        : ''
+    ) || null;
+    const runtimeOptionsWithContactFallback: SendMessageRuntimeOptions = {
+      ...runtimeOptions,
+      contactAgentId: fallbackContactAgentId,
+    };
     const {
       effectiveContactAgentId,
       effectiveProjectId,
@@ -105,7 +123,7 @@ export function createSendMessageHandler({
       effectiveExecutionRoot,
       effectiveMcpEnabled,
       effectiveEnabledMcpIds,
-    } = resolveRuntimeConfig(sessionRuntime, runtimeOptions);
+    } = resolveRuntimeConfig(sessionRuntime, runtimeOptionsWithContactFallback);
     const selectedModel = resolveSelectedModelOrThrow(
       effectiveSelectedModelId,
       aiModelConfigs,

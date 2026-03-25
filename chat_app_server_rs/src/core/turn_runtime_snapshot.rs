@@ -1,0 +1,131 @@
+use std::collections::HashMap;
+
+use serde_json::Value;
+
+use crate::core::mcp_tools::ToolInfo;
+use crate::services::memory_server_client::{
+    SyncTurnRuntimeSnapshotRequestDto, TurnRuntimeSnapshotRuntimeDto,
+    TurnRuntimeSnapshotSystemMessageDto, TurnRuntimeSnapshotToolDto,
+};
+
+pub struct BuildTurnRuntimeSnapshotInput<'a> {
+    pub user_message_id: Option<String>,
+    pub status: &'a str,
+    pub base_system_prompt: Option<&'a str>,
+    pub contact_system_prompt: Option<&'a str>,
+    pub memory_summary_prompt: Option<&'a str>,
+    pub tools: &'a HashMap<String, ToolInfo>,
+    pub model: Option<&'a str>,
+    pub provider: Option<&'a str>,
+    pub contact_agent_id: Option<&'a str>,
+    pub project_id: Option<&'a str>,
+    pub project_root: Option<&'a str>,
+    pub mcp_enabled: bool,
+    pub enabled_mcp_ids: &'a [String],
+}
+
+pub fn build_turn_runtime_snapshot_payload(
+    input: BuildTurnRuntimeSnapshotInput<'_>,
+) -> SyncTurnRuntimeSnapshotRequestDto {
+    let mut system_messages = Vec::new();
+    if let Some(content) = normalize_optional_text(input.base_system_prompt) {
+        system_messages.push(TurnRuntimeSnapshotSystemMessageDto {
+            id: "base_system".to_string(),
+            source: "active_system_context".to_string(),
+            content,
+        });
+    }
+    if let Some(content) = normalize_optional_text(input.contact_system_prompt) {
+        system_messages.push(TurnRuntimeSnapshotSystemMessageDto {
+            id: "contact_system".to_string(),
+            source: "contact_runtime_context".to_string(),
+            content,
+        });
+    }
+    if let Some(content) = normalize_optional_text(input.memory_summary_prompt) {
+        system_messages.push(TurnRuntimeSnapshotSystemMessageDto {
+            id: "memory_summary".to_string(),
+            source: "memory_context_summary".to_string(),
+            content,
+        });
+    }
+
+    let mut tool_entries: Vec<(&String, &ToolInfo)> = input.tools.iter().collect();
+    tool_entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+    let tools = tool_entries
+        .into_iter()
+        .map(|(name, info)| TurnRuntimeSnapshotToolDto {
+            name: name.to_string(),
+            server_name: info.server_name.clone(),
+            server_type: info.server_type.clone(),
+            description: extract_tool_description(&info.tool_info),
+        })
+        .collect::<Vec<_>>();
+
+    SyncTurnRuntimeSnapshotRequestDto {
+        user_message_id: input.user_message_id,
+        status: Some(normalize_status(input.status)),
+        snapshot_source: Some("captured".to_string()),
+        snapshot_version: Some(1),
+        captured_at: None,
+        system_messages: Some(system_messages),
+        tools: Some(tools),
+        runtime: Some(TurnRuntimeSnapshotRuntimeDto {
+            model: normalize_optional_text(input.model),
+            provider: normalize_optional_text(input.provider),
+            contact_agent_id: normalize_optional_text(input.contact_agent_id),
+            project_id: normalize_optional_text(input.project_id),
+            project_root: normalize_optional_text(input.project_root),
+            mcp_enabled: Some(input.mcp_enabled),
+            enabled_mcp_ids: normalize_string_list(input.enabled_mcp_ids),
+        }),
+    }
+}
+
+fn extract_tool_description(tool_info: &Value) -> Option<String> {
+    let direct = tool_info
+        .get("description")
+        .and_then(Value::as_str)
+        .and_then(|value| normalize_optional_text(Some(value)));
+    if direct.is_some() {
+        return direct;
+    }
+
+    tool_info
+        .get("function")
+        .and_then(Value::as_object)
+        .and_then(|function| function.get("description"))
+        .and_then(Value::as_str)
+        .and_then(|value| normalize_optional_text(Some(value)))
+}
+
+fn normalize_status(status: &str) -> String {
+    match status.trim().to_ascii_lowercase().as_str() {
+        "running" => "running".to_string(),
+        "completed" => "completed".to_string(),
+        "failed" => "failed".to_string(),
+        _ => "unknown".to_string(),
+    }
+}
+
+fn normalize_string_list(values: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for value in values {
+        let normalized = value.trim();
+        if normalized.is_empty() {
+            continue;
+        }
+        if out.iter().any(|item| item == normalized) {
+            continue;
+        }
+        out.push(normalized.to_string());
+    }
+    out
+}
+
+fn normalize_optional_text(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|raw| !raw.is_empty())
+        .map(ToOwned::to_owned)
+}

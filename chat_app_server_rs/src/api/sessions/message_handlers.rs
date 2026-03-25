@@ -163,6 +163,57 @@ pub(super) async fn get_session_turn_process_messages_by_turn(
     }
 }
 
+pub(super) async fn get_session_turn_runtime_context_latest(
+    auth: AuthUser,
+    Path(session_id): Path<String>,
+) -> (StatusCode, Json<Value>) {
+    if let Err(err) = ensure_owned_session(&session_id, &auth).await {
+        return map_session_access_error(err);
+    }
+
+    match crate::services::memory_server_client::get_latest_turn_runtime_snapshot(&session_id).await
+    {
+        Ok(payload) => (
+            StatusCode::OK,
+            Json(serde_json::to_value(payload).unwrap_or(Value::Null)),
+        ),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "error": "Failed to get latest runtime context",
+                "detail": err
+            })),
+        ),
+    }
+}
+
+pub(super) async fn get_session_turn_runtime_context_by_turn(
+    auth: AuthUser,
+    Path((session_id, turn_id)): Path<(String, String)>,
+) -> (StatusCode, Json<Value>) {
+    if let Err(err) = ensure_owned_session(&session_id, &auth).await {
+        return map_session_access_error(err);
+    }
+
+    match crate::services::memory_server_client::get_turn_runtime_snapshot_by_turn(
+        &session_id, &turn_id,
+    )
+    .await
+    {
+        Ok(payload) => (
+            StatusCode::OK,
+            Json(serde_json::to_value(payload).unwrap_or(Value::Null)),
+        ),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "error": "Failed to get turn runtime context",
+                "detail": err
+            })),
+        ),
+    }
+}
+
 pub(super) async fn create_session_message(
     auth: AuthUser,
     Path(session_id): Path<String>,

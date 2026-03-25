@@ -185,6 +185,53 @@ export interface StreamChatOptions {
   enabledMcpIds?: string[];
 }
 
+export interface TurnRuntimeSnapshotSystemMessage {
+  id: string;
+  source: string;
+  content: string;
+}
+
+export interface TurnRuntimeSnapshotTool {
+  name: string;
+  server_name: string;
+  server_type: string;
+  description?: string | null;
+}
+
+export interface TurnRuntimeSnapshotRuntime {
+  model?: string | null;
+  provider?: string | null;
+  contact_agent_id?: string | null;
+  project_id?: string | null;
+  project_root?: string | null;
+  mcp_enabled?: boolean | null;
+  enabled_mcp_ids?: string[];
+}
+
+export interface TurnRuntimeSnapshot {
+  id: string;
+  session_id: string;
+  user_id: string;
+  turn_id: string;
+  user_message_id?: string | null;
+  status: string;
+  snapshot_source: string;
+  snapshot_version: number;
+  captured_at: string;
+  updated_at: string;
+  system_messages?: TurnRuntimeSnapshotSystemMessage[];
+  tools?: TurnRuntimeSnapshotTool[];
+  runtime?: TurnRuntimeSnapshotRuntime | null;
+}
+
+export interface TurnRuntimeSnapshotLookupResponse {
+  session_id: string;
+  turn_id?: string | null;
+  status: string;
+  snapshot_source: string;
+  snapshot?: TurnRuntimeSnapshot | null;
+}
+
 export interface TaskManagerUpdatePayload {
   title?: string;
   details?: string;

@@ -188,6 +188,23 @@ export const getSessionTurnProcessMessagesByTurn = (
   return request<any[]>(`/sessions/${sessionId}/turns/by-turn/${encodeURIComponent(turnId)}/process`);
 };
 
+export const getSessionLatestTurnRuntimeContext = (
+  request: ApiRequestFn,
+  sessionId: string,
+): Promise<any> => {
+  return request<any>(`/sessions/${sessionId}/turns/latest/runtime-context`);
+};
+
+export const getSessionTurnRuntimeContextByTurn = (
+  request: ApiRequestFn,
+  sessionId: string,
+  turnId: string,
+): Promise<any> => {
+  return request<any>(
+    `/sessions/${sessionId}/turns/by-turn/${encodeURIComponent(turnId)}/runtime-context`,
+  );
+};
+
 export const listProjects = (request: ApiRequestFn, userId?: string): Promise<any[]> => {
   const query = buildQuery({ user_id: userId });
   return request<any[]>(`/projects${query}`);

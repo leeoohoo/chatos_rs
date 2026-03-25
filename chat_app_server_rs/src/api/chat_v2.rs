@@ -15,16 +15,20 @@ use crate::core::chat_context::{
     maybe_spawn_session_title_rename, resolve_effective_user_id, resolve_system_prompt,
 };
 use crate::core::chat_runtime::{
-    compose_contact_system_prompt, contact_agent_id_from_metadata, enabled_mcp_ids_from_metadata,
-    mcp_enabled_from_metadata, normalize_id, project_id_from_metadata, project_root_from_metadata,
-    resolve_project_runtime,
+    compose_contact_system_prompt, contact_agent_id_from_metadata, contact_id_from_metadata,
+    enabled_mcp_ids_from_metadata, mcp_enabled_from_metadata, normalize_id,
+    project_id_from_metadata, project_root_from_metadata, resolve_project_runtime,
 };
 use crate::core::chat_stream::{build_v2_callbacks, handle_chat_result, send_start_event};
 use crate::core::mcp_runtime::{
     contact_agent_skill_reader_server, has_any_mcp_server, load_mcp_servers_by_selection,
     normalize_mcp_ids,
 };
+use crate::core::turn_runtime_snapshot::{
+    build_turn_runtime_snapshot_payload, BuildTurnRuntimeSnapshotInput,
+};
 use crate::core::user_scope::{ensure_and_set_user_id, resolve_user_id};
+use crate::services::ai_common::normalize_turn_id;
 use crate::services::memory_server_client;
 use crate::services::user_settings::{apply_settings_to_ai_client, get_effective_user_settings};
 use crate::services::v2::ai_server::{AiServer, ChatOptions};
@@ -33,6 +37,8 @@ use crate::utils::abort_registry;
 use crate::utils::attachments;
 use crate::utils::log_helpers::{log_chat_begin, log_chat_cancelled, log_chat_error};
 use crate::utils::sse::{sse_channel, SseSender};
+use tracing::warn;
+use uuid::Uuid;
 
 #[derive(Debug, Deserialize)]
 struct ChatRequest {
@@ -224,15 +230,55 @@ async fn stream_chat_v2(
     );
 
     let effective_user_id = resolve_effective_user_id(req.user_id.clone(), &session_id).await;
-    let contact_agent_id = normalize_id(req.contact_agent_id)
-        .or_else(|| contact_agent_id_from_metadata(session_metadata));
+    let mut contact_agent_id = normalize_id(req.contact_agent_id)
+        .or_else(|| contact_agent_id_from_metadata(session_metadata))
+        .or_else(|| {
+            memory_session
+                .as_ref()
+                .and_then(|session| normalize_id(session.selected_agent_id.clone()))
+        });
+    if contact_agent_id.is_none() {
+        if let Some(contact_id) = contact_id_from_metadata(session_metadata) {
+            if let Ok(contacts) =
+                memory_server_client::list_memory_contacts(effective_user_id.as_deref(), Some(500), 0)
+                    .await
+            {
+                if let Some(contact) = contacts
+                    .iter()
+                    .find(|item| item.id.trim() == contact_id.as_str())
+                {
+                    contact_agent_id = normalize_id(Some(contact.agent_id.clone()));
+                    if let Some(agent_id) = contact_agent_id.as_deref() {
+                        warn!(
+                            "resolved contact_agent_id from contact_id: session_id={} contact_id={} contact_agent_id={}",
+                            session_id, contact_id, agent_id
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     let contact_runtime_context = match contact_agent_id.as_deref() {
-        Some(agent_id) => memory_server_client::get_memory_agent_runtime_context(agent_id)
-            .await
-            .ok()
-            .flatten(),
+        Some(agent_id) => match memory_server_client::get_memory_agent_runtime_context(agent_id).await {
+            Ok(value) => value,
+            Err(err) => {
+                warn!(
+                    "load contact runtime context failed: session_id={} contact_agent_id={} detail={}",
+                    session_id, agent_id, err
+                );
+                None
+            }
+        },
         None => None,
     };
+    if contact_agent_id.is_some() && contact_runtime_context.is_none() {
+        warn!(
+            "contact runtime context missing: session_id={} contact_agent_id={}",
+            session_id,
+            contact_agent_id.as_deref().unwrap_or_default()
+        );
+    }
     let base_system_prompt = resolve_system_prompt(
         model_runtime.system_prompt.clone(),
         model_runtime.use_active_system_context,
@@ -241,7 +287,7 @@ async fn stream_chat_v2(
     .await;
     let contact_system_prompt = compose_contact_system_prompt(contact_runtime_context.as_ref());
     if base_system_prompt.is_some() {
-        ai_server.set_system_prompt(base_system_prompt);
+        ai_server.set_system_prompt(base_system_prompt.clone());
     }
     let prefixed_messages = contact_system_prompt.as_ref().map(|prompt| {
         vec![json!({
@@ -269,6 +315,7 @@ async fn stream_chat_v2(
         .enabled_mcp_ids
         .unwrap_or_else(|| enabled_mcp_ids_from_metadata(session_metadata));
     let normalized_mcp_ids = normalize_mcp_ids(&requested_mcp_ids);
+    let enabled_mcp_ids_for_snapshot = normalized_mcp_ids.clone();
     let mcp_enabled = req
         .mcp_enabled
         .or_else(|| mcp_enabled_from_metadata(session_metadata))
@@ -306,6 +353,7 @@ async fn stream_chat_v2(
     if use_tools {
         let _ = mcp_exec.init().await;
     }
+    let mcp_tool_metadata = mcp_exec.tool_metadata.clone();
     ai_server.set_mcp_tool_execute(mcp_exec);
 
     let effective_settings = get_effective_user_settings(effective_user_id.clone())
@@ -329,6 +377,49 @@ async fn stream_chat_v2(
 
     let attachments_list = req.attachments.unwrap_or_default();
     let att = attachments::parse_attachments(&attachments_list);
+    let memory_summary_prompt = memory_server_client::compose_context(&session_id, 2)
+        .await
+        .ok()
+        .and_then(|payload| payload.0)
+        .and_then(|value| {
+            let trimmed = value.trim().to_string();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            }
+        });
+    let user_message_id = Uuid::new_v4().to_string();
+    let resolved_turn_id = normalize_turn_id(req.turn_id.as_deref()).unwrap_or_else(|| {
+        user_message_id.clone()
+    });
+    let running_snapshot_payload = build_turn_runtime_snapshot_payload(BuildTurnRuntimeSnapshotInput {
+        user_message_id: Some(user_message_id.clone()),
+        status: "running",
+        base_system_prompt: base_system_prompt.as_deref(),
+        contact_system_prompt: contact_system_prompt.as_deref(),
+        memory_summary_prompt: memory_summary_prompt.as_deref(),
+        tools: &mcp_tool_metadata,
+        model: Some(model_runtime.model.as_str()),
+        provider: Some(model_runtime.provider.as_str()),
+        contact_agent_id: contact_agent_id.as_deref(),
+        project_id: resolved_project_id.as_deref(),
+        project_root: resolved_project_root.as_deref(),
+        mcp_enabled,
+        enabled_mcp_ids: &enabled_mcp_ids_for_snapshot,
+    });
+    if let Err(err) = memory_server_client::sync_turn_runtime_snapshot(
+        &session_id,
+        &resolved_turn_id,
+        &running_snapshot_payload,
+    )
+    .await
+    {
+        warn!(
+            "sync running turn snapshot failed: session_id={}, turn_id={}, detail={}",
+            session_id, resolved_turn_id, err
+        );
+    }
 
     let result = ai_server
         .chat(
@@ -345,13 +436,43 @@ async fn stream_chat_v2(
                 supports_images: Some(model_runtime.supports_images),
                 reasoning_enabled: Some(model_runtime.effective_reasoning),
                 callbacks: Some(callback_bundle.callbacks),
-                turn_id: req.turn_id.clone(),
+                turn_id: Some(resolved_turn_id.clone()),
+                user_message_id: Some(user_message_id),
                 message_mode: Some("model".to_string()),
                 message_source: Some(model_runtime.model.clone()),
                 prefixed_messages,
             },
         )
         .await;
+
+    let completed_snapshot_payload =
+        build_turn_runtime_snapshot_payload(BuildTurnRuntimeSnapshotInput {
+            user_message_id: running_snapshot_payload.user_message_id.clone(),
+            status: if result.is_ok() { "completed" } else { "failed" },
+            base_system_prompt: base_system_prompt.as_deref(),
+            contact_system_prompt: contact_system_prompt.as_deref(),
+            memory_summary_prompt: memory_summary_prompt.as_deref(),
+            tools: &mcp_tool_metadata,
+            model: Some(model_runtime.model.as_str()),
+            provider: Some(model_runtime.provider.as_str()),
+            contact_agent_id: contact_agent_id.as_deref(),
+            project_id: resolved_project_id.as_deref(),
+            project_root: resolved_project_root.as_deref(),
+            mcp_enabled,
+            enabled_mcp_ids: &enabled_mcp_ids_for_snapshot,
+        });
+    if let Err(err) = memory_server_client::sync_turn_runtime_snapshot(
+        &session_id,
+        &resolved_turn_id,
+        &completed_snapshot_payload,
+    )
+    .await
+    {
+        warn!(
+            "sync completed turn snapshot failed: session_id={}, turn_id={}, detail={}",
+            session_id, resolved_turn_id, err
+        );
+    }
 
     let should_send_done = handle_chat_result(
         &sender,
