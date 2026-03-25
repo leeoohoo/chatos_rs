@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { apiClient as globalApiClient } from '../lib/api/client';
 import { useChatApiClientFromContext } from '../lib/store/ChatStoreContext';
 import { cn } from '../lib/utils';
@@ -29,6 +29,7 @@ import {
 
 export const InputArea: React.FC<InputAreaProps> = ({
   onSend,
+  onGuide,
   onStop,
   disabled = false,
   isStreaming = false,
@@ -63,6 +64,8 @@ export const InputArea: React.FC<InputAreaProps> = ({
   onMcpEnabledChange,
   onEnabledMcpIdsChange,
 }) => {
+  const isGuidingMode = isStreaming && !isStopping;
+  const effectiveAllowAttachments = allowAttachments && !isGuidingMode;
   const [message, setMessage] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -80,7 +83,7 @@ export const InputArea: React.FC<InputAreaProps> = ({
     handleDrop,
     clearAttachments,
   } = useAttachmentsInput({
-    allowAttachments,
+    allowAttachments: effectiveAllowAttachments,
     disabled,
     supportedFileTypes,
     fileInputRef,
@@ -178,7 +181,7 @@ export const InputArea: React.FC<InputAreaProps> = ({
     if (!projectForFilePicker?.rootPath) return null;
     return normalizePath(projectForFilePicker.rootPath);
   }, [projectForFilePicker?.rootPath, normalizePath]);
-  const showProjectFilePicker = showProjectFileButton && Boolean(projectRootForFilePicker);
+  const showProjectFilePicker = !isGuidingMode && showProjectFileButton && Boolean(projectRootForFilePicker);
   const workspaceRootDisplayName = useMemo(() => {
     if (!normalizedWorkspaceRoot) {
       return '未选择';
@@ -230,6 +233,13 @@ export const InputArea: React.FC<InputAreaProps> = ({
   });
   const projectFilePickerRef = useDismissiblePopover<HTMLDivElement>(projectFilePickerOpen, () => setProjectFilePickerOpen(false));
 
+  useEffect(() => {
+    if (!isGuidingMode || attachments.length === 0) {
+      return;
+    }
+    clearAttachments();
+  }, [attachments.length, clearAttachments, isGuidingMode]);
+
   // 处理输入变化
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const value = e.target.value;
@@ -250,8 +260,21 @@ export const InputArea: React.FC<InputAreaProps> = ({
   // 发送消息
   const handleSend = () => {
     const trimmedMessage = message.trim();
-    if (!trimmedMessage && attachments.length === 0) return;
+    if (!trimmedMessage && (!effectiveAllowAttachments || attachments.length === 0)) return;
     if (disabled) return;
+
+    if (isGuidingMode) {
+      if (!trimmedMessage) {
+        return;
+      }
+      onGuide?.(trimmedMessage);
+      setMessage('');
+      clearAttachments();
+      if (textareaRef.current) {
+        textareaRef.current.style.height = 'auto';
+      }
+      return;
+    }
 
     // 检查是否选择了模型
     if (showModelSelector && !selectedModelId) {
@@ -318,7 +341,7 @@ export const InputArea: React.FC<InputAreaProps> = ({
           onModelChange={onModelChange}
         />
         {/* 附件按钮 */}
-        {allowAttachments && (
+        {effectiveAllowAttachments && (
           <button
             onClick={() => fileInputRef.current?.click()}
             disabled={disabled}
@@ -332,7 +355,7 @@ export const InputArea: React.FC<InputAreaProps> = ({
         )}
 
         <InputAreaProjectFilePicker
-          allowAttachments={allowAttachments}
+          allowAttachments={effectiveAllowAttachments}
           showProjectFilePicker={showProjectFilePicker}
           pickerRef={projectFilePickerRef}
           disabled={disabled}
@@ -434,7 +457,7 @@ export const InputArea: React.FC<InputAreaProps> = ({
           onChange={handleInputChange}
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
-          placeholder={placeholder}
+          placeholder={isGuidingMode ? '执行中，可发送引导（不会打断当前执行）...' : placeholder}
           disabled={disabled}
           className={cn(
             'flex-1 resize-none bg-transparent border-none outline-none',
@@ -452,19 +475,49 @@ export const InputArea: React.FC<InputAreaProps> = ({
           {message.length}/{maxLength}
         </div>
 
+        {isGuidingMode && (
+          <button
+            onClick={() => {
+              if (onStop && !isStopping) {
+                onStop();
+              }
+            }}
+            disabled={isStopping || disabled}
+            className={cn(
+              'flex-shrink-0 p-2 rounded-md transition-colors',
+              isStopping
+                ? 'bg-amber-500 text-white'
+                : 'bg-red-500 text-white hover:bg-red-600',
+              'disabled:opacity-50 disabled:cursor-not-allowed'
+            )}
+            title={isStopping ? '停止中...' : '停止生成'}
+            style={{ backgroundColor: isStopping ? '#f59e0b' : '#ef4444', color: 'white' }}
+          >
+            {isStopping ? (
+              <svg className="w-5 h-5 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3a9 9 0 109 9" />
+              </svg>
+            ) : (
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 6h12v12H6z" />
+              </svg>
+            )}
+          </button>
+        )}
+
         <InputAreaSendButton
-          isStreaming={isStreaming}
+          isStreaming={!isGuidingMode && isStreaming}
           isStopping={isStopping}
           onStop={onStop}
           onSend={handleSend}
-          disabled={disabled || isStreaming || isStopping}
-          canSend={Boolean(message.trim() || attachments.length > 0)}
+          disabled={disabled || isStopping}
+          canSend={Boolean(message.trim() || (!isGuidingMode && attachments.length > 0))}
           showModelSelector={showModelSelector}
           selectedModelId={selectedModelId}
         />
 
         {/* 隐藏的文件输入 */}
-        {allowAttachments && (
+        {effectiveAllowAttachments && (
           <input
             ref={fileInputRef}
             type="file"
@@ -477,7 +530,7 @@ export const InputArea: React.FC<InputAreaProps> = ({
       </div>
 
       {/* 拖拽提示 */}
-      {isDragging && allowAttachments && (
+      {isDragging && effectiveAllowAttachments && (
         <div className="absolute inset-0 bg-primary/10 border-2 border-dashed border-primary rounded-lg flex items-center justify-center">
           <div className="text-center">
             <svg className="w-8 h-8 mx-auto text-primary mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">

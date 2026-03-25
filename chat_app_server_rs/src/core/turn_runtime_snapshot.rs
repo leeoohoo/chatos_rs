@@ -5,8 +5,8 @@ use serde_json::Value;
 use crate::core::mcp_tools::ToolInfo;
 use crate::services::memory_server_client::{
     SyncTurnRuntimeSnapshotRequestDto, TurnRuntimeSnapshotRuntimeDto,
-    TurnRuntimeSnapshotSelectedCommandDto,
-    TurnRuntimeSnapshotSystemMessageDto, TurnRuntimeSnapshotToolDto,
+    TurnRuntimeSnapshotSelectedCommandDto, TurnRuntimeSnapshotSystemMessageDto,
+    TurnRuntimeSnapshotToolDto,
 };
 
 pub struct BuildTurnRuntimeSnapshotInput<'a> {

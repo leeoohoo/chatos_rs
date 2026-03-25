@@ -41,6 +41,9 @@ interface TaskWorkbarProps {
   onDeleteTask?: (task: TaskWorkbarItem) => void;
   onEditTask?: (task: TaskWorkbarItem) => void;
   actionLoadingTaskId?: string | null;
+  runtimeGuidancePendingCount?: number;
+  runtimeGuidanceAppliedCount?: number;
+  runtimeGuidanceLastAppliedAt?: string | null;
 }
 
 type HistoryFilter = 'all' | 'processed';
@@ -77,6 +80,17 @@ const sortTasks = (items: TaskWorkbarItem[]) => {
     const right = Date.parse(b.createdAt) || 0;
     return right - left;
   });
+};
+
+const formatGuidanceAppliedTime = (value?: string | null): string => {
+  if (!value) {
+    return '';
+  }
+  const time = Date.parse(value);
+  if (!Number.isFinite(time)) {
+    return '';
+  }
+  return new Date(time).toLocaleTimeString();
 };
 
 const TaskCard: React.FC<{
@@ -182,6 +196,9 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
   onDeleteTask,
   onEditTask,
   actionLoadingTaskId = null,
+  runtimeGuidancePendingCount = 0,
+  runtimeGuidanceAppliedCount = 0,
+  runtimeGuidanceLastAppliedAt = null,
 }) => {
   const [expanded, setExpanded] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -199,6 +216,15 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
   const visibleHistoryTasks = historyFilter === 'processed'
     ? processedHistoryTasks
     : sortedHistoryTasks;
+  const runtimeGuidanceHint = useMemo(() => {
+    if (runtimeGuidancePendingCount <= 0 && runtimeGuidanceAppliedCount <= 0) {
+      return '';
+    }
+    const appliedAt = formatGuidanceAppliedTime(runtimeGuidanceLastAppliedAt);
+    return appliedAt
+      ? `引导待应用: ${runtimeGuidancePendingCount} · 已应用: ${runtimeGuidanceAppliedCount} · 最近应用: ${appliedAt}`
+      : `引导待应用: ${runtimeGuidancePendingCount} · 已应用: ${runtimeGuidanceAppliedCount}`;
+  }, [runtimeGuidanceAppliedCount, runtimeGuidanceLastAppliedAt, runtimeGuidancePendingCount]);
 
   const currentTurnTasks = useMemo(() => {
     const normalizedCurrentTurnId = typeof currentTurnId === 'string' ? currentTurnId.trim() : '';
@@ -244,6 +270,9 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
             <div className="min-w-0">
               <div className="text-xs font-semibold text-foreground">Workbar</div>
               <div className="text-[11px] text-muted-foreground">{`\u5f53\u524d\u8f6e\u4efb\u52a1\uff1a${currentTurnTasks.length}`}</div>
+              {runtimeGuidanceHint ? (
+                <div className="text-[11px] text-muted-foreground">{runtimeGuidanceHint}</div>
+              ) : null}
             </div>
           </button>
 

@@ -7,6 +7,7 @@ pub mod mcp_loader;
 pub mod memory_server_client;
 pub(crate) mod message_manager_common;
 pub mod notepad;
+pub mod runtime_guidance_manager;
 pub mod session_title;
 pub mod summary;
 pub mod system_context_ai;

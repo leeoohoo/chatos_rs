@@ -185,6 +185,22 @@ export interface StreamChatOptions {
   enabledMcpIds?: string[];
 }
 
+export interface RuntimeGuidanceSubmitPayload {
+  sessionId: string;
+  turnId: string;
+  content: string;
+}
+
+export interface RuntimeGuidanceSubmitResponse {
+  success: boolean;
+  guidance_id?: string;
+  status?: 'queued' | 'applied' | 'dropped';
+  pending_count?: number;
+  turn_id?: string;
+  error?: string;
+  code?: string;
+}
+
 export interface TurnRuntimeSnapshotSystemMessage {
   id: string;
   source: string;

@@ -13,6 +13,7 @@ export function createStreamingActions({ set, get, client }: Deps) {
     isStreaming: false,
     isStopping: false,
     streamingMessageId: null as string | null,
+    activeTurnId: null as string | null,
   };
 
   return {
@@ -21,7 +22,12 @@ export function createStreamingActions({ set, get, client }: Deps) {
         const sessionId = state.currentSessionId;
         if (sessionId) {
           const prev = state.sessionChatState[sessionId] || defaultSessionChatState;
-          state.sessionChatState[sessionId] = { ...prev, isStreaming: true, isStopping: false, streamingMessageId: messageId };
+          state.sessionChatState[sessionId] = {
+            ...prev,
+            isStreaming: true,
+            isStopping: false,
+            streamingMessageId: messageId,
+          };
         }
         state.isStreaming = true;
         state.streamingMessageId = messageId;
@@ -44,7 +50,14 @@ export function createStreamingActions({ set, get, client }: Deps) {
         const sessionId = state.currentSessionId;
         if (sessionId) {
           const prev = state.sessionChatState[sessionId] || defaultSessionChatState;
-          state.sessionChatState[sessionId] = { ...prev, isLoading: false, isStreaming: false, isStopping: false, streamingMessageId: null };
+          state.sessionChatState[sessionId] = {
+            ...prev,
+            isLoading: false,
+            isStreaming: false,
+            isStopping: false,
+            streamingMessageId: null,
+            activeTurnId: null,
+          };
         }
         state.isStreaming = false;
         state.streamingMessageId = null;

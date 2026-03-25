@@ -46,6 +46,7 @@ interface ChatComposerPanelProps {
       enabledMcpIds?: string[];
     },
   ) => void;
+  onGuide: (content: string) => void;
   onStop: () => void;
   inputDisabled: boolean;
   isStreaming: boolean;
@@ -70,6 +71,9 @@ interface ChatComposerPanelProps {
   enabledMcpIds?: string[];
   onMcpEnabledChange: (enabled: boolean) => void;
   onEnabledMcpIdsChange: (ids: string[]) => void;
+  runtimeGuidancePendingCount?: number;
+  runtimeGuidanceAppliedCount?: number;
+  runtimeGuidanceLastAppliedAt?: string | null;
 }
 
 const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
@@ -97,6 +101,7 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
   onTaskReviewConfirm,
   onTaskReviewCancel,
   onSend,
+  onGuide,
   onStop,
   inputDisabled,
   isStreaming,
@@ -121,6 +126,9 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
   enabledMcpIds,
   onMcpEnabledChange,
   onEnabledMcpIdsChange,
+  runtimeGuidancePendingCount = 0,
+  runtimeGuidanceAppliedCount = 0,
+  runtimeGuidanceLastAppliedAt = null,
 }) => (
   <div className="border-t border-border">
     <TaskWorkbar
@@ -137,6 +145,9 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
       onOpenUiPromptHistory={() => onOpenUiPromptHistory(sessionId)}
       uiPromptHistoryCount={uiPromptHistoryCount}
       uiPromptHistoryLoading={uiPromptHistoryLoading}
+      runtimeGuidancePendingCount={runtimeGuidancePendingCount}
+      runtimeGuidanceAppliedCount={runtimeGuidanceAppliedCount}
+      runtimeGuidanceLastAppliedAt={runtimeGuidanceLastAppliedAt}
       onCompleteTask={onCompleteTask}
       onDeleteTask={onDeleteTask}
       onEditTask={onEditTask}
@@ -157,6 +168,7 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
     ) : null}
     <InputArea
       onSend={onSend}
+      onGuide={onGuide}
       onStop={onStop}
       disabled={inputDisabled}
       isStreaming={isStreaming}

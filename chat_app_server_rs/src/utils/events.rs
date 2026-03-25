@@ -19,5 +19,7 @@ impl Events {
     pub const TASK_CREATE_REVIEW_RESOLVED: &'static str = "task_create_review_resolved";
     pub const UI_PROMPT_REQUIRED: &'static str = "ui_prompt_required";
     pub const UI_PROMPT_RESOLVED: &'static str = "ui_prompt_resolved";
+    pub const RUNTIME_GUIDANCE_QUEUED: &'static str = "runtime_guidance_queued";
+    pub const RUNTIME_GUIDANCE_APPLIED: &'static str = "runtime_guidance_applied";
     pub const HEARTBEAT: &'static str = "heartbeat";
 }

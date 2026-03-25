@@ -113,6 +113,14 @@ export interface SessionChatState {
   isStreaming: boolean;
   isStopping: boolean;
   streamingMessageId: string | null;
+  activeTurnId: string | null;
+}
+
+export interface SessionRuntimeGuidanceState {
+  pendingCount: number;
+  appliedCount: number;
+  lastGuidanceAt: string | null;
+  lastAppliedAt: string | null;
 }
 
 export interface ContactRecord {
@@ -154,6 +162,7 @@ export interface ChatState {
   streamingMessageId: string | null;
   hasMoreMessages: boolean;
   sessionChatState: Record<string, SessionChatState>;
+  sessionRuntimeGuidanceState: Record<string, SessionRuntimeGuidanceState>;
   sessionStreamingMessageDrafts: Record<string, Message | null>;
   sessionTurnProcessState: Record<string, Record<string, { expanded: boolean; loaded: boolean; loading: boolean }>>;
   sessionTurnProcessCache: Record<string, Record<string, Message[]>>;
@@ -267,6 +276,16 @@ export interface ChatActions {
     attachments?: any[],
     runtimeOptions?: SendMessageRuntimeOptions,
   ) => Promise<void>;
+  submitRuntimeGuidance: (content: string, options: {
+    sessionId: string;
+    turnId: string;
+  }) => Promise<{
+    success: boolean;
+    guidanceId?: string;
+    status?: 'queued' | 'applied' | 'dropped';
+    pendingCount?: number;
+    turnId?: string;
+  }>;
   updateMessage: (messageId: string, updates: Partial<Message>) => Promise<void>;
   deleteMessage: (messageId: string) => Promise<void>;
 

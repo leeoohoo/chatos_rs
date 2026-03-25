@@ -54,6 +54,7 @@ interface ChatConversationPaneProps {
     workspaceRoot?: string | null;
     enabledMcpIds?: string[];
   }) => void;
+  onGuide: (content: string) => void;
   onStop: () => void;
   inputDisabled: boolean;
   isStreaming: boolean;
@@ -74,6 +75,9 @@ interface ChatConversationPaneProps {
   enabledMcpIds: string[];
   onMcpEnabledChange: (enabled: boolean) => void;
   onEnabledMcpIdsChange: (ids: string[]) => void;
+  runtimeGuidancePendingCount?: number;
+  runtimeGuidanceAppliedCount?: number;
+  runtimeGuidanceLastAppliedAt?: string | null;
 }
 
 interface ChatMessagesPaneProps {
@@ -230,6 +234,7 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
   onTaskReviewConfirm,
   onTaskReviewCancel,
   onSend,
+  onGuide,
   onStop,
   inputDisabled,
   isStreaming,
@@ -250,6 +255,9 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
   enabledMcpIds,
   onMcpEnabledChange,
   onEnabledMcpIdsChange,
+  runtimeGuidancePendingCount = 0,
+  runtimeGuidanceAppliedCount = 0,
+  runtimeGuidanceLastAppliedAt = null,
 }) => (
   <div className="flex-1 min-h-0 flex overflow-hidden">
     <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
@@ -304,6 +312,7 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
           onTaskReviewConfirm={onTaskReviewConfirm}
           onTaskReviewCancel={onTaskReviewCancel}
           onSend={onSend}
+          onGuide={onGuide}
           onStop={onStop}
           inputDisabled={inputDisabled}
           isStreaming={isStreaming}
@@ -328,6 +337,9 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
           enabledMcpIds={enabledMcpIds}
           onMcpEnabledChange={onMcpEnabledChange}
           onEnabledMcpIdsChange={onEnabledMcpIdsChange}
+          runtimeGuidancePendingCount={runtimeGuidancePendingCount}
+          runtimeGuidanceAppliedCount={runtimeGuidanceAppliedCount}
+          runtimeGuidanceLastAppliedAt={runtimeGuidanceLastAppliedAt}
         />
       )}
     </div>

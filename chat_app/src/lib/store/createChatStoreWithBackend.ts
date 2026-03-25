@@ -76,6 +76,7 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                     streamingMessageId: null,
                     hasMoreMessages: true,
                     sessionChatState: {},
+                    sessionRuntimeGuidanceState: {},
                     sessionStreamingMessageDrafts: {},
                     sessionTurnProcessState: {},
                     sessionTurnProcessCache: {},
@@ -112,6 +113,90 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                     ...createRemoteConnectionActions({ set, get, client, getUserIdParam }),
                     ...createMessageActions({ set, get, client }),
                     sendMessage: createSendMessageHandler({ set, get, client, getUserIdParam }),
+                    submitRuntimeGuidance: async (
+                      content: string,
+                      options: { sessionId: string; turnId: string },
+                    ) => {
+                      const sessionId = String(options?.sessionId || '').trim();
+                      const turnId = String(options?.turnId || '').trim();
+                      const trimmedContent = String(content || '').trim();
+                      if (!sessionId || !turnId || !trimmedContent) {
+                        throw new Error('缺少运行时引导参数');
+                      }
+
+                      const guidanceAt = new Date().toISOString();
+                      set((state: any) => {
+                        if (!state.sessionRuntimeGuidanceState) {
+                          state.sessionRuntimeGuidanceState = {};
+                        }
+                        const prev = state.sessionRuntimeGuidanceState[sessionId] || {
+                          pendingCount: 0,
+                          appliedCount: 0,
+                          lastGuidanceAt: null,
+                          lastAppliedAt: null,
+                        };
+                        state.sessionRuntimeGuidanceState[sessionId] = {
+                          ...prev,
+                          pendingCount: Math.max(0, Number(prev.pendingCount || 0) + 1),
+                          lastGuidanceAt: guidanceAt,
+                        };
+                      });
+
+                      try {
+                        const response = await client.submitRuntimeGuidance({
+                          sessionId,
+                          turnId,
+                          content: trimmedContent,
+                        });
+                        set((state: any) => {
+                          if (!state.sessionRuntimeGuidanceState) {
+                            state.sessionRuntimeGuidanceState = {};
+                          }
+                          const prev = state.sessionRuntimeGuidanceState[sessionId] || {
+                            pendingCount: 0,
+                            appliedCount: 0,
+                            lastGuidanceAt: guidanceAt,
+                            lastAppliedAt: null,
+                          };
+                          const pendingFromResponse = Number(
+                            Number.isFinite(Number(response?.pending_count))
+                              ? Number(response?.pending_count)
+                              : Number.NaN
+                          );
+                          state.sessionRuntimeGuidanceState[sessionId] = {
+                            ...prev,
+                            pendingCount: Number.isFinite(pendingFromResponse)
+                              ? Math.max(0, pendingFromResponse)
+                              : prev.pendingCount,
+                            lastGuidanceAt: guidanceAt,
+                          };
+                        });
+                        return {
+                          success: response?.success === true,
+                          guidanceId: response?.guidance_id,
+                          status: response?.status,
+                          pendingCount: response?.pending_count,
+                          turnId: response?.turn_id,
+                        };
+                      } catch (error) {
+                        set((state: any) => {
+                          if (!state.sessionRuntimeGuidanceState) {
+                            state.sessionRuntimeGuidanceState = {};
+                          }
+                          const prev = state.sessionRuntimeGuidanceState[sessionId] || {
+                            pendingCount: 0,
+                            appliedCount: 0,
+                            lastGuidanceAt: null,
+                            lastAppliedAt: null,
+                          };
+                          state.sessionRuntimeGuidanceState[sessionId] = {
+                            ...prev,
+                            pendingCount: Math.max(0, Number(prev.pendingCount || 0) - 1),
+                          };
+                        });
+                        throw error;
+                      }
+                    },
                     ...createStreamingActions({ set, get, client }),
                     setTaskReviewPanel: (panel: ChatState['taskReviewPanel']) => {
                         set((state: any) => {

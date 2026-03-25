@@ -196,7 +196,8 @@ pub(super) async fn get_session_turn_runtime_context_by_turn(
     }
 
     match crate::services::memory_server_client::get_turn_runtime_snapshot_by_turn(
-        &session_id, &turn_id,
+        &session_id,
+        &turn_id,
     )
     .await
     {

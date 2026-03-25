@@ -7,6 +7,9 @@ use tracing::{info, warn};
 use crate::services::ai_common::{
     build_aborted_tool_results, build_tool_stream_callback, completion_failed_error,
 };
+use crate::services::runtime_guidance_manager::{
+    runtime_guidance_manager, RuntimeGuidanceItem, DEFAULT_DRAIN_LIMIT,
+};
 use crate::services::v3::ai_request_handler::StreamCallbacks;
 use crate::utils::abort_registry;
 
@@ -75,6 +78,7 @@ impl AiClient {
         } else {
             None
         };
+        let mut runtime_guidance_items: Vec<Value> = Vec::new();
 
         loop {
             if let Some(sid) = session_id.as_ref() {
@@ -88,6 +92,38 @@ impl AiClient {
 
             info!("AI_V3 request iteration {}", iteration);
 
+            let mut effective_prefixed_input_items = prefixed_input_items.clone();
+            if let (Some(sid), Some(tid)) = (session_id.as_deref(), turn_id.as_deref()) {
+                let drained_guidance =
+                    runtime_guidance_manager().drain_guidance(sid, tid, DEFAULT_DRAIN_LIMIT);
+                for guidance_item in drained_guidance {
+                    runtime_guidance_items.push(build_runtime_guidance_input_item(
+                        &guidance_item,
+                        force_text_content,
+                    ));
+                    if let Some(applied_item) = runtime_guidance_manager().mark_applied(
+                        sid,
+                        tid,
+                        &guidance_item.guidance_id,
+                    ) {
+                        if let Some(cb) = &callbacks.on_runtime_guidance_applied {
+                            cb(json!({
+                                "guidance_id": applied_item.guidance_id,
+                                "session_id": applied_item.session_id,
+                                "turn_id": applied_item.turn_id,
+                                "status": "applied",
+                                "created_at": applied_item.created_at,
+                                "applied_at": applied_item.applied_at,
+                                "pending_count": runtime_guidance_manager().pending_count(sid, tid),
+                            }));
+                        }
+                    }
+                }
+            }
+            if !runtime_guidance_items.is_empty() {
+                effective_prefixed_input_items.extend(runtime_guidance_items.clone());
+            }
+
             self.maybe_refresh_stateless_context(
                 session_id.as_deref(),
                 stable_prefix_mode,
@@ -96,7 +132,7 @@ impl AiClient {
                 force_text_content,
                 adaptive_history_limit,
                 include_tool_items,
-                prefixed_input_items.as_slice(),
+                effective_prefixed_input_items.as_slice(),
                 &mut stateless_context_items,
                 &mut input,
             )
@@ -114,10 +150,19 @@ impl AiClient {
                 if request_attempt_guard > max_request_attempts {
                     break;
                 }
-                let request_input = if no_system_messages {
-                    rewrite_system_messages_to_user(&input, force_text_content)
+                let request_input_source = if use_prev_id && !runtime_guidance_items.is_empty() {
+                    prepend_input_items(
+                        &input,
+                        runtime_guidance_items.as_slice(),
+                        force_text_content,
+                    )
                 } else {
                     input.clone()
+                };
+                let request_input = if no_system_messages {
+                    rewrite_system_messages_to_user(&request_input_source, force_text_content)
+                } else {
+                    request_input_source
                 };
                 let req = self
                     .ai_request_handler
@@ -173,7 +218,7 @@ impl AiClient {
                                 &raw_input,
                                 stable_prefix_mode,
                                 include_tool_items,
-                                prefixed_input_items.as_slice(),
+                                effective_prefixed_input_items.as_slice(),
                                 pending_tool_calls.as_ref(),
                                 pending_tool_outputs.as_ref(),
                                 &mut use_prev_id,
@@ -238,7 +283,7 @@ impl AiClient {
                         &raw_input,
                         stable_prefix_mode,
                         include_tool_items,
-                        prefixed_input_items.as_slice(),
+                        effective_prefixed_input_items.as_slice(),
                         pending_tool_calls.as_ref(),
                         pending_tool_outputs.as_ref(),
                         force_text_content,
@@ -405,7 +450,7 @@ impl AiClient {
                         adaptive_history_limit,
                         stable_prefix_mode,
                         force_text_content,
-                        prefixed_input_items.as_slice(),
+                        effective_prefixed_input_items.as_slice(),
                         &current_items,
                         include_tool_items,
                     )
@@ -433,4 +478,33 @@ impl AiClient {
             iteration += 1;
         }
     }
+}
+
+fn build_runtime_guidance_input_item(
+    guidance_item: &RuntimeGuidanceItem,
+    force_text_content: bool,
+) -> Value {
+    to_message_item(
+        "system",
+        &Value::String(format_runtime_guidance_instruction(guidance_item)),
+        force_text_content,
+    )
+}
+
+fn format_runtime_guidance_instruction(guidance_item: &RuntimeGuidanceItem) -> String {
+    format!(
+        "[Runtime Guidance]\n- guidance_id: {}\n- time: {}\n- source: user guidance during running turn\n- instruction: {}\n- rule: treat this as high-priority preference unless conflicts with safety",
+        guidance_item.guidance_id,
+        guidance_item.created_at,
+        guidance_item.content
+    )
+}
+
+fn prepend_input_items(input: &Value, prefixed_items: &[Value], force_text_content: bool) -> Value {
+    if prefixed_items.is_empty() {
+        return input.clone();
+    }
+    let mut merged = prefixed_items.to_vec();
+    merged.extend(build_current_input_items(input, force_text_content));
+    Value::Array(merged)
 }

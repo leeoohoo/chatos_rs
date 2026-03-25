@@ -417,10 +417,7 @@ pub fn compose_contact_system_prompt(
             }
             parts.push(format!(
                 "简介={}",
-                entry
-                    .description
-                    .as_deref()
-                    .unwrap_or("未提供")
+                entry.description.as_deref().unwrap_or("未提供")
             ));
             parts.push(format!("来源类型={}", entry.source_type));
             lines.push(format!("{}. {}", index + 1, parts.join(" | ")));
@@ -562,7 +559,8 @@ pub fn compose_contact_system_prompt(
                     parts.push(format!("参数提示={}", argument_hint));
                 }
             }
-            if let Some(source_path) = normalize_optional_string(Some(command.source_path.clone())) {
+            if let Some(source_path) = normalize_optional_string(Some(command.source_path.clone()))
+            {
                 parts.push(format!("source_path={}", source_path));
             }
             lines.push(format!("{}. {}", index + 1, parts.join(" | ")));
@@ -674,8 +672,7 @@ mod tests {
     };
     use crate::services::memory_server_client::{
         MemoryAgentRuntimeCommandSummaryDto, MemoryAgentRuntimeContextDto,
-        MemoryAgentRuntimePluginSummaryDto,
-        MemoryAgentRuntimeSkillSummaryDto,
+        MemoryAgentRuntimePluginSummaryDto, MemoryAgentRuntimeSkillSummaryDto,
     };
 
     #[test]
@@ -760,8 +757,11 @@ mod tests {
             project_policy: None,
             updated_at: "2026-03-24T00:00:00Z".to_string(),
         };
-        let command = parse_contact_command_invocation("/team-debug button not render", Some(&runtime_context))
-            .expect("command");
+        let command = parse_contact_command_invocation(
+            "/team-debug button not render",
+            Some(&runtime_context),
+        )
+        .expect("command");
         assert_eq!(command.command_ref, "CMD1");
         assert_eq!(command.name, "team-debug");
         assert_eq!(command.arguments.as_deref(), Some("button not render"));

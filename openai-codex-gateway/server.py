@@ -1920,7 +1920,7 @@ def resolve_codex_bin(cli_value: str | None) -> str | None:
 def parse_args() -> GatewayConfig:
     parser = argparse.ArgumentParser(description="OpenAI-compatible gateway backed by codex SDK")
     parser.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
-    parser.add_argument("--port", type=int, default=8088, help="Bind port (default: 8088)")
+    parser.add_argument("--port", type=int, default=8089, help="Bind port (default: 8088)")
     parser.add_argument("--codex-bin", default=None)
     parser.add_argument(
         "--state-db",

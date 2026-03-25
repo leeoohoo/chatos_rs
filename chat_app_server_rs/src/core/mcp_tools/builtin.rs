@@ -3,9 +3,7 @@ use crate::builtin::code_maintainer::{CodeMaintainerOptions, CodeMaintainerServi
 use crate::builtin::memory_command_reader::{
     MemoryCommandReaderOptions, MemoryCommandReaderService,
 };
-use crate::builtin::memory_plugin_reader::{
-    MemoryPluginReaderOptions, MemoryPluginReaderService,
-};
+use crate::builtin::memory_plugin_reader::{MemoryPluginReaderOptions, MemoryPluginReaderService};
 use crate::builtin::memory_skill_reader::{MemorySkillReaderOptions, MemorySkillReaderService};
 use crate::builtin::notepad::{NotepadBuiltinService, NotepadOptions};
 use crate::builtin::task_manager::{TaskManagerOptions, TaskManagerService};

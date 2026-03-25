@@ -68,8 +68,10 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     updateChatConfig,
     abortCurrentConversation,
     sessionChatState = {},
+    sessionRuntimeGuidanceState = {},
     taskReviewPanelsBySession = {},
     uiPromptPanelsBySession = {},
+    submitRuntimeGuidance,
     upsertTaskReviewPanel,
     removeTaskReviewPanel,
     upsertUiPromptPanel,
@@ -104,8 +106,10 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     updateChatConfig: state.updateChatConfig,
     abortCurrentConversation: state.abortCurrentConversation,
     sessionChatState: state.sessionChatState,
+    sessionRuntimeGuidanceState: state.sessionRuntimeGuidanceState,
     taskReviewPanelsBySession: state.taskReviewPanelsBySession,
     uiPromptPanelsBySession: state.uiPromptPanelsBySession,
+    submitRuntimeGuidance: state.submitRuntimeGuidance,
     upsertTaskReviewPanel: state.upsertTaskReviewPanel,
     removeTaskReviewPanel: state.removeTaskReviewPanel,
     upsertUiPromptPanel: state.upsertUiPromptPanel,
@@ -145,6 +149,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const chatIsLoading = currentChatState?.isLoading ?? false;
   const chatIsStreaming = currentChatState?.isStreaming ?? false;
   const chatIsStopping = currentChatState?.isStopping ?? false;
+  const currentRuntimeGuidanceState = useMemo(() => (
+    currentSession ? sessionRuntimeGuidanceState[currentSession.id] : undefined
+  ), [currentSession, sessionRuntimeGuidanceState]);
 
   const [showMcpManager, setShowMcpManager] = useState(false);
   const [showAiModelManager, setShowAiModelManager] = useState(false);
@@ -371,6 +378,28 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     }
   }, [onMessageSend, sendMessage]);
 
+  const handleRuntimeGuidanceSend = useCallback(async (content: string) => {
+    const sessionId = currentSession?.id;
+    const turnId = (
+      currentChatState?.activeTurnId
+      || activeConversationTurnId
+      || ''
+    ).trim();
+    if (!sessionId || !turnId) {
+      return;
+    }
+    try {
+      await submitRuntimeGuidance(content, { sessionId, turnId });
+    } catch (error) {
+      console.error('Failed to submit runtime guidance:', error);
+    }
+  }, [
+    activeConversationTurnId,
+    currentChatState?.activeTurnId,
+    currentSession?.id,
+    submitRuntimeGuidance,
+  ]);
+
   const handleLoadMore = useCallback(() => {
     if (currentSession) {
       loadMoreMessages(currentSession.id);
@@ -585,8 +614,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 onTaskReviewConfirm={handleTaskReviewConfirm}
                 onTaskReviewCancel={handleTaskReviewCancel}
                 onSend={handleMessageSend}
+                onGuide={handleRuntimeGuidanceSend}
                 onStop={abortCurrentConversation}
-                inputDisabled={chatIsLoading || chatIsStreaming || chatIsStopping}
+                inputDisabled={chatIsStopping || !currentSession}
                 isStreaming={chatIsStreaming}
                 isStopping={chatIsStopping}
                 supportedFileTypes={supportedFileTypes}
@@ -605,6 +635,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 enabledMcpIds={composerEnabledMcpIds}
                 onMcpEnabledChange={handleComposerMcpEnabledChange}
                 onEnabledMcpIdsChange={handleComposerEnabledMcpIdsChange}
+                runtimeGuidancePendingCount={Number(currentRuntimeGuidanceState?.pendingCount || 0)}
+                runtimeGuidanceAppliedCount={Number(currentRuntimeGuidanceState?.appliedCount || 0)}
+                runtimeGuidanceLastAppliedAt={currentRuntimeGuidanceState?.lastAppliedAt || null}
               />
             )}
           </div>

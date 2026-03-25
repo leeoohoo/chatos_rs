@@ -111,6 +111,7 @@ pub fn build_v2_callbacks(sender: &SseSender, session_id: &str) -> StreamCallbac
         on_tools_start: Some(Arc::new(on_tools_start)),
         on_tools_stream: Some(Arc::new(on_tools_stream)),
         on_tools_end: Some(Arc::new(on_tools_end)),
+        on_runtime_guidance_applied: None,
         on_context_summarized_start: Some(Arc::new(on_sum_start)),
         on_context_summarized_stream: Some(Arc::new(on_sum_stream)),
         on_context_summarized_end: Some(Arc::new(on_sum_end)),
@@ -230,12 +231,26 @@ pub fn build_v3_callbacks(
         sender_sum_end.send_json(&json!({ "type": Events::CONTEXT_SUMMARIZED_END, "timestamp": crate::core::time::now_rfc3339(), "data": info }));
     }) as Arc<dyn Fn(Value) + Send + Sync>;
 
+    let sender_runtime_guidance = sender.clone();
+    let sid_runtime_guidance = session_id.to_string();
+    let on_runtime_guidance_applied = Arc::new(move |payload: Value| {
+        if abort_registry::is_aborted(&sid_runtime_guidance) {
+            return;
+        }
+        sender_runtime_guidance.send_json(&json!({
+            "type": Events::RUNTIME_GUIDANCE_APPLIED,
+            "timestamp": crate::core::time::now_rfc3339(),
+            "data": payload
+        }));
+    }) as Arc<dyn Fn(Value) + Send + Sync>;
+
     let callbacks = V3AiClientCallbacks {
         on_chunk: Some(Arc::new(on_chunk)),
         on_thinking: Some(Arc::new(on_thinking)),
         on_tools_start,
         on_tools_stream,
         on_tools_end,
+        on_runtime_guidance_applied: Some(on_runtime_guidance_applied),
         on_context_summarized_start: Some(on_sum_start),
         on_context_summarized_stream: Some(on_sum_stream),
         on_context_summarized_end: Some(on_sum_end),

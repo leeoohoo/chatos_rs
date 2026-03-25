@@ -20,8 +20,8 @@ use crate::core::chat_runtime::{
     compose_contact_command_system_prompt, compose_contact_system_prompt,
     contact_agent_id_from_metadata, contact_id_from_metadata, enabled_mcp_ids_from_metadata,
     mcp_enabled_from_metadata, normalize_id, parse_contact_command_invocation,
-    parse_implicit_command_selections_from_tools_end,
-    project_id_from_metadata, project_root_from_metadata, resolve_project_runtime,
+    parse_implicit_command_selections_from_tools_end, project_id_from_metadata,
+    project_root_from_metadata, resolve_project_runtime,
 };
 use crate::core::chat_stream::{build_v2_callbacks, handle_chat_result, send_start_event};
 use crate::core::mcp_runtime::{
@@ -244,9 +244,12 @@ async fn stream_chat_v2(
         });
     if contact_agent_id.is_none() {
         if let Some(contact_id) = contact_id_from_metadata(session_metadata) {
-            if let Ok(contacts) =
-                memory_server_client::list_memory_contacts(effective_user_id.as_deref(), Some(500), 0)
-                    .await
+            if let Ok(contacts) = memory_server_client::list_memory_contacts(
+                effective_user_id.as_deref(),
+                Some(500),
+                0,
+            )
+            .await
             {
                 if let Some(contact) = contacts
                     .iter()
@@ -265,16 +268,18 @@ async fn stream_chat_v2(
     }
 
     let contact_runtime_context = match contact_agent_id.as_deref() {
-        Some(agent_id) => match memory_server_client::get_memory_agent_runtime_context(agent_id).await {
-            Ok(value) => value,
-            Err(err) => {
-                warn!(
+        Some(agent_id) => {
+            match memory_server_client::get_memory_agent_runtime_context(agent_id).await {
+                Ok(value) => value,
+                Err(err) => {
+                    warn!(
                     "load contact runtime context failed: session_id={} contact_agent_id={} detail={}",
                     session_id, agent_id, err
                 );
-                None
+                    None
+                }
             }
-        },
+        }
         None => None,
     };
     if contact_agent_id.is_some() && contact_runtime_context.is_none() {
@@ -298,14 +303,16 @@ async fn stream_chat_v2(
         selected_command
             .as_ref()
             .map(|command| {
-                vec![memory_server_client::TurnRuntimeSnapshotSelectedCommandDto {
-                    command_ref: Some(command.command_ref.clone()),
-                    name: Some(command.name.clone()),
-                    plugin_source: command.plugin_source.clone(),
-                    source_path: command.source_path.clone(),
-                    trigger: Some("explicit".to_string()),
-                    arguments: command.arguments.clone(),
-                }]
+                vec![
+                    memory_server_client::TurnRuntimeSnapshotSelectedCommandDto {
+                        command_ref: Some(command.command_ref.clone()),
+                        name: Some(command.name.clone()),
+                        plugin_source: command.plugin_source.clone(),
+                        source_path: command.source_path.clone(),
+                        trigger: Some("explicit".to_string()),
+                        arguments: command.arguments.clone(),
+                    },
+                ]
             })
             .unwrap_or_default(),
     ));
@@ -430,14 +437,16 @@ async fn stream_chat_v2(
         if !implicit_items.is_empty() {
             if let Ok(mut snapshot_items) = selected_commands_for_snapshot_on_tools_end.lock() {
                 for item in implicit_items {
-                    snapshot_items.push(memory_server_client::TurnRuntimeSnapshotSelectedCommandDto {
-                        command_ref: item.command_ref,
-                        name: item.name,
-                        plugin_source: item.plugin_source,
-                        source_path: item.source_path,
-                        trigger: Some("implicit".to_string()),
-                        arguments: None,
-                    });
+                    snapshot_items.push(
+                        memory_server_client::TurnRuntimeSnapshotSelectedCommandDto {
+                            command_ref: item.command_ref,
+                            name: item.name,
+                            plugin_source: item.plugin_source,
+                            source_path: item.source_path,
+                            trigger: Some("implicit".to_string()),
+                            arguments: None,
+                        },
+                    );
                 }
             }
         }
@@ -462,29 +471,29 @@ async fn stream_chat_v2(
             }
         });
     let user_message_id = Uuid::new_v4().to_string();
-    let resolved_turn_id = normalize_turn_id(req.turn_id.as_deref()).unwrap_or_else(|| {
-        user_message_id.clone()
-    });
+    let resolved_turn_id =
+        normalize_turn_id(req.turn_id.as_deref()).unwrap_or_else(|| user_message_id.clone());
     let running_selected_commands = selected_commands_for_snapshot
         .lock()
         .map(|items| items.clone())
         .unwrap_or_default();
-    let running_snapshot_payload = build_turn_runtime_snapshot_payload(BuildTurnRuntimeSnapshotInput {
-        user_message_id: Some(user_message_id.clone()),
-        status: "running",
-        base_system_prompt: base_system_prompt.as_deref(),
-        contact_system_prompt: contact_system_prompt.as_deref(),
-        memory_summary_prompt: memory_summary_prompt.as_deref(),
-        tools: &mcp_tool_metadata,
-        model: Some(model_runtime.model.as_str()),
-        provider: Some(model_runtime.provider.as_str()),
-        contact_agent_id: contact_agent_id.as_deref(),
-        project_id: resolved_project_id.as_deref(),
-        project_root: resolved_project_root.as_deref(),
-        mcp_enabled,
-        enabled_mcp_ids: &enabled_mcp_ids_for_snapshot,
-        selected_commands: running_selected_commands.as_slice(),
-    });
+    let running_snapshot_payload =
+        build_turn_runtime_snapshot_payload(BuildTurnRuntimeSnapshotInput {
+            user_message_id: Some(user_message_id.clone()),
+            status: "running",
+            base_system_prompt: base_system_prompt.as_deref(),
+            contact_system_prompt: contact_system_prompt.as_deref(),
+            memory_summary_prompt: memory_summary_prompt.as_deref(),
+            tools: &mcp_tool_metadata,
+            model: Some(model_runtime.model.as_str()),
+            provider: Some(model_runtime.provider.as_str()),
+            contact_agent_id: contact_agent_id.as_deref(),
+            project_id: resolved_project_id.as_deref(),
+            project_root: resolved_project_root.as_deref(),
+            mcp_enabled,
+            enabled_mcp_ids: &enabled_mcp_ids_for_snapshot,
+            selected_commands: running_selected_commands.as_slice(),
+        });
     if let Err(err) = memory_server_client::sync_turn_runtime_snapshot(
         &session_id,
         &resolved_turn_id,
@@ -529,7 +538,11 @@ async fn stream_chat_v2(
     let completed_snapshot_payload =
         build_turn_runtime_snapshot_payload(BuildTurnRuntimeSnapshotInput {
             user_message_id: running_snapshot_payload.user_message_id.clone(),
-            status: if result.is_ok() { "completed" } else { "failed" },
+            status: if result.is_ok() {
+                "completed"
+            } else {
+                "failed"
+            },
             base_system_prompt: base_system_prompt.as_deref(),
             contact_system_prompt: contact_system_prompt.as_deref(),
             memory_summary_prompt: memory_summary_prompt.as_deref(),

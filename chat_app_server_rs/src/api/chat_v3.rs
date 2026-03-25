@@ -20,8 +20,8 @@ use crate::core::chat_runtime::{
     compose_contact_command_system_prompt, compose_contact_system_prompt,
     contact_agent_id_from_metadata, contact_id_from_metadata, enabled_mcp_ids_from_metadata,
     mcp_enabled_from_metadata, normalize_id, parse_contact_command_invocation,
-    parse_implicit_command_selections_from_tools_end,
-    project_id_from_metadata, project_root_from_metadata, resolve_project_runtime,
+    parse_implicit_command_selections_from_tools_end, project_id_from_metadata,
+    project_root_from_metadata, resolve_project_runtime,
 };
 use crate::core::chat_stream::{
     build_v3_callbacks, handle_chat_result, send_error_event, send_start_event,
@@ -37,9 +37,11 @@ use crate::core::turn_runtime_snapshot::{
 use crate::core::user_scope::{ensure_and_set_user_id, resolve_user_id};
 use crate::services::ai_common::normalize_turn_id;
 use crate::services::memory_server_client;
+use crate::services::runtime_guidance_manager::{runtime_guidance_manager, EnqueueGuidanceError};
 use crate::services::user_settings::{apply_settings_to_ai_client, get_effective_user_settings};
 use crate::services::v3::ai_server::{AiServer, ChatOptions};
 use crate::services::v3::mcp_tool_execute::McpToolExecute;
+use crate::services::v3::message_manager::MessageManager;
 use crate::utils::abort_registry;
 use crate::utils::attachments;
 use crate::utils::log_helpers::{log_chat_begin, log_chat_cancelled, log_chat_error};
@@ -68,10 +70,18 @@ struct UserQuery {
     user_id: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct RuntimeGuidanceRequest {
+    session_id: Option<String>,
+    turn_id: Option<String>,
+    content: Option<String>,
+}
+
 pub fn router() -> Router {
     Router::new()
         .route("/api/agent_v3/chat/stream", post(agent_chat_stream))
         .route("/api/agent_v3/chat/stop", post(stop_chat))
+        .route("/api/agent_v3/chat/guide", post(submit_runtime_guidance))
         .route("/api/agent_v3/tools", get(agent_tools))
         .route("/api/agent_v3/status", get(agent_status))
         .route(
@@ -186,6 +196,115 @@ async fn stop_chat(Json(req): Json<Value>) -> (StatusCode, Json<Value>) {
     )
 }
 
+async fn submit_runtime_guidance(
+    _auth: AuthUser,
+    Json(req): Json<RuntimeGuidanceRequest>,
+) -> (StatusCode, Json<Value>) {
+    const CONTENT_MAX_LEN: usize = 1000;
+
+    let session_id = req
+        .session_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("");
+    let turn_id = normalize_turn_id(req.turn_id.as_deref()).unwrap_or_default();
+    let content = req
+        .content
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("");
+
+    if session_id.is_empty() || turn_id.is_empty() || content.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "success": false,
+                "error": "session_id / turn_id / content 不能为空",
+                "code": "invalid_runtime_guidance_payload",
+            })),
+        );
+    }
+    if content.chars().count() > CONTENT_MAX_LEN {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "success": false,
+                "error": format!("content 长度不能超过 {} 字符", CONTENT_MAX_LEN),
+                "code": "runtime_guidance_too_long",
+                "max_length": CONTENT_MAX_LEN,
+            })),
+        );
+    }
+    if abort_registry::is_aborted(session_id) {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({
+                "success": false,
+                "error": "当前轮次已停止，不再接收引导",
+                "code": "turn_not_running",
+            })),
+        );
+    }
+
+    let enqueue_result = runtime_guidance_manager().enqueue_guidance(session_id, &turn_id, content);
+    let guidance_item = match enqueue_result {
+        Ok(item) => item,
+        Err(EnqueueGuidanceError::TurnNotRunning) => {
+            return (
+                StatusCode::CONFLICT,
+                Json(json!({
+                    "success": false,
+                    "error": "当前轮次未运行或已结束",
+                    "code": "turn_not_running",
+                })),
+            );
+        }
+    };
+
+    let pending_count = runtime_guidance_manager().pending_count(session_id, &turn_id);
+    let guidance_id = guidance_item.guidance_id.clone();
+
+    let metadata = json!({
+        "conversation_turn_id": turn_id,
+        "hidden": true,
+        "runtime_guidance": {
+            "guidance_id": guidance_item.guidance_id,
+            "status": "queued",
+            "created_at": guidance_item.created_at,
+        }
+    });
+    let message_manager = MessageManager::new();
+    if let Err(err) = message_manager
+        .save_user_message(
+            session_id,
+            content,
+            Some(guidance_id.clone()),
+            Some("runtime_guidance".to_string()),
+            Some("runtime_guidance".to_string()),
+            Some(metadata),
+        )
+        .await
+    {
+        warn!(
+            "persist runtime guidance failed: session_id={} turn_id={} guidance_id={} detail={}",
+            session_id, turn_id, guidance_id, err
+        );
+    }
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "success": true,
+            "guidance_id": guidance_id,
+            "status": "queued",
+            "pending_count": pending_count,
+            "turn_id": turn_id,
+        })),
+    )
+}
+
 async fn stream_chat_v3(sender: SseSender, req: ChatRequest) {
     let session_id = req.session_id.clone().unwrap_or_default();
     let content = req.content.clone().unwrap_or_default();
@@ -240,9 +359,12 @@ async fn stream_chat_v3(sender: SseSender, req: ChatRequest) {
         });
     if contact_agent_id.is_none() {
         if let Some(contact_id) = contact_id_from_metadata(session_metadata) {
-            if let Ok(contacts) =
-                memory_server_client::list_memory_contacts(effective_user_id.as_deref(), Some(500), 0)
-                    .await
+            if let Ok(contacts) = memory_server_client::list_memory_contacts(
+                effective_user_id.as_deref(),
+                Some(500),
+                0,
+            )
+            .await
             {
                 if let Some(contact) = contacts
                     .iter()
@@ -261,16 +383,18 @@ async fn stream_chat_v3(sender: SseSender, req: ChatRequest) {
     }
 
     let contact_runtime_context = match contact_agent_id.as_deref() {
-        Some(agent_id) => match memory_server_client::get_memory_agent_runtime_context(agent_id).await {
-            Ok(value) => value,
-            Err(err) => {
-                warn!(
+        Some(agent_id) => {
+            match memory_server_client::get_memory_agent_runtime_context(agent_id).await {
+                Ok(value) => value,
+                Err(err) => {
+                    warn!(
                     "load contact runtime context failed: session_id={} contact_agent_id={} detail={}",
                     session_id, agent_id, err
                 );
-                None
+                    None
+                }
             }
-        },
+        }
         None => None,
     };
     if contact_agent_id.is_some() && contact_runtime_context.is_none() {
@@ -294,14 +418,16 @@ async fn stream_chat_v3(sender: SseSender, req: ChatRequest) {
         selected_command
             .as_ref()
             .map(|command| {
-                vec![memory_server_client::TurnRuntimeSnapshotSelectedCommandDto {
-                    command_ref: Some(command.command_ref.clone()),
-                    name: Some(command.name.clone()),
-                    plugin_source: command.plugin_source.clone(),
-                    source_path: command.source_path.clone(),
-                    trigger: Some("explicit".to_string()),
-                    arguments: command.arguments.clone(),
-                }]
+                vec![
+                    memory_server_client::TurnRuntimeSnapshotSelectedCommandDto {
+                        command_ref: Some(command.command_ref.clone()),
+                        name: Some(command.name.clone()),
+                        plugin_source: command.plugin_source.clone(),
+                        source_path: command.source_path.clone(),
+                        trigger: Some("explicit".to_string()),
+                        arguments: command.arguments.clone(),
+                    },
+                ]
             })
             .unwrap_or_default(),
     ));
@@ -442,14 +568,16 @@ async fn stream_chat_v3(sender: SseSender, req: ChatRequest) {
         if !implicit_items.is_empty() {
             if let Ok(mut snapshot_items) = selected_commands_for_snapshot_on_tools_end.lock() {
                 for item in implicit_items {
-                    snapshot_items.push(memory_server_client::TurnRuntimeSnapshotSelectedCommandDto {
-                        command_ref: item.command_ref,
-                        name: item.name,
-                        plugin_source: item.plugin_source,
-                        source_path: item.source_path,
-                        trigger: Some("implicit".to_string()),
-                        arguments: None,
-                    });
+                    snapshot_items.push(
+                        memory_server_client::TurnRuntimeSnapshotSelectedCommandDto {
+                            command_ref: item.command_ref,
+                            name: item.name,
+                            plugin_source: item.plugin_source,
+                            source_path: item.source_path,
+                            trigger: Some("implicit".to_string()),
+                            arguments: None,
+                        },
+                    );
                 }
             }
         }
@@ -474,29 +602,30 @@ async fn stream_chat_v3(sender: SseSender, req: ChatRequest) {
             }
         });
     let user_message_id = Uuid::new_v4().to_string();
-    let resolved_turn_id = normalize_turn_id(req.turn_id.as_deref()).unwrap_or_else(|| {
-        user_message_id.clone()
-    });
+    let resolved_turn_id =
+        normalize_turn_id(req.turn_id.as_deref()).unwrap_or_else(|| user_message_id.clone());
+    runtime_guidance_manager().register_active_turn(&session_id, &resolved_turn_id);
     let running_selected_commands = selected_commands_for_snapshot
         .lock()
         .map(|items| items.clone())
         .unwrap_or_default();
-    let running_snapshot_payload = build_turn_runtime_snapshot_payload(BuildTurnRuntimeSnapshotInput {
-        user_message_id: Some(user_message_id.clone()),
-        status: "running",
-        base_system_prompt: base_system_prompt.as_deref(),
-        contact_system_prompt: contact_system_prompt.as_deref(),
-        memory_summary_prompt: memory_summary_prompt.as_deref(),
-        tools: &mcp_tool_metadata,
-        model: Some(model_runtime.model.as_str()),
-        provider: Some(model_runtime.provider.as_str()),
-        contact_agent_id: contact_agent_id.as_deref(),
-        project_id: resolved_project_id.as_deref(),
-        project_root: resolved_project_root.as_deref(),
-        mcp_enabled,
-        enabled_mcp_ids: &enabled_mcp_ids_for_snapshot,
-        selected_commands: running_selected_commands.as_slice(),
-    });
+    let running_snapshot_payload =
+        build_turn_runtime_snapshot_payload(BuildTurnRuntimeSnapshotInput {
+            user_message_id: Some(user_message_id.clone()),
+            status: "running",
+            base_system_prompt: base_system_prompt.as_deref(),
+            contact_system_prompt: contact_system_prompt.as_deref(),
+            memory_summary_prompt: memory_summary_prompt.as_deref(),
+            tools: &mcp_tool_metadata,
+            model: Some(model_runtime.model.as_str()),
+            provider: Some(model_runtime.provider.as_str()),
+            contact_agent_id: contact_agent_id.as_deref(),
+            project_id: resolved_project_id.as_deref(),
+            project_root: resolved_project_root.as_deref(),
+            mcp_enabled,
+            enabled_mcp_ids: &enabled_mcp_ids_for_snapshot,
+            selected_commands: running_selected_commands.as_slice(),
+        });
     if let Err(err) = memory_server_client::sync_turn_runtime_snapshot(
         &session_id,
         &resolved_turn_id,
@@ -550,7 +679,11 @@ async fn stream_chat_v3(sender: SseSender, req: ChatRequest) {
     let completed_snapshot_payload =
         build_turn_runtime_snapshot_payload(BuildTurnRuntimeSnapshotInput {
             user_message_id: running_snapshot_payload.user_message_id.clone(),
-            status: if result.is_ok() { "completed" } else { "failed" },
+            status: if result.is_ok() {
+                "completed"
+            } else {
+                "failed"
+            },
             base_system_prompt: base_system_prompt.as_deref(),
             contact_system_prompt: contact_system_prompt.as_deref(),
             memory_summary_prompt: memory_summary_prompt.as_deref(),
@@ -589,4 +722,5 @@ async fn stream_chat_v3(sender: SseSender, req: ChatRequest) {
     if should_send_done {
         sender.send_done();
     }
+    runtime_guidance_manager().close_turn(&session_id, &resolved_turn_id);
 }

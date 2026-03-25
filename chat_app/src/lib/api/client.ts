@@ -21,6 +21,8 @@ import type {
   NotepadUpdatePayload,
   PagingOptions,
   RegisterPayload,
+  RuntimeGuidanceSubmitPayload,
+  RuntimeGuidanceSubmitResponse,
   RemoteConnectionDraftPayload,
   RemoteConnectionUpdatePayload,
   SessionPagingOptions,
@@ -619,6 +621,12 @@ class ApiClient {
       reasoningEnabled,
       options
     );
+  }
+
+  async submitRuntimeGuidance(
+    payload: RuntimeGuidanceSubmitPayload,
+  ): Promise<RuntimeGuidanceSubmitResponse> {
+    return streamApi.submitRuntimeGuidance(this.requestFn, payload);
   }
 
   async getTaskManagerTasks(

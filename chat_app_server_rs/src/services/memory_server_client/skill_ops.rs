@@ -8,9 +8,7 @@ pub async fn get_memory_skill(skill_id: &str) -> Result<Option<MemorySkillDto>, 
     send_optional_json(req).await
 }
 
-pub async fn get_memory_skill_plugin(
-    source: &str,
-) -> Result<Option<MemorySkillPluginDto>, String> {
+pub async fn get_memory_skill_plugin(source: &str) -> Result<Option<MemorySkillPluginDto>, String> {
     let normalized_source = source.trim();
     if normalized_source.is_empty() {
         return Ok(None);

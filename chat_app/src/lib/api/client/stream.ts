@@ -1,3 +1,7 @@
+import type {
+  RuntimeGuidanceSubmitPayload,
+  RuntimeGuidanceSubmitResponse,
+} from './types';
 import type { ApiRequestFn } from './workspace';
 
 export interface StreamApiContext {
@@ -106,6 +110,20 @@ export const stopChat = (
     method: 'POST',
     body: JSON.stringify({
       session_id: sessionId,
+    }),
+  });
+};
+
+export const submitRuntimeGuidance = (
+  request: ApiRequestFn,
+  payload: RuntimeGuidanceSubmitPayload,
+): Promise<RuntimeGuidanceSubmitResponse> => {
+  return request<RuntimeGuidanceSubmitResponse>('/agent_v3/chat/guide', {
+    method: 'POST',
+    body: JSON.stringify({
+      session_id: payload.sessionId,
+      turn_id: payload.turnId,
+      content: payload.content,
     }),
   });
 };

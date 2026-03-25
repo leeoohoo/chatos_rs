@@ -63,6 +63,7 @@ export function createSendMessageHandler({
     isStreaming: false,
     isStopping: false,
     streamingMessageId: null as string | null,
+    activeTurnId: null as string | null,
   };
 
   return async function sendMessage(
@@ -203,7 +204,22 @@ export function createSendMessageHandler({
         };
 
         const prev = state.sessionChatState[currentSessionId] || defaultSessionChatState;
-        state.sessionChatState[currentSessionId] = { ...prev, isLoading: true, isStreaming: true, isStopping: false };
+        state.sessionChatState[currentSessionId] = {
+          ...prev,
+          isLoading: true,
+          isStreaming: true,
+          isStopping: false,
+          activeTurnId: conversationTurnId,
+        };
+        if (!state.sessionRuntimeGuidanceState) {
+          state.sessionRuntimeGuidanceState = {};
+        }
+        state.sessionRuntimeGuidanceState[currentSessionId] = {
+          pendingCount: 0,
+          appliedCount: 0,
+          lastGuidanceAt: null,
+          lastAppliedAt: null,
+        };
         if (state.currentSessionId === currentSessionId) {
           state.isLoading = true;
           state.isStreaming = true;
@@ -235,6 +251,7 @@ export function createSendMessageHandler({
           isStreaming: true,
           isStopping: false,
           streamingMessageId: tempAssistantMessage.id,
+          activeTurnId: conversationTurnId,
         };
         if (!state.sessionStreamingMessageDrafts) {
           state.sessionStreamingMessageDrafts = {};
@@ -502,6 +519,62 @@ export function createSendMessageHandler({
                 persistStreamingMessageDraft(state, message);
               });
               sawMeaningfulStreamData = true;
+            } else if (parsed.type === 'runtime_guidance_queued') {
+              const data = (parsed && typeof parsed === 'object') ? parsed.data : null;
+              set((state: any) => {
+                if (!state.sessionRuntimeGuidanceState) {
+                  state.sessionRuntimeGuidanceState = {};
+                }
+                const prev = state.sessionRuntimeGuidanceState[currentSessionId] || {
+                  pendingCount: 0,
+                  appliedCount: 0,
+                  lastGuidanceAt: null,
+                  lastAppliedAt: null,
+                };
+                const pendingFromPayload = Number(
+                  (data && Number.isFinite(Number(data.pending_count)))
+                    ? Number(data.pending_count)
+                    : Number.NaN
+                );
+                state.sessionRuntimeGuidanceState[currentSessionId] = {
+                  ...prev,
+                  pendingCount: Number.isFinite(pendingFromPayload)
+                    ? Math.max(0, pendingFromPayload)
+                    : Math.max(0, Number(prev.pendingCount || 0) + 1),
+                  lastGuidanceAt: typeof parsed.timestamp === 'string' ? parsed.timestamp : prev.lastGuidanceAt,
+                };
+              });
+            } else if (parsed.type === 'runtime_guidance_applied') {
+              const data = (parsed && typeof parsed === 'object') ? parsed.data : null;
+              set((state: any) => {
+                if (!state.sessionRuntimeGuidanceState) {
+                  state.sessionRuntimeGuidanceState = {};
+                }
+                const prev = state.sessionRuntimeGuidanceState[currentSessionId] || {
+                  pendingCount: 0,
+                  appliedCount: 0,
+                  lastGuidanceAt: null,
+                  lastAppliedAt: null,
+                };
+                const pendingFromPayload = Number(
+                  (data && Number.isFinite(Number(data.pending_count)))
+                    ? Number(data.pending_count)
+                    : Number.NaN
+                );
+                const nextPending = Number.isFinite(pendingFromPayload)
+                  ? Math.max(0, pendingFromPayload)
+                  : Math.max(0, Number(prev.pendingCount || 0) - 1);
+                state.sessionRuntimeGuidanceState[currentSessionId] = {
+                  ...prev,
+                  pendingCount: nextPending,
+                  appliedCount: Math.max(0, Number(prev.appliedCount || 0) + 1),
+                  lastAppliedAt: (
+                    typeof data?.applied_at === 'string'
+                      ? data.applied_at
+                      : (typeof parsed.timestamp === 'string' ? parsed.timestamp : prev.lastAppliedAt)
+                  ),
+                };
+              });
             } else if (parsed.type === 'error') {
               const streamError = resolveStreamErrorPayload(parsed);
               throw new Error(
@@ -608,7 +681,21 @@ export function createSendMessageHandler({
           }
 
           const prev = state.sessionChatState[currentSessionId] || defaultSessionChatState;
-          state.sessionChatState[currentSessionId] = { ...prev, isLoading: false, isStreaming: false, isStopping: false, streamingMessageId: null };
+          state.sessionChatState[currentSessionId] = {
+            ...prev,
+            isLoading: false,
+            isStreaming: false,
+            isStopping: false,
+            streamingMessageId: null,
+            activeTurnId: null,
+          };
+          if (!state.sessionRuntimeGuidanceState) {
+            state.sessionRuntimeGuidanceState = {};
+          }
+          const runtimeGuidanceState = state.sessionRuntimeGuidanceState[currentSessionId];
+          if (runtimeGuidanceState) {
+            runtimeGuidanceState.pendingCount = 0;
+          }
           if (state.currentSessionId === currentSessionId) {
             state.isLoading = false;
             state.isStreaming = false;
@@ -672,7 +759,21 @@ export function createSendMessageHandler({
         }
 
         const prev = state.sessionChatState[currentSessionId] || defaultSessionChatState;
-        state.sessionChatState[currentSessionId] = { ...prev, isLoading: false, isStreaming: false, isStopping: false, streamingMessageId: null };
+        state.sessionChatState[currentSessionId] = {
+          ...prev,
+          isLoading: false,
+          isStreaming: false,
+          isStopping: false,
+          streamingMessageId: null,
+          activeTurnId: null,
+        };
+        if (!state.sessionRuntimeGuidanceState) {
+          state.sessionRuntimeGuidanceState = {};
+        }
+        const runtimeGuidanceState = state.sessionRuntimeGuidanceState[currentSessionId];
+        if (runtimeGuidanceState) {
+          runtimeGuidanceState.pendingCount = 0;
+        }
         if (state.currentSessionId === currentSessionId) {
           state.isLoading = false;
           state.isStreaming = false;

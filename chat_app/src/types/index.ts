@@ -366,6 +366,7 @@ export interface InputAreaProps {
       enabledMcpIds?: string[];
     },
   ) => void;
+  onGuide?: (content: string) => void | Promise<void>;
   onStop?: () => void;
   disabled?: boolean;
   isStreaming?: boolean;
