@@ -52,15 +52,19 @@ fn completion_failed_error_uses_finish_reason_and_preview() {
 
 #[test]
 fn build_assistant_message_metadata_skips_empty_fields() {
-    assert!(build_assistant_message_metadata(None, None, None).is_none());
-    assert!(build_assistant_message_metadata(None, Some("   "), None).is_none());
+    assert!(build_assistant_message_metadata(None, None, None, None).is_none());
+    assert!(build_assistant_message_metadata(None, Some("   "), None, None).is_none());
 }
 
 #[test]
 fn build_assistant_message_metadata_keeps_response_id_and_tool_calls() {
     let tool_calls = serde_json::json!([{"id": "call_1"}]);
-    let metadata =
-        build_assistant_message_metadata(Some(&tool_calls), Some("resp_123"), Some("turn_123"));
+    let metadata = build_assistant_message_metadata(
+        Some(&tool_calls),
+        Some("resp_123"),
+        Some("turn_123"),
+        Some("completed"),
+    );
 
     assert_eq!(
         metadata
@@ -82,6 +86,13 @@ fn build_assistant_message_metadata_keeps_response_id_and_tool_calls() {
             .and_then(|value| value.get("conversation_turn_id"))
             .and_then(|value| value.as_str()),
         Some("turn_123")
+    );
+    assert_eq!(
+        metadata
+            .as_ref()
+            .and_then(|value| value.get("response_status"))
+            .and_then(|value| value.as_str()),
+        Some("completed")
     );
 }
 

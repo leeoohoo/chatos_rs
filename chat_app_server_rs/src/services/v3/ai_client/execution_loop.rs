@@ -79,6 +79,8 @@ impl AiClient {
             None
         };
         let mut runtime_guidance_items: Vec<Value> = Vec::new();
+        let mut non_terminal_empty_retry_count = 0usize;
+        let max_non_terminal_empty_retries = 3usize;
 
         loop {
             if let Some(sid) = session_id.as_ref() {
@@ -308,12 +310,82 @@ impl AiClient {
             }
 
             let tool_calls = ai_response.tool_calls.clone();
-            if tool_calls
+            let has_tool_calls = tool_calls
                 .as_ref()
                 .and_then(|v| v.as_array())
                 .map(|a| a.is_empty())
-                .unwrap_or(true)
-            {
+                .map(|is_empty| !is_empty)
+                .unwrap_or(false);
+            if !has_tool_calls {
+                let finish_reason = ai_response.finish_reason.as_deref();
+                let has_content = !ai_response.content.trim().is_empty();
+                let has_reasoning = ai_response
+                    .reasoning
+                    .as_deref()
+                    .map(|value| !value.trim().is_empty())
+                    .unwrap_or(false);
+                if is_non_terminal_finish_reason(finish_reason) && !has_content && !has_reasoning {
+                    non_terminal_empty_retry_count += 1;
+                    let response_id_for_log = ai_response
+                        .response_id
+                        .as_deref()
+                        .unwrap_or("none")
+                        .to_string();
+                    warn!(
+                        "[AI_V3] non-terminal empty response detected: session_id={}, turn_id={}, finish_reason={}, response_id={}, iteration={}, retry={}/{}",
+                        session_id.as_deref().unwrap_or("n/a"),
+                        turn_id.as_deref().unwrap_or("n/a"),
+                        finish_reason.unwrap_or("none"),
+                        response_id_for_log,
+                        iteration,
+                        non_terminal_empty_retry_count,
+                        max_non_terminal_empty_retries,
+                    );
+
+                    if non_terminal_empty_retry_count > max_non_terminal_empty_retries {
+                        return Err(format!(
+                            "AI 响应未完成（finish_reason={}）且未返回内容，重试 {} 次后仍未恢复",
+                            finish_reason.unwrap_or("unknown"),
+                            max_non_terminal_empty_retries
+                        ));
+                    }
+
+                    if use_prev_id {
+                        warn!(
+                            "[AI_V3] disable previous_response_id after non-terminal empty response: session_id={}",
+                            session_id.as_deref().unwrap_or("n/a")
+                        );
+                        if let Some(sid) = session_id.as_ref() {
+                            self.prev_response_id_disabled_sessions.insert(sid.clone());
+                        }
+                        can_use_prev_id = false;
+                        use_prev_id = false;
+                        previous_response_id = None;
+                        let stateless = if let Some(items) = stateless_context_items.clone() {
+                            items
+                        } else {
+                            self.build_stateless_from_raw_input(
+                                session_id.as_ref(),
+                                &raw_input,
+                                force_text_content,
+                                adaptive_history_limit,
+                                stable_prefix_mode,
+                                include_tool_items,
+                                effective_prefixed_input_items.as_slice(),
+                            )
+                            .await
+                        };
+                        if !stateless.is_empty() {
+                            stateless_context_items = Some(stateless.clone());
+                            input = Value::Array(stateless);
+                        }
+                    }
+
+                    let backoff_ms = 200_u64 * non_terminal_empty_retry_count as u64;
+                    sleep(Duration::from_millis(backoff_ms)).await;
+                    iteration += 1;
+                    continue;
+                }
                 return Ok(json!({
                     "success": true,
                     "content": ai_response.content,
@@ -507,4 +579,15 @@ fn prepend_input_items(input: &Value, prefixed_items: &[Value], force_text_conte
     let mut merged = prefixed_items.to_vec();
     merged.extend(build_current_input_items(input, force_text_content));
     Value::Array(merged)
+}
+
+fn is_non_terminal_finish_reason(finish_reason: Option<&str>) -> bool {
+    let normalized = finish_reason
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_ascii_lowercase());
+    matches!(
+        normalized.as_deref(),
+        Some("in_progress") | Some("queued") | Some("pending") | Some("incomplete")
+    )
 }

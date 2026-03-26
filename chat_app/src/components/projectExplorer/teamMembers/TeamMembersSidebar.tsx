@@ -18,11 +18,14 @@ interface TeamMembersSidebarProps {
   switchingContactId: string | null;
   summaryPaneSessionId: string | null;
   openingSummaryContactId: string | null;
+  runtimeContextSessionId: string | null;
+  openingRuntimeContextContactId: string | null;
   removingContactId: string | null;
   sessionChatState?: SessionChatStateMap;
   onOpenAddMember: () => void;
   onSelectContact: (contactId: string) => void;
   onOpenSummary: (contact: ContactItem) => void;
+  onOpenRuntimeContext: (contact: ContactItem) => void;
   onRemoveMember: (contact: ContactItem) => void;
 }
 
@@ -36,11 +39,14 @@ const TeamMembersSidebar: React.FC<TeamMembersSidebarProps> = ({
   switchingContactId,
   summaryPaneSessionId,
   openingSummaryContactId,
+  runtimeContextSessionId,
+  openingRuntimeContextContactId,
   removingContactId,
   sessionChatState,
   onOpenAddMember,
   onSelectContact,
   onOpenSummary,
+  onOpenRuntimeContext,
   onRemoveMember,
 }) => {
   return (
@@ -116,6 +122,22 @@ const TeamMembersSidebar: React.FC<TeamMembersSidebarProps> = ({
                       {openingSummaryContactId === contact.id
                         ? '加载中'
                         : (summaryPaneSessionId && session?.id === summaryPaneSessionId ? '关闭总结' : '总结')}
+                    </button>
+                    <button
+                      type="button"
+                      className={cn(
+                        'px-1.5 py-0.5 text-[11px] rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent',
+                        runtimeContextSessionId && session?.id === runtimeContextSessionId && 'text-blue-600 border-blue-200',
+                      )}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onOpenRuntimeContext(contact);
+                      }}
+                      disabled={openingRuntimeContextContactId === contact.id}
+                    >
+                      {openingRuntimeContextContactId === contact.id
+                        ? '加载中'
+                        : (runtimeContextSessionId && session?.id === runtimeContextSessionId ? '关闭上下文' : '上下文')}
                     </button>
                     <button
                       type="button"

@@ -151,6 +151,38 @@ impl AiRequestHandler {
     }
 }
 
+pub(super) fn is_non_terminal_response_status(status: Option<&str>) -> bool {
+    let normalized = status
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_ascii_lowercase());
+    matches!(
+        normalized.as_deref(),
+        Some("in_progress") | Some("queued") | Some("pending") | Some("incomplete")
+    )
+}
+
+pub(super) fn should_persist_assistant_message(
+    content: &str,
+    reasoning: Option<&str>,
+    tool_calls: Option<&Value>,
+    finish_reason: Option<&str>,
+) -> bool {
+    let has_content = !content.trim().is_empty();
+    let has_reasoning = reasoning
+        .map(str::trim)
+        .map(|value| !value.is_empty())
+        .unwrap_or(false);
+    let has_tool_calls = tool_calls
+        .and_then(|value| value.as_array())
+        .map(|items| !items.is_empty())
+        .unwrap_or(false);
+    if has_content || has_reasoning || has_tool_calls {
+        return true;
+    }
+    !is_non_terminal_response_status(finish_reason)
+}
+
 fn build_request_payload(
     input: Value,
     model: String,

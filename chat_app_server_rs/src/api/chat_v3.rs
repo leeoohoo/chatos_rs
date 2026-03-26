@@ -75,6 +75,16 @@ struct RuntimeGuidanceRequest {
     session_id: Option<String>,
     turn_id: Option<String>,
     content: Option<String>,
+    project_id: Option<String>,
+}
+
+fn normalize_project_scope_id(value: Option<&str>) -> String {
+    let trimmed = value.unwrap_or_default().trim();
+    if trimmed.is_empty() {
+        "0".to_string()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 pub fn router() -> Router {
@@ -197,7 +207,7 @@ async fn stop_chat(Json(req): Json<Value>) -> (StatusCode, Json<Value>) {
 }
 
 async fn submit_runtime_guidance(
-    _auth: AuthUser,
+    auth: AuthUser,
     Json(req): Json<RuntimeGuidanceRequest>,
 ) -> (StatusCode, Json<Value>) {
     const CONTENT_MAX_LEN: usize = 1000;
@@ -215,6 +225,12 @@ async fn submit_runtime_guidance(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .unwrap_or("");
+    let requested_project_id = req
+        .project_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
 
     if session_id.is_empty() || turn_id.is_empty() || content.is_empty() {
         return (
@@ -237,6 +253,70 @@ async fn submit_runtime_guidance(
             })),
         );
     }
+
+    let auth_user_id = match resolve_user_id(None, &auth) {
+        Ok(user_id) => user_id,
+        Err(err) => return err,
+    };
+    let target_session = match memory_server_client::get_session_by_id(session_id).await {
+        Ok(Some(session)) => session,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({
+                    "success": false,
+                    "error": "会话不存在",
+                    "code": "session_not_found",
+                })),
+            );
+        }
+        Err(err) => {
+            warn!(
+                "runtime guidance session lookup failed: session_id={} detail={}",
+                session_id, err
+            );
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({
+                    "success": false,
+                    "error": "查询会话失败",
+                    "code": "session_lookup_failed",
+                })),
+            );
+        }
+    };
+    let session_user_id = target_session.user_id.as_deref().unwrap_or_default().trim();
+    if session_user_id.is_empty() || session_user_id != auth_user_id {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({
+                "success": false,
+                "error": "会话不属于当前用户",
+                "code": "user_scope_forbidden",
+            })),
+        );
+    }
+    if let Some(requested_project_id) = requested_project_id.as_deref() {
+        let session_project_id = target_session
+            .project_id
+            .clone()
+            .or_else(|| project_id_from_metadata(target_session.metadata.as_ref()));
+        let requested_scope = normalize_project_scope_id(Some(requested_project_id));
+        let session_scope = normalize_project_scope_id(session_project_id.as_deref());
+        if requested_scope != session_scope {
+            return (
+                StatusCode::CONFLICT,
+                Json(json!({
+                    "success": false,
+                    "error": "会话项目不匹配，已阻止跨项目引导",
+                    "code": "project_scope_mismatch",
+                    "session_project_id": session_scope,
+                    "requested_project_id": requested_scope,
+                })),
+            );
+        }
+    }
+
     if abort_registry::is_aborted(session_id) {
         return (
             StatusCode::CONFLICT,

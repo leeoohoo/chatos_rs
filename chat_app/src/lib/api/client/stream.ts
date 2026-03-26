@@ -124,6 +124,7 @@ export const submitRuntimeGuidance = (
       session_id: payload.sessionId,
       turn_id: payload.turnId,
       content: payload.content,
+      project_id: payload.projectId,
     }),
   });
 };

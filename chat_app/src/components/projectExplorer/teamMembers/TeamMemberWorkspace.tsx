@@ -45,6 +45,7 @@ interface TeamMemberWorkspaceProps {
       enabledMcpIds?: string[];
     },
   ) => void | Promise<void>;
+  onGuide: (content: string) => void | Promise<void>;
   onStop: () => void;
   onModelChange: (modelId: string | null) => void;
   onReasoningToggle: (enabled: boolean) => void;
@@ -81,6 +82,7 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
   onCloseSummary,
   onDeleteSummary,
   onSend,
+  onGuide,
   onStop,
   onModelChange,
   onReasoningToggle,
@@ -141,8 +143,9 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
     {selectedContact && (
       <InputArea
         onSend={onSend}
+        onGuide={onGuide}
         onStop={onStop}
-        disabled={!isSelectedSessionActive || chatIsLoading || chatIsStreaming || chatIsStopping}
+        disabled={!isSelectedSessionActive || chatIsStopping}
         isStreaming={chatIsStreaming}
         isStopping={chatIsStopping}
         placeholder={`给 ${selectedContact.name} 发送消息...`}

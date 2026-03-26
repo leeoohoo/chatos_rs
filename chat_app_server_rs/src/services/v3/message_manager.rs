@@ -164,6 +164,36 @@ impl MessageManager {
                 }
             }
 
+            let response_status = message
+                .metadata
+                .as_ref()
+                .and_then(extract_response_status_from_metadata);
+            if is_non_terminal_response_status(response_status) {
+                info!(
+                    "[AI_V3][prev-id] skip assistant with non-terminal response status: session_id={}, message_id={}, status={}",
+                    session_id,
+                    message.id,
+                    response_status.unwrap_or("unknown")
+                );
+                continue;
+            }
+
+            let has_content = !message.content.trim().is_empty();
+            let has_reasoning = message
+                .reasoning
+                .as_deref()
+                .map(str::trim)
+                .map(|value| !value.is_empty())
+                .unwrap_or(false);
+            if !has_content && !has_reasoning {
+                info!(
+                    "[AI_V3][prev-id] skip assistant without reusable payload: session_id={}, message_id={}",
+                    session_id,
+                    message.id
+                );
+                continue;
+            }
+
             if let Some(metadata) = &message.metadata {
                 if let Some(response_id) =
                     metadata.get("response_id").and_then(|value| value.as_str())
@@ -196,4 +226,25 @@ impl MessageManager {
         );
         None
     }
+}
+
+fn extract_response_status_from_metadata(metadata: &Value) -> Option<&str> {
+    metadata
+        .get("response_status")
+        .or_else(|| metadata.get("responseStatus"))
+        .or_else(|| metadata.get("finish_reason"))
+        .or_else(|| metadata.get("finishReason"))
+        .or_else(|| metadata.get("status"))
+        .and_then(|value| value.as_str())
+}
+
+fn is_non_terminal_response_status(status: Option<&str>) -> bool {
+    let normalized = status
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_ascii_lowercase());
+    matches!(
+        normalized.as_deref(),
+        Some("in_progress") | Some("queued") | Some("pending") | Some("incomplete")
+    )
 }

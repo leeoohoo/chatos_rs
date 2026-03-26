@@ -289,6 +289,7 @@ export interface ChatActions {
   submitRuntimeGuidance: (content: string, options: {
     sessionId: string;
     turnId: string;
+    projectId?: string | null;
   }) => Promise<{
     success: boolean;
     guidanceId?: string;

@@ -11,7 +11,7 @@ use super::parser::{
     apply_stream_event, collect_stream_tool_calls, extract_output_text,
     extract_reasoning_from_response, extract_tool_calls, StreamState,
 };
-use super::{AiRequestHandler, AiResponse, StreamCallbacks};
+use super::{should_persist_assistant_message, AiRequestHandler, AiResponse, StreamCallbacks};
 
 impl AiRequestHandler {
     pub(super) async fn handle_stream_request(
@@ -133,12 +133,19 @@ impl AiRequestHandler {
                 response_val.get("error").cloned().filter(|v| !v.is_null());
         }
 
-        if persist_messages {
+        let should_persist = should_persist_assistant_message(
+            content.as_str(),
+            reasoning_opt.as_deref(),
+            tool_calls.as_ref(),
+            stream_state.finish_reason.as_deref(),
+        );
+        if persist_messages && should_persist {
             if let Some(session_id) = session_id.clone() {
                 let meta_val = build_assistant_message_metadata(
                     tool_calls.as_ref(),
                     stream_state.response_id.as_deref(),
                     turn_id.as_deref(),
+                    stream_state.finish_reason.as_deref(),
                 );
                 if let Err(err) = self
                     .message_manager
@@ -160,6 +167,14 @@ impl AiRequestHandler {
                     );
                 }
             }
+        } else if persist_messages {
+            info!(
+                "[AI_V3] skip assistant message persistence due to non-terminal empty stream response: session_id={}, turn_id={}, response_id={}, finish_reason={}",
+                session_id.clone().unwrap_or_else(|| "n/a".to_string()),
+                turn_id.clone().unwrap_or_else(|| "n/a".to_string()),
+                stream_state.response_id.as_deref().unwrap_or("none"),
+                stream_state.finish_reason.as_deref().unwrap_or("none")
+            );
         }
 
         Ok(AiResponse {

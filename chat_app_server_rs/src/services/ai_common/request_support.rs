@@ -200,6 +200,7 @@ pub(crate) fn build_assistant_message_metadata(
     tool_calls: Option<&Value>,
     response_id: Option<&str>,
     turn_id: Option<&str>,
+    response_status: Option<&str>,
 ) -> Option<Value> {
     let mut map = serde_json::Map::new();
 
@@ -211,6 +212,12 @@ pub(crate) fn build_assistant_message_metadata(
     }
     if let Some(id) = response_id.map(str::trim).filter(|value| !value.is_empty()) {
         map.insert("response_id".to_string(), Value::String(id.to_string()));
+    }
+    if let Some(status) = response_status.map(str::trim).filter(|value| !value.is_empty()) {
+        map.insert(
+            "response_status".to_string(),
+            Value::String(status.to_string()),
+        );
     }
     if let Some(tool_calls) = tool_calls {
         map.insert("toolCalls".to_string(), tool_calls.clone());

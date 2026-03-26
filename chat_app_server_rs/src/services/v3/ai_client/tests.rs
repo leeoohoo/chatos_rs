@@ -805,3 +805,65 @@ async fn retries_stream_parse_failure_and_then_succeeds() {
     let requests = captured.lock().await.clone();
     assert_eq!(requests.len(), 2);
 }
+
+#[tokio::test]
+async fn retries_non_terminal_empty_stream_response_and_falls_back_from_prev_id() {
+    let first_stream_events = vec![json!({
+        "type": "response.completed",
+        "response": {
+            "id": "resp_non_terminal_empty",
+            "status": "in_progress"
+        }
+    })];
+    let second_stream_events = vec![json!({
+        "type": "response.completed",
+        "response": {
+            "id": "resp_non_terminal_done",
+            "status": "completed",
+            "output_text": "non terminal recovery success"
+        }
+    })];
+    let steps = vec![
+        MockProviderStep::sse(first_stream_events),
+        MockProviderStep::sse(second_stream_events),
+    ];
+    let (base_url, captured, server) = start_mock_provider(steps).await;
+    let mut client = build_test_client(base_url);
+
+    let callbacks = chunk_callbacks();
+
+    let result = run_process_with_tools(
+        &mut client,
+        RunProcessWithToolsArgs {
+            previous_response_id: Some("prev_resp_non_terminal_seed".to_string()),
+            callbacks,
+            purpose: "chat",
+            use_prev_id: true,
+            can_use_prev_id: true,
+            stable_prefix_mode: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("should recover from non-terminal empty response");
+    server.abort();
+
+    assert_eq!(
+        result.get("content").and_then(|value| value.as_str()),
+        Some("non terminal recovery success")
+    );
+
+    let requests = captured.lock().await.clone();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        requests[0]
+            .get("previous_response_id")
+            .and_then(|value| value.as_str()),
+        Some("prev_resp_non_terminal_seed")
+    );
+    assert!(requests[1].get("previous_response_id").is_none());
+    assert!(requests[1]
+        .get("input")
+        .map(|value| value.is_array())
+        .unwrap_or(false));
+}

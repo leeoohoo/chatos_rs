@@ -114,6 +114,30 @@ export const useContactSessionResolver = ({
     return `${contactId}::${resolveProjectId(projectId)}`;
   }, [resolveProjectId]);
 
+  const findSessionInStoreById = useCallback((sessionId: string): Session | null => {
+    const targetId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!targetId) {
+      return null;
+    }
+    const matched = (sessions || []).find((session) => {
+      const id = typeof session?.id === 'string' ? session.id.trim() : '';
+      return id === targetId;
+    });
+    return matched || null;
+  }, [sessions]);
+
+  const isSessionIdStillMatched = useCallback((
+    sessionId: string,
+    contact: ContactSessionEntity,
+    projectId?: string | null,
+  ): boolean => {
+    const matchedSession = findSessionInStoreById(sessionId);
+    if (!matchedSession) {
+      return false;
+    }
+    return isSessionMatchedContactAndProject(matchedSession, contact, resolveProjectId(projectId));
+  }, [findSessionInStoreById, resolveProjectId]);
+
   const findExistingSessionIdInStore = useCallback((
     contact: ContactSessionEntity,
     projectId?: string | null,
@@ -210,7 +234,11 @@ export const useContactSessionResolver = ({
 
     const cachedSessionId = sessionCacheRef.current[cacheKey];
     if (cachedSessionId && cachedSessionId.trim()) {
-      return cachedSessionId.trim();
+      const normalizedCached = cachedSessionId.trim();
+      if (isSessionIdStillMatched(normalizedCached, contact, normalizedProjectId)) {
+        return normalizedCached;
+      }
+      delete sessionCacheRef.current[cacheKey];
     }
 
     const localSessionId = findExistingSessionIdInStore(contact, normalizedProjectId);
@@ -222,6 +250,7 @@ export const useContactSessionResolver = ({
   }, [
     currentSession,
     findExistingSessionIdInStore,
+    isSessionIdStillMatched,
     resolveCacheKey,
     resolveProjectId,
   ]);
@@ -253,7 +282,11 @@ export const useContactSessionResolver = ({
 
     const cachedSessionId = sessionCacheRef.current[cacheKey];
     if (cachedSessionId && cachedSessionId.trim()) {
-      return cachedSessionId.trim();
+      const normalizedCached = cachedSessionId.trim();
+      if (isSessionIdStillMatched(normalizedCached, contact, normalizedProjectId)) {
+        return normalizedCached;
+      }
+      delete sessionCacheRef.current[cacheKey];
     }
 
     const runtimeSessionId = resolveDisplayRuntimeSessionId(contact, { projectId: normalizedProjectId });
@@ -292,6 +325,7 @@ export const useContactSessionResolver = ({
   }, [
     createSession,
     findExistingSessionIdFromApi,
+    isSessionIdStillMatched,
     resolveCacheKey,
     resolveDisplayRuntimeSessionId,
     resolveProjectId,

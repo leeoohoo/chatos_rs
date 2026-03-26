@@ -380,6 +380,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
   const handleRuntimeGuidanceSend = useCallback(async (content: string) => {
     const sessionId = currentSession?.id;
+    const projectId = (currentSession as any)?.projectId || (currentSession as any)?.project_id || null;
     const turnId = (
       currentChatState?.activeTurnId
       || activeConversationTurnId
@@ -389,13 +390,14 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       return;
     }
     try {
-      await submitRuntimeGuidance(content, { sessionId, turnId });
+      await submitRuntimeGuidance(content, { sessionId, turnId, projectId });
     } catch (error) {
       console.error('Failed to submit runtime guidance:', error);
     }
   }, [
     activeConversationTurnId,
     currentChatState?.activeTurnId,
+    currentSession,
     currentSession?.id,
     submitRuntimeGuidance,
   ]);

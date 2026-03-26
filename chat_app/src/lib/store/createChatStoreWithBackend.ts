@@ -115,11 +115,14 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                     sendMessage: createSendMessageHandler({ set, get, client, getUserIdParam }),
                     submitRuntimeGuidance: async (
                       content: string,
-                      options: { sessionId: string; turnId: string },
+                      options: { sessionId: string; turnId: string; projectId?: string | null },
                     ) => {
                       const sessionId = String(options?.sessionId || '').trim();
                       const turnId = String(options?.turnId || '').trim();
                       const trimmedContent = String(content || '').trim();
+                      const projectId = typeof options?.projectId === 'string'
+                        ? options.projectId.trim()
+                        : '';
                       if (!sessionId || !turnId || !trimmedContent) {
                         throw new Error('缺少运行时引导参数');
                       }
@@ -162,6 +165,7 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                           sessionId,
                           turnId,
                           content: trimmedContent,
+                          projectId: projectId || undefined,
                         });
                         set((state: any) => {
                           if (!state.sessionRuntimeGuidanceState) {

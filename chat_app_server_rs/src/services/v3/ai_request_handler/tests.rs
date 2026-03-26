@@ -2,7 +2,10 @@ use serde_json::json;
 
 use crate::services::ai_common::validate_request_payload_size;
 
-use super::{build_request_payload, REQUEST_BODY_LIMIT_ENV};
+use super::{
+    build_request_payload, is_non_terminal_response_status, should_persist_assistant_message,
+    REQUEST_BODY_LIMIT_ENV,
+};
 
 #[test]
 fn payload_precheck_accepts_small_payload() {
@@ -48,4 +51,34 @@ fn build_request_payload_includes_request_cwd_when_present() {
         payload.get("stream").and_then(|value| value.as_bool()),
         Some(true)
     );
+}
+
+#[test]
+fn marks_non_terminal_statuses() {
+    assert!(is_non_terminal_response_status(Some("in_progress")));
+    assert!(is_non_terminal_response_status(Some("queued")));
+    assert!(!is_non_terminal_response_status(Some("completed")));
+    assert!(!is_non_terminal_response_status(None));
+}
+
+#[test]
+fn skips_persist_for_non_terminal_empty_response() {
+    assert!(!should_persist_assistant_message(
+        "",
+        None,
+        None,
+        Some("in_progress"),
+    ));
+    assert!(should_persist_assistant_message(
+        "hello",
+        None,
+        None,
+        Some("in_progress"),
+    ));
+    assert!(should_persist_assistant_message(
+        "",
+        Some("thought"),
+        None,
+        Some("in_progress"),
+    ));
 }

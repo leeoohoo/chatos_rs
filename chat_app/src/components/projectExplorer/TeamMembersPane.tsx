@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { shallow } from 'zustand/shallow';
 
 import { ProjectContactPickerModal } from '../sessionList/ProjectContactPickerModal';
@@ -6,9 +6,11 @@ import { apiClient as globalApiClient } from '../../lib/api/client';
 import { useChatApiClientFromContext, useChatStoreSelector } from '../../lib/store/ChatStoreContext';
 import { cn } from '../../lib/utils';
 import type { Project, Session } from '../../types';
+import type { TurnRuntimeSnapshotLookupResponse } from '../../lib/api/client/types';
 import {
   findLatestMatchedSession,
   normalizeProjectScopeId,
+  resolveSessionProjectScopeId,
   resolveSessionTimestamp,
 } from '../../features/contactSession/sessionResolver';
 import { useContactSessionResolver } from '../../features/contactSession/useContactSessionResolver';
@@ -20,6 +22,7 @@ import type {
   ContactItem,
   ProjectContactRow,
 } from './teamMembers/types';
+import TurnRuntimeContextDrawer from '../chatInterface/TurnRuntimeContextDrawer';
 import TeamMembersSidebar from './teamMembers/TeamMembersSidebar';
 import TeamMemberWorkspace from './teamMembers/TeamMemberWorkspace';
 import { useTeamMemberConversation } from './teamMembers/useTeamMemberConversation';
@@ -51,6 +54,7 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
     setSelectedModel,
     chatConfig,
     updateChatConfig,
+    submitRuntimeGuidance,
   } = useChatStoreSelector((state) => ({
     currentSession: state.currentSession,
     sessions: state.sessions,
@@ -71,12 +75,20 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
     setSelectedModel: state.setSelectedModel,
     chatConfig: state.chatConfig,
     updateChatConfig: state.updateChatConfig,
+    submitRuntimeGuidance: state.submitRuntimeGuidance,
   }), shallow);
   const apiClientFromContext = useChatApiClientFromContext();
   const apiClient = useMemo(
     () => apiClientFromContext || globalApiClient,
     [apiClientFromContext],
   );
+  const [runtimeContextOpen, setRuntimeContextOpen] = useState(false);
+  const [runtimeContextSessionId, setRuntimeContextSessionId] = useState<string | null>(null);
+  const [runtimeContextData, setRuntimeContextData] =
+    useState<TurnRuntimeSnapshotLookupResponse | null>(null);
+  const [runtimeContextLoading, setRuntimeContextLoading] = useState(false);
+  const [runtimeContextError, setRuntimeContextError] = useState<string | null>(null);
+  const [openingRuntimeContextContactId, setOpeningRuntimeContextContactId] = useState<string | null>(null);
 
   const normalizedProjectId = normalizeProjectScopeId(project?.id || null);
   const normalizedContacts = useMemo<ContactItem[]>(() => (
@@ -250,7 +262,93 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
     }
   }, [confirmAddMemberFromManager, handleSelectContact]);
 
+  const loadLatestRuntimeContext = useCallback(async (sessionId: string) => {
+    if (!sessionId) {
+      return;
+    }
+    setRuntimeContextLoading(true);
+    setRuntimeContextError(null);
+    try {
+      const payload = await apiClient.getSessionLatestTurnRuntimeContext(sessionId);
+      setRuntimeContextData(payload);
+    } catch (error) {
+      console.error('Failed to load turn runtime context in team pane:', error);
+      setRuntimeContextError(error instanceof Error ? error.message : '加载上下文失败');
+    } finally {
+      setRuntimeContextLoading(false);
+    }
+  }, [apiClient]);
+
+  const handleOpenRuntimeContext = useCallback(async (contact: ContactItem) => {
+    setOpeningRuntimeContextContactId(contact.id);
+    setSelectedContactId(contact.id);
+    try {
+      const sessionId = await ensureContactSession(contact);
+      if (!sessionId) {
+        return;
+      }
+      const targetSession = (sessions || []).find((item) => item.id === sessionId) || null;
+      if (targetSession && resolveSessionProjectScopeId(targetSession) !== normalizedProjectId) {
+        setRuntimeContextError('检测到跨项目会话，已阻止加载上下文');
+        setRuntimeContextOpen(false);
+        return;
+      }
+      if (runtimeContextOpen && runtimeContextSessionId === sessionId) {
+        setRuntimeContextOpen(false);
+        return;
+      }
+      setRuntimeContextOpen(true);
+      setRuntimeContextSessionId(sessionId);
+      setRuntimeContextData(null);
+      await loadLatestRuntimeContext(sessionId);
+    } finally {
+      setOpeningRuntimeContextContactId((prev) => (prev === contact.id ? null : prev));
+    }
+  }, [
+    ensureContactSession,
+    loadLatestRuntimeContext,
+    normalizedProjectId,
+    runtimeContextOpen,
+    runtimeContextSessionId,
+    sessions,
+    setSelectedContactId,
+  ]);
+
+  const handleRefreshRuntimeContext = useCallback(() => {
+    if (!runtimeContextSessionId) {
+      return;
+    }
+    void loadLatestRuntimeContext(runtimeContextSessionId);
+  }, [loadLatestRuntimeContext, runtimeContextSessionId]);
+
+  const handleRuntimeGuidanceSend = useCallback(async (content: string) => {
+    if (!selectedProjectSession) {
+      return;
+    }
+    if (resolveSessionProjectScopeId(selectedProjectSession) !== normalizedProjectId) {
+      console.warn('Blocked runtime guidance for cross-project session in team pane.');
+      return;
+    }
+    const sessionId = selectedProjectSession.id;
+    const turnId = String(sessionChatState?.[sessionId]?.activeTurnId || '').trim();
+    if (!sessionId || !turnId) {
+      return;
+    }
+    try {
+      await submitRuntimeGuidance(content, { sessionId, turnId, projectId: normalizedProjectId });
+    } catch (error) {
+      console.error('Failed to submit runtime guidance in team pane:', error);
+    }
+  }, [
+    normalizedProjectId,
+    selectedProjectSession?.id,
+    selectedProjectSession,
+    sessionChatState,
+    submitRuntimeGuidance,
+  ]);
+
   const handleRemoveMember = useCallback(async (contact: ContactItem) => {
+    const targetSessionId = projectContacts.find((item) => item.contact.id === contact.id)?.session?.id || null;
     const removed = await removeMemberFromManager(contact);
     if (!removed) {
       return;
@@ -260,7 +358,16 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
       setSummaryPaneSessionId(null);
       resetSummaryState();
     }
-  }, [removeMemberFromManager, resetSummaryState, selectedContactId]);
+    if (targetSessionId && runtimeContextSessionId === targetSessionId) {
+      setRuntimeContextOpen(false);
+    }
+  }, [
+    projectContacts,
+    removeMemberFromManager,
+    resetSummaryState,
+    runtimeContextSessionId,
+    selectedContactId,
+  ]);
 
   if (!project) {
     return (
@@ -282,11 +389,14 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
         switchingContactId={switchingContactId}
         summaryPaneSessionId={summaryPaneSessionId}
         openingSummaryContactId={openingSummaryContactId}
+        runtimeContextSessionId={runtimeContextOpen ? runtimeContextSessionId : null}
+        openingRuntimeContextContactId={openingRuntimeContextContactId}
         removingContactId={removingContactId}
         sessionChatState={sessionChatState}
         onOpenAddMember={() => { void handleOpenAddMember(); }}
         onSelectContact={(contactId) => { void handleSelectContact(contactId); }}
         onOpenSummary={(contact) => { void handleOpenSummary(contact); }}
+        onOpenRuntimeContext={(contact) => { void handleOpenRuntimeContext(contact); }}
         onRemoveMember={(contact) => { void handleRemoveMember(contact); }}
       />
 
@@ -324,11 +434,21 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
         onCloseSummary={() => setSummaryPaneSessionId(null)}
         onDeleteSummary={(summaryId) => { void handleDeleteSummary(summaryId); }}
         onSend={handleSendMessage}
+        onGuide={handleRuntimeGuidanceSend}
         onStop={abortCurrentConversation}
         onModelChange={setSelectedModel}
         onReasoningToggle={(enabled) => updateChatConfig({ reasoningEnabled: enabled })}
         onMcpEnabledChange={handleComposerMcpEnabledChange}
         onEnabledMcpIdsChange={handleComposerEnabledMcpIdsChange}
+      />
+      <TurnRuntimeContextDrawer
+        open={runtimeContextOpen}
+        sessionId={runtimeContextSessionId}
+        loading={runtimeContextLoading}
+        error={runtimeContextError}
+        data={runtimeContextData}
+        onRefresh={handleRefreshRuntimeContext}
+        onClose={() => setRuntimeContextOpen(false)}
       />
       <ProjectContactPickerModal
         isOpen={memberPickerOpen}

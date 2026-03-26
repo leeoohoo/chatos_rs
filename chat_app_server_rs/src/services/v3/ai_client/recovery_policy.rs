@@ -7,7 +7,7 @@ use serde_json::Value;
 use super::{build_current_input_items, AiClient};
 
 impl AiClient {
-    async fn build_stateless_from_raw_input(
+    pub(in crate::services::v3::ai_client) async fn build_stateless_from_raw_input(
         &self,
         session_id: Option<&String>,
         raw_input: &Value,

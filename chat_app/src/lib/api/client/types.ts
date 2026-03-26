@@ -189,6 +189,7 @@ export interface RuntimeGuidanceSubmitPayload {
   sessionId: string;
   turnId: string;
   content: string;
+  projectId?: string | null;
 }
 
 export interface RuntimeGuidanceSubmitResponse {

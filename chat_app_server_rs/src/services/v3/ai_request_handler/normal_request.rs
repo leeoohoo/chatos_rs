@@ -7,7 +7,7 @@ use crate::services::ai_common::{
 };
 
 use super::parser::{extract_output_text, extract_tool_calls};
-use super::{AiRequestHandler, AiResponse};
+use super::{should_persist_assistant_message, AiRequestHandler, AiResponse};
 
 impl AiRequestHandler {
     pub(super) async fn handle_normal_request(
@@ -70,12 +70,19 @@ impl AiRequestHandler {
                 .unwrap_or(0)
         );
 
-        if persist_messages {
+        let should_persist = should_persist_assistant_message(
+            content.as_str(),
+            None,
+            tool_calls.as_ref(),
+            finish_reason.as_deref(),
+        );
+        if persist_messages && should_persist {
             if let Some(session_id) = session_id.clone() {
                 let meta_val = build_assistant_message_metadata(
                     tool_calls.as_ref(),
                     response_id.as_deref(),
                     turn_id.as_deref(),
+                    finish_reason.as_deref(),
                 );
                 let reasoning = None;
                 if let Err(err) = self
@@ -98,6 +105,14 @@ impl AiRequestHandler {
                     );
                 }
             }
+        } else if persist_messages {
+            info!(
+                "[AI_V3] skip assistant message persistence due to non-terminal empty response: session_id={}, turn_id={}, response_id={}, finish_reason={}",
+                session_id.clone().unwrap_or_else(|| "n/a".to_string()),
+                turn_id.clone().unwrap_or_else(|| "n/a".to_string()),
+                response_id.as_deref().unwrap_or("none"),
+                finish_reason.as_deref().unwrap_or("none")
+            );
         }
 
         Ok(AiResponse {
