@@ -167,23 +167,6 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )"#,
-        r#"CREATE TABLE IF NOT EXISTS agents (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            ai_model_config_id TEXT NOT NULL,
-            system_context_id TEXT,
-            description TEXT,
-            user_id TEXT,
-            mcp_config_ids TEXT,
-            callable_agent_ids TEXT,
-            project_id TEXT,
-            workspace_dir TEXT,
-            enabled INTEGER DEFAULT 1,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (ai_model_config_id) REFERENCES ai_model_configs(id),
-            FOREIGN KEY (system_context_id) REFERENCES system_contexts(id)
-        )"#,
         r#"CREATE TABLE IF NOT EXISTS applications (
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
@@ -261,14 +244,6 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
             FOREIGN KEY (system_context_id) REFERENCES system_contexts(id) ON DELETE CASCADE,
             FOREIGN KEY (application_id) REFERENCES applications(id) ON DELETE CASCADE
         )"#,
-        r#"CREATE TABLE IF NOT EXISTS agent_applications (
-            id TEXT PRIMARY KEY,
-            agent_id TEXT NOT NULL,
-            application_id TEXT NOT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE,
-            FOREIGN KEY (application_id) REFERENCES applications(id) ON DELETE CASCADE
-        )"#,
         r#"CREATE TABLE IF NOT EXISTS session_mcp_servers (
             id TEXT PRIMARY KEY,
             session_id TEXT NOT NULL,
@@ -282,60 +257,6 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
             user_id TEXT PRIMARY KEY,
             settings TEXT,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )"#,
-        r#"CREATE TABLE IF NOT EXISTS sub_agent_runs (
-            id TEXT PRIMARY KEY,
-            status TEXT NOT NULL,
-            task TEXT NOT NULL,
-            agent_id TEXT,
-            command_id TEXT,
-            payload_json TEXT,
-            result_json TEXT,
-            error TEXT,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            session_id TEXT NOT NULL,
-            run_id TEXT NOT NULL
-        )"#,
-        r#"CREATE TABLE IF NOT EXISTS sub_agent_run_events (
-            id TEXT PRIMARY KEY,
-            job_id TEXT NOT NULL,
-            event_type TEXT NOT NULL,
-            payload_json TEXT,
-            created_at TEXT NOT NULL,
-            session_id TEXT NOT NULL,
-            run_id TEXT NOT NULL,
-            FOREIGN KEY (job_id) REFERENCES sub_agent_runs(id) ON DELETE CASCADE
-        )"#,
-        r#"CREATE TABLE IF NOT EXISTS sub_agent_run_messages (
-            id TEXT PRIMARY KEY,
-            run_id TEXT NOT NULL,
-            role TEXT NOT NULL,
-            content TEXT NOT NULL,
-            tool_call_id TEXT,
-            reasoning TEXT,
-            metadata TEXT,
-            summary_status TEXT NOT NULL DEFAULT 'pending',
-            summary_id TEXT,
-            summarized_at TEXT,
-            created_at TEXT NOT NULL,
-            FOREIGN KEY (run_id) REFERENCES sub_agent_runs(id) ON DELETE CASCADE
-        )"#,
-        r#"CREATE TABLE IF NOT EXISTS sub_agent_run_summaries (
-            id TEXT PRIMARY KEY,
-            run_id TEXT NOT NULL,
-            summary_text TEXT NOT NULL,
-            summary_model TEXT NOT NULL,
-            trigger_type TEXT NOT NULL,
-            source_start_message_id TEXT,
-            source_end_message_id TEXT,
-            source_message_count INTEGER NOT NULL DEFAULT 0,
-            source_estimated_tokens INTEGER NOT NULL DEFAULT 0,
-            status TEXT NOT NULL DEFAULT 'done',
-            error_message TEXT,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            FOREIGN KEY (run_id) REFERENCES sub_agent_runs(id) ON DELETE CASCADE
         )"#,
     ];
 
@@ -372,22 +293,10 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
     )
     .await
     .ok();
-    ensure_column(pool, "agents", "mcp_config_ids", "TEXT")
-        .await
-        .ok();
-    ensure_column(pool, "agents", "callable_agent_ids", "TEXT")
-        .await
-        .ok();
-    ensure_column(pool, "agents", "project_id", "TEXT")
-        .await
-        .ok();
     ensure_column(pool, "sessions", "status", "TEXT NOT NULL DEFAULT 'active'")
         .await
         .ok();
     ensure_column(pool, "sessions", "archived_at", "TEXT")
-        .await
-        .ok();
-    ensure_column(pool, "agents", "workspace_dir", "TEXT")
         .await
         .ok();
     ensure_column(pool, "terminals", "project_id", "TEXT")
@@ -440,8 +349,6 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
         "CREATE INDEX IF NOT EXISTS idx_mcp_configs_enabled ON mcp_configs(enabled)",
         "CREATE INDEX IF NOT EXISTS idx_ai_model_configs_user_id ON ai_model_configs(user_id)",
         "CREATE INDEX IF NOT EXISTS idx_system_contexts_user_id ON system_contexts(user_id)",
-        "CREATE INDEX IF NOT EXISTS idx_agents_user_id ON agents(user_id)",
-        "CREATE INDEX IF NOT EXISTS idx_agents_project_id ON agents(project_id)",
         "CREATE INDEX IF NOT EXISTS idx_applications_user_id ON applications(user_id)",
         "CREATE INDEX IF NOT EXISTS idx_projects_user_id ON projects(user_id)",
         "CREATE INDEX IF NOT EXISTS idx_terminals_user_id ON terminals(user_id)",
@@ -456,15 +363,6 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
         "CREATE INDEX IF NOT EXISTS idx_mcp_config_profiles_mcp_config_id ON mcp_config_profiles(mcp_config_id)",
         "CREATE INDEX IF NOT EXISTS idx_mcp_config_applications_mcp_config_id ON mcp_config_applications(mcp_config_id)",
         "CREATE INDEX IF NOT EXISTS idx_system_context_applications_context_id ON system_context_applications(system_context_id)",
-        "CREATE INDEX IF NOT EXISTS idx_agent_applications_agent_id ON agent_applications(agent_id)",
-        "CREATE INDEX IF NOT EXISTS idx_sub_agent_runs_session_id ON sub_agent_runs(session_id)",
-        "CREATE INDEX IF NOT EXISTS idx_sub_agent_runs_status_updated_at ON sub_agent_runs(status, updated_at)",
-        "CREATE INDEX IF NOT EXISTS idx_sub_agent_runs_run_id ON sub_agent_runs(run_id)",
-        "CREATE INDEX IF NOT EXISTS idx_sub_agent_run_events_job_id_created_at ON sub_agent_run_events(job_id, created_at)",
-        "CREATE INDEX IF NOT EXISTS idx_sub_agent_run_messages_run_id_created_at ON sub_agent_run_messages(run_id, created_at)",
-        "CREATE INDEX IF NOT EXISTS idx_sub_agent_run_messages_run_summary_status_created_at ON sub_agent_run_messages(run_id, summary_status, created_at)",
-        "CREATE INDEX IF NOT EXISTS idx_sub_agent_run_summaries_run_created_at ON sub_agent_run_summaries(run_id, created_at)",
-        "CREATE INDEX IF NOT EXISTS idx_sub_agent_run_summaries_run_status_created_at ON sub_agent_run_summaries(run_id, status, created_at)",
     ];
     for sql in indexes {
         let _ = sqlx::query(sql).execute(pool).await;

@@ -10,13 +10,13 @@ impl AiClient {
     pub(super) async fn maybe_refresh_stateless_context(
         &self,
         session_id: Option<&str>,
-        sub_agent_run_id: Option<&str>,
         stable_prefix_mode: bool,
         use_prev_id: bool,
         raw_input: &Value,
         force_text_content: bool,
         history_limit: i64,
         include_tool_items: bool,
+        prefixed_input_items: &[Value],
         stateless_context_items: &mut Option<Vec<Value>>,
         input: &mut Value,
     ) {
@@ -24,7 +24,7 @@ impl AiClient {
             return;
         }
 
-        if session_id.is_none() && sub_agent_run_id.is_none() {
+        if session_id.is_none() {
             return;
         }
 
@@ -35,9 +35,9 @@ impl AiClient {
                 history_limit,
                 stable_prefix_mode,
                 force_text_content,
+                prefixed_input_items,
                 &current_items,
                 include_tool_items,
-                sub_agent_run_id.map(|value| value.to_string()),
             )
             .await;
         let previous_len = stateless_context_items
@@ -66,9 +66,9 @@ impl AiClient {
         history_limit: i64,
         stable_prefix_mode: bool,
         force_text: bool,
+        prefixed_input_items: &[Value],
         current_input_items: &[Value],
         include_tool_items: bool,
-        sub_agent_run_id: Option<String>,
     ) -> Vec<Value> {
         let mut items = Vec::new();
         let memory_summary_count;
@@ -76,11 +76,7 @@ impl AiClient {
         let mut memory_summary_used = false;
         let mut tool_call_ids: HashSet<String> = HashSet::new();
         let mut tool_output_ids: HashSet<String> = HashSet::new();
-        let context_data = if let Some(run_id) = sub_agent_run_id.as_ref() {
-            self.message_manager
-                .get_memory_sub_agent_run_history_context(run_id, 2)
-                .await
-        } else if let Some(sid) = session_id.as_ref() {
+        let context_data = if let Some(sid) = session_id.as_ref() {
             self.message_manager
                 .get_memory_chat_history_context(sid, 2)
                 .await
@@ -91,6 +87,9 @@ impl AiClient {
         let use_full_pending_history = stable_prefix_mode && history_limit >= self.history_limit;
         let (merged_summary, merged_summary_count, mut pending_history) = context_data;
         memory_summary_count = merged_summary_count;
+        if !prefixed_input_items.is_empty() {
+            items.extend(prefixed_input_items.iter().cloned());
+        }
         if let Some(summary_text) = merged_summary {
             memory_summary_used = true;
             items.push(to_message_item(

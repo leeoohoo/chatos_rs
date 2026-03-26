@@ -30,15 +30,19 @@ pub const NOTEPAD_DISPLAY_NAME: &str = "Notepad (Builtin)";
 pub const NOTEPAD_SERVER_NAME: &str = "notepad";
 pub const NOTEPAD_COMMAND: &str = "builtin:notepad";
 
-pub const SUB_AGENT_ROUTER_MCP_ID: &str = "builtin_sub_agent_router";
-pub const SUB_AGENT_ROUTER_DISPLAY_NAME: &str = "Sub-Agent Router (Builtin)";
-pub const SUB_AGENT_ROUTER_SERVER_NAME: &str = "sub_agent_router";
-pub const SUB_AGENT_ROUTER_COMMAND: &str = "builtin:sub_agent_router";
+pub const AGENT_BUILDER_MCP_ID: &str = "builtin_agent_builder";
+pub const AGENT_BUILDER_DISPLAY_NAME: &str = "Agent Builder (Builtin)";
+pub const AGENT_BUILDER_SERVER_NAME: &str = "agent_builder";
+pub const AGENT_BUILDER_COMMAND: &str = "builtin:agent_builder";
 
 pub const UI_PROMPTER_MCP_ID: &str = "builtin_ui_prompter";
 pub const UI_PROMPTER_DISPLAY_NAME: &str = "UI Prompter (Builtin)";
 pub const UI_PROMPTER_SERVER_NAME: &str = "ui_prompter";
 pub const UI_PROMPTER_COMMAND: &str = "builtin:ui_prompter";
+
+pub const MEMORY_SKILL_READER_SERVER_NAME: &str = "memory_skill_reader";
+pub const MEMORY_COMMAND_READER_SERVER_NAME: &str = "memory_command_reader";
+pub const MEMORY_PLUGIN_READER_SERVER_NAME: &str = "memory_plugin_reader";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuiltinMcpKind {
@@ -47,8 +51,11 @@ pub enum BuiltinMcpKind {
     TerminalController,
     TaskManager,
     Notepad,
-    SubAgentRouter,
+    AgentBuilder,
     UiPrompter,
+    MemorySkillReader,
+    MemoryCommandReader,
+    MemoryPluginReader,
 }
 
 pub fn builtin_kind_by_id(id: &str) -> Option<BuiltinMcpKind> {
@@ -60,7 +67,7 @@ pub fn builtin_kind_by_id(id: &str) -> Option<BuiltinMcpKind> {
         TERMINAL_CONTROLLER_MCP_ID => Some(BuiltinMcpKind::TerminalController),
         TASK_MANAGER_MCP_ID => Some(BuiltinMcpKind::TaskManager),
         NOTEPAD_MCP_ID => Some(BuiltinMcpKind::Notepad),
-        SUB_AGENT_ROUTER_MCP_ID => Some(BuiltinMcpKind::SubAgentRouter),
+        AGENT_BUILDER_MCP_ID => Some(BuiltinMcpKind::AgentBuilder),
         UI_PROMPTER_MCP_ID => Some(BuiltinMcpKind::UiPrompter),
         _ => None,
     }
@@ -75,7 +82,7 @@ pub fn builtin_kind_by_command(command: &str) -> Option<BuiltinMcpKind> {
         TERMINAL_CONTROLLER_COMMAND => Some(BuiltinMcpKind::TerminalController),
         TASK_MANAGER_COMMAND => Some(BuiltinMcpKind::TaskManager),
         NOTEPAD_COMMAND => Some(BuiltinMcpKind::Notepad),
-        SUB_AGENT_ROUTER_COMMAND => Some(BuiltinMcpKind::SubAgentRouter),
+        AGENT_BUILDER_COMMAND => Some(BuiltinMcpKind::AgentBuilder),
         UI_PROMPTER_COMMAND => Some(BuiltinMcpKind::UiPrompter),
         _ => None,
     }
@@ -90,11 +97,12 @@ pub fn get_builtin_mcp_config(id: &str) -> Option<McpConfig> {
         CODE_MAINTAINER_READ_MCP_ID => Some(code_maintainer_read_config()),
         CODE_MAINTAINER_WRITE_MCP_ID => Some(code_maintainer_write_config()),
         LEGACY_CODE_MAINTAINER_MCP_ID => Some(legacy_code_maintainer_write_config()),
+        AGENT_BUILDER_MCP_ID => Some(agent_builder_config()),
         _ => match builtin_kind_by_id(id) {
             Some(BuiltinMcpKind::TerminalController) => Some(terminal_controller_config()),
             Some(BuiltinMcpKind::TaskManager) => Some(task_manager_config()),
             Some(BuiltinMcpKind::Notepad) => Some(notepad_config()),
-            Some(BuiltinMcpKind::SubAgentRouter) => Some(sub_agent_router_config()),
+            Some(BuiltinMcpKind::AgentBuilder) => Some(agent_builder_config()),
             Some(BuiltinMcpKind::UiPrompter) => Some(ui_prompter_config()),
             _ => None,
         },
@@ -108,7 +116,7 @@ pub fn list_builtin_mcp_configs() -> Vec<McpConfig> {
         terminal_controller_config(),
         task_manager_config(),
         notepad_config(),
-        sub_agent_router_config(),
+        agent_builder_config(),
         ui_prompter_config(),
     ]
 }
@@ -122,7 +130,7 @@ pub fn builtin_display_name(id: &str) -> Option<&'static str> {
         TERMINAL_CONTROLLER_MCP_ID => Some(TERMINAL_CONTROLLER_DISPLAY_NAME),
         TASK_MANAGER_MCP_ID => Some(TASK_MANAGER_DISPLAY_NAME),
         NOTEPAD_MCP_ID => Some(NOTEPAD_DISPLAY_NAME),
-        SUB_AGENT_ROUTER_MCP_ID => Some(SUB_AGENT_ROUTER_DISPLAY_NAME),
+        AGENT_BUILDER_MCP_ID => Some(AGENT_BUILDER_DISPLAY_NAME),
         UI_PROMPTER_MCP_ID => Some(UI_PROMPTER_DISPLAY_NAME),
         _ => None,
     }
@@ -230,14 +238,14 @@ fn notepad_config() -> McpConfig {
     }
 }
 
-fn sub_agent_router_config() -> McpConfig {
+fn agent_builder_config() -> McpConfig {
     let now = crate::core::time::now_rfc3339();
     McpConfig {
-        id: SUB_AGENT_ROUTER_MCP_ID.to_string(),
-        name: SUB_AGENT_ROUTER_SERVER_NAME.to_string(),
-        command: SUB_AGENT_ROUTER_COMMAND.to_string(),
+        id: AGENT_BUILDER_MCP_ID.to_string(),
+        name: AGENT_BUILDER_SERVER_NAME.to_string(),
+        command: AGENT_BUILDER_COMMAND.to_string(),
         r#type: "stdio".to_string(),
-        args: Some(json!(["--name", SUB_AGENT_ROUTER_SERVER_NAME])),
+        args: Some(json!(["--name", AGENT_BUILDER_SERVER_NAME])),
         env: None,
         cwd: None,
         user_id: None,

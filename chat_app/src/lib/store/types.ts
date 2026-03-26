@@ -79,11 +79,67 @@ export interface SessionAiSelection {
   selectedAgentId: string | null;
 }
 
+export interface SessionCreatePayload {
+  title?: string;
+  contactAgentId?: string | null;
+  contactId?: string | null;
+  selectedModelId?: string | null;
+  projectId?: string | null;
+  projectRoot?: string | null;
+  mcpEnabled?: boolean;
+  enabledMcpIds?: string[];
+}
+
+export interface SendMessageRuntimeOptions {
+  contactAgentId?: string | null;
+  contactId?: string | null;
+  projectId?: string | null;
+  projectRoot?: string | null;
+  workspaceRoot?: string | null;
+  mcpEnabled?: boolean;
+  enabledMcpIds?: string[];
+}
+
+export interface SessionSelectOptions {
+  keepActivePanel?: boolean;
+}
+
+export interface SessionCreateOptions {
+  keepActivePanel?: boolean;
+}
+
 export interface SessionChatState {
   isLoading: boolean;
   isStreaming: boolean;
   isStopping: boolean;
   streamingMessageId: string | null;
+  activeTurnId: string | null;
+}
+
+export interface SessionRuntimeGuidanceState {
+  pendingCount: number;
+  appliedCount: number;
+  lastGuidanceAt: string | null;
+  lastAppliedAt: string | null;
+  items: RuntimeGuidanceItem[];
+}
+
+export interface RuntimeGuidanceItem {
+  guidanceId: string;
+  turnId: string | null;
+  content: string;
+  status: 'queued' | 'applied' | 'dropped';
+  createdAt: string;
+  appliedAt: string | null;
+}
+
+export interface ContactRecord {
+  id: string;
+  agentId: string;
+  name: string;
+  status: string;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface ChatState {
@@ -91,6 +147,7 @@ export interface ChatState {
   sessions: Session[];
   currentSessionId: string | null;
   currentSession: Session | null;
+  contacts: ContactRecord[];
 
   // 项目相关
   projects: Project[];
@@ -115,6 +172,7 @@ export interface ChatState {
   streamingMessageId: string | null;
   hasMoreMessages: boolean;
   sessionChatState: Record<string, SessionChatState>;
+  sessionRuntimeGuidanceState: Record<string, SessionRuntimeGuidanceState>;
   sessionStreamingMessageDrafts: Record<string, Message | null>;
   sessionTurnProcessState: Record<string, Record<string, { expanded: boolean; loaded: boolean; loading: boolean }>>;
   sessionTurnProcessCache: Record<string, Record<string, Message[]>>;
@@ -146,10 +204,19 @@ export interface ChatState {
 }
 
 export interface ChatActions {
+  // 联系人操作
+  loadContacts: () => Promise<ContactRecord[]>;
+  createContact: (agentId: string, agentNameSnapshot?: string) => Promise<ContactRecord>;
+  deleteContact: (contactId: string) => Promise<void>;
+  getContactByAgentId: (agentId: string) => ContactRecord | null;
+
   // 会话操作
   loadSessions: (options?: { limit?: number; offset?: number; append?: boolean; silent?: boolean }) => Promise<Session[]>;
-  createSession: (title?: string) => Promise<string>;
-  selectSession: (sessionId: string) => Promise<void>;
+  createSession: (
+    payload?: string | SessionCreatePayload,
+    options?: SessionCreateOptions,
+  ) => Promise<string>;
+  selectSession: (sessionId: string, options?: SessionSelectOptions) => Promise<void>;
   updateSession: (sessionId: string, updates: Partial<Session>) => Promise<void>;
   deleteSession: (sessionId: string) => Promise<void>;
 
@@ -214,7 +281,22 @@ export interface ChatActions {
     userMessageId: string,
     options?: { forceExpand?: boolean; forceCollapse?: boolean }
   ) => Promise<void>;
-  sendMessage: (content: string, attachments?: any[]) => Promise<void>;
+  sendMessage: (
+    content: string,
+    attachments?: any[],
+    runtimeOptions?: SendMessageRuntimeOptions,
+  ) => Promise<void>;
+  submitRuntimeGuidance: (content: string, options: {
+    sessionId: string;
+    turnId: string;
+    projectId?: string | null;
+  }) => Promise<{
+    success: boolean;
+    guidanceId?: string;
+    status?: 'queued' | 'applied' | 'dropped';
+    pendingCount?: number;
+    turnId?: string;
+  }>;
   updateMessage: (messageId: string, updates: Partial<Message>) => Promise<void>;
   deleteMessage: (messageId: string) => Promise<void>;
 

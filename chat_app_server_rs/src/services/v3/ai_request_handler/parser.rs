@@ -1,9 +1,13 @@
+use std::collections::BTreeMap;
+
 use serde_json::{json, Value};
 
 #[derive(Debug, Default)]
 pub(super) struct StreamState {
     pub full_content: String,
     pub reasoning: String,
+    pub tool_calls_map: BTreeMap<usize, Value>,
+    pub tool_call_index_map: BTreeMap<String, usize>,
     pub usage: Option<Value>,
     pub response_obj: Option<Value>,
     pub response_id: Option<String>,
@@ -66,6 +70,201 @@ pub(super) fn extract_tool_calls(response: &Value) -> Option<Value> {
         None
     } else {
         Some(Value::Array(tool_calls))
+    }
+}
+
+pub(super) fn collect_stream_tool_calls(tool_calls_map: &BTreeMap<usize, Value>) -> Option<Value> {
+    if tool_calls_map.is_empty() {
+        None
+    } else {
+        Some(Value::Array(tool_calls_map.values().cloned().collect()))
+    }
+}
+
+fn ensure_tool_call_entry<'a>(
+    tool_calls_map: &'a mut BTreeMap<usize, Value>,
+    index: usize,
+    id: Option<&str>,
+    call_id: Option<&str>,
+) -> &'a mut Value {
+    let entry = tool_calls_map
+        .entry(index)
+        .or_insert(json!({"id":"","type":"function","function":{"name":"","arguments":""}}));
+
+    let resolved_id = call_id
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| id.filter(|value| !value.trim().is_empty()));
+    if let Some(value) = resolved_id {
+        entry["id"] = Value::String(value.to_string());
+    }
+    entry
+}
+
+fn remember_tool_call_index(
+    index_map: &mut BTreeMap<String, usize>,
+    index: usize,
+    id: Option<&str>,
+    call_id: Option<&str>,
+) {
+    if let Some(value) = id {
+        let key = value.trim();
+        if !key.is_empty() {
+            index_map.insert(key.to_string(), index);
+        }
+    }
+    if let Some(value) = call_id {
+        let key = value.trim();
+        if !key.is_empty() {
+            index_map.insert(key.to_string(), index);
+        }
+    }
+}
+
+fn resolve_tool_call_index(
+    event: &Value,
+    item: Option<&Value>,
+    index_map: &BTreeMap<String, usize>,
+) -> Option<usize> {
+    let event_index = event
+        .get("output_index")
+        .and_then(|value| value.as_u64())
+        .map(|value| value as usize);
+    if event_index.is_some() {
+        return event_index;
+    }
+
+    let item_index = item
+        .and_then(|inner| inner.get("output_index"))
+        .and_then(|value| value.as_u64())
+        .map(|value| value as usize);
+    if item_index.is_some() {
+        return item_index;
+    }
+
+    let event_item_id = event
+        .get("item_id")
+        .or_else(|| event.get("id"))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if let Some(value) = event_item_id {
+        if let Some(index) = index_map.get(value) {
+            return Some(*index);
+        }
+    }
+
+    let event_call_id = event
+        .get("call_id")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if let Some(value) = event_call_id {
+        if let Some(index) = index_map.get(value) {
+            return Some(*index);
+        }
+    }
+
+    let item_id = item
+        .and_then(|inner| inner.get("id"))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if let Some(value) = item_id {
+        if let Some(index) = index_map.get(value) {
+            return Some(*index);
+        }
+    }
+
+    let item_call_id = item
+        .and_then(|inner| inner.get("call_id"))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if let Some(value) = item_call_id {
+        if let Some(index) = index_map.get(value) {
+            return Some(*index);
+        }
+    }
+
+    None
+}
+
+fn merge_tool_call_name(entry: &mut Value, name: &str) {
+    if name.trim().is_empty() {
+        return;
+    }
+    let current = entry["function"]["name"].as_str().unwrap_or("").to_string();
+    entry["function"]["name"] = Value::String(join_stream_text(current.as_str(), name));
+}
+
+fn merge_tool_call_arguments(entry: &mut Value, arguments_piece: &str) {
+    if arguments_piece.is_empty() {
+        return;
+    }
+    let current = entry["function"]["arguments"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
+    entry["function"]["arguments"] =
+        Value::String(join_stream_text(current.as_str(), arguments_piece));
+}
+
+fn ingest_tool_call_item(
+    state: &mut StreamState,
+    event: &Value,
+    item: &Value,
+    extra_arguments_piece: Option<&str>,
+) {
+    let item_type = item
+        .get("type")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    if item_type != "function_call" {
+        return;
+    }
+
+    let item_id = item
+        .get("id")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let call_id = item
+        .get("call_id")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let index = resolve_tool_call_index(event, Some(item), &state.tool_call_index_map)
+        .unwrap_or_else(|| state.tool_calls_map.len());
+    remember_tool_call_index(&mut state.tool_call_index_map, index, item_id, call_id);
+
+    let entry = ensure_tool_call_entry(&mut state.tool_calls_map, index, item_id, call_id);
+    if let Some(name) = item.get("name").and_then(|value| value.as_str()) {
+        merge_tool_call_name(entry, name);
+    }
+    if let Some(arguments_piece) = item.get("arguments").map(|value| {
+        value
+            .as_str()
+            .map(|raw| raw.to_string())
+            .unwrap_or_else(|| value.to_string())
+    }) {
+        merge_tool_call_arguments(entry, arguments_piece.as_str());
+    }
+    if let Some(arguments_piece) = extra_arguments_piece {
+        merge_tool_call_arguments(entry, arguments_piece);
+    }
+}
+
+fn ingest_tool_calls_from_response_output(state: &mut StreamState, response: &Value) {
+    if let Some(items) = response.get("output").and_then(|value| value.as_array()) {
+        for (fallback_index, item) in items.iter().enumerate() {
+            let mut event = json!({});
+            if let Some(output_index) = item.get("output_index").and_then(|value| value.as_u64()) {
+                event["output_index"] = json!(output_index);
+            } else {
+                event["output_index"] = json!(fallback_index as u64);
+            }
+            ingest_tool_call_item(state, &event, item, None);
+        }
     }
 }
 
@@ -365,7 +564,8 @@ pub(super) fn apply_stream_event(state: &mut StreamState, event: &Value) -> Stre
         if event_type == "response.output_text.delta" {
             if let Some(delta) = event.get("delta").and_then(extract_text_delta) {
                 if !delta.is_empty() {
-                    state.full_content = join_stream_text(state.full_content.as_str(), delta.as_str());
+                    state.full_content =
+                        join_stream_text(state.full_content.as_str(), delta.as_str());
                     state.sent_any_chunk = true;
                     payload.chunk = Some(delta);
                 }
@@ -385,6 +585,77 @@ pub(super) fn apply_stream_event(state: &mut StreamState, event: &Value) -> Stre
                     }
                 }
             }
+        } else if event_type == "response.output_item.added"
+            || event_type == "response.output_item.delta"
+            || event_type == "response.output_item.done"
+        {
+            let item = event.get("item").or_else(|| event.get("output_item"));
+            if let Some(item) = item {
+                let extra_arguments_piece = if event_type == "response.output_item.delta" {
+                    event
+                        .get("delta")
+                        .and_then(extract_text_delta)
+                        .or_else(|| extract_text_from_fields(event, &["arguments", "text"]))
+                } else {
+                    None
+                };
+                ingest_tool_call_item(state, event, item, extra_arguments_piece.as_deref());
+            }
+        } else if event_type == "response.function_call_arguments.delta"
+            || event_type == "response.function_call.delta"
+        {
+            let delta_piece = event
+                .get("delta")
+                .and_then(extract_text_delta)
+                .or_else(|| extract_text_from_fields(event, &["arguments", "text"]));
+            let call_id = event
+                .get("call_id")
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            let item_id = event
+                .get("item_id")
+                .or_else(|| event.get("id"))
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            if let Some(arguments_piece) = delta_piece {
+                let index = resolve_tool_call_index(event, None, &state.tool_call_index_map)
+                    .unwrap_or_else(|| state.tool_calls_map.len());
+                remember_tool_call_index(&mut state.tool_call_index_map, index, item_id, call_id);
+                let entry =
+                    ensure_tool_call_entry(&mut state.tool_calls_map, index, item_id, call_id);
+                merge_tool_call_arguments(entry, arguments_piece.as_str());
+            }
+        } else if event_type == "response.function_call_arguments.done"
+            || event_type == "response.function_call.done"
+        {
+            let args_piece = extract_text_from_fields(event, &["arguments", "output", "text"]);
+            let name_piece = event
+                .get("name")
+                .and_then(|value| value.as_str())
+                .map(|value| value.to_string());
+            let call_id = event
+                .get("call_id")
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            let item_id = event
+                .get("item_id")
+                .or_else(|| event.get("id"))
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            let index = resolve_tool_call_index(event, None, &state.tool_call_index_map)
+                .unwrap_or_else(|| state.tool_calls_map.len());
+            remember_tool_call_index(&mut state.tool_call_index_map, index, item_id, call_id);
+            let entry = ensure_tool_call_entry(&mut state.tool_calls_map, index, item_id, call_id);
+            if let Some(name) = name_piece {
+                merge_tool_call_name(entry, name.as_str());
+            }
+            if let Some(arguments_piece) = args_piece {
+                merge_tool_call_arguments(entry, arguments_piece.as_str());
+            }
         } else if let Some(reasoning_delta) = extract_reasoning_event_text(event_type, event) {
             if !reasoning_delta.is_empty() {
                 state.reasoning =
@@ -394,6 +665,7 @@ pub(super) fn apply_stream_event(state: &mut StreamState, event: &Value) -> Stre
         } else if event_type == "response.completed" {
             if let Some(response) = event.get("response") {
                 state.response_obj = Some(response.clone());
+                ingest_tool_calls_from_response_output(state, response);
                 if state.full_content.is_empty() {
                     let extracted = extract_output_text(response);
                     if !extracted.is_empty() {
@@ -405,6 +677,7 @@ pub(super) fn apply_stream_event(state: &mut StreamState, event: &Value) -> Stre
                 }
             } else {
                 state.response_obj = Some(event.clone());
+                ingest_tool_calls_from_response_output(state, event);
                 if state.full_content.is_empty() {
                     let extracted = extract_output_text(event);
                     if !extracted.is_empty() {
@@ -521,12 +794,6 @@ fn join_stream_text(current: &str, chunk: &str) -> String {
     }
     if current.starts_with(chunk) {
         return current.to_string();
-    }
-    if current.contains(chunk) {
-        return current.to_string();
-    }
-    if chunk.contains(current) {
-        return chunk.to_string();
     }
 
     let max_overlap = std::cmp::min(current.len(), chunk.len());
@@ -764,5 +1031,89 @@ mod tests {
         assert_eq!(state.response_id.as_deref(), Some("resp_plain"));
         assert_eq!(state.full_content, "plain summary text");
         assert!(state.response_obj.is_some());
+    }
+
+    #[test]
+    fn apply_stream_event_collects_function_calls_from_stream_events() {
+        let mut state = StreamState::default();
+        let added = json!({
+            "type": "response.output_item.added",
+            "output_index": 0,
+            "item": {
+                "id": "fc_item_1",
+                "type": "function_call",
+                "call_id": "call_1",
+                "name": "mcp_search",
+                "arguments": ""
+            }
+        });
+        let args_delta = json!({
+            "type": "response.function_call_arguments.delta",
+            "item_id": "fc_item_1",
+            "delta": "{\"q\":\"ru"
+        });
+        let args_done = json!({
+            "type": "response.function_call_arguments.done",
+            "item_id": "fc_item_1",
+            "arguments": "{\"q\":\"rust\"}"
+        });
+
+        let _ = apply_stream_event(&mut state, &added);
+        let _ = apply_stream_event(&mut state, &args_delta);
+        let _ = apply_stream_event(&mut state, &args_done);
+
+        let tool_calls = collect_stream_tool_calls(&state.tool_calls_map)
+            .and_then(|value| value.as_array().cloned())
+            .unwrap_or_default();
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(
+            tool_calls[0].get("id").and_then(|value| value.as_str()),
+            Some("call_1")
+        );
+        assert_eq!(
+            tool_calls[0]
+                .get("function")
+                .and_then(|value| value.get("name"))
+                .and_then(|value| value.as_str()),
+            Some("mcp_search")
+        );
+        assert_eq!(
+            tool_calls[0]
+                .get("function")
+                .and_then(|value| value.get("arguments"))
+                .and_then(|value| value.as_str()),
+            Some("{\"q\":\"rust\"}")
+        );
+    }
+
+    #[test]
+    fn apply_stream_event_collects_function_calls_from_response_completed() {
+        let mut state = StreamState::default();
+        let completed = json!({
+            "type": "response.completed",
+            "response": {
+                "id": "resp_tool",
+                "output": [
+                    {
+                        "type": "function_call",
+                        "output_index": 0,
+                        "id": "fc_item_2",
+                        "call_id": "call_2",
+                        "name": "mcp_read",
+                        "arguments": "{\"path\":\"README.md\"}"
+                    }
+                ]
+            }
+        });
+
+        let _ = apply_stream_event(&mut state, &completed);
+        let tool_calls = collect_stream_tool_calls(&state.tool_calls_map)
+            .and_then(|value| value.as_array().cloned())
+            .unwrap_or_default();
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(
+            tool_calls[0].get("id").and_then(|value| value.as_str()),
+            Some("call_2")
+        );
     }
 }

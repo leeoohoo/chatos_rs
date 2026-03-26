@@ -24,6 +24,15 @@ export interface SessionSummaryWorkbarItem {
   errorMessage?: string | null;
 }
 
+export interface RuntimeGuidanceWorkbarItem {
+  guidanceId: string;
+  turnId: string | null;
+  content: string;
+  status: 'queued' | 'applied' | 'dropped';
+  createdAt: string;
+  appliedAt: string | null;
+}
+
 interface TaskWorkbarProps {
   tasks: TaskWorkbarItem[];
   historyTasks?: TaskWorkbarItem[];
@@ -41,6 +50,10 @@ interface TaskWorkbarProps {
   onDeleteTask?: (task: TaskWorkbarItem) => void;
   onEditTask?: (task: TaskWorkbarItem) => void;
   actionLoadingTaskId?: string | null;
+  runtimeGuidancePendingCount?: number;
+  runtimeGuidanceAppliedCount?: number;
+  runtimeGuidanceLastAppliedAt?: string | null;
+  runtimeGuidanceItems?: RuntimeGuidanceWorkbarItem[];
 }
 
 type HistoryFilter = 'all' | 'processed';
@@ -77,6 +90,43 @@ const sortTasks = (items: TaskWorkbarItem[]) => {
     const right = Date.parse(b.createdAt) || 0;
     return right - left;
   });
+};
+
+const formatGuidanceAppliedTime = (value?: string | null): string => {
+  if (!value) {
+    return '';
+  }
+  const time = Date.parse(value);
+  if (!Number.isFinite(time)) {
+    return '';
+  }
+  return new Date(time).toLocaleTimeString();
+};
+
+const guidanceStatusStyles: Record<RuntimeGuidanceWorkbarItem['status'], string> = {
+  queued: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200',
+  applied: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-200',
+  dropped: 'bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-200',
+};
+
+const guidanceStatusText: Record<RuntimeGuidanceWorkbarItem['status'], string> = {
+  queued: '待应用',
+  applied: '已应用',
+  dropped: '已丢弃',
+};
+
+const formatGuidanceItemTime = (item: RuntimeGuidanceWorkbarItem): string => {
+  const candidate = item.status === 'applied'
+    ? (item.appliedAt || item.createdAt)
+    : item.createdAt;
+  if (!candidate) {
+    return '';
+  }
+  const parsed = Date.parse(candidate);
+  if (!Number.isFinite(parsed)) {
+    return '';
+  }
+  return new Date(parsed).toLocaleTimeString();
 };
 
 const TaskCard: React.FC<{
@@ -182,6 +232,10 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
   onDeleteTask,
   onEditTask,
   actionLoadingTaskId = null,
+  runtimeGuidancePendingCount = 0,
+  runtimeGuidanceAppliedCount = 0,
+  runtimeGuidanceLastAppliedAt = null,
+  runtimeGuidanceItems = [],
 }) => {
   const [expanded, setExpanded] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -199,6 +253,35 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
   const visibleHistoryTasks = historyFilter === 'processed'
     ? processedHistoryTasks
     : sortedHistoryTasks;
+  const runtimeGuidanceHint = useMemo(() => {
+    if (runtimeGuidancePendingCount <= 0 && runtimeGuidanceAppliedCount <= 0) {
+      return '';
+    }
+    const appliedAt = formatGuidanceAppliedTime(runtimeGuidanceLastAppliedAt);
+    return appliedAt
+      ? `引导待应用: ${runtimeGuidancePendingCount} · 已应用: ${runtimeGuidanceAppliedCount} · 最近应用: ${appliedAt}`
+      : `引导待应用: ${runtimeGuidancePendingCount} · 已应用: ${runtimeGuidanceAppliedCount}`;
+  }, [runtimeGuidanceAppliedCount, runtimeGuidanceLastAppliedAt, runtimeGuidancePendingCount]);
+  const visibleRuntimeGuidanceItems = useMemo(() => {
+    const normalizedCurrentTurnId = typeof currentTurnId === 'string' ? currentTurnId.trim() : '';
+    const sortedItems = [...runtimeGuidanceItems].sort((a, b) => {
+      const left = Date.parse(a.createdAt) || 0;
+      const right = Date.parse(b.createdAt) || 0;
+      return right - left;
+    });
+    if (sortedItems.length === 0) {
+      return [];
+    }
+    if (!normalizedCurrentTurnId) {
+      return sortedItems.slice(0, 3);
+    }
+    const scoped = sortedItems.filter((item) => (item.turnId || '').trim() === normalizedCurrentTurnId);
+    return (scoped.length > 0 ? scoped : sortedItems).slice(0, 3);
+  }, [currentTurnId, runtimeGuidanceItems]);
+  const latestRuntimeGuidanceContent = useMemo(() => {
+    const latest = visibleRuntimeGuidanceItems.find((item) => item.content && item.content.trim().length > 0);
+    return latest ? latest.content.trim() : '';
+  }, [visibleRuntimeGuidanceItems]);
 
   const currentTurnTasks = useMemo(() => {
     const normalizedCurrentTurnId = typeof currentTurnId === 'string' ? currentTurnId.trim() : '';
@@ -244,6 +327,17 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
             <div className="min-w-0">
               <div className="text-xs font-semibold text-foreground">Workbar</div>
               <div className="text-[11px] text-muted-foreground">{`\u5f53\u524d\u8f6e\u4efb\u52a1\uff1a${currentTurnTasks.length}`}</div>
+              {runtimeGuidanceHint ? (
+                <div className="text-[11px] text-muted-foreground">{runtimeGuidanceHint}</div>
+              ) : null}
+              {latestRuntimeGuidanceContent ? (
+                <div
+                  className="truncate text-[11px] text-muted-foreground"
+                  title={latestRuntimeGuidanceContent}
+                >
+                  {`最近引导：${latestRuntimeGuidanceContent}`}
+                </div>
+              ) : null}
             </div>
           </button>
 
@@ -293,6 +387,36 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
             {error ? (
               <div className="mb-2 rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] text-rose-700 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200">
                 {error}
+              </div>
+            ) : null}
+
+            {visibleRuntimeGuidanceItems.length > 0 ? (
+              <div className="mb-2 rounded-md border border-border bg-background px-2 py-1.5">
+                <div className="mb-1 text-[11px] font-medium text-foreground">最近引导</div>
+                <div className="space-y-1.5">
+                  {visibleRuntimeGuidanceItems.map((item) => {
+                    const timeText = formatGuidanceItemTime(item);
+                    const contentText = (item.content || '').trim();
+                    return (
+                      <div key={item.guidanceId} className="rounded border border-border/70 bg-card/60 px-2 py-1">
+                        <div className="flex items-center gap-1.5">
+                          <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${guidanceStatusStyles[item.status]}`}>
+                            {guidanceStatusText[item.status]}
+                          </span>
+                          {timeText ? (
+                            <span className="text-[10px] text-muted-foreground">{timeText}</span>
+                          ) : null}
+                        </div>
+                        <div
+                          className="mt-0.5 break-all text-[11px] text-foreground"
+                          title={contentText || '引导内容为空'}
+                        >
+                          {contentText || '引导内容为空'}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             ) : null}
 

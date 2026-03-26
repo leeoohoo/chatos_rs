@@ -1,162 +1,35 @@
 import type { Session } from '../../../types';
 import type ApiClient from '../../api/client';
 import { fetchSession, normalizeSession } from '../helpers/sessions';
-import { applyTurnProcessCache, fetchSessionMessages } from '../helpers/messages';
+import { fetchSessionMessages } from '../helpers/messages';
 import {
   mergeSessionAiSelectionIntoMetadata,
   readSessionAiSelectionFromMetadata,
 } from '../helpers/sessionAiSelection';
-import type { SessionAiSelection } from '../types';
+import {
+  mergeSessionRuntimeIntoMetadata,
+} from '../helpers/sessionRuntime';
+import type {
+  SessionAiSelection,
+  SessionCreateOptions,
+  SessionCreatePayload,
+  SessionSelectOptions,
+} from '../types';
 import { debugLog, generateId } from '@/lib/utils';
-
-const SESSION_MESSAGES_CACHE_MAX_ENTRIES = 16;
-type SessionMessagesCacheEntry = {
-  fetchedAt: number;
-  messages: any[];
-};
-const sessionMessagesPageCache = new Map<string, SessionMessagesCacheEntry>();
-
-const createPerfMeasureStopper = (measureName: string): (() => number | null) => {
-  if (typeof performance === 'undefined' || typeof performance.mark !== 'function' || typeof performance.measure !== 'function') {
-    return () => null;
-  }
-
-  const startMark = `${measureName}:start`;
-  const endMark = `${measureName}:end`;
-  performance.mark(startMark);
-
-  return () => {
-    performance.mark(endMark);
-    performance.measure(measureName, startMark, endMark);
-    const entries = performance.getEntriesByName(measureName);
-    const duration = entries.length > 0 ? entries[entries.length - 1].duration : null;
-    performance.clearMarks(startMark);
-    performance.clearMarks(endMark);
-    performance.clearMeasures(measureName);
-    return duration;
-  };
-};
-
-const cloneStreamingMessageDraft = <T,>(value: T): T => {
-  try {
-    if (typeof structuredClone === 'function') {
-      return structuredClone(value);
-    }
-  } catch {
-    // ignore and fallback to JSON clone
-  }
-
-  try {
-    return JSON.parse(JSON.stringify(value));
-  } catch {
-    return value;
-  }
-};
-
-const writeSessionMessagesCache = (sessionId: string, messages: any[]) => {
-  sessionMessagesPageCache.set(sessionId, {
-    fetchedAt: Date.now(),
-    messages: cloneStreamingMessageDraft(messages),
-  });
-
-  while (sessionMessagesPageCache.size > SESSION_MESSAGES_CACHE_MAX_ENTRIES) {
-    const oldestKey = sessionMessagesPageCache.keys().next().value;
-    if (!oldestKey) {
-      break;
-    }
-    sessionMessagesPageCache.delete(oldestKey);
-  }
-};
-
-const ensureSessionTurnMaps = (state: any, sessionId: string) => {
-  if (!state.sessionTurnProcessState) {
-    state.sessionTurnProcessState = {};
-  }
-  if (!state.sessionTurnProcessState[sessionId]) {
-    state.sessionTurnProcessState[sessionId] = {};
-  }
-
-  if (!state.sessionTurnProcessCache) {
-    state.sessionTurnProcessCache = {};
-  }
-  if (!state.sessionTurnProcessCache[sessionId]) {
-    state.sessionTurnProcessCache[sessionId] = {};
-  }
-};
-
-const normalizeDate = (value: any): Date => {
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
-};
-
-const normalizeTurnId = (value: unknown): string => (
-  typeof value === 'string' ? value.trim() : ''
-);
-
-const resolveUserByTurnId = (messages: any[], turnId: string) => {
-  if (!turnId) {
-    return null;
-  }
-
-  return messages.find((message: any) => {
-    if (message?.role !== 'user') {
-      return false;
-    }
-    const messageTurnId = normalizeTurnId(
-      message?.metadata?.conversation_turn_id || message?.metadata?.historyProcess?.turnId,
-    );
-    return messageTurnId === turnId;
-  }) || null;
-};
-
-const buildDraftUserMessageForStreaming = (
-  sessionId: string,
-  draftMessage: any,
-  finalAssistantMessageId: string,
-) => {
-  const linkedUserMessageId = normalizeTurnId(
-    typeof draftMessage?.metadata?.historyFinalForUserMessageId === 'string'
-      ? draftMessage.metadata.historyFinalForUserMessageId
-      : (
-        typeof draftMessage?.metadata?.historyDraftUserMessage?.id === 'string'
-          ? draftMessage.metadata.historyDraftUserMessage.id
-          : ''
-      )
-  );
-  const turnId = typeof draftMessage?.metadata?.conversation_turn_id === 'string'
-    ? draftMessage.metadata.conversation_turn_id
-    : '';
-  const effectiveUserMessageId = linkedUserMessageId || (turnId ? `temp_user_turn_${turnId}` : '');
-  if (!effectiveUserMessageId) {
-    return null;
-  }
-
-  const draftUser = draftMessage?.metadata?.historyDraftUserMessage || {};
-
-  return {
-    id: effectiveUserMessageId,
-    sessionId,
-    role: 'user' as const,
-    content: typeof draftUser.content === 'string' ? draftUser.content : '',
-    status: 'completed' as const,
-    createdAt: normalizeDate(draftUser.createdAt || draftMessage?.createdAt || Date.now()),
-    metadata: {
-      ...(turnId ? { conversation_turn_id: turnId } : {}),
-      historyProcess: {
-        hasProcess: false,
-        toolCallCount: 0,
-        thinkingCount: 0,
-        processMessageCount: 0,
-        userMessageId: effectiveUserMessageId,
-        ...(turnId ? { turnId } : {}),
-        finalAssistantMessageId: finalAssistantMessageId || null,
-        expanded: false,
-        loaded: false,
-        loading: false,
-      },
-    },
-  };
-};
+import {
+  createPerfMeasureStopper,
+  deleteSessionMessagesCacheEntry,
+  isSessionActive,
+  matchSessionContactProjectScope,
+  normalizeContact,
+  normalizeContactSessions,
+  normalizeProjectScopeId,
+  resolveSessionTimestamp,
+  splitSessionsByMappedContacts,
+  writeSessionMessagesCache,
+} from './sessionsUtils';
+import type { MemoryContact } from './sessionsUtils';
+import { applySelectSessionState } from './sessionsSelectHelpers';
 
 interface Deps {
   set: any;
@@ -190,26 +63,77 @@ export function createSessionActions({
         const { userId, projectId } = getSessionParams();
 
         debugLog('🔍 loadSessions 调用 client.getSessions', { userId, projectId, customUserId, customProjectId, options });
-        const rawSessions = await client.getSessions(
-          userId,
-          projectId,
-          { limit: options.limit, offset: options.offset, includeArchiving: true },
-        );
+        const [rawContacts, rawSessions] = await Promise.all([
+          client.getContacts(userId, { limit: 2000, offset: 0 }).catch(() => []),
+          client.getSessions(
+            userId,
+            undefined,
+            { limit: options.limit, offset: options.offset },
+          ),
+        ]);
+        const contacts = (Array.isArray(rawContacts) ? rawContacts : [])
+          .map(normalizeContact)
+          .filter((item): item is MemoryContact => !!item)
+          .filter((item) => {
+            const status = typeof item.status === 'string' ? item.status.toLowerCase() : '';
+            return status === '' || status === 'active';
+          });
+
         const sessions = Array.isArray(rawSessions)
           ? rawSessions.map(normalizeSession)
           : [];
-        debugLog('🔍 loadSessions 返回结果:', sessions);
+
+        const { matchedSessions: filteredByContacts, missingContacts } = splitSessionsByMappedContacts(
+          sessions,
+          contacts,
+        );
+
+        const backfilledSessions: Session[] = [];
+        for (const contact of missingContacts) {
+          const metadata = mergeSessionRuntimeIntoMetadata(null, {
+            contactAgentId: contact.agent_id,
+            contactId: contact.id,
+            selectedModelId: null,
+            projectId: '0',
+            projectRoot: null,
+            mcpEnabled: true,
+            enabledMcpIds: [],
+          });
+          try {
+            const created = await client.createSession({
+              id: generateId(),
+              title: contact.agent_name_snapshot || '联系人',
+              user_id: userId,
+              project_id: '0',
+              metadata,
+            });
+            backfilledSessions.push(normalizeSession(created));
+          } catch (error) {
+            debugLog('🔍 联系人补建会话失败，忽略', {
+              contactId: contact.id,
+              agentId: contact.agent_id,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+
+        const mergedByContact = [
+          ...filteredByContacts,
+          ...backfilledSessions,
+        ];
+        debugLog('🔍 loadSessions 返回结果:', mergedByContact);
 
         const existing = options.append ? (get().sessions || []) : [];
-        const merged = options.append ? [...existing, ...sessions] : sessions;
-        const deduped: Session[] = [];
+        const merged = options.append ? [...existing, ...mergedByContact] : mergedByContact;
+        const dedupedById: Session[] = [];
         const seen = new Set<string>();
         for (const s of merged) {
           if (s && !seen.has(s.id)) {
             seen.add(s.id);
-            deduped.push(s);
+            dedupedById.push(s);
           }
         }
+        const deduped = normalizeContactSessions(dedupedById);
 
         set((state: any) => {
           state.sessions = deduped;
@@ -229,18 +153,17 @@ export function createSessionActions({
             const matched = deduped.find(s => s.id === state.currentSessionId);
             if (matched) {
               state.currentSession = matched;
+            } else {
+              state.currentSessionId = null;
+              state.currentSession = null;
+              state.messages = [];
             }
           }
         });
 
         const currentState = get();
         if (deduped.length > 0 && !currentState.currentSessionId) {
-          const activeSessions = deduped.filter((session: Session) => {
-            const status = typeof session.status === 'string'
-              ? session.status.toLowerCase()
-              : '';
-            return !(session.archived || status === 'archived' || status === 'archiving');
-          });
+          const activeSessions = deduped.filter((session: Session) => isSessionActive(session));
           if (activeSessions.length > 0) {
             const lastSessionId = localStorage.getItem(`lastSessionId_${userId}_${projectId}`);
             let sessionToSelect: Session | undefined;
@@ -265,7 +188,7 @@ export function createSessionActions({
         }
 
         debugLog('🔍 loadSessions 完成');
-        return sessions;
+        return deduped;
       } catch (error) {
         console.error('🔍 loadSessions 错误:', error);
         set((state: any) => {
@@ -278,24 +201,113 @@ export function createSessionActions({
       }
     },
 
-    createSession: async (title = 'New Chat') => {
+    createSession: async (
+      payload: string | SessionCreatePayload = 'New Chat',
+      options: SessionCreateOptions = {},
+    ) => {
       try {
-        const { userId, projectId } = getSessionParams();
+        const payloadObject: SessionCreatePayload = typeof payload === 'string'
+          ? { title: payload }
+          : (payload || {});
+        const title = (payloadObject.title || 'New Chat').trim() || 'New Chat';
+        const { userId, projectId: fallbackProjectId } = getSessionParams();
+        const requestedProjectId = typeof payloadObject.projectId === 'string'
+          ? payloadObject.projectId.trim()
+          : '';
+        const fallbackScopedProjectId = typeof fallbackProjectId === 'string'
+          ? fallbackProjectId.trim()
+          : '';
+        const effectiveProjectId = normalizeProjectScopeId(
+          requestedProjectId || fallbackScopedProjectId || null,
+        );
         const stateBeforeCreate = get();
+        const selectedModelId = payloadObject.selectedModelId ?? stateBeforeCreate.selectedModelId ?? null;
+        const contactAgentId = typeof payloadObject.contactAgentId === 'string'
+          ? (payloadObject.contactAgentId.trim() || null)
+          : null;
+        const contactId = typeof payloadObject.contactId === 'string'
+          ? (payloadObject.contactId.trim() || null)
+          : null;
+        const effectiveProjectRoot = effectiveProjectId === '0'
+          ? null
+          : (typeof payloadObject.projectRoot === 'string'
+            ? (payloadObject.projectRoot.trim() || null)
+            : null);
+
+        if (contactId || contactAgentId) {
+          const existingSession = (stateBeforeCreate.sessions || []).find((session: Session) => (
+            matchSessionContactProjectScope(session, {
+              contactId,
+              contactAgentId,
+              projectId: effectiveProjectId,
+            })
+          ));
+          if (existingSession) {
+            await get().selectSession(existingSession.id, {
+              keepActivePanel: options.keepActivePanel,
+            });
+            return existingSession.id;
+          }
+
+          try {
+            const remoteRows = await client.getSessions(
+              userId,
+              effectiveProjectId,
+              { limit: 200, offset: 0 },
+            );
+            const remoteMatched = (Array.isArray(remoteRows) ? remoteRows : [])
+              .map(normalizeSession)
+              .filter((session: Session) => (
+                matchSessionContactProjectScope(session, {
+                  contactId,
+                  contactAgentId,
+                  projectId: effectiveProjectId,
+                })
+              ))
+              .sort((left: Session, right: Session) =>
+                resolveSessionTimestamp(right) - resolveSessionTimestamp(left),
+              );
+
+            const remoteExisting = remoteMatched[0];
+            if (remoteExisting?.id) {
+              await get().selectSession(remoteExisting.id, {
+                keepActivePanel: options.keepActivePanel,
+              });
+              return remoteExisting.id;
+            }
+          } catch (error) {
+            debugLog('🔍 createSession 远端查重失败，继续创建', {
+              contactId,
+              contactAgentId,
+              projectId: effectiveProjectId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+
         const inheritedAiSelection: SessionAiSelection = {
-          selectedModelId: stateBeforeCreate.selectedModelId ?? null,
-          selectedAgentId: stateBeforeCreate.selectedAgentId ?? null,
+          selectedModelId,
+          selectedAgentId: contactAgentId,
         };
-        const initialMetadata = mergeSessionAiSelectionIntoMetadata(
+        const selectionMetadata = mergeSessionAiSelectionIntoMetadata(
           null,
           inheritedAiSelection,
         );
+        const initialMetadata = mergeSessionRuntimeIntoMetadata(selectionMetadata, {
+          contactAgentId,
+          contactId,
+          selectedModelId,
+          projectId: effectiveProjectId,
+          projectRoot: effectiveProjectRoot,
+          mcpEnabled: payloadObject.mcpEnabled ?? true,
+          enabledMcpIds: payloadObject.enabledMcpIds ?? [],
+        });
 
-        debugLog('🔍 createSession 使用参数:', { userId, projectId, title });
+        debugLog('🔍 createSession 使用参数:', { userId, projectId: effectiveProjectId, title });
         debugLog('🔍 createSession 自定义参数:', { customUserId, customProjectId });
         debugLog('🔍 createSession 最终使用的参数:', {
           userId: userId,
-          projectId: projectId,
+          projectId: effectiveProjectId,
           isCustomUserId: !!customUserId,
           isCustomProjectId: !!customProjectId,
         });
@@ -310,10 +322,8 @@ export function createSessionActions({
           id: generateId(),
           title,
           user_id: userId,
+          project_id: effectiveProjectId,
         };
-        if (projectId) {
-          sessionData.project_id = projectId;
-        }
         if (Object.keys(initialMetadata).length > 0) {
           sessionData.metadata = initialMetadata;
         }
@@ -346,12 +356,14 @@ export function createSessionActions({
             state.sessionStreamingMessageDrafts = {};
           }
           state.sessionStreamingMessageDrafts[formattedSession.id] = null;
-          state.activePanel = 'chat';
+          if (!options.keepActivePanel) {
+            state.activePanel = 'chat';
+          }
           state.error = null;
         });
 
-        sessionMessagesPageCache.delete(formattedSession.id);
-        localStorage.setItem(`lastSessionId_${userId}_${projectId}`, formattedSession.id);
+        deleteSessionMessagesCacheEntry(formattedSession.id);
+        localStorage.setItem(`lastSessionId_${userId}_${effectiveProjectId}`, formattedSession.id);
         debugLog('🔍 保存新创建的会话ID到 localStorage:', formattedSession.id);
 
         return formattedSession.id;
@@ -364,7 +376,10 @@ export function createSessionActions({
       }
     },
 
-    selectSession: async (sessionId: string) => {
+    selectSession: async (
+      sessionId: string,
+      options: SessionSelectOptions = {},
+    ) => {
       const selectStartedAt = Date.now();
       const stopPerfMeasure = createPerfMeasureStopper(`store.selectSession.${sessionId}.${selectStartedAt}`);
       const beforeSelect = get();
@@ -372,7 +387,7 @@ export function createSessionActions({
       const sameSessionState = beforeSelect.sessionChatState?.[sessionId];
       if (beforeSelect.currentSessionId === sessionId && sameSessionState?.isStreaming) {
         // 同一会话流式过程中仍允许切回聊天面板，避免在项目/终端面板点击会话无响应
-        if (beforeSelect.activePanel !== 'chat') {
+        if (!options.keepActivePanel && beforeSelect.activePanel !== 'chat') {
           set((state: any) => {
             state.activePanel = 'chat';
           });
@@ -387,8 +402,9 @@ export function createSessionActions({
           state.error = null;
         });
 
+        const existingSession = (beforeSelect.sessions || []).find((item: Session) => item.id === sessionId) || null;
         const [session, messages] = await Promise.all([
-          fetchSession(client, sessionId),
+          existingSession ? Promise.resolve(existingSession) : fetchSession(client, sessionId),
           fetchSessionMessages(client, sessionId, { limit: 50, offset: 0 }),
         ]);
         writeSessionMessagesCache(sessionId, messages);
@@ -400,180 +416,16 @@ export function createSessionActions({
           : null;
 
         set((state: any) => {
-          const chatState = state.sessionChatState[sessionId];
-          const draftMessage = state.sessionStreamingMessageDrafts?.[sessionId];
-          let nextMessages = messages;
-
-          if (chatState?.isStreaming && chatState.streamingMessageId) {
-            const hasStreamingMessage = nextMessages.some((m: any) => m.id === chatState.streamingMessageId);
-            if (!hasStreamingMessage) {
-              let restoredStreamingMessage: any = null;
-              if (draftMessage && typeof draftMessage === 'object') {
-                restoredStreamingMessage = cloneStreamingMessageDraft(draftMessage);
-              } else if (localStreamingMessage && typeof localStreamingMessage === 'object') {
-                restoredStreamingMessage = cloneStreamingMessageDraft(localStreamingMessage);
-              }
-
-              const streamingDraftSource = restoredStreamingMessage || localStreamingMessage;
-              if (streamingDraftSource) {
-                const linkedUserMessageId = normalizeTurnId(
-                  typeof streamingDraftSource.metadata?.historyFinalForUserMessageId === 'string'
-                    ? streamingDraftSource.metadata.historyFinalForUserMessageId
-                    : (
-                      typeof streamingDraftSource.metadata?.historyDraftUserMessage?.id === 'string'
-                        ? streamingDraftSource.metadata.historyDraftUserMessage.id
-                        : ''
-                    ),
-                );
-                const linkedTurnId = normalizeTurnId(
-                  streamingDraftSource.metadata?.historyFinalForTurnId
-                  || streamingDraftSource.metadata?.conversation_turn_id,
-                );
-                const linkedUserById = linkedUserMessageId
-                  ? nextMessages.find((message: any) => message?.role === 'user' && message?.id === linkedUserMessageId)
-                  : null;
-                const linkedUserByTurn = linkedUserById || !linkedTurnId
-                  ? null
-                  : resolveUserByTurnId(nextMessages, linkedTurnId);
-                const linkedUserMessage = linkedUserById || linkedUserByTurn;
-
-                if (linkedUserMessage && restoredStreamingMessage?.metadata) {
-                  restoredStreamingMessage.metadata.historyFinalForUserMessageId = linkedUserMessage.id;
-                  const resolvedTurnId = linkedTurnId || normalizeTurnId(
-                    linkedUserMessage?.metadata?.conversation_turn_id || linkedUserMessage?.metadata?.historyProcess?.turnId,
-                  );
-                  if (resolvedTurnId) {
-                    restoredStreamingMessage.metadata.historyFinalForTurnId = resolvedTurnId;
-                  }
-                  if (restoredStreamingMessage.metadata.historyDraftUserMessage) {
-                    restoredStreamingMessage.metadata.historyDraftUserMessage.id = linkedUserMessage.id;
-                  }
-                }
-
-                if ((linkedUserMessageId || linkedTurnId) && !linkedUserMessage) {
-                  const draftUserMessage = buildDraftUserMessageForStreaming(
-                    sessionId,
-                    streamingDraftSource,
-                    chatState.streamingMessageId,
-                  );
-                  if (draftUserMessage) {
-                    nextMessages = [...nextMessages, draftUserMessage];
-                  }
-                }
-              }
-
-              nextMessages = [
-                ...nextMessages,
-                restoredStreamingMessage || localStreamingMessage || {
-                  id: chatState.streamingMessageId,
-                  sessionId,
-                  role: 'assistant',
-                  content: '',
-                  status: 'streaming',
-                  createdAt: new Date(),
-                  metadata: {
-                    toolCalls: [],
-                    contentSegments: [{ content: '', type: 'text' }],
-                    currentSegmentIndex: 0,
-                  },
-                },
-              ];
-            }
-          }
-
-          if (draftMessage && typeof draftMessage === 'object') {
-            const draftClone = cloneStreamingMessageDraft(draftMessage);
-            const draftId = typeof (draftClone as any)?.id === 'string' ? (draftClone as any).id : '';
-            const draftIndex = draftId
-              ? nextMessages.findIndex((m: any) => m?.id === draftId)
-              : -1;
-
-            if (draftIndex === -1) {
-              nextMessages = [...nextMessages, draftClone];
-            } else {
-              const existing = nextMessages[draftIndex] || {};
-              const existingTime = new Date((existing as any)?.updatedAt || (existing as any)?.createdAt || 0).getTime();
-              const draftTime = new Date((draftClone as any)?.updatedAt || (draftClone as any)?.createdAt || 0).getTime();
-              const existingContentLength = typeof (existing as any)?.content === 'string'
-                ? (existing as any).content.length
-                : 0;
-              const draftContentLength = typeof (draftClone as any)?.content === 'string'
-                ? (draftClone as any).content.length
-                : 0;
-              const shouldReplaceWithDraft = Boolean(
-                chatState?.isStreaming
-                || draftTime > existingTime
-                || draftContentLength > existingContentLength
-                || (existing as any)?.status !== (draftClone as any)?.status
-              );
-              if (shouldReplaceWithDraft) {
-                nextMessages[draftIndex] = {
-                  ...existing,
-                  ...draftClone,
-                };
-              }
-            }
-
-            if (!chatState?.isStreaming && state.sessionStreamingMessageDrafts) {
-              state.sessionStreamingMessageDrafts[sessionId] = null;
-            }
-          }
-
-          ensureSessionTurnMaps(state, sessionId);
-
-          nextMessages = applyTurnProcessCache(
-            nextMessages,
-            state.sessionTurnProcessCache?.[sessionId],
-            state.sessionTurnProcessState?.[sessionId],
-          );
-
-          state.currentSessionId = sessionId;
-          (state as any).currentSession = session;
-          const index = state.sessions.findIndex((s: any) => s.id === sessionId);
-          if (index !== -1 && session) {
-            state.sessions[index] = session;
-          }
-          const savedAiSelection = state.sessionAiSelectionBySession?.[sessionId];
-          if (savedAiSelection) {
-            state.selectedModelId = savedAiSelection.selectedModelId ?? null;
-            state.selectedAgentId = savedAiSelection.selectedAgentId ?? null;
-          } else if (sessionAiSelectionFromMetadata) {
-            if (!state.sessionAiSelectionBySession) {
-              state.sessionAiSelectionBySession = {};
-            }
-            state.sessionAiSelectionBySession[sessionId] = {
-              selectedModelId: sessionAiSelectionFromMetadata.selectedModelId ?? null,
-              selectedAgentId: sessionAiSelectionFromMetadata.selectedAgentId ?? null,
-            };
-            state.selectedModelId = sessionAiSelectionFromMetadata.selectedModelId ?? null;
-            state.selectedAgentId = sessionAiSelectionFromMetadata.selectedAgentId ?? null;
-          } else if (
-            (previousSessionId === null || previousSessionId === sessionId)
-            && (state.selectedModelId || state.selectedAgentId)
-          ) {
-            if (!state.sessionAiSelectionBySession) {
-              state.sessionAiSelectionBySession = {};
-            }
-            state.sessionAiSelectionBySession[sessionId] = {
-              selectedModelId: state.selectedModelId ?? null,
-              selectedAgentId: state.selectedAgentId ?? null,
-            };
-          } else {
-            state.selectedModelId = null;
-            state.selectedAgentId = null;
-          }
-          state.messages = nextMessages;
-          state.activePanel = 'chat';
-          state.isLoading = false;
-          state.hasMoreMessages = messages.length >= 50;
-          state.isStreaming = chatState?.isStreaming ?? false;
-          state.streamingMessageId = chatState?.streamingMessageId ?? null;
-          if (chatState) {
-            state.isLoading = chatState.isLoading;
-          }
-          if (!session) {
-            state.error = 'Session not found';
-          }
+          applySelectSessionState({
+            state,
+            sessionId,
+            session,
+            messages,
+            previousSessionId,
+            localStreamingMessage,
+            sessionAiSelectionFromMetadata,
+            keepActivePanel: options.keepActivePanel,
+          });
         });
 
         if (session) {
@@ -705,7 +557,7 @@ export function createSessionActions({
             state.activePanel = state.currentProjectId ? 'project' : 'chat';
           }
         });
-        sessionMessagesPageCache.delete(sessionId);
+        deleteSessionMessagesCacheEntry(sessionId);
       } catch (error) {
         console.error('Failed to delete session:', error);
         set((state: any) => {

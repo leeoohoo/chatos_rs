@@ -1,9 +1,9 @@
 import React from 'react';
 import { InputArea } from '../InputArea';
 import TaskDraftPanel from '../TaskDraftPanel';
-import TaskWorkbar, { type TaskWorkbarItem } from '../TaskWorkbar';
+import TaskWorkbar, { type RuntimeGuidanceWorkbarItem, type TaskWorkbarItem } from '../TaskWorkbar';
 import UiPromptPanel from '../UiPromptPanel';
-import type { AgentConfig, AiModelConfig, Project } from '../../types';
+import type { AiModelConfig, Project } from '../../types';
 import type {
   TaskReviewDraft,
   TaskReviewPanelState,
@@ -23,9 +23,9 @@ interface ChatComposerPanelProps {
   workbarActionLoadingTaskId: string | null;
   onRefreshWorkbarTasks: () => void;
   onOpenHistory: (sessionId: string) => void;
-  onOpenUiPromptHistory: (sessionId: string) => void;
-  uiPromptHistoryCount: number;
-  uiPromptHistoryLoading: boolean;
+  onOpenUiPromptHistory?: (sessionId: string) => void;
+  uiPromptHistoryCount?: number;
+  uiPromptHistoryLoading?: boolean;
   onCompleteTask: (task: TaskWorkbarItem) => void;
   onDeleteTask: (task: TaskWorkbarItem) => void;
   onEditTask: (task: TaskWorkbarItem) => void;
@@ -35,7 +35,18 @@ interface ChatComposerPanelProps {
   activeTaskReviewPanel: TaskReviewPanelState | null;
   onTaskReviewConfirm: (drafts: TaskReviewDraft[]) => void;
   onTaskReviewCancel: () => void;
-  onSend: (content: string, attachments?: File[]) => void;
+  onSend: (
+    content: string,
+    attachments?: File[],
+    runtimeOptions?: {
+      mcpEnabled?: boolean;
+      projectId?: string | null;
+      projectRoot?: string | null;
+      workspaceRoot?: string | null;
+      enabledMcpIds?: string[];
+    },
+  ) => void;
+  onGuide: (content: string) => void;
   onStop: () => void;
   inputDisabled: boolean;
   isStreaming: boolean;
@@ -47,11 +58,23 @@ interface ChatComposerPanelProps {
   selectedModelId: string | null;
   availableModels: AiModelConfig[];
   onModelChange: (modelId: string | null) => void;
-  selectedAgentId: string | null;
-  availableAgents: AgentConfig[];
-  onAgentChange: (agentId: string | null) => void;
   availableProjects: Project[];
   currentProject: Project | null;
+  selectedProjectId: string | null;
+  onProjectChange: (projectId: string | null) => void;
+  showProjectSelector?: boolean;
+  showProjectFileButton?: boolean;
+  workspaceRoot?: string | null;
+  onWorkspaceRootChange?: (path: string | null) => void;
+  showWorkspaceRootPicker?: boolean;
+  mcpEnabled: boolean;
+  enabledMcpIds?: string[];
+  onMcpEnabledChange: (enabled: boolean) => void;
+  onEnabledMcpIdsChange: (ids: string[]) => void;
+  runtimeGuidancePendingCount?: number;
+  runtimeGuidanceAppliedCount?: number;
+  runtimeGuidanceLastAppliedAt?: string | null;
+  runtimeGuidanceItems?: RuntimeGuidanceWorkbarItem[];
 }
 
 const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
@@ -79,6 +102,7 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
   onTaskReviewConfirm,
   onTaskReviewCancel,
   onSend,
+  onGuide,
   onStop,
   inputDisabled,
   isStreaming,
@@ -90,11 +114,23 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
   selectedModelId,
   availableModels,
   onModelChange,
-  selectedAgentId,
-  availableAgents,
-  onAgentChange,
   availableProjects,
   currentProject,
+  selectedProjectId,
+  onProjectChange,
+  showProjectSelector = true,
+  showProjectFileButton = true,
+  workspaceRoot = null,
+  onWorkspaceRootChange,
+  showWorkspaceRootPicker = false,
+  mcpEnabled,
+  enabledMcpIds,
+  onMcpEnabledChange,
+  onEnabledMcpIdsChange,
+  runtimeGuidancePendingCount = 0,
+  runtimeGuidanceAppliedCount = 0,
+  runtimeGuidanceLastAppliedAt = null,
+  runtimeGuidanceItems = [],
 }) => (
   <div className="border-t border-border">
     <TaskWorkbar
@@ -108,9 +144,13 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
       actionLoadingTaskId={workbarActionLoadingTaskId}
       onRefresh={onRefreshWorkbarTasks}
       onOpenHistory={() => onOpenHistory(sessionId)}
-      onOpenUiPromptHistory={() => onOpenUiPromptHistory(sessionId)}
+      onOpenUiPromptHistory={onOpenUiPromptHistory ? () => onOpenUiPromptHistory(sessionId) : undefined}
       uiPromptHistoryCount={uiPromptHistoryCount}
       uiPromptHistoryLoading={uiPromptHistoryLoading}
+      runtimeGuidancePendingCount={runtimeGuidancePendingCount}
+      runtimeGuidanceAppliedCount={runtimeGuidanceAppliedCount}
+      runtimeGuidanceLastAppliedAt={runtimeGuidanceLastAppliedAt}
+      runtimeGuidanceItems={runtimeGuidanceItems}
       onCompleteTask={onCompleteTask}
       onDeleteTask={onDeleteTask}
       onEditTask={onEditTask}
@@ -131,6 +171,7 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
     ) : null}
     <InputArea
       onSend={onSend}
+      onGuide={onGuide}
       onStop={onStop}
       disabled={inputDisabled}
       isStreaming={isStreaming}
@@ -145,11 +186,19 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
       selectedModelId={selectedModelId}
       availableModels={availableModels}
       onModelChange={onModelChange}
-      selectedAgentId={selectedAgentId}
-      availableAgents={availableAgents}
-      onAgentChange={onAgentChange}
       availableProjects={availableProjects}
       currentProject={currentProject}
+      selectedProjectId={selectedProjectId}
+      onProjectChange={onProjectChange}
+      showProjectSelector={showProjectSelector}
+      showProjectFileButton={showProjectFileButton}
+      workspaceRoot={workspaceRoot}
+      onWorkspaceRootChange={onWorkspaceRootChange}
+      showWorkspaceRootPicker={showWorkspaceRootPicker}
+      mcpEnabled={mcpEnabled}
+      enabledMcpIds={enabledMcpIds}
+      onMcpEnabledChange={onMcpEnabledChange}
+      onEnabledMcpIdsChange={onEnabledMcpIdsChange}
     />
   </div>
 );

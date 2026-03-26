@@ -1,0 +1,779 @@
+use std::collections::{HashMap, HashSet};
+use std::path::Path;
+
+use futures_util::TryStreamExt;
+use mongodb::bson::doc;
+use mongodb::options::FindOptions;
+use uuid::Uuid;
+
+use crate::db::Db;
+use crate::models::{
+    CreateMemoryAgentRequest, MemoryAgent, MemoryAgentRuntimeCommandSummary,
+    MemoryAgentRuntimeContext, MemoryAgentRuntimePluginSummary, MemoryAgentRuntimeSkillSummary,
+    MemoryAgentSkill, UpdateMemoryAgentRequest,
+};
+use crate::services::skills::{
+    extract_plugin_content_async, resolve_plugin_root_from_cache, resolve_skill_state_root,
+};
+
+use super::{auth::ADMIN_USER_ID, now_rfc3339, skills as skills_repo};
+
+fn collection(db: &Db) -> mongodb::Collection<MemoryAgent> {
+    db.collection::<MemoryAgent>("memory_agents")
+}
+
+#[derive(Debug)]
+struct NormalizedAgentLinks {
+    plugin_sources: Vec<String>,
+    skill_ids: Vec<String>,
+    default_skill_ids: Vec<String>,
+}
+
+fn normalize_string_list(items: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    for item in items {
+        let trimmed = item.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if seen.insert(trimmed.to_string()) {
+            out.push(trimmed.to_string());
+        }
+    }
+    out
+}
+
+fn normalize_inline_skills(skills: &[MemoryAgentSkill]) -> Vec<MemoryAgentSkill> {
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    for skill in skills {
+        let id = skill.id.trim();
+        let name = skill.name.trim();
+        let content = skill.content.trim();
+        if id.is_empty() || name.is_empty() || content.is_empty() {
+            continue;
+        }
+        if !seen.insert(id.to_string()) {
+            continue;
+        }
+        out.push(MemoryAgentSkill {
+            id: id.to_string(),
+            name: name.to_string(),
+            content: content.to_string(),
+        });
+    }
+    out
+}
+
+fn visible_user_ids_for_agent_owner(user_id: &str) -> Vec<String> {
+    let normalized = user_id.trim();
+    if normalized.is_empty() || normalized == ADMIN_USER_ID {
+        return vec![ADMIN_USER_ID.to_string()];
+    }
+    vec![normalized.to_string(), ADMIN_USER_ID.to_string()]
+}
+
+async fn normalize_agent_links_for_write(
+    db: &Db,
+    user_id: &str,
+    plugin_sources: &[String],
+    skill_ids: &[String],
+    default_skill_ids: &[String],
+    inline_skills: &[MemoryAgentSkill],
+) -> Result<NormalizedAgentLinks, String> {
+    let mut normalized_plugin_sources = normalize_string_list(plugin_sources);
+    let normalized_skill_ids = normalize_string_list(skill_ids);
+    let normalized_default_skill_ids = normalize_string_list(default_skill_ids);
+    let inline_skill_ids = normalize_inline_skills(inline_skills)
+        .into_iter()
+        .map(|skill| skill.id)
+        .collect::<HashSet<_>>();
+    let visible_user_ids = visible_user_ids_for_agent_owner(user_id);
+    let external_skill_ids = normalized_skill_ids
+        .iter()
+        .filter(|skill_id| !inline_skill_ids.contains(*skill_id))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    let resolved_skills = skills_repo::list_skills_by_ids(
+        db,
+        visible_user_ids.as_slice(),
+        external_skill_ids.as_slice(),
+    )
+    .await?;
+    let skill_map = resolved_skills
+        .into_iter()
+        .map(|skill| (skill.id.clone(), skill))
+        .collect::<HashMap<_, _>>();
+
+    let mut missing_skill_ids = Vec::new();
+    for skill_id in &external_skill_ids {
+        if !skill_map.contains_key(skill_id) {
+            missing_skill_ids.push(skill_id.clone());
+        }
+    }
+    if !missing_skill_ids.is_empty() {
+        return Err(format!(
+            "unknown skill_ids: {}",
+            missing_skill_ids.join(", ")
+        ));
+    }
+
+    for skill in skill_map.values() {
+        let plugin_source = skill.plugin_source.trim();
+        if plugin_source.is_empty() {
+            continue;
+        }
+        if !normalized_plugin_sources
+            .iter()
+            .any(|item| item == plugin_source)
+        {
+            normalized_plugin_sources.push(plugin_source.to_string());
+        }
+    }
+
+    let resolved_plugins = skills_repo::get_plugins_by_sources_for_user_ids(
+        db,
+        visible_user_ids.as_slice(),
+        normalized_plugin_sources.as_slice(),
+    )
+    .await?;
+    let plugin_sources_found = resolved_plugins
+        .iter()
+        .map(|plugin| plugin.source.as_str())
+        .collect::<HashSet<_>>();
+    let mut missing_plugin_sources = Vec::new();
+    for plugin_source in &normalized_plugin_sources {
+        if !plugin_sources_found.contains(plugin_source.as_str()) {
+            missing_plugin_sources.push(plugin_source.clone());
+        }
+    }
+    if !missing_plugin_sources.is_empty() {
+        return Err(format!(
+            "unknown plugin_sources: {}",
+            missing_plugin_sources.join(", ")
+        ));
+    }
+
+    let mut invalid_default_skill_ids = Vec::new();
+    for skill_id in &normalized_default_skill_ids {
+        let included = normalized_skill_ids.iter().any(|item| item == skill_id)
+            || inline_skill_ids.contains(skill_id);
+        if !included {
+            invalid_default_skill_ids.push(skill_id.clone());
+        }
+    }
+    if !invalid_default_skill_ids.is_empty() {
+        return Err(format!(
+            "default_skill_ids must belong to skill_ids or inline skills: {}",
+            invalid_default_skill_ids.join(", ")
+        ));
+    }
+
+    Ok(NormalizedAgentLinks {
+        plugin_sources: normalized_plugin_sources,
+        skill_ids: normalized_skill_ids,
+        default_skill_ids: normalized_default_skill_ids,
+    })
+}
+
+async fn derive_plugin_sources_from_skills(
+    db: &Db,
+    user_id: &str,
+    explicit_plugin_sources: &[String],
+    skill_ids: &[String],
+) -> Result<Vec<String>, String> {
+    let mut plugin_sources = normalize_string_list(explicit_plugin_sources);
+    let normalized_skill_ids = normalize_string_list(skill_ids);
+    if normalized_skill_ids.is_empty() {
+        return Ok(plugin_sources);
+    }
+
+    let visible_user_ids = visible_user_ids_for_agent_owner(user_id);
+    let resolved_skills = skills_repo::list_skills_by_ids(
+        db,
+        visible_user_ids.as_slice(),
+        normalized_skill_ids.as_slice(),
+    )
+    .await?;
+
+    for skill in resolved_skills {
+        let plugin_source = skill.plugin_source.trim();
+        if plugin_source.is_empty() {
+            continue;
+        }
+        if plugin_sources.iter().any(|item| item == plugin_source) {
+            continue;
+        }
+        plugin_sources.push(plugin_source.to_string());
+    }
+
+    Ok(plugin_sources)
+}
+
+async fn hydrate_agent_for_read(db: &Db, mut agent: MemoryAgent) -> Result<MemoryAgent, String> {
+    agent.plugin_sources = derive_plugin_sources_from_skills(
+        db,
+        agent.user_id.as_str(),
+        agent.plugin_sources.as_slice(),
+        agent.skill_ids.as_slice(),
+    )
+    .await?;
+    agent.skill_ids = normalize_string_list(agent.skill_ids.as_slice());
+    agent.default_skill_ids = normalize_string_list(agent.default_skill_ids.as_slice());
+    agent.skills = normalize_inline_skills(agent.skills.as_slice());
+    Ok(agent)
+}
+
+pub(crate) async fn derive_plugin_sources_for_agent(
+    db: &Db,
+    agent: &MemoryAgent,
+) -> Result<Vec<String>, String> {
+    derive_plugin_sources_from_skills(
+        db,
+        agent.user_id.as_str(),
+        agent.plugin_sources.as_slice(),
+        agent.skill_ids.as_slice(),
+    )
+    .await
+}
+
+pub async fn create_agent(db: &Db, req: CreateMemoryAgentRequest) -> Result<MemoryAgent, String> {
+    let now = now_rfc3339();
+    let skills = normalize_inline_skills(req.skills.unwrap_or_default().as_slice());
+    let links = normalize_agent_links_for_write(
+        db,
+        req.user_id.as_str(),
+        req.plugin_sources.as_deref().unwrap_or(&[]),
+        req.skill_ids.as_deref().unwrap_or(&[]),
+        req.default_skill_ids.as_deref().unwrap_or(&[]),
+        skills.as_slice(),
+    )
+    .await?;
+    let agent = MemoryAgent {
+        id: Uuid::new_v4().to_string(),
+        user_id: req.user_id,
+        name: req.name.trim().to_string(),
+        description: req.description,
+        category: req.category,
+        role_definition: req.role_definition,
+        plugin_sources: links.plugin_sources,
+        skills,
+        skill_ids: links.skill_ids,
+        default_skill_ids: links.default_skill_ids,
+        mcp_policy: req.mcp_policy,
+        project_policy: req.project_policy,
+        enabled: req.enabled.unwrap_or(true),
+        created_at: now.clone(),
+        updated_at: now,
+    };
+
+    collection(db)
+        .insert_one(agent.clone())
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(agent)
+}
+
+pub async fn list_agents(
+    db: &Db,
+    user_ids: &[String],
+    enabled: Option<bool>,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<MemoryAgent>, String> {
+    if user_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut filter = if user_ids.len() == 1 {
+        doc! { "user_id": user_ids[0].clone() }
+    } else {
+        doc! { "user_id": { "$in": user_ids } }
+    };
+    if let Some(value) = enabled {
+        filter.insert("enabled", value);
+    }
+
+    let options = FindOptions::builder()
+        .sort(doc! {"updated_at": -1})
+        .limit(Some(limit.max(1).min(500)))
+        .skip(Some(offset.max(0) as u64))
+        .build();
+
+    let cursor = collection(db)
+        .find(filter)
+        .with_options(options)
+        .await
+        .map_err(|e| e.to_string())?;
+    let items = cursor
+        .try_collect::<Vec<MemoryAgent>>()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut out = Vec::with_capacity(items.len());
+    for agent in items {
+        out.push(hydrate_agent_for_read(db, agent).await?);
+    }
+    Ok(out)
+}
+
+pub async fn get_agent_by_id(db: &Db, agent_id: &str) -> Result<Option<MemoryAgent>, String> {
+    let item = collection(db)
+        .find_one(doc! { "id": agent_id })
+        .await
+        .map_err(|e| e.to_string())?;
+    match item {
+        Some(agent) => Ok(Some(hydrate_agent_for_read(db, agent).await?)),
+        None => Ok(None),
+    }
+}
+
+pub async fn get_user_clone_by_source_agent_id(
+    db: &Db,
+    user_id: &str,
+    source_agent_id: &str,
+) -> Result<Option<MemoryAgent>, String> {
+    let item = collection(db)
+        .find_one(doc! {
+            "user_id": user_id,
+            "project_policy.__chatos_clone_meta.source_agent_id": source_agent_id,
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+    match item {
+        Some(agent) => Ok(Some(hydrate_agent_for_read(db, agent).await?)),
+        None => Ok(None),
+    }
+}
+
+pub async fn update_agent(
+    db: &Db,
+    agent_id: &str,
+    req: UpdateMemoryAgentRequest,
+) -> Result<Option<MemoryAgent>, String> {
+    let existing = get_agent_by_id(db, agent_id).await?;
+    let Some(existing) = existing else {
+        return Ok(None);
+    };
+
+    let skills = normalize_inline_skills(
+        req.skills
+            .clone()
+            .unwrap_or(existing.skills.clone())
+            .as_slice(),
+    );
+    let links = normalize_agent_links_for_write(
+        db,
+        existing.user_id.as_str(),
+        req.plugin_sources
+            .as_deref()
+            .unwrap_or(existing.plugin_sources.as_slice()),
+        req.skill_ids
+            .as_deref()
+            .unwrap_or(existing.skill_ids.as_slice()),
+        req.default_skill_ids
+            .as_deref()
+            .unwrap_or(existing.default_skill_ids.as_slice()),
+        skills.as_slice(),
+    )
+    .await?;
+
+    let updated = MemoryAgent {
+        id: existing.id,
+        user_id: existing.user_id,
+        name: req
+            .name
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or(existing.name),
+        description: req.description.or(existing.description),
+        category: req.category.or(existing.category),
+        role_definition: req.role_definition.unwrap_or(existing.role_definition),
+        plugin_sources: links.plugin_sources,
+        skills,
+        skill_ids: links.skill_ids,
+        default_skill_ids: links.default_skill_ids,
+        mcp_policy: req.mcp_policy.or(existing.mcp_policy),
+        project_policy: req.project_policy.or(existing.project_policy),
+        enabled: req.enabled.unwrap_or(existing.enabled),
+        created_at: existing.created_at,
+        updated_at: now_rfc3339(),
+    };
+
+    collection(db)
+        .replace_one(doc! { "id": agent_id }, updated.clone())
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(Some(updated))
+}
+
+pub async fn delete_agent(db: &Db, agent_id: &str) -> Result<bool, String> {
+    let result = collection(db)
+        .delete_one(doc! { "id": agent_id })
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(result.deleted_count > 0)
+}
+
+pub async fn get_runtime_context(
+    db: &Db,
+    agent_id: &str,
+) -> Result<Option<MemoryAgentRuntimeContext>, String> {
+    fn normalize_optional_text(value: Option<&str>) -> Option<String> {
+        value
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+            .map(ToOwned::to_owned)
+    }
+
+    fn command_display_name(raw_name: &str, source_path: &str) -> String {
+        let normalized_name = raw_name.trim();
+        if !normalized_name.is_empty() {
+            return normalized_name.to_string();
+        }
+
+        let normalized_path = source_path.trim();
+        if normalized_path.is_empty() {
+            return "unnamed-command".to_string();
+        }
+
+        Path::new(normalized_path)
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| normalized_path.to_string())
+    }
+
+    fn parse_description_from_markdown_frontmatter(raw: &str) -> Option<String> {
+        let trimmed = raw.trim();
+        if !trimmed.starts_with("---\n") && !trimmed.starts_with("---\r\n") {
+            return None;
+        }
+        let mut lines = trimmed.lines();
+        if lines.next().map(str::trim) != Some("---") {
+            return None;
+        }
+        for line in lines {
+            let normalized = line.trim();
+            if normalized == "---" {
+                break;
+            }
+            let Some((key, value)) = normalized.split_once(':') else {
+                continue;
+            };
+            if !key.trim().eq_ignore_ascii_case("description") {
+                continue;
+            }
+            let value = value.trim().trim_matches('"').trim_matches('\'');
+            if value.is_empty() {
+                return None;
+            }
+            return Some(value.to_string());
+        }
+        None
+    }
+
+    fn parse_description_from_leading_table(raw: &str) -> Option<String> {
+        let lines = raw.lines().collect::<Vec<_>>();
+        if lines.len() < 2 {
+            return None;
+        }
+        let mut start = 0usize;
+        while start < lines.len() && lines[start].trim().is_empty() {
+            start += 1;
+        }
+        if start + 1 >= lines.len() {
+            return None;
+        }
+        let header = lines[start].trim();
+        let separator = lines[start + 1].trim();
+        if !header.contains('|') || !separator.contains('|') {
+            return None;
+        }
+        let is_separator = separator
+            .trim_matches('|')
+            .split('|')
+            .map(str::trim)
+            .all(|cell| {
+                !cell.is_empty() && cell.chars().all(|ch| ch == '-' || ch == ':' || ch == ' ')
+            });
+        if !is_separator {
+            return None;
+        }
+
+        let mut rows = vec![header];
+        for line in lines.iter().skip(start + 2) {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || !trimmed.contains('|') {
+                break;
+            }
+            rows.push(trimmed);
+        }
+        for row in rows {
+            let cells = row
+                .trim_matches('|')
+                .split('|')
+                .map(str::trim)
+                .collect::<Vec<_>>();
+            if cells.len() < 2 {
+                continue;
+            }
+            if !cells[0].eq_ignore_ascii_case("description") {
+                continue;
+            }
+            if cells[1].is_empty() {
+                return None;
+            }
+            return Some(cells[1].to_string());
+        }
+        None
+    }
+
+    fn parse_first_body_paragraph(raw: &str) -> Option<String> {
+        let mut in_code_block = false;
+        for line in raw.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("```") {
+                in_code_block = !in_code_block;
+                continue;
+            }
+            if in_code_block || trimmed.is_empty() {
+                continue;
+            }
+            if trimmed.starts_with('#')
+                || trimmed.starts_with('|')
+                || trimmed.starts_with('-')
+                || trimmed.starts_with('*')
+                || trimmed
+                    .chars()
+                    .all(|ch| ch == '-' || ch == ':' || ch == '|')
+            {
+                continue;
+            }
+            return Some(trimmed.to_string());
+        }
+        None
+    }
+
+    fn infer_description_from_markdown(raw: &str) -> Option<String> {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        parse_description_from_markdown_frontmatter(trimmed)
+            .or_else(|| parse_description_from_leading_table(trimmed))
+            .or_else(|| parse_first_body_paragraph(trimmed))
+            .and_then(|value| normalize_optional_text(Some(value.as_str())))
+    }
+
+    let Some(agent) = get_agent_by_id(db, agent_id).await? else {
+        return Ok(None);
+    };
+
+    let visible_user_ids = visible_user_ids_for_agent_owner(agent.user_id.as_str());
+    let plugins = skills_repo::get_plugins_by_sources_for_user_ids(
+        db,
+        visible_user_ids.as_slice(),
+        agent.plugin_sources.as_slice(),
+    )
+    .await?;
+    let mut plugin_map = plugins
+        .into_iter()
+        .map(|plugin| (plugin.source.clone(), plugin))
+        .collect::<HashMap<_, _>>();
+    let plugins_root = resolve_skill_state_root(agent.user_id.as_str()).join("plugins");
+    for source in &agent.plugin_sources {
+        let Some(existing) = plugin_map.get(source).cloned() else {
+            continue;
+        };
+        let content_missing = existing
+            .content
+            .as_deref()
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+            .is_none();
+        let commands_missing = existing.commands.is_empty();
+        let command_metadata_missing = existing.commands.iter().any(|command| {
+            let description_missing = command
+                .description
+                .as_deref()
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+                .is_none();
+            let argument_hint_missing = command
+                .argument_hint
+                .as_deref()
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+                .is_none();
+            description_missing || argument_hint_missing
+        });
+        if !content_missing && !commands_missing && !command_metadata_missing {
+            continue;
+        }
+        let Some(plugin_root) = resolve_plugin_root_from_cache(
+            plugins_root.as_path(),
+            existing.cache_path.as_deref(),
+            existing.source.as_str(),
+        ) else {
+            continue;
+        };
+        let Ok(extracted) = extract_plugin_content_async(plugin_root).await else {
+            continue;
+        };
+        let mut refreshed = existing.clone();
+        let mut changed = false;
+        if content_missing {
+            if let Some(content) = extracted
+                .content
+                .as_deref()
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+            {
+                refreshed.content = Some(content.to_string());
+                changed = true;
+            }
+        }
+        if (commands_missing || command_metadata_missing) && !extracted.commands.is_empty() {
+            refreshed.commands = extracted.commands;
+            refreshed.command_count = refreshed.commands.len().min(i64::MAX as usize) as i64;
+            changed = true;
+        }
+        if !changed {
+            continue;
+        }
+        if let Ok(saved) = skills_repo::upsert_plugin(db, refreshed).await {
+            plugin_map.insert(source.clone(), saved);
+        }
+    }
+    let skills = skills_repo::list_skills_by_ids(
+        db,
+        visible_user_ids.as_slice(),
+        agent.skill_ids.as_slice(),
+    )
+    .await?;
+    let skill_map = skills
+        .into_iter()
+        .map(|skill| (skill.id.clone(), skill))
+        .collect::<HashMap<_, _>>();
+    let runtime_plugins = agent
+        .plugin_sources
+        .iter()
+        .filter_map(|source| plugin_map.get(source))
+        .map(|plugin| MemoryAgentRuntimePluginSummary {
+            source: plugin.source.clone(),
+            name: plugin.name.clone(),
+            category: plugin.category.clone(),
+            description: plugin.description.clone(),
+            content_summary: normalize_optional_text(plugin.description.as_deref()),
+            updated_at: Some(plugin.updated_at.clone()),
+        })
+        .collect::<Vec<_>>();
+    let mut runtime_commands = Vec::new();
+    let mut seen_command_keys = HashSet::new();
+    for plugin_source in &agent.plugin_sources {
+        let Some(plugin) = plugin_map.get(plugin_source.as_str()) else {
+            continue;
+        };
+        let mut commands = plugin.commands.clone();
+        commands.sort_by(|left, right| {
+            let left_key = left.source_path.trim().to_string();
+            let right_key = right.source_path.trim().to_string();
+            left_key
+                .cmp(&right_key)
+                .then_with(|| left.name.trim().cmp(right.name.trim()))
+        });
+        for command in commands {
+            let source_path = command.source_path.trim().to_string();
+            if source_path.is_empty() {
+                continue;
+            }
+            let dedup_key = format!("{}::{}", plugin.source, source_path);
+            if !seen_command_keys.insert(dedup_key) {
+                continue;
+            }
+            let command_ref = format!("CMD{}", runtime_commands.len() + 1);
+            runtime_commands.push(MemoryAgentRuntimeCommandSummary {
+                command_ref,
+                name: command_display_name(command.name.as_str(), source_path.as_str()),
+                description: normalize_optional_text(command.description.as_deref())
+                    .or_else(|| infer_description_from_markdown(command.content.as_str())),
+                argument_hint: normalize_optional_text(command.argument_hint.as_deref()),
+                plugin_source: plugin.source.clone(),
+                source_path,
+                content: command.content.trim().to_string(),
+                updated_at: Some(plugin.updated_at.clone()),
+            });
+        }
+    }
+    let inline_skill_map = agent
+        .skills
+        .iter()
+        .map(|skill| (skill.id.clone(), skill))
+        .collect::<HashMap<_, _>>();
+    let mut added_inline_skill_ids = HashSet::new();
+    let mut runtime_skills = Vec::new();
+    for skill_id in &agent.skill_ids {
+        if let Some(skill) = skill_map.get(skill_id) {
+            runtime_skills.push(MemoryAgentRuntimeSkillSummary {
+                id: skill.id.clone(),
+                name: skill.name.clone(),
+                description: normalize_optional_text(skill.description.as_deref())
+                    .or_else(|| infer_description_from_markdown(skill.content.as_str())),
+                plugin_source: Some(skill.plugin_source.clone()),
+                source_type: "skill_center".to_string(),
+                source_path: Some(skill.source_path.clone()),
+                updated_at: Some(skill.updated_at.clone()),
+            });
+            continue;
+        }
+        if let Some(skill) = inline_skill_map.get(skill_id) {
+            added_inline_skill_ids.insert(skill.id.clone());
+            runtime_skills.push(MemoryAgentRuntimeSkillSummary {
+                id: skill.id.clone(),
+                name: skill.name.clone(),
+                description: None,
+                plugin_source: None,
+                source_type: "inline".to_string(),
+                source_path: None,
+                updated_at: Some(agent.updated_at.clone()),
+            });
+        }
+    }
+    for skill in &agent.skills {
+        if added_inline_skill_ids.contains(&skill.id) {
+            continue;
+        }
+        runtime_skills.push(MemoryAgentRuntimeSkillSummary {
+            id: skill.id.clone(),
+            name: skill.name.clone(),
+            description: None,
+            plugin_source: None,
+            source_type: "inline".to_string(),
+            source_path: None,
+            updated_at: Some(agent.updated_at.clone()),
+        });
+    }
+
+    Ok(Some(MemoryAgentRuntimeContext {
+        agent_id: agent.id,
+        name: agent.name,
+        description: agent.description,
+        category: agent.category,
+        role_definition: agent.role_definition,
+        plugin_sources: agent.plugin_sources,
+        runtime_plugins,
+        skills: agent.skills,
+        skill_ids: agent.skill_ids,
+        runtime_skills,
+        runtime_commands,
+        mcp_policy: agent.mcp_policy,
+        project_policy: agent.project_policy,
+        updated_at: agent.updated_at,
+    }))
+}

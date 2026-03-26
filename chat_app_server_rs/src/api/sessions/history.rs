@@ -175,6 +175,50 @@ fn build_assistant_segments(message: &Message, tool_calls: &[Value]) -> Vec<Valu
     segments
 }
 
+fn extract_process_segments_from_message(message: &Message) -> Vec<Value> {
+    let existing_segments = extract_content_segments_from_message(message);
+    let filtered_existing: Vec<Value> = existing_segments
+        .into_iter()
+        .filter(|segment| {
+            let Value::Object(map) = segment else {
+                return false;
+            };
+
+            match map.get("type").and_then(Value::as_str) {
+                Some("thinking") => {
+                    is_meaningful_reasoning(map.get("content").and_then(Value::as_str))
+                }
+                Some("tool_call") => map
+                    .get("toolCallId")
+                    .or_else(|| map.get("tool_call_id"))
+                    .or_else(|| map.get("toolCallID"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .is_some(),
+                _ => false,
+            }
+        })
+        .collect();
+    if !filtered_existing.is_empty() {
+        return filtered_existing;
+    }
+
+    let tool_calls = extract_tool_calls_from_message(message);
+    build_assistant_segments(message, &tool_calls)
+        .into_iter()
+        .filter(|segment| {
+            let Value::Object(map) = segment else {
+                return false;
+            };
+            matches!(
+                map.get("type").and_then(Value::as_str),
+                Some("thinking") | Some("tool_call")
+            )
+        })
+        .collect()
+}
+
 fn enrich_assistant_message_for_display(message: &mut Message) {
     if message.role != "assistant" || is_session_summary(message) {
         return;
@@ -229,7 +273,10 @@ fn message_turn_id(message: &Message) -> Option<&str> {
     message
         .metadata
         .as_ref()
-        .and_then(|meta| meta.get("conversation_turn_id"))
+        .and_then(|meta| {
+            meta.get("conversation_turn_id")
+                .or_else(|| meta.get("conversationTurnId"))
+        })
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -286,6 +333,7 @@ fn strip_assistant_for_compact_history(message: &mut Message, user_message_id: &
 }
 
 fn mark_process_message_loaded(message: &mut Message, user_message_id: &str) {
+    let turn_id = message_turn_id(message).map(|value| value.to_string());
     let metadata = ensure_metadata_object(message);
     metadata.insert("hidden".to_string(), Value::Bool(false));
     metadata.insert("historyProcessPlaceholder".to_string(), Value::Bool(false));
@@ -294,6 +342,50 @@ fn mark_process_message_loaded(message: &mut Message, user_message_id: &str) {
         Value::String(user_message_id.to_string()),
     );
     metadata.insert("historyProcessLoaded".to_string(), Value::Bool(true));
+    if let Some(turn_id) = turn_id {
+        metadata.insert("historyProcessTurnId".to_string(), Value::String(turn_id));
+    }
+}
+
+fn build_embedded_process_message(
+    final_assistant: &Message,
+    user_message_id: &str,
+) -> Option<Message> {
+    if final_assistant.role != "assistant" || is_session_summary(final_assistant) {
+        return None;
+    }
+
+    let process_segments = extract_process_segments_from_message(final_assistant);
+    let tool_calls = extract_tool_calls_from_message(final_assistant);
+    if process_segments.is_empty() && tool_calls.is_empty() {
+        return None;
+    }
+
+    let mut synthetic = final_assistant.clone();
+    synthetic.id = format!("{}::embedded_process", final_assistant.id);
+    synthetic.content.clear();
+    synthetic.summary = None;
+    synthetic.reasoning = None;
+    synthetic.tool_calls = (!tool_calls.is_empty()).then_some(Value::Array(tool_calls.clone()));
+
+    let metadata = ensure_metadata_object(&mut synthetic);
+    metadata.remove("historyFinalForUserMessageId");
+    metadata.remove("historyFinalForTurnId");
+    metadata.remove("historyProcessExpanded");
+    if !tool_calls.is_empty() {
+        metadata.insert("toolCalls".to_string(), Value::Array(tool_calls));
+    }
+    metadata.insert(
+        "contentSegments".to_string(),
+        Value::Array(process_segments.clone()),
+    );
+    metadata.insert(
+        "currentSegmentIndex".to_string(),
+        Value::Number(Number::from(process_segments.len().saturating_sub(1) as u64)),
+    );
+
+    mark_process_message_loaded(&mut synthetic, user_message_id);
+    Some(synthetic)
 }
 
 fn build_compact_history_messages(messages: Vec<Message>) -> Vec<Message> {
@@ -455,6 +547,16 @@ pub(super) fn build_turn_process_messages(messages: &[Message], user_index: usiz
             let mut tool_message = source.clone();
             mark_process_message_loaded(&mut tool_message, &user_message_id);
             process_messages.push(tool_message);
+        }
+    }
+
+    if process_messages.is_empty() {
+        if let Some(final_assistant_index) = final_assistant_index {
+            if let Some(synthetic) =
+                build_embedded_process_message(&messages[final_assistant_index], &user_message_id)
+            {
+                process_messages.push(synthetic);
+            }
         }
     }
 

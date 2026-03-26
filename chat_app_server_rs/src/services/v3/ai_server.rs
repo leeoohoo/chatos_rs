@@ -54,6 +54,11 @@ impl AiServer {
         self.ai_client.set_system_prompt(prompt);
     }
 
+    pub fn set_mcp_tool_execute(&mut self, mcp_tool_execute: McpToolExecute) {
+        self.mcp_tool_execute = mcp_tool_execute.clone();
+        self.ai_client.set_mcp_tool_execute(mcp_tool_execute);
+    }
+
     pub async fn chat(
         &mut self,
         session_id: &str,
@@ -75,7 +80,7 @@ impl AiServer {
             .save_user_message(
                 session_id,
                 user_message,
-                None,
+                options.user_message_id.clone(),
                 options.message_mode.clone(),
                 options.message_source.clone(),
                 meta,
@@ -100,16 +105,7 @@ impl AiServer {
 
         let messages = vec![json!({"role": "user", "content": content_parts})];
 
-        let callbacks = options.callbacks.unwrap_or_else(|| AiClientCallbacks {
-            on_chunk: None,
-            on_thinking: None,
-            on_tools_start: None,
-            on_tools_stream: None,
-            on_tools_end: None,
-            on_context_summarized_start: None,
-            on_context_summarized_stream: None,
-            on_context_summarized_end: None,
-        });
+        let callbacks = options.callbacks.unwrap_or_default();
 
         let result = self
             .ai_client
@@ -121,6 +117,7 @@ impl AiServer {
                     temperature: Some(temperature),
                     max_tokens,
                     reasoning_enabled: Some(reasoning_enabled),
+                    supports_responses: options.supports_responses,
                     provider: Some(provider),
                     thinking_level,
                     system_prompt: None,
@@ -129,20 +126,13 @@ impl AiServer {
                     conversation_turn_id: turn_id.clone(),
                     message_mode: options.message_mode.clone(),
                     message_source: options.message_source.clone(),
-                    sub_agent_run_id: None,
+                    prefixed_input_items: options.prefixed_input_items.clone(),
+                    request_cwd: options.request_cwd.clone(),
+                    use_codex_gateway_mcp_passthrough: options.use_codex_gateway_mcp_passthrough,
                     callbacks: Some(if use_tools {
                         callbacks
                     } else {
-                        AiClientCallbacks {
-                            on_chunk: callbacks.on_chunk,
-                            on_thinking: callbacks.on_thinking,
-                            on_tools_start: None,
-                            on_tools_stream: None,
-                            on_tools_end: None,
-                            on_context_summarized_start: callbacks.on_context_summarized_start,
-                            on_context_summarized_stream: callbacks.on_context_summarized_stream,
-                            on_context_summarized_end: callbacks.on_context_summarized_end,
-                        }
+                        callbacks.without_tool_callbacks()
                     }),
                 },
             )
@@ -157,6 +147,7 @@ pub struct ChatOptions {
     pub model: Option<String>,
     pub provider: Option<String>,
     pub thinking_level: Option<String>,
+    pub supports_responses: Option<bool>,
     pub temperature: Option<f64>,
     pub max_tokens: Option<i64>,
     pub use_tools: Option<bool>,
@@ -165,6 +156,10 @@ pub struct ChatOptions {
     pub reasoning_enabled: Option<bool>,
     pub callbacks: Option<AiClientCallbacks>,
     pub turn_id: Option<String>,
+    pub user_message_id: Option<String>,
     pub message_mode: Option<String>,
     pub message_source: Option<String>,
+    pub prefixed_input_items: Option<Vec<Value>>,
+    pub request_cwd: Option<String>,
+    pub use_codex_gateway_mcp_passthrough: Option<bool>,
 }

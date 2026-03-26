@@ -1,12 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { shallow } from 'zustand/shallow';
 import { useChatApiClientFromContext, useChatStoreSelector } from '../lib/store/ChatStoreContext';
-import { MessageList } from './MessageList';
 import { SessionList } from './SessionList';
 import McpManager from './McpManager';
 import AiModelManager from './AiModelManager';
 import SystemContextEditor from './SystemContextEditor';
-import AgentManager from './AgentManager';
 import UserSettingsPanel from './UserSettingsPanel';
 import ProjectExplorer from './ProjectExplorer';
 import TerminalView from './TerminalView';
@@ -15,69 +13,27 @@ import RemoteSftpPanel from './RemoteSftpPanel';
 // 搴旂敤寮圭獥绠＄悊鍣ㄧ敱 ApplicationsPanel 鐩存帴鎵挎媴
 import ApplicationsPanel from './ApplicationsPanel';
 import NotepadPanel from './NotepadPanel';
-import ChatComposerPanel from './chatInterface/ChatComposerPanel';
+import ChatConversationPane from './chatInterface/ChatConversationPane';
 import HeaderBar from './chatInterface/HeaderBar';
-import SummaryPane from './chatInterface/SummaryPane';
 import UiPromptHistoryDrawer from './chatInterface/UiPromptHistoryDrawer';
+import TurnRuntimeContextDrawer from './chatInterface/TurnRuntimeContextDrawer';
 import {
-  collectMessageToolCalls,
+  buildSupportedFileTypes,
   formatSummaryCreatedAt,
-  hasToolCallError,
-  normalizeWorkbarSummary,
-  normalizeWorkbarTask,
-  normalizeUiPromptHistoryItem,
-  selectLatestTurnTasks,
-  shouldRefreshForTaskMutationToolCall,
+  resolveModelSupportFlags,
   toUiPromptPanelFromRecord,
-  extractTaskIdsFromToolCall,
 } from './chatInterface/helpers';
-import { usePanelActions } from './chatInterface/usePanelActions';
-import { useWorkbarMutations } from './chatInterface/useWorkbarMutations';
-import type { UiPromptHistoryItem } from './chatInterface/types';
-import type { SessionSummaryWorkbarItem, TaskWorkbarItem } from './TaskWorkbar';
+import { useSessionHeaderMeta } from './chatInterface/useSessionHeaderMeta';
+import { useSessionWorkbarPanels } from './chatInterface/useSessionWorkbarPanels';
 import { apiClient as globalApiClient } from '../lib/api/client';
 import { cn } from '../lib/utils';
 import type { ChatInterfaceProps } from '../types';
 import { useAuthStore } from '../lib/auth/authStore';
-
-const SESSION_PAGE_SIZE = 30;
-const WORKBAR_SUMMARY_PAGE_SIZE = 50;
-
-const appendUniqueSummaries = (
-  current: SessionSummaryWorkbarItem[],
-  incoming: SessionSummaryWorkbarItem[]
-): SessionSummaryWorkbarItem[] => {
-  if (incoming.length === 0) {
-    return current;
-  }
-
-  const merged = [...current];
-  const indexById = new Map<string, number>();
-  merged.forEach((item, index) => {
-    if (item.id) {
-      indexById.set(item.id, index);
-    }
-  });
-
-  for (const nextItem of incoming) {
-    const summaryId = nextItem.id.trim();
-    if (!summaryId) {
-      merged.push(nextItem);
-      continue;
-    }
-
-    const existingIndex = indexById.get(summaryId);
-    if (typeof existingIndex === 'number') {
-      merged[existingIndex] = nextItem;
-      continue;
-    }
-
-    indexById.set(summaryId, merged.length);
-    merged.push(nextItem);
-  }
-
-  return merged;
-};
+import { useSessionRuntimeSettings } from '../features/sessionRuntime/useSessionRuntimeSettings';
+import { useContactMemoryContext } from './chatInterface/useContactMemoryContext';
+import { useUiPromptHistory } from './chatInterface/useUiPromptHistory';
+import { useContactProjectScope } from './chatInterface/useContactProjectScope';
+import type { TurnRuntimeSnapshotLookupResponse } from '../lib/api/client/types';
 
 export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   className,
@@ -86,6 +42,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
 }) => {
   const {
     currentSession,
+    contacts,
     currentProject,
     currentTerminal,
     currentRemoteConnection,
@@ -94,12 +51,11 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     messages,
     hasMoreMessages,
     error,
-    loadSessions,
     loadProjects,
-    // selectSession,
     loadMoreMessages,
     toggleTurnProcess,
     sendMessage,
+    updateSession,
     clearError,
     sidebarOpen,
     toggleSidebar,
@@ -107,16 +63,15 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     selectedModelId,
     setSelectedModel,
     loadAiModelConfigs,
-    agents,
-    selectedAgentId,
-    setSelectedAgent,
     loadAgents,
     chatConfig,
     updateChatConfig,
     abortCurrentConversation,
     sessionChatState = {},
+    sessionRuntimeGuidanceState = {},
     taskReviewPanelsBySession = {},
     uiPromptPanelsBySession = {},
+    submitRuntimeGuidance,
     upsertTaskReviewPanel,
     removeTaskReviewPanel,
     upsertUiPromptPanel,
@@ -125,6 +80,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     // selectedApplicationId,  // 涓嶅啀鐢ㄤ簬鑷姩鏄剧ず
   } = useChatStoreSelector((state) => ({
     currentSession: state.currentSession,
+    contacts: state.contacts,
     currentProject: state.currentProject,
     currentTerminal: state.currentTerminal,
     currentRemoteConnection: state.currentRemoteConnection,
@@ -133,11 +89,11 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     messages: state.messages,
     hasMoreMessages: state.hasMoreMessages,
     error: state.error,
-    loadSessions: state.loadSessions,
     loadProjects: state.loadProjects,
     loadMoreMessages: state.loadMoreMessages,
     toggleTurnProcess: state.toggleTurnProcess,
     sendMessage: state.sendMessage,
+    updateSession: state.updateSession,
     clearError: state.clearError,
     sidebarOpen: state.sidebarOpen,
     toggleSidebar: state.toggleSidebar,
@@ -145,16 +101,15 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     selectedModelId: state.selectedModelId,
     setSelectedModel: state.setSelectedModel,
     loadAiModelConfigs: state.loadAiModelConfigs,
-    agents: state.agents,
-    selectedAgentId: state.selectedAgentId,
-    setSelectedAgent: state.setSelectedAgent,
     loadAgents: state.loadAgents,
     chatConfig: state.chatConfig,
     updateChatConfig: state.updateChatConfig,
     abortCurrentConversation: state.abortCurrentConversation,
     sessionChatState: state.sessionChatState,
+    sessionRuntimeGuidanceState: state.sessionRuntimeGuidanceState,
     taskReviewPanelsBySession: state.taskReviewPanelsBySession,
     uiPromptPanelsBySession: state.uiPromptPanelsBySession,
+    submitRuntimeGuidance: state.submitRuntimeGuidance,
     upsertTaskReviewPanel: state.upsertTaskReviewPanel,
     removeTaskReviewPanel: state.removeTaskReviewPanel,
     upsertUiPromptPanel: state.upsertUiPromptPanel,
@@ -165,127 +120,103 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const apiClient = useMemo(() => apiClientFromContext || globalApiClient, [apiClientFromContext]);
   const { user, logout } = useAuthStore();
 
-  const selectedAgent = useMemo(
-    () => (selectedAgentId ? agents.find((a: any) => a.id === selectedAgentId) : null),
-    [agents, selectedAgentId]
+  const { supportsImages, supportsReasoning } = useMemo(
+    () => resolveModelSupportFlags(selectedModelId, aiModelConfigs as any[]),
+    [aiModelConfigs, selectedModelId],
   );
-  const activeModelConfig = useMemo(() => (
-    selectedAgent
-      ? aiModelConfigs.find((m: any) => m.id === selectedAgent.ai_model_config_id)
-      : aiModelConfigs.find((m: any) => m.id === selectedModelId)
-  ), [aiModelConfigs, selectedAgent, selectedModelId]);
-  const supportsImages = activeModelConfig?.supports_images === true;
-  const supportsReasoning = activeModelConfig?.supports_reasoning === true;
-  const supportedFileTypes = useMemo(() => (
-    supportsImages
-      ? ['image/*', 'text/*', 'application/json', 'application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document']
-      : ['text/*', 'application/json', 'application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document']
-  ), [supportsImages]);
+  const supportedFileTypes = useMemo(
+    () => buildSupportedFileTypes(supportsImages),
+    [supportsImages],
+  );
   const currentChatState = useMemo(() => (
     currentSession ? sessionChatState[currentSession.id] : undefined
   ), [currentSession, sessionChatState]);
+  const {
+    currentContactName,
+    currentContactId,
+    headerTitle,
+  } = useSessionHeaderMeta({
+    currentSession,
+    contacts: contacts as any[],
+    activePanel,
+    currentProject,
+    currentTerminal,
+    currentRemoteConnection,
+  });
   const chatIsLoading = currentChatState?.isLoading ?? false;
   const chatIsStreaming = currentChatState?.isStreaming ?? false;
   const chatIsStopping = currentChatState?.isStopping ?? false;
-  const headerTitle = activePanel === 'project'
-    ? (currentProject?.name || '项目')
-    : activePanel === 'terminal'
-      ? (currentTerminal?.name || '终端')
-      : activePanel === 'remote_terminal' || activePanel === 'remote_sftp'
-        ? (currentRemoteConnection?.name || '远端连接')
-      : (currentSession?.title || '');
 
   const [showMcpManager, setShowMcpManager] = useState(false);
   const [showAiModelManager, setShowAiModelManager] = useState(false);
   const [showSystemContextEditor, setShowSystemContextEditor] = useState(false);
-  const [showAgentManager, setShowAgentManager] = useState(false);
   const [showApplicationsPanel, setShowApplicationsPanel] = useState(false);
   const [showNotepadPanel, setShowNotepadPanel] = useState(false);
   const [showUserSettings, setShowUserSettings] = useState(false);
   const didInitRef = useRef(false);
-  const [workbarCurrentTurnTasks, setWorkbarCurrentTurnTasks] = useState<TaskWorkbarItem[]>([]);
-  const [workbarHistoryTasks, setWorkbarHistoryTasks] = useState<TaskWorkbarItem[]>([]);
-  const [workbarHistoryLoadedSessionId, setWorkbarHistoryLoadedSessionId] = useState<string | null>(null);
-  const [workbarLoading, setWorkbarLoading] = useState(false);
-  const [workbarHistoryLoading, setWorkbarHistoryLoading] = useState(false);
-  const [workbarSummaries, setWorkbarSummaries] = useState<SessionSummaryWorkbarItem[]>([]);
-  const [workbarSummariesTotal, setWorkbarSummariesTotal] = useState(0);
-  const [workbarSummariesLoadedSessionId, setWorkbarSummariesLoadedSessionId] = useState<string | null>(null);
-  const [workbarSummariesLoading, setWorkbarSummariesLoading] = useState(false);
-  const [workbarSummariesLoadingMore, setWorkbarSummariesLoadingMore] = useState(false);
-  const [workbarError, setWorkbarError] = useState<string | null>(null);
-  const [workbarHistoryError, setWorkbarHistoryError] = useState<string | null>(null);
-  const [workbarSummariesError, setWorkbarSummariesError] = useState<string | null>(null);
   const [summaryPaneSessionId, setSummaryPaneSessionId] = useState<string | null>(null);
   const [uiPromptHistoryOpen, setUiPromptHistoryOpen] = useState(false);
-  const [uiPromptHistoryItems, setUiPromptHistoryItems] = useState<UiPromptHistoryItem[]>([]);
-  const [uiPromptHistoryLoading, setUiPromptHistoryLoading] = useState(false);
-  const [uiPromptHistoryError, setUiPromptHistoryError] = useState<string | null>(null);
-  const [uiPromptHistoryLoadedSessionId, setUiPromptHistoryLoadedSessionId] = useState<string | null>(null);
-  const currentSessionRef = useRef<string | null>(null);
+  const [runtimeContextOpen, setRuntimeContextOpen] = useState(false);
+  const [runtimeContextSessionId, setRuntimeContextSessionId] = useState<string | null>(null);
+  const [runtimeContextData, setRuntimeContextData] =
+    useState<TurnRuntimeSnapshotLookupResponse | null>(null);
+  const [runtimeContextLoading, setRuntimeContextLoading] = useState(false);
+  const [runtimeContextError, setRuntimeContextError] = useState<string | null>(null);
+  const {
+    workspaceRoot: composerWorkspaceRoot,
+    mcpEnabled: composerMcpEnabled,
+    enabledMcpIds: composerEnabledMcpIds,
+    setWorkspaceRoot: handleComposerWorkspaceRootChange,
+    setMcpEnabled: handleComposerMcpEnabledChange,
+    setEnabledMcpIds: handleComposerEnabledMcpIdsChange,
+  } = useSessionRuntimeSettings({
+    session: currentSession,
+    updateSession,
+  });
+  const {
+    currentProjectIdForMemory,
+    currentProjectNameForMemory,
+    composerAvailableProjects,
+    handleComposerProjectChange,
+  } = useContactProjectScope({
+    apiClient,
+    currentSession: currentSession as any,
+    currentContactId,
+    projects: projects as any[],
+  });
+  const {
+    sessionMemorySummaries,
+    agentRecalls,
+    memoryLoading,
+    memoryError,
+    loadContactMemoryContext,
+    resetMemoryState,
+    cancelPendingMemoryLoad,
+  } = useContactMemoryContext({
+    apiClient,
+    currentSessionId: currentSession?.id || null,
+    currentContactId,
+    currentProjectIdForMemory,
+  });
   const lastHydratedChatSessionRef = useRef<string | null>(null);
-  const currentTurnLoadSeqRef = useRef(0);
-  const historyLoadSeqRef = useRef(0);
-  const summariesLoadSeqRef = useRef(0);
-  const summariesLoadMoreSeqRef = useRef(0);
-  const uiPromptHistoryLoadSeqRef = useRef(0);
-  const uiPromptHistoryCacheRef = useRef<Map<string, UiPromptHistoryItem[]>>(new Map());
-
-  const activeTaskReviewPanel = useMemo(() => {
-    if (!currentSession) {
-      return null;
-    }
-    const panels = taskReviewPanelsBySession[currentSession.id];
-    if (!Array.isArray(panels) || panels.length === 0) {
-      return null;
-    }
-    return panels[0];
-  }, [currentSession, taskReviewPanelsBySession]);
-
-  const activeUiPromptPanel = useMemo(() => {
-    if (!currentSession) {
-      return null;
-    }
-    const panels = uiPromptPanelsBySession[currentSession.id];
-    if (!Array.isArray(panels) || panels.length === 0) {
-      return null;
-    }
-    return panels[0];
-  }, [currentSession, uiPromptPanelsBySession]);
-
-  const activeConversationTurnId = useMemo(() => {
-    if (!currentSession) {
-      return null;
-    }
-
-    for (let i = messages.length - 1; i >= 0; i -= 1) {
-      const message = messages[i] as any;
-      if (message?.sessionId && message.sessionId !== currentSession.id) {
-        continue;
-      }
-      const turnId = typeof message?.metadata?.conversation_turn_id === 'string'
-        ? message.metadata.conversation_turn_id.trim()
-        : '';
-      if (turnId) {
-        return turnId;
-      }
-    }
-
-    return null;
-  }, [currentSession, messages]);
-
-  const handledTaskMutationKeysRef = useRef<Set<string>>(new Set());
 
   const sessionSummaryPaneVisible = Boolean(
     activePanel === 'chat' && currentSession && summaryPaneSessionId === currentSession.id
   );
-  const summariesHasMore = workbarSummaries.length < workbarSummariesTotal;
 
   const currentSessionIdForUiPrompts = currentSession?.id || null;
-
-  useEffect(() => {
-    currentSessionRef.current = currentSession?.id || null;
-  }, [currentSession?.id]);
+  const {
+    uiPromptHistoryItems,
+    uiPromptHistoryLoading,
+    uiPromptHistoryError,
+    loadUiPromptHistory,
+    resetUiPromptHistoryState,
+    hydrateUiPromptHistoryFromCache,
+    cancelPendingUiPromptHistoryLoad,
+  } = useUiPromptHistory({
+    apiClient,
+    currentSessionId: currentSessionIdForUiPrompts,
+  });
 
   useEffect(() => {
     if (!currentSessionIdForUiPrompts || activePanel !== 'chat') {
@@ -313,452 +244,47 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     };
   }, [activePanel, apiClient, currentSessionIdForUiPrompts, upsertUiPromptPanel]);
 
-  const loadUiPromptHistory = useCallback(async (sessionId: string, force = false) => {
-    if (!sessionId) {
-      setUiPromptHistoryItems([]);
-      setUiPromptHistoryError(null);
-      setUiPromptHistoryLoadedSessionId(null);
-      setUiPromptHistoryLoading(false);
-      return;
-    }
-
-    const cached = uiPromptHistoryCacheRef.current.get(sessionId);
-    if (!force && uiPromptHistoryLoadedSessionId === sessionId && uiPromptHistoryItems.length > 0) {
-      return;
-    }
-    if (!force && cached) {
-      setUiPromptHistoryItems(cached);
-      setUiPromptHistoryError(null);
-      setUiPromptHistoryLoadedSessionId(sessionId);
-      setUiPromptHistoryLoading(false);
-      return;
-    }
-
-    const requestSeq = uiPromptHistoryLoadSeqRef.current + 1;
-    uiPromptHistoryLoadSeqRef.current = requestSeq;
-    const shouldShowLoading = force || !cached;
-    if (shouldShowLoading) {
-      setUiPromptHistoryLoading(true);
-    }
-    setUiPromptHistoryError(null);
-    try {
-      const records = await apiClient.getUiPromptHistory(sessionId, { limit: 200 });
-      const normalized = Array.isArray(records)
-        ? records
-            .map((item) => normalizeUiPromptHistoryItem(item))
-            .filter((item): item is UiPromptHistoryItem => item !== null)
-        : [];
-      uiPromptHistoryCacheRef.current.set(sessionId, normalized);
-      if (
-        uiPromptHistoryLoadSeqRef.current !== requestSeq
-        || currentSessionRef.current !== sessionId
-      ) {
-        return;
-      }
-      setUiPromptHistoryItems(normalized);
-      setUiPromptHistoryLoadedSessionId(sessionId);
-    } catch (error) {
-      if (
-        uiPromptHistoryLoadSeqRef.current !== requestSeq
-        || currentSessionRef.current !== sessionId
-      ) {
-        return;
-      }
-      setUiPromptHistoryError(error instanceof Error ? error.message : '交互确认记录加载失败');
-    } finally {
-      if (
-        uiPromptHistoryLoadSeqRef.current === requestSeq
-        && currentSessionRef.current === sessionId
-      ) {
-        setUiPromptHistoryLoading(false);
-      }
-    }
-  }, [apiClient, uiPromptHistoryItems.length, uiPromptHistoryLoadedSessionId]);
-
-  const CURRENT_TURN_MUTATION_FALLBACK_LIMIT = 8;
-
-  const currentTurnMutationTaskIds = useMemo(() => {
-    if (!currentSession || !activeConversationTurnId) {
-      return [];
-    }
-
-    const ids = new Set<string>();
-    let lastKnownTurnId = '';
-
-    for (const message of messages as any[]) {
-      if (message?.sessionId && message.sessionId !== currentSession.id) {
-        continue;
-      }
-
-      const messageTurnId = typeof message?.metadata?.conversation_turn_id === 'string'
-        ? message.metadata.conversation_turn_id.trim()
-        : '';
-      if (messageTurnId) {
-        lastKnownTurnId = messageTurnId;
-      }
-
-      const effectiveTurnId = messageTurnId || lastKnownTurnId;
-      if (effectiveTurnId !== activeConversationTurnId) {
-        continue;
-      }
-
-      const toolCalls = collectMessageToolCalls(message);
-      for (const toolCall of toolCalls) {
-        if (!shouldRefreshForTaskMutationToolCall(toolCall)) {
-          continue;
-        }
-        if (toolCall?.completed !== true || hasToolCallError(toolCall)) {
-          continue;
-        }
-
-        extractTaskIdsFromToolCall(toolCall).forEach((taskId) => ids.add(taskId));
-      }
-    }
-
-    return Array.from(ids);
-  }, [
-    activeConversationTurnId,
-    currentSession,
-    messages,
-  ]);
-
-  const mergedCurrentTurnTasks = useMemo(() => {
-    const baseTasks = workbarCurrentTurnTasks.length > 0
-      ? workbarCurrentTurnTasks
-      : selectLatestTurnTasks(workbarHistoryTasks);
-
-    if (currentTurnMutationTaskIds.length === 0) {
-      return baseTasks;
-    }
-
-    const existing = new Set(baseTasks.map((task) => task.id));
-    const fallbackCandidates = workbarHistoryTasks
-      .filter((task) => currentTurnMutationTaskIds.includes(task.id) && !existing.has(task.id))
-      .slice(0, CURRENT_TURN_MUTATION_FALLBACK_LIMIT);
-
-    if (fallbackCandidates.length === 0) {
-      return baseTasks;
-    }
-
-    return [...baseTasks, ...fallbackCandidates];
-  }, [currentTurnMutationTaskIds, selectLatestTurnTasks, workbarCurrentTurnTasks, workbarHistoryTasks]);
-
-  const loadCurrentTurnWorkbarTasks = useCallback(async (sessionId: string, conversationTurnId?: string | null) => {
-    if (!sessionId) {
-      setWorkbarCurrentTurnTasks([]);
-      setWorkbarError(null);
-      setWorkbarLoading(false);
-      return;
-    }
-
-    const requestSeq = currentTurnLoadSeqRef.current + 1;
-    currentTurnLoadSeqRef.current = requestSeq;
-    const turnId = typeof conversationTurnId === 'string' ? conversationTurnId.trim() : '';
-
-    setWorkbarLoading(true);
-    setWorkbarError(null);
-    try {
-      let normalizedTasks: TaskWorkbarItem[] = [];
-
-      if (turnId) {
-        const tasks = await apiClient.getTaskManagerTasks(sessionId, {
-          conversationTurnId: turnId,
-          includeDone: true,
-          limit: 100,
-        });
-        normalizedTasks = tasks.map(normalizeWorkbarTask);
-      }
-
-      if (normalizedTasks.length === 0) {
-        const fallbackTasks = await apiClient.getTaskManagerTasks(sessionId, {
-          includeDone: true,
-          limit: 200,
-        });
-        normalizedTasks = selectLatestTurnTasks(fallbackTasks.map(normalizeWorkbarTask));
-      }
-
-      if (
-        currentTurnLoadSeqRef.current !== requestSeq
-        || currentSessionRef.current !== sessionId
-      ) {
-        return;
-      }
-      setWorkbarCurrentTurnTasks(normalizedTasks);
-    } catch (error) {
-      if (
-        currentTurnLoadSeqRef.current !== requestSeq
-        || currentSessionRef.current !== sessionId
-      ) {
-        return;
-      }
-      setWorkbarError(error instanceof Error ? error.message : '任务操作失败');
-    } finally {
-      if (
-        currentTurnLoadSeqRef.current === requestSeq
-        && currentSessionRef.current === sessionId
-      ) {
-        setWorkbarLoading(false);
-      }
-    }
-  }, [apiClient]);
-
-  const loadHistoryWorkbarTasks = useCallback(async (sessionId: string, force = false) => {
-    if (!sessionId) {
-      setWorkbarHistoryTasks([]);
-      setWorkbarHistoryError(null);
-      setWorkbarHistoryLoadedSessionId(null);
-      setWorkbarHistoryLoading(false);
-      return;
-    }
-
-    if (!force && workbarHistoryLoadedSessionId === sessionId && workbarHistoryTasks.length > 0) {
-      return;
-    }
-
-    const requestSeq = historyLoadSeqRef.current + 1;
-    historyLoadSeqRef.current = requestSeq;
-    setWorkbarHistoryLoading(true);
-    setWorkbarHistoryError(null);
-    try {
-      const tasks = await apiClient.getTaskManagerTasks(sessionId, {
-        includeDone: true,
-        limit: 300,
-      });
-      if (
-        historyLoadSeqRef.current !== requestSeq
-        || currentSessionRef.current !== sessionId
-      ) {
-        return;
-      }
-      setWorkbarHistoryTasks(tasks.map(normalizeWorkbarTask));
-      setWorkbarHistoryLoadedSessionId(sessionId);
-    } catch (error) {
-      if (
-        historyLoadSeqRef.current !== requestSeq
-        || currentSessionRef.current !== sessionId
-      ) {
-        return;
-      }
-      setWorkbarHistoryError(error instanceof Error ? error.message : '\u4efb\u52a1\u52a0\u8f7d\u5931\u8d25');
-    } finally {
-      if (
-        historyLoadSeqRef.current === requestSeq
-        && currentSessionRef.current === sessionId
-      ) {
-        setWorkbarHistoryLoading(false);
-      }
-    }
-  }, [apiClient, workbarHistoryLoadedSessionId, workbarHistoryTasks.length]);
-
-  const loadWorkbarSummaries = useCallback(async (sessionId: string, force = false) => {
-    if (!sessionId) {
-      setWorkbarSummaries([]);
-      setWorkbarSummariesTotal(0);
-      setWorkbarSummariesLoadedSessionId(null);
-      setWorkbarSummariesError(null);
-      setWorkbarSummariesLoading(false);
-      setWorkbarSummariesLoadingMore(false);
-      return;
-    }
-
-    if (!force && workbarSummariesLoadedSessionId === sessionId) {
-      return;
-    }
-
-    const requestSeq = summariesLoadSeqRef.current + 1;
-    summariesLoadSeqRef.current = requestSeq;
-    setWorkbarSummariesLoading(true);
-    setWorkbarSummariesLoadingMore(false);
-    setWorkbarSummariesError(null);
-    try {
-      const payload = await apiClient.getSessionSummaries(sessionId, {
-        limit: WORKBAR_SUMMARY_PAGE_SIZE,
-        offset: 0,
-      });
-      const items = Array.isArray(payload?.items)
-        ? payload.items.map(normalizeWorkbarSummary)
-        : [];
-      if (
-        summariesLoadSeqRef.current !== requestSeq
-        || currentSessionRef.current !== sessionId
-      ) {
-        return;
-      }
-      setWorkbarSummaries(items);
-      const total = typeof payload?.total === 'number' ? payload.total : items.length;
-      setWorkbarSummariesTotal(Math.max(total, items.length));
-      setWorkbarSummariesLoadedSessionId(sessionId);
-    } catch (error) {
-      if (
-        summariesLoadSeqRef.current !== requestSeq
-        || currentSessionRef.current !== sessionId
-      ) {
-        return;
-      }
-      setWorkbarSummariesError(error instanceof Error ? error.message : '会话总结加载失败');
-    } finally {
-      if (
-        summariesLoadSeqRef.current === requestSeq
-        && currentSessionRef.current === sessionId
-      ) {
-        setWorkbarSummariesLoading(false);
-      }
-    }
-  }, [apiClient, workbarSummariesLoadedSessionId]);
-
-  const loadMoreWorkbarSummaries = useCallback(async (sessionId: string) => {
-    if (!sessionId || workbarSummariesLoading || workbarSummariesLoadingMore) {
-      return;
-    }
-    if (workbarSummariesLoadedSessionId !== sessionId) {
-      await loadWorkbarSummaries(sessionId, true);
-      return;
-    }
-    if (workbarSummaries.length >= workbarSummariesTotal) {
-      return;
-    }
-
-    const offset = workbarSummaries.length;
-    const requestSeq = summariesLoadMoreSeqRef.current + 1;
-    summariesLoadMoreSeqRef.current = requestSeq;
-    setWorkbarSummariesLoadingMore(true);
-    setWorkbarSummariesError(null);
-    try {
-      const payload = await apiClient.getSessionSummaries(sessionId, {
-        limit: WORKBAR_SUMMARY_PAGE_SIZE,
-        offset,
-      });
-      const items = Array.isArray(payload?.items)
-        ? payload.items.map(normalizeWorkbarSummary)
-        : [];
-      if (
-        summariesLoadMoreSeqRef.current !== requestSeq
-        || currentSessionRef.current !== sessionId
-      ) {
-        return;
-      }
-      setWorkbarSummaries((previous) => appendUniqueSummaries(previous, items));
-      const total = typeof payload?.total === 'number' ? payload.total : workbarSummariesTotal;
-      setWorkbarSummariesTotal(Math.max(total, offset + items.length));
-    } catch (error) {
-      if (
-        summariesLoadMoreSeqRef.current !== requestSeq
-        || currentSessionRef.current !== sessionId
-      ) {
-        return;
-      }
-      setWorkbarSummariesError(error instanceof Error ? error.message : '会话总结加载失败');
-    } finally {
-      if (
-        summariesLoadMoreSeqRef.current === requestSeq
-        && currentSessionRef.current === sessionId
-      ) {
-        setWorkbarSummariesLoadingMore(false);
-      }
-    }
-  }, [
-    apiClient,
-    loadWorkbarSummaries,
-    workbarSummaries.length,
-    workbarSummariesLoadedSessionId,
-    workbarSummariesLoading,
-    workbarSummariesLoadingMore,
-    workbarSummariesTotal,
-  ]);
-
-  const handleOpenSessionSummaryPane = useCallback((sessionId: string) => {
-    if (!sessionId) {
-      return;
-    }
-    setSummaryPaneSessionId(sessionId);
-    void loadWorkbarSummaries(sessionId, true);
-  }, [loadWorkbarSummaries]);
-
-  const refreshWorkbarTasks = useCallback(async () => {
-    if (!currentSession) {
-      return;
-    }
-    await Promise.all([
-      loadCurrentTurnWorkbarTasks(currentSession.id, activeConversationTurnId),
-      loadHistoryWorkbarTasks(currentSession.id, true),
-      loadWorkbarSummaries(currentSession.id, true),
-    ]);
-  }, [activeConversationTurnId, currentSession, loadCurrentTurnWorkbarTasks, loadHistoryWorkbarTasks, loadWorkbarSummaries]);
-
-  useEffect(() => {
-    if (!currentSession || activePanel !== 'chat') {
-      return;
-    }
-
-    const handled = handledTaskMutationKeysRef.current;
-    const pendingKeys: string[] = [];
-
-    for (const message of messages as any[]) {
-      if (message?.sessionId && message.sessionId !== currentSession.id) {
-        continue;
-      }
-
-      const toolCalls = collectMessageToolCalls(message);
-      for (const toolCall of toolCalls) {
-        if (!shouldRefreshForTaskMutationToolCall(toolCall)) {
-          continue;
-        }
-        if (toolCall?.completed !== true) {
-          continue;
-        }
-        if (hasToolCallError(toolCall)) {
-          continue;
-        }
-
-        const toolCallId = String(toolCall?.id || toolCall?.tool_call_id || toolCall?.toolCallId || '').trim();
-        const key = currentSession.id + ':' + String(message?.id || '') + ':' + (toolCallId || String(toolCall?.name || ''));
-        if (handled.has(key)) {
-          continue;
-        }
-        pendingKeys.push(key);
-      }
-    }
-
-    if (pendingKeys.length === 0) {
-      return;
-    }
-
-    pendingKeys.forEach((key) => handled.add(key));
-    if (handled.size > 2048) {
-      const tail = Array.from(handled).slice(-1024);
-      handled.clear();
-      tail.forEach((key) => handled.add(key));
-    }
-    void loadCurrentTurnWorkbarTasks(currentSession.id, activeConversationTurnId);
-    if (sessionSummaryPaneVisible) {
-      void loadWorkbarSummaries(currentSession.id, true);
-    }
-  }, [
-    activeConversationTurnId,
-    activePanel,
-    currentSession,
-    loadCurrentTurnWorkbarTasks,
-    loadWorkbarSummaries,
-    messages,
-    sessionSummaryPaneVisible,
-  ]);
-
   const {
-    workbarActionLoadingTaskId,
-    workbarSummaryActionLoadingKey,
+    activeConversationTurnId,
+    activeTaskReviewPanel,
+    activeUiPromptPanel,
+    handleOpenWorkbarHistory,
+    handleRefreshWorkbar,
+    handleTaskReviewCancel,
+    handleTaskReviewConfirm,
+    handleUiPromptCancel,
+    handleUiPromptSubmit,
     handleWorkbarCompleteTask,
     handleWorkbarDeleteTask,
     handleWorkbarEditTask,
-    handleDeleteWorkbarSummary,
-    handleClearWorkbarSummaries,
-  } = useWorkbarMutations({
+    mergedCurrentTurnTasks,
+    resetAllWorkbarState,
+    resetHistoryWorkbarState,
+    runtimeGuidanceAppliedCount,
+    runtimeGuidanceItems,
+    runtimeGuidanceLastAppliedAt,
+    runtimeGuidancePendingCount,
+    workbarActionLoadingTaskId,
+    workbarError,
+    workbarHistoryError,
+    workbarHistoryLoading,
+    workbarHistoryTasks,
+    workbarLoading,
+  } = useSessionWorkbarPanels({
     apiClient,
-    currentSessionId: currentSession?.id ?? null,
-    workbarSummariesLength: workbarSummaries.length,
-    refreshWorkbarTasks,
-    loadWorkbarSummaries,
-    setWorkbarError,
-    setWorkbarSummariesError,
+    session: currentSession,
+    enabled: activePanel === 'chat',
+    messages: messages as any[],
+    selectedSessionActiveTurnId: currentChatState?.activeTurnId || null,
+    sessionRuntimeGuidanceState,
+    taskReviewPanelsBySession,
+    uiPromptPanelsBySession,
+    upsertTaskReviewPanel,
+    removeTaskReviewPanel,
+    upsertUiPromptPanel,
+    removeUiPromptPanel,
+    loadWorkbarSummaries: loadContactMemoryContext,
+    loadUiPromptHistory,
   });
 
   // 鍒濆鍖栧姞杞戒細璇濄€丄I妯″瀷鍜屾櫤鑳戒綋閰嶇疆
@@ -767,37 +293,19 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     if (didInitRef.current) return;
     didInitRef.current = true;
 
-    loadSessions({ limit: SESSION_PAGE_SIZE, offset: 0 });
     loadProjects();
     loadAiModelConfigs();
     loadAgents();
-  }, [loadSessions, loadProjects, loadAiModelConfigs, loadAgents]);
+  }, [loadProjects, loadAiModelConfigs, loadAgents]);
 
   useEffect(() => {
     if (!currentSession || activePanel !== 'chat') {
-      currentTurnLoadSeqRef.current += 1;
-      historyLoadSeqRef.current += 1;
-      summariesLoadSeqRef.current += 1;
-      summariesLoadMoreSeqRef.current += 1;
-      uiPromptHistoryLoadSeqRef.current += 1;
+      cancelPendingMemoryLoad();
+      cancelPendingUiPromptHistoryLoad();
       lastHydratedChatSessionRef.current = null;
-      setWorkbarCurrentTurnTasks([]);
-      setWorkbarHistoryTasks([]);
-      setWorkbarSummaries([]);
-      setWorkbarSummariesTotal(0);
-      setWorkbarError(null);
-      setWorkbarHistoryError(null);
-      setWorkbarSummariesError(null);
-      setWorkbarLoading(false);
-      setWorkbarHistoryLoading(false);
-      setWorkbarSummariesLoading(false);
-      setWorkbarHistoryLoadedSessionId(null);
-      setWorkbarSummariesLoadedSessionId(null);
-      setWorkbarSummariesLoadingMore(false);
-      setUiPromptHistoryItems([]);
-      setUiPromptHistoryError(null);
-      setUiPromptHistoryLoadedSessionId(null);
-      setUiPromptHistoryLoading(false);
+      resetAllWorkbarState();
+      resetMemoryState();
+      resetUiPromptHistoryState();
       setUiPromptHistoryOpen(false);
       return;
     }
@@ -805,54 +313,78 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     const sessionChanged = lastHydratedChatSessionRef.current !== currentSession.id;
     if (sessionChanged) {
       lastHydratedChatSessionRef.current = currentSession.id;
-      historyLoadSeqRef.current += 1;
-      summariesLoadSeqRef.current += 1;
-      summariesLoadMoreSeqRef.current += 1;
-      uiPromptHistoryLoadSeqRef.current += 1;
-      setWorkbarHistoryTasks([]);
-      setWorkbarHistoryError(null);
-      setWorkbarHistoryLoadedSessionId(null);
-      setWorkbarHistoryLoading(false);
-      setWorkbarSummaries([]);
-      setWorkbarSummariesTotal(0);
-      setWorkbarSummariesError(null);
-      setWorkbarSummariesLoadedSessionId(null);
-      setWorkbarSummariesLoading(false);
-      setWorkbarSummariesLoadingMore(false);
-      const cachedUiPromptHistory = uiPromptHistoryCacheRef.current.get(currentSession.id);
-      setUiPromptHistoryItems(cachedUiPromptHistory ? [...cachedUiPromptHistory] : []);
-      setUiPromptHistoryError(null);
-      setUiPromptHistoryLoadedSessionId(cachedUiPromptHistory ? currentSession.id : null);
-      setUiPromptHistoryLoading(false);
+      cancelPendingMemoryLoad();
+      cancelPendingUiPromptHistoryLoad();
+      resetHistoryWorkbarState();
+      resetMemoryState();
+      hydrateUiPromptHistoryFromCache(currentSession.id);
     }
 
-    void loadCurrentTurnWorkbarTasks(currentSession.id, activeConversationTurnId);
     if (sessionSummaryPaneVisible) {
-      void loadWorkbarSummaries(currentSession.id);
+      void loadContactMemoryContext(currentSession.id);
     }
     if (uiPromptHistoryOpen) {
       void loadUiPromptHistory(currentSession.id);
     }
   }, [
-    activeConversationTurnId,
     activePanel,
+    cancelPendingMemoryLoad,
+    cancelPendingUiPromptHistoryLoad,
     currentSession,
-    loadCurrentTurnWorkbarTasks,
-    loadWorkbarSummaries,
+    hydrateUiPromptHistoryFromCache,
+    loadContactMemoryContext,
     loadUiPromptHistory,
+    resetAllWorkbarState,
+    resetHistoryWorkbarState,
+    resetMemoryState,
+    resetUiPromptHistoryState,
     sessionSummaryPaneVisible,
     uiPromptHistoryOpen,
   ]);
 
   // 澶勭悊娑堟伅鍙戦€?
-  const handleMessageSend = useCallback(async (content: string, attachments?: File[]) => {
+  const handleMessageSend = useCallback(async (
+    content: string,
+    attachments?: File[],
+    runtimeOptions?: {
+      mcpEnabled?: boolean;
+      projectId?: string | null;
+      projectRoot?: string | null;
+      workspaceRoot?: string | null;
+      enabledMcpIds?: string[];
+    },
+  ) => {
     try {
-      await sendMessage(content, attachments);
+      await sendMessage(content, attachments, runtimeOptions);
       onMessageSend?.(content, attachments);
     } catch (error) {
       console.error('Failed to send message:', error);
     }
   }, [onMessageSend, sendMessage]);
+
+  const handleRuntimeGuidanceSend = useCallback(async (content: string) => {
+    const sessionId = currentSession?.id;
+    const projectId = (currentSession as any)?.projectId || (currentSession as any)?.project_id || null;
+    const turnId = (
+      currentChatState?.activeTurnId
+      || activeConversationTurnId
+      || ''
+    ).trim();
+    if (!sessionId || !turnId) {
+      return;
+    }
+    try {
+      await submitRuntimeGuidance(content, { sessionId, turnId, projectId });
+    } catch (error) {
+      console.error('Failed to submit runtime guidance:', error);
+    }
+  }, [
+    activeConversationTurnId,
+    currentChatState?.activeTurnId,
+    currentSession,
+    currentSession?.id,
+    submitRuntimeGuidance,
+  ]);
 
   const handleLoadMore = useCallback(() => {
     if (currentSession) {
@@ -870,24 +402,57 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       });
   }, [toggleTurnProcess]);
 
-  const {
-    handleTaskReviewConfirm,
-    handleTaskReviewCancel,
-    handleUiPromptSubmit,
-    handleUiPromptCancel,
-  } = usePanelActions({
-    activeTaskReviewPanel,
-    activeUiPromptPanel,
-    apiClient,
-    upsertTaskReviewPanel,
-    removeTaskReviewPanel,
-    upsertUiPromptPanel,
-    removeUiPromptPanel,
-    loadCurrentTurnWorkbarTasks,
-    loadHistoryWorkbarTasks,
-    loadWorkbarSummaries,
-    loadUiPromptHistory,
-  });
+  const handleRefreshMemory = useCallback((sessionId: string) => {
+    void loadContactMemoryContext(sessionId, true);
+  }, [loadContactMemoryContext]);
+
+  const handleCloseSummary = useCallback(() => {
+    setSummaryPaneSessionId(null);
+  }, []);
+
+  const handleOpenHistory = useCallback((sessionId: string) => {
+    setSummaryPaneSessionId(sessionId);
+    handleOpenWorkbarHistory(sessionId, { forceHistory: false, forceSummaries: true });
+  }, [handleOpenWorkbarHistory]);
+
+  const handleOpenUiPromptHistory = useCallback((sessionId: string) => {
+    setUiPromptHistoryOpen(true);
+    void loadUiPromptHistory(sessionId);
+  }, [loadUiPromptHistory]);
+
+  const loadLatestRuntimeContext = useCallback(async (sessionId: string) => {
+    if (!sessionId) {
+      return;
+    }
+    setRuntimeContextLoading(true);
+    setRuntimeContextError(null);
+    try {
+      const payload = await apiClient.getSessionLatestTurnRuntimeContext(sessionId);
+      setRuntimeContextData(payload);
+    } catch (error) {
+      console.error('Failed to load turn runtime context:', error);
+      setRuntimeContextError(error instanceof Error ? error.message : '加载上下文失败');
+    } finally {
+      setRuntimeContextLoading(false);
+    }
+  }, [apiClient]);
+
+  const handleOpenRuntimeContext = useCallback((sessionId: string) => {
+    if (!sessionId) {
+      return;
+    }
+    setRuntimeContextOpen(true);
+    setRuntimeContextSessionId(sessionId);
+    setRuntimeContextData(null);
+    void loadLatestRuntimeContext(sessionId);
+  }, [loadLatestRuntimeContext]);
+
+  const handleRefreshRuntimeContext = useCallback(() => {
+    if (!runtimeContextSessionId) {
+      return;
+    }
+    void loadLatestRuntimeContext(runtimeContextSessionId);
+  }, [loadLatestRuntimeContext, runtimeContextSessionId]);
 
 
   if (showSystemContextEditor) {
@@ -908,7 +473,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         onOpenNotepad={() => setShowNotepadPanel(true)}
         onOpenApplications={() => setShowApplicationsPanel(true)}
         onOpenMcpManager={() => setShowMcpManager(true)}
-        onOpenAgentManager={() => setShowAgentManager(true)}
         onOpenAiModelManager={() => setShowAiModelManager(true)}
         onOpenSystemContextEditor={() => setShowSystemContextEditor(true)}
         onOpenUserSettings={() => setShowUserSettings(true)}
@@ -939,8 +503,12 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
             collapsed={!sidebarOpen}
             onToggleCollapse={toggleSidebar}
             onSelectSession={() => setSummaryPaneSessionId(null)}
-            onOpenSummary={handleOpenSessionSummaryPane}
-            summaryOpenSessionId={sessionSummaryPaneVisible ? currentSession?.id ?? null : null}
+            onOpenSessionSummary={(sessionId) => {
+              setSummaryPaneSessionId((prev) => (prev === sessionId ? null : sessionId));
+            }}
+            onOpenSessionRuntimeContext={handleOpenRuntimeContext}
+            activeSummarySessionId={summaryPaneSessionId}
+            activeRuntimeContextSessionId={runtimeContextOpen ? runtimeContextSessionId : null}
           />
 
           {/* 宸茬Щ闄ゅ乏渚у簲鐢ㄦ娊灞夐潰鏉匡紝鏀逛负寮圭獥 */}
@@ -958,138 +526,82 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
             ) : activePanel === 'remote_sftp' ? (
               <RemoteSftpPanel className="flex-1" />
             ) : (
-              <div className="flex-1 min-h-0 flex overflow-hidden">
-                <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
-                  <div className="flex-1 overflow-hidden">
-                    {currentSession ? (
-                      sessionSummaryPaneVisible ? (
-                        <SummaryPane
-                          sessionId={currentSession.id}
-                          sessionTitle={currentSession.title}
-                          messages={messages}
-                          isLoading={chatIsLoading}
-                          isStreaming={chatIsStreaming}
-                          isStopping={chatIsStopping}
-                          hasMore={hasMoreMessages}
-                          onLoadMore={handleLoadMore}
-                          onToggleTurnProcess={handleToggleTurnProcess}
-                          customRenderer={customRenderer}
-                          summaries={workbarSummaries}
-                          summariesLoading={workbarSummariesLoading}
-                          summariesLoadingMore={workbarSummariesLoadingMore}
-                          summariesHasMore={summariesHasMore}
-                          summariesError={workbarSummariesError}
-                          actionLoadingKey={workbarSummaryActionLoadingKey}
-                          onClearAll={() => {
-                            void handleClearWorkbarSummaries();
-                          }}
-                          onRefresh={() => {
-                            void loadWorkbarSummaries(currentSession.id, true);
-                          }}
-                          onClose={() => setSummaryPaneSessionId(null)}
-                          onDeleteSummary={(summary) => {
-                            void handleDeleteWorkbarSummary(summary);
-                          }}
-                          onLoadMoreSummaries={() => {
-                            void loadMoreWorkbarSummaries(currentSession.id);
-                          }}
-                          formatCreatedAt={formatSummaryCreatedAt}
-                        />
-                      ) : (
-                        <MessageList
-                          key={`messages-${currentSession?.id || 'none'}-chat`}
-                          sessionId={currentSession?.id}
-                          messages={messages}
-                          isLoading={chatIsLoading}
-                          isStreaming={chatIsStreaming}
-                          isStopping={chatIsStopping}
-                          hasMore={hasMoreMessages}
-                          onLoadMore={handleLoadMore}
-                          onToggleTurnProcess={handleToggleTurnProcess}
-                          customRenderer={customRenderer}
-                        />
-                      )
-                    ) : (
-                      <div className="flex items-center justify-center h-full">
-                        <div className="text-center">
-                          <h2 className="text-xl font-semibold text-muted-foreground mb-2">
-                            欢迎使用 AI 聊天
-                          </h2>
-                          <p className="text-muted-foreground mb-4">
-                            点击左上角按钮选择会话，或创建新的会话开始对话
-                          </p>
-                          <button
-                            onClick={toggleSidebar}
-                            className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
-                          >
-                            展开会话列表
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* 杈撳叆鍖哄煙 */}
-                  {currentSession && activePanel === 'chat' && (
-                    <ChatComposerPanel
-                      sessionId={currentSession.id}
-                      mergedCurrentTurnTasks={mergedCurrentTurnTasks}
-                      workbarHistoryTasks={workbarHistoryTasks}
-                      activeConversationTurnId={activeConversationTurnId}
-                      workbarLoading={workbarLoading}
-                      workbarHistoryLoading={workbarHistoryLoading}
-                      workbarError={workbarError}
-                      workbarHistoryError={workbarHistoryError}
-                      workbarActionLoadingTaskId={workbarActionLoadingTaskId}
-                      onRefreshWorkbarTasks={() => {
-                        void refreshWorkbarTasks();
-                      }}
-                      onOpenHistory={(sessionId) => {
-                        void loadHistoryWorkbarTasks(sessionId);
-                        void loadWorkbarSummaries(sessionId);
-                      }}
-                      onOpenUiPromptHistory={(sessionId) => {
-                        setUiPromptHistoryOpen(true);
-                        void loadUiPromptHistory(sessionId);
-                      }}
-                      uiPromptHistoryCount={uiPromptHistoryItems.length}
-                      uiPromptHistoryLoading={uiPromptHistoryLoading}
-                      onCompleteTask={(task) => {
-                        void handleWorkbarCompleteTask(task);
-                      }}
-                      onDeleteTask={(task) => {
-                        void handleWorkbarDeleteTask(task);
-                      }}
-                      onEditTask={(task) => {
-                        void handleWorkbarEditTask(task);
-                      }}
-                      activeUiPromptPanel={activeUiPromptPanel}
-                      onUiPromptSubmit={handleUiPromptSubmit}
-                      onUiPromptCancel={handleUiPromptCancel}
-                      activeTaskReviewPanel={activeTaskReviewPanel}
-                      onTaskReviewConfirm={handleTaskReviewConfirm}
-                      onTaskReviewCancel={handleTaskReviewCancel}
-                      onSend={handleMessageSend}
-                      onStop={abortCurrentConversation}
-                      inputDisabled={chatIsLoading || chatIsStreaming || chatIsStopping}
-                      isStreaming={chatIsStreaming}
-                      isStopping={chatIsStopping}
-                      supportedFileTypes={supportedFileTypes}
-                      reasoningSupported={supportsReasoning}
-                      reasoningEnabled={chatConfig?.reasoningEnabled === true}
-                      onReasoningToggle={(enabled) => updateChatConfig({ reasoningEnabled: enabled })}
-                      selectedModelId={selectedModelId}
-                      availableModels={aiModelConfigs}
-                      onModelChange={setSelectedModel}
-                      selectedAgentId={selectedAgentId}
-                      availableAgents={agents}
-                      onAgentChange={setSelectedAgent}
-                      availableProjects={projects}
-                      currentProject={currentProject}
-                    />
-                  )}
-                </div>
-              </div>
+              <ChatConversationPane
+                currentSession={currentSession}
+                sessionSummaryPaneVisible={sessionSummaryPaneVisible}
+                currentContactName={currentContactName}
+                currentProjectNameForMemory={currentProjectNameForMemory}
+                currentProjectIdForMemory={currentProjectIdForMemory || null}
+                messages={messages}
+                chatIsLoading={chatIsLoading}
+                chatIsStreaming={chatIsStreaming}
+                chatIsStopping={chatIsStopping}
+                hasMoreMessages={hasMoreMessages}
+                onLoadMore={handleLoadMore}
+                onToggleTurnProcess={handleToggleTurnProcess}
+                customRenderer={customRenderer}
+                sessionMemorySummaries={sessionMemorySummaries}
+                agentRecalls={agentRecalls}
+                memoryLoading={memoryLoading}
+                memoryError={memoryError}
+                onRefreshMemory={handleRefreshMemory}
+                onCloseSummary={handleCloseSummary}
+                toggleSidebar={toggleSidebar}
+                mergedCurrentTurnTasks={mergedCurrentTurnTasks}
+                workbarHistoryTasks={workbarHistoryTasks}
+                activeConversationTurnId={activeConversationTurnId}
+                workbarLoading={workbarLoading}
+                workbarHistoryLoading={workbarHistoryLoading}
+                workbarError={workbarError}
+                workbarHistoryError={workbarHistoryError}
+                workbarActionLoadingTaskId={workbarActionLoadingTaskId}
+                onRefreshWorkbarTasks={handleRefreshWorkbar}
+                onOpenHistory={handleOpenHistory}
+                onOpenUiPromptHistory={handleOpenUiPromptHistory}
+                uiPromptHistoryCount={uiPromptHistoryItems.length}
+                uiPromptHistoryLoading={uiPromptHistoryLoading}
+                onCompleteTask={(task) => {
+                  void handleWorkbarCompleteTask(task);
+                }}
+                onDeleteTask={(task) => {
+                  void handleWorkbarDeleteTask(task);
+                }}
+                onEditTask={(task) => {
+                  void handleWorkbarEditTask(task);
+                }}
+                activeUiPromptPanel={activeUiPromptPanel}
+                onUiPromptSubmit={handleUiPromptSubmit}
+                onUiPromptCancel={handleUiPromptCancel}
+                activeTaskReviewPanel={activeTaskReviewPanel}
+                onTaskReviewConfirm={handleTaskReviewConfirm}
+                onTaskReviewCancel={handleTaskReviewCancel}
+                onSend={handleMessageSend}
+                onGuide={handleRuntimeGuidanceSend}
+                onStop={abortCurrentConversation}
+                inputDisabled={chatIsStopping || !currentSession}
+                isStreaming={chatIsStreaming}
+                isStopping={chatIsStopping}
+                supportedFileTypes={supportedFileTypes}
+                supportsReasoning={supportsReasoning}
+                reasoningEnabled={chatConfig?.reasoningEnabled === true}
+                onReasoningToggle={(enabled) => updateChatConfig({ reasoningEnabled: enabled })}
+                selectedModelId={selectedModelId}
+                availableModels={aiModelConfigs}
+                onModelChange={setSelectedModel}
+                availableProjects={composerAvailableProjects}
+                currentProject={currentProject}
+                onProjectChange={handleComposerProjectChange}
+                workspaceRoot={composerWorkspaceRoot}
+                onWorkspaceRootChange={handleComposerWorkspaceRootChange}
+                mcpEnabled={composerMcpEnabled}
+                enabledMcpIds={composerEnabledMcpIds}
+                onMcpEnabledChange={handleComposerMcpEnabledChange}
+                onEnabledMcpIdsChange={handleComposerEnabledMcpIdsChange}
+                runtimeGuidancePendingCount={runtimeGuidancePendingCount}
+                runtimeGuidanceAppliedCount={runtimeGuidanceAppliedCount}
+                runtimeGuidanceLastAppliedAt={runtimeGuidanceLastAppliedAt}
+                runtimeGuidanceItems={runtimeGuidanceItems}
+              />
             )}
           </div>
 
@@ -1111,6 +623,16 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
           formatCreatedAt={formatSummaryCreatedAt}
         />
 
+        <TurnRuntimeContextDrawer
+          open={runtimeContextOpen}
+          sessionId={runtimeContextSessionId}
+          loading={runtimeContextLoading}
+          error={runtimeContextError}
+          data={runtimeContextData}
+          onRefresh={handleRefreshRuntimeContext}
+          onClose={() => setRuntimeContextOpen(false)}
+        />
+
         {/* MCP绠＄悊鍣?*/}
         {showMcpManager && (
           <McpManager onClose={() => setShowMcpManager(false)} />
@@ -1121,11 +643,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
           onClose={() => setShowNotepadPanel(false)}
         />
 
-        {/* 鏅鸿兘浣撶鐞嗗櫒 */}
-        {showAgentManager && (
-          <AgentManager onClose={() => setShowAgentManager(false)} />
-        )}
-        
         {/* AI妯″瀷绠＄悊鍣?*/}
         {showAiModelManager && (
           <AiModelManager onClose={() => setShowAiModelManager(false)} />

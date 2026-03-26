@@ -11,6 +11,11 @@ export interface SessionPaging {
   includeArchiving?: boolean;
 }
 
+export interface ContactPaging {
+  limit?: number;
+  offset?: number;
+}
+
 export interface RemoteConnectionPayload {
   name?: string;
   host: string;
@@ -81,6 +86,78 @@ export const deleteSession = (request: ApiRequestFn, id: string): Promise<any> =
   });
 };
 
+export const getContacts = (
+  request: ApiRequestFn,
+  userId?: string,
+  paging?: ContactPaging,
+): Promise<any[]> => {
+  const query = buildQuery({
+    user_id: userId,
+    limit: paging?.limit,
+    offset: paging?.offset,
+  });
+  return request<any[]>(`/contacts${query}`);
+};
+
+export const createContact = (
+  request: ApiRequestFn,
+  data: { agent_id: string; agent_name_snapshot?: string; user_id?: string },
+): Promise<any> => {
+  return request<any>('/contacts', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+};
+
+export const deleteContact = (request: ApiRequestFn, contactId: string): Promise<any> => {
+  return request<any>(`/contacts/${contactId}`, {
+    method: 'DELETE',
+  });
+};
+
+export const getContactProjectMemories = (
+  request: ApiRequestFn,
+  contactId: string,
+  projectId: string,
+  paging?: ContactPaging,
+): Promise<any[]> => {
+  const query = buildQuery({
+    limit: paging?.limit,
+    offset: paging?.offset,
+  });
+  return request<any[]>(
+    `/contacts/${encodeURIComponent(contactId)}/project-memories/${encodeURIComponent(projectId)}${query}`,
+  );
+};
+
+export const getContactProjects = (
+  request: ApiRequestFn,
+  contactId: string,
+  paging?: ContactPaging,
+): Promise<any[]> => {
+  const query = buildQuery({
+    limit: paging?.limit,
+    offset: paging?.offset,
+  });
+  return request<any[]>(
+    `/contacts/${encodeURIComponent(contactId)}/projects${query}`,
+  );
+};
+
+export const getContactAgentRecalls = (
+  request: ApiRequestFn,
+  contactId: string,
+  paging?: ContactPaging,
+): Promise<any[]> => {
+  const query = buildQuery({
+    limit: paging?.limit,
+    offset: paging?.offset,
+  });
+  return request<any[]>(
+    `/contacts/${encodeURIComponent(contactId)}/agent-recalls${query}`,
+  );
+};
+
 export const getSessionMessages = (
   request: ApiRequestFn,
   sessionId: string,
@@ -109,6 +186,23 @@ export const getSessionTurnProcessMessagesByTurn = (
   turnId: string
 ): Promise<any[]> => {
   return request<any[]>(`/sessions/${sessionId}/turns/by-turn/${encodeURIComponent(turnId)}/process`);
+};
+
+export const getSessionLatestTurnRuntimeContext = (
+  request: ApiRequestFn,
+  sessionId: string,
+): Promise<any> => {
+  return request<any>(`/sessions/${sessionId}/turns/latest/runtime-context`);
+};
+
+export const getSessionTurnRuntimeContextByTurn = (
+  request: ApiRequestFn,
+  sessionId: string,
+  turnId: string,
+): Promise<any> => {
+  return request<any>(
+    `/sessions/${sessionId}/turns/by-turn/${encodeURIComponent(turnId)}/runtime-context`,
+  );
 };
 
 export const listProjects = (request: ApiRequestFn, userId?: string): Promise<any[]> => {
@@ -145,6 +239,39 @@ export const deleteProject = (request: ApiRequestFn, id: string): Promise<any> =
 
 export const getProject = (request: ApiRequestFn, id: string): Promise<any> => {
   return request<any>(`/projects/${id}`);
+};
+
+export const listProjectContacts = (
+  request: ApiRequestFn,
+  projectId: string,
+  paging?: ContactPaging,
+): Promise<any[]> => {
+  const query = buildQuery({
+    limit: paging?.limit,
+    offset: paging?.offset,
+  });
+  return request<any[]>(`/projects/${encodeURIComponent(projectId)}/contacts${query}`);
+};
+
+export const addProjectContact = (
+  request: ApiRequestFn,
+  projectId: string,
+  data: { contact_id: string },
+): Promise<any> => {
+  return request<any>(`/projects/${encodeURIComponent(projectId)}/contacts`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+};
+
+export const removeProjectContact = (
+  request: ApiRequestFn,
+  projectId: string,
+  contactId: string,
+): Promise<any> => {
+  return request<any>(`/projects/${encodeURIComponent(projectId)}/contacts/${encodeURIComponent(contactId)}`, {
+    method: 'DELETE',
+  });
 };
 
 export const listProjectChangeLogs = (

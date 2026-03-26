@@ -14,18 +14,11 @@ pub(super) struct ToolCallExecutionPlan {
 pub(super) fn build_tool_call_execution_plan(tool_calls_arr: &[Value]) -> ToolCallExecutionPlan {
     let mut plan = ToolCallExecutionPlan::default();
     let mut exact_key_to_call_id: HashMap<String, String> = HashMap::new();
-    let mut first_suggest_call_id: Option<String> = None;
 
     for tool_call in tool_calls_arr {
         let call_id = tool_call_id(tool_call);
         let tool_name = tool_call_name(tool_call);
         let mut canonical_call_id: Option<String> = None;
-
-        if is_suggest_sub_agent_tool(tool_name.as_str()) {
-            if let Some(existing) = first_suggest_call_id.as_ref() {
-                canonical_call_id = Some(existing.clone());
-            }
-        }
 
         if canonical_call_id.is_none() && !call_id.is_empty() {
             let dedupe_key = format!(
@@ -48,13 +41,6 @@ pub(super) fn build_tool_call_execution_plan(tool_calls_arr: &[Value]) -> ToolCa
                 }
             }
             continue;
-        }
-
-        if is_suggest_sub_agent_tool(tool_name.as_str())
-            && !call_id.is_empty()
-            && first_suggest_call_id.is_none()
-        {
-            first_suggest_call_id = Some(call_id);
         }
 
         plan.display_calls.push(tool_call.clone());
@@ -120,15 +106,6 @@ fn tool_call_arguments_text(tool_call: &Value) -> String {
     }
 
     arguments.to_string()
-}
-
-fn is_suggest_sub_agent_tool(tool_name: &str) -> bool {
-    let normalized = tool_name.trim().to_lowercase();
-    if normalized.is_empty() {
-        return false;
-    }
-
-    normalized.ends_with("_suggest_sub_agent") || normalized.contains("__suggest_sub_agent")
 }
 
 pub(super) fn build_tool_call_items(tool_calls_arr: &[Value]) -> Vec<Value> {

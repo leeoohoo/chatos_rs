@@ -35,6 +35,10 @@ export interface Message {
 export interface Session {
   id: string;
   title: string;
+  userId?: string | null;
+  user_id?: string | null;
+  projectId?: string | null;
+  project_id?: string | null;
   createdAt: Date;
   updatedAt: Date;
   messageCount: number;
@@ -224,8 +228,6 @@ export interface McpConfig {
   enabled: boolean;
   readonly?: boolean;
   builtin?: boolean;
-  supports_settings?: boolean;
-  builtin_kind?: string;
   config?: any;
   createdAt: Date;
   updatedAt: Date;
@@ -353,7 +355,18 @@ export interface MessageListProps {
 }
 
 export interface InputAreaProps {
-  onSend: (content: string, attachments?: File[]) => void;
+  onSend: (
+    content: string,
+    attachments?: File[],
+    runtimeOptions?: {
+      mcpEnabled?: boolean;
+      projectId?: string | null;
+      projectRoot?: string | null;
+      workspaceRoot?: string | null;
+      enabledMcpIds?: string[];
+    },
+  ) => void;
+  onGuide?: (content: string) => void | Promise<void>;
   onStop?: () => void;
   disabled?: boolean;
   isStreaming?: boolean;
@@ -369,13 +382,20 @@ export interface InputAreaProps {
   selectedModelId?: string | null;
   availableModels?: AiModelConfig[];
   onModelChange?: (modelId: string | null) => void;
-  // 智能体选择支持
-  selectedAgentId?: string | null;
-  availableAgents?: AgentConfig[];
-  onAgentChange?: (agentId: string | null) => void;
-  // 项目（用于展示智能体关联项目）
+  // 项目（用于发送时透传 project_root）
   availableProjects?: Project[];
   currentProject?: Project | null;
+  selectedProjectId?: string | null;
+  onProjectChange?: (projectId: string | null) => void;
+  showProjectSelector?: boolean;
+  showProjectFileButton?: boolean;
+  workspaceRoot?: string | null;
+  onWorkspaceRootChange?: (path: string | null) => void;
+  showWorkspaceRootPicker?: boolean;
+  mcpEnabled?: boolean;
+  enabledMcpIds?: string[];
+  onMcpEnabledChange?: (enabled: boolean) => void;
+  onEnabledMcpIdsChange?: (ids: string[]) => void;
 }
 
 export interface SessionListProps {

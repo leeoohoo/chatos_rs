@@ -1,3 +1,7 @@
+use crate::services::builtin_mcp::{
+    BuiltinMcpKind, MEMORY_COMMAND_READER_SERVER_NAME, MEMORY_PLUGIN_READER_SERVER_NAME,
+    MEMORY_SKILL_READER_SERVER_NAME,
+};
 use crate::services::mcp_loader::{
     load_mcp_configs_for_user, McpBuiltinServer, McpHttpServer, McpStdioServer,
 };
@@ -10,6 +14,78 @@ pub type McpServerBundle = (
 
 pub fn empty_mcp_server_bundle() -> McpServerBundle {
     (Vec::new(), Vec::new(), Vec::new())
+}
+
+pub fn contact_agent_skill_reader_server(
+    user_id: Option<String>,
+    project_id: Option<String>,
+    contact_agent_id: &str,
+) -> Option<McpBuiltinServer> {
+    let normalized_agent_id = contact_agent_id.trim();
+    if normalized_agent_id.is_empty() {
+        return None;
+    }
+
+    Some(McpBuiltinServer {
+        name: MEMORY_SKILL_READER_SERVER_NAME.to_string(),
+        kind: BuiltinMcpKind::MemorySkillReader,
+        workspace_dir: String::new(),
+        user_id,
+        project_id,
+        contact_agent_id: Some(normalized_agent_id.to_string()),
+        allow_writes: false,
+        max_file_bytes: 0,
+        max_write_bytes: 0,
+        search_limit: 0,
+    })
+}
+
+pub fn contact_agent_command_reader_server(
+    user_id: Option<String>,
+    project_id: Option<String>,
+    contact_agent_id: &str,
+) -> Option<McpBuiltinServer> {
+    let normalized_agent_id = contact_agent_id.trim();
+    if normalized_agent_id.is_empty() {
+        return None;
+    }
+
+    Some(McpBuiltinServer {
+        name: MEMORY_COMMAND_READER_SERVER_NAME.to_string(),
+        kind: BuiltinMcpKind::MemoryCommandReader,
+        workspace_dir: String::new(),
+        user_id,
+        project_id,
+        contact_agent_id: Some(normalized_agent_id.to_string()),
+        allow_writes: false,
+        max_file_bytes: 0,
+        max_write_bytes: 0,
+        search_limit: 0,
+    })
+}
+
+pub fn contact_agent_plugin_reader_server(
+    user_id: Option<String>,
+    project_id: Option<String>,
+    contact_agent_id: &str,
+) -> Option<McpBuiltinServer> {
+    let normalized_agent_id = contact_agent_id.trim();
+    if normalized_agent_id.is_empty() {
+        return None;
+    }
+
+    Some(McpBuiltinServer {
+        name: MEMORY_PLUGIN_READER_SERVER_NAME.to_string(),
+        kind: BuiltinMcpKind::MemoryPluginReader,
+        workspace_dir: String::new(),
+        user_id,
+        project_id,
+        contact_agent_id: Some(normalized_agent_id.to_string()),
+        allow_writes: false,
+        max_file_bytes: 0,
+        max_write_bytes: 0,
+        search_limit: 0,
+    })
 }
 
 pub fn normalize_mcp_ids(ids: &[String]) -> Vec<String> {

@@ -1,4 +1,5 @@
 use serde_json::Value;
+use tracing::info;
 
 use crate::core::mcp_tools::ToolResult;
 use crate::models::message::Message;
@@ -119,27 +120,17 @@ impl MessageManager {
         )
     }
 
-    pub async fn get_memory_sub_agent_run_history_context(
-        &self,
-        run_id: &str,
-        memory_summary_limit: usize,
-    ) -> (Option<String>, usize, Vec<Message>) {
-        let context = self
-            .core
-            .get_memory_sub_agent_run_history_context(run_id, memory_summary_limit)
-            .await;
-        (
-            context.merged_summary,
-            context.summary_count,
-            context.messages,
-        )
-    }
-
     pub async fn get_last_response_id(&self, session_id: &str, limit: i64) -> Option<String> {
         let memory_summary_limit = Some(2);
         let (_summaries, messages) = self
             .get_session_memory_history(session_id, Some(limit), memory_summary_limit)
             .await;
+        info!(
+            "[AI_V3][prev-id] scan start: session_id={}, limit={}, message_count={}",
+            session_id,
+            limit,
+            messages.len()
+        );
 
         for message in messages.iter().rev() {
             if message.role != "assistant" {
@@ -164,24 +155,96 @@ impl MessageManager {
                     .map(|array| !array.is_empty())
                     .unwrap_or(false)
                 {
+                    info!(
+                        "[AI_V3][prev-id] skip assistant with tool_calls: session_id={}, message_id={}",
+                        session_id,
+                        message.id
+                    );
                     continue;
                 }
+            }
+
+            let response_status = message
+                .metadata
+                .as_ref()
+                .and_then(extract_response_status_from_metadata);
+            if is_non_terminal_response_status(response_status) {
+                info!(
+                    "[AI_V3][prev-id] skip assistant with non-terminal response status: session_id={}, message_id={}, status={}",
+                    session_id,
+                    message.id,
+                    response_status.unwrap_or("unknown")
+                );
+                continue;
+            }
+
+            let has_content = !message.content.trim().is_empty();
+            let has_reasoning = message
+                .reasoning
+                .as_deref()
+                .map(str::trim)
+                .map(|value| !value.is_empty())
+                .unwrap_or(false);
+            if !has_content && !has_reasoning {
+                info!(
+                    "[AI_V3][prev-id] skip assistant without reusable payload: session_id={}, message_id={}",
+                    session_id,
+                    message.id
+                );
+                continue;
             }
 
             if let Some(metadata) = &message.metadata {
                 if let Some(response_id) =
                     metadata.get("response_id").and_then(|value| value.as_str())
                 {
+                    info!(
+                        "[AI_V3][prev-id] hit metadata.response_id: session_id={}, message_id={}, response_id={}",
+                        session_id,
+                        message.id,
+                        response_id
+                    );
                     return Some(response_id.to_string());
                 }
                 if let Some(response_id) =
                     metadata.get("responseId").and_then(|value| value.as_str())
                 {
+                    info!(
+                        "[AI_V3][prev-id] hit metadata.responseId: session_id={}, message_id={}, response_id={}",
+                        session_id,
+                        message.id,
+                        response_id
+                    );
                     return Some(response_id.to_string());
                 }
             }
         }
 
+        info!(
+            "[AI_V3][prev-id] miss: session_id={}, no reusable response_id found",
+            session_id
+        );
         None
     }
+}
+
+fn extract_response_status_from_metadata(metadata: &Value) -> Option<&str> {
+    metadata
+        .get("response_status")
+        .or_else(|| metadata.get("responseStatus"))
+        .or_else(|| metadata.get("finish_reason"))
+        .or_else(|| metadata.get("finishReason"))
+        .or_else(|| metadata.get("status"))
+        .and_then(|value| value.as_str())
+}
+
+fn is_non_terminal_response_status(status: Option<&str>) -> bool {
+    let normalized = status
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_ascii_lowercase());
+    matches!(
+        normalized.as_deref(),
+        Some("in_progress") | Some("queued") | Some("pending") | Some("incomplete")
+    )
 }

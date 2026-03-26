@@ -1,3 +1,7 @@
+import type {
+  RuntimeGuidanceSubmitPayload,
+  RuntimeGuidanceSubmitResponse,
+} from './types';
 import type { ApiRequestFn } from './workspace';
 
 export interface StreamApiContext {
@@ -39,7 +43,14 @@ export const streamChat = async (
   userId?: string,
   attachments?: any[],
   reasoningEnabled?: boolean,
-  options?: { turnId?: string }
+  options?: {
+    turnId?: string;
+    contactAgentId?: string | null;
+    projectId?: string | null;
+    projectRoot?: string | null;
+    mcpEnabled?: boolean;
+    enabledMcpIds?: string[];
+  }
 ): Promise<ReadableStream> => {
   const useResponses = modelConfig?.supports_responses === true;
   const url = `${context.baseUrl}/${useResponses ? 'agent_v3' : 'agent_v2'}/chat/stream`;
@@ -57,6 +68,11 @@ export const streamChat = async (
       attachments: attachments || [],
       reasoning_enabled: reasoningEnabled,
       turn_id: options?.turnId,
+      contact_agent_id: options?.contactAgentId || undefined,
+      project_id: options?.projectId || undefined,
+      project_root: options?.projectRoot || undefined,
+      mcp_enabled: options?.mcpEnabled,
+      enabled_mcp_ids: options?.enabledMcpIds || [],
       ai_model_config: {
         provider: modelConfig.provider,
         model_name: modelConfig.model_name,
@@ -83,49 +99,6 @@ export const streamChat = async (
   return response.body;
 };
 
-export const streamAgentChat = async (
-  context: StreamApiContext,
-  sessionId: string,
-  content: string,
-  agentId: string,
-  userId?: string,
-  attachments?: any[],
-  reasoningEnabled?: boolean,
-  options?: { useResponses?: boolean; turnId?: string }
-): Promise<ReadableStream> => {
-  const useResponses = options?.useResponses === true;
-  const url = `${context.baseUrl}/${useResponses ? 'agent_v3/agents' : 'agents'}/chat/stream`;
-
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Accept': 'text/event-stream',
-      ...(context.accessToken ? { Authorization: `Bearer ${context.accessToken}` } : {}),
-    },
-    body: JSON.stringify({
-      session_id: sessionId,
-      content,
-      agent_id: agentId,
-      user_id: userId,
-      attachments: attachments || [],
-      reasoning_enabled: reasoningEnabled,
-      turn_id: options?.turnId,
-    }),
-  });
-  context.applyRefreshedAccessToken(response);
-
-  if (!response.ok) {
-    throw await buildStreamHttpError(response);
-  }
-
-  if (!response.body) {
-    throw new Error('Response body is null');
-  }
-
-  return response.body;
-};
-
 export const stopChat = (
   request: ApiRequestFn,
   sessionId: string,
@@ -137,6 +110,21 @@ export const stopChat = (
     method: 'POST',
     body: JSON.stringify({
       session_id: sessionId,
+    }),
+  });
+};
+
+export const submitRuntimeGuidance = (
+  request: ApiRequestFn,
+  payload: RuntimeGuidanceSubmitPayload,
+): Promise<RuntimeGuidanceSubmitResponse> => {
+  return request<RuntimeGuidanceSubmitResponse>('/agent_v3/chat/guide', {
+    method: 'POST',
+    body: JSON.stringify({
+      session_id: payload.sessionId,
+      turn_id: payload.turnId,
+      content: payload.content,
+      project_id: payload.projectId,
     }),
   });
 };

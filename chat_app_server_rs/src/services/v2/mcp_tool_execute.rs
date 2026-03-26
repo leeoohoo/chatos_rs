@@ -5,7 +5,7 @@ use tracing::{info, warn};
 
 use crate::core::mcp_tools::{
     build_builtin_tool_service, build_function_tool_schema,
-    execute_tools_stream as execute_tools_stream_common, inject_sub_agent_router_args,
+    execute_tools_stream as execute_tools_stream_common, inject_agent_builder_args,
     jsonrpc_http_call, jsonrpc_stdio_call, list_tools_http, list_tools_stdio,
     parse_tool_definition, to_text, BuiltinToolService, ToolResultCallback, ToolSchemaFormat,
     ToolStreamChunkCallback,
@@ -224,8 +224,8 @@ impl McpToolExecute {
                 .get(&info.server_name)
                 .ok_or_else(|| "missing builtin service".to_string())?;
 
-            let args = if matches!(service, BuiltinToolService::SubAgentRouter(_)) {
-                inject_sub_agent_router_args(args, caller_model)
+            let args = if matches!(service, BuiltinToolService::AgentBuilder(_)) {
+                inject_agent_builder_args(args, caller_model)
             } else {
                 args
             };

@@ -13,6 +13,7 @@ export function createStreamingActions({ set, get, client }: Deps) {
     isStreaming: false,
     isStopping: false,
     streamingMessageId: null as string | null,
+    activeTurnId: null as string | null,
   };
 
   return {
@@ -21,7 +22,12 @@ export function createStreamingActions({ set, get, client }: Deps) {
         const sessionId = state.currentSessionId;
         if (sessionId) {
           const prev = state.sessionChatState[sessionId] || defaultSessionChatState;
-          state.sessionChatState[sessionId] = { ...prev, isStreaming: true, isStopping: false, streamingMessageId: messageId };
+          state.sessionChatState[sessionId] = {
+            ...prev,
+            isStreaming: true,
+            isStopping: false,
+            streamingMessageId: messageId,
+          };
         }
         state.isStreaming = true;
         state.streamingMessageId = messageId;
@@ -44,7 +50,14 @@ export function createStreamingActions({ set, get, client }: Deps) {
         const sessionId = state.currentSessionId;
         if (sessionId) {
           const prev = state.sessionChatState[sessionId] || defaultSessionChatState;
-          state.sessionChatState[sessionId] = { ...prev, isLoading: false, isStreaming: false, isStopping: false, streamingMessageId: null };
+          state.sessionChatState[sessionId] = {
+            ...prev,
+            isLoading: false,
+            isStreaming: false,
+            isStopping: false,
+            streamingMessageId: null,
+            activeTurnId: null,
+          };
         }
         state.isStreaming = false;
         state.streamingMessageId = null;
@@ -83,23 +96,14 @@ export function createStreamingActions({ set, get, client }: Deps) {
       try {
         const {
           selectedModelId,
-          selectedAgentId,
           aiModelConfigs,
-          agents,
           sessionAiSelectionBySession,
         } = get();
         const sessionAiSelection = sessionAiSelectionBySession?.[currentSessionId];
-        const effectiveSelectedAgentId = sessionAiSelection?.selectedAgentId ?? selectedAgentId;
         const effectiveSelectedModelId = sessionAiSelection?.selectedModelId ?? selectedModelId;
-        let activeModel: any = null;
-        if (effectiveSelectedAgentId) {
-          const agent = agents.find((a: any) => a.id === effectiveSelectedAgentId);
-          if (agent) {
-            activeModel = aiModelConfigs.find((m: any) => m.id === agent.ai_model_config_id);
-          }
-        } else if (effectiveSelectedModelId) {
-          activeModel = aiModelConfigs.find((m: any) => m.id === effectiveSelectedModelId);
-        }
+        const activeModel = effectiveSelectedModelId
+          ? aiModelConfigs.find((m: any) => m.id === effectiveSelectedModelId)
+          : null;
         const useResponses = activeModel?.supports_responses === true;
         await client.stopChat(currentSessionId, { useResponses });
         debugLog('✅ 成功停止当前对话');

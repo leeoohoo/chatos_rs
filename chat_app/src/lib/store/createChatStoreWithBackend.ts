@@ -9,6 +9,7 @@ import { createAiModelActions } from './actions/aiModels';
 import { createMcpActions } from './actions/mcp';
 import { createChatConfigActions } from './actions/chatConfig';
 import { createSessionActions } from './actions/sessions';
+import { createContactActions } from './actions/contacts';
 import { createProjectActions } from './actions/projects';
 import { createTerminalActions } from './actions/terminals';
 import { createRemoteConnectionActions } from './actions/remoteConnections';
@@ -50,7 +51,7 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                     (set, get) => {
                     const getSessionParams = () => ({
                         userId,
-                        projectId: '',
+                        projectId: customProjectId || get().currentProjectId || '',
                     });
 
                     return {
@@ -58,6 +59,7 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                     sessions: [],
                     currentSessionId: null,
                     currentSession: null,
+                    contacts: [],
                     projects: [],
                     currentProjectId: null,
                     currentProject: null,
@@ -74,6 +76,7 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                     streamingMessageId: null,
                     hasMoreMessages: true,
                     sessionChatState: {},
+                    sessionRuntimeGuidanceState: {},
                     sessionStreamingMessageDrafts: {},
                     sessionTurnProcessState: {},
                     sessionTurnProcessCache: {},
@@ -103,12 +106,198 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                     error: null,
 
                     // 会话/项目/消息/流式/UI 操作（拆分到独立模块）
+                    ...createContactActions({ set, get, client, getUserIdParam }),
                     ...createSessionActions({ set, get, client, getSessionParams, customUserId, customProjectId }),
                     ...createProjectActions({ set, get, client, getUserIdParam }),
                     ...createTerminalActions({ set, get, client, getUserIdParam }),
                     ...createRemoteConnectionActions({ set, get, client, getUserIdParam }),
                     ...createMessageActions({ set, get, client }),
                     sendMessage: createSendMessageHandler({ set, get, client, getUserIdParam }),
+                    submitRuntimeGuidance: async (
+                      content: string,
+                      options: { sessionId: string; turnId: string; projectId?: string | null },
+                    ) => {
+                      const sessionId = String(options?.sessionId || '').trim();
+                      const turnId = String(options?.turnId || '').trim();
+                      const trimmedContent = String(content || '').trim();
+                      const projectId = typeof options?.projectId === 'string'
+                        ? options.projectId.trim()
+                        : '';
+                      if (!sessionId || !turnId || !trimmedContent) {
+                        throw new Error('缺少运行时引导参数');
+                      }
+
+                      const guidanceAt = new Date().toISOString();
+                      const optimisticGuidanceId = `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                      const maxItems = 20;
+                      set((state: any) => {
+                        if (!state.sessionRuntimeGuidanceState) {
+                          state.sessionRuntimeGuidanceState = {};
+                        }
+                        const prev = state.sessionRuntimeGuidanceState[sessionId] || {
+                          pendingCount: 0,
+                          appliedCount: 0,
+                          lastGuidanceAt: null,
+                          lastAppliedAt: null,
+                          items: [],
+                        };
+                        const prevItems = Array.isArray(prev.items) ? prev.items : [];
+                        state.sessionRuntimeGuidanceState[sessionId] = {
+                          ...prev,
+                          pendingCount: Math.max(0, Number(prev.pendingCount || 0) + 1),
+                          lastGuidanceAt: guidanceAt,
+                          items: [
+                            {
+                              guidanceId: optimisticGuidanceId,
+                              turnId,
+                              content: trimmedContent,
+                              status: 'queued',
+                              createdAt: guidanceAt,
+                              appliedAt: null,
+                            },
+                            ...prevItems,
+                          ].slice(0, maxItems),
+                        };
+                        const shouldAppendToVisibleMessages = state.currentSessionId === sessionId;
+                        if (shouldAppendToVisibleMessages) {
+                          if (!Array.isArray(state.messages)) {
+                            state.messages = [];
+                          }
+                          const exists = state.messages.some((message: any) => message?.id === optimisticGuidanceId);
+                          if (!exists) {
+                            state.messages.push({
+                              id: optimisticGuidanceId,
+                              sessionId,
+                              role: 'user',
+                              content: trimmedContent,
+                              status: 'completed',
+                              createdAt: new Date(guidanceAt),
+                              metadata: {
+                                conversation_turn_id: turnId,
+                                message_mode: 'runtime_guidance',
+                                message_source: 'runtime_guidance',
+                                runtime_guidance: {
+                                  guidance_id: optimisticGuidanceId,
+                                  status: 'queued',
+                                  created_at: guidanceAt,
+                                },
+                              },
+                            });
+                          }
+                        }
+                      });
+
+                      try {
+                        const response = await client.submitRuntimeGuidance({
+                          sessionId,
+                          turnId,
+                          content: trimmedContent,
+                          projectId: projectId || undefined,
+                        });
+                        set((state: any) => {
+                          if (!state.sessionRuntimeGuidanceState) {
+                            state.sessionRuntimeGuidanceState = {};
+                          }
+                          const prev = state.sessionRuntimeGuidanceState[sessionId] || {
+                            pendingCount: 0,
+                            appliedCount: 0,
+                            lastGuidanceAt: guidanceAt,
+                            lastAppliedAt: null,
+                            items: [],
+                          };
+                          const pendingFromResponse = Number(
+                            Number.isFinite(Number(response?.pending_count))
+                              ? Number(response?.pending_count)
+                              : Number.NaN
+                          );
+                          const responseGuidanceId = String(response?.guidance_id || '').trim();
+                          const guidanceId = responseGuidanceId || optimisticGuidanceId;
+                          const nextStatus = response?.status === 'applied'
+                            ? 'applied'
+                            : (response?.status === 'dropped' ? 'dropped' : 'queued');
+                          const prevItems = Array.isArray(prev.items) ? [...prev.items] : [];
+                          const existingIndex = prevItems.findIndex((item: any) => item.guidanceId === optimisticGuidanceId || item.guidanceId === guidanceId);
+                          if (existingIndex >= 0) {
+                            prevItems[existingIndex] = {
+                              ...prevItems[existingIndex],
+                              guidanceId,
+                              turnId,
+                              content: prevItems[existingIndex]?.content || trimmedContent,
+                              status: nextStatus,
+                            };
+                          } else {
+                            prevItems.unshift({
+                              guidanceId,
+                              turnId,
+                              content: trimmedContent,
+                              status: nextStatus,
+                              createdAt: guidanceAt,
+                              appliedAt: null,
+                            });
+                          }
+                          state.sessionRuntimeGuidanceState[sessionId] = {
+                            ...prev,
+                            pendingCount: Number.isFinite(pendingFromResponse)
+                              ? Math.max(0, pendingFromResponse)
+                              : prev.pendingCount,
+                            lastGuidanceAt: guidanceAt,
+                            items: prevItems.slice(0, maxItems),
+                          };
+                          if (state.currentSessionId === sessionId && Array.isArray(state.messages)) {
+                            const guidanceMessageIndex = state.messages.findIndex((message: any) => (
+                              message?.id === optimisticGuidanceId
+                              || (guidanceId && message?.id === guidanceId)
+                            ));
+                            if (guidanceMessageIndex >= 0) {
+                              const nextMetadata = {
+                                ...(state.messages[guidanceMessageIndex]?.metadata || {}),
+                                runtime_guidance: {
+                                  guidance_id: guidanceId,
+                                  status: nextStatus,
+                                  created_at: guidanceAt,
+                                },
+                              };
+                              state.messages[guidanceMessageIndex] = {
+                                ...state.messages[guidanceMessageIndex],
+                                id: guidanceId,
+                                status: 'completed',
+                                metadata: nextMetadata,
+                              };
+                            }
+                          }
+                        });
+                        return {
+                          success: response?.success === true,
+                          guidanceId: response?.guidance_id,
+                          status: response?.status,
+                          pendingCount: response?.pending_count,
+                          turnId: response?.turn_id,
+                        };
+                      } catch (error) {
+                        set((state: any) => {
+                          if (!state.sessionRuntimeGuidanceState) {
+                            state.sessionRuntimeGuidanceState = {};
+                          }
+                          const prev = state.sessionRuntimeGuidanceState[sessionId] || {
+                            pendingCount: 0,
+                            appliedCount: 0,
+                            lastGuidanceAt: null,
+                            lastAppliedAt: null,
+                            items: [],
+                          };
+                          const prevItems = Array.isArray(prev.items) ? prev.items : [];
+                          state.sessionRuntimeGuidanceState[sessionId] = {
+                            ...prev,
+                            pendingCount: Math.max(0, Number(prev.pendingCount || 0) - 1),
+                            items: prevItems.filter((item: any) => item.guidanceId !== optimisticGuidanceId),
+                          };
+                          if (state.currentSessionId === sessionId && Array.isArray(state.messages)) {
+                            state.messages = state.messages.filter((message: any) => message?.id !== optimisticGuidanceId);
+                          }
+                        });
+                        throw error;
+                      }
+                    },
                     ...createStreamingActions({ set, get, client }),
                     setTaskReviewPanel: (panel: ChatState['taskReviewPanel']) => {
                         set((state: any) => {

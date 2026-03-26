@@ -11,7 +11,7 @@
 
 - `backend/`: Rust server (Axum + MongoDB + workers)
 - `frontend/`: React console (Vite)
-- `memory_server_architecture_plan.md`: full architecture/design doc
+- `../docs/plans/memory_server_architecture_plan.md`: full architecture/design doc
 
 ## Backend
 

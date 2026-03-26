@@ -1,9 +1,18 @@
 import axios from 'axios';
 
 import type {
+  AgentRecall,
+  AgentMemoryJobConfig,
   AiModelConfig,
   JobRun,
+  MemoryAgent,
+  MemoryContact,
+  ContactProject,
+  MemoryProject,
+  MemorySkill,
+  MemorySkillPlugin,
   Message,
+  ProjectMemory,
   SummaryGraphEdge,
   SummaryGraphNode,
   RollupJobConfig,
@@ -22,6 +31,8 @@ const client = axios.create({
   timeout: 30000,
 });
 
+const AI_CREATE_AGENT_TIMEOUT_MS = 180000;
+
 type RawUserItem = {
   username: string;
   role: string;
@@ -36,6 +47,17 @@ function normalizeUserItem(raw: RawUserItem): UserItem {
     created_at: raw.created_at,
     updated_at: raw.updated_at,
   };
+}
+
+function normalizeOptionalPrompt(value: string | null | undefined): string | null | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null) {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 client.interceptors.request.use((config) => {
@@ -143,9 +165,17 @@ export const api = {
     return data;
   },
 
-  async listSummaries(sessionId: string): Promise<SessionSummary[]> {
+  async listSummaries(
+    sessionId: string,
+    params?: { status?: string; level?: number; limit?: number; offset?: number },
+  ): Promise<SessionSummary[]> {
     const { data } = await client.get(`/sessions/${sessionId}/summaries`, {
-      params: { status: 'pending', limit: 200, offset: 0 },
+      params: {
+        status: params?.status,
+        level: params?.level,
+        limit: params?.limit ?? 200,
+        offset: params?.offset ?? 0,
+      },
     });
     return data.items ?? [];
   },
@@ -234,6 +264,7 @@ export const api = {
             ? payload.enabled === 1
             : Boolean(payload.enabled),
       summary_model_config_id: payload.summary_model_config_id,
+      summary_prompt: normalizeOptionalPrompt(payload.summary_prompt),
       token_limit: payload.token_limit,
       round_limit: payload.round_limit,
       target_summary_tokens: payload.target_summary_tokens,
@@ -261,6 +292,7 @@ export const api = {
             ? payload.enabled === 1
             : Boolean(payload.enabled),
       summary_model_config_id: payload.summary_model_config_id,
+      summary_prompt: normalizeOptionalPrompt(payload.summary_prompt),
       token_limit: payload.token_limit,
       round_limit: payload.round_limit,
       target_summary_tokens: payload.target_summary_tokens,
@@ -288,6 +320,41 @@ export const api = {
     return data;
   },
 
+  async getAgentMemoryJobConfig(userId: string): Promise<AgentMemoryJobConfig | null> {
+    const { data } = await client.get('/configs/agent-memory-job', { params: { user_id: userId } });
+    return data ?? null;
+  },
+
+  async saveAgentMemoryJobConfig(payload: Partial<AgentMemoryJobConfig> & { user_id: string }) {
+    const req = {
+      user_id: payload.user_id,
+      enabled:
+        payload.enabled === undefined
+          ? undefined
+          : typeof payload.enabled === 'number'
+            ? payload.enabled === 1
+            : Boolean(payload.enabled),
+      summary_model_config_id: payload.summary_model_config_id,
+      summary_prompt: normalizeOptionalPrompt(payload.summary_prompt),
+      token_limit: payload.token_limit,
+      round_limit: payload.round_limit,
+      target_summary_tokens: payload.target_summary_tokens,
+      job_interval_seconds: payload.job_interval_seconds,
+      keep_raw_level0_count: payload.keep_raw_level0_count,
+      max_level: payload.max_level,
+      max_agents_per_tick: payload.max_agents_per_tick,
+    };
+    const { data } = await client.put('/configs/agent-memory-job', req);
+    return data;
+  },
+
+  async runAgentMemoryOnce(userId: string) {
+    const { data } = await client.post('/jobs/agent-memory/run-once', {
+      user_id: userId,
+    });
+    return data;
+  },
+
   async listJobRuns(): Promise<JobRun[]> {
     const { data } = await client.get('/jobs/runs', {
       params: { limit: 200 },
@@ -307,5 +374,272 @@ export const api = {
       include_raw_messages: true,
     });
     return data;
+  },
+
+  async listAgents(
+    userId?: string,
+    params?: { include_shared?: boolean; enabled?: boolean; limit?: number; offset?: number },
+  ): Promise<MemoryAgent[]> {
+    const { data } = await client.get('/agents', {
+      params: {
+        user_id: userId,
+        include_shared: params?.include_shared,
+        enabled: params?.enabled,
+        limit: params?.limit ?? 200,
+        offset: params?.offset ?? 0,
+      },
+    });
+    return data.items ?? [];
+  },
+
+  async listAgentSessions(
+    agentId: string,
+    userId?: string,
+    params?: { project_id?: string; status?: string; limit?: number; offset?: number },
+  ): Promise<Session[]> {
+    const normalizedStatus = params?.status?.trim();
+    const { data } = await client.get(`/agents/${encodeURIComponent(agentId)}/sessions`, {
+      params: {
+        user_id: userId,
+        project_id: params?.project_id,
+        status: normalizedStatus && normalizedStatus.length > 0 ? normalizedStatus : undefined,
+        limit: params?.limit ?? 100,
+        offset: params?.offset ?? 0,
+      },
+    });
+    return data.items ?? [];
+  },
+
+  async createAgent(payload: {
+    user_id?: string;
+    name: string;
+    description?: string;
+    category?: string;
+    role_definition: string;
+    plugin_sources?: string[];
+    skill_ids?: string[];
+    default_skill_ids?: string[];
+    enabled?: boolean;
+  }): Promise<MemoryAgent> {
+    const { data } = await client.post('/agents', payload);
+    return data;
+  },
+
+  async updateAgent(
+    agentId: string,
+    payload: {
+      name?: string;
+      description?: string;
+      category?: string;
+      role_definition?: string;
+      plugin_sources?: string[];
+      skill_ids?: string[];
+      default_skill_ids?: string[];
+      enabled?: boolean;
+    },
+  ): Promise<MemoryAgent> {
+    const { data } = await client.patch(`/agents/${agentId}`, payload);
+    return data;
+  },
+
+  async deleteAgent(agentId: string): Promise<boolean> {
+    const { data } = await client.delete(`/agents/${agentId}`);
+    return Boolean(data?.success);
+  },
+
+  async aiCreateAgent(payload: {
+    user_id?: string;
+    model_config_id?: string;
+    requirement: string;
+    name?: string;
+    category?: string;
+    description?: string;
+    role_definition?: string;
+    skill_ids?: string[];
+    default_skill_ids?: string[];
+    enabled?: boolean;
+  }): Promise<{ created: boolean; agent: MemoryAgent; source?: string }> {
+    const { data } = await client.post('/agents/ai-create', payload, {
+      timeout: AI_CREATE_AGENT_TIMEOUT_MS,
+    });
+    return data;
+  },
+
+  async listSkillPlugins(
+    userId?: string,
+    params?: { limit?: number; offset?: number },
+  ): Promise<MemorySkillPlugin[]> {
+    const { data } = await client.get('/skills/plugins', {
+      params: {
+        user_id: userId,
+        limit: params?.limit ?? 200,
+        offset: params?.offset ?? 0,
+      },
+    });
+    return data.items ?? [];
+  },
+
+  async getSkillPlugin(source: string, userId?: string): Promise<MemorySkillPlugin | null> {
+    const { data } = await client.get('/skills/plugins/detail', {
+      params: {
+        user_id: userId,
+        source,
+      },
+    });
+    return data ?? null;
+  },
+
+  async listSkills(
+    userId?: string,
+    params?: { plugin_source?: string; query?: string; limit?: number; offset?: number },
+  ): Promise<MemorySkill[]> {
+    const { data } = await client.get('/skills', {
+      params: {
+        user_id: userId,
+        plugin_source: params?.plugin_source,
+        query: params?.query,
+        limit: params?.limit ?? 300,
+        offset: params?.offset ?? 0,
+      },
+    });
+    return data.items ?? [];
+  },
+
+  async getSkill(skillId: string, userId?: string): Promise<MemorySkill | null> {
+    const { data } = await client.get(`/skills/${encodeURIComponent(skillId)}`, {
+      params: { user_id: userId },
+    });
+    return data ?? null;
+  },
+
+  async importSkillsFromGit(payload: {
+    user_id?: string;
+    repository: string;
+    branch?: string;
+    marketplace_path?: string;
+    plugins_path?: string;
+    auto_install?: boolean;
+  }): Promise<any> {
+    const { data } = await client.post('/skills/import-git', payload);
+    return data;
+  },
+
+  async installSkillPlugins(payload: {
+    user_id?: string;
+    source?: string;
+    install_all?: boolean;
+  }): Promise<any> {
+    const { data } = await client.post('/skills/plugins/install', payload);
+    return data;
+  },
+
+  async listContacts(
+    userId?: string,
+    params?: { limit?: number; offset?: number; status?: string },
+  ): Promise<MemoryContact[]> {
+    const { data } = await client.get('/contacts', {
+      params: {
+        user_id: userId,
+        status: params?.status,
+        limit: params?.limit ?? 200,
+        offset: params?.offset ?? 0,
+      },
+    });
+    return data.items ?? [];
+  },
+
+  async listProjects(
+    userId?: string,
+    params?: { status?: string; include_virtual?: boolean; limit?: number; offset?: number },
+  ): Promise<MemoryProject[]> {
+    const { data } = await client.get('/projects', {
+      params: {
+        user_id: userId,
+        status: params?.status,
+        include_virtual: params?.include_virtual ?? true,
+        limit: params?.limit ?? 500,
+        offset: params?.offset ?? 0,
+      },
+    });
+    return data.items ?? [];
+  },
+
+  async listContactProjects(
+    contactId: string,
+    params?: { limit?: number; offset?: number },
+  ): Promise<ContactProject[]> {
+    const { data } = await client.get(
+      `/contacts/${encodeURIComponent(contactId)}/projects`,
+      {
+        params: {
+          limit: params?.limit ?? 200,
+          offset: params?.offset ?? 0,
+        },
+      },
+    );
+    return data.items ?? [];
+  },
+
+  async listContactProjectMemories(
+    contactId: string,
+    params?: { project_id?: string; limit?: number; offset?: number },
+  ): Promise<ProjectMemory[]> {
+    const { data } = await client.get(
+      `/contacts/${encodeURIComponent(contactId)}/project-memories`,
+      {
+      params: {
+        project_id: params?.project_id,
+        limit: params?.limit ?? 200,
+        offset: params?.offset ?? 0,
+      },
+      },
+    );
+    return data.items ?? [];
+  },
+
+  async listContactProjectMemoriesByProject(
+    contactId: string,
+    projectId: string,
+    params?: { limit?: number; offset?: number },
+  ): Promise<ProjectMemory[]> {
+    const { data } = await client.get(
+      `/contacts/${encodeURIComponent(contactId)}/project-memories/${encodeURIComponent(projectId)}`,
+      {
+        params: {
+          limit: params?.limit ?? 200,
+          offset: params?.offset ?? 0,
+        },
+      },
+    );
+    return data.items ?? [];
+  },
+
+  async listContactProjectSummaries(
+    contactId: string,
+    projectId: string,
+  ): Promise<{ session_id?: string | null; items: SessionSummary[] }> {
+    const { data } = await client.get(
+      `/contacts/${encodeURIComponent(contactId)}/projects/${encodeURIComponent(projectId)}/summaries`,
+    );
+    return {
+      session_id: data.session_id ?? null,
+      items: data.items ?? [],
+    };
+  },
+
+  async listContactAgentRecalls(
+    contactId: string,
+    params?: { limit?: number; offset?: number },
+  ): Promise<AgentRecall[]> {
+    const { data } = await client.get(
+      `/contacts/${encodeURIComponent(contactId)}/agent-recalls`,
+      {
+        params: {
+          limit: params?.limit ?? 200,
+          offset: params?.offset ?? 0,
+        },
+      },
+    );
+    return data.items ?? [];
   },
 };

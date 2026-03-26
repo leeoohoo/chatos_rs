@@ -1,6 +1,7 @@
 import type { AiModelConfig } from '../../../types';
 import type ApiClient from '../../api/client';
 import { mergeSessionAiSelectionIntoMetadata } from '../helpers/sessionAiSelection';
+import { mergeSessionRuntimeIntoMetadata } from '../helpers/sessionRuntime';
 import { generateId } from '@/lib/utils';
 
 export function createAiModelActions({ set, get, client, getUserIdParam }: { set: any; get: any; client: ApiClient; getUserIdParam: () => string; }) {
@@ -105,7 +106,11 @@ export function createAiModelActions({ set, get, client, getUserIdParam }: { set
           const baseMetadata = sessionIndex >= 0
             ? state.sessions[sessionIndex]?.metadata
             : state.currentSession?.metadata;
-          const nextMetadata = mergeSessionAiSelectionIntoMetadata(baseMetadata, nextSelection);
+          const metadataWithSelection = mergeSessionAiSelectionIntoMetadata(baseMetadata, nextSelection);
+          const nextMetadata = mergeSessionRuntimeIntoMetadata(metadataWithSelection, {
+            contactAgentId: nextSelection.selectedAgentId,
+            selectedModelId: nextSelection.selectedModelId,
+          });
           if (sessionIndex >= 0) {
             state.sessions[sessionIndex].metadata = nextMetadata;
           }

@@ -1,138 +1,22 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { MessageItem, type DerivedProcessStats } from './MessageItem';
+import { MessageItem } from './MessageItem';
 import { LoadingSpinner } from './LoadingSpinner';
 // import { cn } from '../lib/utils';
-import type { Message, MessageListProps } from '../types';
-
-const normalizeTurnId = (value: unknown): string => (
-  typeof value === 'string' ? value.trim() : ''
-);
-const normalizeMetaId = (value: unknown): string => (
-  typeof value === 'string' ? value.trim() : ''
-);
+import type { MessageListProps } from '../types';
+import {
+  buildVisibleMessageState,
+  normalizeMetaId,
+  parseMessageForList,
+  type ParsedMessageCacheEntry,
+} from './messageList/derivedData';
 const MESSAGE_WINDOW_EXPAND_TOP_OFFSET = 120;
-const ESTIMATED_MESSAGE_ROW_HEIGHT = 88;
-const MESSAGE_WINDOW_MIN_SIZE = 56;
-const MESSAGE_WINDOW_MAX_SIZE = 180;
-const MESSAGE_WINDOW_OVERSCAN_ROWS = 12;
-const MESSAGE_WINDOW_THRESHOLD_EXTRA = 24;
+const ESTIMATED_MESSAGE_ROW_HEIGHT = 120;
+const MESSAGE_WINDOW_MIN_SIZE = 20;
+const MESSAGE_WINDOW_MAX_SIZE = 72;
+const MESSAGE_WINDOW_OVERSCAN_ROWS = 6;
+const MESSAGE_WINDOW_THRESHOLD_EXTRA = 8;
 
-type ParsedMessageForList = {
-  message: Message;
-  id: string;
-  role: Message['role'];
-  status: string;
-  visible: boolean;
-  time: number;
-  metadata: Record<string, any>;
-  segments: any[];
-  metadataToolCalls: any[];
-  topLevelToolCalls: any[];
-  assistantToolCalls: Array<{ id: string; toolCall: any }>;
-  toolResultCallId: string;
-  thinkingSegmentCount: number;
-  toolCallSegmentCount: number;
-  conversationTurnId: string;
-  historyProcessTurnId: string;
-  historyProcessUserMessageId: string;
-  historyFinalForUserMessageId: string;
-  historyFinalForTurnId: string;
-  historyProcessPlaceholder: boolean;
-  userExpanded: boolean;
-  userTurnId: string;
-  userFinalAssistantMessageId: string;
-};
-
-type ParsedMessageCacheEntry = {
-  ref: Message;
-  metadataRef: unknown;
-  content: string;
-  status: unknown;
-  updatedAt: unknown;
-  parsed: ParsedMessageForList;
-};
-
-const getTimeValue = (value: unknown): number => {
-  if (!value) return 0;
-  if (value instanceof Date) return value.getTime();
-  const parsed = new Date(value as any).getTime();
-  return Number.isNaN(parsed) ? 0 : parsed;
-};
-
-const parseMessageForList = (message: Message): ParsedMessageForList => {
-  const raw = message as any;
-  const metadata = ((raw?.metadata || {}) as Record<string, any>);
-  const segments = Array.isArray(metadata.contentSegments) ? metadata.contentSegments : [];
-  const metadataToolCalls = Array.isArray(metadata.toolCalls) ? metadata.toolCalls : [];
-  const topLevelToolCalls = Array.isArray(raw.toolCalls) ? raw.toolCalls : [];
-  const assistantToolCalls: Array<{ id: string; toolCall: any }> = [];
-
-  if (message.role === 'assistant') {
-    [...metadataToolCalls, ...topLevelToolCalls].forEach((toolCall: any) => {
-      const id = normalizeMetaId(toolCall?.id);
-      if (id) {
-        assistantToolCalls.push({ id, toolCall });
-      }
-    });
-  }
-
-  let thinkingSegmentCount = 0;
-  let toolCallSegmentCount = 0;
-  if (message.role === 'assistant') {
-    segments.forEach((segment: any) => {
-      if (
-        segment?.type === 'thinking'
-        && typeof segment?.content === 'string'
-        && segment.content.trim().length > 0
-      ) {
-        thinkingSegmentCount += 1;
-        return;
-      }
-      if (segment?.type === 'tool_call' && Boolean(segment?.toolCallId)) {
-        toolCallSegmentCount += 1;
-      }
-    });
-  }
-
-  const toolResultCallIdRaw = raw.tool_call_id || raw.toolCallId || metadata.tool_call_id || metadata.toolCallId;
-  const conversationTurnId = normalizeTurnId(metadata.conversation_turn_id);
-  const historyProcessTurnId = normalizeTurnId(metadata.historyProcessTurnId || metadata.historyProcess?.turnId);
-  const historyProcessUserMessageId = normalizeMetaId(metadata.historyProcessUserMessageId);
-  const historyFinalForUserMessageId = normalizeMetaId(metadata.historyFinalForUserMessageId);
-  const historyFinalForTurnId = normalizeTurnId(metadata.historyFinalForTurnId);
-  const historyProcessPlaceholder = metadata.historyProcessPlaceholder === true;
-  const userExpanded = metadata?.historyProcess?.expanded === true;
-  const userTurnId = normalizeTurnId(metadata.conversation_turn_id || metadata.historyProcess?.turnId);
-  const userFinalAssistantMessageId = normalizeMetaId(metadata?.historyProcess?.finalAssistantMessageId);
-
-  return {
-    message,
-    id: message.id,
-    role: message.role,
-    status: String(message.status || ''),
-    visible: !metadata?.hidden && message.role !== 'tool',
-    time: message.updatedAt ? getTimeValue(message.updatedAt) : getTimeValue(message.createdAt),
-    metadata,
-    segments,
-    metadataToolCalls,
-    topLevelToolCalls,
-    assistantToolCalls,
-    toolResultCallId: toolResultCallIdRaw ? String(toolResultCallIdRaw) : '',
-    thinkingSegmentCount,
-    toolCallSegmentCount,
-    conversationTurnId,
-    historyProcessTurnId,
-    historyProcessUserMessageId,
-    historyFinalForUserMessageId,
-    historyFinalForTurnId,
-    historyProcessPlaceholder,
-    userExpanded,
-    userTurnId,
-    userFinalAssistantMessageId,
-  };
-};
-
-export const MessageList: React.FC<MessageListProps> = ({
+const MessageListComponent: React.FC<MessageListProps> = ({
   sessionId,
   messages,
   isLoading = false,
@@ -149,6 +33,10 @@ export const MessageList: React.FC<MessageListProps> = ({
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const scrollRafRef = useRef<number | null>(null);
   const initialScrollRafRef = useRef<number | null>(null);
+  const streamEndScrollRafRef = useRef<number | null>(null);
+  const streamEndSettleRafRef = useRef<number | null>(null);
+  const autoScrollRafRef = useRef<number | null>(null);
+  const prevIsStreamingRef = useRef<boolean>(isStreaming);
   const pendingSessionInitialScrollRef = useRef<boolean>(true);
   const expandingWindowRef = useRef(false);
   const prevVisibleCountRef = useRef(0);
@@ -203,225 +91,23 @@ export const MessageList: React.FC<MessageListProps> = ({
     derivedProcessStatsByUserId,
     processSignalByUserMessageId,
     linkedUserExpandedByAssistantId,
-  } = useMemo(() => {
-    const visible: Message[] = [];
-    const toolResultMap = new Map<string, Message>();
-    const toolResultMetaMap = new Map<string, { id: string; time: number }>();
-    const assistantToolById = new Map<string, any>();
-    const assistantToolMetaById = new Map<string, { messageId: string; time: number }>();
-
-    const signalMap = new Map<string, string>();
-    const userMessageIds = new Set<string>();
-    const turnToUserMessageId = new Map<string, string>();
-    const assistantIdToUserMessageId = new Map<string, string>();
-    const mutableStats = new Map<string, {
-      hasStreamingAssistant: boolean;
-      thinkingCount: number;
-      processMessageCount: number;
-      toolCallIds: Set<string>;
-    }>();
-
-    const userExpandedById = new Map<string, boolean>();
-    const turnExpandedById = new Map<string, boolean>();
-    const finalAssistantExpandedById = new Map<string, boolean>();
-
-    parsedMessages.forEach((parsed) => {
-      if (parsed.visible) {
-        visible.push(parsed.message);
+  } = useMemo(() => buildVisibleMessageState(parsedMessages), [parsedMessages]);
+  const dedupedVisibleMessages = useMemo(() => {
+    if (!visibleMessages || visibleMessages.length <= 1) {
+      return visibleMessages;
+    }
+    const seenIds = new Set<string>();
+    const list: typeof visibleMessages = [];
+    for (const message of visibleMessages) {
+      const id = String(message.id || '');
+      if (!id || seenIds.has(id)) {
+        continue;
       }
-
-      if (parsed.toolResultCallId) {
-        toolResultMap.set(parsed.toolResultCallId, parsed.message);
-        toolResultMetaMap.set(parsed.toolResultCallId, { id: parsed.id, time: parsed.time });
-      }
-
-      if (parsed.role === 'assistant') {
-        parsed.assistantToolCalls.forEach(({ id, toolCall }) => {
-          if (!assistantToolById.has(id)) {
-            assistantToolById.set(id, toolCall);
-          }
-          if (!assistantToolMetaById.has(id)) {
-            assistantToolMetaById.set(id, { messageId: parsed.id, time: parsed.time });
-          }
-        });
-      }
-
-      if (parsed.role === 'user') {
-        userMessageIds.add(parsed.id);
-        signalMap.set(parsed.id, '');
-        mutableStats.set(parsed.id, {
-          hasStreamingAssistant: false,
-          thinkingCount: 0,
-          processMessageCount: 0,
-          toolCallIds: new Set<string>(),
-        });
-
-        if (parsed.userTurnId && !turnToUserMessageId.has(parsed.userTurnId)) {
-          turnToUserMessageId.set(parsed.userTurnId, parsed.id);
-        }
-        if (
-          parsed.userFinalAssistantMessageId
-          && !assistantIdToUserMessageId.has(parsed.userFinalAssistantMessageId)
-        ) {
-          assistantIdToUserMessageId.set(parsed.userFinalAssistantMessageId, parsed.id);
-        }
-
-        userExpandedById.set(parsed.id, parsed.userExpanded);
-        if (parsed.userTurnId) {
-          turnExpandedById.set(parsed.userTurnId, parsed.userExpanded);
-        }
-        if (parsed.userFinalAssistantMessageId) {
-          finalAssistantExpandedById.set(parsed.userFinalAssistantMessageId, parsed.userExpanded);
-        }
-      }
-    });
-
-    const appendSignal = (userMessageId: string, piece: string) => {
-      if (!userMessageId || !piece) {
-        return;
-      }
-      const prev = signalMap.get(userMessageId) || '';
-      signalMap.set(userMessageId, prev ? `${prev}||${piece}` : piece);
-    };
-
-    const resolveLinkedUserMessageId = (parsed: ParsedMessageForList): string => {
-      if (parsed.role === 'assistant') {
-        let linkedUserMessageId = parsed.historyProcessUserMessageId;
-        if (!linkedUserMessageId || !userMessageIds.has(linkedUserMessageId)) {
-          const processTurnId = parsed.historyProcessTurnId || parsed.conversationTurnId;
-          if (processTurnId) {
-            linkedUserMessageId = turnToUserMessageId.get(processTurnId) || '';
-          }
-        }
-        if (!linkedUserMessageId || !userMessageIds.has(linkedUserMessageId)) {
-          linkedUserMessageId = parsed.historyFinalForUserMessageId;
-        }
-        if (!linkedUserMessageId || !userMessageIds.has(linkedUserMessageId)) {
-          const finalTurnId = parsed.historyFinalForTurnId || parsed.conversationTurnId;
-          if (finalTurnId) {
-            linkedUserMessageId = turnToUserMessageId.get(finalTurnId) || '';
-          }
-        }
-        if (!linkedUserMessageId || !userMessageIds.has(linkedUserMessageId)) {
-          linkedUserMessageId = assistantIdToUserMessageId.get(parsed.id) || '';
-        }
-        return userMessageIds.has(linkedUserMessageId) ? linkedUserMessageId : '';
-      }
-
-      let linkedUserMessageId = parsed.historyProcessUserMessageId;
-      if (!linkedUserMessageId || !userMessageIds.has(linkedUserMessageId)) {
-        const processTurnId = parsed.historyProcessTurnId || parsed.conversationTurnId;
-        if (processTurnId) {
-          linkedUserMessageId = turnToUserMessageId.get(processTurnId) || '';
-        }
-      }
-      return userMessageIds.has(linkedUserMessageId) ? linkedUserMessageId : '';
-    };
-
-    parsedMessages.forEach((parsed) => {
-      const linkedUserMessageId = resolveLinkedUserMessageId(parsed);
-      if (!linkedUserMessageId) {
-        return;
-      }
-
-      if (parsed.role === 'assistant') {
-        appendSignal(
-          linkedUserMessageId,
-          `A:${parsed.id}:${parsed.status}:${parsed.metadataToolCalls.length}:${parsed.toolCallSegmentCount}:${parsed.thinkingSegmentCount}:${parsed.segments.length}`,
-        );
-
-        const stats = mutableStats.get(linkedUserMessageId);
-        if (!stats) {
-          return;
-        }
-
-        if (parsed.status === 'streaming') {
-          stats.hasStreamingAssistant = true;
-        }
-
-        const isProcessAssistant = Boolean(parsed.historyProcessUserMessageId || parsed.historyProcessTurnId);
-        if (isProcessAssistant && !parsed.historyProcessPlaceholder) {
-          stats.processMessageCount += 1;
-        }
-
-        parsed.assistantToolCalls.forEach(({ id }) => {
-          stats.toolCallIds.add(id);
-        });
-
-        parsed.segments.forEach((segment: any) => {
-          if (segment?.type === 'tool_call') {
-            const id = normalizeMetaId(segment?.toolCallId);
-            if (id) {
-              stats.toolCallIds.add(id);
-            }
-            return;
-          }
-          if (
-            segment?.type === 'thinking'
-            && typeof segment?.content === 'string'
-            && segment.content.trim().length > 0
-          ) {
-            stats.thinkingCount += 1;
-          }
-        });
-        return;
-      }
-
-      appendSignal(
-        linkedUserMessageId,
-        `P:${parsed.id}:${parsed.role}:${parsed.historyProcessPlaceholder ? '1' : '0'}`,
-      );
-    });
-
-    const derivedStats = new Map<string, DerivedProcessStats>();
-    mutableStats.forEach((stats, userMessageId) => {
-      const toolCallCount = stats.toolCallIds.size;
-      derivedStats.set(userMessageId, {
-        hasProcess: toolCallCount > 0 || stats.thinkingCount > 0 || stats.processMessageCount > 0,
-        hasStreamingAssistant: stats.hasStreamingAssistant,
-        toolCallCount,
-        thinkingCount: stats.thinkingCount,
-        processMessageCount: stats.processMessageCount,
-      });
-    });
-
-    const expandedByAssistantId = new Map<string, boolean>();
-    parsedMessages.forEach((parsed) => {
-      if (parsed.role !== 'assistant') {
-        return;
-      }
-      if (parsed.historyProcessUserMessageId || parsed.historyProcessTurnId) {
-        return;
-      }
-
-      const linkedUserMessageId = parsed.historyFinalForUserMessageId;
-      if (linkedUserMessageId && userExpandedById.has(linkedUserMessageId)) {
-        expandedByAssistantId.set(parsed.id, userExpandedById.get(linkedUserMessageId) === true);
-        return;
-      }
-
-      const linkedTurnId = parsed.historyFinalForTurnId || parsed.conversationTurnId;
-      if (linkedTurnId && turnExpandedById.has(linkedTurnId)) {
-        expandedByAssistantId.set(parsed.id, turnExpandedById.get(linkedTurnId) === true);
-        return;
-      }
-
-      if (finalAssistantExpandedById.has(parsed.id)) {
-        expandedByAssistantId.set(parsed.id, finalAssistantExpandedById.get(parsed.id) === true);
-      }
-    });
-
-    return {
-      visibleMessages: visible,
-      toolResultById: toolResultMap,
-      toolResultMetaById: toolResultMetaMap,
-      assistantToolCallById: assistantToolById,
-      assistantToolCallMetaById: assistantToolMetaById,
-      derivedProcessStatsByUserId: derivedStats,
-      processSignalByUserMessageId: signalMap,
-      linkedUserExpandedByAssistantId: expandedByAssistantId,
-    };
-  }, [parsedMessages]);
+      seenIds.add(id);
+      list.push(message);
+    }
+    return list;
+  }, [visibleMessages]);
 
   const windowSize = useMemo(() => {
     const estimatedRows = Math.ceil((viewportHeight || 960) / ESTIMATED_MESSAGE_ROW_HEIGHT);
@@ -430,17 +116,17 @@ export const MessageList: React.FC<MessageListProps> = ({
   }, [viewportHeight]);
   const windowThreshold = windowSize + MESSAGE_WINDOW_THRESHOLD_EXTRA;
   const windowStep = Math.max(32, Math.floor(windowSize * 0.6));
-  const shouldWindowMessages = visibleMessages.length > windowThreshold;
+  const shouldWindowMessages = dedupedVisibleMessages.length > windowThreshold;
   const boundedRenderStartIndex = shouldWindowMessages
-    ? Math.min(renderStartIndex, Math.max(0, visibleMessages.length - 1))
+    ? Math.min(renderStartIndex, Math.max(0, dedupedVisibleMessages.length - 1))
     : 0;
   const renderedMessages = useMemo(
     () => (shouldWindowMessages
-      ? visibleMessages.slice(boundedRenderStartIndex)
-      : visibleMessages),
-    [shouldWindowMessages, visibleMessages, boundedRenderStartIndex],
+      ? dedupedVisibleMessages.slice(boundedRenderStartIndex)
+      : dedupedVisibleMessages),
+    [shouldWindowMessages, dedupedVisibleMessages, boundedRenderStartIndex],
   );
-  const lastVisibleIndex = visibleMessages.length - 1;
+  const lastVisibleIndex = dedupedVisibleMessages.length - 1;
   const toolResultKeyByMessageId = useMemo(() => {
     const map = new Map<string, string>();
     for (const message of renderedMessages) {
@@ -497,7 +183,7 @@ export const MessageList: React.FC<MessageListProps> = ({
       return;
     }
 
-    if (visibleMessages.length === 0 && !isLoading && !hasMore) {
+    if (dedupedVisibleMessages.length === 0 && !isLoading && !hasMore) {
       pendingSessionInitialScrollRef.current = false;
       return;
     }
@@ -525,7 +211,7 @@ export const MessageList: React.FC<MessageListProps> = ({
         initialScrollRafRef.current = null;
       }
     };
-  }, [sessionId, visibleMessages.length, isLoading, hasMore, isStreaming]);
+  }, [sessionId, dedupedVisibleMessages.length, isLoading, hasMore, isStreaming]);
 
   useEffect(() => {
     const target = scrollRef.current;
@@ -555,7 +241,7 @@ export const MessageList: React.FC<MessageListProps> = ({
   }, [sessionId]);
 
   useEffect(() => {
-    const nextCount = visibleMessages.length;
+    const nextCount = dedupedVisibleMessages.length;
     const previousCount = prevVisibleCountRef.current;
     prevVisibleCountRef.current = nextCount;
 
@@ -570,26 +256,26 @@ export const MessageList: React.FC<MessageListProps> = ({
       if (previousCount === 0) {
         return latestStart;
       }
-      // 用户已展开到最前面时，保持不折叠
-      if (prev === 0) {
+      // 用户正在查看更早消息时保持位置；回到底部后自动恢复紧凑窗口，避免长列表常驻造成滚动卡顿
+      if (prev === 0 && !isAtBottom) {
         return 0;
       }
-      // 在底部连续对话时，窗口跟随最新消息，避免渲染集合持续膨胀
+      // 连续流式或自动滚动时，窗口跟随最新消息；手动展开过程消息时保持当前位置
       if (isStreaming || autoScroll || isAtBottom) {
         return latestStart;
       }
       return Math.min(prev, latestStart);
     });
-  }, [visibleMessages.length, isStreaming, autoScroll, isAtBottom, windowSize, windowThreshold]);
+  }, [dedupedVisibleMessages.length, isStreaming, autoScroll, isAtBottom, windowSize, windowThreshold]);
 
   useEffect(() => {
-    const nextCount = visibleMessages.length;
+    const nextCount = dedupedVisibleMessages.length;
     if (nextCount <= windowThreshold) {
       setRenderStartIndex(0);
       return;
     }
     setRenderStartIndex(Math.max(0, nextCount - windowSize));
-  }, [sessionId, visibleMessages.length, windowSize, windowThreshold]);
+  }, [sessionId, dedupedVisibleMessages.length, windowSize, windowThreshold]);
 
   const expandRenderedWindow = useCallback(() => {
     if (!shouldWindowMessages || boundedRenderStartIndex <= 0) {
@@ -623,27 +309,119 @@ export const MessageList: React.FC<MessageListProps> = ({
     });
   }, [boundedRenderStartIndex, shouldWindowMessages, windowStep]);
 
-  const measureAtBottom = () => {
-    const el = scrollRef.current;
-    if (!el) return true;
-    const threshold = 40;
-    return el.scrollHeight - el.scrollTop - el.clientHeight <= threshold;
-  };
+  const cancelPendingStreamEndScroll = useCallback(() => {
+    if (streamEndScrollRafRef.current !== null) {
+      cancelAnimationFrame(streamEndScrollRafRef.current);
+      streamEndScrollRafRef.current = null;
+    }
+    if (streamEndSettleRafRef.current !== null) {
+      cancelAnimationFrame(streamEndSettleRafRef.current);
+      streamEndSettleRafRef.current = null;
+    }
+  }, []);
 
-  const scrollToBottom = (smooth = true) => {
-    bottomRef.current?.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto' });
-  };
+  const scrollToBottom = useCallback((smooth = true) => {
+    const el = scrollRef.current;
+    if (!el) {
+      return;
+    }
+    if (smooth) {
+      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+      return;
+    }
+    el.scrollTop = el.scrollHeight;
+  }, []);
+
+  const scheduleAutoScrollToBottom = useCallback(() => {
+    if (autoScrollRafRef.current !== null) {
+      return;
+    }
+    autoScrollRafRef.current = requestAnimationFrame(() => {
+      autoScrollRafRef.current = null;
+      scrollToBottom(false);
+    });
+  }, [scrollToBottom]);
+
+  const scheduleStreamEndBottomLock = useCallback((frames = 8) => {
+    cancelPendingStreamEndScroll();
+    if (frames <= 0) {
+      return;
+    }
+
+    const lockBottom = (remaining: number) => {
+      scrollToBottom(false);
+      setIsAtBottom(true);
+      if (remaining <= 1) {
+        return;
+      }
+      streamEndSettleRafRef.current = requestAnimationFrame(() => {
+        streamEndSettleRafRef.current = null;
+        lockBottom(remaining - 1);
+      });
+    };
+
+    streamEndScrollRafRef.current = requestAnimationFrame(() => {
+      streamEndScrollRafRef.current = null;
+      lockBottom(frames);
+    });
+  }, [cancelPendingStreamEndScroll, scrollToBottom]);
+
+  useEffect(() => {
+    const root = scrollRef.current;
+    const target = bottomRef.current;
+    if (!root || !target || typeof IntersectionObserver === 'undefined') {
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const atBottom = Boolean(entries[0]?.isIntersecting);
+        setIsAtBottom((prev) => (prev === atBottom ? prev : atBottom));
+        if (!atBottom) {
+          setAutoScroll((prev) => (prev ? false : prev));
+          return;
+        }
+        if (isStreaming) {
+          setAutoScroll((prev) => (prev ? prev : true));
+        }
+      },
+      {
+        root,
+        threshold: 0.98,
+      },
+    );
+
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [sessionId, isStreaming, renderedMessages.length]);
 
   useEffect(() => {
     if (isStreaming && autoScroll) {
-      scrollToBottom(false);
+      scheduleAutoScrollToBottom();
     }
-  }, [messages, isStreaming, autoScroll]);
+  }, [messages, isStreaming, autoScroll, scheduleAutoScrollToBottom]);
 
   useEffect(() => {
-    const next = measureAtBottom();
-    setIsAtBottom(prev => (prev === next ? prev : next));
-  }, [messages, isStreaming]);
+    const wasStreaming = prevIsStreamingRef.current;
+    prevIsStreamingRef.current = isStreaming;
+    if (!wasStreaming || isStreaming) {
+      return;
+    }
+
+    if (!(autoScroll || isAtBottom)) {
+      return;
+    }
+
+    scheduleStreamEndBottomLock();
+
+    return cancelPendingStreamEndScroll;
+  }, [
+    isStreaming,
+    autoScroll,
+    isAtBottom,
+    scheduleStreamEndBottomLock,
+    cancelPendingStreamEndScroll,
+  ]);
 
   useEffect(() => {
     if (isStreaming && isAtBottom) {
@@ -656,19 +434,16 @@ export const MessageList: React.FC<MessageListProps> = ({
   }, [isStreaming, isAtBottom]);
 
   const handleScroll = () => {
+    if (!shouldWindowMessages) {
+      return;
+    }
     if (scrollRafRef.current !== null) return;
     scrollRafRef.current = requestAnimationFrame(() => {
       scrollRafRef.current = null;
       const el = scrollRef.current;
       if (!el) return;
-      const atBottom = measureAtBottom();
-      setIsAtBottom(prev => (prev === atBottom ? prev : atBottom));
-      if (!atBottom) {
-        setAutoScroll(prev => (prev ? false : prev));
-      }
       if (
-        shouldWindowMessages
-        && boundedRenderStartIndex > 0
+        boundedRenderStartIndex > 0
         && el.scrollTop <= MESSAGE_WINDOW_EXPAND_TOP_OFFSET
       ) {
         expandRenderedWindow();
@@ -691,11 +466,23 @@ export const MessageList: React.FC<MessageListProps> = ({
         cancelAnimationFrame(initialScrollRafRef.current);
         initialScrollRafRef.current = null;
       }
+      if (streamEndScrollRafRef.current !== null) {
+        cancelAnimationFrame(streamEndScrollRafRef.current);
+        streamEndScrollRafRef.current = null;
+      }
+      if (streamEndSettleRafRef.current !== null) {
+        cancelAnimationFrame(streamEndSettleRafRef.current);
+        streamEndSettleRafRef.current = null;
+      }
+      if (autoScrollRafRef.current !== null) {
+        cancelAnimationFrame(autoScrollRafRef.current);
+        autoScrollRafRef.current = null;
+      }
       expandingWindowRef.current = false;
     };
   }, []);
 
-  if (visibleMessages.length === 0 && !isLoading && !hasMore) {
+  if (dedupedVisibleMessages.length === 0 && !isLoading && !hasMore) {
     return (
       <div className="flex items-center justify-center h-full">
         <div className="text-center space-y-4">
@@ -720,12 +507,8 @@ export const MessageList: React.FC<MessageListProps> = ({
     <div className="flex flex-col h-full relative">
       <div
         ref={scrollRef}
-        onScroll={handleScroll}
+        onScroll={shouldWindowMessages ? handleScroll : undefined}
         className="flex-1 overflow-y-auto px-4 py-6 space-y-1"
-        style={{
-          willChange: 'scroll-position',
-          transform: 'translateZ(0)',
-        }}
       >
         {hasMore && (
           <div className="flex justify-center mb-2">
@@ -802,5 +585,22 @@ export const MessageList: React.FC<MessageListProps> = ({
     </div>
   );
 };
+
+const areMessageListPropsEqual = (prevProps: MessageListProps, nextProps: MessageListProps): boolean => (
+  prevProps.sessionId === nextProps.sessionId
+  && prevProps.messages === nextProps.messages
+  && (prevProps.isLoading ?? false) === (nextProps.isLoading ?? false)
+  && (prevProps.isStreaming ?? false) === (nextProps.isStreaming ?? false)
+  && (prevProps.isStopping ?? false) === (nextProps.isStopping ?? false)
+  && (prevProps.hasMore ?? false) === (nextProps.hasMore ?? false)
+  && prevProps.onLoadMore === nextProps.onLoadMore
+  && prevProps.onToggleTurnProcess === nextProps.onToggleTurnProcess
+  && prevProps.onMessageEdit === nextProps.onMessageEdit
+  && prevProps.onMessageDelete === nextProps.onMessageDelete
+  && prevProps.customRenderer === nextProps.customRenderer
+);
+
+export const MessageList = React.memo(MessageListComponent, areMessageListPropsEqual);
+MessageList.displayName = 'MessageList';
 
 export default MessageList;

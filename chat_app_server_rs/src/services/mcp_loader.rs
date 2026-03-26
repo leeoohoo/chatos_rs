@@ -3,7 +3,7 @@ use crate::models::mcp_config::McpConfig;
 use crate::repositories::mcp_configs;
 use crate::services::builtin_mcp::{
     builtin_kind_by_command, builtin_kind_by_id, get_builtin_mcp_config, is_builtin_mcp_id,
-    BuiltinMcpKind,
+    list_builtin_mcp_configs, BuiltinMcpKind,
 };
 use crate::utils::workspace::resolve_workspace_dir;
 
@@ -29,6 +29,7 @@ pub struct McpBuiltinServer {
     pub workspace_dir: String,
     pub user_id: Option<String>,
     pub project_id: Option<String>,
+    pub contact_agent_id: Option<String>,
     pub allow_writes: bool,
     pub max_file_bytes: i64,
     pub max_write_bytes: i64,
@@ -48,7 +49,7 @@ fn build_servers_from_configs(
     let mut http_servers = Vec::new();
     let mut stdio_servers = Vec::new();
     let mut builtin_servers = Vec::new();
-    let workspace_dir_fallback = workspace_dir
+    let workspace_dir_value = workspace_dir
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
 
@@ -60,9 +61,24 @@ fn build_servers_from_configs(
             else {
                 continue;
             };
-            let root = workspace_dir_fallback
-                .clone()
-                .unwrap_or_else(|| resolve_workspace_dir(None));
+            if matches!(kind, BuiltinMcpKind::AgentBuilder) {
+                continue;
+            }
+            let requires_workspace = matches!(
+                kind,
+                BuiltinMcpKind::CodeMaintainerRead
+                    | BuiltinMcpKind::CodeMaintainerWrite
+                    | BuiltinMcpKind::TerminalController
+            );
+            let root = match workspace_dir_value.clone() {
+                Some(value) => value,
+                None if requires_workspace => {
+                    // For tools that must be bound to a project root, skip loading
+                    // when the composer has no selected project.
+                    continue;
+                }
+                None => resolve_workspace_dir(None),
+            };
             let allow_writes = !matches!(kind, BuiltinMcpKind::CodeMaintainerRead);
             builtin_servers.push(McpBuiltinServer {
                 name: server_name,
@@ -70,6 +86,7 @@ fn build_servers_from_configs(
                 workspace_dir: root,
                 user_id: user_id.clone(),
                 project_id: project_id.clone(),
+                contact_agent_id: None,
                 allow_writes,
                 max_file_bytes: 256 * 1024,
                 max_write_bytes: 5 * 1024 * 1024,
@@ -90,7 +107,7 @@ fn build_servers_from_configs(
                 .as_deref()
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty())
-                .or_else(|| workspace_dir_fallback.clone());
+                .or_else(|| workspace_dir_value.clone());
             let server = McpStdioServer {
                 name: server_name,
                 command: cfg.command,
@@ -131,12 +148,22 @@ pub async fn load_mcp_configs_for_user(
     } else {
         mcp_configs::list_enabled_mcp_configs(user_id.clone()).await?
     };
+    let mut seen_ids: std::collections::HashSet<String> =
+        configs.iter().map(|cfg| cfg.id.clone()).collect();
     if use_filter {
         if let Some(ids) = mcp_config_ids.as_ref() {
             for id in ids {
                 if let Some(cfg) = get_builtin_mcp_config(id) {
-                    configs.push(cfg);
+                    if seen_ids.insert(cfg.id.clone()) {
+                        configs.push(cfg);
+                    }
                 }
+            }
+        }
+    } else {
+        for cfg in list_builtin_mcp_configs() {
+            if seen_ids.insert(cfg.id.clone()) {
+                configs.push(cfg);
             }
         }
     }

@@ -10,7 +10,7 @@ use crate::ai::AiClient;
 use crate::repositories::{configs, sessions};
 use crate::state::AppState;
 
-use super::{rollup, summary};
+use super::{agent_memory, rollup, summary};
 
 #[derive(Default)]
 struct WorkerState {
@@ -58,11 +58,24 @@ async fn tick_once(
                 summary_cfg.job_interval_seconds,
             ) {
                 let result = summary::run_once(&state.pool, &ai, user_id.as_str()).await;
-                if let Err(err) = result {
-                    warn!(
-                        "[MEMORY-WORKER] summary run failed user_id={} error={}",
-                        user_id, err
-                    );
+                match result {
+                    Ok(result) => {
+                        info!(
+                            "[MEMORY-WORKER] summary run user_id={} processed={} summarized={} generated={} marked={} failed={}",
+                            user_id,
+                            result.processed_sessions,
+                            result.summarized_sessions,
+                            result.generated_summaries,
+                            result.marked_messages,
+                            result.failed_sessions
+                        );
+                    }
+                    Err(err) => {
+                        warn!(
+                            "[MEMORY-WORKER] summary run failed user_id={} error={}",
+                            user_id, err
+                        );
+                    }
                 }
                 mark_run(&worker_state, key.as_str(), now_ts);
             }
@@ -79,11 +92,59 @@ async fn tick_once(
                 rollup_cfg.job_interval_seconds,
             ) {
                 let result = rollup::run_once(&state.pool, &ai, user_id.as_str()).await;
-                if let Err(err) = result {
-                    warn!(
-                        "[MEMORY-WORKER] rollup run failed user_id={} error={}",
-                        user_id, err
-                    );
+                match result {
+                    Ok(result) => {
+                        info!(
+                            "[MEMORY-WORKER] rollup run user_id={} processed={} rolled_up={} generated={} marked={} failed={}",
+                            user_id,
+                            result.processed_sessions,
+                            result.rolled_up_sessions,
+                            result.generated_summaries,
+                            result.marked_summaries,
+                            result.failed_sessions
+                        );
+                    }
+                    Err(err) => {
+                        warn!(
+                            "[MEMORY-WORKER] rollup run failed user_id={} error={}",
+                            user_id, err
+                        );
+                    }
+                }
+                mark_run(&worker_state, key.as_str(), now_ts);
+            }
+        }
+
+        let agent_memory_cfg =
+            configs::get_effective_agent_memory_job_config(&state.pool, user_id.as_str()).await?;
+        if agent_memory_cfg.enabled == 1 {
+            let key = format!("agent_memory:{}", user_id);
+            if is_due(
+                &worker_state,
+                key.as_str(),
+                now_ts,
+                agent_memory_cfg.job_interval_seconds,
+            ) {
+                let result = agent_memory::run_once(&state.pool, &ai, user_id.as_str()).await;
+                match result {
+                    Ok(result) => {
+                        info!(
+                            "[MEMORY-WORKER] agent memory run user_id={} processed={} summarized={} generated={} marked_summaries={} marked_recalls={} failed={}",
+                            user_id,
+                            result.processed_agents,
+                            result.summarized_agents,
+                            result.generated_recalls,
+                            result.marked_source_summaries,
+                            result.marked_source_recalls,
+                            result.failed_agents
+                        );
+                    }
+                    Err(err) => {
+                        warn!(
+                            "[MEMORY-WORKER] agent memory run failed user_id={} error={}",
+                            user_id, err
+                        );
+                    }
                 }
                 mark_run(&worker_state, key.as_str(), now_ts);
             }

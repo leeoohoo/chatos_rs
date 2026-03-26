@@ -4,7 +4,7 @@ use reqwest::Client;
 use serde_json::json;
 
 use crate::config::AppConfig;
-use crate::models::AiModelConfig;
+use crate::models::{AiModelConfig, DEFAULT_SUMMARY_PROMPT_TEMPLATE};
 
 #[derive(Clone)]
 pub struct AiClient {
@@ -38,6 +38,7 @@ impl AiClient {
         target_tokens: i64,
         prompt_title: &str,
         chunks: &[String],
+        summary_prompt: Option<&str>,
     ) -> Result<String, String> {
         if chunks.is_empty() {
             return Err("empty summarize input".to_string());
@@ -52,10 +53,7 @@ impl AiClient {
             .collect::<Vec<_>>()
             .join("\n\n---\n\n");
 
-        let system_prompt = format!(
-            "你是 Memory Server 的总结引擎。请输出结构化简洁总结，重点保留事实、决策、风险、待办。目标长度约 {} tokens。",
-            max_tokens
-        );
+        let system_prompt = build_summary_system_prompt(summary_prompt, max_tokens, prompt_title);
         let user_prompt = format!(
             "任务：{}\n\n请基于以下内容生成高质量总结：\n\n{}",
             prompt_title, context
@@ -81,6 +79,7 @@ impl AiClient {
                 .temperature
                 .unwrap_or(self.default_temperature)
                 .clamp(0.0, 2.0);
+            let supports_responses = cfg.supports_responses == 1;
 
             if let Some(api_key) = api_key {
                 return self
@@ -88,6 +87,7 @@ impl AiClient {
                         base_url.as_str(),
                         model_name.as_str(),
                         temperature,
+                        supports_responses,
                         api_key,
                         &system_prompt,
                         &user_prompt,
@@ -103,6 +103,7 @@ impl AiClient {
                     self.default_base_url.as_str(),
                     self.default_model.as_str(),
                     self.default_temperature,
+                    false,
                     api_key,
                     &system_prompt,
                     &user_prompt,
@@ -122,6 +123,43 @@ impl AiClient {
     }
 
     async fn call_openai_compatible(
+        &self,
+        base_url: &str,
+        model: &str,
+        temperature: f64,
+        supports_responses: bool,
+        api_key: &str,
+        system_prompt: &str,
+        user_prompt: &str,
+        max_tokens: i64,
+    ) -> Result<String, String> {
+        if supports_responses {
+            return self
+                .call_responses_api(
+                    base_url,
+                    model,
+                    temperature,
+                    api_key,
+                    system_prompt,
+                    user_prompt,
+                    max_tokens,
+                )
+                .await;
+        }
+
+        self.call_chat_completions_api(
+            base_url,
+            model,
+            temperature,
+            api_key,
+            system_prompt,
+            user_prompt,
+            max_tokens,
+        )
+        .await
+    }
+
+    async fn call_chat_completions_api(
         &self,
         base_url: &str,
         model: &str,
@@ -177,6 +215,76 @@ impl AiClient {
 
         Ok(text)
     }
+
+    async fn call_responses_api(
+        &self,
+        base_url: &str,
+        model: &str,
+        temperature: f64,
+        api_key: &str,
+        system_prompt: &str,
+        user_prompt: &str,
+        max_tokens: i64,
+    ) -> Result<String, String> {
+        let endpoint = build_responses_endpoint(base_url);
+
+        let body = json!({
+            "model": model,
+            "temperature": temperature.clamp(0.0, 2.0),
+            "max_output_tokens": max_tokens,
+            "input": [
+                {
+                    "type": "message",
+                    "role": "system",
+                    "content": [{"type": "input_text", "text": system_prompt}]
+                },
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": user_prompt}]
+                }
+            ]
+        });
+
+        let resp = self
+            .http
+            .post(endpoint)
+            .bearer_auth(api_key)
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("ai request failed: {e}"))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(format!("ai request status={} body={}", status, text));
+        }
+
+        let value: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("ai response parse failed: {e}"))?;
+
+        extract_responses_output_text(&value).ok_or_else(|| "ai empty content".to_string())
+    }
+}
+
+fn build_summary_system_prompt(
+    summary_prompt: Option<&str>,
+    target_tokens: i64,
+    prompt_title: &str,
+) -> String {
+    let template = summary_prompt
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(DEFAULT_SUMMARY_PROMPT_TEMPLATE);
+
+    let target_tokens_str = target_tokens.to_string();
+    template
+        .replace("{{target_tokens}}", target_tokens_str.as_str())
+        .replace("{{prompt_title}}", prompt_title)
 }
 
 fn normalize_base_url(base_url: &str) -> String {
@@ -203,6 +311,69 @@ fn build_chat_completion_endpoint(base_url: &str) -> String {
         normalized
     } else {
         format!("{}/chat/completions", normalized)
+    }
+}
+
+fn build_responses_endpoint(base_url: &str) -> String {
+    let normalized = normalize_base_url(base_url);
+    if normalized.ends_with("/responses") {
+        normalized
+    } else {
+        format!("{}/responses", normalized)
+    }
+}
+
+fn extract_responses_output_text(value: &serde_json::Value) -> Option<String> {
+    if let Some(text) = value.get("output_text").and_then(|v| v.as_str()) {
+        let trimmed = text.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+
+    let mut parts = Vec::new();
+    let Some(items) = value.get("output").and_then(|v| v.as_array()) else {
+        return None;
+    };
+
+    for item in items {
+        let item_type = item.get("type").and_then(|v| v.as_str()).unwrap_or("");
+        if item_type == "message" {
+            if let Some(contents) = item.get("content").and_then(|v| v.as_array()) {
+                for content in contents {
+                    let content_type = content.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                    if content_type == "output_text"
+                        || content_type == "input_text"
+                        || content_type == "text"
+                    {
+                        if let Some(text) = content.get("text").and_then(|v| v.as_str()) {
+                            let trimmed = text.trim();
+                            if !trimmed.is_empty() {
+                                parts.push(trimmed.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+            continue;
+        }
+
+        if (item_type == "output_text" || item_type == "input_text" || item_type == "text")
+            && item.get("text").and_then(|v| v.as_str()).is_some()
+        {
+            if let Some(text) = item.get("text").and_then(|v| v.as_str()) {
+                let trimmed = text.trim();
+                if !trimmed.is_empty() {
+                    parts.push(trimmed.to_string());
+                }
+            }
+        }
+    }
+
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("\n"))
     }
 }
 

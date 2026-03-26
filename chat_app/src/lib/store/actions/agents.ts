@@ -1,5 +1,6 @@
 import type ApiClient from '../../api/client';
 import { mergeSessionAiSelectionIntoMetadata } from '../helpers/sessionAiSelection';
+import { mergeSessionRuntimeIntoMetadata } from '../helpers/sessionRuntime';
 import { debugLog } from '@/lib/utils';
 
 interface Deps {
@@ -14,9 +15,26 @@ export function createAgentActions({ set, get, client, getUserIdParam }: Deps) {
   return {
     loadAgents: async () => {
       try {
-        const agents = await client.getAgents(getUserIdParam());
-        debugLog('🔍 [后端返回] loadAgents 返回的数据:', agents);
-        debugLog('🔍 [后端返回] 第一个智能体的 app_ids:', agents?.[0]?.app_ids);
+        const memoryAgents = await client.getMemoryAgents(getUserIdParam(), { enabled: true });
+        const agents = (memoryAgents || []).map((agent: any) => ({
+          id: agent.id,
+          name: agent.name,
+          description: agent.description || '',
+          ai_model_config_id: '',
+          enabled: agent.enabled !== false,
+          project_id: agent?.project_policy?.project_id || null,
+          workspace_dir: agent?.project_policy?.project_root || null,
+          app_ids: [],
+          role_definition: agent.role_definition || '',
+          skills: Array.isArray(agent.skills) ? agent.skills : [],
+          skill_ids: Array.isArray(agent.skill_ids) ? agent.skill_ids : [],
+          default_skill_ids: Array.isArray(agent.default_skill_ids) ? agent.default_skill_ids : [],
+          mcp_policy: agent.mcp_policy || null,
+          project_policy: agent.project_policy || null,
+          createdAt: agent.created_at || new Date().toISOString(),
+          updatedAt: agent.updated_at || new Date().toISOString(),
+        }));
+        debugLog('🔍 [Memory] loadAgents 返回的数据:', agents);
         set((state: any) => {
           state.agents = (agents || []) as any[];
         });
@@ -53,7 +71,11 @@ export function createAgentActions({ set, get, client, getUserIdParam }: Deps) {
           const baseMetadata = sessionIndex >= 0
             ? state.sessions[sessionIndex]?.metadata
             : state.currentSession?.metadata;
-          const nextMetadata = mergeSessionAiSelectionIntoMetadata(baseMetadata, nextSelection);
+          const metadataWithSelection = mergeSessionAiSelectionIntoMetadata(baseMetadata, nextSelection);
+          const nextMetadata = mergeSessionRuntimeIntoMetadata(metadataWithSelection, {
+            contactAgentId: nextSelection.selectedAgentId,
+            selectedModelId: nextSelection.selectedModelId,
+          });
           if (sessionIndex >= 0) {
             state.sessions[sessionIndex].metadata = nextMetadata;
           }

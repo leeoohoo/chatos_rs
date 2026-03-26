@@ -32,11 +32,21 @@ export const readSessionAiSelectionFromMetadata = (
 ): SessionAiSelection | null => {
   const meta = parseSessionMetadata(metadata);
   const raw = meta?.[SESSION_AI_SELECTION_KEY];
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-    return null;
-  }
-  const selectedModelId = normalizeId((raw as any).selected_model_id ?? (raw as any).selectedModelId);
-  const selectedAgentId = normalizeId((raw as any).selected_agent_id ?? (raw as any).selectedAgentId);
+  const runtime = meta?.chat_runtime;
+  const contact = meta?.contact;
+  const selectedModelId = normalizeId(
+    runtime?.selected_model_id ?? runtime?.selectedModelId ?? (raw as any)?.selected_model_id ?? (raw as any)?.selectedModelId,
+  );
+  const selectedAgentId = normalizeId(
+    contact?.agent_id
+      ?? contact?.agentId
+      ?? runtime?.contact_agent_id
+      ?? runtime?.contactAgentId
+      ?? meta?.ui_contact?.agent_id
+      ?? meta?.ui_contact?.agentId
+      ?? (raw as any)?.selected_agent_id
+      ?? (raw as any)?.selectedAgentId,
+  );
   if (!selectedModelId && !selectedAgentId) {
     return null;
   }
@@ -59,6 +69,24 @@ export const mergeSessionAiSelectionIntoMetadata = (
   next[SESSION_AI_SELECTION_KEY] = {
     selected_model_id: selectedModelId,
     selected_agent_id: selectedAgentId,
+  };
+  next.chat_runtime = {
+    ...(next.chat_runtime && typeof next.chat_runtime === 'object' && !Array.isArray(next.chat_runtime)
+      ? next.chat_runtime
+      : {}),
+    selected_model_id: selectedModelId,
+    contact_agent_id: selectedAgentId,
+  };
+  next.contact = {
+    ...(next.contact && typeof next.contact === 'object' && !Array.isArray(next.contact)
+      ? next.contact
+      : {}),
+    type: 'memory_agent',
+    agent_id: selectedAgentId,
+  };
+  next.ui_contact = {
+    type: 'memory_agent',
+    agent_id: selectedAgentId,
   };
   return next;
 };

@@ -1,27 +1,20 @@
 import { useCallback, useState } from 'react';
-import type { SessionSummaryWorkbarItem, TaskWorkbarItem } from '../TaskWorkbar';
+import type { TaskWorkbarItem } from '../TaskWorkbar';
 
 interface UseWorkbarMutationsArgs {
   apiClient: any;
   currentSessionId: string | null;
-  workbarSummariesLength: number;
   refreshWorkbarTasks: () => Promise<void>;
-  loadWorkbarSummaries: (sessionId: string, force?: boolean) => Promise<void>;
   setWorkbarError: (value: string | null) => void;
-  setWorkbarSummariesError: (value: string | null) => void;
 }
 
 export function useWorkbarMutations({
   apiClient,
   currentSessionId,
-  workbarSummariesLength,
   refreshWorkbarTasks,
-  loadWorkbarSummaries,
   setWorkbarError,
-  setWorkbarSummariesError,
 }: UseWorkbarMutationsArgs) {
   const [workbarActionLoadingTaskId, setWorkbarActionLoadingTaskId] = useState<string | null>(null);
-  const [workbarSummaryActionLoadingKey, setWorkbarSummaryActionLoadingKey] = useState<string | null>(null);
 
   const withWorkbarTaskMutation = useCallback(async (taskId: string, action: () => Promise<void>) => {
     setWorkbarActionLoadingTaskId(taskId);
@@ -35,27 +28,6 @@ export function useWorkbarMutations({
       setWorkbarActionLoadingTaskId(null);
     }
   }, [refreshWorkbarTasks, setWorkbarError]);
-
-  const withWorkbarSummaryMutation = useCallback(async (
-    sessionId: string,
-    actionKey: string,
-    action: () => Promise<void>
-  ) => {
-    if (!sessionId) {
-      return;
-    }
-
-    setWorkbarSummaryActionLoadingKey(actionKey);
-    setWorkbarSummariesError(null);
-    try {
-      await action();
-      await loadWorkbarSummaries(sessionId, true);
-    } catch (error) {
-      setWorkbarSummariesError(error instanceof Error ? error.message : '会话总结操作失败');
-    } finally {
-      setWorkbarSummaryActionLoadingKey(null);
-    }
-  }, [loadWorkbarSummaries, setWorkbarSummariesError]);
 
   const handleWorkbarCompleteTask = useCallback(async (task: TaskWorkbarItem) => {
     if (!currentSessionId) {
@@ -161,45 +133,10 @@ export function useWorkbarMutations({
     });
   }, [apiClient, currentSessionId, setWorkbarError, withWorkbarTaskMutation]);
 
-  const handleDeleteWorkbarSummary = useCallback(async (summary: SessionSummaryWorkbarItem) => {
-    if (!currentSessionId) {
-      return;
-    }
-    if (typeof window !== 'undefined') {
-      const confirmed = window.confirm('确认删除这条会话总结吗？相关消息会重新进入待总结队列。');
-      if (!confirmed) {
-        return;
-      }
-    }
-
-    await withWorkbarSummaryMutation(currentSessionId, `delete:${summary.id}`, async () => {
-      await apiClient.deleteSessionSummary(currentSessionId, summary.id);
-    });
-  }, [apiClient, currentSessionId, withWorkbarSummaryMutation]);
-
-  const handleClearWorkbarSummaries = useCallback(async () => {
-    if (!currentSessionId || workbarSummariesLength === 0) {
-      return;
-    }
-    if (typeof window !== 'undefined') {
-      const confirmed = window.confirm('确认清空当前会话的所有总结吗？相关消息会重新进入待总结队列。');
-      if (!confirmed) {
-        return;
-      }
-    }
-
-    await withWorkbarSummaryMutation(currentSessionId, 'clear-all', async () => {
-      await apiClient.clearSessionSummaries(currentSessionId);
-    });
-  }, [apiClient, currentSessionId, withWorkbarSummaryMutation, workbarSummariesLength]);
-
   return {
     workbarActionLoadingTaskId,
-    workbarSummaryActionLoadingKey,
     handleWorkbarCompleteTask,
     handleWorkbarDeleteTask,
     handleWorkbarEditTask,
-    handleDeleteWorkbarSummary,
-    handleClearWorkbarSummaries,
   };
 }

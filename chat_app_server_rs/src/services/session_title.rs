@@ -40,7 +40,8 @@ pub async fn maybe_rename_session_title(
         }
         let new_title = derive_title_from_content(user_content, max_len);
         if new_title != session.title {
-            let _ = memory_server_client::update_session(session_id, Some(new_title), None).await;
+            let _ =
+                memory_server_client::update_session(session_id, Some(new_title), None, None).await;
             return true;
         }
     }

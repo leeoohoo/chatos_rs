@@ -80,6 +80,52 @@ export const formatSummaryCreatedAt = (value: string): string => {
   return parsed.toLocaleString('zh-CN', { hour12: false });
 };
 
+export const buildSupportedFileTypes = (supportsImages: boolean): string[] => (
+  supportsImages
+    ? ['image/*', 'text/*', 'application/json', 'application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document']
+    : ['text/*', 'application/json', 'application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document']
+);
+
+export const resolveModelSupportFlags = (
+  selectedModelId: string | null,
+  aiModelConfigs: any[],
+): { supportsImages: boolean; supportsReasoning: boolean } => {
+  if (!selectedModelId) {
+    return { supportsImages: false, supportsReasoning: false };
+  }
+  const matched = (aiModelConfigs || []).find((item: any) => item?.id === selectedModelId);
+  return {
+    supportsImages: matched?.supports_images === true,
+    supportsReasoning: matched?.supports_reasoning === true,
+  };
+};
+
+export const pickFirstSessionPanel = <T,>(
+  panelsBySession: Record<string, T[] | undefined> | undefined,
+  sessionId: string | null | undefined,
+): T | null => {
+  const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+  if (!normalizedSessionId) {
+    return null;
+  }
+  const panels = panelsBySession?.[normalizedSessionId];
+  if (!Array.isArray(panels) || panels.length === 0) {
+    return null;
+  }
+  return panels[0] || null;
+};
+
+export const pickSessionScopedState = <T,>(
+  stateBySession: Record<string, T | undefined> | undefined,
+  sessionId: string | null | undefined,
+): T | undefined => {
+  const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+  if (!normalizedSessionId) {
+    return undefined;
+  }
+  return stateBySession?.[normalizedSessionId];
+};
+
 export const isTaskMutationToolName = (name: unknown): boolean => {
   const normalized = String(name || '').toLowerCase();
   if (!normalized) {
@@ -125,27 +171,7 @@ export const shouldRefreshForTaskMutationToolCall = (toolCall: any): boolean => 
   if (isTaskMutationToolName(toolCall?.name)) {
     return true;
   }
-
-  const normalizedName = String(toolCall?.name || '').toLowerCase();
-  if (!normalizedName.includes('sub_agent')) {
-    return false;
-  }
-
-  const combinedOutput = [toolCall?.result, toolCall?.finalResult, toolCall?.streamLog]
-    .filter((value) => typeof value === 'string' && value.trim())
-    .map((value) => String(value).toLowerCase())
-    .join(' ');
-
-  if (!combinedOutput) {
-    return true;
-  }
-
-  return combinedOutput.includes('task_manager_builtin__')
-    || combinedOutput.includes('task_manager')
-    || combinedOutput.includes('add_task')
-    || combinedOutput.includes('update_task')
-    || combinedOutput.includes('complete_task')
-    || combinedOutput.includes('delete_task');
+  return false;
 };
 
 export const hasToolCallError = (toolCall: any): boolean => {

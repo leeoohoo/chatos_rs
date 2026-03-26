@@ -1,5 +1,4 @@
 #![allow(dead_code)]
-pub mod agent;
 pub mod ai_model_config;
 pub mod application;
 pub mod mcp_config;
@@ -10,10 +9,6 @@ pub mod session;
 pub mod session_mcp_server;
 pub mod session_summary_job_config;
 pub mod session_summary_v2;
-pub mod sub_agent_run;
-pub mod sub_agent_run_event;
-pub mod sub_agent_run_message;
-pub mod sub_agent_run_summary;
 pub mod system_context;
 pub mod terminal;
 pub mod terminal_log;

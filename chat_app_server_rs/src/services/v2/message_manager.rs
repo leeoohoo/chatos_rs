@@ -119,22 +119,6 @@ impl MessageManager {
         )
     }
 
-    pub async fn get_memory_sub_agent_run_history_context(
-        &self,
-        run_id: &str,
-        memory_summary_limit: usize,
-    ) -> (Option<String>, usize, Vec<Message>) {
-        let context = self
-            .core
-            .get_memory_sub_agent_run_history_context(run_id, memory_summary_limit)
-            .await;
-        (
-            context.merged_summary,
-            context.summary_count,
-            context.messages,
-        )
-    }
-
     pub fn get_session_messages_sync(&self, session_id: &str, limit: Option<i64>) -> Vec<Message> {
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             return tokio::task::block_in_place(|| {

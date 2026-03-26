@@ -1,7 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { MarkdownRenderer } from './MarkdownRenderer';
-import SuggestSubAgentModal from './SuggestSubAgentModal';
-import RunSubAgentModal from './RunSubAgentModal';
 import type { ToolCall, Message } from '../types';
 import './ToolCallRenderer.css';
 
@@ -43,18 +41,6 @@ const inferType = (val: any): string => {
     case 'object': return 'object';
     default: return typeof val;
   }
-};
-
-const isSuggestSubAgentTool = (toolName: string): boolean => {
-  const normalized = String(toolName || '').trim().toLowerCase();
-  if (!normalized) return false;
-  return normalized.endsWith('_suggest_sub_agent') || normalized.includes('__suggest_sub_agent');
-};
-
-const isRunSubAgentTool = (toolName: string): boolean => {
-  const normalized = String(toolName || '').trim().toLowerCase();
-  if (!normalized) return false;
-  return normalized.endsWith('_run_sub_agent') || normalized.includes('__run_sub_agent');
 };
 
 interface TreeNode {
@@ -200,22 +186,6 @@ export const ToolCallRenderer: React.FC<ToolCallRendererProps> = ({
   className,
 }) => {
   const [showDetails, setShowDetails] = useState(false);
-  const [showSuggestModal, setShowSuggestModal] = useState(false);
-  const [showRunModal, setShowRunModal] = useState(false);
-  const toolName = String(toolCall?.name || '');
-  const isSuggestSubAgent = useMemo(() => isSuggestSubAgentTool(toolName), [toolName]);
-  const isRunSubAgent = useMemo(() => isRunSubAgentTool(toolName), [toolName]);
-  const isModalTool = isSuggestSubAgent || isRunSubAgent;
-
-  const openToolModal = () => {
-    if (isSuggestSubAgent) {
-      setShowSuggestModal(true);
-      return;
-    }
-    if (isRunSubAgent) {
-      setShowRunModal(true);
-    }
-  };
 
   const toolResultMessage = useMemo(() => {
     return toolResultById?.get(String(toolCall.id));
@@ -345,30 +315,15 @@ export const ToolCallRenderer: React.FC<ToolCallRendererProps> = ({
 
   const statusText = hasError
     ? '错误'
-    : (isModalTool
-      ? (hasFinalResult ? '完成' : '运行中')
-      : (hasResult ? '完成' : '等待中'));
+    : (hasFinalResult ? '完成' : (hasStreamLog ? '运行中' : '等待中'));
   const statusClass = hasError
     ? 'error'
-    : (isModalTool
-      ? (hasFinalResult ? 'success' : 'pending')
-      : (hasResult ? 'success' : 'pending'));
-  const canToggleDetails = !isModalTool && (hasArguments || hasResult || hasError);
+    : (hasFinalResult ? 'success' : 'pending');
+  const canToggleDetails = hasArguments || hasResult || hasError || hasStreamLog;
 
   return (
     <div className={`tool-call-renderer tool-call-container${className ? ` ${className}` : ''}`}>
-      <div
-        className={`tool-chip ${showDetails ? 'expanded' : ''} ${isModalTool ? 'cursor-pointer hover:border-blue-400/70 dark:hover:border-blue-500/70' : ''}`}
-        onClick={isModalTool ? openToolModal : undefined}
-        role={isModalTool ? 'button' : undefined}
-        tabIndex={isModalTool ? 0 : undefined}
-        onKeyDown={isModalTool ? (event) => {
-          if (event.key === 'Enter' || event.key === ' ') {
-            event.preventDefault();
-            openToolModal();
-          }
-        } : undefined}
-      >
+      <div className={`tool-chip ${showDetails ? 'expanded' : ''}`}>
         <div className="tool-chip-left">
           <svg className="tool-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <path d="M13 2 3 14h7l-1 8 12-14h-7l1-6z" />
@@ -387,26 +342,6 @@ export const ToolCallRenderer: React.FC<ToolCallRendererProps> = ({
           >
             <svg className="tool-toggle-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <polyline points="6 9 12 15 18 9" />
-            </svg>
-          </button>
-        )}
-        {isModalTool && (
-          <button
-            type="button"
-            onClick={(event) => {
-              event.stopPropagation();
-              openToolModal();
-            }}
-            className="tool-toggle"
-            aria-label={isRunSubAgent ? '打开运行详情弹窗' : '打开推荐详情弹窗'}
-            title={isRunSubAgent ? '打开运行详情弹窗' : '打开推荐详情弹窗'}
-          >
-            <svg className="tool-toggle-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M14 3h7v7" />
-              <path d="M10 14 21 3" />
-              <path d="M21 14v7h-7" />
-              <path d="M3 10V3h7" />
-              <path d="M3 21h7v-7" />
             </svg>
           </button>
         )}
@@ -442,6 +377,13 @@ export const ToolCallRenderer: React.FC<ToolCallRendererProps> = ({
             </div>
           )}
 
+          {hasStreamLog && !hasResult && (
+            <div>
+              <div className="details-title">流式输出:</div>
+              <MarkdownRenderer content={streamLogText} isStreaming />
+            </div>
+          )}
+
           {/* 错误 */}
           {hasError && (
             <div>
@@ -458,30 +400,6 @@ export const ToolCallRenderer: React.FC<ToolCallRendererProps> = ({
             })()}
           </div>
         </div>
-      )}
-
-      {isSuggestSubAgent && showSuggestModal && (
-        <SuggestSubAgentModal
-          toolCall={{
-            ...toolCall,
-            result,
-            finalResult: (toolCall as any)?.finalResult,
-            persistedResult: toolResultMessage?.content,
-          }}
-          onClose={() => setShowSuggestModal(false)}
-        />
-      )}
-
-      {isRunSubAgent && showRunModal && (
-        <RunSubAgentModal
-          toolCall={{
-            ...toolCall,
-            result,
-            finalResult: (toolCall as any)?.finalResult,
-            persistedResult: toolResultMessage?.content,
-          }}
-          onClose={() => setShowRunModal(false)}
-        />
       )}
     </div>
   );

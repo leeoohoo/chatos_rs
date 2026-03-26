@@ -21,8 +21,6 @@ export const joinStreamingText = (current: string, chunk: string): string => {
   // 兼容部分模型返回累计快照、部分模型返回增量。
   if (chunk.startsWith(current)) return chunk;
   if (current.startsWith(chunk)) return current;
-  if (current.includes(chunk)) return current;
-  if (chunk.includes(current)) return chunk;
 
   const maxOverlap = Math.min(current.length, chunk.length);
   for (let overlap = maxOverlap; overlap >= 8; overlap -= 1) {

@@ -1,5 +1,4 @@
 #![allow(dead_code)]
-pub mod agent;
 pub mod ai_client;
 pub mod ai_request_handler;
 pub mod ai_server;

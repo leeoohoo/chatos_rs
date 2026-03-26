@@ -54,6 +54,11 @@ impl AiServer {
         self.ai_client.set_system_prompt(prompt);
     }
 
+    pub fn set_mcp_tool_execute(&mut self, mcp_tool_execute: McpToolExecute) {
+        self.mcp_tool_execute = mcp_tool_execute.clone();
+        self.ai_client.set_mcp_tool_execute(mcp_tool_execute);
+    }
+
     pub async fn chat(
         &mut self,
         session_id: &str,
@@ -75,7 +80,7 @@ impl AiServer {
             .save_user_message(
                 session_id,
                 user_message,
-                None,
+                options.user_message_id.clone(),
                 options.message_mode.clone(),
                 options.message_source.clone(),
                 meta,
@@ -117,7 +122,7 @@ impl AiServer {
                 Some("chat".to_string()),
                 options.message_mode.clone(),
                 options.message_source.clone(),
-                None,
+                options.prefixed_messages.unwrap_or_default(),
             )
             .await?;
 
@@ -138,21 +143,8 @@ pub struct ChatOptions {
     pub reasoning_enabled: Option<bool>,
     pub callbacks: Option<AiClientCallbacks>,
     pub turn_id: Option<String>,
+    pub user_message_id: Option<String>,
     pub message_mode: Option<String>,
     pub message_source: Option<String>,
-}
-
-impl Default for AiClientCallbacks {
-    fn default() -> Self {
-        AiClientCallbacks {
-            on_chunk: None,
-            on_thinking: None,
-            on_tools_start: None,
-            on_tools_stream: None,
-            on_tools_end: None,
-            on_context_summarized_start: None,
-            on_context_summarized_stream: None,
-            on_context_summarized_end: None,
-        }
-    }
+    pub prefixed_messages: Option<Vec<Value>>,
 }
