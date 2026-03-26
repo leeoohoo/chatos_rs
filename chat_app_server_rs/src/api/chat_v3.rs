@@ -114,10 +114,16 @@ async fn agent_chat_stream(
     }
     let session_id = req.session_id.clone().unwrap_or_default();
     let content = req.content.clone().unwrap_or_default();
-    if session_id.is_empty() || content.is_empty() {
+    let has_text_content = !content.trim().is_empty();
+    let has_attachments = req
+        .attachments
+        .as_ref()
+        .map(|items| !items.is_empty())
+        .unwrap_or(false);
+    if session_id.is_empty() || (!has_text_content && !has_attachments) {
         return Err((
             StatusCode::BAD_REQUEST,
-            Json(json!({"error": "session_id 和 content 不能为空"})),
+            Json(json!({"error": "session_id 不能为空，且 content 与 attachments 不能同时为空"})),
         ));
     }
     if req
