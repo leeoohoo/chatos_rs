@@ -58,14 +58,17 @@
 
 ## 开发方案归档
 方案/评估/契约文档统一收纳在：
-- [docs/plans/README.md](/Users/lilei/project/my_project/chatos_rs/docs/plans/README.md)
+- 本地目录 `docs/plans/`（该目录已配置不上传 git）
 
 ## 子项目文档
-- [chat_app English](/Users/lilei/project/my_project/chatos_rs/chat_app/README.en.md)
-- [chat_app 中文](/Users/lilei/project/my_project/chatos_rs/chat_app/README.zh-CN.md)
-- [chat_app_server_rs English](/Users/lilei/project/my_project/chatos_rs/chat_app_server_rs/README.en.md)
-- [chat_app_server_rs 中文](/Users/lilei/project/my_project/chatos_rs/chat_app_server_rs/README.zh-CN.md)
-- [memory_server English](/Users/lilei/project/my_project/chatos_rs/memory_server/README.en.md)
-- [memory_server 中文](/Users/lilei/project/my_project/chatos_rs/memory_server/README.zh-CN.md)
-- [openai-codex-gateway English](/Users/lilei/project/my_project/chatos_rs/openai-codex-gateway/README.en.md)
-- [openai-codex-gateway 中文](/Users/lilei/project/my_project/chatos_rs/openai-codex-gateway/README.zh-CN.md)
+- [chat_app English](./chat_app/README.en.md)
+- [chat_app 中文](./chat_app/README.zh-CN.md)
+- [chat_app_server_rs English](./chat_app_server_rs/README.en.md)
+- [chat_app_server_rs 中文](./chat_app_server_rs/README.zh-CN.md)
+- [memory_server English](./memory_server/README.en.md)
+- [memory_server 中文](./memory_server/README.zh-CN.md)
+- [openai-codex-gateway English](./openai-codex-gateway/README.en.md)
+- [openai-codex-gateway 中文](./openai-codex-gateway/README.zh-CN.md)
+
+## 开源协议
+本项目使用 [MIT License](./LICENSE)。
