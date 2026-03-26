@@ -23,9 +23,9 @@ interface ChatComposerPanelProps {
   workbarActionLoadingTaskId: string | null;
   onRefreshWorkbarTasks: () => void;
   onOpenHistory: (sessionId: string) => void;
-  onOpenUiPromptHistory: (sessionId: string) => void;
-  uiPromptHistoryCount: number;
-  uiPromptHistoryLoading: boolean;
+  onOpenUiPromptHistory?: (sessionId: string) => void;
+  uiPromptHistoryCount?: number;
+  uiPromptHistoryLoading?: boolean;
   onCompleteTask: (task: TaskWorkbarItem) => void;
   onDeleteTask: (task: TaskWorkbarItem) => void;
   onEditTask: (task: TaskWorkbarItem) => void;
@@ -144,7 +144,7 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
       actionLoadingTaskId={workbarActionLoadingTaskId}
       onRefresh={onRefreshWorkbarTasks}
       onOpenHistory={() => onOpenHistory(sessionId)}
-      onOpenUiPromptHistory={() => onOpenUiPromptHistory(sessionId)}
+      onOpenUiPromptHistory={onOpenUiPromptHistory ? () => onOpenUiPromptHistory(sessionId) : undefined}
       uiPromptHistoryCount={uiPromptHistoryCount}
       uiPromptHistoryLoading={uiPromptHistoryLoading}
       runtimeGuidancePendingCount={runtimeGuidancePendingCount}

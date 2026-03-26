@@ -158,6 +158,33 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                             ...prevItems,
                           ].slice(0, maxItems),
                         };
+                        const shouldAppendToVisibleMessages = state.currentSessionId === sessionId;
+                        if (shouldAppendToVisibleMessages) {
+                          if (!Array.isArray(state.messages)) {
+                            state.messages = [];
+                          }
+                          const exists = state.messages.some((message: any) => message?.id === optimisticGuidanceId);
+                          if (!exists) {
+                            state.messages.push({
+                              id: optimisticGuidanceId,
+                              sessionId,
+                              role: 'user',
+                              content: trimmedContent,
+                              status: 'completed',
+                              createdAt: new Date(guidanceAt),
+                              metadata: {
+                                conversation_turn_id: turnId,
+                                message_mode: 'runtime_guidance',
+                                message_source: 'runtime_guidance',
+                                runtime_guidance: {
+                                  guidance_id: optimisticGuidanceId,
+                                  status: 'queued',
+                                  created_at: guidanceAt,
+                                },
+                              },
+                            });
+                          }
+                        }
                       });
 
                       try {
@@ -216,6 +243,28 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                             lastGuidanceAt: guidanceAt,
                             items: prevItems.slice(0, maxItems),
                           };
+                          if (state.currentSessionId === sessionId && Array.isArray(state.messages)) {
+                            const guidanceMessageIndex = state.messages.findIndex((message: any) => (
+                              message?.id === optimisticGuidanceId
+                              || (guidanceId && message?.id === guidanceId)
+                            ));
+                            if (guidanceMessageIndex >= 0) {
+                              const nextMetadata = {
+                                ...(state.messages[guidanceMessageIndex]?.metadata || {}),
+                                runtime_guidance: {
+                                  guidance_id: guidanceId,
+                                  status: nextStatus,
+                                  created_at: guidanceAt,
+                                },
+                              };
+                              state.messages[guidanceMessageIndex] = {
+                                ...state.messages[guidanceMessageIndex],
+                                id: guidanceId,
+                                status: 'completed',
+                                metadata: nextMetadata,
+                              };
+                            }
+                          }
                         });
                         return {
                           success: response?.success === true,
@@ -242,6 +291,9 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                             pendingCount: Math.max(0, Number(prev.pendingCount || 0) - 1),
                             items: prevItems.filter((item: any) => item.guidanceId !== optimisticGuidanceId),
                           };
+                          if (state.currentSessionId === sessionId && Array.isArray(state.messages)) {
+                            state.messages = state.messages.filter((message: any) => message?.id !== optimisticGuidanceId);
+                          }
                         });
                         throw error;
                       }

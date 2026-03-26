@@ -18,6 +18,7 @@ import { useSessionRuntimeSettings } from '../../features/sessionRuntime/useSess
 import {
   useSessionSummaryPanel,
 } from '../../features/sessionSummary/useSessionSummaryPanel';
+import { useSessionWorkbarPanels } from '../chatInterface/useSessionWorkbarPanels';
 import type {
   ContactItem,
   ProjectContactRow,
@@ -55,6 +56,13 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
     chatConfig,
     updateChatConfig,
     submitRuntimeGuidance,
+    sessionRuntimeGuidanceState,
+    taskReviewPanelsBySession,
+    uiPromptPanelsBySession,
+    upsertTaskReviewPanel,
+    removeTaskReviewPanel,
+    upsertUiPromptPanel,
+    removeUiPromptPanel,
   } = useChatStoreSelector((state) => ({
     currentSession: state.currentSession,
     sessions: state.sessions,
@@ -76,6 +84,13 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
     chatConfig: state.chatConfig,
     updateChatConfig: state.updateChatConfig,
     submitRuntimeGuidance: state.submitRuntimeGuidance,
+    sessionRuntimeGuidanceState: state.sessionRuntimeGuidanceState,
+    taskReviewPanelsBySession: state.taskReviewPanelsBySession,
+    uiPromptPanelsBySession: state.uiPromptPanelsBySession,
+    upsertTaskReviewPanel: state.upsertTaskReviewPanel,
+    removeTaskReviewPanel: state.removeTaskReviewPanel,
+    upsertUiPromptPanel: state.upsertUiPromptPanel,
+    removeUiPromptPanel: state.removeUiPromptPanel,
   }), shallow);
   const apiClientFromContext = useChatApiClientFromContext();
   const apiClient = useMemo(
@@ -240,6 +255,15 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
     loadMoreMessages,
   });
 
+  const selectedSessionActiveTurnId = useMemo(() => {
+    if (!selectedProjectSession?.id) {
+      return null;
+    }
+    const raw = sessionChatState?.[selectedProjectSession.id]?.activeTurnId;
+    const normalized = typeof raw === 'string' ? raw.trim() : '';
+    return normalized || null;
+  }, [selectedProjectSession?.id, sessionChatState]);
+
   const runtimeSourceSession = selectedProjectSession || currentSession;
   const {
     mcpEnabled: composerMcpEnabled,
@@ -254,6 +278,61 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
   const handleOpenAddMember = useCallback(async () => {
     await openAddMemberFromManager();
   }, [openAddMemberFromManager]);
+
+  const loadWorkbarSummaries = useCallback(async (sessionId: string, _force = false) => {
+    if (!sessionId) {
+      return;
+    }
+    await loadSessionSummaries(sessionId, { silent: true });
+  }, [loadSessionSummaries]);
+
+  const {
+    activeConversationTurnId,
+    activeTaskReviewPanel,
+    activeUiPromptPanel,
+    handleOpenWorkbarHistory,
+    handleRefreshWorkbar,
+    handleTaskReviewCancel,
+    handleTaskReviewConfirm,
+    handleUiPromptCancel,
+    handleUiPromptSubmit,
+    handleWorkbarCompleteTask,
+    handleWorkbarDeleteTask,
+    handleWorkbarEditTask,
+    mergedCurrentTurnTasks,
+    runtimeGuidanceAppliedCount,
+    runtimeGuidanceItems,
+    runtimeGuidanceLastAppliedAt,
+    runtimeGuidancePendingCount,
+    workbarActionLoadingTaskId,
+    workbarError,
+    workbarHistoryError,
+    workbarHistoryLoading,
+    workbarHistoryTasks,
+    workbarLoading,
+  } = useSessionWorkbarPanels({
+    apiClient,
+    session: isSelectedSessionActive ? selectedProjectSession : null,
+    enabled: Boolean(isSelectedSessionActive && selectedProjectSession?.id),
+    messages: messages as any[],
+    selectedSessionActiveTurnId,
+    sessionRuntimeGuidanceState,
+    taskReviewPanelsBySession,
+    uiPromptPanelsBySession,
+    upsertTaskReviewPanel,
+    removeTaskReviewPanel,
+    upsertUiPromptPanel,
+    removeUiPromptPanel,
+    loadWorkbarSummaries,
+  });
+
+  const handleOpenTeamWorkbarHistory = useCallback((sessionId: string) => {
+    if (!sessionId) {
+      return;
+    }
+    setSummaryPaneSessionId(sessionId);
+    handleOpenWorkbarHistory(sessionId, { forceHistory: true, forceSummaries: true });
+  }, [handleOpenWorkbarHistory, setSummaryPaneSessionId]);
 
   const handleConfirmAddMember = useCallback(async () => {
     const contactId = await confirmAddMemberFromManager();
@@ -440,6 +519,29 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
         onReasoningToggle={(enabled) => updateChatConfig({ reasoningEnabled: enabled })}
         onMcpEnabledChange={handleComposerMcpEnabledChange}
         onEnabledMcpIdsChange={handleComposerEnabledMcpIdsChange}
+        mergedCurrentTurnTasks={mergedCurrentTurnTasks}
+        workbarHistoryTasks={workbarHistoryTasks}
+        activeConversationTurnId={activeConversationTurnId}
+        workbarLoading={workbarLoading}
+        workbarHistoryLoading={workbarHistoryLoading}
+        workbarError={workbarError}
+        workbarHistoryError={workbarHistoryError}
+        workbarActionLoadingTaskId={workbarActionLoadingTaskId}
+        onRefreshWorkbarTasks={handleRefreshWorkbar}
+        onOpenWorkbarHistory={handleOpenTeamWorkbarHistory}
+        onCompleteTask={(task) => { void handleWorkbarCompleteTask(task); }}
+        onDeleteTask={(task) => { void handleWorkbarDeleteTask(task); }}
+        onEditTask={(task) => { void handleWorkbarEditTask(task); }}
+        activeUiPromptPanel={activeUiPromptPanel}
+        onUiPromptSubmit={handleUiPromptSubmit}
+        onUiPromptCancel={handleUiPromptCancel}
+        activeTaskReviewPanel={activeTaskReviewPanel}
+        onTaskReviewConfirm={handleTaskReviewConfirm}
+        onTaskReviewCancel={handleTaskReviewCancel}
+        runtimeGuidancePendingCount={runtimeGuidancePendingCount}
+        runtimeGuidanceAppliedCount={runtimeGuidanceAppliedCount}
+        runtimeGuidanceLastAppliedAt={runtimeGuidanceLastAppliedAt}
+        runtimeGuidanceItems={runtimeGuidanceItems}
       />
       <TurnRuntimeContextDrawer
         open={runtimeContextOpen}

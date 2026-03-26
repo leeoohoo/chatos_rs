@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 
-import { InputArea } from '../../InputArea';
+import ChatComposerPanel from '../../chatInterface/ChatComposerPanel';
+import { buildSupportedFileTypes, resolveModelSupportFlags } from '../../chatInterface/helpers';
 import { MessageList } from '../../MessageList';
 import type { Project, Session } from '../../../types';
 import type { ContactItem } from './types';
@@ -51,6 +52,29 @@ interface TeamMemberWorkspaceProps {
   onReasoningToggle: (enabled: boolean) => void;
   onMcpEnabledChange: (enabled: boolean) => void;
   onEnabledMcpIdsChange: (ids: string[]) => void;
+  mergedCurrentTurnTasks: any[];
+  workbarHistoryTasks: any[];
+  activeConversationTurnId: string | null;
+  workbarLoading: boolean;
+  workbarHistoryLoading: boolean;
+  workbarError: string | null;
+  workbarHistoryError: string | null;
+  workbarActionLoadingTaskId: string | null;
+  onRefreshWorkbarTasks: () => void;
+  onOpenWorkbarHistory: (sessionId: string) => void;
+  onCompleteTask: (task: any) => void;
+  onDeleteTask: (task: any) => void;
+  onEditTask: (task: any) => void;
+  activeUiPromptPanel: any;
+  onUiPromptSubmit: (payload: any) => void;
+  onUiPromptCancel: () => void;
+  activeTaskReviewPanel: any;
+  onTaskReviewConfirm: (payload: any) => void;
+  onTaskReviewCancel: (payload?: any) => void;
+  runtimeGuidancePendingCount?: number;
+  runtimeGuidanceAppliedCount?: number;
+  runtimeGuidanceLastAppliedAt?: string | null;
+  runtimeGuidanceItems?: any[];
 }
 
 const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
@@ -88,8 +112,42 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
   onReasoningToggle,
   onMcpEnabledChange,
   onEnabledMcpIdsChange,
-}) => (
-  <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
+  mergedCurrentTurnTasks,
+  workbarHistoryTasks,
+  activeConversationTurnId,
+  workbarLoading,
+  workbarHistoryLoading,
+  workbarError,
+  workbarHistoryError,
+  workbarActionLoadingTaskId,
+  onRefreshWorkbarTasks,
+  onOpenWorkbarHistory,
+  onCompleteTask,
+  onDeleteTask,
+  onEditTask,
+  activeUiPromptPanel,
+  onUiPromptSubmit,
+  onUiPromptCancel,
+  activeTaskReviewPanel,
+  onTaskReviewConfirm,
+  onTaskReviewCancel,
+  runtimeGuidancePendingCount = 0,
+  runtimeGuidanceAppliedCount = 0,
+  runtimeGuidanceLastAppliedAt = null,
+  runtimeGuidanceItems = [],
+}) => {
+  const { supportsImages } = useMemo(
+    () => resolveModelSupportFlags(selectedModelId, aiModelConfigs as any[]),
+    [aiModelConfigs, selectedModelId],
+  );
+
+  const supportedFileTypes = useMemo(
+    () => buildSupportedFileTypes(supportsImages),
+    [supportsImages],
+  );
+
+  return (
+    <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
     <div className="flex-1 overflow-hidden">
       {!selectedContact ? (
         <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
@@ -140,23 +198,43 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
       )}
     </div>
 
-    {selectedContact && (
-      <InputArea
+    {selectedContact && selectedProjectSession ? (
+      <ChatComposerPanel
+        sessionId={selectedProjectSession.id}
+        mergedCurrentTurnTasks={mergedCurrentTurnTasks}
+        workbarHistoryTasks={workbarHistoryTasks}
+        activeConversationTurnId={activeConversationTurnId}
+        workbarLoading={workbarLoading}
+        workbarHistoryLoading={workbarHistoryLoading}
+        workbarError={workbarError}
+        workbarHistoryError={workbarHistoryError}
+        workbarActionLoadingTaskId={workbarActionLoadingTaskId}
+        onRefreshWorkbarTasks={onRefreshWorkbarTasks}
+        onOpenHistory={onOpenWorkbarHistory}
+        uiPromptHistoryCount={0}
+        uiPromptHistoryLoading={false}
+        onCompleteTask={onCompleteTask}
+        onDeleteTask={onDeleteTask}
+        onEditTask={onEditTask}
+        activeUiPromptPanel={activeUiPromptPanel}
+        onUiPromptSubmit={onUiPromptSubmit}
+        onUiPromptCancel={onUiPromptCancel}
+        activeTaskReviewPanel={activeTaskReviewPanel}
+        onTaskReviewConfirm={onTaskReviewConfirm}
+        onTaskReviewCancel={onTaskReviewCancel}
         onSend={onSend}
         onGuide={onGuide}
         onStop={onStop}
-        disabled={!isSelectedSessionActive || chatIsStopping}
+        inputDisabled={!isSelectedSessionActive || chatIsStopping}
         isStreaming={chatIsStreaming}
         isStopping={chatIsStopping}
-        placeholder={`给 ${selectedContact.name} 发送消息...`}
-        allowAttachments={true}
-        showModelSelector={true}
-        selectedModelId={selectedModelId}
-        availableModels={aiModelConfigs}
-        onModelChange={onModelChange}
+        supportedFileTypes={supportedFileTypes}
         reasoningSupported={supportsReasoning}
         reasoningEnabled={reasoningEnabled}
         onReasoningToggle={onReasoningToggle}
+        selectedModelId={selectedModelId}
+        availableModels={aiModelConfigs}
+        onModelChange={onModelChange}
         availableProjects={[project]}
         currentProject={project}
         selectedProjectId={project.id}
@@ -168,9 +246,14 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
         enabledMcpIds={enabledMcpIds}
         onMcpEnabledChange={onMcpEnabledChange}
         onEnabledMcpIdsChange={onEnabledMcpIdsChange}
+        runtimeGuidancePendingCount={runtimeGuidancePendingCount}
+        runtimeGuidanceAppliedCount={runtimeGuidanceAppliedCount}
+        runtimeGuidanceLastAppliedAt={runtimeGuidanceLastAppliedAt}
+        runtimeGuidanceItems={runtimeGuidanceItems}
       />
-    )}
-  </div>
-);
+    ) : null}
+    </div>
+  );
+};
 
 export default TeamMemberWorkspace;

@@ -18,13 +18,13 @@ import HeaderBar from './chatInterface/HeaderBar';
 import UiPromptHistoryDrawer from './chatInterface/UiPromptHistoryDrawer';
 import TurnRuntimeContextDrawer from './chatInterface/TurnRuntimeContextDrawer';
 import {
+  buildSupportedFileTypes,
   formatSummaryCreatedAt,
+  resolveModelSupportFlags,
   toUiPromptPanelFromRecord,
 } from './chatInterface/helpers';
-import { usePanelActions } from './chatInterface/usePanelActions';
 import { useSessionHeaderMeta } from './chatInterface/useSessionHeaderMeta';
-import { useWorkbarState } from './chatInterface/useWorkbarState';
-import { useWorkbarMutations } from './chatInterface/useWorkbarMutations';
+import { useSessionWorkbarPanels } from './chatInterface/useSessionWorkbarPanels';
 import { apiClient as globalApiClient } from '../lib/api/client';
 import { cn } from '../lib/utils';
 import type { ChatInterfaceProps } from '../types';
@@ -120,17 +120,14 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const apiClient = useMemo(() => apiClientFromContext || globalApiClient, [apiClientFromContext]);
   const { user, logout } = useAuthStore();
 
-  const activeModelConfig = useMemo(
-    () => aiModelConfigs.find((m: any) => m.id === selectedModelId),
-    [aiModelConfigs, selectedModelId]
+  const { supportsImages, supportsReasoning } = useMemo(
+    () => resolveModelSupportFlags(selectedModelId, aiModelConfigs as any[]),
+    [aiModelConfigs, selectedModelId],
   );
-  const supportsImages = activeModelConfig?.supports_images === true;
-  const supportsReasoning = activeModelConfig?.supports_reasoning === true;
-  const supportedFileTypes = useMemo(() => (
-    supportsImages
-      ? ['image/*', 'text/*', 'application/json', 'application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document']
-      : ['text/*', 'application/json', 'application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document']
-  ), [supportsImages]);
+  const supportedFileTypes = useMemo(
+    () => buildSupportedFileTypes(supportsImages),
+    [supportsImages],
+  );
   const currentChatState = useMemo(() => (
     currentSession ? sessionChatState[currentSession.id] : undefined
   ), [currentSession, sessionChatState]);
@@ -149,9 +146,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const chatIsLoading = currentChatState?.isLoading ?? false;
   const chatIsStreaming = currentChatState?.isStreaming ?? false;
   const chatIsStopping = currentChatState?.isStopping ?? false;
-  const currentRuntimeGuidanceState = useMemo(() => (
-    currentSession ? sessionRuntimeGuidanceState[currentSession.id] : undefined
-  ), [currentSession, sessionRuntimeGuidanceState]);
 
   const [showMcpManager, setShowMcpManager] = useState(false);
   const [showAiModelManager, setShowAiModelManager] = useState(false);
@@ -206,28 +200,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   });
   const lastHydratedChatSessionRef = useRef<string | null>(null);
 
-  const activeTaskReviewPanel = useMemo(() => {
-    if (!currentSession) {
-      return null;
-    }
-    const panels = taskReviewPanelsBySession[currentSession.id];
-    if (!Array.isArray(panels) || panels.length === 0) {
-      return null;
-    }
-    return panels[0];
-  }, [currentSession, taskReviewPanelsBySession]);
-
-  const activeUiPromptPanel = useMemo(() => {
-    if (!currentSession) {
-      return null;
-    }
-    const panels = uiPromptPanelsBySession[currentSession.id];
-    if (!Array.isArray(panels) || panels.length === 0) {
-      return null;
-    }
-    return panels[0];
-  }, [currentSession, uiPromptPanelsBySession]);
-
   const sessionSummaryPaneVisible = Boolean(
     activePanel === 'chat' && currentSession && summaryPaneSessionId === currentSession.id
   );
@@ -271,36 +243,48 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       cancelled = true;
     };
   }, [activePanel, apiClient, currentSessionIdForUiPrompts, upsertUiPromptPanel]);
-  const {
-    activeConversationTurnId,
-    mergedCurrentTurnTasks,
-    workbarHistoryTasks,
-    workbarLoading,
-    workbarHistoryLoading,
-    workbarError,
-    workbarHistoryError,
-    setWorkbarError,
-    loadCurrentTurnWorkbarTasks,
-    loadHistoryWorkbarTasks,
-    refreshWorkbarTasks,
-    resetAllWorkbarState,
-    resetHistoryWorkbarState,
-  } = useWorkbarState({
-    apiClient,
-    currentSession,
-    messages: messages as any[],
-  });
 
   const {
-    workbarActionLoadingTaskId,
+    activeConversationTurnId,
+    activeTaskReviewPanel,
+    activeUiPromptPanel,
+    handleOpenWorkbarHistory,
+    handleRefreshWorkbar,
+    handleTaskReviewCancel,
+    handleTaskReviewConfirm,
+    handleUiPromptCancel,
+    handleUiPromptSubmit,
     handleWorkbarCompleteTask,
     handleWorkbarDeleteTask,
     handleWorkbarEditTask,
-  } = useWorkbarMutations({
+    mergedCurrentTurnTasks,
+    resetAllWorkbarState,
+    resetHistoryWorkbarState,
+    runtimeGuidanceAppliedCount,
+    runtimeGuidanceItems,
+    runtimeGuidanceLastAppliedAt,
+    runtimeGuidancePendingCount,
+    workbarActionLoadingTaskId,
+    workbarError,
+    workbarHistoryError,
+    workbarHistoryLoading,
+    workbarHistoryTasks,
+    workbarLoading,
+  } = useSessionWorkbarPanels({
     apiClient,
-    currentSessionId: currentSession?.id ?? null,
-    refreshWorkbarTasks,
-    setWorkbarError,
+    session: currentSession,
+    enabled: activePanel === 'chat',
+    messages: messages as any[],
+    selectedSessionActiveTurnId: currentChatState?.activeTurnId || null,
+    sessionRuntimeGuidanceState,
+    taskReviewPanelsBySession,
+    uiPromptPanelsBySession,
+    upsertTaskReviewPanel,
+    removeTaskReviewPanel,
+    upsertUiPromptPanel,
+    removeUiPromptPanel,
+    loadWorkbarSummaries: loadContactMemoryContext,
+    loadUiPromptHistory,
   });
 
   // 鍒濆鍖栧姞杞戒細璇濄€丄I妯″瀷鍜屾櫤鑳戒綋閰嶇疆
@@ -426,15 +410,10 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     setSummaryPaneSessionId(null);
   }, []);
 
-  const handleRefreshWorkbar = useCallback(() => {
-    void refreshWorkbarTasks();
-  }, [refreshWorkbarTasks]);
-
   const handleOpenHistory = useCallback((sessionId: string) => {
     setSummaryPaneSessionId(sessionId);
-    void loadHistoryWorkbarTasks(sessionId);
-    void loadContactMemoryContext(sessionId, true);
-  }, [loadContactMemoryContext, loadHistoryWorkbarTasks]);
+    handleOpenWorkbarHistory(sessionId, { forceHistory: false, forceSummaries: true });
+  }, [handleOpenWorkbarHistory]);
 
   const handleOpenUiPromptHistory = useCallback((sessionId: string) => {
     setUiPromptHistoryOpen(true);
@@ -474,25 +453,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     }
     void loadLatestRuntimeContext(runtimeContextSessionId);
   }, [loadLatestRuntimeContext, runtimeContextSessionId]);
-
-  const {
-    handleTaskReviewConfirm,
-    handleTaskReviewCancel,
-    handleUiPromptSubmit,
-    handleUiPromptCancel,
-  } = usePanelActions({
-    activeTaskReviewPanel,
-    activeUiPromptPanel,
-    apiClient,
-    upsertTaskReviewPanel,
-    removeTaskReviewPanel,
-    upsertUiPromptPanel,
-    removeUiPromptPanel,
-    loadCurrentTurnWorkbarTasks,
-    loadHistoryWorkbarTasks,
-    loadWorkbarSummaries: loadContactMemoryContext,
-    loadUiPromptHistory,
-  });
 
 
   if (showSystemContextEditor) {
@@ -637,10 +597,10 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 enabledMcpIds={composerEnabledMcpIds}
                 onMcpEnabledChange={handleComposerMcpEnabledChange}
                 onEnabledMcpIdsChange={handleComposerEnabledMcpIdsChange}
-                runtimeGuidancePendingCount={Number(currentRuntimeGuidanceState?.pendingCount || 0)}
-                runtimeGuidanceAppliedCount={Number(currentRuntimeGuidanceState?.appliedCount || 0)}
-                runtimeGuidanceLastAppliedAt={currentRuntimeGuidanceState?.lastAppliedAt || null}
-                runtimeGuidanceItems={Array.isArray(currentRuntimeGuidanceState?.items) ? currentRuntimeGuidanceState.items : []}
+                runtimeGuidancePendingCount={runtimeGuidancePendingCount}
+                runtimeGuidanceAppliedCount={runtimeGuidanceAppliedCount}
+                runtimeGuidanceLastAppliedAt={runtimeGuidanceLastAppliedAt}
+                runtimeGuidanceItems={runtimeGuidanceItems}
               />
             )}
           </div>
