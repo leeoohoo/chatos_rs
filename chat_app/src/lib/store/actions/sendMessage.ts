@@ -219,6 +219,7 @@ export function createSendMessageHandler({
           appliedCount: 0,
           lastGuidanceAt: null,
           lastAppliedAt: null,
+          items: [],
         };
         if (state.currentSessionId === currentSessionId) {
           state.isLoading = true;
@@ -530,18 +531,54 @@ export function createSendMessageHandler({
                   appliedCount: 0,
                   lastGuidanceAt: null,
                   lastAppliedAt: null,
+                  items: [],
                 };
                 const pendingFromPayload = Number(
                   (data && Number.isFinite(Number(data.pending_count)))
                     ? Number(data.pending_count)
                     : Number.NaN
                 );
+                const guidanceId = String(data?.guidance_id || '').trim();
+                const contentCandidates = [data?.content, data?.instruction, data?.message, data?.text];
+                const guidanceContent = contentCandidates.find(
+                  (value) => typeof value === 'string' && value.trim().length > 0
+                ) as string | undefined;
+                const queuedAt = (
+                  typeof data?.created_at === 'string'
+                    ? data.created_at
+                    : (typeof parsed.timestamp === 'string' ? parsed.timestamp : new Date().toISOString())
+                );
+                const prevItems = Array.isArray(prev.items) ? [...prev.items] : [];
+                if (guidanceId && guidanceContent) {
+                  const existingIndex = prevItems.findIndex((item: any) => item.guidanceId === guidanceId);
+                  if (existingIndex >= 0) {
+                    prevItems[existingIndex] = {
+                      ...prevItems[existingIndex],
+                      turnId: String(data?.turn_id || prevItems[existingIndex]?.turnId || '').trim() || null,
+                      content: guidanceContent,
+                      status: 'queued',
+                      createdAt: typeof prevItems[existingIndex]?.createdAt === 'string'
+                        ? prevItems[existingIndex].createdAt
+                        : queuedAt,
+                    };
+                  } else {
+                    prevItems.unshift({
+                      guidanceId,
+                      turnId: String(data?.turn_id || '').trim() || null,
+                      content: guidanceContent,
+                      status: 'queued',
+                      createdAt: queuedAt,
+                      appliedAt: null,
+                    });
+                  }
+                }
                 state.sessionRuntimeGuidanceState[currentSessionId] = {
                   ...prev,
                   pendingCount: Number.isFinite(pendingFromPayload)
                     ? Math.max(0, pendingFromPayload)
                     : Math.max(0, Number(prev.pendingCount || 0) + 1),
                   lastGuidanceAt: typeof parsed.timestamp === 'string' ? parsed.timestamp : prev.lastGuidanceAt,
+                  items: prevItems.slice(0, 20),
                 };
               });
             } else if (parsed.type === 'runtime_guidance_applied') {
@@ -555,6 +592,7 @@ export function createSendMessageHandler({
                   appliedCount: 0,
                   lastGuidanceAt: null,
                   lastAppliedAt: null,
+                  items: [],
                 };
                 const pendingFromPayload = Number(
                   (data && Number.isFinite(Number(data.pending_count)))
@@ -564,15 +602,70 @@ export function createSendMessageHandler({
                 const nextPending = Number.isFinite(pendingFromPayload)
                   ? Math.max(0, pendingFromPayload)
                   : Math.max(0, Number(prev.pendingCount || 0) - 1);
+                const appliedAt = (
+                  typeof data?.applied_at === 'string'
+                    ? data.applied_at
+                    : (typeof parsed.timestamp === 'string' ? parsed.timestamp : prev.lastAppliedAt)
+                );
+                const guidanceId = String(data?.guidance_id || '').trim();
+                const contentCandidates = [data?.content, data?.instruction, data?.message, data?.text];
+                const guidanceContent = contentCandidates.find(
+                  (value) => typeof value === 'string' && value.trim().length > 0
+                ) as string | undefined;
+                const prevItems = Array.isArray(prev.items) ? [...prev.items] : [];
+                if (guidanceId) {
+                  const existingIndex = prevItems.findIndex((item: any) => item.guidanceId === guidanceId);
+                  if (existingIndex >= 0) {
+                    prevItems[existingIndex] = {
+                      ...prevItems[existingIndex],
+                      status: 'applied',
+                      appliedAt,
+                      turnId: String(data?.turn_id || prevItems[existingIndex]?.turnId || '').trim() || null,
+                    };
+                  } else {
+                    const fallbackTurnId = String(data?.turn_id || '').trim();
+                    const optimisticIndex = prevItems.findIndex((item: any) => {
+                      if ((item?.status || '') !== 'queued') {
+                        return false;
+                      }
+                      if (!String(item?.guidanceId || '').startsWith('local_')) {
+                        return false;
+                      }
+                      if (!fallbackTurnId) {
+                        return true;
+                      }
+                      return String(item?.turnId || '').trim() === fallbackTurnId;
+                    });
+                    if (optimisticIndex >= 0) {
+                      prevItems[optimisticIndex] = {
+                        ...prevItems[optimisticIndex],
+                        guidanceId,
+                        status: 'applied',
+                        appliedAt,
+                        turnId: fallbackTurnId || String(prevItems[optimisticIndex]?.turnId || '').trim() || null,
+                      };
+                    } else if (guidanceContent) {
+                      prevItems.unshift({
+                        guidanceId,
+                        turnId: fallbackTurnId || null,
+                        content: guidanceContent,
+                        status: 'applied',
+                        createdAt: (
+                          typeof data?.created_at === 'string'
+                            ? data.created_at
+                            : appliedAt || new Date().toISOString()
+                        ),
+                        appliedAt,
+                      });
+                    }
+                  }
+                }
                 state.sessionRuntimeGuidanceState[currentSessionId] = {
                   ...prev,
                   pendingCount: nextPending,
                   appliedCount: Math.max(0, Number(prev.appliedCount || 0) + 1),
-                  lastAppliedAt: (
-                    typeof data?.applied_at === 'string'
-                      ? data.applied_at
-                      : (typeof parsed.timestamp === 'string' ? parsed.timestamp : prev.lastAppliedAt)
-                  ),
+                  lastAppliedAt: appliedAt,
+                  items: prevItems.slice(0, 20),
                 };
               });
             } else if (parsed.type === 'error') {

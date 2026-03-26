@@ -75,6 +75,7 @@ struct ModelRuntime {
     base_url: String,
     api_key: String,
     temperature: f64,
+    supports_responses: bool,
 }
 
 #[derive(Debug, Default)]
@@ -185,6 +186,10 @@ async fn run_agent_builder(
     runtime: &ModelRuntime,
     context: &mut ToolContext<'_>,
 ) -> Result<ToolLoopOutcome, (StatusCode, String)> {
+    if runtime.supports_responses {
+        return run_plain_json_fallback(http, runtime, context).await;
+    }
+
     match run_tool_loop(http, runtime, context).await {
         Ok(outcome) => Ok(outcome),
         Err((status, detail))
@@ -897,6 +902,7 @@ async fn resolve_model_runtime(
         base_url: normalize_base_url(config.openai_base_url.as_str()),
         api_key: api_key.to_string(),
         temperature: config.openai_temperature.clamp(0.0, 2.0),
+        supports_responses: false,
     })
 }
 
@@ -929,6 +935,7 @@ fn model_runtime_from_model_config(
             .temperature
             .unwrap_or(config.openai_temperature)
             .clamp(0.0, 2.0),
+        supports_responses: item.supports_responses == 1,
     })
 }
 
@@ -968,6 +975,10 @@ fn model_runtime_from_value(
         .and_then(Value::as_f64)
         .unwrap_or(config.openai_temperature)
         .clamp(0.0, 2.0);
+    let supports_responses = value
+        .get("supports_responses")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
 
     Ok(ModelRuntime {
         provider,
@@ -975,10 +986,24 @@ fn model_runtime_from_value(
         base_url,
         api_key: api_key.to_string(),
         temperature,
+        supports_responses,
     })
 }
 
 async fn request_chat_completion(
+    http: &Client,
+    runtime: &ModelRuntime,
+    messages: &[Value],
+    tools: Option<&[Value]>,
+) -> Result<Value, (StatusCode, String)> {
+    if runtime.supports_responses {
+        return request_responses_completion(http, runtime, messages, tools).await;
+    }
+
+    request_chat_completions(http, runtime, messages, tools).await
+}
+
+async fn request_chat_completions(
     http: &Client,
     runtime: &ModelRuntime,
     messages: &[Value],
@@ -1023,6 +1048,286 @@ async fn request_chat_completion(
         .json::<Value>()
         .await
         .map_err(|err| bad_gateway_error(format!("agent builder ai response parse failed: {err}")))
+}
+
+async fn request_responses_completion(
+    http: &Client,
+    runtime: &ModelRuntime,
+    messages: &[Value],
+    tools: Option<&[Value]>,
+) -> Result<Value, (StatusCode, String)> {
+    let mut body = json!({
+        "model": runtime.model,
+        "temperature": runtime.temperature,
+        "max_output_tokens": 2400,
+        "stream": false,
+        "input": build_responses_input_from_messages(messages),
+    });
+
+    if let Some(tool_items) = tools {
+        body["tools"] = Value::Array(tool_items.to_vec());
+        body["tool_choice"] = Value::String("auto".to_string());
+    }
+
+    let endpoint = build_responses_endpoint(runtime.base_url.as_str());
+    let response = http
+        .post(endpoint)
+        .bearer_auth(runtime.api_key.as_str())
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|err| bad_gateway_error(format!("agent builder ai request failed: {err}")))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let payload = response.text().await.unwrap_or_default();
+        return Err((
+            StatusCode::BAD_GATEWAY,
+            format!(
+                "agent builder ai request status={} body={}",
+                status, payload
+            ),
+        ));
+    }
+
+    let payload = response
+        .json::<Value>()
+        .await
+        .map_err(|err| bad_gateway_error(format!("agent builder ai response parse failed: {err}")))?;
+
+    Ok(adapt_responses_to_chat_completion(payload))
+}
+
+fn build_responses_input_from_messages(messages: &[Value]) -> Value {
+    let mut items = Vec::new();
+
+    for message in messages {
+        let role = message
+            .get("role")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .unwrap_or("");
+        if role.is_empty() {
+            continue;
+        }
+
+        if role == "tool" {
+            let call_id = message
+                .get("tool_call_id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .unwrap_or("");
+            if call_id.is_empty() {
+                continue;
+            }
+
+            let raw_output = message.get("content").cloned().unwrap_or(Value::Null);
+            let output = if let Some(text) = raw_output.as_str() {
+                parse_json_candidate(text).unwrap_or_else(|| Value::String(text.to_string()))
+            } else {
+                raw_output
+            };
+
+            items.push(json!({
+                "type": "function_call_output",
+                "call_id": call_id,
+                "output": output,
+            }));
+            continue;
+        }
+
+        if role == "assistant" {
+            if let Some(tool_calls) = message.get("tool_calls").and_then(Value::as_array) {
+                for call in tool_calls {
+                    let call_id = call
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .unwrap_or("");
+                    let function = call.get("function");
+                    let name = function
+                        .and_then(|item| item.get("name"))
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .unwrap_or("");
+                    if call_id.is_empty() || name.is_empty() {
+                        continue;
+                    }
+
+                    let arguments = function
+                        .and_then(|item| item.get("arguments"))
+                        .cloned()
+                        .unwrap_or_else(|| Value::String("{}".to_string()));
+                    let arguments = arguments
+                        .as_str()
+                        .map(|raw| raw.to_string())
+                        .unwrap_or_else(|| arguments.to_string());
+
+                    items.push(json!({
+                        "type": "function_call",
+                        "call_id": call_id,
+                        "name": name,
+                        "arguments": arguments,
+                    }));
+                }
+            }
+        }
+
+        if let Some(text) = extract_message_text(message.get("content")) {
+            let trimmed = text.trim();
+            if !trimmed.is_empty() {
+                items.push(json!({
+                    "type": "message",
+                    "role": role,
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": trimmed,
+                        }
+                    ],
+                }));
+            }
+        }
+    }
+
+    Value::Array(items)
+}
+
+fn adapt_responses_to_chat_completion(value: Value) -> Value {
+    let content = extract_responses_output_text(&value);
+    let tool_calls = extract_responses_tool_calls(&value);
+    let finish_reason = value
+        .get("status")
+        .and_then(Value::as_str)
+        .map(|status| {
+            if status == "completed" {
+                "stop".to_string()
+            } else {
+                status.to_string()
+            }
+        })
+        .unwrap_or_else(|| "stop".to_string());
+
+    let mut message = Map::new();
+    message.insert(
+        "content".to_string(),
+        content.map(Value::String).unwrap_or(Value::Null),
+    );
+    if !tool_calls.is_empty() {
+        message.insert("tool_calls".to_string(), Value::Array(tool_calls));
+    }
+
+    json!({
+        "choices": [
+            {
+                "message": Value::Object(message),
+                "finish_reason": finish_reason,
+            }
+        ]
+    })
+}
+
+fn extract_responses_output_text(value: &Value) -> Option<String> {
+    if let Some(text) = value.get("output_text").and_then(Value::as_str) {
+        let trimmed = text.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+
+    let mut parts = Vec::new();
+    let Some(items) = value.get("output").and_then(Value::as_array) else {
+        return None;
+    };
+
+    for item in items {
+        let item_type = item.get("type").and_then(Value::as_str).unwrap_or("");
+        if item_type == "message" {
+            if let Some(contents) = item.get("content").and_then(Value::as_array) {
+                for content in contents {
+                    let content_type = content.get("type").and_then(Value::as_str).unwrap_or("");
+                    if content_type == "output_text"
+                        || content_type == "input_text"
+                        || content_type == "text"
+                    {
+                        if let Some(text) = content.get("text").and_then(Value::as_str) {
+                            let trimmed = text.trim();
+                            if !trimmed.is_empty() {
+                                parts.push(trimmed.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+            continue;
+        }
+
+        if (item_type == "output_text" || item_type == "input_text" || item_type == "text")
+            && item.get("text").and_then(Value::as_str).is_some()
+        {
+            if let Some(text) = item.get("text").and_then(Value::as_str) {
+                let trimmed = text.trim();
+                if !trimmed.is_empty() {
+                    parts.push(trimmed.to_string());
+                }
+            }
+        }
+    }
+
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("\n"))
+    }
+}
+
+fn extract_responses_tool_calls(value: &Value) -> Vec<Value> {
+    let Some(items) = value.get("output").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+
+    let mut out = Vec::new();
+    for item in items {
+        if item.get("type").and_then(Value::as_str) != Some("function_call") {
+            continue;
+        }
+
+        let call_id = item
+            .get("call_id")
+            .and_then(Value::as_str)
+            .or_else(|| item.get("id").and_then(Value::as_str))
+            .map(str::trim)
+            .unwrap_or("");
+        let name = item
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .unwrap_or("");
+        if call_id.is_empty() || name.is_empty() {
+            continue;
+        }
+
+        let arguments = item
+            .get("arguments")
+            .cloned()
+            .unwrap_or_else(|| Value::String("{}".to_string()));
+        let arguments = arguments
+            .as_str()
+            .map(|raw| raw.to_string())
+            .unwrap_or_else(|| arguments.to_string());
+
+        out.push(json!({
+            "id": call_id,
+            "type": "function",
+            "function": {
+                "name": name,
+                "arguments": arguments,
+            }
+        }));
+    }
+
+    out
 }
 
 fn build_agent_builder_tools() -> Vec<Value> {
@@ -1617,6 +1922,15 @@ fn build_chat_completion_endpoint(base_url: &str) -> String {
         normalized
     } else {
         format!("{}/chat/completions", normalized)
+    }
+}
+
+fn build_responses_endpoint(base_url: &str) -> String {
+    let normalized = normalize_base_url(base_url);
+    if normalized.ends_with("/responses") {
+        normalized
+    } else {
+        format!("{}/responses", normalized)
     }
 }
 

@@ -1,7 +1,7 @@
 import React from 'react';
 import { InputArea } from '../InputArea';
 import TaskDraftPanel from '../TaskDraftPanel';
-import TaskWorkbar, { type TaskWorkbarItem } from '../TaskWorkbar';
+import TaskWorkbar, { type RuntimeGuidanceWorkbarItem, type TaskWorkbarItem } from '../TaskWorkbar';
 import UiPromptPanel from '../UiPromptPanel';
 import type { AiModelConfig, Project } from '../../types';
 import type {
@@ -74,6 +74,7 @@ interface ChatComposerPanelProps {
   runtimeGuidancePendingCount?: number;
   runtimeGuidanceAppliedCount?: number;
   runtimeGuidanceLastAppliedAt?: string | null;
+  runtimeGuidanceItems?: RuntimeGuidanceWorkbarItem[];
 }
 
 const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
@@ -129,6 +130,7 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
   runtimeGuidancePendingCount = 0,
   runtimeGuidanceAppliedCount = 0,
   runtimeGuidanceLastAppliedAt = null,
+  runtimeGuidanceItems = [],
 }) => (
   <div className="border-t border-border">
     <TaskWorkbar
@@ -148,6 +150,7 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
       runtimeGuidancePendingCount={runtimeGuidancePendingCount}
       runtimeGuidanceAppliedCount={runtimeGuidanceAppliedCount}
       runtimeGuidanceLastAppliedAt={runtimeGuidanceLastAppliedAt}
+      runtimeGuidanceItems={runtimeGuidanceItems}
       onCompleteTask={onCompleteTask}
       onDeleteTask={onDeleteTask}
       onEditTask={onEditTask}

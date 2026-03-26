@@ -121,6 +121,16 @@ export interface SessionRuntimeGuidanceState {
   appliedCount: number;
   lastGuidanceAt: string | null;
   lastAppliedAt: string | null;
+  items: RuntimeGuidanceItem[];
+}
+
+export interface RuntimeGuidanceItem {
+  guidanceId: string;
+  turnId: string | null;
+  content: string;
+  status: 'queued' | 'applied' | 'dropped';
+  createdAt: string;
+  appliedAt: string | null;
 }
 
 export interface ContactRecord {

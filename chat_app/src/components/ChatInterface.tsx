@@ -638,6 +638,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 runtimeGuidancePendingCount={Number(currentRuntimeGuidanceState?.pendingCount || 0)}
                 runtimeGuidanceAppliedCount={Number(currentRuntimeGuidanceState?.appliedCount || 0)}
                 runtimeGuidanceLastAppliedAt={currentRuntimeGuidanceState?.lastAppliedAt || null}
+                runtimeGuidanceItems={Array.isArray(currentRuntimeGuidanceState?.items) ? currentRuntimeGuidanceState.items : []}
               />
             )}
           </div>

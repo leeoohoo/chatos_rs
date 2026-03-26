@@ -3,6 +3,7 @@ import React from 'react';
 import { MessageList } from '../MessageList';
 import ChatComposerPanel from './ChatComposerPanel';
 import SummaryPane from './SummaryPane';
+import type { RuntimeGuidanceWorkbarItem } from '../TaskWorkbar';
 
 interface ChatConversationPaneProps {
   currentSession: any;
@@ -78,6 +79,7 @@ interface ChatConversationPaneProps {
   runtimeGuidancePendingCount?: number;
   runtimeGuidanceAppliedCount?: number;
   runtimeGuidanceLastAppliedAt?: string | null;
+  runtimeGuidanceItems?: RuntimeGuidanceWorkbarItem[];
 }
 
 interface ChatMessagesPaneProps {
@@ -258,6 +260,7 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
   runtimeGuidancePendingCount = 0,
   runtimeGuidanceAppliedCount = 0,
   runtimeGuidanceLastAppliedAt = null,
+  runtimeGuidanceItems = [],
 }) => (
   <div className="flex-1 min-h-0 flex overflow-hidden">
     <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
@@ -340,6 +343,7 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
           runtimeGuidancePendingCount={runtimeGuidancePendingCount}
           runtimeGuidanceAppliedCount={runtimeGuidanceAppliedCount}
           runtimeGuidanceLastAppliedAt={runtimeGuidanceLastAppliedAt}
+          runtimeGuidanceItems={runtimeGuidanceItems}
         />
       )}
     </div>

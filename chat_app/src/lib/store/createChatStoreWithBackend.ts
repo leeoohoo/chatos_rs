@@ -125,6 +125,8 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                       }
 
                       const guidanceAt = new Date().toISOString();
+                      const optimisticGuidanceId = `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                      const maxItems = 20;
                       set((state: any) => {
                         if (!state.sessionRuntimeGuidanceState) {
                           state.sessionRuntimeGuidanceState = {};
@@ -134,11 +136,24 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                           appliedCount: 0,
                           lastGuidanceAt: null,
                           lastAppliedAt: null,
+                          items: [],
                         };
+                        const prevItems = Array.isArray(prev.items) ? prev.items : [];
                         state.sessionRuntimeGuidanceState[sessionId] = {
                           ...prev,
                           pendingCount: Math.max(0, Number(prev.pendingCount || 0) + 1),
                           lastGuidanceAt: guidanceAt,
+                          items: [
+                            {
+                              guidanceId: optimisticGuidanceId,
+                              turnId,
+                              content: trimmedContent,
+                              status: 'queued',
+                              createdAt: guidanceAt,
+                              appliedAt: null,
+                            },
+                            ...prevItems,
+                          ].slice(0, maxItems),
                         };
                       });
 
@@ -157,18 +172,45 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                             appliedCount: 0,
                             lastGuidanceAt: guidanceAt,
                             lastAppliedAt: null,
+                            items: [],
                           };
                           const pendingFromResponse = Number(
                             Number.isFinite(Number(response?.pending_count))
                               ? Number(response?.pending_count)
                               : Number.NaN
                           );
+                          const responseGuidanceId = String(response?.guidance_id || '').trim();
+                          const guidanceId = responseGuidanceId || optimisticGuidanceId;
+                          const nextStatus = response?.status === 'applied'
+                            ? 'applied'
+                            : (response?.status === 'dropped' ? 'dropped' : 'queued');
+                          const prevItems = Array.isArray(prev.items) ? [...prev.items] : [];
+                          const existingIndex = prevItems.findIndex((item: any) => item.guidanceId === optimisticGuidanceId || item.guidanceId === guidanceId);
+                          if (existingIndex >= 0) {
+                            prevItems[existingIndex] = {
+                              ...prevItems[existingIndex],
+                              guidanceId,
+                              turnId,
+                              content: prevItems[existingIndex]?.content || trimmedContent,
+                              status: nextStatus,
+                            };
+                          } else {
+                            prevItems.unshift({
+                              guidanceId,
+                              turnId,
+                              content: trimmedContent,
+                              status: nextStatus,
+                              createdAt: guidanceAt,
+                              appliedAt: null,
+                            });
+                          }
                           state.sessionRuntimeGuidanceState[sessionId] = {
                             ...prev,
                             pendingCount: Number.isFinite(pendingFromResponse)
                               ? Math.max(0, pendingFromResponse)
                               : prev.pendingCount,
                             lastGuidanceAt: guidanceAt,
+                            items: prevItems.slice(0, maxItems),
                           };
                         });
                         return {
@@ -188,10 +230,13 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                             appliedCount: 0,
                             lastGuidanceAt: null,
                             lastAppliedAt: null,
+                            items: [],
                           };
+                          const prevItems = Array.isArray(prev.items) ? prev.items : [];
                           state.sessionRuntimeGuidanceState[sessionId] = {
                             ...prev,
                             pendingCount: Math.max(0, Number(prev.pendingCount || 0) - 1),
+                            items: prevItems.filter((item: any) => item.guidanceId !== optimisticGuidanceId),
                           };
                         });
                         throw error;
