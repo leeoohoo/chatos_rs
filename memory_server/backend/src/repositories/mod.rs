@@ -3,6 +3,7 @@ pub mod auth;
 pub mod configs;
 pub mod contacts;
 pub mod jobs;
+pub mod locks;
 pub mod memories;
 pub mod messages;
 pub mod project_agent_links;

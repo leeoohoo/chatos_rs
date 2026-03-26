@@ -6,6 +6,7 @@ use super::{default_i64_0, default_pending};
 pub struct SessionSummary {
     pub id: String,
     pub session_id: String,
+    pub source_digest: Option<String>,
     pub summary_text: String,
     pub summary_model: String,
     pub trigger_type: String,
@@ -32,6 +33,7 @@ pub struct SessionSummary {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateSummaryInput {
     pub session_id: String,
+    pub source_digest: Option<String>,
     pub summary_text: String,
     pub summary_model: String,
     pub trigger_type: String,

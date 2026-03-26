@@ -7,8 +7,9 @@ mod read_ops;
 mod write_ops;
 
 pub use self::read_ops::{
-    list_agent_ids_with_pending_recall_rollup_by_user, list_agent_recalls,
-    list_pending_agent_recalls_by_level, list_project_memories, list_project_memories_by_contact,
+    find_agent_recall_by_source_digest, list_agent_ids_with_pending_recall_rollup_by_user,
+    list_agent_recalls, list_pending_agent_recalls_by_level, list_project_memories,
+    list_project_memories_by_contact,
 };
 pub use self::write_ops::{
     mark_agent_recalls_rolled_up, upsert_agent_recall, upsert_project_memory,

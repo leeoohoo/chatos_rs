@@ -132,3 +132,26 @@ pub async fn list_pending_agent_recalls_by_level(
         .map_err(|e| e.to_string())?;
     cursor.try_collect().await.map_err(|e| e.to_string())
 }
+
+pub async fn find_agent_recall_by_source_digest(
+    db: &Db,
+    user_id: &str,
+    agent_id: &str,
+    level: i64,
+    source_digest: &str,
+) -> Result<Option<AgentRecall>, String> {
+    let normalized = source_digest.trim();
+    if normalized.is_empty() {
+        return Ok(None);
+    }
+
+    agent_recalls_collection(db)
+        .find_one(doc! {
+            "user_id": user_id,
+            "agent_id": agent_id,
+            "level": level,
+            "source_digest": normalized,
+        })
+        .await
+        .map_err(|e| e.to_string())
+}

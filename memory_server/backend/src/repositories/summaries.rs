@@ -15,7 +15,8 @@ pub use self::aggregate_ops::{
     list_session_ids_with_pending_rollup_by_user, list_summary_level_stats,
 };
 pub use self::read_ops::{
-    list_all_summaries_by_session, list_pending_summaries_by_level_no_limit, list_summaries,
+    find_summary_by_source_digest, list_all_summaries_by_session,
+    list_pending_summaries_by_level_no_limit, list_summaries,
 };
 pub use self::write_ops::{
     create_summary, delete_summary, mark_summaries_agent_memory_summarized,

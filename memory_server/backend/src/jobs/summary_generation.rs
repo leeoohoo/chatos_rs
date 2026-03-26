@@ -3,13 +3,13 @@ use tracing::{info, warn};
 use crate::ai::AiClient;
 use crate::db::Db;
 use crate::models::{AiModelConfig, CreateSummaryInput};
-use crate::repositories::{jobs, messages, summaries};
+use crate::repositories::{jobs, locks, messages, summaries};
 use crate::services::summarizer::{
     estimate_tokens_text, estimate_tokens_texts, message_to_summary_block,
     summarize_texts_with_split,
 };
 
-use super::{memory_sync, summary_support};
+use super::{idempotency, job_support, memory_sync, summary_support};
 
 pub(crate) async fn process_session(
     pool: &Db,
@@ -21,6 +21,57 @@ pub(crate) async fn process_session(
     round_limit: i64,
     token_limit: i64,
     target_summary_tokens: i64,
+) -> Result<(usize, usize), String> {
+    let lease_seconds = job_support::resolve_lock_lease_seconds();
+    let lock_key = format!("summary_l0:{}", session_id);
+    let Some(lock_handle) =
+        locks::try_acquire_job_lock(pool, lock_key.as_str(), lease_seconds).await?
+    else {
+        info!(
+            "[MEMORY-SUMMARY-L0] skip session lock busy: session_id={}",
+            session_id
+        );
+        return Ok((0, 0));
+    };
+
+    let result = process_session_locked(
+        pool,
+        ai,
+        session_id,
+        model_name,
+        model_cfg,
+        summary_prompt,
+        round_limit,
+        token_limit,
+        target_summary_tokens,
+        &lock_handle,
+        lease_seconds,
+    )
+    .await;
+
+    if let Err(err) = locks::release_job_lock(pool, &lock_handle).await {
+        warn!(
+            "[MEMORY-SUMMARY-L0] release lock failed: session_id={} key={} error={}",
+            session_id, lock_handle.lock_key, err
+        );
+    }
+
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn process_session_locked(
+    pool: &Db,
+    ai: &AiClient,
+    session_id: &str,
+    model_name: &str,
+    model_cfg: Option<&AiModelConfig>,
+    summary_prompt: Option<&str>,
+    round_limit: i64,
+    token_limit: i64,
+    target_summary_tokens: i64,
+    lock_handle: &locks::JobLockHandle,
+    lease_seconds: i64,
 ) -> Result<(usize, usize), String> {
     let pending_head =
         messages::list_pending_messages(pool, session_id, Some(round_limit.max(1))).await?;
@@ -66,6 +117,47 @@ pub(crate) async fn process_session(
         .iter()
         .map(|m| estimate_tokens_text(message_to_summary_block(m).as_str()))
         .sum::<i64>();
+    let source_digest = idempotency::digest_from_ids("summary_l0", selected_ids.as_slice())
+        .ok_or_else(|| "build summary source digest failed".to_string())?;
+
+    if let Some(existing) =
+        summaries::find_summary_by_source_digest(pool, session_id, 0, source_digest.as_str())
+            .await?
+    {
+        if let Err(err) = locks::refresh_job_lock(pool, lock_handle, lease_seconds).await {
+            warn!(
+                "[MEMORY-SUMMARY-L0] refresh lock failed before reuse: session_id={} error={}",
+                session_id, err
+            );
+        }
+
+        if let Err(err) = memory_sync::sync_memories_from_summary(pool, session_id, &existing).await {
+            return Err(err);
+        }
+
+        let marked = messages::mark_messages_summarized(
+            pool,
+            session_id,
+            selected_ids.as_slice(),
+            existing.id.as_str(),
+        )
+        .await?;
+        if marked < selected_ids.len() {
+            warn!(
+                "[MEMORY-SUMMARY-L0] partial mark on reuse: session_id={} selected={} marked={} summary_id={}",
+                session_id,
+                selected_ids.len(),
+                marked,
+                existing.id
+            );
+        }
+
+        info!(
+            "[MEMORY-SUMMARY-L0] reused existing summary by digest: session_id={} digest={} summary_id={} marked={}",
+            session_id, source_digest, existing.id, marked
+        );
+        return Ok((0, marked));
+    }
 
     let job_run = match jobs::create_job_run(
         pool,
@@ -86,6 +178,13 @@ pub(crate) async fn process_session(
         }
         Err(err) => return Err(err),
     };
+
+    if let Err(err) = locks::refresh_job_lock(pool, lock_handle, lease_seconds).await {
+        warn!(
+            "[MEMORY-SUMMARY-L0] refresh lock failed before llm: session_id={} error={}",
+            session_id, err
+        );
+    }
 
     let mut overflow_retry_count = 0usize;
     let mut forced_truncated = false;
@@ -161,10 +260,18 @@ pub(crate) async fn process_session(
         trigger_type.push_str("+forced_truncated");
     }
 
-    let summary = match summaries::create_summary(
+    if let Err(err) = locks::refresh_job_lock(pool, lock_handle, lease_seconds).await {
+        warn!(
+            "[MEMORY-SUMMARY-L0] refresh lock failed before persist: session_id={} error={}",
+            session_id, err
+        );
+    }
+
+    let create_result = match summaries::create_summary(
         pool,
         CreateSummaryInput {
             session_id: session_id.to_string(),
+            source_digest: Some(source_digest.clone()),
             summary_text,
             summary_model: model_name.to_string(),
             trigger_type,
@@ -186,11 +293,20 @@ pub(crate) async fn process_session(
             return Err(err);
         }
     };
+    let generated = if create_result.inserted { 1 } else { 0 };
+    let summary = create_result.summary;
 
     if let Err(err) = memory_sync::sync_memories_from_summary(pool, session_id, &summary).await {
         let _ =
             summary_support::finish_failed_job_run(pool, job_run.id.as_str(), err.as_str()).await;
         return Err(err);
+    }
+
+    if let Err(err) = locks::refresh_job_lock(pool, lock_handle, lease_seconds).await {
+        warn!(
+            "[MEMORY-SUMMARY-L0] refresh lock failed before mark: session_id={} error={}",
+            session_id, err
+        );
     }
 
     let marked = match messages::mark_messages_summarized(
@@ -209,7 +325,25 @@ pub(crate) async fn process_session(
         }
     };
 
-    if let Err(err) = jobs::finish_job_run(pool, job_run.id.as_str(), "done", 1, None).await {
+    if marked < selected_ids.len() {
+        warn!(
+            "[MEMORY-SUMMARY-L0] partial mark: session_id={} selected={} marked={} summary_id={}",
+            session_id,
+            selected_ids.len(),
+            marked,
+            summary.id
+        );
+    }
+
+    if let Err(err) = jobs::finish_job_run(
+        pool,
+        job_run.id.as_str(),
+        "done",
+        generated as i64,
+        None,
+    )
+    .await
+    {
         warn!(
             "[MEMORY-SUMMARY-L0] finish job run failed: session_id={} job_run_id={} error={}",
             session_id, job_run.id, err
@@ -217,12 +351,13 @@ pub(crate) async fn process_session(
     }
 
     info!(
-        "[MEMORY-SUMMARY-L0] done session_id={} selected={} marked={} summary_id={}",
+        "[MEMORY-SUMMARY-L0] done session_id={} selected={} marked={} generated={} summary_id={}",
         session_id,
         selected.len(),
         marked,
+        generated,
         summary.id
     );
 
-    Ok((1, marked))
+    Ok((generated, marked))
 }

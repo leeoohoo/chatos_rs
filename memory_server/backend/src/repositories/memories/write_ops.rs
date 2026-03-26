@@ -101,6 +101,7 @@ pub struct UpsertAgentRecallInput {
     pub user_id: String,
     pub agent_id: String,
     pub recall_key: String,
+    pub source_digest: Option<String>,
     pub recall_text: String,
     pub level: i64,
     pub confidence: Option<f64>,
@@ -121,11 +122,18 @@ pub async fn upsert_agent_recall(
     let mut set_doc = doc! {
         "recall_text": input.recall_text.as_str(),
         "level": input.level.max(0),
-        "rolled_up": 0,
-        "rollup_recall_key": Bson::Null,
-        "rolled_up_at": Bson::Null,
         "updated_at": now.as_str(),
     };
+    if let Some(source_digest) = input
+        .source_digest
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        set_doc.insert("source_digest", source_digest);
+    } else {
+        set_doc.insert("source_digest", Bson::Null);
+    }
     if let Some(confidence) = input.confidence {
         set_doc.insert("confidence", confidence);
     }
@@ -142,6 +150,9 @@ pub async fn upsert_agent_recall(
             "user_id": input.user_id.as_str(),
             "agent_id": input.agent_id.as_str(),
             "recall_key": input.recall_key.as_str(),
+            "rolled_up": 0,
+            "rollup_recall_key": Bson::Null,
+            "rolled_up_at": Bson::Null,
         }
     };
 

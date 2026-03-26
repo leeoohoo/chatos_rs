@@ -1,6 +1,7 @@
 pub mod agent_memory;
 mod agent_memory_generation;
 mod agent_memory_support;
+mod idempotency;
 mod job_support;
 pub mod memory_sync;
 pub mod rollup;

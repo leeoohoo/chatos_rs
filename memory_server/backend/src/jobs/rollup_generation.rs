@@ -3,12 +3,12 @@ use tracing::{info, warn};
 use crate::ai::AiClient;
 use crate::db::Db;
 use crate::models::{AiModelConfig, CreateSummaryInput, SessionSummary};
-use crate::repositories::{jobs, summaries};
+use crate::repositories::{jobs, locks, summaries};
 use crate::services::summarizer::{
     estimate_tokens_text, summarize_texts_with_split, summary_to_rollup_block,
 };
 
-use super::{job_support, memory_sync};
+use super::{idempotency, job_support, memory_sync};
 
 #[derive(Debug, Clone)]
 struct RollupBatchSelection {
@@ -29,6 +29,61 @@ pub(crate) async fn process_session(
     target_summary_tokens: i64,
     keep_raw_level0_count: i64,
     max_level: i64,
+) -> Result<(usize, usize), String> {
+    let lease_seconds = job_support::resolve_lock_lease_seconds();
+    let lock_key = format!("summary_rollup:{}", session_id);
+    let Some(lock_handle) =
+        locks::try_acquire_job_lock(pool, lock_key.as_str(), lease_seconds).await?
+    else {
+        info!(
+            "[MEMORY-SUMMARY-ROLLUP] skip session lock busy: session_id={}",
+            session_id
+        );
+        return Ok((0, 0));
+    };
+
+    let result = process_session_locked(
+        pool,
+        ai,
+        session_id,
+        model_name,
+        model_cfg,
+        summary_prompt,
+        round_limit,
+        token_limit,
+        target_summary_tokens,
+        keep_raw_level0_count,
+        max_level,
+        &lock_handle,
+        lease_seconds,
+    )
+    .await;
+
+    if let Err(err) = locks::release_job_lock(pool, &lock_handle).await {
+        warn!(
+            "[MEMORY-SUMMARY-ROLLUP] release lock failed: session_id={} key={} error={}",
+            session_id, lock_handle.lock_key, err
+        );
+    }
+
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn process_session_locked(
+    pool: &Db,
+    ai: &AiClient,
+    session_id: &str,
+    model_name: &str,
+    model_cfg: Option<&AiModelConfig>,
+    summary_prompt: Option<&str>,
+    round_limit: i64,
+    token_limit: i64,
+    target_summary_tokens: i64,
+    keep_raw_level0_count: i64,
+    max_level: i64,
+    lock_handle: &locks::JobLockHandle,
+    lease_seconds: i64,
 ) -> Result<(usize, usize), String> {
     let selection = select_rollup_batch(
         pool,
@@ -66,6 +121,51 @@ pub(crate) async fn process_session(
         .iter()
         .map(|s| estimate_tokens_text(s.summary_text.as_str()))
         .sum::<i64>();
+    let digest_namespace = format!("summary_rollup:l{}->{}", level, target_level);
+    let source_digest =
+        idempotency::digest_from_ids(digest_namespace.as_str(), selected_ids.as_slice())
+            .ok_or_else(|| "build rollup source digest failed".to_string())?;
+
+    if let Some(existing) = summaries::find_summary_by_source_digest(
+        pool,
+        session_id,
+        target_level,
+        source_digest.as_str(),
+    )
+    .await?
+    {
+        if let Err(err) = locks::refresh_job_lock(pool, lock_handle, lease_seconds).await {
+            warn!(
+                "[MEMORY-SUMMARY-ROLLUP] refresh lock failed before reuse: session_id={} error={}",
+                session_id, err
+            );
+        }
+
+        if let Err(err) = memory_sync::sync_memories_from_summary(pool, session_id, &existing).await {
+            return Err(err);
+        }
+
+        let marked = summaries::mark_summaries_rolled_up(
+            pool,
+            selected_ids.as_slice(),
+            existing.id.as_str(),
+        )
+        .await?;
+        if marked < selected_ids.len() {
+            warn!(
+                "[MEMORY-SUMMARY-ROLLUP] partial mark on reuse: session_id={} selected={} marked={} summary_id={}",
+                session_id,
+                selected_ids.len(),
+                marked,
+                existing.id
+            );
+        }
+        info!(
+            "[MEMORY-SUMMARY-ROLLUP] reused existing summary by digest: session_id={} level={}->{} digest={} summary_id={} marked={}",
+            session_id, level, target_level, source_digest, existing.id, marked
+        );
+        return Ok((0, marked));
+    }
 
     let trigger = format!("rollup_level_{}_to_{}", level, target_level);
     let trigger_with_reason = format!("{}+{}", trigger, trigger_reason);
@@ -88,6 +188,13 @@ pub(crate) async fn process_session(
         }
         Err(err) => return Err(err),
     };
+
+    if let Err(err) = locks::refresh_job_lock(pool, lock_handle, lease_seconds).await {
+        warn!(
+            "[MEMORY-SUMMARY-ROLLUP] refresh lock failed before llm: session_id={} error={}",
+            session_id, err
+        );
+    }
 
     let mut overflow_retry_count = 0usize;
     let mut forced_truncated = false;
@@ -155,10 +262,18 @@ pub(crate) async fn process_session(
         trigger_type.push_str("+forced_truncated");
     }
 
-    let summary = match summaries::create_summary(
+    if let Err(err) = locks::refresh_job_lock(pool, lock_handle, lease_seconds).await {
+        warn!(
+            "[MEMORY-SUMMARY-ROLLUP] refresh lock failed before persist: session_id={} error={}",
+            session_id, err
+        );
+    }
+
+    let create_result = match summaries::create_summary(
         pool,
         CreateSummaryInput {
             session_id: session_id.to_string(),
+            source_digest: Some(source_digest.clone()),
             summary_text,
             summary_model: model_name.to_string(),
             trigger_type,
@@ -179,10 +294,19 @@ pub(crate) async fn process_session(
             return Err(err);
         }
     };
+    let generated = if create_result.inserted { 1 } else { 0 };
+    let summary = create_result.summary;
 
     if let Err(err) = memory_sync::sync_memories_from_summary(pool, session_id, &summary).await {
         let _ = finish_failed_job_run(pool, job_run.id.as_str(), err.as_str()).await;
         return Err(err);
+    }
+
+    if let Err(err) = locks::refresh_job_lock(pool, lock_handle, lease_seconds).await {
+        warn!(
+            "[MEMORY-SUMMARY-ROLLUP] refresh lock failed before mark: session_id={} error={}",
+            session_id, err
+        );
     }
 
     let marked = match summaries::mark_summaries_rolled_up(
@@ -198,7 +322,25 @@ pub(crate) async fn process_session(
             return Err(err);
         }
     };
-    if let Err(err) = jobs::finish_job_run(pool, job_run.id.as_str(), "done", 1, None).await {
+    if marked < selected_ids.len() {
+        warn!(
+            "[MEMORY-SUMMARY-ROLLUP] partial mark: session_id={} selected={} marked={} summary_id={}",
+            session_id,
+            selected_ids.len(),
+            marked,
+            summary.id
+        );
+    }
+
+    if let Err(err) = jobs::finish_job_run(
+        pool,
+        job_run.id.as_str(),
+        "done",
+        generated as i64,
+        None,
+    )
+    .await
+    {
         warn!(
             "[MEMORY-SUMMARY-ROLLUP] finish job run failed: session_id={} job_run_id={} error={}",
             session_id, job_run.id, err
@@ -206,16 +348,17 @@ pub(crate) async fn process_session(
     }
 
     info!(
-        "[MEMORY-SUMMARY-ROLLUP] done session_id={} level={}->{} selected={} marked={} summary_id={}",
+        "[MEMORY-SUMMARY-ROLLUP] done session_id={} level={}->{} selected={} marked={} generated={} summary_id={}",
         session_id,
         level,
         target_level,
         selected.len(),
         marked,
+        generated,
         summary.id
     );
 
-    Ok((1, marked))
+    Ok((generated, marked))
 }
 
 async fn finish_failed_job_run(pool: &Db, job_run_id: &str, error_message: &str) {

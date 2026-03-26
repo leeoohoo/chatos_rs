@@ -13,6 +13,7 @@ pub async fn init_schema(db: &Db) -> Result<(), String> {
     ensure_summary_indexes(db).await?;
     ensure_config_indexes(db).await?;
     ensure_job_run_indexes(db).await?;
+    ensure_job_lock_indexes(db).await?;
     ensure_agent_skill_indexes(db).await?;
     ensure_project_memory_indexes(db).await?;
     ensure_turn_runtime_snapshot_indexes(db).await?;
@@ -105,6 +106,14 @@ async fn ensure_summary_indexes(db: &Db) -> Result<(), String> {
         doc! {"rollup_summary_id": 1},
     )
     .await?;
+    ensure_unique_partial_index(
+        db.collection("session_summaries_v2"),
+        doc! {"session_id": 1, "level": 1, "source_digest": 1},
+        doc! {
+            "source_digest": {"$exists": true, "$type": "string"},
+        },
+    )
+    .await?;
     Ok(())
 }
 
@@ -155,6 +164,12 @@ async fn ensure_job_run_indexes(db: &Db) -> Result<(), String> {
         },
     )
     .await?;
+    Ok(())
+}
+
+async fn ensure_job_lock_indexes(db: &Db) -> Result<(), String> {
+    ensure_unique_index(db.collection("job_locks"), doc! {"lock_key": 1}).await?;
+    ensure_index(db.collection("job_locks"), doc! {"expires_at_ts": 1}).await?;
     Ok(())
 }
 
@@ -280,6 +295,14 @@ async fn ensure_project_memory_indexes(db: &Db) -> Result<(), String> {
     ensure_index(
         db.collection("agent_recalls"),
         doc! {"user_id": 1, "agent_id": 1, "level": 1, "rolled_up": 1, "updated_at": 1},
+    )
+    .await?;
+    ensure_unique_partial_index(
+        db.collection("agent_recalls"),
+        doc! {"user_id": 1, "agent_id": 1, "level": 1, "source_digest": 1},
+        doc! {
+            "source_digest": {"$exists": true, "$type": "string"},
+        },
     )
     .await?;
     Ok(())

@@ -1,5 +1,4 @@
 use tracing::{info, warn};
-use uuid::Uuid;
 
 use crate::ai::AiClient;
 use crate::db::Db;
@@ -10,6 +9,7 @@ use crate::services::summarizer::{estimate_tokens_text, summarize_texts_with_spl
 use super::agent_memory_support::{
     finish_failed_job_run, recall_to_rollup_block, select_rollup_batch, select_summary_batch,
 };
+use super::idempotency;
 
 pub(crate) async fn generate_level0_recall_from_summaries(
     pool: &Db,
@@ -47,6 +47,31 @@ pub(crate) async fn generate_level0_recall_from_summaries(
         .iter()
         .map(|text| estimate_tokens_text(text.as_str()))
         .sum::<i64>();
+    let source_digest = idempotency::digest_from_ids("agent_recall_l0", selected_ids.as_slice())
+        .ok_or_else(|| "build agent l0 source digest failed".to_string())?;
+
+    if let Some(existing) =
+        memories::find_agent_recall_by_source_digest(pool, user_id, agent_id, 0, source_digest.as_str())
+            .await?
+    {
+        let marked =
+            summaries::mark_summaries_agent_memory_summarized(pool, selected_ids.as_slice()).await?;
+        if marked < selected_ids.len() {
+            warn!(
+                "[MEMORY-AGENT-RECALL] partial l0 mark on reuse: user_id={} agent_id={} selected={} marked={} recall_id={}",
+                user_id,
+                agent_id,
+                selected_ids.len(),
+                marked,
+                existing.id
+            );
+        }
+        info!(
+            "[MEMORY-AGENT-RECALL] reused l0 recall by digest: user_id={} agent_id={} digest={} recall_key={} marked={}",
+            user_id, agent_id, source_digest, existing.recall_key, marked
+        );
+        return Ok((0, marked));
+    }
 
     let trigger_reason = if selected.len() as i64 >= round_limit {
         "summary_count_limit"
@@ -95,13 +120,14 @@ pub(crate) async fn generate_level0_recall_from_summaries(
         ));
     }
 
-    let recall_key = format!("agent_recall:l0:{}", Uuid::new_v4());
+    let recall_key = format!("agent_recall:l0:{}", source_digest);
     let _ = memories::upsert_agent_recall(
         pool,
         memories::UpsertAgentRecallInput {
             user_id: user_id.to_string(),
             agent_id: agent_id.to_string(),
             recall_key,
+            source_digest: Some(source_digest.clone()),
             recall_text,
             level: 0,
             confidence: None,
@@ -112,6 +138,15 @@ pub(crate) async fn generate_level0_recall_from_summaries(
 
     let marked =
         summaries::mark_summaries_agent_memory_summarized(pool, selected_ids.as_slice()).await?;
+    if marked < selected_ids.len() {
+        warn!(
+            "[MEMORY-AGENT-RECALL] partial l0 mark: user_id={} agent_id={} selected={} marked={}",
+            user_id,
+            agent_id,
+            selected_ids.len(),
+            marked
+        );
+    }
 
     if let Err(err) = jobs::finish_job_run(pool, job_run.id.as_str(), "done", 1, None).await {
         warn!(
@@ -181,6 +216,46 @@ pub(crate) async fn generate_rollup_recall(
         .iter()
         .map(|item| estimate_tokens_text(item.recall_text.as_str()))
         .sum::<i64>();
+    let digest_namespace = format!("agent_recall_rollup:l{}->{}", level, target_level);
+    let source_digest =
+        idempotency::digest_from_ids(digest_namespace.as_str(), selected_ids.as_slice())
+            .ok_or_else(|| "build agent rollup source digest failed".to_string())?;
+
+    if let Some(existing) = memories::find_agent_recall_by_source_digest(
+        pool,
+        user_id,
+        agent_id,
+        target_level,
+        source_digest.as_str(),
+    )
+    .await?
+    {
+        let marked = memories::mark_agent_recalls_rolled_up(
+            pool,
+            user_id,
+            agent_id,
+            selected_ids.as_slice(),
+            existing.recall_key.as_str(),
+        )
+        .await?;
+        if marked < selected_ids.len() {
+            warn!(
+                "[MEMORY-AGENT-RECALL] partial rollup mark on reuse: user_id={} agent_id={} level={}->{} selected={} marked={} recall_id={}",
+                user_id,
+                agent_id,
+                level,
+                target_level,
+                selected_ids.len(),
+                marked,
+                existing.id
+            );
+        }
+        info!(
+            "[MEMORY-AGENT-RECALL] reused rollup recall by digest: user_id={} agent_id={} level={}->{} digest={} recall_key={} marked={}",
+            user_id, agent_id, level, target_level, source_digest, existing.recall_key, marked
+        );
+        return Ok((0, marked));
+    }
 
     let trigger = format!(
         "agent_recall_rollup_level_{}_to_{}+{}",
@@ -248,13 +323,14 @@ pub(crate) async fn generate_rollup_recall(
         merged
     };
 
-    let rollup_recall_key = format!("agent_recall:l{}:{}", target_level, Uuid::new_v4());
+    let rollup_recall_key = format!("agent_recall:l{}:{}", target_level, source_digest);
     let _ = memories::upsert_agent_recall(
         pool,
         memories::UpsertAgentRecallInput {
             user_id: user_id.to_string(),
             agent_id: agent_id.to_string(),
             recall_key: rollup_recall_key.clone(),
+            source_digest: Some(source_digest.clone()),
             recall_text,
             level: target_level,
             confidence: None,
@@ -271,6 +347,17 @@ pub(crate) async fn generate_rollup_recall(
         rollup_recall_key.as_str(),
     )
     .await?;
+    if marked < selected_ids.len() {
+        warn!(
+            "[MEMORY-AGENT-RECALL] partial rollup mark: user_id={} agent_id={} level={}->{} selected={} marked={}",
+            user_id,
+            agent_id,
+            level,
+            target_level,
+            selected_ids.len(),
+            marked
+        );
+    }
 
     if let Err(err) = jobs::finish_job_run(pool, job_run.id.as_str(), "done", 1, None).await {
         warn!(

@@ -25,6 +25,7 @@ pub struct AgentRecall {
     pub user_id: String,
     pub agent_id: String,
     pub recall_key: String,
+    pub source_digest: Option<String>,
     pub recall_text: String,
     #[serde(default = "default_i64_0")]
     pub level: i64,

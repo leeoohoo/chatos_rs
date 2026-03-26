@@ -52,6 +52,27 @@ pub async fn list_all_summaries_by_session(
     cursor.try_collect().await.map_err(|e| e.to_string())
 }
 
+pub async fn find_summary_by_source_digest(
+    db: &Db,
+    session_id: &str,
+    level: i64,
+    source_digest: &str,
+) -> Result<Option<SessionSummary>, String> {
+    let normalized = source_digest.trim();
+    if normalized.is_empty() {
+        return Ok(None);
+    }
+
+    collection(db)
+        .find_one(doc! {
+            "session_id": session_id,
+            "level": level,
+            "source_digest": normalized,
+        })
+        .await
+        .map_err(|e| e.to_string())
+}
+
 pub async fn list_pending_summaries_by_level_no_limit(
     db: &Db,
     session_id: &str,

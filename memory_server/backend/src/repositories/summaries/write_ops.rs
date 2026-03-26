@@ -7,11 +7,29 @@ use crate::models::{CreateSummaryInput, SessionSummary};
 use super::collection;
 use super::now_rfc3339;
 
-pub async fn create_summary(db: &Db, input: CreateSummaryInput) -> Result<SessionSummary, String> {
+#[derive(Debug, Clone)]
+pub struct CreateSummaryResult {
+    pub summary: SessionSummary,
+    pub inserted: bool,
+}
+
+fn is_duplicate_key_error(err: &mongodb::error::Error) -> bool {
+    let text = err.to_string().to_ascii_lowercase();
+    text.contains("e11000") || text.contains("duplicate key")
+}
+
+pub async fn create_summary(db: &Db, input: CreateSummaryInput) -> Result<CreateSummaryResult, String> {
     let now = now_rfc3339();
+    let source_digest = input
+        .source_digest
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
     let summary = SessionSummary {
         id: Uuid::new_v4().to_string(),
         session_id: input.session_id,
+        source_digest: source_digest.clone(),
         summary_text: input.summary_text,
         summary_model: input.summary_model,
         trigger_type: input.trigger_type,
@@ -30,12 +48,34 @@ pub async fn create_summary(db: &Db, input: CreateSummaryInput) -> Result<Sessio
         updated_at: now,
     };
 
-    collection(db)
-        .insert_one(summary.clone())
-        .await
-        .map_err(|e| e.to_string())?;
-
-    Ok(summary)
+    match collection(db).insert_one(summary.clone()).await {
+        Ok(_) => {
+            return Ok(CreateSummaryResult {
+                summary,
+                inserted: true,
+            });
+        }
+        Err(err) if is_duplicate_key_error(&err) => {
+            if let Some(digest) = source_digest.as_deref() {
+                if let Some(existing) = collection(db)
+                    .find_one(doc! {
+                        "session_id": summary.session_id.as_str(),
+                        "level": summary.level,
+                        "source_digest": digest,
+                    })
+                    .await
+                    .map_err(|e| e.to_string())?
+                {
+                    return Ok(CreateSummaryResult {
+                        summary: existing,
+                        inserted: false,
+                    });
+                }
+            }
+            return Err(err.to_string());
+        }
+        Err(err) => return Err(err.to_string()),
+    }
 }
 
 pub async fn mark_summaries_rolled_up(
