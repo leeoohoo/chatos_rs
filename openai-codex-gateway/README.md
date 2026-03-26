@@ -34,6 +34,27 @@ python -m pip install -e .
 python openai-codex-gateway/server.py --host 127.0.0.1 --port 8088
 ```
 
+快速后台启动（推荐）：
+
+```bash
+cd openai-codex-gateway
+./gateway_ctl.sh start
+```
+
+常用命令：
+
+```bash
+./gateway_ctl.sh status
+./gateway_ctl.sh tail
+./gateway_ctl.sh restart
+./gateway_ctl.sh stop
+```
+
+默认日志与 PID：
+
+- `/tmp/chatos_rs_dev/codex_gateway.log`
+- `/tmp/chatos_rs_dev/codex_gateway.pid`
+
 可选参数：
 
 - `--codex-bin`：指定 codex 可执行文件路径
@@ -87,6 +108,12 @@ Authorization: Bearer <API_KEY>   # 可选
 
 - `cwd`：请求级工作目录。网关会把它传给 `thread_start/thread_resume/turn_start`，
   用来把本轮以及后续续聊绑定到指定项目目录，而不是服务启动时的默认 `--cwd`。
+
+模型说明：
+
+- 可以在每次 `POST /v1/responses` 请求里传 `model`（例如 `gpt-5`）。
+- 网关会把该 `model` 透传给 codex app-server（新会话和续聊都会生效）。
+- 如果不传 `model`，则使用 codex 当前默认模型（响应中会显示为 `codex-default`）。
 
 ## OpenAI Python SDK 调用示例
 
@@ -264,6 +291,7 @@ client = OpenAI(
 
 # 1) 首轮
 resp1 = client.responses.create(
+    model="gpt-5",
     input="请调用 mcp__my_mcp__my_tool 并只输出结果",
     tools=[{
         "type": "mcp",
@@ -278,6 +306,7 @@ print(resp1.id, resp1.output_text)
 
 # 2) 续聊（同会话）
 resp2 = client.responses.create(
+    model="gpt-5",
     previous_response_id=resp1.id,
     input="继续调用 mcp__my_mcp__my_tool，返回最新结果",
     tools=[{

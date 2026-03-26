@@ -30,6 +30,11 @@ This gateway normalizes API access so compatibility is preserved while backend i
 - `GET /v1/models`
 - `POST /v1/responses`
 
+## Model Selection
+- Clients can pass `model` in each `POST /v1/responses` request.
+- The gateway forwards that model to codex app-server.
+- If `model` is omitted, codex default model is used.
+
 ## Python Dependencies
 Install dependencies:
 
@@ -43,6 +48,25 @@ From this directory:
 ```bash
 python server.py --host 127.0.0.1 --port 8088
 ```
+
+## Quick Background Run (Recommended)
+
+```bash
+./gateway_ctl.sh start
+```
+
+Common commands:
+
+```bash
+./gateway_ctl.sh status
+./gateway_ctl.sh tail
+./gateway_ctl.sh restart
+./gateway_ctl.sh stop
+```
+
+Default log and PID paths:
+- `/tmp/chatos_rs_dev/codex_gateway.log`
+- `/tmp/chatos_rs_dev/codex_gateway.pid`
 
 ## Notes
 - The gateway prefers bundled SDK code under `vendor/` by default.
