@@ -30,6 +30,11 @@
 - `GET /v1/models`
 - `POST /v1/responses`
 
+## 模型传参说明
+- 支持客户端在 `POST /v1/responses` 中传 `model`。
+- 网关会把该模型透传给 codex app-server。
+- 如果不传 `model`，会使用 codex 当前默认模型。
+
 ## Python 依赖
 安装依赖：
 
@@ -43,6 +48,25 @@ python -m pip install -r requirements.txt
 ```bash
 python server.py --host 127.0.0.1 --port 8088
 ```
+
+## 快速后台启动（推荐）
+
+```bash
+./gateway_ctl.sh start
+```
+
+常用命令：
+
+```bash
+./gateway_ctl.sh status
+./gateway_ctl.sh tail
+./gateway_ctl.sh restart
+./gateway_ctl.sh stop
+```
+
+默认日志与 PID：
+- `/tmp/chatos_rs_dev/codex_gateway.log`
+- `/tmp/chatos_rs_dev/codex_gateway.pid`
 
 ## 说明
 - 默认优先使用 `vendor/` 下内置 SDK。
