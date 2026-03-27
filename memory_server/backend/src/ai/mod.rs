@@ -13,13 +13,14 @@ pub struct AiClient {
     default_base_url: String,
     default_model: String,
     default_temperature: f64,
+    request_timeout_secs: u64,
     allow_local_fallback: bool,
 }
 
 impl AiClient {
     pub fn new(timeout_secs: u64, config: &AppConfig) -> Result<Self, String> {
         let http = Client::builder()
-            .timeout(Duration::from_secs(timeout_secs))
+            .connect_timeout(Duration::from_secs(10))
             .build()
             .map_err(|e| e.to_string())?;
         Ok(Self {
@@ -28,6 +29,7 @@ impl AiClient {
             default_base_url: normalize_base_url(config.openai_base_url.as_str()),
             default_model: normalize_model_name(config.openai_model.as_str()),
             default_temperature: config.openai_temperature.clamp(0.0, 2.0),
+            request_timeout_secs: timeout_secs,
             allow_local_fallback: config.allow_local_summary_fallback,
         })
     }
@@ -183,14 +185,16 @@ impl AiClient {
             ]
         });
 
-        let resp = self
+        let mut req = self
             .http
             .post(endpoint)
             .bearer_auth(api_key)
             .header("Content-Type", "application/json")
-            .json(&body)
-            .send()
-            .await
+            .json(&body);
+        if let Some(timeout) = request_timeout_for_base_url(base_url, self.request_timeout_secs) {
+            req = req.timeout(timeout);
+        }
+        let resp = req.send().await
             .map_err(|e| format!("ai request failed: {e}"))?;
 
         if !resp.status().is_success() {
@@ -237,14 +241,16 @@ impl AiClient {
             ]
         });
 
-        let resp = self
+        let mut req = self
             .http
             .post(endpoint)
             .bearer_auth(api_key)
             .header("Content-Type", "application/json")
-            .json(&body)
-            .send()
-            .await
+            .json(&body);
+        if let Some(timeout) = request_timeout_for_base_url(base_url, self.request_timeout_secs) {
+            req = req.timeout(timeout);
+        }
+        let resp = req.send().await
             .map_err(|e| format!("ai request failed: {e}"))?;
 
         if !resp.status().is_success() {
@@ -501,6 +507,31 @@ fn build_responses_endpoint(base_url: &str) -> String {
         normalized
     } else {
         format!("{}/responses", normalized)
+    }
+}
+
+fn is_local_gateway_base_url(base_url: &str) -> bool {
+    let normalized = normalize_base_url(base_url);
+    let Ok(parsed) = url::Url::parse(normalized.as_str()) else {
+        return false;
+    };
+
+    let host = parsed
+        .host_str()
+        .map(|value| value.to_ascii_lowercase())
+        .unwrap_or_default();
+    if host != "127.0.0.1" && host != "localhost" && host != "::1" {
+        return false;
+    }
+
+    parsed.port_or_known_default() == Some(8089)
+}
+
+fn request_timeout_for_base_url(base_url: &str, timeout_secs: u64) -> Option<Duration> {
+    if is_local_gateway_base_url(base_url) {
+        None
+    } else {
+        Some(Duration::from_secs(timeout_secs))
     }
 }
 

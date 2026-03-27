@@ -129,7 +129,7 @@ pub async fn ai_create_agent(
     let request = NormalizedRequest::from_request(scope_user_id, req)?;
     let runtime = resolve_model_runtime(db, config, &request).await?;
     let http = Client::builder()
-        .timeout(Duration::from_secs(config.ai_request_timeout_secs))
+        .connect_timeout(Duration::from_secs(10))
         // In WSL deployments we've seen stale pooled sockets cause follow-up
         // calls to fail intermittently. Use short-lived connections here.
         .pool_max_idle_per_host(0)
@@ -1033,14 +1033,16 @@ async fn request_chat_completions(
     }
 
     let endpoint = build_chat_completion_endpoint(runtime.base_url.as_str());
-    let response = http
+    let mut request = http
         .post(endpoint.as_str())
         .bearer_auth(runtime.api_key.as_str())
         .header("Content-Type", "application/json")
         .header("Connection", "close")
-        .json(&body)
-        .send()
-        .await
+        .json(&body);
+    if let Some(timeout) = request_timeout_for_runtime(runtime) {
+        request = request.timeout(timeout);
+    }
+    let response = request.send().await
         .map_err(|err| bad_gateway_error(format_transport_error(runtime, endpoint.as_str(), &err)))?;
 
     if !response.status().is_success() {
@@ -1083,14 +1085,16 @@ async fn request_responses_completion(
     }
 
     let endpoint = build_responses_endpoint(runtime.base_url.as_str());
-    let response = http
+    let mut request = http
         .post(endpoint.as_str())
         .bearer_auth(runtime.api_key.as_str())
         .header("Content-Type", "application/json")
         .header("Connection", "close")
-        .json(&body)
-        .send()
-        .await
+        .json(&body);
+    if let Some(timeout) = request_timeout_for_runtime(runtime) {
+        request = request.timeout(timeout);
+    }
+    let response = request.send().await
         .map_err(|err| bad_gateway_error(format_transport_error(runtime, endpoint.as_str(), &err)))?;
 
     if !response.status().is_success() {
@@ -2236,6 +2240,31 @@ fn normalize_base_url(base_url: &str) -> String {
     }
 }
 
+fn is_local_gateway_base_url(base_url: &str) -> bool {
+    let normalized = normalize_base_url(base_url);
+    let Ok(parsed) = url::Url::parse(normalized.as_str()) else {
+        return false;
+    };
+
+    let host = parsed
+        .host_str()
+        .map(|value| value.to_ascii_lowercase())
+        .unwrap_or_default();
+    if host != "127.0.0.1" && host != "localhost" && host != "::1" {
+        return false;
+    }
+
+    parsed.port_or_known_default() == Some(8089)
+}
+
+fn request_timeout_for_runtime(runtime: &ModelRuntime) -> Option<Duration> {
+    if is_local_gateway_base_url(runtime.base_url.as_str()) {
+        None
+    } else {
+        Some(Duration::from_secs(runtime.request_timeout_secs))
+    }
+}
+
 fn classify_transport_error(err: &reqwest::Error) -> &'static str {
     if err.is_timeout() {
         "timeout"
@@ -2265,6 +2294,9 @@ fn error_source_chain(err: &reqwest::Error) -> String {
 fn format_transport_error(runtime: &ModelRuntime, endpoint: &str, err: &reqwest::Error) -> String {
     let kind = classify_transport_error(err);
     let sources = error_source_chain(err);
+    let timeout_label = request_timeout_for_runtime(runtime)
+        .map(|value| value.as_secs().to_string())
+        .unwrap_or_else(|| "disabled(local_gateway)".to_string());
     let source_suffix = if sources.is_empty() {
         String::new()
     } else {
@@ -2276,7 +2308,7 @@ fn format_transport_error(runtime: &ModelRuntime, endpoint: &str, err: &reqwest:
         runtime.provider,
         runtime.model,
         endpoint,
-        runtime.request_timeout_secs,
+        timeout_label,
         err,
         source_suffix
     );
