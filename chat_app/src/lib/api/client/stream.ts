@@ -46,6 +46,7 @@ export const streamChat = async (
   options?: {
     turnId?: string;
     contactAgentId?: string | null;
+    remoteConnectionId?: string | null;
     projectId?: string | null;
     projectRoot?: string | null;
     mcpEnabled?: boolean;
@@ -54,6 +55,9 @@ export const streamChat = async (
 ): Promise<ReadableStream> => {
   const useResponses = modelConfig?.supports_responses === true;
   const url = `${context.baseUrl}/${useResponses ? 'agent_v3' : 'agent_v2'}/chat/stream`;
+  const hasRemoteConnectionId = Boolean(
+    options && Object.prototype.hasOwnProperty.call(options, 'remoteConnectionId'),
+  );
 
   const response = await fetch(url, {
     method: 'POST',
@@ -69,6 +73,9 @@ export const streamChat = async (
       reasoning_enabled: reasoningEnabled,
       turn_id: options?.turnId,
       contact_agent_id: options?.contactAgentId || undefined,
+      remote_connection_id: hasRemoteConnectionId
+        ? (options?.remoteConnectionId ?? null)
+        : undefined,
       project_id: options?.projectId || undefined,
       project_root: options?.projectRoot || undefined,
       mcp_enabled: options?.mcpEnabled,

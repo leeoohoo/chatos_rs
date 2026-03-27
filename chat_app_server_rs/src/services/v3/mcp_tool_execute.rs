@@ -367,6 +367,7 @@ mod tests {
                 workspace_dir: String::new(),
                 user_id: Some("user_1".to_string()),
                 project_id: Some("project_1".to_string()),
+                remote_connection_id: None,
                 contact_agent_id: Some("agent_1".to_string()),
                 allow_writes: false,
                 max_file_bytes: 0,

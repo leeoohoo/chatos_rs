@@ -39,11 +39,14 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
     currentSession,
     sessions,
     contacts,
+    remoteConnections,
+    currentRemoteConnection,
     loadContacts,
     messages,
     hasMoreMessages,
     sessionChatState,
     sendMessage,
+    selectRemoteConnection,
     abortCurrentConversation,
     loadMoreMessages,
     toggleTurnProcess,
@@ -67,11 +70,14 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
     currentSession: state.currentSession,
     sessions: state.sessions,
     contacts: state.contacts,
+    remoteConnections: state.remoteConnections,
+    currentRemoteConnection: state.currentRemoteConnection,
     loadContacts: state.loadContacts,
     messages: state.messages,
     hasMoreMessages: state.hasMoreMessages,
     sessionChatState: state.sessionChatState,
     sendMessage: state.sendMessage,
+    selectRemoteConnection: state.selectRemoteConnection,
     abortCurrentConversation: state.abortCurrentConversation,
     loadMoreMessages: state.loadMoreMessages,
     toggleTurnProcess: state.toggleTurnProcess,
@@ -426,6 +432,10 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
     submitRuntimeGuidance,
   ]);
 
+  const handleComposerRemoteConnectionChange = useCallback((connectionId: string | null) => {
+    void selectRemoteConnection(connectionId, { activatePanel: false });
+  }, [selectRemoteConnection]);
+
   const handleRemoveMember = useCallback(async (contact: ContactItem) => {
     const targetSessionId = projectContacts.find((item) => item.contact.id === contact.id)?.session?.id || null;
     const removed = await removeMemberFromManager(contact);
@@ -501,6 +511,9 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
         reasoningEnabled={chatConfig?.reasoningEnabled === true}
         mcpEnabled={composerMcpEnabled}
         enabledMcpIds={composerEnabledMcpIds}
+        availableRemoteConnections={remoteConnections || []}
+        currentRemoteConnectionId={currentRemoteConnection?.id || null}
+        onRemoteConnectionChange={handleComposerRemoteConnectionChange}
         onLoadMore={handleLoadMore}
         onToggleTurnProcess={handleToggleTurnProcess}
         onClearSummaries={() => { void handleClearSummaries(); }}

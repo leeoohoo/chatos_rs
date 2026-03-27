@@ -3,7 +3,7 @@ import React, { useMemo } from 'react';
 import ChatComposerPanel from '../../chatInterface/ChatComposerPanel';
 import { buildSupportedFileTypes, resolveModelSupportFlags } from '../../chatInterface/helpers';
 import { MessageList } from '../../MessageList';
-import type { Project, Session } from '../../../types';
+import type { Project, RemoteConnection, Session } from '../../../types';
 import type { ContactItem } from './types';
 import TeamMemberSummaryView from './TeamMemberSummaryView';
 
@@ -29,6 +29,9 @@ interface TeamMemberWorkspaceProps {
   reasoningEnabled: boolean;
   mcpEnabled: boolean;
   enabledMcpIds: string[];
+  availableRemoteConnections: RemoteConnection[];
+  currentRemoteConnectionId: string | null;
+  onRemoteConnectionChange: (connectionId: string | null) => void;
   onLoadMore: () => void;
   onToggleTurnProcess: (userMessageId: string) => void;
   onClearSummaries: () => void;
@@ -40,6 +43,7 @@ interface TeamMemberWorkspaceProps {
     attachments?: File[],
     runtimeOptions?: {
       mcpEnabled?: boolean;
+      remoteConnectionId?: string | null;
       projectId?: string | null;
       projectRoot?: string | null;
       workspaceRoot?: string | null;
@@ -99,6 +103,9 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
   reasoningEnabled,
   mcpEnabled,
   enabledMcpIds,
+  availableRemoteConnections,
+  currentRemoteConnectionId,
+  onRemoteConnectionChange,
   onLoadMore,
   onToggleTurnProcess,
   onClearSummaries,
@@ -242,6 +249,9 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
         showProjectSelector={false}
         showProjectFileButton={false}
         showWorkspaceRootPicker={false}
+        availableRemoteConnections={availableRemoteConnections}
+        currentRemoteConnectionId={currentRemoteConnectionId}
+        onRemoteConnectionChange={onRemoteConnectionChange}
         mcpEnabled={mcpEnabled}
         enabledMcpIds={enabledMcpIds}
         onMcpEnabledChange={onMcpEnabledChange}

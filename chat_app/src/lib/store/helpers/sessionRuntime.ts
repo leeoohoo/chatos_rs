@@ -1,6 +1,7 @@
 export interface SessionRuntimeMetadata {
   contactAgentId: string | null;
   contactId: string | null;
+  remoteConnectionId: string | null;
   selectedModelId: string | null;
   mcpEnabled: boolean;
   enabledMcpIds: string[];
@@ -86,6 +87,9 @@ export const readSessionRuntimeFromMetadata = (
   const contactId = normalizeId(
     contact?.contact_id ?? contact?.contactId ?? meta?.ui_contact?.contact_id ?? meta?.ui_contact?.contactId,
   );
+  const remoteConnectionId = normalizeId(
+    runtime?.remote_connection_id ?? runtime?.remoteConnectionId,
+  );
 
   const projectId = normalizeId(
     runtime?.project_id ?? runtime?.projectId,
@@ -104,6 +108,7 @@ export const readSessionRuntimeFromMetadata = (
     !selectedModelId
     && !contactAgentId
     && !contactId
+    && !remoteConnectionId
     && !projectId
     && !projectRoot
     && !workspaceRoot
@@ -116,6 +121,7 @@ export const readSessionRuntimeFromMetadata = (
   return {
     contactAgentId,
     contactId,
+    remoteConnectionId,
     selectedModelId,
     mcpEnabled,
     enabledMcpIds,
@@ -132,12 +138,30 @@ export const mergeSessionRuntimeIntoMetadata = (
   const next = parseSessionMetadata(metadata);
   const existingRuntime = readSessionRuntimeFromMetadata(next);
 
-  const selectedModelId = normalizeId(runtime.selectedModelId ?? existingRuntime?.selectedModelId);
-  const contactAgentId = normalizeId(runtime.contactAgentId ?? existingRuntime?.contactAgentId);
-  const contactId = normalizeId(runtime.contactId ?? existingRuntime?.contactId);
-  const projectId = normalizeId(runtime.projectId ?? existingRuntime?.projectId);
-  const projectRoot = normalizeId(runtime.projectRoot ?? existingRuntime?.projectRoot);
-  const workspaceRoot = normalizeId(runtime.workspaceRoot ?? existingRuntime?.workspaceRoot);
+  const hasOwn = (key: keyof SessionRuntimeMetadata): boolean => (
+    Object.prototype.hasOwnProperty.call(runtime, key)
+  );
+  const selectedModelId = normalizeId(
+    hasOwn('selectedModelId') ? runtime.selectedModelId : existingRuntime?.selectedModelId,
+  );
+  const contactAgentId = normalizeId(
+    hasOwn('contactAgentId') ? runtime.contactAgentId : existingRuntime?.contactAgentId,
+  );
+  const contactId = normalizeId(
+    hasOwn('contactId') ? runtime.contactId : existingRuntime?.contactId,
+  );
+  const remoteConnectionId = normalizeId(
+    hasOwn('remoteConnectionId') ? runtime.remoteConnectionId : existingRuntime?.remoteConnectionId,
+  );
+  const projectId = normalizeId(
+    hasOwn('projectId') ? runtime.projectId : existingRuntime?.projectId,
+  );
+  const projectRoot = normalizeId(
+    hasOwn('projectRoot') ? runtime.projectRoot : existingRuntime?.projectRoot,
+  );
+  const workspaceRoot = normalizeId(
+    hasOwn('workspaceRoot') ? runtime.workspaceRoot : existingRuntime?.workspaceRoot,
+  );
   const mcpEnabled = typeof runtime.mcpEnabled === 'boolean'
     ? runtime.mcpEnabled
     : (existingRuntime?.mcpEnabled ?? true);
@@ -148,6 +172,7 @@ export const mergeSessionRuntimeIntoMetadata = (
   next.chat_runtime = {
     selected_model_id: selectedModelId,
     contact_agent_id: contactAgentId,
+    remote_connection_id: remoteConnectionId,
     mcp_enabled: mcpEnabled,
     enabled_mcp_ids: enabledMcpIds,
     project_id: projectId,

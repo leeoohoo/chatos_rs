@@ -40,6 +40,12 @@ pub const UI_PROMPTER_DISPLAY_NAME: &str = "UI Prompter (Builtin)";
 pub const UI_PROMPTER_SERVER_NAME: &str = "ui_prompter";
 pub const UI_PROMPTER_COMMAND: &str = "builtin:ui_prompter";
 
+pub const REMOTE_CONNECTION_CONTROLLER_MCP_ID: &str = "builtin_remote_connection_controller";
+pub const REMOTE_CONNECTION_CONTROLLER_DISPLAY_NAME: &str =
+    "Remote Connection Controller (Builtin)";
+pub const REMOTE_CONNECTION_CONTROLLER_SERVER_NAME: &str = "remote_connection_controller";
+pub const REMOTE_CONNECTION_CONTROLLER_COMMAND: &str = "builtin:remote_connection_controller";
+
 pub const MEMORY_SKILL_READER_SERVER_NAME: &str = "memory_skill_reader";
 pub const MEMORY_COMMAND_READER_SERVER_NAME: &str = "memory_command_reader";
 pub const MEMORY_PLUGIN_READER_SERVER_NAME: &str = "memory_plugin_reader";
@@ -53,6 +59,7 @@ pub enum BuiltinMcpKind {
     Notepad,
     AgentBuilder,
     UiPrompter,
+    RemoteConnectionController,
     MemorySkillReader,
     MemoryCommandReader,
     MemoryPluginReader,
@@ -69,6 +76,7 @@ pub fn builtin_kind_by_id(id: &str) -> Option<BuiltinMcpKind> {
         NOTEPAD_MCP_ID => Some(BuiltinMcpKind::Notepad),
         AGENT_BUILDER_MCP_ID => Some(BuiltinMcpKind::AgentBuilder),
         UI_PROMPTER_MCP_ID => Some(BuiltinMcpKind::UiPrompter),
+        REMOTE_CONNECTION_CONTROLLER_MCP_ID => Some(BuiltinMcpKind::RemoteConnectionController),
         _ => None,
     }
 }
@@ -84,6 +92,7 @@ pub fn builtin_kind_by_command(command: &str) -> Option<BuiltinMcpKind> {
         NOTEPAD_COMMAND => Some(BuiltinMcpKind::Notepad),
         AGENT_BUILDER_COMMAND => Some(BuiltinMcpKind::AgentBuilder),
         UI_PROMPTER_COMMAND => Some(BuiltinMcpKind::UiPrompter),
+        REMOTE_CONNECTION_CONTROLLER_COMMAND => Some(BuiltinMcpKind::RemoteConnectionController),
         _ => None,
     }
 }
@@ -104,6 +113,9 @@ pub fn get_builtin_mcp_config(id: &str) -> Option<McpConfig> {
             Some(BuiltinMcpKind::Notepad) => Some(notepad_config()),
             Some(BuiltinMcpKind::AgentBuilder) => Some(agent_builder_config()),
             Some(BuiltinMcpKind::UiPrompter) => Some(ui_prompter_config()),
+            Some(BuiltinMcpKind::RemoteConnectionController) => {
+                Some(remote_connection_controller_config())
+            }
             _ => None,
         },
     }
@@ -118,6 +130,7 @@ pub fn list_builtin_mcp_configs() -> Vec<McpConfig> {
         notepad_config(),
         agent_builder_config(),
         ui_prompter_config(),
+        remote_connection_controller_config(),
     ]
 }
 
@@ -132,6 +145,7 @@ pub fn builtin_display_name(id: &str) -> Option<&'static str> {
         NOTEPAD_MCP_ID => Some(NOTEPAD_DISPLAY_NAME),
         AGENT_BUILDER_MCP_ID => Some(AGENT_BUILDER_DISPLAY_NAME),
         UI_PROMPTER_MCP_ID => Some(UI_PROMPTER_DISPLAY_NAME),
+        REMOTE_CONNECTION_CONTROLLER_MCP_ID => Some(REMOTE_CONNECTION_CONTROLLER_DISPLAY_NAME),
         _ => None,
     }
 }
@@ -263,6 +277,23 @@ fn ui_prompter_config() -> McpConfig {
         command: UI_PROMPTER_COMMAND.to_string(),
         r#type: "stdio".to_string(),
         args: Some(json!(["--name", UI_PROMPTER_SERVER_NAME])),
+        env: None,
+        cwd: None,
+        user_id: None,
+        enabled: true,
+        created_at: now.clone(),
+        updated_at: now,
+    }
+}
+
+fn remote_connection_controller_config() -> McpConfig {
+    let now = crate::core::time::now_rfc3339();
+    McpConfig {
+        id: REMOTE_CONNECTION_CONTROLLER_MCP_ID.to_string(),
+        name: REMOTE_CONNECTION_CONTROLLER_SERVER_NAME.to_string(),
+        command: REMOTE_CONNECTION_CONTROLLER_COMMAND.to_string(),
+        r#type: "stdio".to_string(),
+        args: Some(json!(["--name", REMOTE_CONNECTION_CONTROLLER_SERVER_NAME])),
         env: None,
         cwd: None,
         user_id: None,

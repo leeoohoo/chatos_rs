@@ -7,6 +7,9 @@ const PROJECT_REQUIRED_MCP_IDS = new Set([
   'builtin_code_maintainer_write',
   'builtin_terminal_controller',
 ]);
+const REMOTE_REQUIRED_MCP_IDS = new Set([
+  'builtin_remote_connection_controller',
+]);
 
 export interface SelectableMcpConfig {
   id: string;
@@ -24,6 +27,7 @@ interface UseMcpSelectionOptions {
   mcpEnabled: boolean;
   enabledMcpIds: string[];
   hasDirectoryContext: boolean;
+  hasRemoteContext: boolean;
   disabled: boolean;
   isStreaming: boolean;
   isStopping: boolean;
@@ -44,6 +48,7 @@ interface UseMcpSelectionResult {
   isAllMcpSelected: boolean;
   selectedMcpCount: number;
   isProjectRequiredMcpId: (id: string) => boolean;
+  isRemoteRequiredMcpId: (id: string) => boolean;
   loadAvailableMcpConfigs: () => Promise<void>;
   handleToggleMcpPicker: () => void;
   handleSelectAllMcp: () => void;
@@ -55,6 +60,7 @@ export const useMcpSelection = ({
   mcpEnabled,
   enabledMcpIds,
   hasDirectoryContext,
+  hasRemoteContext,
   disabled,
   isStreaming,
   isStopping,
@@ -71,25 +77,37 @@ export const useMcpSelection = ({
     [availableMcpConfigs],
   );
   const selectableMcpIds = useMemo(
-    () => availableMcpIds.filter((id) => hasDirectoryContext || !PROJECT_REQUIRED_MCP_IDS.has(id)),
-    [availableMcpIds, hasDirectoryContext],
+    () => availableMcpIds.filter((id) => {
+      if (!hasDirectoryContext && PROJECT_REQUIRED_MCP_IDS.has(id)) {
+        return false;
+      }
+      if (!hasRemoteContext && REMOTE_REQUIRED_MCP_IDS.has(id)) {
+        return false;
+      }
+      return true;
+    }),
+    [availableMcpIds, hasDirectoryContext, hasRemoteContext],
   );
   const selectableMcpIdSet = useMemo(
     () => new Set(selectableMcpIds),
     [selectableMcpIds],
+  );
+  const allowAllShortcut = useMemo(
+    () => availableMcpIds.length > 0 && selectableMcpIds.length === availableMcpIds.length,
+    [availableMcpIds.length, selectableMcpIds.length],
   );
   const sanitizedEnabledMcpIds = useMemo(() => {
     if (availableMcpIds.length === 0) {
       return enabledMcpIds;
     }
     if (enabledMcpIds.length === 0) {
-      return hasDirectoryContext ? [] : [...selectableMcpIds];
+      return allowAllShortcut ? [] : [...selectableMcpIds];
     }
     return enabledMcpIds.filter((id) => selectableMcpIdSet.has(id));
   }, [
+    allowAllShortcut,
     availableMcpIds.length,
     enabledMcpIds,
-    hasDirectoryContext,
     selectableMcpIdSet,
     selectableMcpIds,
   ]);
@@ -208,23 +226,23 @@ export const useMcpSelection = ({
       }
       uniqueIds.push(trimmed);
     }
-    if (hasDirectoryContext && uniqueIds.length === selectableMcpIds.length) {
+    if (allowAllShortcut && uniqueIds.length === selectableMcpIds.length) {
       onEnabledMcpIdsChange([]);
       return;
     }
     onEnabledMcpIdsChange(uniqueIds);
-  }, [hasDirectoryContext, onEnabledMcpIdsChange, selectableMcpIds.length]);
+  }, [allowAllShortcut, onEnabledMcpIdsChange, selectableMcpIds.length]);
 
   const handleSelectAllMcp = useCallback(() => {
     if (!onEnabledMcpIdsChange) {
       return;
     }
-    if (hasDirectoryContext) {
+    if (allowAllShortcut) {
       onEnabledMcpIdsChange([]);
       return;
     }
     onEnabledMcpIdsChange([...selectableMcpIds]);
-  }, [hasDirectoryContext, onEnabledMcpIdsChange, selectableMcpIds]);
+  }, [allowAllShortcut, onEnabledMcpIdsChange, selectableMcpIds]);
 
   const handleToggleMcpSelection = useCallback((mcpId: string) => {
     if (!onEnabledMcpIdsChange) {
@@ -255,6 +273,7 @@ export const useMcpSelection = ({
   ]);
 
   const isProjectRequiredMcpId = useCallback((id: string) => PROJECT_REQUIRED_MCP_IDS.has(id), []);
+  const isRemoteRequiredMcpId = useCallback((id: string) => REMOTE_REQUIRED_MCP_IDS.has(id), []);
 
   return {
     mcpPickerOpen,
@@ -269,6 +288,7 @@ export const useMcpSelection = ({
     isAllMcpSelected,
     selectedMcpCount,
     isProjectRequiredMcpId,
+    isRemoteRequiredMcpId,
     loadAvailableMcpConfigs,
     handleToggleMcpPicker,
     handleSelectAllMcp,

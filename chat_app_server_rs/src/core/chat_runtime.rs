@@ -117,6 +117,11 @@ pub fn project_root_from_metadata(metadata: Option<&Value>) -> Option<String> {
         .or_else(|| metadata_string(metadata, &["chat_runtime", "projectRoot"]))
 }
 
+pub fn remote_connection_id_from_metadata(metadata: Option<&Value>) -> Option<String> {
+    metadata_string(metadata, &["chat_runtime", "remote_connection_id"])
+        .or_else(|| metadata_string(metadata, &["chat_runtime", "remoteConnectionId"]))
+}
+
 pub fn mcp_enabled_from_metadata(metadata: Option<&Value>) -> Option<bool> {
     metadata_bool(metadata, &["chat_runtime", "mcp_enabled"])
         .or_else(|| metadata_bool(metadata, &["chat_runtime", "mcpEnabled"]))
@@ -667,13 +672,14 @@ mod tests {
     use super::{
         compose_contact_command_system_prompt, compose_contact_system_prompt,
         parse_contact_command_invocation, parse_implicit_command_selections_from_tools_end,
-        CONTACT_COMMAND_READER_TOOL_NAME, CONTACT_PLUGIN_READER_TOOL_NAME,
-        CONTACT_SKILL_READER_TOOL_NAME,
+        remote_connection_id_from_metadata, CONTACT_COMMAND_READER_TOOL_NAME,
+        CONTACT_PLUGIN_READER_TOOL_NAME, CONTACT_SKILL_READER_TOOL_NAME,
     };
     use crate::services::memory_server_client::{
         MemoryAgentRuntimeCommandSummaryDto, MemoryAgentRuntimeContextDto,
         MemoryAgentRuntimePluginSummaryDto, MemoryAgentRuntimeSkillSummaryDto,
     };
+    use serde_json::json;
 
     #[test]
     fn builds_contact_prompt_with_plugin_and_skill_summaries() {
@@ -768,6 +774,29 @@ mod tests {
         let prompt = compose_contact_command_system_prompt(Some(&command)).expect("prompt");
         assert!(prompt.contains("command_ref=CMD1"));
         assert!(prompt.contains("用户附加参数=button not render"));
+    }
+
+    #[test]
+    fn resolves_remote_connection_id_from_metadata_aliases() {
+        let metadata = json!({
+            "chat_runtime": {
+                "remoteConnectionId": " conn_1 "
+            }
+        });
+        assert_eq!(
+            remote_connection_id_from_metadata(Some(&metadata)),
+            Some("conn_1".to_string())
+        );
+
+        let metadata = json!({
+            "chat_runtime": {
+                "remote_connection_id": "conn_2"
+            }
+        });
+        assert_eq!(
+            remote_connection_id_from_metadata(Some(&metadata)),
+            Some("conn_2".to_string())
+        );
     }
 
     #[test]

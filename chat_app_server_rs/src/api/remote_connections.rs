@@ -20,10 +20,8 @@ mod tests;
 mod transfer_helpers;
 mod transfer_manager;
 
-use self::connectivity::{
-    connect_ssh2_session, run_remote_connectivity_test, run_ssh_command, should_use_native_ssh,
-    spawn_remote_shell,
-};
+use self::connectivity::{connect_ssh2_session, should_use_native_ssh, spawn_remote_shell};
+pub(crate) use self::connectivity::{run_remote_connectivity_test, run_ssh_command};
 use self::contracts::{
     CreateRemoteConnectionRequest, RemoteConnectionQuery, SftpTransferStatus,
     UpdateRemoteConnectionRequest, WsInput, WsOutput,

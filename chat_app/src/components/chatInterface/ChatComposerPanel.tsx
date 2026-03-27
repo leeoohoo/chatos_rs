@@ -3,7 +3,7 @@ import { InputArea } from '../InputArea';
 import TaskDraftPanel from '../TaskDraftPanel';
 import TaskWorkbar, { type RuntimeGuidanceWorkbarItem, type TaskWorkbarItem } from '../TaskWorkbar';
 import UiPromptPanel from '../UiPromptPanel';
-import type { AiModelConfig, Project } from '../../types';
+import type { AiModelConfig, Project, RemoteConnection } from '../../types';
 import type {
   TaskReviewDraft,
   TaskReviewPanelState,
@@ -40,6 +40,7 @@ interface ChatComposerPanelProps {
     attachments?: File[],
     runtimeOptions?: {
       mcpEnabled?: boolean;
+      remoteConnectionId?: string | null;
       projectId?: string | null;
       projectRoot?: string | null;
       workspaceRoot?: string | null;
@@ -66,6 +67,9 @@ interface ChatComposerPanelProps {
   showProjectFileButton?: boolean;
   workspaceRoot?: string | null;
   onWorkspaceRootChange?: (path: string | null) => void;
+  currentRemoteConnectionId?: string | null;
+  availableRemoteConnections?: RemoteConnection[];
+  onRemoteConnectionChange?: (connectionId: string | null) => void;
   showWorkspaceRootPicker?: boolean;
   mcpEnabled: boolean;
   enabledMcpIds?: string[];
@@ -122,6 +126,9 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
   showProjectFileButton = true,
   workspaceRoot = null,
   onWorkspaceRootChange,
+  currentRemoteConnectionId = null,
+  availableRemoteConnections = [],
+  onRemoteConnectionChange,
   showWorkspaceRootPicker = false,
   mcpEnabled,
   enabledMcpIds,
@@ -194,6 +201,9 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
       showProjectFileButton={showProjectFileButton}
       workspaceRoot={workspaceRoot}
       onWorkspaceRootChange={onWorkspaceRootChange}
+      currentRemoteConnectionId={currentRemoteConnectionId}
+      availableRemoteConnections={availableRemoteConnections}
+      onRemoteConnectionChange={onRemoteConnectionChange}
       showWorkspaceRootPicker={showWorkspaceRootPicker}
       mcpEnabled={mcpEnabled}
       enabledMcpIds={enabledMcpIds}

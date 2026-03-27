@@ -158,6 +158,7 @@ export const useTeamMemberConversation = ({
     attachments?: File[],
     runtimeOptions?: {
       mcpEnabled?: boolean;
+      remoteConnectionId?: string | null;
       projectId?: string | null;
       projectRoot?: string | null;
       workspaceRoot?: string | null;
@@ -175,6 +176,7 @@ export const useTeamMemberConversation = ({
       await sendMessage(content, attachments, {
         mcpEnabled: runtimeOptions?.mcpEnabled,
         enabledMcpIds: runtimeOptions?.enabledMcpIds,
+        remoteConnectionId: runtimeOptions?.remoteConnectionId,
         contactAgentId: selectedContact.agentId,
         contactId: selectedContact.id,
         projectId,

@@ -46,7 +46,7 @@ python -m pip install -r requirements.txt
 在当前目录执行：
 
 ```bash
-python server.py --host 127.0.0.1 --port 8088
+python server.py --host 127.0.0.1 --port 8089
 ```
 
 ## 快速后台启动（推荐）
