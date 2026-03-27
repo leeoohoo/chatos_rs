@@ -77,6 +77,9 @@ impl AiRequestHandler {
         message_source: Option<String>,
         purpose: &str,
     ) -> Result<AiResponse, String> {
+        let requested_stream = stream;
+        let stream = true;
+
         let payload = build_request_payload(
             input,
             model,
@@ -103,10 +106,11 @@ impl AiRequestHandler {
         let token = build_abort_token(session_id.as_deref());
 
         info!(
-            "[AI_V3] handleRequest start: purpose={}, model={}, stream={}, baseURL={}, session={}, tools={}, cwd={}",
+            "[AI_V3] handleRequest start: purpose={}, model={}, stream={}, requested_stream={}, baseURL={}, session={}, tools={}, cwd={}",
             purpose,
             payload.get("model").and_then(|v| v.as_str()).unwrap_or(""),
             stream,
+            requested_stream,
             self.base_url,
             session_id.clone().unwrap_or_else(|| "n/a".to_string()),
             payload
@@ -120,34 +124,19 @@ impl AiRequestHandler {
         let persist_messages = purpose != "agent_builder";
         let force_identity_encoding = purpose == "session_summary_job";
 
-        if stream {
-            self.handle_stream_request(
-                url,
-                payload,
-                callbacks,
-                session_id,
-                turn_id,
-                token,
-                force_identity_encoding,
-                persist_messages,
-                message_mode,
-                message_source,
-            )
-            .await
-        } else {
-            self.handle_normal_request(
-                url,
-                payload,
-                session_id,
-                turn_id,
-                token,
-                force_identity_encoding,
-                persist_messages,
-                message_mode,
-                message_source,
-            )
-            .await
-        }
+        self.handle_stream_request(
+            url,
+            payload,
+            callbacks,
+            session_id,
+            turn_id,
+            token,
+            force_identity_encoding,
+            persist_messages,
+            message_mode,
+            message_source,
+        )
+        .await
     }
 }
 

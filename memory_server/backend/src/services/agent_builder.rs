@@ -129,7 +129,7 @@ pub async fn ai_create_agent(
     let request = NormalizedRequest::from_request(scope_user_id, req)?;
     let runtime = resolve_model_runtime(db, config, &request).await?;
     let http = Client::builder()
-        .timeout(Duration::from_secs(config.ai_request_timeout_secs))
+        .connect_timeout(Duration::from_secs(10))
         // In WSL deployments we've seen stale pooled sockets cause follow-up
         // calls to fail intermittently. Use short-lived connections here.
         .pool_max_idle_per_host(0)
@@ -1022,7 +1022,8 @@ async fn request_chat_completions(
         "model": runtime.model,
         "temperature": runtime.temperature,
         "max_tokens": 2400,
-        "stream": false,
+        "stream": true,
+        "stream_options": {"include_usage": true},
         "messages": messages,
     });
 
@@ -1032,14 +1033,16 @@ async fn request_chat_completions(
     }
 
     let endpoint = build_chat_completion_endpoint(runtime.base_url.as_str());
-    let response = http
+    let mut request = http
         .post(endpoint.as_str())
         .bearer_auth(runtime.api_key.as_str())
         .header("Content-Type", "application/json")
         .header("Connection", "close")
-        .json(&body)
-        .send()
-        .await
+        .json(&body);
+    if let Some(timeout) = request_timeout_for_runtime(runtime) {
+        request = request.timeout(timeout);
+    }
+    let response = request.send().await
         .map_err(|err| bad_gateway_error(format_transport_error(runtime, endpoint.as_str(), &err)))?;
 
     if !response.status().is_success() {
@@ -1058,10 +1061,8 @@ async fn request_chat_completions(
         ));
     }
 
-    response
-        .json::<Value>()
-        .await
-        .map_err(|err| bad_gateway_error(format!("agent builder ai response parse failed: {err}")))
+    let events = read_sse_json_events(response).await?;
+    aggregate_chat_completions_stream(events.as_slice())
 }
 
 async fn request_responses_completion(
@@ -1074,7 +1075,7 @@ async fn request_responses_completion(
         "model": runtime.model,
         "temperature": runtime.temperature,
         "max_output_tokens": 2400,
-        "stream": false,
+        "stream": true,
         "input": build_responses_input_from_messages(messages),
     });
 
@@ -1084,14 +1085,16 @@ async fn request_responses_completion(
     }
 
     let endpoint = build_responses_endpoint(runtime.base_url.as_str());
-    let response = http
+    let mut request = http
         .post(endpoint.as_str())
         .bearer_auth(runtime.api_key.as_str())
         .header("Content-Type", "application/json")
         .header("Connection", "close")
-        .json(&body)
-        .send()
-        .await
+        .json(&body);
+    if let Some(timeout) = request_timeout_for_runtime(runtime) {
+        request = request.timeout(timeout);
+    }
+    let response = request.send().await
         .map_err(|err| bad_gateway_error(format_transport_error(runtime, endpoint.as_str(), &err)))?;
 
     if !response.status().is_success() {
@@ -1110,12 +1113,323 @@ async fn request_responses_completion(
         ));
     }
 
-    let payload = response
-        .json::<Value>()
-        .await
-        .map_err(|err| bad_gateway_error(format!("agent builder ai response parse failed: {err}")))?;
+    let events = read_sse_json_events(response).await?;
+    let payload = aggregate_responses_stream(events.as_slice())?;
 
     Ok(adapt_responses_to_chat_completion(payload))
+}
+
+async fn read_sse_json_events(
+    mut response: reqwest::Response,
+) -> Result<Vec<Value>, (StatusCode, String)> {
+    let mut buffer = String::new();
+    let mut events: Vec<Value> = Vec::new();
+
+    while let Some(bytes) = response
+        .chunk()
+        .await
+        .map_err(|err| bad_gateway_error(format!("agent builder ai stream read failed: {err}")))?
+    {
+        let text = String::from_utf8_lossy(&bytes).to_string();
+        buffer.push_str(text.as_str());
+        events.extend(drain_sse_json_events(&mut buffer));
+    }
+
+    flush_sse_tail_events(&mut buffer, &mut events);
+
+    if events.is_empty() {
+        return Err(bad_gateway_error(
+            "agent builder ai stream parse failed: no JSON events found",
+        ));
+    }
+
+    Ok(events)
+}
+
+fn drain_sse_json_events(buffer: &mut String) -> Vec<Value> {
+    let mut events = Vec::new();
+
+    while let Some(idx) = buffer.find("\n\n") {
+        let packet = buffer[..idx].to_string();
+        *buffer = buffer[idx + 2..].to_string();
+
+        for line in packet.lines() {
+            let normalized = line.trim();
+            if !normalized.starts_with("data:") {
+                continue;
+            }
+            let data = normalized.trim_start_matches("data:").trim();
+            if data.is_empty() || data == "[DONE]" {
+                continue;
+            }
+            if let Ok(value) = serde_json::from_str::<Value>(data) {
+                events.push(value);
+            }
+        }
+    }
+
+    events
+}
+
+fn flush_sse_tail_events(buffer: &mut String, events: &mut Vec<Value>) {
+    if buffer.trim().is_empty() {
+        return;
+    }
+
+    if buffer.contains("data:") {
+        if !buffer.ends_with("\n\n") {
+            buffer.push_str("\n\n");
+        }
+        events.extend(drain_sse_json_events(buffer));
+    }
+
+    let tail = buffer.trim();
+    if tail.is_empty() {
+        return;
+    }
+
+    if let Ok(value) = serde_json::from_str::<Value>(tail) {
+        emit_tail_json_value(value, events);
+    }
+    buffer.clear();
+}
+
+fn emit_tail_json_value(value: Value, events: &mut Vec<Value>) {
+    if let Some(items) = value.as_array() {
+        for item in items {
+            if item.is_object() {
+                events.push(item.clone());
+            }
+        }
+        return;
+    }
+    if value.is_object() {
+        events.push(value);
+    }
+}
+
+fn aggregate_chat_completions_stream(events: &[Value]) -> Result<Value, (StatusCode, String)> {
+    #[derive(Default, Clone)]
+    struct ToolCallAccumulator {
+        id: Option<String>,
+        name: Option<String>,
+        arguments: String,
+    }
+
+    let mut content = String::new();
+    let mut finish_reason: Option<String> = None;
+    let mut usage: Option<Value> = None;
+    let mut tool_calls: Vec<ToolCallAccumulator> = Vec::new();
+
+    for event in events {
+        if let Some(value_usage) = event.get("usage") {
+            usage = Some(value_usage.clone());
+        }
+
+        let Some(choices) = event.get("choices").and_then(Value::as_array) else {
+            continue;
+        };
+
+        for choice in choices {
+            if let Some(reason) = choice
+                .get("finish_reason")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+            {
+                finish_reason = Some(reason.to_string());
+            }
+
+            if let Some(delta) = choice.get("delta") {
+                if let Some(text) = delta.get("content").and_then(Value::as_str) {
+                    content.push_str(text);
+                } else if let Some(parts) = delta.get("content").and_then(Value::as_array) {
+                    for part in parts {
+                        if let Some(text) = part.get("text").and_then(Value::as_str) {
+                            content.push_str(text);
+                        }
+                    }
+                }
+
+                if let Some(items) = delta.get("tool_calls").and_then(Value::as_array) {
+                    for item in items {
+                        let index = item
+                            .get("index")
+                            .and_then(Value::as_u64)
+                            .map(|value| value as usize)
+                            .unwrap_or(tool_calls.len());
+                        while tool_calls.len() <= index {
+                            tool_calls.push(ToolCallAccumulator::default());
+                        }
+                        if let Some(id) = item
+                            .get("id")
+                            .and_then(Value::as_str)
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty())
+                        {
+                            tool_calls[index].id = Some(id.to_string());
+                        }
+                        if let Some(function) = item.get("function") {
+                            if let Some(name) = function
+                                .get("name")
+                                .and_then(Value::as_str)
+                                .map(str::trim)
+                                .filter(|value| !value.is_empty())
+                            {
+                                tool_calls[index].name = Some(name.to_string());
+                            }
+                            if let Some(arguments) = function.get("arguments").and_then(Value::as_str)
+                            {
+                                tool_calls[index].arguments.push_str(arguments);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut message = Map::new();
+    if content.trim().is_empty() {
+        message.insert("content".to_string(), Value::Null);
+    } else {
+        message.insert("content".to_string(), Value::String(content));
+    }
+
+    let normalized_tool_calls = tool_calls
+        .iter()
+        .enumerate()
+        .filter_map(|(index, item)| {
+            let name = item.name.as_deref()?.trim();
+            if name.is_empty() {
+                return None;
+            }
+            let id = item
+                .id
+                .clone()
+                .unwrap_or_else(|| format!("call_{}", index + 1));
+            let arguments = if item.arguments.trim().is_empty() {
+                "{}".to_string()
+            } else {
+                item.arguments.clone()
+            };
+            Some(json!({
+                "id": id,
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "arguments": arguments,
+                }
+            }))
+        })
+        .collect::<Vec<_>>();
+
+    if !normalized_tool_calls.is_empty() {
+        message.insert("tool_calls".to_string(), Value::Array(normalized_tool_calls));
+    }
+
+    let mut out = json!({
+        "choices": [
+            {
+                "message": Value::Object(message),
+                "finish_reason": finish_reason.unwrap_or_else(|| "stop".to_string()),
+            }
+        ]
+    });
+    if let Some(value_usage) = usage {
+        out["usage"] = value_usage;
+    }
+    Ok(out)
+}
+
+fn aggregate_responses_stream(events: &[Value]) -> Result<Value, (StatusCode, String)> {
+    let mut completed_response: Option<Value> = None;
+    let mut response_template: Option<Value> = None;
+    let mut output_items: Vec<Value> = Vec::new();
+    let mut output_text = String::new();
+    let mut reasoning_text = String::new();
+
+    for event in events {
+        if event.get("object").and_then(Value::as_str) == Some("response") {
+            completed_response = Some(event.clone());
+        }
+
+        if let Some(response) = event.get("response") {
+            response_template = Some(response.clone());
+            let event_type = event
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if event_type == "response.completed" || event_type == "response.failed" {
+                completed_response = Some(response.clone());
+            }
+        }
+
+        let event_type = event.get("type").and_then(Value::as_str).unwrap_or_default();
+        if event_type == "response.output_text.delta" {
+            if let Some(delta) = event.get("delta").and_then(Value::as_str) {
+                output_text.push_str(delta);
+            }
+        } else if event_type == "response.reasoning.delta" {
+            if let Some(delta) = event.get("delta").and_then(Value::as_str) {
+                reasoning_text.push_str(delta);
+            }
+        } else if event_type == "response.reasoning.done" {
+            if let Some(text) = event.get("text").and_then(Value::as_str) {
+                reasoning_text = text.to_string();
+            }
+        } else if event_type == "response.output_item.done" {
+            if let Some(item) = event.get("item") {
+                output_items.push(item.clone());
+            }
+        }
+    }
+
+    if let Some(response) = completed_response {
+        return Ok(response);
+    }
+
+    let mut response = response_template
+        .and_then(|value| value.as_object().cloned())
+        .unwrap_or_default();
+
+    if output_items.is_empty() && !output_text.trim().is_empty() {
+        output_items.push(json!({
+            "type": "message",
+            "status": "completed",
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "output_text",
+                    "text": output_text.clone(),
+                }
+            ],
+        }));
+    }
+
+    if !output_items.is_empty() {
+        response.insert("output".to_string(), Value::Array(output_items));
+    }
+    if !output_text.trim().is_empty() {
+        response.insert("output_text".to_string(), Value::String(output_text));
+    }
+    if !reasoning_text.trim().is_empty() {
+        response.insert("reasoning".to_string(), Value::String(reasoning_text));
+    }
+    if !response.contains_key("status") {
+        response.insert("status".to_string(), Value::String("completed".to_string()));
+    }
+    if !response.contains_key("object") {
+        response.insert("object".to_string(), Value::String("response".to_string()));
+    }
+
+    if response.is_empty() {
+        return Err(bad_gateway_error(
+            "agent builder ai stream parse failed: no response payload assembled",
+        ));
+    }
+
+    Ok(Value::Object(response))
 }
 
 fn build_responses_input_from_messages(messages: &[Value]) -> Value {
@@ -1926,6 +2240,31 @@ fn normalize_base_url(base_url: &str) -> String {
     }
 }
 
+fn is_local_gateway_base_url(base_url: &str) -> bool {
+    let normalized = normalize_base_url(base_url);
+    let Ok(parsed) = url::Url::parse(normalized.as_str()) else {
+        return false;
+    };
+
+    let host = parsed
+        .host_str()
+        .map(|value| value.to_ascii_lowercase())
+        .unwrap_or_default();
+    if host != "127.0.0.1" && host != "localhost" && host != "::1" {
+        return false;
+    }
+
+    parsed.port_or_known_default() == Some(8089)
+}
+
+fn request_timeout_for_runtime(runtime: &ModelRuntime) -> Option<Duration> {
+    if is_local_gateway_base_url(runtime.base_url.as_str()) {
+        None
+    } else {
+        Some(Duration::from_secs(runtime.request_timeout_secs))
+    }
+}
+
 fn classify_transport_error(err: &reqwest::Error) -> &'static str {
     if err.is_timeout() {
         "timeout"
@@ -1955,6 +2294,9 @@ fn error_source_chain(err: &reqwest::Error) -> String {
 fn format_transport_error(runtime: &ModelRuntime, endpoint: &str, err: &reqwest::Error) -> String {
     let kind = classify_transport_error(err);
     let sources = error_source_chain(err);
+    let timeout_label = request_timeout_for_runtime(runtime)
+        .map(|value| value.as_secs().to_string())
+        .unwrap_or_else(|| "disabled(local_gateway)".to_string());
     let source_suffix = if sources.is_empty() {
         String::new()
     } else {
@@ -1966,7 +2308,7 @@ fn format_transport_error(runtime: &ModelRuntime, endpoint: &str, err: &reqwest:
         runtime.provider,
         runtime.model,
         endpoint,
-        runtime.request_timeout_secs,
+        timeout_label,
         err,
         source_suffix
     );
