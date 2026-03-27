@@ -46,6 +46,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     currentProject,
     currentTerminal,
     currentRemoteConnection,
+    remoteConnections,
     projects,
     activePanel,
     messages,
@@ -55,6 +56,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     loadMoreMessages,
     toggleTurnProcess,
     sendMessage,
+    selectRemoteConnection,
     updateSession,
     clearError,
     sidebarOpen,
@@ -84,6 +86,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     currentProject: state.currentProject,
     currentTerminal: state.currentTerminal,
     currentRemoteConnection: state.currentRemoteConnection,
+    remoteConnections: state.remoteConnections,
     projects: state.projects,
     activePanel: state.activePanel,
     messages: state.messages,
@@ -93,6 +96,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     loadMoreMessages: state.loadMoreMessages,
     toggleTurnProcess: state.toggleTurnProcess,
     sendMessage: state.sendMessage,
+    selectRemoteConnection: state.selectRemoteConnection,
     updateSession: state.updateSession,
     clearError: state.clearError,
     sidebarOpen: state.sidebarOpen,
@@ -348,6 +352,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     attachments?: File[],
     runtimeOptions?: {
       mcpEnabled?: boolean;
+      remoteConnectionId?: string | null;
       projectId?: string | null;
       projectRoot?: string | null;
       workspaceRoot?: string | null;
@@ -355,12 +360,30 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     },
   ) => {
     try {
-      await sendMessage(content, attachments, runtimeOptions);
+      const hasRemoteConnectionIdOverride = Boolean(
+        runtimeOptions
+        && Object.prototype.hasOwnProperty.call(runtimeOptions, 'remoteConnectionId'),
+      );
+      const remoteConnectionIdOverride = hasRemoteConnectionIdOverride
+        ? (typeof runtimeOptions?.remoteConnectionId === 'string'
+          ? runtimeOptions.remoteConnectionId
+          : null)
+        : undefined;
+      await sendMessage(content, attachments, {
+        ...runtimeOptions,
+        remoteConnectionId: hasRemoteConnectionIdOverride
+          ? (remoteConnectionIdOverride ?? null)
+          : (currentRemoteConnection?.id || null),
+      });
       onMessageSend?.(content, attachments);
     } catch (error) {
       console.error('Failed to send message:', error);
     }
-  }, [onMessageSend, sendMessage]);
+  }, [currentRemoteConnection?.id, onMessageSend, sendMessage]);
+
+  const handleComposerRemoteConnectionChange = useCallback((connectionId: string | null) => {
+    void selectRemoteConnection(connectionId, { activatePanel: false });
+  }, [selectRemoteConnection]);
 
   const handleRuntimeGuidanceSend = useCallback(async (content: string) => {
     const sessionId = currentSession?.id;
@@ -593,6 +616,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 onProjectChange={handleComposerProjectChange}
                 workspaceRoot={composerWorkspaceRoot}
                 onWorkspaceRootChange={handleComposerWorkspaceRootChange}
+                currentRemoteConnectionId={currentRemoteConnection?.id || null}
+                availableRemoteConnections={remoteConnections || []}
+                onRemoteConnectionChange={handleComposerRemoteConnectionChange}
                 mcpEnabled={composerMcpEnabled}
                 enabledMcpIds={composerEnabledMcpIds}
                 onMcpEnabledChange={handleComposerMcpEnabledChange}

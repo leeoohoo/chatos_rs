@@ -93,6 +93,7 @@ export interface SessionCreatePayload {
 export interface SendMessageRuntimeOptions {
   contactAgentId?: string | null;
   contactId?: string | null;
+  remoteConnectionId?: string | null;
   projectId?: string | null;
   projectRoot?: string | null;
   workspaceRoot?: string | null;
@@ -271,7 +272,10 @@ export interface ChatActions {
     jump_password?: string;
   }) => Promise<RemoteConnection | null>;
   deleteRemoteConnection: (connectionId: string) => Promise<void>;
-  selectRemoteConnection: (connectionId: string) => Promise<void>;
+  selectRemoteConnection: (
+    connectionId: string | null,
+    options?: { activatePanel?: boolean },
+  ) => Promise<void>;
   openRemoteSftp: (connectionId: string) => Promise<void>;
 
   // 消息操作

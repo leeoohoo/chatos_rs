@@ -31,7 +31,7 @@ python -m pip install -e .
 在仓库根目录执行：
 
 ```bash
-python openai-codex-gateway/server.py --host 127.0.0.1 --port 8088
+python openai-codex-gateway/server.py --host 127.0.0.1 --port 8089
 ```
 
 快速后台启动（推荐）：
@@ -68,7 +68,7 @@ cd openai-codex-gateway
 - 如果仍提示找不到 runtime，请显式指定：
 
 ```bash
-python openai-codex-gateway/server.py --codex-bin "$(which codex)" --port 8088
+python openai-codex-gateway/server.py --codex-bin "$(which codex)" --port 8089
 ```
 
 ## 接口
@@ -121,7 +121,7 @@ Authorization: Bearer <API_KEY>   # 可选
 from openai import OpenAI
 
 client = OpenAI(
-    base_url="http://127.0.0.1:8088/v1",
+    base_url="http://127.0.0.1:8089/v1",
     api_key="dummy-or-real-key",
 )
 
@@ -137,7 +137,7 @@ print(resp.output_text)
 ```python
 from openai import OpenAI
 
-client = OpenAI(base_url="http://127.0.0.1:8088/v1", api_key="dummy")
+client = OpenAI(base_url="http://127.0.0.1:8089/v1", api_key="dummy")
 
 stream = client.responses.stream(
     model="gpt-5",
@@ -160,7 +160,7 @@ for event in stream:
 python -m pip install openai
 ```
 
-然后执行（默认调用 `http://127.0.0.1:8088/v1`）：
+然后执行（默认调用 `http://127.0.0.1:8089/v1`）：
 
 ```bash
 python openai-codex-gateway/tests/test_single_turn.py
@@ -175,7 +175,7 @@ python openai-codex-gateway/tests/test_function_tools_stream.py
 
 可选环境变量：
 
-- `GATEWAY_BASE_URL`：默认 `http://127.0.0.1:8088/v1`
+- `GATEWAY_BASE_URL`：默认 `http://127.0.0.1:8089/v1`
 - `GATEWAY_API_KEY`：默认 `dummy-key`
 - `GATEWAY_TEST_MODEL`：可选；指定模型名（不传就用网关默认模型）
 

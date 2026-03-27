@@ -96,7 +96,7 @@ pub(super) fn spawn_remote_shell(
     })
 }
 
-pub(super) async fn run_ssh_command(
+pub(crate) async fn run_ssh_command(
     connection: &RemoteConnection,
     remote_command: &str,
     timeout_duration: Duration,
@@ -169,7 +169,7 @@ pub(super) async fn run_ssh_command(
     }
 }
 
-pub(super) async fn run_remote_connectivity_test(
+pub(crate) async fn run_remote_connectivity_test(
     connection: &RemoteConnection,
 ) -> Result<Value, String> {
     let script = "printf '__CHATOS_OK__\\n'; uname -n 2>/dev/null || hostname";

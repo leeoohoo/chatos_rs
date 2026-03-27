@@ -360,6 +360,7 @@ export interface InputAreaProps {
     attachments?: File[],
     runtimeOptions?: {
       mcpEnabled?: boolean;
+      remoteConnectionId?: string | null;
       projectId?: string | null;
       projectRoot?: string | null;
       workspaceRoot?: string | null;
@@ -391,6 +392,9 @@ export interface InputAreaProps {
   showProjectFileButton?: boolean;
   workspaceRoot?: string | null;
   onWorkspaceRootChange?: (path: string | null) => void;
+  currentRemoteConnectionId?: string | null;
+  availableRemoteConnections?: RemoteConnection[];
+  onRemoteConnectionChange?: (connectionId: string | null) => void;
   showWorkspaceRootPicker?: boolean;
   mcpEnabled?: boolean;
   enabledMcpIds?: string[];

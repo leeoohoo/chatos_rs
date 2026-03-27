@@ -134,20 +134,43 @@ impl TerminalControllerService {
         self.register_tool(
             "execute_command",
             &format!(
-                "Execute command in project terminal with path switching. Relative path is resolved from project root ({root_for_desc})."
+                "LOCAL ONLY: execute shell command in the local project terminal with path switching. Relative path is resolved from project root ({root_for_desc}). This tool does NOT execute on remote SSH hosts. For remote servers, use builtin_remote_connection_controller.run_command instead."
             ),
             json!({
                 "type": "object",
                 "properties": {
-                    "path": { "type": "string" },
-                    "common": { "type": "string" }
+                    "path": {
+                        "type": "string",
+                        "description": "Local directory path under project root."
+                    },
+                    "common": {
+                        "type": "string",
+                        "description": "Local shell command to run."
+                    },
+                    "command": {
+                        "type": "string",
+                        "description": "Alias of common. Local shell command to run."
+                    }
                 },
                 "additionalProperties": false,
-                "required": ["path", "common"]
+                "required": ["path"]
             }),
             Arc::new(move |args, _session_id| {
                 let path = required_trimmed_string(&args, "path")?;
-                let command = required_trimmed_string(&args, "common")?;
+                let command = args
+                    .get("common")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|v| !v.is_empty())
+                    .map(|v| v.to_string())
+                    .or_else(|| {
+                        args.get("command")
+                            .and_then(|v| v.as_str())
+                            .map(str::trim)
+                            .filter(|v| !v.is_empty())
+                            .map(|v| v.to_string())
+                    })
+                    .ok_or_else(|| "common is required".to_string())?;
                 let ctx = bound.clone();
                 let result = block_on_result(async move {
                     execute_command_with_context(ctx, path.as_str(), command.as_str()).await

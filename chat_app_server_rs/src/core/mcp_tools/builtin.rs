@@ -6,6 +6,9 @@ use crate::builtin::memory_command_reader::{
 use crate::builtin::memory_plugin_reader::{MemoryPluginReaderOptions, MemoryPluginReaderService};
 use crate::builtin::memory_skill_reader::{MemorySkillReaderOptions, MemorySkillReaderService};
 use crate::builtin::notepad::{NotepadBuiltinService, NotepadOptions};
+use crate::builtin::remote_connection_controller::{
+    RemoteConnectionControllerOptions, RemoteConnectionControllerService,
+};
 use crate::builtin::task_manager::{TaskManagerOptions, TaskManagerService};
 use crate::builtin::terminal_controller::{TerminalControllerOptions, TerminalControllerService};
 use crate::builtin::ui_prompter::{UiPrompterOptions, UiPrompterService};
@@ -22,6 +25,7 @@ pub enum BuiltinToolService {
     Notepad(NotepadBuiltinService),
     AgentBuilder(AgentBuilderService),
     UiPrompter(UiPrompterService),
+    RemoteConnectionController(RemoteConnectionControllerService),
     MemorySkillReader(MemorySkillReaderService),
     MemoryCommandReader(MemoryCommandReaderService),
     MemoryPluginReader(MemoryPluginReaderService),
@@ -36,6 +40,7 @@ impl BuiltinToolService {
             Self::Notepad(service) => service.list_tools(),
             Self::AgentBuilder(service) => service.list_tools(),
             Self::UiPrompter(service) => service.list_tools(),
+            Self::RemoteConnectionController(service) => service.list_tools(),
             Self::MemorySkillReader(service) => service.list_tools(),
             Self::MemoryCommandReader(service) => service.list_tools(),
             Self::MemoryPluginReader(service) => service.list_tools(),
@@ -75,6 +80,7 @@ impl BuiltinToolService {
                 conversation_turn_id,
                 on_stream_chunk,
             ),
+            Self::RemoteConnectionController(service) => service.call_tool(name, args),
             Self::MemorySkillReader(service) => service.call_tool(name, args),
             Self::MemoryCommandReader(service) => service.call_tool(name, args),
             Self::MemoryPluginReader(service) => service.call_tool(name, args),
@@ -156,6 +162,19 @@ pub fn build_builtin_tool_service(server: &McpBuiltinServer) -> Result<BuiltinTo
                 prompt_timeout_ms: crate::services::ui_prompt_manager::UI_PROMPT_TIMEOUT_MS_DEFAULT,
             })?;
             Ok(BuiltinToolService::UiPrompter(service))
+        }
+        BuiltinMcpKind::RemoteConnectionController => {
+            let service =
+                RemoteConnectionControllerService::new(RemoteConnectionControllerOptions {
+                    server_name: server.name.clone(),
+                    user_id: server.user_id.clone(),
+                    default_remote_connection_id: server.remote_connection_id.clone(),
+                    command_timeout_seconds: 20,
+                    max_command_timeout_seconds: 120,
+                    max_output_chars: 20_000,
+                    max_read_file_bytes: 256 * 1024,
+                })?;
+            Ok(BuiltinToolService::RemoteConnectionController(service))
         }
         BuiltinMcpKind::MemorySkillReader => {
             let agent_id = server

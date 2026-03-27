@@ -24,6 +24,7 @@ import {
   InputAreaMcpPicker,
   InputAreaProjectFilePicker,
   InputAreaProjectSelector,
+  InputAreaRemoteConnectionPicker,
   InputAreaWorkspacePicker,
 } from './inputArea/PickerWidgets';
 
@@ -58,6 +59,9 @@ export const InputArea: React.FC<InputAreaProps> = ({
   showProjectFileButton = true,
   workspaceRoot = null,
   onWorkspaceRootChange,
+  currentRemoteConnectionId = null,
+  availableRemoteConnections = [],
+  onRemoteConnectionChange,
   showWorkspaceRootPicker = false,
   mcpEnabled = true,
   enabledMcpIds = [],
@@ -133,6 +137,9 @@ export const InputArea: React.FC<InputAreaProps> = ({
   });
   const hasRuntimeProject = Boolean(selectedRuntimeProject?.id && selectedRuntimeProject?.rootPath);
   const hasDirectoryContext = hasRuntimeProject || Boolean(normalizedWorkspaceRoot);
+  const hasRemoteContext = Boolean(
+    typeof currentRemoteConnectionId === 'string' && currentRemoteConnectionId.trim().length > 0,
+  );
   const {
     mcpPickerOpen,
     setMcpPickerOpen,
@@ -146,6 +153,7 @@ export const InputArea: React.FC<InputAreaProps> = ({
     isAllMcpSelected,
     selectedMcpCount,
     isProjectRequiredMcpId,
+    isRemoteRequiredMcpId,
     loadAvailableMcpConfigs,
     handleToggleMcpPicker,
     handleSelectAllMcp,
@@ -155,6 +163,7 @@ export const InputArea: React.FC<InputAreaProps> = ({
     mcpEnabled,
     enabledMcpIds,
     hasDirectoryContext,
+    hasRemoteContext,
     disabled,
     isStreaming,
     isStopping,
@@ -291,6 +300,7 @@ export const InputArea: React.FC<InputAreaProps> = ({
     onSend(trimmedMessage, attachments, {
       mcpEnabled,
       enabledMcpIds: sanitizedEnabledMcpIds,
+      remoteConnectionId: currentRemoteConnectionId,
       projectId: runtimeProjectId,
       projectRoot: runtimeProjectRoot,
       workspaceRoot: runtimeWorkspaceRoot,
@@ -405,6 +415,15 @@ export const InputArea: React.FC<InputAreaProps> = ({
           onSelectWorkspaceRoot={handleSelectWorkspaceRoot}
         />
 
+        <InputAreaRemoteConnectionPicker
+          availableRemoteConnections={availableRemoteConnections}
+          currentRemoteConnectionId={currentRemoteConnectionId}
+          onRemoteConnectionChange={onRemoteConnectionChange}
+          disabled={disabled}
+          isStreaming={isStreaming}
+          isStopping={isStopping}
+        />
+
         <InputAreaMcpPicker
           mcpPickerRef={mcpPickerRef}
           mcpEnabled={mcpEnabled}
@@ -423,7 +442,9 @@ export const InputArea: React.FC<InputAreaProps> = ({
           builtinMcpConfigs={builtinMcpConfigs}
           customMcpConfigs={customMcpConfigs}
           hasDirectoryContext={hasDirectoryContext}
+          hasRemoteContext={hasRemoteContext}
           isProjectRequiredMcpId={isProjectRequiredMcpId}
+          isRemoteRequiredMcpId={isRemoteRequiredMcpId}
           sanitizedEnabledMcpIds={sanitizedEnabledMcpIds}
           onRefreshMcpConfigs={() => { void loadAvailableMcpConfigs(); }}
           onSelectAllMcp={handleSelectAllMcp}

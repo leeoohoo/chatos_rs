@@ -27,6 +27,7 @@ export const buildChatRequestLogPayload = ({
   attachments,
   reasoningEnabled,
   contactAgentId,
+  remoteConnectionId,
   projectId,
   projectRoot,
   mcpEnabled,
@@ -41,6 +42,7 @@ export const buildChatRequestLogPayload = ({
   attachments: any[];
   reasoningEnabled: boolean;
   contactAgentId: string | null;
+  remoteConnectionId: string | null;
   projectId: string;
   projectRoot: string | null;
   mcpEnabled: boolean;
@@ -63,6 +65,7 @@ export const buildChatRequestLogPayload = ({
   attachments: attachments || [],
   reasoning_enabled: reasoningEnabled,
   contact_agent_id: contactAgentId,
+  remote_connection_id: remoteConnectionId,
   project_id: projectId,
   project_root: projectRoot,
   mcp_enabled: mcpEnabled,
@@ -72,6 +75,7 @@ export const buildChatRequestLogPayload = ({
 export const buildStreamChatRuntimeOptions = ({
   turnId,
   contactAgentId,
+  remoteConnectionId,
   projectId,
   projectRoot,
   mcpEnabled,
@@ -79,6 +83,7 @@ export const buildStreamChatRuntimeOptions = ({
 }: {
   turnId: string;
   contactAgentId: string | null;
+  remoteConnectionId: string | null;
   projectId: string;
   projectRoot: string | null;
   mcpEnabled: boolean;
@@ -86,6 +91,7 @@ export const buildStreamChatRuntimeOptions = ({
 }) => ({
   turnId,
   contactAgentId,
+  remoteConnectionId,
   projectId,
   projectRoot,
   mcpEnabled,

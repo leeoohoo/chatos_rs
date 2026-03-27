@@ -50,6 +50,7 @@ interface ChatConversationPaneProps {
   onTaskReviewCancel: (payload?: any) => void;
   onSend: (content: string, attachments?: File[], runtimeOptions?: {
     mcpEnabled?: boolean;
+    remoteConnectionId?: string | null;
     projectId?: string | null;
     projectRoot?: string | null;
     workspaceRoot?: string | null;
@@ -72,6 +73,9 @@ interface ChatConversationPaneProps {
   onProjectChange: (projectId: string | null) => void;
   workspaceRoot: string | null;
   onWorkspaceRootChange: (path: string | null) => void;
+  currentRemoteConnectionId?: string | null;
+  availableRemoteConnections?: any[];
+  onRemoteConnectionChange?: (connectionId: string | null) => void;
   mcpEnabled: boolean;
   enabledMcpIds: string[];
   onMcpEnabledChange: (enabled: boolean) => void;
@@ -253,6 +257,9 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
   onProjectChange,
   workspaceRoot,
   onWorkspaceRootChange,
+  currentRemoteConnectionId,
+  availableRemoteConnections,
+  onRemoteConnectionChange,
   mcpEnabled,
   enabledMcpIds,
   onMcpEnabledChange,
@@ -335,6 +342,9 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
           showProjectFileButton={false}
           workspaceRoot={workspaceRoot}
           onWorkspaceRootChange={onWorkspaceRootChange}
+          currentRemoteConnectionId={currentRemoteConnectionId}
+          availableRemoteConnections={availableRemoteConnections}
+          onRemoteConnectionChange={onRemoteConnectionChange}
           showWorkspaceRootPicker={true}
           mcpEnabled={mcpEnabled}
           enabledMcpIds={enabledMcpIds}

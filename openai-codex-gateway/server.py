@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import json
 import os
 import shutil
@@ -254,6 +256,17 @@ def _deny_approval(_method: str, _params: dict[str, Any] | None) -> dict[str, An
     return {}
 
 
+def gateway_developer_instructions() -> str:
+    return (
+        "Gateway policy: only use caller-provided tools for this request "
+        "(dynamic function tools and configured MCP servers). "
+        "Do not use Codex built-in environment tools such as shell/command execution, "
+        "file editing/apply_patch, request_permissions, or web_search. "
+        "If the required caller-provided tool is unavailable, explain that limitation "
+        "and ask the user to provide/enable the tool."
+    )
+
+
 def debug_enabled() -> bool:
     value = os.environ.get("GATEWAY_DEBUG", "")
     return value.strip().lower() in {"1", "true", "yes", "on"}
@@ -295,7 +308,7 @@ class CodexBridge:
     def _run_turn(
         self,
         *,
-        prompt: str,
+        input_items: list[dict[str, Any]],
         model: str | None,
         reasoning_effort: str | None,
         reasoning_summary: str | None,
@@ -329,6 +342,7 @@ class CodexBridge:
             f"reasoning_summary={reasoning_summary or 'default'}",
             f"prev={'yes' if previous_response_id else 'no'}",
             f"cwd={request_cwd or self._cfg.cwd or 'default'}",
+            f"input_items={len(input_items)}",
             f"function_tools={len(function_tools)}",
             f"provided_outputs={len(provided_tool_outputs)}",
         )
@@ -339,6 +353,7 @@ class CodexBridge:
         def handle_server_request(method: str, params: dict[str, Any] | None) -> dict[str, Any]:
             nonlocal missing_tool_output_detected
             if method in {"item/commandExecution/requestApproval", "item/fileChange/requestApproval"}:
+                state_log("run_turn.builtin_request_declined", f"method={method}")
                 return {"decision": "decline"}
 
             if method != "item/tool/call":
@@ -401,6 +416,7 @@ class CodexBridge:
                 resume_params: dict[str, Any] = {
                     "approvalPolicy": self._cfg.approval_policy,
                     "sandbox": self._cfg.sandbox,
+                    "developerInstructions": gateway_developer_instructions(),
                     **({"model": model} if model else {}),
                     **({"cwd": request_cwd} if request_cwd else {}),
                     **({"config": request_config_overrides} if request_config_overrides else {}),
@@ -413,6 +429,7 @@ class CodexBridge:
                 start_params: dict[str, Any] = {
                     "approvalPolicy": self._cfg.approval_policy,
                     "sandbox": self._cfg.sandbox,
+                    "developerInstructions": gateway_developer_instructions(),
                     **({"model": model} if model else {}),
                     **({"cwd": request_cwd} if request_cwd else {}),
                     **({"config": request_config_overrides} if request_config_overrides else {}),
@@ -424,7 +441,7 @@ class CodexBridge:
 
             turn_started = client.turn_start(
                 thread_id,
-                [{"type": "text", "text": prompt}],
+                input_items,
                 params={
                     **({"cwd": request_cwd} if request_cwd else {}),
                     **({"model": model} if model else {}),
@@ -619,11 +636,11 @@ class CodexBridge:
         provided_tool_outputs: dict[str, list[dict[str, Any]]],
         on_delta: Callable[[str], None] | None = None,
     ) -> tuple[str, dict[str, Any]]:
-        prompt = extract_prompt(payload)
-        if provided_tool_outputs:
-            prompt = merge_prompt_with_tool_outputs(prompt, provided_tool_outputs)
-        if not prompt:
-            raise ValueError("request input is empty; provide `input` text")
+        input_items = extract_turn_input_items(payload)
+        input_items = merge_input_items_with_tool_outputs(input_items, provided_tool_outputs)
+        input_items = ensure_non_empty_turn_input(input_items)
+        if not input_items:
+            raise ValueError("request input is empty; provide `input` text/image/file")
 
         model = payload.get("model")
         model_name = model if isinstance(model, str) and model else "codex-default"
@@ -642,7 +659,7 @@ class CodexBridge:
         message_id = make_id("msg")
 
         result = self._run_turn(
-            prompt=prompt,
+            input_items=input_items,
             model=model,
             reasoning_effort=reasoning_effort,
             reasoning_summary=reasoning_summary,
@@ -975,11 +992,11 @@ class GatewayHandler(BaseHTTPRequestHandler):
         )
 
         try:
-            prompt = extract_prompt(payload)
-            if provided_tool_outputs:
-                prompt = merge_prompt_with_tool_outputs(prompt, provided_tool_outputs)
-            if not prompt:
-                raise ValueError("request input is empty; provide `input` text")
+            input_items = extract_turn_input_items(payload)
+            input_items = merge_input_items_with_tool_outputs(input_items, provided_tool_outputs)
+            input_items = ensure_non_empty_turn_input(input_items)
+            if not input_items:
+                raise ValueError("request input is empty; provide `input` text/image/file")
 
             if function_tools:
                 tool_message_id = make_id("msg")
@@ -1045,7 +1062,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
                     )
 
                 result = self.gateway.bridge._run_turn(
-                    prompt=prompt,
+                    input_items=input_items,
                     model=model_raw if isinstance(model_raw, str) else None,
                     reasoning_effort=reasoning_effort,
                     reasoning_summary=reasoning_summary,
@@ -1314,7 +1331,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 )
 
             result = self.gateway.bridge._run_turn(
-                prompt=prompt,
+                input_items=input_items,
                 model=model_raw if isinstance(model_raw, str) else None,
                 reasoning_effort=reasoning_effort,
                 reasoning_summary=reasoning_summary,
@@ -1457,25 +1474,202 @@ def extract_bearer_token(value: str | None) -> str | None:
     return token or None
 
 
-def extract_prompt(payload: dict[str, Any]) -> str:
-    parts: list[str] = []
+def extract_turn_input_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
 
     instructions = payload.get("instructions")
     if isinstance(instructions, str) and instructions.strip():
-        parts.append(instructions.strip())
+        items.append({"type": "text", "text": instructions.strip()})
 
     input_value = payload.get("input")
     if input_value is None and "messages" in payload:
         input_value = payload.get("messages")
 
-    input_texts: list[str] = []
-    collect_text(input_value, input_texts)
+    collect_turn_input_items(input_value, items)
+    return items
 
-    text = "\n\n".join(t.strip() for t in input_texts if isinstance(t, str) and t.strip())
-    if text:
-        parts.append(text)
 
-    return "\n\n".join(parts).strip()
+def collect_turn_input_items(node: Any, out: list[dict[str, Any]]) -> None:
+    if node is None:
+        return
+
+    if isinstance(node, str):
+        text = node.strip()
+        if text:
+            out.append({"type": "text", "text": text})
+        return
+
+    if isinstance(node, list):
+        for item in node:
+            collect_turn_input_items(item, out)
+        return
+
+    if not isinstance(node, dict):
+        return
+
+    node_type = node.get("type")
+    if isinstance(node_type, str):
+        normalized = node_type.strip()
+
+        if normalized in {"text", "input_text", "output_text", "inputText", "outputText"}:
+            text = node.get("text")
+            if isinstance(text, str) and text.strip():
+                out.append({"type": "text", "text": text.strip()})
+            return
+
+        if normalized in {"image", "input_image", "image_url", "inputImage", "imageUrl"}:
+            image_url = extract_image_url(node)
+            if image_url:
+                out.append({"type": "image", "url": image_url})
+            else:
+                image_ref = extract_image_reference_text(node)
+                if image_ref:
+                    out.append({"type": "text", "text": image_ref})
+            return
+
+        if normalized in {"localImage", "local_image"}:
+            local_path = normalize_optional_string(node.get("path"))
+            if local_path:
+                out.append({"type": "localImage", "path": local_path})
+            return
+
+        if normalized in {"input_file", "file", "inputFile"}:
+            text = extract_input_file_text(node)
+            if text:
+                out.append({"type": "text", "text": text})
+            return
+
+        if normalized == "message":
+            collect_turn_input_items(node.get("content"), out)
+            return
+
+    # Legacy chat-style message object: {"role":"user","content":...}
+    if "role" in node and "content" in node:
+        collect_turn_input_items(node.get("content"), out)
+        return
+
+    if "content" in node:
+        collect_turn_input_items(node.get("content"), out)
+        return
+
+    text = node.get("text")
+    if isinstance(text, str) and text.strip():
+        out.append({"type": "text", "text": text.strip()})
+
+
+def normalize_optional_string(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    trimmed = value.strip()
+    return trimmed if trimmed else None
+
+
+def extract_image_url(node: dict[str, Any]) -> str | None:
+    image_url = node.get("image_url", node.get("imageUrl", node.get("url")))
+    if isinstance(image_url, dict):
+        candidate = image_url.get("url")
+        return normalize_optional_string(candidate)
+    return normalize_optional_string(image_url)
+
+
+def extract_image_reference_text(node: dict[str, Any]) -> str | None:
+    file_id = normalize_optional_string(node.get("file_id")) or normalize_optional_string(
+        node.get("fileId")
+    )
+    if not file_id:
+        image_url = node.get("image_url", node.get("imageUrl"))
+        if isinstance(image_url, dict):
+            file_id = normalize_optional_string(image_url.get("file_id")) or normalize_optional_string(
+                image_url.get("fileId")
+            )
+    if not file_id:
+        return None
+    return f"[image attachment via file_id={file_id}; direct URL not provided]"
+
+
+def extract_input_file_text(node: dict[str, Any]) -> str | None:
+    filename = normalize_optional_string(node.get("filename")) or normalize_optional_string(
+        node.get("name")
+    )
+    mime_type = (
+        normalize_optional_string(node.get("mime_type"))
+        or normalize_optional_string(node.get("mimeType"))
+        or normalize_optional_string(node.get("content_type"))
+        or normalize_optional_string(node.get("contentType"))
+    )
+    file_id = normalize_optional_string(node.get("file_id")) or normalize_optional_string(
+        node.get("fileId")
+    )
+
+    inline_text = normalize_optional_string(node.get("text"))
+    if inline_text:
+        return format_file_text_block(filename, mime_type, inline_text)
+
+    file_data = node.get("file_data", node.get("fileData", node.get("data")))
+    if isinstance(file_data, str) and file_data.strip():
+        decoded = decode_file_data(file_data.strip())
+        if decoded is not None:
+            textual = decode_bytes_to_text(decoded)
+            if textual:
+                return format_file_text_block(filename, mime_type, textual)
+
+    label = filename or file_id or "unnamed"
+    if file_id:
+        return (
+            f"Attachment: {label}"
+            f"{f' ({mime_type})' if mime_type else ''}"
+            f" [file_id={file_id}; content not inlined]"
+        )
+    return (
+        f"Attachment: {label}"
+        f"{f' ({mime_type})' if mime_type else ''}"
+        " [binary or unsupported file content omitted]"
+    )
+
+
+def format_file_text_block(filename: str | None, mime_type: str | None, text: str) -> str:
+    name = filename or "attachment"
+    mime = mime_type or "application/octet-stream"
+    content = text.strip()
+    if not content:
+        content = "[empty]"
+    max_chars = 20_000
+    if len(content) > max_chars:
+        content = f"{content[:max_chars]}\n...[truncated]"
+    return f"Attachment: {name} ({mime})\n\n{content}"
+
+
+def decode_file_data(file_data: str) -> bytes | None:
+    if file_data.startswith("data:"):
+        comma_idx = file_data.find(",")
+        if comma_idx == -1:
+            return None
+        meta = file_data[:comma_idx].lower()
+        body = file_data[comma_idx + 1 :]
+        if ";base64" in meta:
+            try:
+                return base64.b64decode(body, validate=False)
+            except binascii.Error:
+                return None
+        return body.encode("utf-8", errors="replace")
+
+    # Try base64 first; fallback to raw text bytes.
+    try:
+        return base64.b64decode(file_data, validate=True)
+    except binascii.Error:
+        return file_data.encode("utf-8", errors="replace")
+
+
+def decode_bytes_to_text(data: bytes) -> str | None:
+    if not data:
+        return ""
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        try:
+            return data.decode("utf-8", errors="replace")
+        except Exception:
+            return None
 
 
 def extract_function_tools(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1624,6 +1818,41 @@ def merge_prompt_with_tool_outputs(
     return extra
 
 
+def merge_input_items_with_tool_outputs(
+    input_items: list[dict[str, Any]],
+    provided_tool_outputs: dict[str, list[dict[str, Any]]],
+) -> list[dict[str, Any]]:
+    if not provided_tool_outputs:
+        return input_items
+
+    out = list(input_items)
+    extra = merge_prompt_with_tool_outputs("", provided_tool_outputs).strip()
+    if extra:
+        out.append({"type": "text", "text": extra})
+    return out
+
+
+def ensure_non_empty_turn_input(input_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not input_items:
+        return input_items
+
+    has_text = any(
+        isinstance(item, dict)
+        and item.get("type") == "text"
+        and isinstance(item.get("text"), str)
+        and item.get("text").strip()
+        for item in input_items
+    )
+    if has_text:
+        return input_items
+
+    # Some upstream paths reject all-nontext turns; add a neutral hint to keep
+    # image-only requests valid without forcing users to type extra words.
+    out = list(input_items)
+    out.append({"type": "text", "text": "请根据上传的图片或附件内容进行分析并回答。"})
+    return out
+
+
 def encode_tool_arguments(arguments: Any) -> str:
     if isinstance(arguments, str):
         return arguments
@@ -1681,12 +1910,22 @@ def extract_request_config_overrides(payload: dict[str, Any]) -> dict[str, Any] 
             raise ValueError(f"duplicate mcp server label in `tools`: {label}")
         mcp_servers[label] = mcp_config
 
-    # This gateway is Rust-only. Always disable Codex built-in tool sources
-    # (apps/plugins/connectors) so only caller-provided tools can be selected.
+    # This gateway is Rust-only. Force-disable Codex built-in tool surfaces so
+    # the model only sees caller-provided function/MCP tools.
     config: dict[str, Any] = {
         "features.apps": False,
         "features.plugins": False,
         "features.connectors": False,
+        "features.shell_tool": False,
+        "features.include_apply_patch_tool": False,
+        "features.request_permissions_tool": False,
+        "features.web_search": False,
+        "features.web_search_cached": False,
+        "features.web_search_request": False,
+        "include_apply_patch_tool": False,
+        "allow_login_shell": False,
+        "web_search": "disabled",
+        "tools.view_image": False,
         # Always clear thread-level MCP servers from local Codex config so this
         # gateway only uses caller-provided tooling.
         "mcp_servers": mcp_servers,
@@ -1920,7 +2159,7 @@ def resolve_codex_bin(cli_value: str | None) -> str | None:
 def parse_args() -> GatewayConfig:
     parser = argparse.ArgumentParser(description="OpenAI-compatible gateway backed by codex SDK")
     parser.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
-    parser.add_argument("--port", type=int, default=8089, help="Bind port (default: 8088)")
+    parser.add_argument("--port", type=int, default=8089, help="Bind port (default: 8089)")
     parser.add_argument("--codex-bin", default=None)
     parser.add_argument(
         "--state-db",

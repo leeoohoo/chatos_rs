@@ -179,6 +179,7 @@ export interface ApplicationUpdatePayload {
 export interface StreamChatOptions {
   turnId?: string;
   contactAgentId?: string | null;
+  remoteConnectionId?: string | null;
   projectId?: string | null;
   projectRoot?: string | null;
   mcpEnabled?: boolean;

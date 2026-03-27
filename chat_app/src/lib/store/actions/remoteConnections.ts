@@ -1,6 +1,7 @@
 import type { RemoteConnection } from '../../../types';
 import type ApiClient from '../../api/client';
 import { normalizeRemoteConnection } from '../helpers/remoteConnections';
+import { mergeSessionRuntimeIntoMetadata } from '../helpers/sessionRuntime';
 
 interface CreateRemoteConnectionPayload {
   name?: string;
@@ -48,6 +49,30 @@ interface Deps {
 }
 
 export function createRemoteConnectionActions({ set, get, client, getUserIdParam }: Deps) {
+  const persistRemoteConnectionToCurrentSession = (connectionId: string | null) => {
+    const state = get();
+    const currentSessionId = typeof state?.currentSessionId === 'string'
+      ? state.currentSessionId.trim()
+      : '';
+    if (!currentSessionId) {
+      return;
+    }
+    const currentSession = state?.currentSession;
+    const metadata = mergeSessionRuntimeIntoMetadata(currentSession?.metadata, {
+      remoteConnectionId: connectionId,
+    });
+    set((draft: any) => {
+      const sessionIndex = draft.sessions.findIndex((item: any) => item?.id === currentSessionId);
+      if (sessionIndex >= 0) {
+        draft.sessions[sessionIndex].metadata = metadata;
+      }
+      if (draft.currentSession?.id === currentSessionId) {
+        draft.currentSession.metadata = metadata;
+      }
+    });
+    void client.updateSession(currentSessionId, { metadata }).catch(() => {});
+  };
+
   return {
     loadRemoteConnections: async () => {
       try {
@@ -56,20 +81,16 @@ export function createRemoteConnectionActions({ set, get, client, getUserIdParam
         const formatted = Array.isArray(list) ? list.map(normalizeRemoteConnection) : [];
         set((state: any) => {
           state.remoteConnections = formatted;
-          if (!state.currentRemoteConnectionId) {
-            const lastId = localStorage.getItem(`lastRemoteConnectionId_${uid}`);
-            if (lastId) {
-              const matched = formatted.find((item: RemoteConnection) => item.id === lastId);
-              if (matched) {
-                state.currentRemoteConnectionId = matched.id;
-                state.currentRemoteConnection = matched;
-              }
-            }
-          } else {
+          if (state.currentRemoteConnectionId) {
             const matched = formatted.find((item: RemoteConnection) => item.id === state.currentRemoteConnectionId);
             if (matched) {
               state.currentRemoteConnection = matched;
+            } else {
+              state.currentRemoteConnectionId = null;
+              state.currentRemoteConnection = null;
             }
+          } else {
+            state.currentRemoteConnection = null;
           }
         });
         return formatted;
@@ -96,6 +117,7 @@ export function createRemoteConnectionActions({ set, get, client, getUserIdParam
         state.activePanel = 'remote_terminal';
       });
       localStorage.setItem(`lastRemoteConnectionId_${uid}`, connection.id);
+      persistRemoteConnectionToCurrentSession(connection.id);
       return connection;
     },
 
@@ -124,6 +146,7 @@ export function createRemoteConnectionActions({ set, get, client, getUserIdParam
 
     deleteRemoteConnection: async (connectionId: string) => {
       try {
+        const shouldClearSessionRuntime = get().currentRemoteConnectionId === connectionId;
         await client.deleteRemoteConnection(connectionId);
         set((state: any) => {
           state.remoteConnections = state.remoteConnections.filter((item: RemoteConnection) => item.id !== connectionId);
@@ -135,6 +158,9 @@ export function createRemoteConnectionActions({ set, get, client, getUserIdParam
             }
           }
         });
+        if (shouldClearSessionRuntime) {
+          persistRemoteConnectionToCurrentSession(null);
+        }
       } catch (error) {
         console.error('Failed to delete remote connection:', error);
         set((state: any) => {
@@ -143,20 +169,40 @@ export function createRemoteConnectionActions({ set, get, client, getUserIdParam
       }
     },
 
-    selectRemoteConnection: async (connectionId: string) => {
+    selectRemoteConnection: async (
+      connectionId: string | null,
+      options?: { activatePanel?: boolean },
+    ) => {
       try {
-        let connection = get().remoteConnections.find((item: RemoteConnection) => item.id === connectionId) || null;
+        const normalizedConnectionId = typeof connectionId === 'string' ? connectionId.trim() : '';
+        const activatePanel = options?.activatePanel !== false;
+        const uid = getUserIdParam();
+        if (!normalizedConnectionId) {
+          set((state: any) => {
+            state.currentRemoteConnectionId = null;
+            state.currentRemoteConnection = null;
+            if (state.activePanel === 'remote_terminal' || state.activePanel === 'remote_sftp') {
+              state.activePanel = 'chat';
+            }
+          });
+          localStorage.removeItem(`lastRemoteConnectionId_${uid}`);
+          persistRemoteConnectionToCurrentSession(null);
+          return;
+        }
+        let connection = get().remoteConnections.find((item: RemoteConnection) => item.id === normalizedConnectionId) || null;
         if (!connection) {
-          const fetched = await client.getRemoteConnection(connectionId);
+          const fetched = await client.getRemoteConnection(normalizedConnectionId);
           connection = normalizeRemoteConnection(fetched);
         }
-        const uid = getUserIdParam();
         set((state: any) => {
-          state.currentRemoteConnectionId = connectionId;
+          state.currentRemoteConnectionId = normalizedConnectionId;
           state.currentRemoteConnection = connection;
-          state.activePanel = 'remote_terminal';
+          if (activatePanel) {
+            state.activePanel = 'remote_terminal';
+          }
         });
-        localStorage.setItem(`lastRemoteConnectionId_${uid}`, connectionId);
+        localStorage.setItem(`lastRemoteConnectionId_${uid}`, normalizedConnectionId);
+        persistRemoteConnectionToCurrentSession(normalizedConnectionId);
       } catch (error) {
         console.error('Failed to select remote connection:', error);
         set((state: any) => {
@@ -179,6 +225,7 @@ export function createRemoteConnectionActions({ set, get, client, getUserIdParam
           state.activePanel = 'remote_sftp';
         });
         localStorage.setItem(`lastRemoteConnectionId_${uid}`, connectionId);
+        persistRemoteConnectionToCurrentSession(connectionId);
       } catch (error) {
         console.error('Failed to open remote sftp:', error);
         set((state: any) => {

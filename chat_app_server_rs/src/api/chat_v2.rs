@@ -21,7 +21,7 @@ use crate::core::chat_runtime::{
     contact_agent_id_from_metadata, contact_id_from_metadata, enabled_mcp_ids_from_metadata,
     mcp_enabled_from_metadata, normalize_id, parse_contact_command_invocation,
     parse_implicit_command_selections_from_tools_end, project_id_from_metadata,
-    project_root_from_metadata, resolve_project_runtime,
+    project_root_from_metadata, remote_connection_id_from_metadata, resolve_project_runtime,
 };
 use crate::core::chat_stream::{build_v2_callbacks, handle_chat_result, send_start_event};
 use crate::core::mcp_runtime::{
@@ -57,6 +57,7 @@ struct ChatRequest {
     contact_agent_id: Option<String>,
     project_id: Option<String>,
     project_root: Option<String>,
+    remote_connection_id: Option<String>,
     mcp_enabled: Option<bool>,
     enabled_mcp_ids: Option<Vec<String>>,
 }
@@ -96,10 +97,16 @@ async fn agent_chat_stream(
     }
     let session_id = req.session_id.clone().unwrap_or_default();
     let content = req.content.clone().unwrap_or_default();
-    if session_id.is_empty() || content.is_empty() {
+    let has_text_content = !content.trim().is_empty();
+    let has_attachments = req
+        .attachments
+        .as_ref()
+        .map(|items| !items.is_empty())
+        .unwrap_or(false);
+    if session_id.is_empty() || (!has_text_content && !has_attachments) {
         return Err((
             StatusCode::BAD_REQUEST,
-            Json(json!({"error": "session_id 和 content 不能为空"})),
+            Json(json!({"error": "session_id 不能为空，且 content 与 attachments 不能同时为空"})),
         ));
     }
 
@@ -358,6 +365,8 @@ async fn stream_chat_v2(
         .unwrap_or_else(|| enabled_mcp_ids_from_metadata(session_metadata));
     let normalized_mcp_ids = normalize_mcp_ids(&requested_mcp_ids);
     let enabled_mcp_ids_for_snapshot = normalized_mcp_ids.clone();
+    let default_remote_connection_id = normalize_id(req.remote_connection_id)
+        .or_else(|| remote_connection_id_from_metadata(session_metadata));
     let mcp_enabled = req
         .mcp_enabled
         .or_else(|| mcp_enabled_from_metadata(session_metadata))
@@ -399,6 +408,9 @@ async fn stream_chat_v2(
         ) {
             builtin_servers.push(server);
         }
+    }
+    for server in &mut builtin_servers {
+        server.remote_connection_id = default_remote_connection_id.clone();
     }
     let use_tools = has_any_mcp_server(&http_servers, &stdio_servers, &builtin_servers);
     let mut mcp_exec = McpToolExecute::new(

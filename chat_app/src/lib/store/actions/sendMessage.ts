@@ -118,6 +118,7 @@ export function createSendMessageHandler({
     };
     const {
       effectiveContactAgentId,
+      effectiveRemoteConnectionId,
       effectiveProjectId,
       effectiveProjectRoot,
       effectiveWorkspaceRoot,
@@ -133,6 +134,7 @@ export function createSendMessageHandler({
     const runtimeMetadata = mergeSessionRuntimeIntoMetadata(currentSession?.metadata, {
       selectedModelId: selectedModel?.id || null,
       contactAgentId: effectiveContactAgentId,
+      remoteConnectionId: effectiveRemoteConnectionId,
       projectId: effectiveProjectId,
       projectRoot: effectiveProjectRoot,
       workspaceRoot: effectiveWorkspaceRoot,
@@ -273,6 +275,7 @@ export function createSendMessageHandler({
         attachments: apiAttachments || [],
         reasoningEnabled,
         contactAgentId: effectiveContactAgentId,
+        remoteConnectionId: effectiveRemoteConnectionId,
         projectId: effectiveProjectId,
         projectRoot: effectiveExecutionRoot,
         mcpEnabled: effectiveMcpEnabled,
@@ -291,6 +294,7 @@ export function createSendMessageHandler({
         buildStreamChatRuntimeOptions({
           turnId: conversationTurnId,
           contactAgentId: effectiveContactAgentId,
+          remoteConnectionId: effectiveRemoteConnectionId,
           projectId: effectiveProjectId,
           projectRoot: effectiveExecutionRoot,
           mcpEnabled: effectiveMcpEnabled,

@@ -2,6 +2,7 @@ import type { SendMessageRuntimeOptions } from '../../types';
 
 interface SessionRuntimeLike {
   contactAgentId?: string | null;
+  remoteConnectionId?: string | null;
   projectId?: string | null;
   projectRoot?: string | null;
   workspaceRoot?: string | null;
@@ -11,6 +12,7 @@ interface SessionRuntimeLike {
 
 interface RuntimeResolutionResult {
   effectiveContactAgentId: string | null;
+  effectiveRemoteConnectionId: string | null;
   effectiveProjectId: string;
   effectiveProjectRoot: string | null;
   effectiveWorkspaceRoot: string | null;
@@ -32,6 +34,19 @@ export const resolveRuntimeConfig = (
   const requestedProjectId = typeof runtimeOptions?.projectId === 'string'
     ? runtimeOptions.projectId.trim()
     : '';
+  const hasRequestedRemoteConnectionId = Boolean(
+    runtimeOptions
+    && Object.prototype.hasOwnProperty.call(runtimeOptions, 'remoteConnectionId'),
+  );
+  const requestedRemoteConnectionId = typeof runtimeOptions?.remoteConnectionId === 'string'
+    ? runtimeOptions.remoteConnectionId.trim()
+    : '';
+  const sessionRemoteConnectionId = typeof sessionRuntime?.remoteConnectionId === 'string'
+    ? sessionRuntime.remoteConnectionId.trim()
+    : '';
+  const effectiveRemoteConnectionId = hasRequestedRemoteConnectionId
+    ? (requestedRemoteConnectionId || null)
+    : (sessionRemoteConnectionId || null);
   const sessionProjectId = typeof sessionRuntime?.projectId === 'string'
     ? sessionRuntime.projectId.trim()
     : '';
@@ -62,6 +77,7 @@ export const resolveRuntimeConfig = (
 
   return {
     effectiveContactAgentId,
+    effectiveRemoteConnectionId,
     effectiveProjectId,
     effectiveProjectRoot,
     effectiveWorkspaceRoot,

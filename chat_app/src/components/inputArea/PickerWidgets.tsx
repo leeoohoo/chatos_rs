@@ -1,6 +1,6 @@
 import React from 'react';
 import { cn } from '../../lib/utils';
-import type { FsEntry, Project } from '../../types';
+import type { FsEntry, Project, RemoteConnection } from '../../types';
 import type { SelectableMcpConfig } from './useMcpSelection';
 
 interface InputAreaProjectFilePickerProps {
@@ -327,6 +327,54 @@ export const InputAreaWorkspacePicker: React.FC<InputAreaWorkspacePickerProps> =
   );
 };
 
+interface InputAreaRemoteConnectionPickerProps {
+  availableRemoteConnections: RemoteConnection[];
+  currentRemoteConnectionId?: string | null;
+  onRemoteConnectionChange?: (connectionId: string | null) => void;
+  disabled: boolean;
+  isStreaming: boolean;
+  isStopping: boolean;
+}
+
+export const InputAreaRemoteConnectionPicker: React.FC<InputAreaRemoteConnectionPickerProps> = ({
+  availableRemoteConnections,
+  currentRemoteConnectionId,
+  onRemoteConnectionChange,
+  disabled,
+  isStreaming,
+  isStopping,
+}) => {
+  if (!Array.isArray(availableRemoteConnections) || availableRemoteConnections.length === 0) {
+    return null;
+  }
+
+  return (
+    <select
+      value={currentRemoteConnectionId || ''}
+      onChange={(event) => {
+        const connectionId = event.target.value || null;
+        onRemoteConnectionChange?.(connectionId);
+      }}
+      disabled={disabled || isStreaming || isStopping}
+      className={cn(
+        'flex-shrink-0 px-2 py-1 text-xs rounded-md border bg-background',
+        'text-foreground focus:outline-none focus:ring-1 focus:ring-primary max-w-[220px]',
+        (disabled || isStreaming || isStopping) && 'opacity-50 cursor-not-allowed'
+      )}
+      title="选择远程服务器（会透传给 AI 工具）"
+    >
+      <option value="">
+        服务器: 不选择
+      </option>
+      {availableRemoteConnections.map((connection) => (
+        <option key={connection.id} value={connection.id}>
+          {`服务器: ${connection.name || connection.host}`}
+        </option>
+      ))}
+    </select>
+  );
+};
+
 interface InputAreaMcpPickerProps {
   mcpPickerRef: React.RefObject<HTMLDivElement>;
   mcpEnabled: boolean;
@@ -345,7 +393,9 @@ interface InputAreaMcpPickerProps {
   builtinMcpConfigs: SelectableMcpConfig[];
   customMcpConfigs: SelectableMcpConfig[];
   hasDirectoryContext: boolean;
+  hasRemoteContext: boolean;
   isProjectRequiredMcpId: (id: string) => boolean;
+  isRemoteRequiredMcpId: (id: string) => boolean;
   sanitizedEnabledMcpIds: string[];
   onRefreshMcpConfigs: () => void;
   onSelectAllMcp: () => void;
@@ -370,7 +420,9 @@ export const InputAreaMcpPicker: React.FC<InputAreaMcpPickerProps> = ({
   builtinMcpConfigs,
   customMcpConfigs,
   hasDirectoryContext,
+  hasRemoteContext,
   isProjectRequiredMcpId,
+  isRemoteRequiredMcpId,
   sanitizedEnabledMcpIds,
   onRefreshMcpConfigs,
   onSelectAllMcp,
@@ -462,20 +514,22 @@ export const InputAreaMcpPicker: React.FC<InputAreaMcpPickerProps> = ({
                   </div>
                   {builtinMcpConfigs.map((item) => {
                     const projectDisabled = !hasDirectoryContext && isProjectRequiredMcpId(item.id);
-                    const checked = !projectDisabled && (isAllMcpSelected || sanitizedEnabledMcpIds.includes(item.id));
+                    const remoteDisabled = !hasRemoteContext && isRemoteRequiredMcpId(item.id);
+                    const disabledByContext = projectDisabled || remoteDisabled;
+                    const checked = !disabledByContext && (isAllMcpSelected || sanitizedEnabledMcpIds.includes(item.id));
                     return (
                       <label
                         key={item.id}
                         className={cn(
                           'w-full px-3 py-1.5 text-sm flex items-center gap-2',
-                          projectDisabled ? 'opacity-50 cursor-not-allowed' : 'hover:bg-accent',
+                          disabledByContext ? 'opacity-50 cursor-not-allowed' : 'hover:bg-accent',
                         )}
                       >
                         <input
                           type="checkbox"
                           checked={checked}
                           onChange={() => {
-                            if (projectDisabled) {
+                            if (disabledByContext) {
                               return;
                             }
                             if (!mcpEnabled) {
@@ -483,11 +537,14 @@ export const InputAreaMcpPicker: React.FC<InputAreaMcpPickerProps> = ({
                             }
                             onToggleMcpSelection(item.id);
                           }}
-                          disabled={disabled || isStreaming || isStopping || projectDisabled}
+                          disabled={disabled || isStreaming || isStopping || disabledByContext}
                         />
                         <span className="truncate" title={item.displayName}>{item.displayName}</span>
                         {projectDisabled && (
                           <span className="text-[11px] text-muted-foreground">需选择目录</span>
+                        )}
+                        {remoteDisabled && (
+                          <span className="text-[11px] text-muted-foreground">需选择服务器</span>
                         )}
                       </label>
                     );

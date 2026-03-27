@@ -198,7 +198,7 @@ mod tests {
         let resolved = resolve_chat_model_config(
             &json!({
                 "model_name": "gpt-5.3-codex",
-                "base_url": "http://127.0.0.1:8088/v1"
+                "base_url": "http://127.0.0.1:8089/v1"
             }),
             "gpt-4o-mini",
             "k",
