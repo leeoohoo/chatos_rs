@@ -505,6 +505,10 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
       setSelectedPath(path);
       setSelectedFile(null);
     },
+    onSelectMarkedPath: (path) => {
+      setSelectedPath(path);
+      setSelectedFile(null);
+    },
     onToggleDir: (entry) => {
       void toggleDir(entry);
     },
