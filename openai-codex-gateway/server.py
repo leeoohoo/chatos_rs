@@ -1456,15 +1456,20 @@ class GatewayHandler(BaseHTTPRequestHandler):
 
     def _write_json(self, status: HTTPStatus, body: dict[str, Any]) -> None:
         encoded = json.dumps(body, ensure_ascii=False).encode("utf-8")
-        self.send_response(status)
-        self._write_common_headers()
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(encoded)))
-        self.send_header("Connection", "close")
-        self.end_headers()
-        self.wfile.write(encoded)
-        self.wfile.flush()
-        self.close_connection = True
+        try:
+            self.send_response(status)
+            self._write_common_headers()
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(encoded)))
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(encoded)
+            self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            # Client disconnected before reading the response body.
+            debug_log("http.write_json.disconnected", f"status={int(status)}")
+        finally:
+            self.close_connection = True
 
     def _send_sse(self, data: dict[str, Any]) -> None:
         payload = json.dumps(data, ensure_ascii=False)

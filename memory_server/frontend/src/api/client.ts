@@ -31,7 +31,9 @@ const client = axios.create({
   timeout: 30000,
 });
 
-const AI_CREATE_AGENT_TIMEOUT_MS = 180000;
+// AI 创建智能体可能涉及工具调用、技能筛选与多轮推理，耗时可能超过 3 分钟。
+// 这里禁用 axios 超时，避免前端先断开导致网关出现 Broken pipe 噪声日志。
+const AI_CREATE_AGENT_TIMEOUT_MS = 0;
 
 type RawUserItem = {
   username: string;
