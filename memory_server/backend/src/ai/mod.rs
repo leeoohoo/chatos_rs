@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use reqwest::Client;
-use serde_json::json;
+use serde_json::{json, Value};
 
 use crate::config::AppConfig;
 use crate::models::{AiModelConfig, DEFAULT_SUMMARY_PROMPT_TEMPLATE};
@@ -175,6 +175,8 @@ impl AiClient {
             "model": model,
             "temperature": temperature.clamp(0.0, 2.0),
             "max_tokens": max_tokens,
+            "stream": true,
+            "stream_options": {"include_usage": true},
             "messages": [
                 {"role":"system","content": system_prompt},
                 {"role":"user","content": user_prompt}
@@ -197,20 +199,8 @@ impl AiClient {
             return Err(format!("ai request status={} body={}", status, text));
         }
 
-        let value: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| format!("ai response parse failed: {e}"))?;
-
-        let text = value
-            .get("choices")
-            .and_then(|v| v.as_array())
-            .and_then(|arr| arr.first())
-            .and_then(|first| first.get("message"))
-            .and_then(|m| m.get("content"))
-            .and_then(|c| c.as_str())
-            .map(|v| v.trim().to_string())
-            .filter(|v| !v.is_empty())
+        let events = read_sse_json_events(resp).await?;
+        let text = extract_chat_text_from_stream(events.as_slice())
             .ok_or_else(|| "ai empty content".to_string())?;
 
         Ok(text)
@@ -232,6 +222,7 @@ impl AiClient {
             "model": model,
             "temperature": temperature.clamp(0.0, 2.0),
             "max_output_tokens": max_tokens,
+            "stream": true,
             "input": [
                 {
                     "type": "message",
@@ -262,13 +253,203 @@ impl AiClient {
             return Err(format!("ai request status={} body={}", status, text));
         }
 
-        let value: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| format!("ai response parse failed: {e}"))?;
+        let events = read_sse_json_events(resp).await?;
+        let value = aggregate_responses_stream(events.as_slice())?;
 
         extract_responses_output_text(&value).ok_or_else(|| "ai empty content".to_string())
     }
+}
+
+async fn read_sse_json_events(mut response: reqwest::Response) -> Result<Vec<Value>, String> {
+    let mut buffer = String::new();
+    let mut events: Vec<Value> = Vec::new();
+
+    while let Some(bytes) = response
+        .chunk()
+        .await
+        .map_err(|err| format!("ai stream read failed: {err}"))?
+    {
+        let text = String::from_utf8_lossy(&bytes).to_string();
+        buffer.push_str(text.as_str());
+        events.extend(drain_sse_json_events(&mut buffer));
+    }
+
+    flush_sse_tail_events(&mut buffer, &mut events);
+
+    if events.is_empty() {
+        return Err("ai stream parse failed: no JSON events found".to_string());
+    }
+
+    Ok(events)
+}
+
+fn drain_sse_json_events(buffer: &mut String) -> Vec<Value> {
+    let mut events = Vec::new();
+
+    while let Some(idx) = buffer.find("\n\n") {
+        let packet = buffer[..idx].to_string();
+        *buffer = buffer[idx + 2..].to_string();
+
+        for line in packet.lines() {
+            let normalized = line.trim();
+            if !normalized.starts_with("data:") {
+                continue;
+            }
+
+            let data = normalized.trim_start_matches("data:").trim();
+            if data.is_empty() || data == "[DONE]" {
+                continue;
+            }
+            if let Ok(value) = serde_json::from_str::<Value>(data) {
+                events.push(value);
+            }
+        }
+    }
+
+    events
+}
+
+fn flush_sse_tail_events(buffer: &mut String, events: &mut Vec<Value>) {
+    if buffer.trim().is_empty() {
+        return;
+    }
+
+    if buffer.contains("data:") {
+        if !buffer.ends_with("\n\n") {
+            buffer.push_str("\n\n");
+        }
+        events.extend(drain_sse_json_events(buffer));
+    }
+
+    let tail = buffer.trim();
+    if tail.is_empty() {
+        return;
+    }
+    if let Ok(value) = serde_json::from_str::<Value>(tail) {
+        emit_tail_json_value(value, events);
+    }
+    buffer.clear();
+}
+
+fn emit_tail_json_value(value: Value, events: &mut Vec<Value>) {
+    if let Some(items) = value.as_array() {
+        for item in items {
+            if item.is_object() {
+                events.push(item.clone());
+            }
+        }
+        return;
+    }
+    if value.is_object() {
+        events.push(value);
+    }
+}
+
+fn extract_chat_text_from_stream(events: &[Value]) -> Option<String> {
+    let mut text = String::new();
+
+    for event in events {
+        if let Some(choices) = event.get("choices").and_then(Value::as_array) {
+            for choice in choices {
+                if let Some(delta) = choice.get("delta") {
+                    if let Some(content) = delta.get("content").and_then(Value::as_str) {
+                        text.push_str(content);
+                    } else if let Some(parts) = delta.get("content").and_then(Value::as_array) {
+                        for part in parts {
+                            if let Some(piece) = part.get("text").and_then(Value::as_str) {
+                                text.push_str(piece);
+                            }
+                        }
+                    }
+                }
+
+                if let Some(message) = choice.get("message") {
+                    if let Some(content) = message.get("content").and_then(Value::as_str) {
+                        if text.trim().is_empty() {
+                            text = content.to_string();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let normalized = text.trim().to_string();
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized)
+    }
+}
+
+fn aggregate_responses_stream(events: &[Value]) -> Result<Value, String> {
+    let mut completed_response: Option<Value> = None;
+    let mut response_template: Option<Value> = None;
+    let mut output_items: Vec<Value> = Vec::new();
+    let mut output_text = String::new();
+
+    for event in events {
+        if event.get("object").and_then(Value::as_str) == Some("response") {
+            completed_response = Some(event.clone());
+        }
+        if let Some(response) = event.get("response") {
+            response_template = Some(response.clone());
+            let event_type = event
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if event_type == "response.completed" || event_type == "response.failed" {
+                completed_response = Some(response.clone());
+            }
+        }
+
+        let event_type = event.get("type").and_then(Value::as_str).unwrap_or_default();
+        if event_type == "response.output_text.delta" {
+            if let Some(delta) = event.get("delta").and_then(Value::as_str) {
+                output_text.push_str(delta);
+            }
+        } else if event_type == "response.output_item.done" {
+            if let Some(item) = event.get("item") {
+                output_items.push(item.clone());
+            }
+        }
+    }
+
+    if let Some(value) = completed_response {
+        return Ok(value);
+    }
+
+    let mut response = response_template
+        .and_then(|value| value.as_object().cloned())
+        .unwrap_or_default();
+
+    if output_items.is_empty() && !output_text.trim().is_empty() {
+        output_items.push(json!({
+            "type": "message",
+            "status": "completed",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": output_text.clone()}]
+        }));
+    }
+
+    if !output_items.is_empty() {
+        response.insert("output".to_string(), Value::Array(output_items));
+    }
+    if !output_text.trim().is_empty() {
+        response.insert("output_text".to_string(), Value::String(output_text));
+    }
+    if !response.contains_key("status") {
+        response.insert("status".to_string(), Value::String("completed".to_string()));
+    }
+    if !response.contains_key("object") {
+        response.insert("object".to_string(), Value::String("response".to_string()));
+    }
+
+    if response.is_empty() {
+        return Err("ai stream parse failed: no response payload assembled".to_string());
+    }
+
+    Ok(Value::Object(response))
 }
 
 fn build_summary_system_prompt(

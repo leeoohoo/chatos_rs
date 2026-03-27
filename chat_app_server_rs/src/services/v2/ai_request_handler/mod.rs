@@ -70,6 +70,9 @@ impl AiRequestHandler {
         message_source: Option<String>,
         purpose: &str,
     ) -> Result<AiResponse, String> {
+        let requested_stream = stream;
+        let stream = true;
+
         let mut payload = json!({
             "model": model,
             "messages": messages,
@@ -91,10 +94,8 @@ impl AiRequestHandler {
             payload["reasoning_effort"] = Value::String(level);
         }
 
-        if stream {
-            payload["stream"] = Value::Bool(true);
-            payload["stream_options"] = json!({"include_usage": true});
-        }
+        payload["stream"] = Value::Bool(true);
+        payload["stream_options"] = json!({"include_usage": true});
 
         if let Err(err) = validate_request_payload_size(&payload, REQUEST_BODY_LIMIT_ENV) {
             error!(
@@ -108,10 +109,11 @@ impl AiRequestHandler {
         let token = build_abort_token(session_id.as_deref());
 
         info!(
-            "[AI] handleRequest start: purpose={}, model={}, stream={}, baseURL={}, session={}",
+            "[AI] handleRequest start: purpose={}, model={}, stream={}, requested_stream={}, baseURL={}, session={}",
             purpose,
             payload["model"].as_str().unwrap_or(""),
             stream,
+            requested_stream,
             self.base_url,
             session_id.clone().unwrap_or_else(|| "n/a".to_string())
         );
@@ -119,36 +121,20 @@ impl AiRequestHandler {
         let persist_messages = purpose != "agent_builder";
         let force_identity_encoding = purpose == "session_summary_job";
 
-        if stream {
-            self.handle_stream_request(
-                url,
-                payload,
-                callbacks,
-                reasoning_enabled,
-                session_id,
-                turn_id,
-                token,
-                force_identity_encoding,
-                persist_messages,
-                message_mode,
-                message_source,
-            )
-            .await
-        } else {
-            self.handle_normal_request(
-                url,
-                payload,
-                reasoning_enabled,
-                session_id,
-                turn_id,
-                token,
-                force_identity_encoding,
-                persist_messages,
-                message_mode,
-                message_source,
-            )
-            .await
-        }
+        self.handle_stream_request(
+            url,
+            payload,
+            callbacks,
+            reasoning_enabled,
+            session_id,
+            turn_id,
+            token,
+            force_identity_encoding,
+            persist_messages,
+            message_mode,
+            message_source,
+        )
+        .await
     }
 
     async fn handle_normal_request(
