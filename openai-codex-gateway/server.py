@@ -11,6 +11,7 @@ import sqlite3
 import sys
 import threading
 import time
+import traceback
 import uuid
 import warnings
 from dataclasses import dataclass
@@ -791,6 +792,8 @@ class GatewayHandler(BaseHTTPRequestHandler):
 
             self._write_json(HTTPStatus.NOT_FOUND, error_payload("not_found", "not found"))
         except Exception as exc:  # noqa: BLE001
+            debug_log("http.get.error", f"path={path}", f"error={exc}")
+            traceback.print_exc(file=sys.stderr)
             self._write_json(
                 HTTPStatus.INTERNAL_SERVER_ERROR,
                 error_payload("server_error", str(exc)),
@@ -856,8 +859,11 @@ class GatewayHandler(BaseHTTPRequestHandler):
             status = HTTPStatus.OK if body.get("status") != "failed" else HTTPStatus.BAD_GATEWAY
             self._write_json(status, body)
         except ValueError as exc:
+            debug_log("http.post.invalid_request", f"path={path}", f"error={exc}")
             self._write_json(HTTPStatus.BAD_REQUEST, error_payload("invalid_request", str(exc)))
         except Exception as exc:  # noqa: BLE001
+            debug_log("http.post.error", f"path={path}", f"error={exc}")
+            traceback.print_exc(file=sys.stderr)
             self._write_json(
                 HTTPStatus.INTERNAL_SERVER_ERROR,
                 error_payload("server_error", str(exc)),
@@ -1410,6 +1416,8 @@ class GatewayHandler(BaseHTTPRequestHandler):
         except BrokenPipeError:
             return
         except Exception as exc:  # noqa: BLE001
+            debug_log("http.stream.error", f"error={exc}")
+            traceback.print_exc(file=sys.stderr)
             send_stream_event(
                 {
                     "type": "error",
@@ -1452,8 +1460,11 @@ class GatewayHandler(BaseHTTPRequestHandler):
         self._write_common_headers()
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(encoded)))
+        self.send_header("Connection", "close")
         self.end_headers()
         self.wfile.write(encoded)
+        self.wfile.flush()
+        self.close_connection = True
 
     def _send_sse(self, data: dict[str, Any]) -> None:
         payload = json.dumps(data, ensure_ascii=False)

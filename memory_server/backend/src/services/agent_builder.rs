@@ -1,10 +1,12 @@
 use std::collections::HashSet;
+use std::error::Error as StdError;
 use std::time::Duration;
 
 use axum::http::StatusCode;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
+use tracing::warn;
 
 use crate::config::AppConfig;
 use crate::db::Db;
@@ -75,6 +77,7 @@ struct ModelRuntime {
     base_url: String,
     api_key: String,
     temperature: f64,
+    request_timeout_secs: u64,
     supports_responses: bool,
 }
 
@@ -127,6 +130,9 @@ pub async fn ai_create_agent(
     let runtime = resolve_model_runtime(db, config, &request).await?;
     let http = Client::builder()
         .timeout(Duration::from_secs(config.ai_request_timeout_secs))
+        // In WSL deployments we've seen stale pooled sockets cause follow-up
+        // calls to fail intermittently. Use short-lived connections here.
+        .pool_max_idle_per_host(0)
         .build()
         .map_err(|err| internal_error(format!("init agent builder http client failed: {err}")))?;
 
@@ -902,6 +908,7 @@ async fn resolve_model_runtime(
         base_url: normalize_base_url(config.openai_base_url.as_str()),
         api_key: api_key.to_string(),
         temperature: config.openai_temperature.clamp(0.0, 2.0),
+        request_timeout_secs: config.ai_request_timeout_secs,
         supports_responses: false,
     })
 }
@@ -935,6 +942,7 @@ fn model_runtime_from_model_config(
             .temperature
             .unwrap_or(config.openai_temperature)
             .clamp(0.0, 2.0),
+        request_timeout_secs: config.ai_request_timeout_secs,
         supports_responses: item.supports_responses == 1,
     })
 }
@@ -986,6 +994,7 @@ fn model_runtime_from_value(
         base_url,
         api_key: api_key.to_string(),
         temperature,
+        request_timeout_secs: config.ai_request_timeout_secs,
         supports_responses,
     })
 }
@@ -1024,13 +1033,14 @@ async fn request_chat_completions(
 
     let endpoint = build_chat_completion_endpoint(runtime.base_url.as_str());
     let response = http
-        .post(endpoint)
+        .post(endpoint.as_str())
         .bearer_auth(runtime.api_key.as_str())
         .header("Content-Type", "application/json")
+        .header("Connection", "close")
         .json(&body)
         .send()
         .await
-        .map_err(|err| bad_gateway_error(format!("agent builder ai request failed: {err}")))?;
+        .map_err(|err| bad_gateway_error(format_transport_error(runtime, endpoint.as_str(), &err)))?;
 
     if !response.status().is_success() {
         let status = response.status();
@@ -1038,8 +1048,12 @@ async fn request_chat_completions(
         return Err((
             StatusCode::BAD_GATEWAY,
             format!(
-                "agent builder ai request status={} body={}",
-                status, payload
+                "agent builder ai request status={} provider={} model={} endpoint={} body={}",
+                status,
+                runtime.provider,
+                runtime.model,
+                endpoint,
+                payload
             ),
         ));
     }
@@ -1071,13 +1085,14 @@ async fn request_responses_completion(
 
     let endpoint = build_responses_endpoint(runtime.base_url.as_str());
     let response = http
-        .post(endpoint)
+        .post(endpoint.as_str())
         .bearer_auth(runtime.api_key.as_str())
         .header("Content-Type", "application/json")
+        .header("Connection", "close")
         .json(&body)
         .send()
         .await
-        .map_err(|err| bad_gateway_error(format!("agent builder ai request failed: {err}")))?;
+        .map_err(|err| bad_gateway_error(format_transport_error(runtime, endpoint.as_str(), &err)))?;
 
     if !response.status().is_success() {
         let status = response.status();
@@ -1085,8 +1100,12 @@ async fn request_responses_completion(
         return Err((
             StatusCode::BAD_GATEWAY,
             format!(
-                "agent builder ai request status={} body={}",
-                status, payload
+                "agent builder ai request status={} provider={} model={} endpoint={} body={}",
+                status,
+                runtime.provider,
+                runtime.model,
+                endpoint,
+                payload
             ),
         ));
     }
@@ -1905,6 +1924,54 @@ fn normalize_base_url(base_url: &str) -> String {
     } else {
         normalized.to_string()
     }
+}
+
+fn classify_transport_error(err: &reqwest::Error) -> &'static str {
+    if err.is_timeout() {
+        "timeout"
+    } else if err.is_connect() {
+        "connect"
+    } else if err.is_request() {
+        "request"
+    } else if err.is_body() {
+        "body"
+    } else if err.is_decode() {
+        "decode"
+    } else {
+        "other"
+    }
+}
+
+fn error_source_chain(err: &reqwest::Error) -> String {
+    let mut parts = Vec::new();
+    let mut current = err.source();
+    while let Some(source) = current {
+        parts.push(source.to_string());
+        current = source.source();
+    }
+    parts.join(" | ")
+}
+
+fn format_transport_error(runtime: &ModelRuntime, endpoint: &str, err: &reqwest::Error) -> String {
+    let kind = classify_transport_error(err);
+    let sources = error_source_chain(err);
+    let source_suffix = if sources.is_empty() {
+        String::new()
+    } else {
+        format!(" source_chain={sources}")
+    };
+    let message = format!(
+        "agent builder ai transport failed kind={} provider={} model={} endpoint={} timeout_secs={} detail={}{}",
+        kind,
+        runtime.provider,
+        runtime.model,
+        endpoint,
+        runtime.request_timeout_secs,
+        err,
+        source_suffix
+    );
+    warn!("[AGENT_BUILDER] {}", message);
+    message
 }
 
 fn normalize_model_name(model: &str) -> String {
