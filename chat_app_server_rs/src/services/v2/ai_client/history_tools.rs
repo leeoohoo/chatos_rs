@@ -2,6 +2,9 @@ use std::collections::HashSet;
 
 use serde_json::{json, Value};
 
+const EMPTY_ASSISTANT_TOOL_CALL_PLACEHOLDER: &str = "[tool_call]";
+const EMPTY_ASSISTANT_MESSAGE_PLACEHOLDER: &str = "[assistant_message]";
+
 pub(super) fn normalize_content(content: &Value) -> String {
     if let Some(value) = content.as_str() {
         return value.to_string();
@@ -121,6 +124,71 @@ pub(super) fn ensure_tool_responses(history: Vec<Value>) -> Vec<Value> {
     output
 }
 
+pub(super) fn sanitize_messages_for_request(messages: Vec<Value>) -> Vec<Value> {
+    let mut sanitized = Vec::with_capacity(messages.len());
+
+    for mut message in messages {
+        let role = message
+            .get("role")
+            .and_then(|value| value.as_str())
+            .unwrap_or("");
+        if role != "assistant" {
+            sanitized.push(message);
+            continue;
+        }
+
+        let content_is_empty = message
+            .get("content")
+            .map(assistant_content_is_empty)
+            .unwrap_or(true);
+        if !content_is_empty {
+            sanitized.push(message);
+            continue;
+        }
+
+        let has_tool_calls = message
+            .get("tool_calls")
+            .and_then(|value| value.as_array())
+            .map(|items| !items.is_empty())
+            .unwrap_or(false);
+        let has_reasoning = message
+            .get("reasoning_content")
+            .and_then(|value| value.as_str())
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false)
+            || message
+                .get("reasoning")
+                .and_then(|value| value.as_str())
+                .map(|value| !value.trim().is_empty())
+                .unwrap_or(false);
+
+        if has_tool_calls {
+            message["content"] = Value::String(EMPTY_ASSISTANT_TOOL_CALL_PLACEHOLDER.to_string());
+            sanitized.push(message);
+            continue;
+        }
+
+        if has_reasoning {
+            message["content"] = Value::String(EMPTY_ASSISTANT_MESSAGE_PLACEHOLDER.to_string());
+            sanitized.push(message);
+        }
+    }
+
+    sanitized
+}
+
+fn assistant_content_is_empty(content: &Value) -> bool {
+    if content.is_null() {
+        return true;
+    }
+
+    if let Some(text) = content.as_str() {
+        return text.trim().is_empty();
+    }
+
+    false
+}
+
 pub(super) fn find_summary_index(messages: &[Value], summary_prompt: Option<&String>) -> i64 {
     if summary_prompt.is_none() {
         return -1;
@@ -156,4 +224,46 @@ pub(super) fn find_anchor_index(messages: &[Value], anchor: Option<&Value>) -> i
     }
 
     -1
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sanitize_messages_for_request_replaces_empty_assistant_with_tool_calls() {
+        let messages = vec![json!({
+            "role": "assistant",
+            "content": Value::Null,
+            "tool_calls": [{
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "demo", "arguments": "{}"}
+            }]
+        })];
+
+        let sanitized = sanitize_messages_for_request(messages);
+
+        assert_eq!(sanitized.len(), 1);
+        assert_eq!(
+            sanitized[0].get("content").and_then(|value| value.as_str()),
+            Some("[tool_call]")
+        );
+    }
+
+    #[test]
+    fn sanitize_messages_for_request_drops_empty_assistant_without_payload() {
+        let messages = vec![
+            json!({"role": "assistant", "content": ""}),
+            json!({"role": "user", "content": "hello"}),
+        ];
+
+        let sanitized = sanitize_messages_for_request(messages);
+
+        assert_eq!(sanitized.len(), 1);
+        assert_eq!(
+            sanitized[0].get("role").and_then(|value| value.as_str()),
+            Some("user")
+        );
+    }
 }

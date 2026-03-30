@@ -35,6 +35,7 @@ use crate::core::turn_runtime_snapshot::{
 use crate::core::user_scope::{ensure_and_set_user_id, resolve_user_id};
 use crate::services::ai_common::normalize_turn_id;
 use crate::services::memory_server_client;
+use crate::services::runtime_guidance_manager::runtime_guidance_manager;
 use crate::services::user_settings::{apply_settings_to_ai_client, get_effective_user_settings};
 use crate::services::v2::ai_server::{AiServer, ChatOptions};
 use crate::services::v2::mcp_tool_execute::McpToolExecute;
@@ -485,6 +486,7 @@ async fn stream_chat_v2(
     let user_message_id = Uuid::new_v4().to_string();
     let resolved_turn_id =
         normalize_turn_id(req.turn_id.as_deref()).unwrap_or_else(|| user_message_id.clone());
+    runtime_guidance_manager().register_active_turn(&session_id, &resolved_turn_id);
     let running_selected_commands = selected_commands_for_snapshot
         .lock()
         .map(|items| items.clone())
@@ -590,6 +592,7 @@ async fn stream_chat_v2(
         || log_chat_cancelled(&session_id),
         |err| log_chat_error(err),
     );
+    runtime_guidance_manager().close_turn(&session_id, &resolved_turn_id);
     if always_send_done || should_send_done {
         sender.send_done();
     }
