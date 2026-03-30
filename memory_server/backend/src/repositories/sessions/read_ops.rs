@@ -7,8 +7,8 @@ use crate::db::Db;
 use crate::models::Session;
 
 use super::super::session_support::{
-    agent_lookup_conditions, build_contact_or_conditions, insert_project_scope_filter,
-    normalize_project_scope, project_scope_condition,
+    agent_lookup_conditions, build_contact_or_conditions, contact_or_agent_presence_match,
+    insert_project_scope_filter, normalize_project_scope, project_scope_condition,
 };
 use super::{collection, normalize_optional_text};
 
@@ -192,24 +192,7 @@ pub async fn get_session_by_id(db: &Db, session_id: &str) -> Result<Option<Sessi
 }
 
 pub async fn list_active_user_ids(db: &Db, limit: i64) -> Result<Vec<String>, String> {
-    let contact_match = doc! {
-        "$or": [
-            {"metadata.contact.contact_id": {"$exists": true, "$type": "string"}},
-            {"metadata.contact.contactId": {"$exists": true, "$type": "string"}},
-            {"metadata.ui_contact.contact_id": {"$exists": true, "$type": "string"}},
-            {"metadata.ui_contact.contactId": {"$exists": true, "$type": "string"}},
-            {"metadata.contact.agent_id": {"$exists": true, "$type": "string"}},
-            {"metadata.contact.agentId": {"$exists": true, "$type": "string"}},
-            {"metadata.ui_contact.agent_id": {"$exists": true, "$type": "string"}},
-            {"metadata.ui_contact.agentId": {"$exists": true, "$type": "string"}},
-            {"metadata.ui_chat_selection.selected_agent_id": {"$exists": true, "$type": "string"}},
-            {"metadata.ui_chat_selection.selectedAgentId": {"$exists": true, "$type": "string"}},
-            {"metadata.chat_runtime.contact_agent_id": {"$exists": true, "$type": "string"}},
-            {"metadata.chat_runtime.contactAgentId": {"$exists": true, "$type": "string"}},
-            {"selected_agent_id": {"$exists": true, "$type": "string"}},
-            {"selectedAgentId": {"$exists": true, "$type": "string"}}
-        ]
-    };
+    let contact_match = contact_or_agent_presence_match("");
     let pipeline = vec![
         doc! {"$match": {"status": "active"}},
         doc! {"$match": contact_match},

@@ -59,6 +59,7 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
         "system_contexts",
         "applications",
         "projects",
+        "project_run_catalogs",
         "terminals",
         "remote_connections",
         "terminal_logs",
@@ -163,6 +164,27 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
         .await;
     let _ = db
         .collection::<mongodb::bson::Document>("projects")
+        .create_index(
+            IndexModel::builder().keys(doc! { "user_id": 1 }).build(),
+            None,
+        )
+        .await;
+    let _ = db
+        .collection::<mongodb::bson::Document>("project_run_catalogs")
+        .create_index(
+            IndexModel::builder()
+                .keys(doc! { "project_id": 1 })
+                .options(
+                    mongodb::options::IndexOptions::builder()
+                        .unique(true)
+                        .build(),
+                )
+                .build(),
+            None,
+        )
+        .await;
+    let _ = db
+        .collection::<mongodb::bson::Document>("project_run_catalogs")
         .create_index(
             IndexModel::builder().keys(doc! { "user_id": 1 }).build(),
             None,

@@ -277,6 +277,25 @@ class ApiClient {
     return workspaceApi.getProject(this.requestFn, id);
   }
 
+  async analyzeProjectRun(projectId: string): Promise<any> {
+    return workspaceApi.analyzeProjectRun(this.requestFn, projectId);
+  }
+
+  async getProjectRunCatalog(projectId: string): Promise<any> {
+    return workspaceApi.getProjectRunCatalog(this.requestFn, projectId);
+  }
+
+  async executeProjectRun(
+    projectId: string,
+    data: { target_id?: string; cwd?: string; command?: string; create_if_missing?: boolean },
+  ): Promise<any> {
+    return workspaceApi.executeProjectRun(this.requestFn, projectId, data);
+  }
+
+  async setProjectRunDefault(projectId: string, targetId: string): Promise<any> {
+    return workspaceApi.setProjectRunDefault(this.requestFn, projectId, targetId);
+  }
+
   async listProjectContacts(
     projectId: string,
     paging?: PagingOptions,
@@ -323,6 +342,16 @@ class ApiClient {
 
   async createTerminal(data: { name?: string; cwd: string; user_id?: string }): Promise<any> {
     return workspaceApi.createTerminal(this.requestFn, data);
+  }
+
+  async dispatchTerminalCommand(data: {
+    cwd: string;
+    command: string;
+    user_id?: string;
+    project_id?: string;
+    create_if_missing?: boolean;
+  }): Promise<any> {
+    return workspaceApi.dispatchTerminalCommand(this.requestFn, data);
   }
 
   async getTerminal(id: string): Promise<any> {

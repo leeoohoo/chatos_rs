@@ -194,7 +194,9 @@ impl AiClient {
         if let Some(timeout) = request_timeout_for_base_url(base_url, self.request_timeout_secs) {
             req = req.timeout(timeout);
         }
-        let resp = req.send().await
+        let resp = req
+            .send()
+            .await
             .map_err(|e| format!("ai request failed: {e}"))?;
 
         if !resp.status().is_success() {
@@ -250,7 +252,9 @@ impl AiClient {
         if let Some(timeout) = request_timeout_for_base_url(base_url, self.request_timeout_secs) {
             req = req.timeout(timeout);
         }
-        let resp = req.send().await
+        let resp = req
+            .send()
+            .await
             .map_err(|e| format!("ai request failed: {e}"))?;
 
         if !resp.status().is_success() {
@@ -409,7 +413,10 @@ fn aggregate_responses_stream(events: &[Value]) -> Result<Value, String> {
             }
         }
 
-        let event_type = event.get("type").and_then(Value::as_str).unwrap_or_default();
+        let event_type = event
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
         if event_type == "response.output_text.delta" {
             if let Some(delta) = event.get("delta").and_then(Value::as_str) {
                 output_text.push_str(delta);

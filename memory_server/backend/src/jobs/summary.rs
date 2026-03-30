@@ -145,10 +145,16 @@ pub async fn run_once_for_session(
     ai: &AiClient,
     user_id: &str,
     session_id: &str,
-) -> Result<(), String> {
+) -> Result<SummaryRunResult, String> {
     let config = configs::get_effective_summary_job_config(pool, user_id).await?;
     if config.enabled != 1 {
-        return Ok(());
+        return Ok(SummaryRunResult {
+            processed_sessions: 0,
+            summarized_sessions: 0,
+            generated_summaries: 0,
+            marked_messages: 0,
+            failed_sessions: 0,
+        });
     }
 
     let model_cfg = summary_support::resolve_model_config(
@@ -162,7 +168,7 @@ pub async fn run_once_for_session(
         .map(|m| m.model.clone())
         .unwrap_or_else(|| "local-fallback".to_string());
 
-    let _ = process_session(
+    let (generated, marked) = process_session(
         pool,
         ai,
         session_id,
@@ -175,5 +181,11 @@ pub async fn run_once_for_session(
     )
     .await?;
 
-    Ok(())
+    Ok(SummaryRunResult {
+        processed_sessions: 1,
+        summarized_sessions: if generated > 0 { 1 } else { 0 },
+        generated_summaries: generated,
+        marked_messages: marked,
+        failed_sessions: 0,
+    })
 }

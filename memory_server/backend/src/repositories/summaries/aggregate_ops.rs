@@ -2,6 +2,7 @@ use futures_util::TryStreamExt;
 use mongodb::bson::doc;
 
 use crate::db::Db;
+use crate::repositories::session_support::contact_or_agent_presence_match;
 
 use super::{doc_i64, summary_agent_id_expr, summary_project_id_expr, AgentMemorySummarySource};
 
@@ -51,15 +52,7 @@ pub async fn list_session_ids_with_pending_rollup_by_user(
     max_level: i64,
     limit: i64,
 ) -> Result<Vec<String>, String> {
-    let contact_match = doc! {
-        "$or": [
-            {"session.metadata.contact.contact_id": {"$exists": true, "$type": "string"}},
-            {"session.metadata.ui_contact.contact_id": {"$exists": true, "$type": "string"}},
-            {"session.metadata.contact.agent_id": {"$exists": true, "$type": "string"}},
-            {"session.metadata.ui_contact.agent_id": {"$exists": true, "$type": "string"}},
-            {"session.metadata.ui_chat_selection.selected_agent_id": {"$exists": true, "$type": "string"}}
-        ]
-    };
+    let contact_match = contact_or_agent_presence_match("session");
     let pipeline = vec![
         doc! {"$match": {
             "status": "pending",

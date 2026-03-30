@@ -5,6 +5,7 @@ pub mod change_logs;
 pub mod db;
 pub mod mcp_configs;
 pub mod projects;
+pub mod project_run_catalogs;
 pub mod remote_connections;
 pub mod session_mcp_servers;
 pub mod system_contexts;

@@ -2,16 +2,20 @@ use axum::extract::{Path, Query};
 use axum::http::StatusCode;
 use axum::Json;
 use serde_json::Value;
+use std::path::Path as FsPath;
 
 use crate::core::auth::AuthUser;
 use crate::core::terminal_access::{ensure_owned_terminal, map_terminal_access_error};
 use crate::core::user_scope::resolve_user_id;
 use crate::core::validation::{normalize_non_empty, validate_existing_dir};
 use crate::models::terminal::TerminalService;
-use crate::models::terminal_log::TerminalLogService;
+use crate::models::terminal_log::{TerminalLog, TerminalLogService};
 use crate::services::terminal_manager::get_terminal_manager;
 
-use super::{attach_busy, derive_terminal_name, CreateTerminalRequest, TerminalQuery};
+use super::{
+    attach_busy, derive_terminal_name, CreateTerminalRequest, DispatchTerminalCommandRequest,
+    TerminalQuery,
+};
 
 pub(super) async fn list_terminals(
     auth: AuthUser,
@@ -112,4 +116,164 @@ pub(super) async fn delete_terminal(
             Json(serde_json::json!({ "error": err })),
         ),
     }
+}
+
+fn normalized_cwd(path: &str) -> String {
+    let trimmed = path.trim().trim_end_matches(&['/', '\\'][..]);
+    if trimmed.is_empty() {
+        path.trim().to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn is_same_cwd(left: &str, right: &str) -> bool {
+    normalized_cwd(left) == normalized_cwd(right)
+}
+
+fn terminal_name_from_cwd(cwd: &str) -> String {
+    let trimmed = cwd.trim().trim_end_matches(&['/', '\\'][..]);
+    if trimmed.is_empty() {
+        return "Terminal".to_string();
+    }
+    FsPath::new(trimmed)
+        .file_name()
+        .map(|value| value.to_string_lossy().to_string())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| derive_terminal_name(trimmed))
+}
+
+pub(super) async fn dispatch_terminal_command(
+    auth: AuthUser,
+    Json(req): Json<DispatchTerminalCommandRequest>,
+) -> (StatusCode, Json<Value>) {
+    let DispatchTerminalCommandRequest {
+        cwd,
+        command,
+        user_id,
+        project_id,
+        create_if_missing,
+    } = req;
+    let user_id = match resolve_user_id(user_id, &auth) {
+        Ok(user_id) => user_id,
+        Err(err) => return err,
+    };
+    let cwd = match validate_existing_dir(
+        cwd.as_deref().unwrap_or(""),
+        "运行目录不能为空",
+        "运行目录不存在或不是目录",
+    ) {
+        Ok(path) => path,
+        Err(err) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": err })),
+            );
+        }
+    };
+    let command = match normalize_non_empty(command) {
+        Some(value) => value,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": "运行命令不能为空" })),
+            );
+        }
+    };
+    let normalized_project_id = normalize_non_empty(project_id);
+    let allow_create = create_if_missing.unwrap_or(true);
+
+    let manager = get_terminal_manager();
+    let mut terminals = match TerminalService::list(Some(user_id.clone())).await {
+        Ok(items) => items,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": err })),
+            );
+        }
+    };
+
+    terminals.sort_by(|a, b| b.last_active_at.cmp(&a.last_active_at));
+    let reusable = terminals.into_iter().find(|terminal| {
+        if terminal.status != "running" {
+            return false;
+        }
+        if !is_same_cwd(terminal.cwd.as_str(), cwd.as_str()) {
+            return false;
+        }
+        if let Some(project_id) = normalized_project_id.as_deref() {
+            if terminal.project_id.as_deref() != Some(project_id) {
+                return false;
+            }
+        }
+        !manager.get_busy(terminal.id.as_str()).unwrap_or(false)
+    });
+
+    let (terminal, reused) = if let Some(terminal) = reusable {
+        (terminal, true)
+    } else if allow_create {
+        let name = terminal_name_from_cwd(cwd.as_str());
+        match manager
+            .create(
+                name,
+                cwd.clone(),
+                Some(user_id.clone()),
+                normalized_project_id.clone(),
+            )
+            .await
+        {
+            Ok(terminal) => (terminal, false),
+            Err(err) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": err })),
+                );
+            }
+        }
+    } else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "未找到可复用终端，且未允许自动创建" })),
+        );
+    };
+
+    let session = match manager.ensure_running(&terminal).await {
+        Ok(session) => session,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": err })),
+            );
+        }
+    };
+
+    let input = format!("{command}\n");
+    if let Err(err) = session.write_input(input.as_str()) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": err })),
+        );
+    }
+
+    let cmd_log = TerminalLog::new(
+        terminal.id.clone(),
+        "command".to_string(),
+        command.clone(),
+    );
+    let input_log = TerminalLog::new(terminal.id.clone(), "input".to_string(), input.clone());
+    let _ = TerminalLogService::create(cmd_log).await;
+    let _ = TerminalLogService::create(input_log).await;
+    let _ = TerminalService::touch(terminal.id.as_str()).await;
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "terminal_id": terminal.id,
+            "terminal_name": terminal.name,
+            "terminal_reused": reused,
+            "cwd": terminal.cwd,
+            "executed_command": command,
+        })),
+    )
 }

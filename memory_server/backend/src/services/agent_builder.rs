@@ -1042,8 +1042,9 @@ async fn request_chat_completions(
     if let Some(timeout) = request_timeout_for_runtime(runtime) {
         request = request.timeout(timeout);
     }
-    let response = request.send().await
-        .map_err(|err| bad_gateway_error(format_transport_error(runtime, endpoint.as_str(), &err)))?;
+    let response = request.send().await.map_err(|err| {
+        bad_gateway_error(format_transport_error(runtime, endpoint.as_str(), &err))
+    })?;
 
     if !response.status().is_success() {
         let status = response.status();
@@ -1052,11 +1053,7 @@ async fn request_chat_completions(
             StatusCode::BAD_GATEWAY,
             format!(
                 "agent builder ai request status={} provider={} model={} endpoint={} body={}",
-                status,
-                runtime.provider,
-                runtime.model,
-                endpoint,
-                payload
+                status, runtime.provider, runtime.model, endpoint, payload
             ),
         ));
     }
@@ -1094,8 +1091,9 @@ async fn request_responses_completion(
     if let Some(timeout) = request_timeout_for_runtime(runtime) {
         request = request.timeout(timeout);
     }
-    let response = request.send().await
-        .map_err(|err| bad_gateway_error(format_transport_error(runtime, endpoint.as_str(), &err)))?;
+    let response = request.send().await.map_err(|err| {
+        bad_gateway_error(format_transport_error(runtime, endpoint.as_str(), &err))
+    })?;
 
     if !response.status().is_success() {
         let status = response.status();
@@ -1104,11 +1102,7 @@ async fn request_responses_completion(
             StatusCode::BAD_GATEWAY,
             format!(
                 "agent builder ai request status={} provider={} model={} endpoint={} body={}",
-                status,
-                runtime.provider,
-                runtime.model,
-                endpoint,
-                payload
+                status, runtime.provider, runtime.model, endpoint, payload
             ),
         ));
     }
@@ -1278,7 +1272,8 @@ fn aggregate_chat_completions_stream(events: &[Value]) -> Result<Value, (StatusC
                             {
                                 tool_calls[index].name = Some(name.to_string());
                             }
-                            if let Some(arguments) = function.get("arguments").and_then(Value::as_str)
+                            if let Some(arguments) =
+                                function.get("arguments").and_then(Value::as_str)
                             {
                                 tool_calls[index].arguments.push_str(arguments);
                             }
@@ -1325,7 +1320,10 @@ fn aggregate_chat_completions_stream(events: &[Value]) -> Result<Value, (StatusC
         .collect::<Vec<_>>();
 
     if !normalized_tool_calls.is_empty() {
-        message.insert("tool_calls".to_string(), Value::Array(normalized_tool_calls));
+        message.insert(
+            "tool_calls".to_string(),
+            Value::Array(normalized_tool_calls),
+        );
     }
 
     let mut out = json!({
@@ -1365,7 +1363,10 @@ fn aggregate_responses_stream(events: &[Value]) -> Result<Value, (StatusCode, St
             }
         }
 
-        let event_type = event.get("type").and_then(Value::as_str).unwrap_or_default();
+        let event_type = event
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
         if event_type == "response.output_text.delta" {
             if let Some(delta) = event.get("delta").and_then(Value::as_str) {
                 output_text.push_str(delta);

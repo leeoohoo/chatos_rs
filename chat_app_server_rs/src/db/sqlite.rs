@@ -197,6 +197,16 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             last_active_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )"#,
+        r#"CREATE TABLE IF NOT EXISTS project_run_catalogs (
+            project_id TEXT PRIMARY KEY,
+            user_id TEXT,
+            status TEXT NOT NULL DEFAULT 'empty',
+            default_target_id TEXT,
+            targets_json TEXT NOT NULL DEFAULT '[]',
+            error_message TEXT,
+            analyzed_at TEXT,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )"#,
         r#"CREATE TABLE IF NOT EXISTS remote_connections (
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
@@ -354,6 +364,8 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
         "CREATE INDEX IF NOT EXISTS idx_terminals_user_id ON terminals(user_id)",
         "CREATE INDEX IF NOT EXISTS idx_terminals_project_id ON terminals(project_id)",
         "CREATE INDEX IF NOT EXISTS idx_terminals_status ON terminals(status)",
+        "CREATE INDEX IF NOT EXISTS idx_project_run_catalogs_user_id ON project_run_catalogs(user_id)",
+        "CREATE INDEX IF NOT EXISTS idx_project_run_catalogs_status ON project_run_catalogs(status)",
         "CREATE INDEX IF NOT EXISTS idx_remote_connections_user_id ON remote_connections(user_id)",
         "CREATE INDEX IF NOT EXISTS idx_remote_connections_host ON remote_connections(host)",
         "CREATE INDEX IF NOT EXISTS idx_terminal_logs_terminal_id ON terminal_logs(terminal_id)",

@@ -141,7 +141,8 @@ async fn process_session_locked(
             );
         }
 
-        if let Err(err) = memory_sync::sync_memories_from_summary(pool, session_id, &existing).await {
+        if let Err(err) = memory_sync::sync_memories_from_summary(pool, session_id, &existing).await
+        {
             return Err(err);
         }
 
@@ -332,14 +333,8 @@ async fn process_session_locked(
         );
     }
 
-    if let Err(err) = jobs::finish_job_run(
-        pool,
-        job_run.id.as_str(),
-        "done",
-        generated as i64,
-        None,
-    )
-    .await
+    if let Err(err) =
+        jobs::finish_job_run(pool, job_run.id.as_str(), "done", generated as i64, None).await
     {
         warn!(
             "[MEMORY-SUMMARY-ROLLUP] finish job run failed: session_id={} job_run_id={} error={}",

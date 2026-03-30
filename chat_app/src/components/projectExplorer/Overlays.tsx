@@ -97,8 +97,10 @@ interface EntryContextMenuProps {
   contextMenu: EntryContextMenuState | null;
   contextMenuStyle: React.CSSProperties | undefined;
   isContextRootEntry: boolean;
+  canRunFile?: (entry: FsEntry) => boolean;
   onCreateDirectory: (path: string) => void;
   onCreateFile: (path: string) => void;
+  onRunFile?: (entry: FsEntry) => void;
   onDownload: (entry: FsEntry) => void;
   onDelete: (entry: FsEntry) => void;
 }
@@ -107,8 +109,10 @@ export const EntryContextMenu: React.FC<EntryContextMenuProps> = ({
   contextMenu,
   contextMenuStyle,
   isContextRootEntry,
+  canRunFile,
   onCreateDirectory,
   onCreateFile,
+  onRunFile,
   onDownload,
   onDelete,
 }) => {
@@ -142,6 +146,15 @@ export const EntryContextMenu: React.FC<EntryContextMenuProps> = ({
           className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent"
         >
           新建文件
+        </button>
+      )}
+      {!contextMenu.entry.isDir && canRunFile?.(contextMenu.entry) && (
+        <button
+          type="button"
+          onClick={() => onRunFile?.(contextMenu.entry)}
+          className="w-full text-left px-2 py-1.5 text-sm rounded hover:bg-accent"
+        >
+          运行文件
         </button>
       )}
       <button

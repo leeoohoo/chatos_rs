@@ -7,10 +7,15 @@ mod ws_handlers;
 #[cfg(test)]
 mod tests;
 
-use axum::{routing::get, Router};
+use axum::{routing::get, routing::post, Router};
 
-use self::contracts::{CreateTerminalRequest, TerminalLogQuery, TerminalQuery, WsInput, WsOutput};
-use self::crud_handlers::{create_terminal, delete_terminal, get_terminal, list_terminals};
+use self::contracts::{
+    CreateTerminalRequest, DispatchTerminalCommandRequest, TerminalLogQuery, TerminalQuery, WsInput,
+    WsOutput,
+};
+use self::crud_handlers::{
+    create_terminal, delete_terminal, dispatch_terminal_command, get_terminal, list_terminals,
+};
 use self::history_handlers::list_terminal_logs;
 use self::support::{
     attach_busy, derive_terminal_name, list_terminal_logs_before_page,
@@ -27,6 +32,7 @@ pub(super) const WS_MAX_SNAPSHOT_LINES: usize = 10_000;
 pub fn router() -> Router {
     Router::new()
         .route("/api/terminals", get(list_terminals).post(create_terminal))
+        .route("/api/terminals/dispatch-command", post(dispatch_terminal_command))
         .route(
             "/api/terminals/:id",
             get(get_terminal).delete(delete_terminal),

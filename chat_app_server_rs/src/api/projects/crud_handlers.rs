@@ -12,6 +12,8 @@ use crate::core::validation::{
     normalize_non_empty, validate_existing_dir, validate_existing_dir_if_present,
 };
 use crate::models::project::{Project, ProjectService};
+use crate::repositories::project_run_catalogs;
+use crate::services::project_run::analyze_project;
 
 use super::contracts::{CreateProjectRequest, ProjectQuery, UpdateProjectRequest};
 use super::memory_sync::{sync_active_project, sync_archived_project};
@@ -93,6 +95,18 @@ pub(super) async fn create_project(
             })),
         );
     }
+
+    let saved_for_analyze = saved.clone();
+    tokio::spawn(async move {
+        let catalog = analyze_project(&saved_for_analyze).await;
+        if let Err(err) = project_run_catalogs::upsert_catalog(&catalog).await {
+            eprintln!(
+                "[PROJECTS] auto analyze run catalog failed: project_id={} err={}",
+                saved_for_analyze.id, err
+            );
+        }
+    });
+
     (
         StatusCode::CREATED,
         Json(serde_json::to_value(saved).unwrap_or(Value::Null)),

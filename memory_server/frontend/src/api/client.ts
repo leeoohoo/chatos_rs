@@ -357,9 +357,19 @@ export const api = {
     return data;
   },
 
-  async listJobRuns(): Promise<JobRun[]> {
+  async listJobRuns(params?: {
+    job_type?: string;
+    session_id?: string;
+    status?: string;
+    limit?: number;
+  }): Promise<JobRun[]> {
     const { data } = await client.get('/jobs/runs', {
-      params: { limit: 200 },
+      params: {
+        limit: params?.limit ?? 200,
+        job_type: params?.job_type,
+        session_id: params?.session_id,
+        status: params?.status,
+      },
     });
     return data.items ?? [];
   },

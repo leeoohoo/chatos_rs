@@ -241,6 +241,43 @@ export const getProject = (request: ApiRequestFn, id: string): Promise<any> => {
   return request<any>(`/projects/${id}`);
 };
 
+export const analyzeProjectRun = (request: ApiRequestFn, projectId: string): Promise<any> => {
+  return request<any>(`/projects/${encodeURIComponent(projectId)}/run/analyze`, {
+    method: 'POST',
+  });
+};
+
+export const getProjectRunCatalog = (request: ApiRequestFn, projectId: string): Promise<any> => {
+  return request<any>(`/projects/${encodeURIComponent(projectId)}/run/catalog`);
+};
+
+export const executeProjectRun = (
+  request: ApiRequestFn,
+  projectId: string,
+  data: {
+    target_id?: string;
+    cwd?: string;
+    command?: string;
+    create_if_missing?: boolean;
+  },
+): Promise<any> => {
+  return request<any>(`/projects/${encodeURIComponent(projectId)}/run/execute`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+};
+
+export const setProjectRunDefault = (
+  request: ApiRequestFn,
+  projectId: string,
+  targetId: string,
+): Promise<any> => {
+  return request<any>(`/projects/${encodeURIComponent(projectId)}/run/default`, {
+    method: 'POST',
+    body: JSON.stringify({ target_id: targetId }),
+  });
+};
+
 export const listProjectContacts = (
   request: ApiRequestFn,
   projectId: string,
@@ -312,6 +349,22 @@ export const createTerminal = (
   data: { name?: string; cwd: string; user_id?: string }
 ): Promise<any> => {
   return request<any>('/terminals', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+};
+
+export const dispatchTerminalCommand = (
+  request: ApiRequestFn,
+  data: {
+    cwd: string;
+    command: string;
+    user_id?: string;
+    project_id?: string;
+    create_if_missing?: boolean;
+  }
+): Promise<any> => {
+  return request<any>('/terminals/dispatch-command', {
     method: 'POST',
     body: JSON.stringify(data),
   });

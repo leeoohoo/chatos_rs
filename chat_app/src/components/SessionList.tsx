@@ -1,9 +1,10 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useChatStoreContext, useChatApiClientFromContext } from '../lib/store/ChatStoreContext';
 import { useChatStore } from '../lib/store';
 import { apiClient as globalApiClient } from '../lib/api/client';
 import { useConfirmDialog } from '../hooks/useConfirmDialog';
 import { cn } from '../lib/utils';
+import { normalizeProjectRunCatalog } from './projectExplorer/utils';
 import { SessionListDialogs } from './sessionList/SessionListDialogs';
 import {
   ProjectSection,
@@ -127,6 +128,15 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
   const [terminalModalOpen, setTerminalModalOpen] = useState(false);
   const [terminalRoot, setTerminalRoot] = useState('');
   const [terminalError, setTerminalError] = useState<string | null>(null);
+  const [projectRunStateById, setProjectRunStateById] = useState<Record<string, {
+    status: string;
+    loading: boolean;
+    targetCount: number;
+    defaultTargetId: string | null;
+    fallbackTargetId: string | null;
+    error: string | null;
+  }>>({});
+  const [runningProjectId, setRunningProjectId] = useState<string | null>(null);
 
   const apiClientFromContext = useChatApiClientFromContext();
   const apiClient = apiClientFromContext || globalApiClient;
@@ -373,6 +383,116 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     remoteExpanded,
   });
 
+  useEffect(() => {
+    let cancelled = false;
+    const ids = new Set((projects || []).map((project) => String(project.id || '')));
+
+    setProjectRunStateById((prev) => {
+      const next: Record<string, {
+        status: string;
+        loading: boolean;
+        targetCount: number;
+        defaultTargetId: string | null;
+        fallbackTargetId: string | null;
+        error: string | null;
+      }> = {};
+      (projects || []).forEach((project) => {
+        const previous = prev[project.id];
+        next[project.id] = previous || {
+          status: 'analyzing',
+          loading: true,
+          targetCount: 0,
+          defaultTargetId: null,
+          fallbackTargetId: null,
+          error: null,
+        };
+      });
+      return next;
+    });
+
+    const load = async () => {
+      const updates = await Promise.all(
+        (projects || []).map(async (project) => {
+          try {
+            const raw = await apiClient.getProjectRunCatalog(project.id);
+            const catalog = normalizeProjectRunCatalog(raw);
+            const fallback = catalog.targets[0]?.id ? String(catalog.targets[0].id) : null;
+            const targetCount = catalog.targets.length;
+            const status = targetCount > 0 ? 'ready' : (catalog.status || 'empty');
+            return {
+              projectId: project.id,
+              state: {
+                status,
+                loading: false,
+                targetCount,
+                defaultTargetId: catalog.defaultTargetId ? String(catalog.defaultTargetId) : null,
+                fallbackTargetId: fallback,
+                error: catalog.errorMessage ? String(catalog.errorMessage) : null,
+              },
+            };
+          } catch (err: any) {
+            return {
+              projectId: project.id,
+              state: {
+                status: 'error',
+                loading: false,
+                targetCount: 0,
+                defaultTargetId: null,
+                fallbackTargetId: null,
+                error: err?.message || '运行目标加载失败',
+              },
+            };
+          }
+        })
+      );
+
+      if (cancelled) return;
+      setProjectRunStateById((prev) => {
+        const next: Record<string, typeof updates[number]['state']> = {};
+        ids.forEach((id) => {
+          const old = prev[id];
+          if (old) {
+            next[id] = old;
+          }
+        });
+        updates.forEach((item) => {
+          next[item.projectId] = item.state;
+        });
+        return next;
+      });
+    };
+
+    void load();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [apiClient, projects]);
+
+  const handleRunProject = async (projectId: string) => {
+    const project = (projects || []).find((item) => item.id === projectId);
+    if (!project) return;
+    const runState = projectRunStateById[projectId];
+    if (!runState) return;
+    const targetId = runState.defaultTargetId || runState.fallbackTargetId;
+    if (!targetId) return;
+
+    setRunningProjectId(projectId);
+    try {
+      const result = await apiClient.executeProjectRun(projectId, {
+        target_id: targetId,
+        create_if_missing: true,
+      });
+      const terminalId = String(result?.terminal_id || '').trim();
+      if (terminalId) {
+        await handleSelectTerminal(terminalId);
+      }
+      setActivePanel('terminal');
+    } finally {
+      setRunningProjectId((prev) => (prev === projectId ? null : prev));
+    }
+  };
+
   return (
     <div
       className={cn(
@@ -425,10 +545,15 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
             expanded={projectsExpanded}
             projects={projects}
             currentProjectId={currentProject?.id}
+            projectRunStateById={projectRunStateById}
+            runningProjectId={runningProjectId}
             onToggle={handleToggleProjectsSection}
             onCreate={openProjectModal}
             onSelect={(projectId) => {
               void handleSelectProject(projectId);
+            }}
+            onRunProject={(project) => {
+              void handleRunProject(project.id);
             }}
             onArchive={(projectId) => {
               void handleArchiveProject(projectId);
