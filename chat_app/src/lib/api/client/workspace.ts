@@ -374,6 +374,17 @@ export const getTerminal = (request: ApiRequestFn, id: string): Promise<any> => 
   return request<any>(`/terminals/${id}`);
 };
 
+export const interruptTerminal = (
+  request: ApiRequestFn,
+  id: string,
+  data?: { reason?: string },
+): Promise<any> => {
+  return request<any>(`/terminals/${encodeURIComponent(id)}/interrupt`, {
+    method: 'POST',
+    body: JSON.stringify(data || {}),
+  });
+};
+
 export const deleteTerminal = (request: ApiRequestFn, id: string): Promise<any> => {
   return request<any>(`/terminals/${id}`, {
     method: 'DELETE',

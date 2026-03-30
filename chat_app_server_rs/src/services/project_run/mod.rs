@@ -1,4 +1,5 @@
 use std::collections::{HashSet, VecDeque};
+use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -25,6 +26,9 @@ const IGNORED_DIRS: &[&str] = &[
     ".idea",
     ".vscode",
 ];
+const SHELL_BUILTINS: &[&str] = &[
+    "cd", "export", "unset", "alias", "unalias", "source", ".", "echo", "printf", "test", "[",
+];
 
 #[derive(Debug, Clone)]
 pub struct RunDispatchResult {
@@ -50,6 +54,67 @@ fn normalized_cwd(path: &str) -> String {
     } else {
         trimmed.to_string()
     }
+}
+
+fn command_token_from(command: &str) -> Option<String> {
+    for token in command.split_whitespace() {
+        if token.is_empty() {
+            continue;
+        }
+        if token.contains('=') && !token.starts_with('/') && !token.starts_with("./") && !token.starts_with("../")
+        {
+            let mut parts = token.splitn(2, '=');
+            let key = parts.next().unwrap_or_default().trim();
+            let val = parts.next().unwrap_or_default();
+            if !key.is_empty() && !val.is_empty() {
+                continue;
+            }
+        }
+        return Some(token.trim_matches(|c| c == '"' || c == '\'').to_string());
+    }
+    None
+}
+
+fn command_exists_in_path(bin: &str) -> bool {
+    let Some(path) = env::var_os("PATH") else {
+        return false;
+    };
+    for dir in env::split_paths(&path) {
+        if dir.join(bin).is_file() {
+            return true;
+        }
+    }
+    false
+}
+
+pub fn validate_command_preflight(command: &str, cwd: &str) -> Result<(), String> {
+    let command = command.trim();
+    if command.is_empty() {
+        return Err("运行命令不能为空".to_string());
+    }
+    let Some(token) = command_token_from(command) else {
+        return Err("运行命令不能为空".to_string());
+    };
+    let token_lower = token.to_lowercase();
+    if SHELL_BUILTINS.contains(&token_lower.as_str()) {
+        return Ok(());
+    }
+    if token.contains('/') {
+        let candidate = Path::new(&token);
+        let abs = if candidate.is_absolute() {
+            candidate.to_path_buf()
+        } else {
+            Path::new(cwd).join(candidate)
+        };
+        if abs.exists() {
+            return Ok(());
+        }
+        return Err(format!("运行失败：未找到可执行文件 `{}`", token));
+    }
+    if command_exists_in_path(&token) {
+        return Ok(());
+    }
+    Err(format!("运行失败：缺少运行环境 `{}`（command not found）", token))
 }
 
 fn is_same_cwd(left: &str, right: &str) -> bool {
@@ -527,6 +592,7 @@ pub async fn dispatch_command(
     if command.trim().is_empty() {
         return Err("运行命令不能为空".to_string());
     }
+    validate_command_preflight(command, cwd.as_str())?;
     let mut terminals = TerminalService::list(Some(user_id.to_string())).await?;
     terminals.sort_by(|a, b| b.last_active_at.cmp(&a.last_active_at));
 

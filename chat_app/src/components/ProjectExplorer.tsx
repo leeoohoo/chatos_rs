@@ -229,6 +229,25 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     });
   }, [client, project?.id]);
 
+  const handleInterruptTerminal = useCallback(async (terminalId: string, payload?: { reason?: string }) => {
+    return client.interruptTerminal(terminalId, payload);
+  }, [client]);
+
+  const handleGetTerminal = useCallback(async (terminalId: string) => {
+    return client.getTerminal(terminalId);
+  }, [client]);
+
+  const handleListTerminalLogs = useCallback(async (
+    terminalId: string,
+    params?: { limit?: number; offset?: number; before?: string }
+  ) => {
+    return client.listTerminalLogs(terminalId, params);
+  }, [client]);
+
+  const handleListTerminals = useCallback(async () => {
+    return client.listTerminals();
+  }, [client]);
+
   const loadRunCatalog = useCallback(async (analyze = false) => {
     if (!project?.id) return;
     setRunCatalogLoading(true);
@@ -634,6 +653,7 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
   };
 
   const previewPaneProps: React.ComponentProps<typeof ProjectPreviewPane> = {
+    projectId: project.id,
     selectedFile,
     selectedPath,
     selectedEntry,
@@ -643,6 +663,10 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     runCwd,
     projectRootPath: project.rootPath,
     onRunCommand: handleDispatchTerminalCommand,
+    onInterruptTerminal: handleInterruptTerminal,
+    onGetTerminal: handleGetTerminal,
+    onListTerminalLogs: handleListTerminalLogs,
+    onListTerminals: handleListTerminals,
     runTargets,
     runStatus,
     runCatalogLoading,

@@ -30,6 +30,11 @@ pub(super) struct DispatchTerminalCommandRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct InterruptTerminalRequest {
+    pub(super) reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
 pub(super) enum WsInput {
     #[serde(rename = "input")]

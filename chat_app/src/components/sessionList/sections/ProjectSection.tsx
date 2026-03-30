@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { cn } from '../../../lib/utils';
 import type { Project } from '../../../types';
 import { DotsVerticalIcon, PlusIcon, TrashIcon } from '../../ui/icons';
@@ -11,13 +11,26 @@ interface ProjectSectionProps {
     status: string;
     loading: boolean;
     targetCount: number;
+    targets?: Array<{
+      id: string;
+      label: string;
+      cwd?: string | null;
+    }>;
     error?: string | null;
   }>;
   runningProjectId?: string | null;
+  projectLiveStateById?: Record<string, {
+    isRunning: boolean;
+    terminalName?: string | null;
+    canRestart?: boolean;
+    actionLoading?: boolean;
+  }>;
   onToggle: () => void;
   onCreate: () => void;
   onSelect: (projectId: string) => void;
-  onRunProject?: (project: Project) => void;
+  onRunProject?: (project: Project, targetId?: string) => void;
+  onStopProject?: (project: Project) => void;
+  onRestartProject?: (project: Project) => void;
   onArchive: (projectId: string) => void;
   onToggleActionMenu: (event: React.MouseEvent<HTMLButtonElement>) => void;
   closeActionMenus: () => void;
@@ -29,14 +42,19 @@ export const ProjectSection: React.FC<ProjectSectionProps> = ({
   currentProjectId,
   projectRunStateById,
   runningProjectId,
+  projectLiveStateById,
   onToggle,
   onCreate,
   onSelect,
   onRunProject,
+  onStopProject,
+  onRestartProject,
   onArchive,
   onToggleActionMenu,
   closeActionMenus,
 }) => {
+  const [chooserProjectId, setChooserProjectId] = useState<string | null>(null);
+
   return (
     <div className={cn('flex flex-col min-h-0', expanded ? 'flex-1' : 'shrink-0')}>
       <div className="px-3 py-2 text-xs text-muted-foreground flex items-center justify-between">
@@ -73,10 +91,12 @@ export const ProjectSection: React.FC<ProjectSectionProps> = ({
                   const status = String(runState?.status || 'analyzing');
                   const isAnalyzing = Boolean(runState?.loading) || status === 'analyzing';
                   const isReady = status === 'ready' && targetCount > 0;
-                  const isRunning = runningProjectId === project.id;
-                  const runDisabled = isRunning || !isReady;
+                  const liveState = projectLiveStateById?.[project.id];
+                  const isRunning = Boolean(liveState?.isRunning);
+                  const actionLoading = Boolean(liveState?.actionLoading);
+                  const runDisabled = isRunning || actionLoading || runningProjectId === project.id || !isReady;
                   const runTitle = isRunning
-                    ? '运行中...'
+                    ? `运行中：${liveState?.terminalName || '终端'}`
                     : isReady
                       ? `运行默认目标（${targetCount}）`
                       : (runState?.error || (isAnalyzing ? '正在分析启动目标' : '未检测到可运行目标'));
@@ -90,7 +110,10 @@ export const ProjectSection: React.FC<ProjectSectionProps> = ({
                           ? 'bg-accent border border-border'
                           : 'hover:bg-accent/50',
                       )}
-                      onClick={() => onSelect(project.id)}
+                      onClick={() => {
+                        setChooserProjectId(null);
+                        onSelect(project.id);
+                      }}
                     >
                       <div className="flex-1 min-w-0">
                         <h3 className="text-sm font-medium text-foreground truncate">
@@ -100,27 +123,88 @@ export const ProjectSection: React.FC<ProjectSectionProps> = ({
                           {project.rootPath}
                         </div>
                       </div>
-                      <button
-                        type="button"
-                        title={runTitle}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          if (!runDisabled) {
-                            onRunProject?.(project);
-                          }
-                        }}
-                        disabled={runDisabled}
-                        className={cn(
-                          'mr-1 h-7 w-7 rounded-full border text-xs transition-colors disabled:cursor-not-allowed',
-                          isReady
-                            ? 'border-emerald-500/60 text-emerald-600 hover:bg-emerald-500/10'
-                            : 'border-border text-muted-foreground',
-                          isAnalyzing && 'animate-pulse',
-                          runDisabled && 'opacity-60'
-                        )}
-                      >
-                        ▶
-                      </button>
+                      {isRunning ? (
+                        <div className="mr-1 flex items-center gap-1">
+                          <button
+                            type="button"
+                            title="停止"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              if (!actionLoading) {
+                                onStopProject?.(project);
+                              }
+                            }}
+                            disabled={actionLoading}
+                            className="h-7 w-7 rounded border border-rose-500/60 text-rose-600 hover:bg-rose-500/10 disabled:opacity-60 disabled:cursor-not-allowed"
+                          >
+                            ■
+                          </button>
+                          <button
+                            type="button"
+                            title={liveState?.canRestart === false ? '未找到可重启命令' : '重启'}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              if (!actionLoading && liveState?.canRestart !== false) {
+                                onRestartProject?.(project);
+                              }
+                            }}
+                            disabled={actionLoading || liveState?.canRestart === false}
+                            className="h-7 w-7 rounded border border-border text-muted-foreground hover:bg-accent disabled:opacity-60 disabled:cursor-not-allowed"
+                          >
+                            ↻
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="relative mr-1">
+                          <button
+                            type="button"
+                            title={runTitle}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              if (runDisabled) return;
+                              const targets = runState?.targets || [];
+                              if (targets.length > 1) {
+                                setChooserProjectId((prev) => (prev === project.id ? null : project.id));
+                                return;
+                              }
+                              onRunProject?.(project, targets[0]?.id);
+                            }}
+                            disabled={runDisabled}
+                            className={cn(
+                              'h-7 w-7 rounded-full border text-xs transition-colors disabled:cursor-not-allowed',
+                              isReady
+                                ? 'border-emerald-500/60 text-emerald-600 hover:bg-emerald-500/10'
+                                : 'border-border text-muted-foreground',
+                              isAnalyzing && 'animate-pulse',
+                              runDisabled && 'opacity-60'
+                            )}
+                          >
+                            ▶
+                          </button>
+                          {chooserProjectId === project.id && (runState?.targets?.length || 0) > 1 && (
+                            <div
+                              className="absolute right-0 top-8 z-20 w-64 rounded-md border border-border bg-popover shadow-lg p-1"
+                              onClick={(event) => event.stopPropagation()}
+                            >
+                              <div className="px-2 py-1 text-[11px] text-muted-foreground">选择启动目标</div>
+                              {runState?.targets?.map((target) => (
+                                <button
+                                  key={target.id}
+                                  type="button"
+                                  onClick={() => {
+                                    setChooserProjectId(null);
+                                    onRunProject?.(project, target.id);
+                                  }}
+                                  className="w-full text-left rounded px-2 py-1.5 hover:bg-accent"
+                                >
+                                  <div className="text-xs text-foreground truncate">{target.label}</div>
+                                  <div className="text-[11px] text-muted-foreground truncate">{target.cwd || '-'}</div>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
                       <div className="relative" data-action-menu-root="true">
                         <button
                           className="p-1 text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 transition-opacity"

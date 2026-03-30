@@ -134,9 +134,15 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     targetCount: number;
     defaultTargetId: string | null;
     fallbackTargetId: string | null;
+    defaultCommand: string | null;
+    defaultCwd: string | null;
+    fallbackCommand: string | null;
+    fallbackCwd: string | null;
+    targets: Array<{ id: string; label: string; cwd: string; command: string }>;
     error: string | null;
   }>>({});
   const [runningProjectId, setRunningProjectId] = useState<string | null>(null);
+  const [projectActionLoadingById, setProjectActionLoadingById] = useState<Record<string, boolean>>({});
 
   const apiClientFromContext = useChatApiClientFromContext();
   const apiClient = apiClientFromContext || globalApiClient;
@@ -394,6 +400,11 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
         targetCount: number;
         defaultTargetId: string | null;
         fallbackTargetId: string | null;
+        defaultCommand: string | null;
+        defaultCwd: string | null;
+        fallbackCommand: string | null;
+        fallbackCwd: string | null;
+        targets: Array<{ id: string; label: string; cwd: string; command: string }>;
         error: string | null;
       }> = {};
       (projects || []).forEach((project) => {
@@ -404,6 +415,11 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
           targetCount: 0,
           defaultTargetId: null,
           fallbackTargetId: null,
+          defaultCommand: null,
+          defaultCwd: null,
+          fallbackCommand: null,
+          fallbackCwd: null,
+          targets: [],
           error: null,
         };
       });
@@ -417,6 +433,10 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
             const raw = await apiClient.getProjectRunCatalog(project.id);
             const catalog = normalizeProjectRunCatalog(raw);
             const fallback = catalog.targets[0]?.id ? String(catalog.targets[0].id) : null;
+            const defaultTarget = catalog.defaultTargetId
+              ? catalog.targets.find((item) => item.id === catalog.defaultTargetId) || null
+              : (catalog.targets.find((item) => item.isDefault) || null);
+            const fallbackTarget = catalog.targets[0] || null;
             const targetCount = catalog.targets.length;
             const status = targetCount > 0 ? 'ready' : (catalog.status || 'empty');
             return {
@@ -427,6 +447,16 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
                 targetCount,
                 defaultTargetId: catalog.defaultTargetId ? String(catalog.defaultTargetId) : null,
                 fallbackTargetId: fallback,
+                defaultCommand: defaultTarget?.command ? String(defaultTarget.command) : null,
+                defaultCwd: defaultTarget?.cwd ? String(defaultTarget.cwd) : null,
+                fallbackCommand: fallbackTarget?.command ? String(fallbackTarget.command) : null,
+                fallbackCwd: fallbackTarget?.cwd ? String(fallbackTarget.cwd) : null,
+                targets: (catalog.targets || []).map((target) => ({
+                  id: String(target.id || ''),
+                  label: String(target.label || target.command || '未命名目标'),
+                  cwd: String(target.cwd || ''),
+                  command: String(target.command || ''),
+                })),
                 error: catalog.errorMessage ? String(catalog.errorMessage) : null,
               },
             };
@@ -439,6 +469,11 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
                 targetCount: 0,
                 defaultTargetId: null,
                 fallbackTargetId: null,
+                defaultCommand: null,
+                defaultCwd: null,
+                fallbackCommand: null,
+                fallbackCwd: null,
+                targets: [],
                 error: err?.message || '运行目标加载失败',
               },
             };
@@ -469,15 +504,78 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     };
   }, [apiClient, projects]);
 
-  const handleRunProject = async (projectId: string) => {
+  useEffect(() => {
+    if (isCollapsed) return;
+    const timer = setInterval(() => {
+      void loadTerminals();
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [isCollapsed, loadTerminals]);
+
+  const projectLiveStateById = useMemo(() => {
+    const out: Record<string, {
+      isRunning: boolean;
+      terminalId: string | null;
+      terminalName: string | null;
+      canRestart: boolean;
+      actionLoading: boolean;
+    }> = {};
+    (projects || []).forEach((project) => {
+      const related = (terminals || [])
+        .filter((terminal: any) => String(terminal?.projectId || '') === project.id && terminal?.status === 'running')
+        .sort((a: any, b: any) => {
+          const ta = new Date(a?.lastActiveAt || 0).getTime();
+          const tb = new Date(b?.lastActiveAt || 0).getTime();
+          return tb - ta;
+        });
+      const busy = related.find((terminal: any) => Boolean(terminal?.busy));
+      const active = busy || related[0] || null;
+      const runState = projectRunStateById[project.id];
+      const command = runState?.defaultCommand || runState?.fallbackCommand || null;
+      const cwd = runState?.defaultCwd || runState?.fallbackCwd || active?.cwd || null;
+      out[project.id] = {
+        isRunning: Boolean(busy),
+        terminalId: active?.id || null,
+        terminalName: active?.name || null,
+        canRestart: Boolean(command && cwd),
+        actionLoading: Boolean(projectActionLoadingById[project.id]),
+      };
+    });
+    return out;
+  }, [projectActionLoadingById, projectRunStateById, projects, terminals]);
+
+  const setProjectRunError = (projectId: string, error: string | null) => {
+    setProjectRunStateById((prev) => {
+      const state = prev[projectId];
+      if (!state) return prev;
+      return {
+        ...prev,
+        [projectId]: {
+          ...state,
+          error,
+        },
+      };
+    });
+  };
+
+  const setProjectActionLoading = (projectId: string, loading: boolean) => {
+    setProjectActionLoadingById((prev) => ({
+      ...prev,
+      [projectId]: loading,
+    }));
+  };
+
+  const handleRunProject = async (projectId: string, chosenTargetId?: string) => {
     const project = (projects || []).find((item) => item.id === projectId);
     if (!project) return;
     const runState = projectRunStateById[projectId];
     if (!runState) return;
-    const targetId = runState.defaultTargetId || runState.fallbackTargetId;
+    const targetId = (chosenTargetId || '').trim() || runState.defaultTargetId || runState.fallbackTargetId;
     if (!targetId) return;
 
     setRunningProjectId(projectId);
+    setProjectActionLoading(projectId, true);
+    setProjectRunError(projectId, null);
     try {
       const result = await apiClient.executeProjectRun(projectId, {
         target_id: targetId,
@@ -488,8 +586,66 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
         await handleSelectTerminal(terminalId);
       }
       setActivePanel('terminal');
+      await loadTerminals();
+    } catch (err: any) {
+      setProjectRunError(projectId, err?.message || '运行失败');
     } finally {
+      setProjectActionLoading(projectId, false);
       setRunningProjectId((prev) => (prev === projectId ? null : prev));
+    }
+  };
+
+  const handleStopProject = async (projectId: string) => {
+    const live = projectLiveStateById[projectId];
+    if (!live?.terminalId) return;
+    setProjectActionLoading(projectId, true);
+    setProjectRunError(projectId, null);
+    try {
+      await apiClient.interruptTerminal(live.terminalId, { reason: 'project_list_stop' });
+      await loadTerminals();
+      setActivePanel('terminal');
+    } catch (err: any) {
+      setProjectRunError(projectId, err?.message || '停止失败');
+    } finally {
+      setProjectActionLoading(projectId, false);
+    }
+  };
+
+  const handleRestartProject = async (projectId: string) => {
+    const project = (projects || []).find((item) => item.id === projectId);
+    if (!project) return;
+    const live = projectLiveStateById[projectId];
+    const runState = projectRunStateById[projectId];
+    const command = runState?.defaultCommand || runState?.fallbackCommand;
+    const fallbackTerminalCwd = (terminals || []).find((t: any) => t.id === live?.terminalId)?.cwd || '';
+    const cwd = (runState?.defaultCwd || runState?.fallbackCwd || fallbackTerminalCwd || '').trim();
+    if (!command || !cwd) {
+      setProjectRunError(projectId, '未找到可重启命令，请先重扫目标');
+      return;
+    }
+    setProjectActionLoading(projectId, true);
+    setProjectRunError(projectId, null);
+    try {
+      if (live?.terminalId && live.isRunning) {
+        await apiClient.interruptTerminal(live.terminalId, { reason: 'project_list_restart' });
+        await new Promise((resolve) => setTimeout(resolve, 180));
+      }
+      const result = await apiClient.dispatchTerminalCommand({
+        cwd,
+        command,
+        project_id: project.id,
+        create_if_missing: true,
+      });
+      const terminalId = String(result?.terminal_id || '').trim();
+      if (terminalId) {
+        await handleSelectTerminal(terminalId);
+      }
+      setActivePanel('terminal');
+      await loadTerminals();
+    } catch (err: any) {
+      setProjectRunError(projectId, err?.message || '重启失败');
+    } finally {
+      setProjectActionLoading(projectId, false);
     }
   };
 
@@ -547,13 +703,20 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
             currentProjectId={currentProject?.id}
             projectRunStateById={projectRunStateById}
             runningProjectId={runningProjectId}
+            projectLiveStateById={projectLiveStateById}
             onToggle={handleToggleProjectsSection}
             onCreate={openProjectModal}
             onSelect={(projectId) => {
               void handleSelectProject(projectId);
             }}
-            onRunProject={(project) => {
-              void handleRunProject(project.id);
+            onRunProject={(project, targetId) => {
+              void handleRunProject(project.id, targetId);
+            }}
+            onStopProject={(project) => {
+              void handleStopProject(project.id);
+            }}
+            onRestartProject={(project) => {
+              void handleRestartProject(project.id);
             }}
             onArchive={(projectId) => {
               void handleArchiveProject(projectId);

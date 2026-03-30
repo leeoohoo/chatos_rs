@@ -358,6 +358,10 @@ class ApiClient {
     return workspaceApi.getTerminal(this.requestFn, id);
   }
 
+  async interruptTerminal(id: string, data?: { reason?: string }): Promise<any> {
+    return workspaceApi.interruptTerminal(this.requestFn, id, data);
+  }
+
   async deleteTerminal(id: string): Promise<any> {
     return workspaceApi.deleteTerminal(this.requestFn, id);
   }

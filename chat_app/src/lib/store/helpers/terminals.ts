@@ -5,6 +5,7 @@ export const normalizeTerminal = (raw: any): Terminal => ({
   name: raw?.name ?? '',
   cwd: raw?.cwd ?? '',
   userId: raw?.user_id ?? raw?.userId ?? null,
+  projectId: raw?.project_id ?? raw?.projectId ?? null,
   status: raw?.status ?? 'running',
   busy: raw?.busy ?? false,
   createdAt: new Date(raw?.created_at ?? raw?.createdAt ?? Date.now()),

@@ -16,7 +16,7 @@ use super::io_runtime::{spawn_shell, spawn_terminal_output_persist, spawn_termin
 use super::output_history::{OutputHistory, SNAPSHOT_MAX_LINES};
 use super::path_utils::{canonicalize_path, path_is_within_root};
 use super::prompt_parser::{
-    extract_prompt_cwd, infer_prompt_cwd_from_context, is_prompt_line, strip_ansi,
+    extract_prompt_cwd, infer_prompt_cwd_from_context, strip_ansi,
 };
 use super::{input_triggers_busy, now_millis, TerminalEvent};
 
@@ -30,6 +30,7 @@ pub struct TerminalSession {
     current_cwd: Mutex<PathBuf>,
     input_line: Mutex<String>,
     busy: AtomicBool,
+    awaiting_command_output: AtomicBool,
     root_reset_in_progress: AtomicBool,
     last_input_at: AtomicU64,
     last_output_at: AtomicU64,
@@ -81,6 +82,7 @@ impl TerminalSession {
             current_cwd: Mutex::new(root_cwd),
             input_line: Mutex::new(String::new()),
             busy: AtomicBool::new(false),
+            awaiting_command_output: AtomicBool::new(false),
             root_reset_in_progress: AtomicBool::new(false),
             last_input_at: AtomicU64::new(0),
             last_output_at: AtomicU64::new(0),
@@ -112,14 +114,18 @@ impl TerminalSession {
                             let mut parts = line_buffer.split('\n').collect::<Vec<_>>();
                             let tail = parts.pop().unwrap_or("");
                             for line in parts.iter() {
-                                session_clone.sync_current_cwd_from_prompt_line(line);
-                                if is_prompt_line(line) {
+                                let is_prompt = session_clone.sync_current_cwd_from_prompt_line(line);
+                                session_clone.observe_output_line(line, is_prompt);
+                                if is_prompt {
                                     saw_prompt = true;
                                 }
                             }
                             line_buffer = tail.to_string();
-                            session_clone.sync_current_cwd_from_prompt_line(line_buffer.as_str());
-                            if !saw_prompt && is_prompt_line(line_buffer.as_str()) {
+                            let tail_is_prompt =
+                                session_clone.sync_current_cwd_from_prompt_line(line_buffer.as_str());
+                            session_clone
+                                .observe_output_line(line_buffer.as_str(), tail_is_prompt);
+                            if !saw_prompt && tail_is_prompt {
                                 saw_prompt = true;
                             }
                             if saw_prompt {
@@ -310,19 +316,19 @@ impl TerminalSession {
         self.mark_output();
     }
 
-    fn sync_current_cwd_from_prompt_line(&self, line: &str) {
+    fn sync_current_cwd_from_prompt_line(&self, line: &str) -> bool {
         let parsed_cwd = extract_prompt_cwd(line).or_else(|| {
             let current = self.current_cwd.lock().ok()?.clone();
             infer_prompt_cwd_from_context(line, current.as_path(), self.root_cwd.as_path())
         });
 
         let Some(parsed_cwd) = parsed_cwd else {
-            return;
+            return false;
         };
 
         if !path_is_within_root(parsed_cwd.as_path(), self.root_cwd.as_path()) {
             self.reset_shell_to_root(parsed_cwd.as_path());
-            return;
+            return true;
         }
 
         self.root_reset_in_progress.store(false, Ordering::Relaxed);
@@ -330,6 +336,7 @@ impl TerminalSession {
         if let Ok(mut cwd_guard) = self.current_cwd.lock() {
             *cwd_guard = parsed_cwd;
         }
+        true
     }
 
     fn reset_shell_to_root(&self, escaped_cwd: &Path) {
@@ -363,6 +370,10 @@ impl TerminalSession {
     fn mark_input(&self, data: &str) {
         self.last_input_at.store(now_millis(), Ordering::Relaxed);
         if input_triggers_busy(data) {
+            self.awaiting_command_output.store(
+                has_visible_command_text(data),
+                Ordering::Relaxed,
+            );
             self.set_busy(true);
         }
     }
@@ -373,7 +384,20 @@ impl TerminalSession {
 
     fn mark_prompt(&self) {
         self.last_prompt_at.store(now_millis(), Ordering::Relaxed);
+        if self.awaiting_command_output.load(Ordering::Relaxed) {
+            return;
+        }
         self.set_busy(false);
+    }
+
+    fn observe_output_line(&self, line: &str, is_prompt: bool) {
+        if !self.is_busy() || is_prompt {
+            return;
+        }
+        if line.trim().is_empty() {
+            return;
+        }
+        self.awaiting_command_output.store(false, Ordering::Relaxed);
     }
 
     fn set_busy(&self, busy: bool) {
@@ -381,5 +405,28 @@ impl TerminalSession {
         if prev != busy {
             let _ = self.sender.send(TerminalEvent::State(busy));
         }
+    }
+}
+
+fn has_visible_command_text(data: &str) -> bool {
+    data.chars().any(|ch| !ch.is_control() && !ch.is_whitespace())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::has_visible_command_text;
+
+    #[test]
+    fn visible_command_text_detection_ignores_control_only_input() {
+        assert!(!has_visible_command_text(""));
+        assert!(!has_visible_command_text("\r"));
+        assert!(!has_visible_command_text("\n"));
+        assert!(!has_visible_command_text("\u{3}"));
+    }
+
+    #[test]
+    fn visible_command_text_detection_recognizes_actual_command_input() {
+        assert!(has_visible_command_text("npm run dev\r"));
+        assert!(has_visible_command_text(" ls\n"));
     }
 }

@@ -10,11 +10,12 @@ use crate::core::user_scope::resolve_user_id;
 use crate::core::validation::{normalize_non_empty, validate_existing_dir};
 use crate::models::terminal::TerminalService;
 use crate::models::terminal_log::{TerminalLog, TerminalLogService};
+use crate::services::project_run::validate_command_preflight;
 use crate::services::terminal_manager::get_terminal_manager;
 
+use super::contracts::InterruptTerminalRequest;
 use super::{
-    attach_busy, derive_terminal_name, CreateTerminalRequest, DispatchTerminalCommandRequest,
-    TerminalQuery,
+    attach_busy, derive_terminal_name, CreateTerminalRequest, DispatchTerminalCommandRequest, TerminalQuery,
 };
 
 pub(super) async fn list_terminals(
@@ -180,6 +181,9 @@ pub(super) async fn dispatch_terminal_command(
             );
         }
     };
+    if let Err(err) = validate_command_preflight(command.as_str(), cwd.as_str()) {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": err })));
+    }
     let normalized_project_id = normalize_non_empty(project_id);
     let allow_create = create_if_missing.unwrap_or(true);
 
@@ -274,6 +278,51 @@ pub(super) async fn dispatch_terminal_command(
             "terminal_reused": reused,
             "cwd": terminal.cwd,
             "executed_command": command,
+        })),
+    )
+}
+
+pub(super) async fn interrupt_terminal_command(
+    auth: AuthUser,
+    Path(id): Path<String>,
+    Json(req): Json<InterruptTerminalRequest>,
+) -> (StatusCode, Json<Value>) {
+    let terminal = match ensure_owned_terminal(&id, &auth).await {
+        Ok(terminal) => terminal,
+        Err(err) => return map_terminal_access_error(err),
+    };
+    let manager = get_terminal_manager();
+    let session = match manager.ensure_running(&terminal).await {
+        Ok(session) => session,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": err })),
+            );
+        }
+    };
+    if let Err(err) = session.write_input("\u{3}") {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": err })),
+        );
+    }
+    let reason = normalize_non_empty(req.reason).unwrap_or_else(|| "manual_interrupt".to_string());
+    let _ = TerminalLogService::create(TerminalLog::new(
+        terminal.id.clone(),
+        "signal".to_string(),
+        format!("ctrl_c:{reason}"),
+    ))
+    .await;
+    let _ = TerminalService::touch(terminal.id.as_str()).await;
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "terminal_id": terminal.id,
+            "terminal_name": terminal.name,
+            "interrupted": true,
+            "signal": "SIGINT",
+            "reason": reason,
         })),
     )
 }

@@ -88,6 +88,7 @@ export interface Terminal {
   name: string;
   cwd: string;
   userId?: string | null;
+  projectId?: string | null;
   status: string;
   busy?: boolean;
   createdAt: Date;
