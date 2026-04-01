@@ -2,6 +2,7 @@ import React from 'react';
 
 import { MessageList } from '../../MessageList';
 import type { SessionSummaryItem } from '../../../features/sessionSummary/useSessionSummaryPanel';
+import type { Message } from '../../../types';
 
 interface TeamMemberSummaryViewProps {
   sessionId: string;
@@ -12,7 +13,7 @@ interface TeamMemberSummaryViewProps {
   summaryError: string | null;
   clearingSummaries: boolean;
   deletingSummaryId: string | null;
-  messages: any[];
+  messages: Message[];
   hasMoreMessages: boolean;
   chatIsLoading: boolean;
   chatIsStreaming: boolean;

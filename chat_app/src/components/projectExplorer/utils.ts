@@ -6,6 +6,8 @@ import type {
   FsReadResult,
   ProjectChangeMark,
   ProjectChangeSummary,
+  ProjectRunCatalog,
+  ProjectRunTarget,
 } from '../../types';
 
 export type ChangeKind = 'create' | 'edit' | 'delete';
@@ -254,3 +256,30 @@ export const isValidEntryName = (name: string): boolean => (
   !name.includes('\\') &&
   !name.includes('\0')
 );
+
+export const normalizeProjectRunTarget = (raw: any): ProjectRunTarget => ({
+  id: String(raw?.id || ''),
+  label: String(raw?.label || raw?.command || ''),
+  kind: String(raw?.kind || 'custom'),
+  cwd: String(raw?.cwd || ''),
+  command: String(raw?.command || ''),
+  source: String(raw?.source || 'auto'),
+  confidence: Number.isFinite(Number(raw?.confidence)) ? Number(raw?.confidence) : 0,
+  isDefault: Boolean(raw?.is_default ?? raw?.isDefault),
+});
+
+export const normalizeProjectRunCatalog = (raw: any): ProjectRunCatalog => {
+  const targets = Array.isArray(raw?.targets)
+    ? raw.targets.map(normalizeProjectRunTarget).filter((item: ProjectRunTarget) => item.id && item.command && item.cwd)
+    : [];
+  const defaultTargetId = raw?.default_target_id ?? raw?.defaultTargetId ?? null;
+  return {
+    projectId: String(raw?.project_id ?? raw?.projectId ?? ''),
+    status: String(raw?.status ?? (targets.length > 0 ? 'ready' : 'empty')),
+    defaultTargetId: defaultTargetId ? String(defaultTargetId) : null,
+    targets,
+    errorMessage: (raw?.error_message ?? raw?.errorMessage ?? null) || null,
+    analyzedAt: (raw?.analyzed_at ?? raw?.analyzedAt ?? null) || null,
+    updatedAt: (raw?.updated_at ?? raw?.updatedAt ?? null) || null,
+  };
+};

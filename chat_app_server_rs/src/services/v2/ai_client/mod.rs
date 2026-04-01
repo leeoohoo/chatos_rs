@@ -9,6 +9,9 @@ pub use crate::services::ai_client_common::AiClientCallbacks;
 use crate::services::ai_common::{
     build_aborted_tool_results, build_tool_stream_callback, completion_failed_error,
 };
+use crate::services::runtime_guidance_manager::{
+    runtime_guidance_manager, RuntimeGuidanceItem, DEFAULT_DRAIN_LIMIT,
+};
 use crate::services::user_settings::AiClientSettings;
 use crate::services::v2::ai_request_handler::{AiRequestHandler, StreamCallbacks};
 use crate::services::v2::mcp_tool_execute::McpToolExecute;
@@ -20,7 +23,9 @@ mod history_tools;
 mod runtime_support;
 mod token_compaction;
 
-use self::history_tools::{drop_duplicate_tail, ensure_tool_responses};
+use self::history_tools::{
+    drop_duplicate_tail, ensure_tool_responses, sanitize_messages_for_request,
+};
 use self::runtime_support::{
     cap_tool_content_for_input, is_response_parse_error, is_transient_transport_or_parse_error,
 };
@@ -176,6 +181,15 @@ impl AiClient {
             .await;
 
             let mut api_messages = messages.clone();
+            let runtime_guidance_messages = drain_runtime_guidance_messages(
+                session_id.as_deref(),
+                turn_id.as_deref(),
+                &callbacks,
+            );
+            if !runtime_guidance_messages.is_empty() {
+                api_messages.extend(runtime_guidance_messages);
+            }
+            api_messages = sanitize_messages_for_request(api_messages);
 
             let mut resp = None;
             let mut last_err: Option<String> = None;
@@ -395,6 +409,62 @@ impl AiClient {
         }
         None
     }
+}
+
+fn drain_runtime_guidance_messages(
+    session_id: Option<&str>,
+    turn_id: Option<&str>,
+    callbacks: &AiClientCallbacks,
+) -> Vec<Value> {
+    let Some(session_id) = session_id.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Vec::new();
+    };
+    let Some(turn_id) = turn_id.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Vec::new();
+    };
+
+    let drained =
+        runtime_guidance_manager().drain_guidance(session_id, turn_id, DEFAULT_DRAIN_LIMIT);
+    if drained.is_empty() {
+        return Vec::new();
+    }
+
+    let mut messages = Vec::with_capacity(drained.len());
+    for guidance_item in drained {
+        messages.push(build_runtime_guidance_message(&guidance_item));
+        if let Some(applied_item) =
+            runtime_guidance_manager().mark_applied(session_id, turn_id, &guidance_item.guidance_id)
+        {
+            if let Some(cb) = &callbacks.on_runtime_guidance_applied {
+                cb(json!({
+                    "guidance_id": applied_item.guidance_id,
+                    "turn_id": applied_item.turn_id,
+                    "status": "applied",
+                    "created_at": applied_item.created_at,
+                    "applied_at": applied_item.applied_at,
+                    "pending_count": runtime_guidance_manager().pending_count(session_id, turn_id),
+                }));
+            }
+        }
+    }
+
+    messages
+}
+
+fn build_runtime_guidance_message(guidance_item: &RuntimeGuidanceItem) -> Value {
+    json!({
+        "role": "system",
+        "content": format_runtime_guidance_instruction(guidance_item),
+    })
+}
+
+fn format_runtime_guidance_instruction(guidance_item: &RuntimeGuidanceItem) -> String {
+    format!(
+        "[Runtime Guidance]\n- guidance_id: {}\n- time: {}\n- source: user guidance during running turn\n- instruction: {}\n- rule: treat this as high-priority preference unless conflicts with safety",
+        guidance_item.guidance_id,
+        guidance_item.created_at,
+        guidance_item.content
+    )
 }
 
 impl AiClientSettings for AiClient {

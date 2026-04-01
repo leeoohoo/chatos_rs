@@ -11,8 +11,6 @@ import {
   normalizeFile,
 } from './projectExplorer/utils';
 import { ProjectExplorerFilesWorkspace } from './projectExplorer/ProjectExplorerFilesWorkspace';
-import { ProjectPreviewPane } from './projectExplorer/PreviewPane';
-import { ProjectTreePane } from './projectExplorer/TreePane';
 import TeamMembersPane from './projectExplorer/TeamMembersPane';
 import WorkspaceTabs from './projectExplorer/WorkspaceTabs';
 import { useProjectTreeActions } from './projectExplorer/useProjectTreeActions';
@@ -28,7 +26,9 @@ import {
 import {
   useProjectExplorerState,
 } from './projectExplorer/useProjectExplorerState';
+import { useProjectExplorerRunState } from './projectExplorer/useProjectExplorerRunState';
 import { useProjectExplorerUiPersistence } from './projectExplorer/useProjectExplorerUiPersistence';
+import { useProjectExplorerWorkspaceView } from './projectExplorer/useProjectExplorerWorkspaceView';
 
 interface ProjectExplorerProps {
   project: Project | null;
@@ -97,6 +97,10 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     keyToPath,
     getParentPath,
   } = useProjectExplorerPathHelpers(project?.rootPath);
+  const resolveParentPath = useCallback(
+    (path: string | null | undefined) => getParentPath(path || '') || '',
+    [getParentPath],
+  );
 
   const { loadEntries, loadChangeSummary } = useProjectExplorerDataLoading({
     client,
@@ -194,11 +198,32 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     () => (selectedEntry?.isDir ? selectedEntry.path : null),
     [selectedEntry]
   );
-
-  const isContextRootEntry = useMemo(() => {
-    if (!contextMenu?.entry.path || !project?.rootPath) return false;
-    return normalizePath(contextMenu.entry.path) === normalizePath(project.rootPath);
-  }, [contextMenu?.entry.path, normalizePath, project?.rootPath]);
+  const {
+    runCwd,
+    runStatus,
+    runTargets,
+    runCatalogLoading,
+    runCatalogError,
+    selectedRunTargetId,
+    setSelectedRunTargetId,
+    handleDispatchTerminalCommand,
+    handleInterruptTerminal,
+    handleGetTerminal,
+    handleListTerminalLogs,
+    handleListTerminals,
+    handleAnalyzeRunTargets,
+    canRunFile,
+    handleRunFile,
+  } = useProjectExplorerRunState({
+    client,
+    project,
+    selectedEntry,
+    selectedPath,
+    getParentPath: resolveParentPath,
+    setActionError,
+    setActionLoading,
+    setActionMessage,
+  });
 
   const actionReloadPath = useMemo(() => {
     if (!selectedEntry) return project?.rootPath || null;
@@ -352,48 +377,6 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     openFile,
   });
 
-  const handleDragStart = useCallback((event: React.DragEvent, entry: FsEntry) => {
-    if (!entry.path) return;
-    clearDragExpandTimer();
-    clearDragAutoScroll();
-    setDraggingEntryPath(entry.path);
-    setDropTargetDirPath(null);
-    setMoveConflict(null);
-    event.dataTransfer.effectAllowed = 'move';
-    event.dataTransfer.setData('text/plain', entry.path);
-  }, [clearDragAutoScroll, clearDragExpandTimer]);
-
-  const handleDragEnd = useCallback(() => {
-    clearDragExpandTimer();
-    clearDragAutoScroll();
-    setDraggingEntryPath(null);
-    setDropTargetDirPath(null);
-  }, [clearDragAutoScroll, clearDragExpandTimer]);
-
-  const openEntryContextMenu = useCallback((event: React.MouseEvent, entry: FsEntry) => {
-    event.preventDefault();
-    event.stopPropagation();
-    setSelectedPath(entry.path);
-    if (entry.isDir) {
-      setSelectedFile(null);
-    }
-    setContextMenu({
-      x: event.clientX,
-      y: event.clientY,
-      entry,
-    });
-  }, []);
-
-  const contextMenuStyle = useMemo(() => {
-    if (!contextMenu) return undefined;
-    const maxX = typeof window !== 'undefined' ? window.innerWidth - 220 : contextMenu.x;
-    const maxY = typeof window !== 'undefined' ? window.innerHeight - 240 : contextMenu.y;
-    return {
-      left: `${Math.max(8, Math.min(contextMenu.x, maxX))}px`,
-      top: `${Math.max(8, Math.min(contextMenu.y, maxY))}px`,
-    };
-  }, [contextMenu]);
-
   useProjectExplorerProjectLifecycle({
     projectId: project?.id,
     projectRootPath: project?.rootPath,
@@ -454,8 +437,18 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
       </div>
     );
   }
-
-  const treePaneProps: React.ComponentProps<typeof ProjectTreePane> = {
+  const {
+    treePaneProps,
+    previewPaneProps,
+    contextMenuStyle,
+    isContextRootEntry,
+    canRunFile: workspaceCanRunFile,
+    handleRunFile: workspaceHandleRunFile,
+    handleCreateDirectory: workspaceHandleCreateDirectory,
+    handleCreateFile: workspaceHandleCreateFile,
+    handleDownloadSelected: workspaceHandleDownloadSelected,
+    handleDeleteSelected: workspaceHandleDeleteSelected,
+  } = useProjectExplorerWorkspaceView({
     project,
     treeWidth,
     treeScrollRef,
@@ -468,6 +461,7 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     dropTargetDirPath,
     actionLoading,
     actionReloadPath,
+    contextMenu,
     canConfirmCurrent,
     showOnlyChanged,
     changeSummary,
@@ -479,60 +473,49 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     normalizePath,
     toExpandedKey,
     canDropToDirectory,
-    onSelectProjectRoot: () => {
-      void selectProjectRoot();
-    },
-    onToggleShowOnlyChanged: () => {
-      setShowOnlyChanged((prev) => !prev);
-    },
-    onCreateDirectoryAtRoot: () => {
-      void handleCreateDirectory(project.rootPath);
-    },
-    onCreateFileAtRoot: () => {
-      void handleCreateFile(project.rootPath);
-    },
-    onRefresh: () => {
-      void handleRefresh();
-    },
-    onConfirmCurrent: () => {
-      void handleConfirmCurrentChanges();
-    },
-    onConfirmAll: () => {
-      void handleConfirmAllChanges();
-    },
-    onOpenContextMenu: openEntryContextMenu,
-    onSelectDeletedPath: (path) => {
-      setSelectedPath(path);
-      setSelectedFile(null);
-    },
-    onToggleDir: (entry) => {
-      void toggleDir(entry);
-    },
-    onOpenFile: (entry) => {
-      void openFile(entry);
-    },
-    onDragStart: handleDragStart,
-    onDragEnd: handleDragEnd,
-    onSetDropTargetDirPath: setDropTargetDirPath,
-    onSetDraggingEntryPath: setDraggingEntryPath,
-    onMoveEntryByDrop: (sourcePath, targetDirPath) => {
-      void handleMoveEntryByDrop(sourcePath, targetDirPath);
-    },
-    onScheduleDragExpand: scheduleDragExpand,
-    onCancelDragExpandIfMatches: cancelDragExpandIfMatches,
-    onClearDragExpandTimer: clearDragExpandTimer,
-    onStartDragAutoScroll: startDragAutoScroll,
-    onClearDragAutoScroll: clearDragAutoScroll,
-  };
-
-  const previewPaneProps: React.ComponentProps<typeof ProjectPreviewPane> = {
-    selectedFile,
-    selectedPath,
-    selectedEntry,
+    setSelectedPath,
+    setSelectedFile,
+    setShowOnlyChanged,
+    setDraggingEntryPath,
+    setDropTargetDirPath,
+    setMoveConflict,
+    setContextMenu,
+    clearDragExpandTimer,
+    cancelDragExpandIfMatches,
+    scheduleDragExpand,
+    clearDragAutoScroll,
+    startDragAutoScroll,
+    selectProjectRoot,
+    toggleDir,
+    openFile,
+    handleCreateDirectory,
+    handleCreateFile,
+    handleRefresh,
+    handleConfirmCurrentChanges,
+    handleConfirmAllChanges,
+    handleMoveEntryByDrop,
+    handleDispatchTerminalCommand,
+    handleInterruptTerminal,
+    handleGetTerminal,
+    handleListTerminalLogs,
+    handleListTerminals,
+    canRunFile,
+    handleRunFile,
+    handleDownloadSelected,
+    handleDeleteSelected,
     loadingFile,
     error,
+    selectedFile,
     selectedLog,
-  };
+    runCwd,
+    runTargets,
+    runStatus,
+    runCatalogLoading,
+    runCatalogError,
+    selectedRunTargetId,
+    setSelectedRunTargetId,
+    handleAnalyzeRunTargets,
+  });
 
   return (
     <div ref={containerRef} className={cn('flex h-full flex-col overflow-hidden', className)}>
@@ -571,10 +554,12 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
             contextMenuStyle={contextMenuStyle}
             isContextRootEntry={isContextRootEntry}
             setContextMenu={setContextMenu}
-            onCreateDirectory={handleCreateDirectory}
-            onCreateFile={handleCreateFile}
-            onDownloadSelected={handleDownloadSelected}
-            onDeleteSelected={handleDeleteSelected}
+            canRunFile={workspaceCanRunFile}
+            onCreateDirectory={workspaceHandleCreateDirectory}
+            onCreateFile={workspaceHandleCreateFile}
+            onRunFile={workspaceHandleRunFile}
+            onDownloadSelected={workspaceHandleDownloadSelected}
+            onDeleteSelected={workspaceHandleDeleteSelected}
           />
         )}
       </div>

@@ -28,6 +28,7 @@ static REQUEST_ID_HEADER: HeaderName = HeaderName::from_static("x-request-id");
 pub mod agent_builder;
 pub mod applications;
 pub mod auth;
+mod chat_stream_common;
 pub mod chat_v2;
 pub mod chat_v3;
 pub mod configs;

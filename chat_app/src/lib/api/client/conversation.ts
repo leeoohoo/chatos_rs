@@ -1,16 +1,34 @@
 import { buildQuery } from './shared';
+import type {
+  AiModelConfigResponse,
+  ConversationAssistantResponse,
+  ConversationDetailsResponse,
+  ConversationMessageEnvelope,
+  ConversationMessagesEnvelope,
+  ConversationMcpServersResponse,
+  ConversationMessagePayload,
+  McpConfigResourceResponse,
+  McpConfigResponse,
+  SessionResponse,
+  SessionMessageResponse,
+} from './types';
 import type { ApiRequestFn } from './workspace';
 
-export const getConversationDetails = async (request: ApiRequestFn, conversationId: string) => {
+export const getConversationDetails = async (
+  request: ApiRequestFn,
+  conversationId: string,
+): Promise<ConversationDetailsResponse> => {
   try {
-    const session = await request<any>(`/sessions/${conversationId}`);
+    const session = await request<SessionResponse>(`/sessions/${conversationId}`);
+    const createdAt = session.created_at || session.createdAt || new Date().toISOString();
+    const updatedAt = session.updated_at || session.updatedAt || createdAt;
     return {
       data: {
         conversation: {
           id: session.id,
           title: session.title,
-          created_at: session.created_at,
-          updated_at: session.updated_at,
+          created_at: createdAt,
+          updated_at: updatedAt,
         },
       },
     };
@@ -29,10 +47,13 @@ export const getConversationDetails = async (request: ApiRequestFn, conversation
   }
 };
 
-export const getAssistant = async (request: ApiRequestFn, _conversationId: string) => {
+export const getAssistant = async (
+  request: ApiRequestFn,
+  _conversationId: string,
+): Promise<ConversationAssistantResponse> => {
   try {
-    const configs = await request<any[]>('/ai-model-configs');
-    const defaultConfig = configs.find((config: any) => config.enabled) || configs[0];
+    const configs = await request<AiModelConfigResponse[]>('/ai-model-configs');
+    const defaultConfig = configs.find((config) => config.enabled) || configs[0];
 
     if (!defaultConfig) {
       throw new Error('No AI model configuration found');
@@ -71,12 +92,15 @@ export const getAssistant = async (request: ApiRequestFn, _conversationId: strin
   }
 };
 
-export const getMcpServers = async (request: ApiRequestFn, _conversationId?: string) => {
+export const getMcpServers = async (
+  request: ApiRequestFn,
+  _conversationId?: string,
+): Promise<ConversationMcpServersResponse> => {
   try {
-    const mcpConfigs = await request<any[]>('/mcp-configs');
+    const mcpConfigs = await request<McpConfigResponse[]>('/mcp-configs');
     const enabledServers = mcpConfigs
-      .filter((config: any) => config.enabled)
-      .map((config: any) => ({
+      .filter((config) => config.enabled)
+      .map((config) => ({
         name: config.name,
         url: config.command,
       }));
@@ -98,12 +122,12 @@ export const getMcpServers = async (request: ApiRequestFn, _conversationId?: str
 export const getMcpConfigResource = async (
   request: ApiRequestFn,
   configId: string
-): Promise<{ success: boolean; config: any; alias?: string }> => {
+): Promise<McpConfigResourceResponse> => {
   try {
-    return await request<any>(`/mcp-configs/${configId}/resource/config`);
+    return await request<McpConfigResourceResponse>(`/mcp-configs/${configId}/resource/config`);
   } catch (error) {
     console.error('Failed to get MCP config resource:', error);
-    return { success: false, config: null } as any;
+    return { success: false, config: null };
   }
 };
 
@@ -117,23 +141,27 @@ export const getMcpConfigResourceByCommand = async (
     cwd?: string | null;
     alias?: string | null;
   }
-): Promise<{ success: boolean; config: any; alias?: string }> => {
+): Promise<McpConfigResourceResponse> => {
   try {
-    return await request<any>(`/mcp-configs/resource/config`, {
+    return await request<McpConfigResourceResponse>(`/mcp-configs/resource/config`, {
       method: 'POST',
       body: JSON.stringify(data),
     });
   } catch (error) {
     console.error('Failed to get MCP config resource by command:', error);
-    return { success: false, config: null } as any;
+    return { success: false, config: null };
   }
 };
 
-export const saveMessage = async (request: ApiRequestFn, conversationId: string, message: any) => {
+export const saveMessage = async (
+  request: ApiRequestFn,
+  conversationId: string,
+  message: ConversationMessagePayload,
+): Promise<ConversationMessageEnvelope> => {
   try {
     const messageId = message.id || `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-    const savedMessage = await request<any>(`/messages`, {
+    const savedMessage = await request<SessionMessageResponse>(`/messages`, {
       method: 'POST',
       body: JSON.stringify({
         id: messageId,
@@ -154,13 +182,21 @@ export const saveMessage = async (request: ApiRequestFn, conversationId: string,
     };
   } catch (error) {
     console.error('Failed to save message:', error);
+    const fallbackMessage: SessionMessageResponse = {
+      id: message.id || Date.now().toString(),
+      role: message.role,
+      content: message.content,
+      metadata: message.metadata || null,
+      created_at: new Date().toISOString(),
+    };
+
+    if (Array.isArray(message.tool_calls)) {
+      fallbackMessage.tool_calls = message.tool_calls;
+    }
+
     return {
       data: {
-        message: {
-          ...message,
-          id: Date.now().toString(),
-          created_at: new Date().toISOString(),
-        },
+        message: fallbackMessage,
       },
     };
   }
@@ -170,10 +206,12 @@ export const getMessages = async (
   request: ApiRequestFn,
   conversationId: string,
   params: { limit?: number; offset?: number } = {}
-) => {
+): Promise<ConversationMessagesEnvelope> => {
   try {
     const query = buildQuery({ limit: params.limit, offset: params.offset });
-    const messages = await request<any[]>(`/sessions/${conversationId}/messages${query}`);
+    const messages = await request<SessionMessageResponse[]>(
+      `/sessions/${conversationId}/messages${query}`,
+    );
     return {
       data: {
         messages,
@@ -189,6 +227,10 @@ export const getMessages = async (
   }
 };
 
-export const addMessage = (request: ApiRequestFn, conversationId: string, message: any) => {
+export const addMessage = (
+  request: ApiRequestFn,
+  conversationId: string,
+  message: ConversationMessagePayload,
+): Promise<ConversationMessageEnvelope> => {
   return saveMessage(request, conversationId, message);
 };

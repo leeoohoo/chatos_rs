@@ -270,6 +270,12 @@ export const useProjectTreeActions = ({
     setActionMessage(null);
     try {
       await loadEntries(actionReloadPath);
+      if (
+        projectRootPath
+        && normalizePath(actionReloadPath) !== normalizePath(projectRootPath)
+      ) {
+        await loadEntries(projectRootPath);
+      }
       await loadChangeSummary();
       setActionMessage('目录已刷新');
     } catch (err: any) {
@@ -277,7 +283,16 @@ export const useProjectTreeActions = ({
     } finally {
       setActionLoading(false);
     }
-  }, [actionReloadPath, loadChangeSummary, loadEntries, setActionError, setActionLoading, setActionMessage]);
+  }, [
+    actionReloadPath,
+    loadChangeSummary,
+    loadEntries,
+    normalizePath,
+    projectRootPath,
+    setActionError,
+    setActionLoading,
+    setActionMessage,
+  ]);
 
   const handleConfirmCurrentChanges = useCallback(async () => {
     if (!projectId) return;

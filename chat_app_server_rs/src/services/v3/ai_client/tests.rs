@@ -68,6 +68,61 @@ async fn recovers_prev_id_then_completion_overflow_and_succeeds() {
 }
 
 #[tokio::test]
+async fn prefixed_runtime_items_disable_previous_response_id_reuse() {
+    let steps = vec![MockProviderStep::json(
+        StatusCode::OK,
+        json!({
+            "id": "resp_contact_runtime",
+            "status": "completed",
+            "output_text": "contact runtime ok"
+        }),
+    )];
+    let (base_url, captured, server) = start_mock_provider(steps).await;
+    let mut client = build_test_client(base_url);
+
+    let result = run_process_with_tools(
+        &mut client,
+        RunProcessWithToolsArgs {
+            session_id: Some("session_contact_runtime".to_string()),
+            previous_response_id: Some("prev_resp_contact_runtime".to_string()),
+            callbacks: empty_callbacks(),
+            use_prev_id: true,
+            can_use_prev_id: true,
+            prefixed_input_items: vec![json!({
+                "type": "message",
+                "role": "system",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": "联系人 runtime context"
+                    }
+                ]
+            })],
+            stable_prefix_mode: true,
+            purpose: "chat",
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("prefixed runtime items should force stateless request");
+    server.abort();
+
+    assert_eq!(
+        result.get("content").and_then(|value| value.as_str()),
+        Some("contact runtime ok")
+    );
+
+    let requests = captured.lock().await.clone();
+    assert_eq!(requests.len(), 1);
+    assert!(requests[0].get("previous_response_id").is_none());
+    let request_input_text = requests[0]
+        .get("input")
+        .map(|value| value.to_string())
+        .unwrap_or_default();
+    assert!(request_input_text.contains("联系人 runtime context"));
+}
+
+#[tokio::test]
 async fn recovers_input_must_be_list_and_retries_with_list_payload() {
     let steps = vec![
         MockProviderStep::text(StatusCode::BAD_REQUEST, "input must be a list"),

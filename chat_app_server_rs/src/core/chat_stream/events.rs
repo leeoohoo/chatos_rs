@@ -7,8 +7,6 @@ use crate::utils::abort_registry;
 use crate::utils::events::Events;
 use crate::utils::sse::SseSender;
 
-use super::text::ensure_complete_event_content;
-
 pub fn send_fallback_chunk_if_needed(
     sender: &SseSender,
     chunk_sent: &Arc<AtomicBool>,
@@ -77,8 +75,8 @@ pub fn handle_chat_result(
             if let Some(flag) = chunk_sent {
                 send_fallback_chunk_if_needed(sender, flag, &res);
             }
-            let complete_result = ensure_complete_event_content(&res, streamed_content);
-            send_complete_event(sender, &complete_result);
+            let _ = streamed_content;
+            send_complete_event(sender, &res);
             true
         }
         Err(err) => {

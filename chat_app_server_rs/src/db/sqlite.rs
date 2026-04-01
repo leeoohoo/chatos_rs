@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use sqlx::{
@@ -10,12 +10,11 @@ use tracing::info;
 
 use super::types::SqliteConfig;
 
+const LEGACY_SQLITE_DB_PATH: &str = "data/chat_app.db";
+
 pub(super) async fn init_sqlite(cfg: &SqliteConfig) -> Result<SqlitePool, String> {
-    let db_path = cfg
-        .db_path
-        .clone()
-        .unwrap_or_else(|| "data/chat_app.db".to_string());
-    let path = Path::new(&db_path);
+    let path = resolve_sqlite_db_path(cfg);
+    migrate_legacy_sqlite_files_if_needed(path.as_path())?;
     if let Some(parent) = path.parent() {
         if !parent.exists() {
             std::fs::create_dir_all(parent)
@@ -24,7 +23,7 @@ pub(super) async fn init_sqlite(cfg: &SqliteConfig) -> Result<SqlitePool, String
     }
 
     let mut options = SqliteConnectOptions::new()
-        .filename(path)
+        .filename(path.as_path())
         .create_if_missing(true)
         .journal_mode(SqliteJournalMode::Wal);
 
@@ -54,8 +53,81 @@ pub(super) async fn init_sqlite(cfg: &SqliteConfig) -> Result<SqlitePool, String
 
     create_tables_sqlite(&pool).await?;
 
-    info!("[SQLite] database initialized: {}", db_path);
+    info!("[SQLite] database initialized: {}", path.display());
     Ok(pool)
+}
+
+fn resolve_sqlite_db_path(cfg: &SqliteConfig) -> PathBuf {
+    if let Ok(value) = std::env::var("CHAT_APP_DB_PATH") {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed);
+        }
+    }
+
+    let configured = cfg
+        .db_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(LEGACY_SQLITE_DB_PATH);
+    let configured_path = PathBuf::from(configured);
+    if configured_path.is_absolute() {
+        return configured_path;
+    }
+    let relative = configured.trim_start_matches("./");
+    if relative.starts_with(".local/") {
+        return Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")))
+            .join(relative);
+    }
+
+    repo_runtime_root()
+        .join("chat_app_server")
+        .join("data")
+        .join(configured_path.file_name().unwrap_or_default())
+}
+
+fn repo_runtime_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")))
+        .join(".local")
+}
+
+fn migrate_legacy_sqlite_files_if_needed(target: &Path) -> Result<(), String> {
+    let legacy_db = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join(LEGACY_SQLITE_DB_PATH);
+    if target == legacy_db.as_path() || target.exists() || !legacy_db.exists() {
+        return Ok(());
+    }
+
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|err| format!("create migrated sqlite dir failed: {err}"))?;
+    }
+
+    move_if_exists(legacy_db.as_path(), target)?;
+    for suffix in ["-wal", "-shm"] {
+        let legacy_sidecar = PathBuf::from(format!("{}{}", legacy_db.display(), suffix));
+        let target_sidecar = PathBuf::from(format!("{}{}", target.display(), suffix));
+        move_if_exists(legacy_sidecar.as_path(), target_sidecar.as_path())?;
+    }
+    Ok(())
+}
+
+fn move_if_exists(from: &Path, to: &Path) -> Result<(), String> {
+    if !from.exists() || to.exists() {
+        return Ok(());
+    }
+    std::fs::rename(from, to).map_err(|err| {
+        format!(
+            "move runtime artifact failed: {} -> {} ({err})",
+            from.display(),
+            to.display()
+        )
+    })
 }
 
 async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
@@ -196,6 +268,16 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             last_active_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )"#,
+        r#"CREATE TABLE IF NOT EXISTS project_run_catalogs (
+            project_id TEXT PRIMARY KEY,
+            user_id TEXT,
+            status TEXT NOT NULL DEFAULT 'empty',
+            default_target_id TEXT,
+            targets_json TEXT NOT NULL DEFAULT '[]',
+            error_message TEXT,
+            analyzed_at TEXT,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )"#,
         r#"CREATE TABLE IF NOT EXISTS remote_connections (
             id TEXT PRIMARY KEY,
@@ -354,6 +436,8 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
         "CREATE INDEX IF NOT EXISTS idx_terminals_user_id ON terminals(user_id)",
         "CREATE INDEX IF NOT EXISTS idx_terminals_project_id ON terminals(project_id)",
         "CREATE INDEX IF NOT EXISTS idx_terminals_status ON terminals(status)",
+        "CREATE INDEX IF NOT EXISTS idx_project_run_catalogs_user_id ON project_run_catalogs(user_id)",
+        "CREATE INDEX IF NOT EXISTS idx_project_run_catalogs_status ON project_run_catalogs(status)",
         "CREATE INDEX IF NOT EXISTS idx_remote_connections_user_id ON remote_connections(user_id)",
         "CREATE INDEX IF NOT EXISTS idx_remote_connections_host ON remote_connections(host)",
         "CREATE INDEX IF NOT EXISTS idx_terminal_logs_terminal_id ON terminal_logs(terminal_id)",

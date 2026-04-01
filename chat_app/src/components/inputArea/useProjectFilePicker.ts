@@ -8,6 +8,21 @@ interface ProjectFileApiClient {
   readFsFile: (path: string) => Promise<unknown>;
 }
 
+interface FsEntriesResponse {
+  path?: string | null;
+  parent?: string | null;
+  entries?: unknown[];
+  truncated?: boolean;
+}
+
+interface FsFileReadResponse {
+  content?: string;
+  is_binary?: boolean;
+  isBinary?: boolean;
+  content_type?: string;
+  contentType?: string;
+}
+
 interface UseProjectFilePickerOptions {
   client: ProjectFileApiClient;
   showProjectFilePicker: boolean;
@@ -185,12 +200,16 @@ export const useProjectFilePicker = ({
       setProjectFileSearching(true);
       setProjectFileError(null);
       try {
-        const data: any = await client.searchFsEntries(projectRootForFilePicker, keyword, 300);
+        const data = await client.searchFsEntries(
+          projectRootForFilePicker,
+          keyword,
+          300,
+        ) as FsEntriesResponse;
         if (cancelled) return;
 
-        const entriesRaw: any[] = Array.isArray(data?.entries) ? data.entries : [];
+        const entriesRaw = Array.isArray(data?.entries) ? data.entries : [];
         const normalizedEntries = entriesRaw
-          .map((raw: any) => normalizeFsEntry(raw))
+          .map((raw) => normalizeFsEntry(raw as Record<string, unknown>))
           .filter((entry: FsEntry) => (
             !entry.isDir
             && entry.path
@@ -200,9 +219,9 @@ export const useProjectFilePicker = ({
 
         setProjectFileSearchResults(normalizedEntries);
         setProjectFileSearchTruncated(Boolean(data?.truncated));
-      } catch (error: any) {
+      } catch (error) {
         if (cancelled) return;
-        setProjectFileError(error?.message || '搜索项目文件失败');
+        setProjectFileError(error instanceof Error ? error.message : '搜索项目文件失败');
         setProjectFileSearchResults([]);
         setProjectFileSearchTruncated(false);
       } finally {
@@ -231,12 +250,12 @@ export const useProjectFilePicker = ({
     setProjectFileLoading(true);
     setProjectFileError(null);
     try {
-      const data: any = await client.listFsEntries(safePath);
+      const data = await client.listFsEntries(safePath) as FsEntriesResponse;
       const currentPathRaw = typeof data?.path === 'string' && data.path ? data.path : safePath;
       const normalizedCurrent = normalizePath(currentPathRaw);
-      const entriesRaw: any[] = Array.isArray(data?.entries) ? data.entries : [];
+      const entriesRaw = Array.isArray(data?.entries) ? data.entries : [];
       const normalizedEntries = entriesRaw
-        .map((raw: any) => normalizeFsEntry(raw))
+        .map((raw) => normalizeFsEntry(raw as Record<string, unknown>))
         .filter((entry: FsEntry) => (
           entry.path
           && isPathWithinRoot(entry.path, fallbackRoot)
@@ -251,8 +270,8 @@ export const useProjectFilePicker = ({
         setProjectFileParent(null);
       }
       setProjectFileEntries(normalizedEntries);
-    } catch (error: any) {
-      setProjectFileError(error?.message || '加载项目文件失败');
+    } catch (error) {
+      setProjectFileError(error instanceof Error ? error.message : '加载项目文件失败');
       setProjectFileEntries([]);
     } finally {
       setProjectFileLoading(false);
@@ -294,7 +313,7 @@ export const useProjectFilePicker = ({
     setProjectFileAttachingPath(entry.path);
     setProjectFileError(null);
     try {
-      const rawFile: any = await client.readFsFile(entry.path);
+      const rawFile = await client.readFsFile(entry.path) as FsFileReadResponse;
       const isBinary = rawFile?.is_binary ?? rawFile?.isBinary;
       if (isBinary) {
         throw new Error('暂不支持二进制文件，请选择文本文件');
@@ -313,8 +332,8 @@ export const useProjectFilePicker = ({
       const fileToAttach = new File([content], relativePath, { type: normalizedContentType });
       addFiles([fileToAttach]);
       setProjectFilePickerOpen(false);
-    } catch (error: any) {
-      const rawMessage = error?.message || '读取项目文件失败';
+    } catch (error) {
+      const rawMessage = error instanceof Error ? error.message : '读取项目文件失败';
       if (String(rawMessage).includes('413')) {
         setProjectFileError('文件过大，当前最多支持 2MB 的项目文件');
       } else {

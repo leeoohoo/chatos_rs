@@ -1,5 +1,15 @@
 import type { FsEntry } from '../../types';
 
+interface FsEntryLike {
+  name?: string;
+  path?: string;
+  is_dir?: boolean;
+  isDir?: boolean;
+  size?: number | null;
+  modified_at?: string | null;
+  modifiedAt?: string | null;
+}
+
 export const MAX_ATTACHMENTS = 20; // 个
 export const MAX_FILE_BYTES = 20 * 1024 * 1024; // 20MB
 export const MAX_TOTAL_BYTES = 50 * 1024 * 1024; // 50MB
@@ -12,7 +22,7 @@ export const formatFileSize = (bytes: number) => {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 };
 
-export const normalizeFsEntry = (raw: any): FsEntry => ({
+export const normalizeFsEntry = (raw: FsEntryLike): FsEntry => ({
   name: raw?.name ?? '',
   path: raw?.path ?? '',
   isDir: raw?.is_dir ?? raw?.isDir ?? false,

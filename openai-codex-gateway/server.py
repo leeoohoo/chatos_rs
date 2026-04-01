@@ -23,6 +23,7 @@ from urllib.parse import urlparse
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SDK_IMPORT_SOURCE = "unknown"
+DEFAULT_STATE_DB_PATH = REPO_ROOT / ".local" / "openai-codex-gateway" / "gateway_state.sqlite3"
 
 warnings.filterwarnings(
     "ignore",
@@ -58,13 +59,20 @@ def load_sdk_imports() -> tuple[Any, ...]:
         from codex_app_server.generated.v2_all import (
             AgentMessageDeltaNotification,
             AgentMessageThreadItem,
+            CommandExecutionThreadItem,
+            DynamicToolCallThreadItem,
+            FileChangeThreadItem,
+            ImageViewThreadItem,
             ItemCompletedNotification,
+            ItemStartedNotification,
+            McpToolCallThreadItem,
             ModelListResponse,
             ReasoningSummaryTextDeltaNotification,
             ReasoningTextDeltaNotification,
             ReasoningThreadItem,
             ThreadTokenUsageUpdatedNotification,
             TurnCompletedNotification,
+            WebSearchThreadItem,
         )
 
         return (
@@ -72,13 +80,20 @@ def load_sdk_imports() -> tuple[Any, ...]:
             AppServerConfig,
             AgentMessageDeltaNotification,
             AgentMessageThreadItem,
+            CommandExecutionThreadItem,
+            DynamicToolCallThreadItem,
+            FileChangeThreadItem,
+            ImageViewThreadItem,
             ItemCompletedNotification,
+            ItemStartedNotification,
+            McpToolCallThreadItem,
             ModelListResponse,
             ReasoningSummaryTextDeltaNotification,
             ReasoningTextDeltaNotification,
             ReasoningThreadItem,
             ThreadTokenUsageUpdatedNotification,
             TurnCompletedNotification,
+            WebSearchThreadItem,
         )
 
     if mode in {"auto", "local"}:
@@ -145,13 +160,20 @@ def load_sdk_imports() -> tuple[Any, ...]:
     AppServerConfig,
     AgentMessageDeltaNotification,
     AgentMessageThreadItem,
+    CommandExecutionThreadItem,
+    DynamicToolCallThreadItem,
+    FileChangeThreadItem,
+    ImageViewThreadItem,
     ItemCompletedNotification,
+    ItemStartedNotification,
+    McpToolCallThreadItem,
     ModelListResponse,
     ReasoningSummaryTextDeltaNotification,
     ReasoningTextDeltaNotification,
     ReasoningThreadItem,
     ThreadTokenUsageUpdatedNotification,
     TurnCompletedNotification,
+    WebSearchThreadItem,
 ) = load_sdk_imports()
 
 
@@ -290,6 +312,84 @@ def state_log(*parts: Any) -> None:
     print(f"[gateway.state] {message}", file=sys.stderr, flush=True)
 
 
+def extract_allowed_function_tool_names(function_tools: list[dict[str, Any]]) -> set[str]:
+    out: set[str] = set()
+    for tool in function_tools:
+        name = tool.get("name")
+        if isinstance(name, str) and name:
+            out.add(name)
+    return out
+
+
+def extract_allowed_mcp_server_labels(config_overrides: dict[str, Any] | None) -> set[str]:
+    if not isinstance(config_overrides, dict):
+        return set()
+    raw_servers = config_overrides.get("mcp_servers")
+    if not isinstance(raw_servers, dict):
+        return set()
+    return {
+        label
+        for label in raw_servers.keys()
+        if isinstance(label, str) and label.strip()
+    }
+
+
+def describe_disallowed_thread_item(
+    item: Any,
+    *,
+    allowed_function_tool_names: set[str],
+    allowed_mcp_server_labels: set[str],
+) -> str | None:
+    if isinstance(item, CommandExecutionThreadItem):
+        return "Codex 内置 shell/commandExecution 工具已被 gateway 禁用"
+
+    if isinstance(item, FileChangeThreadItem):
+        return "Codex 内置 fileChange/apply_patch 工具已被 gateway 禁用"
+
+    if isinstance(item, ImageViewThreadItem):
+        return "Codex 内置 view_image 工具已被 gateway 禁用"
+
+    if isinstance(item, WebSearchThreadItem):
+        return "Codex 内置 web_search 工具已被 gateway 禁用"
+
+    if isinstance(item, DynamicToolCallThreadItem):
+        tool_name = item.tool.strip()
+        if tool_name not in allowed_function_tool_names:
+            return (
+                "Codex 尝试调用未在本次请求中声明的动态工具："
+                f"{tool_name or 'unknown'}"
+            )
+        return None
+
+    if isinstance(item, McpToolCallThreadItem):
+        server_label = item.server.strip()
+        if server_label not in allowed_mcp_server_labels:
+            return (
+                "Codex 尝试调用未在本次请求中声明的 MCP 服务："
+                f"{server_label or 'unknown'}"
+            )
+        return None
+
+    return None
+
+
+def is_allowed_tool_call_name(
+    tool_name: str,
+    *,
+    allowed_function_tool_names: set[str],
+    allowed_mcp_server_labels: set[str],
+) -> bool:
+    normalized = tool_name.strip()
+    if not normalized:
+        return False
+    if normalized in allowed_function_tool_names:
+        return True
+    return any(
+        normalized.startswith(f"mcp__{label}__")
+        for label in allowed_mcp_server_labels
+    )
+
+
 class CodexBridge:
     def __init__(self, cfg: GatewayConfig, store: ResponseThreadStore) -> None:
         self._cfg = cfg
@@ -335,6 +435,9 @@ class CodexBridge:
         seen_call_ids: set[str] = set()
         missing_tool_output_detected = False
         interrupt_sent = False
+        disallowed_tool_error: str | None = None
+        allowed_function_tool_names = extract_allowed_function_tool_names(function_tools)
+        allowed_mcp_server_labels = extract_allowed_mcp_server_labels(request_config_overrides)
 
         debug_log(
             "run_turn.start",
@@ -350,23 +453,89 @@ class CodexBridge:
         if function_tools:
             names = [str(tool.get("name", "unknown")) for tool in function_tools[:16]]
             debug_log("run_turn.tools", ", ".join(names))
+        if allowed_mcp_server_labels:
+            debug_log(
+                "run_turn.mcp_servers",
+                ", ".join(sorted(allowed_mcp_server_labels)),
+            )
 
         def handle_server_request(method: str, params: dict[str, Any] | None) -> dict[str, Any]:
-            nonlocal missing_tool_output_detected
+            nonlocal disallowed_tool_error, missing_tool_output_detected
+            payload = params or {}
             if method in {"item/commandExecution/requestApproval", "item/fileChange/requestApproval"}:
                 state_log("run_turn.builtin_request_declined", f"method={method}")
                 return {"decision": "decline"}
 
+            if method == "item/permissions/requestApproval":
+                if disallowed_tool_error is None:
+                    disallowed_tool_error = "Codex 内置 request_permissions 工具已被 gateway 禁用"
+                state_log("run_turn.builtin_request_declined", f"method={method}")
+                return {"permissions": {}}
+
+            if method == "mcpServer/elicitation/request":
+                server_name_raw = payload.get("serverName")
+                server_name = (
+                    server_name_raw.strip()
+                    if isinstance(server_name_raw, str)
+                    else ""
+                )
+                if server_name in allowed_mcp_server_labels:
+                    state_log(
+                        "run_turn.mcp_elicitation_accepted",
+                        f"server={server_name}",
+                    )
+                    return {
+                        "action": "accept",
+                        "content": {},
+                    }
+                if disallowed_tool_error is None:
+                    disallowed_tool_error = (
+                        "Codex 尝试为未声明的 MCP 服务申请调用权限："
+                        f"{server_name or 'unknown'}"
+                    )
+                state_log(
+                    "run_turn.mcp_elicitation_declined",
+                    f"server={server_name or 'unknown'}",
+                )
+                return {
+                    "action": "decline",
+                    "content": None,
+                }
+
             if method != "item/tool/call":
                 return {}
 
-            payload = params or {}
             call_id_raw = payload.get("callId")
             tool_name_raw = payload.get("tool")
             arguments = payload.get("arguments")
 
             call_id = call_id_raw if isinstance(call_id_raw, str) and call_id_raw else make_id("call")
             tool_name = tool_name_raw if isinstance(tool_name_raw, str) and tool_name_raw else "unknown_tool"
+
+            if not is_allowed_tool_call_name(
+                tool_name,
+                allowed_function_tool_names=allowed_function_tool_names,
+                allowed_mcp_server_labels=allowed_mcp_server_labels,
+            ):
+                if disallowed_tool_error is None:
+                    disallowed_tool_error = (
+                        "Codex 尝试调用未在本次请求中声明的动态工具："
+                        f"{tool_name}"
+                    )
+                state_log(
+                    "run_turn.disallowed_dynamic_tool",
+                    f"name={tool_name}",
+                    f"call_id={call_id}",
+                )
+                return {
+                    "contentItems": [
+                        {
+                            "type": "inputText",
+                            "text": "DISALLOWED_TOOL_CALL",
+                        }
+                    ],
+                    "success": False,
+                }
 
             if call_id not in seen_call_ids:
                 seen_call_ids.add(call_id)
@@ -465,12 +634,33 @@ class CodexBridge:
                 event_method = getattr(event, "method", "unknown")
                 payload = event.payload
 
-                if missing_tool_output_detected and not interrupt_sent:
+                if (missing_tool_output_detected or disallowed_tool_error) and not interrupt_sent:
                     try:
                         client.turn_interrupt(thread_id, turn_id)
                     except Exception:
                         pass
                     interrupt_sent = True
+
+                if (
+                    isinstance(payload, (ItemStartedNotification, ItemCompletedNotification))
+                    and payload.turn_id == turn_id
+                ):
+                    item = payload.item.root
+                    tool_violation = describe_disallowed_thread_item(
+                        item,
+                        allowed_function_tool_names=allowed_function_tool_names,
+                        allowed_mcp_server_labels=allowed_mcp_server_labels,
+                    )
+                    if tool_violation and disallowed_tool_error is None:
+                        disallowed_tool_error = tool_violation
+                        state_log(
+                            "run_turn.disallowed_thread_item",
+                            f"method={event_method}",
+                            f"type={getattr(item, 'type', 'unknown')}",
+                            f"detail={tool_violation}",
+                        )
+                    if tool_violation:
+                        continue
 
                 if isinstance(payload, AgentMessageDeltaNotification) and payload.turn_id == turn_id:
                     output_text += payload.delta
@@ -559,6 +749,8 @@ class CodexBridge:
 
                 if isinstance(payload, TurnCompletedNotification) and payload.turn.id == turn_id:
                     status = payload.turn.status.value
+                    if disallowed_tool_error:
+                        status = "failed"
                     reasoning_log(
                         "turn.completed",
                         f"turn_id={turn_id}",
@@ -581,6 +773,13 @@ class CodexBridge:
                             "codex_error_info": to_json_compatible(
                                 payload.turn.error.codex_error_info
                             ),
+                        }
+                    if disallowed_tool_error:
+                        error = {
+                            "message": disallowed_tool_error,
+                            "codex_error_info": {
+                                "gateway_error": "disallowed_tool_use",
+                            },
                         }
                     break
         finally:
@@ -1928,20 +2127,15 @@ def extract_request_config_overrides(payload: dict[str, Any]) -> dict[str, Any] 
 
     # This gateway is Rust-only. Force-disable Codex built-in tool surfaces so
     # the model only sees caller-provided function/MCP tools.
+    tools_config = {
+        "view_image": False,
+        "web_search": {
+            "enabled": False,
+        },
+    }
     config: dict[str, Any] = {
-        "features.apps": False,
-        "features.plugins": False,
-        "features.connectors": False,
-        "features.shell_tool": False,
-        "features.include_apply_patch_tool": False,
-        "features.request_permissions_tool": False,
-        "features.web_search": False,
-        "features.web_search_cached": False,
-        "features.web_search_request": False,
-        "include_apply_patch_tool": False,
-        "allow_login_shell": False,
+        "tools": tools_config,
         "web_search": "disabled",
-        "tools.view_image": False,
         # Always clear thread-level MCP servers from local Codex config so this
         # gateway only uses caller-provided tooling.
         "mcp_servers": mcp_servers,
@@ -2172,6 +2366,27 @@ def resolve_codex_bin(cli_value: str | None) -> str | None:
     return shutil.which("codex")
 
 
+def resolve_state_db_path() -> str:
+    env_value = os.environ.get("CODEX_GATEWAY_STATE_DB")
+    if env_value and env_value.strip():
+        return env_value.strip()
+
+    target = DEFAULT_STATE_DB_PATH
+    legacy = Path(__file__).with_name("gateway_state.sqlite3")
+    if target != legacy and not target.exists() and legacy.exists():
+        target.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            legacy.replace(target)
+            for suffix in ("-wal", "-shm"):
+                legacy_sidecar = Path(f"{legacy}{suffix}")
+                target_sidecar = Path(f"{target}{suffix}")
+                if legacy_sidecar.exists() and not target_sidecar.exists():
+                    legacy_sidecar.replace(target_sidecar)
+        except OSError:
+            return str(legacy)
+    return str(target)
+
+
 def parse_args() -> GatewayConfig:
     parser = argparse.ArgumentParser(description="OpenAI-compatible gateway backed by codex SDK")
     parser.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
@@ -2179,10 +2394,7 @@ def parse_args() -> GatewayConfig:
     parser.add_argument("--codex-bin", default=None)
     parser.add_argument(
         "--state-db",
-        default=(
-            os.environ.get("CODEX_GATEWAY_STATE_DB")
-            or str(Path(__file__).with_name("gateway_state.sqlite3"))
-        ),
+        default=resolve_state_db_path(),
         help="SQLite file for persisting response_id -> thread_id mappings",
     )
     parser.add_argument(

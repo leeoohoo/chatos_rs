@@ -1,7 +1,6 @@
 import { useState, useCallback } from 'react';
 
-interface ConfirmDialogState {
-  isOpen: boolean;
+export interface ConfirmDialogOptions {
   title: string;
   message: string;
   description?: string;
@@ -15,6 +14,10 @@ interface ConfirmDialogState {
   onCancel?: () => void;
 }
 
+export interface ConfirmDialogState extends ConfirmDialogOptions {
+  isOpen: boolean;
+}
+
 export const useConfirmDialog = () => {
   const [dialogState, setDialogState] = useState<ConfirmDialogState>({
     isOpen: false,
@@ -25,19 +28,7 @@ export const useConfirmDialog = () => {
     type: 'danger'
   });
 
-  const showConfirmDialog = useCallback((options: {
-    title: string;
-    message: string;
-    description?: string;
-    details?: string;
-    detailsTitle?: string;
-    detailsLines?: string[];
-    confirmText?: string;
-    cancelText?: string;
-    type?: 'danger' | 'warning' | 'info';
-    onConfirm?: () => void;
-    onCancel?: () => void;
-  }) => {
+  const showConfirmDialog = useCallback((options: ConfirmDialogOptions) => {
     setDialogState({
       isOpen: true,
       title: options.title,

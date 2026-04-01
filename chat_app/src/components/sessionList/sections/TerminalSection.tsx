@@ -84,12 +84,12 @@ export const TerminalSection: React.FC<TerminalSectionProps> = ({
                   onClick={() => onSelect(terminal.id)}
                 >
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <h3 className="text-sm font-medium text-foreground truncate">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <h3 className="text-sm font-medium text-foreground truncate min-w-0 flex-1">
                         {terminal.name}
                       </h3>
                       <span className={cn(
-                        'inline-flex items-center text-[10px] px-1.5 py-0.5 rounded border',
+                        'inline-flex items-center shrink-0 whitespace-nowrap leading-none text-[10px] px-1.5 py-0.5 rounded border',
                         terminal.status === 'running'
                           ? 'border-emerald-500/40 text-emerald-600'
                           : 'border-muted-foreground/40 text-muted-foreground',
@@ -98,7 +98,7 @@ export const TerminalSection: React.FC<TerminalSectionProps> = ({
                       </span>
                       {terminal.status === 'running' && (
                         <span className={cn(
-                          'inline-flex items-center text-[10px] px-1.5 py-0.5 rounded border',
+                          'inline-flex items-center shrink-0 whitespace-nowrap leading-none text-[10px] px-1.5 py-0.5 rounded border',
                           terminal.busy
                             ? 'border-amber-500/40 text-amber-600'
                             : 'border-emerald-500/30 text-emerald-600/80',

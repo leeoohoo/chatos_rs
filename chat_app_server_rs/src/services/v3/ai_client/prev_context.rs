@@ -1,9 +1,17 @@
+use serde_json::Value;
+
 pub(super) fn should_use_prev_id_for_next_turn(
     prefer_stateless: bool,
     can_use_prev_id: bool,
     has_next_response_id: bool,
 ) -> bool {
     !prefer_stateless && can_use_prev_id && has_next_response_id
+}
+
+pub(super) fn should_disable_prev_id_for_prefixed_input_items(
+    prefixed_input_items: &[Value],
+) -> bool {
+    !prefixed_input_items.is_empty()
 }
 
 pub(super) fn should_prefer_stateless_context(
@@ -137,7 +145,8 @@ mod tests {
         is_request_body_too_large_error, is_response_parse_error,
         is_system_messages_not_allowed_error, is_transient_network_error,
         is_transient_transport_or_parse_error, model_supports_prev_response_id,
-        reduce_history_limit, should_prefer_stateless_context, should_use_prev_id_for_next_turn,
+        reduce_history_limit, should_disable_prev_id_for_prefixed_input_items,
+        should_prefer_stateless_context, should_use_prev_id_for_next_turn,
     };
 
     #[test]
@@ -151,6 +160,16 @@ mod tests {
         assert!(should_use_prev_id_for_next_turn(false, true, true));
         assert!(!should_use_prev_id_for_next_turn(false, true, false));
         assert!(!should_use_prev_id_for_next_turn(false, false, true));
+    }
+
+    #[test]
+    fn disables_prev_id_when_runtime_prefixed_items_exist() {
+        assert!(should_disable_prev_id_for_prefixed_input_items(&[serde_json::json!({
+            "type": "message",
+            "role": "system",
+            "content": [{ "type": "input_text", "text": "contact runtime" }]
+        })]));
+        assert!(!should_disable_prev_id_for_prefixed_input_items(&[]));
     }
 
     #[test]

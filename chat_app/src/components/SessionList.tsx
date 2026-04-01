@@ -1,8 +1,5 @@
-import React, { useMemo, useState } from 'react';
-import { useChatStoreContext, useChatApiClientFromContext } from '../lib/store/ChatStoreContext';
+import React from 'react';
 import { useChatStore } from '../lib/store';
-import { apiClient as globalApiClient } from '../lib/api/client';
-import { useConfirmDialog } from '../hooks/useConfirmDialog';
 import { cn } from '../lib/utils';
 import { SessionListDialogs } from './sessionList/SessionListDialogs';
 import {
@@ -15,27 +12,7 @@ import {
   formatTimeAgo,
   getSessionStatus,
 } from './sessionList/helpers';
-import { useRemoteConnectionForm } from './sessionList/useRemoteConnectionForm';
-import {
-  useContactSessionListState,
-} from './sessionList/useContactSessionListState';
-import { useInlineActionMenus } from './sessionList/useInlineActionMenus';
-import { useSectionExpansion } from './sessionList/useSectionExpansion';
-import { useSessionListBootstrap } from './sessionList/useSessionListBootstrap';
-import { useLocalFsPickers } from './sessionList/useLocalFsPickers';
-import { useContactSessionCreator } from './sessionList/useContactSessionCreator';
-import { useSessionListDeleteActions } from './sessionList/useSessionListDeleteActions';
-import { useSessionListActions } from './sessionList/useSessionListActions';
-import { useSessionListStoreState } from './sessionList/useSessionListStoreState';
-
-type ContactItem = {
-  id: string;
-  agentId: string;
-  name: string;
-  status: string;
-  createdAt: Date;
-  updatedAt: Date;
-};
+import { useSessionListController } from './sessionList/useSessionListController';
 
 interface SessionListProps {
   isOpen?: boolean;
@@ -63,314 +40,13 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     activeSummarySessionId,
     activeRuntimeContextSessionId,
   } = props;
-  // 尝试从Context获取store hook（如果可用）
-  let contextStoreHook: typeof useChatStore | null = null;
-  try {
-    contextStoreHook = useChatStoreContext();
-  } catch (error) {
-    // 如果Context不可用，contextStoreHook保持为null
-  }
-  
-  const storeToUse = store || contextStoreHook;
-  
-  if (!storeToUse) {
-    throw new Error('SessionList must be used within a ChatStoreProvider or receive a store prop');
-  }
-  
-  const {
-    sessions,
-    contacts,
-    agents,
-    currentSession,
-    activePanel,
-    loadContacts: loadContactsAction,
-    createContact: createContactAction,
-    deleteContact: deleteContactAction,
-    createSession,
-    selectSession,
-    deleteSession,
-    updateSession,
-    loadAgents,
-    sessionChatState,
-    taskReviewPanelsBySession = {},
-    uiPromptPanelsBySession = {},
-    projects,
-    currentProject,
-    loadProjects,
-    createProject,
-    selectProject,
-    deleteProject,
-    setActivePanel,
-    terminals,
-    currentTerminal,
-    loadTerminals,
-    createTerminal,
-    selectTerminal,
-    deleteTerminal,
-    remoteConnections,
-    currentRemoteConnection,
-    loadRemoteConnections,
-    createRemoteConnection,
-    updateRemoteConnection,
-    selectRemoteConnection,
-    deleteRemoteConnection,
-    openRemoteSftp,
-  } = useSessionListStoreState(storeToUse);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [isRefreshingTerminals, setIsRefreshingTerminals] = useState(false);
-  const [isRefreshingRemote, setIsRefreshingRemote] = useState(false);
-
-  const [projectModalOpen, setProjectModalOpen] = useState(false);
-  const [projectRoot, setProjectRoot] = useState('');
-  const [projectError, setProjectError] = useState<string | null>(null);
-
-  const [terminalModalOpen, setTerminalModalOpen] = useState(false);
-  const [terminalRoot, setTerminalRoot] = useState('');
-  const [terminalError, setTerminalError] = useState<string | null>(null);
-
-  const apiClientFromContext = useChatApiClientFromContext();
-  const apiClient = apiClientFromContext || globalApiClient;
-
-  const {
-    remoteModalOpen,
-    setRemoteModalOpen,
-    remoteName,
-    setRemoteName,
-    remoteHost,
-    setRemoteHost,
-    remotePort,
-    setRemotePort,
-    remoteUsername,
-    setRemoteUsername,
-    remoteAuthType,
-    setRemoteAuthType,
-    remotePassword,
-    setRemotePassword,
-    remotePrivateKeyPath,
-    setRemotePrivateKeyPath,
-    remoteCertificatePath,
-    setRemoteCertificatePath,
-    remoteDefaultPath,
-    setRemoteDefaultPath,
-    remoteHostKeyPolicy,
-    setRemoteHostKeyPolicy,
-    remoteJumpEnabled,
-    setRemoteJumpEnabled,
-    remoteJumpHost,
-    setRemoteJumpHost,
-    remoteJumpPort,
-    setRemoteJumpPort,
-    remoteJumpUsername,
-    setRemoteJumpUsername,
-    remoteJumpPrivateKeyPath,
-    setRemoteJumpPrivateKeyPath,
-    remoteJumpPassword,
-    setRemoteJumpPassword,
-    remoteError,
-    remoteErrorAction,
-    remoteSuccess,
-    remoteTesting,
-    remoteSaving,
-    editingRemoteConnectionId,
-    openRemoteModal: openRemoteModalBase,
-    openEditRemoteModal,
-    handleTestRemoteConnection,
-    handleSaveRemoteConnection,
-    handleQuickTestRemoteConnection,
-  } = useRemoteConnectionForm({
-    apiClient,
-    createRemoteConnection,
-    updateRemoteConnection,
-  });
-  const {
-    keyFilePickerOpen,
-    keyFilePickerTitle,
-    keyFilePickerPath,
-    keyFilePickerParent,
-    keyFilePickerLoading,
-    keyFilePickerItems,
-    keyFilePickerError,
-    dirPickerOpen,
-    dirPickerTarget,
-    dirPickerPath,
-    dirPickerParent,
-    dirPickerLoading,
-    dirPickerItems,
-    dirPickerError,
-    showHiddenDirs,
-    dirPickerCreateModalOpen,
-    dirPickerNewFolderName,
-    dirPickerCreatingFolder,
-    setShowHiddenDirs,
-    setDirPickerCreateModalOpen,
-    setDirPickerNewFolderName,
-    openDirPicker,
-    closeDirPicker,
-    openCreateDirModal,
-    createDirInPicker,
-    chooseDir,
-    openKeyFilePicker,
-    closeKeyFilePicker,
-    applySelectedKeyFile,
-    loadDirEntries,
-    loadKeyFileEntries,
-    setKeyFilePickerOpen,
-  } = useLocalFsPickers({
-    apiClient,
-    projectRoot,
-    terminalRoot,
-    remotePrivateKeyPath,
-    remoteCertificatePath,
-    remoteJumpPrivateKeyPath,
-    onProjectRootChange: setProjectRoot,
-    onTerminalRootChange: setTerminalRoot,
-    onRemotePrivateKeyPathChange: setRemotePrivateKeyPath,
-    onRemoteCertificatePathChange: setRemoteCertificatePath,
-    onRemoteJumpPrivateKeyPathChange: setRemoteJumpPrivateKeyPath,
-  });
-  
-  const { dialogState, showConfirmDialog, handleConfirm, handleCancel } = useConfirmDialog();
-
   const isCollapsed = collapsed ?? !isOpen;
-  const existingContactAgentIds = useMemo(
-    () => (contacts || []).map((item: ContactItem) => item.agentId),
-    [contacts],
-  );
-
-  const {
-    ensureSessionForContact,
-    displaySessionRuntimeIdMap,
-    displaySessions,
-    currentDisplaySessionId,
-    activeSummaryDisplaySessionId,
-    clearCachedSessionIdsForContact,
-  } = useContactSessionListState({
-    contacts,
-    sessions: sessions || [],
-    currentSession,
-    activePanel,
+  const controller = useSessionListController({
+    store,
     activeSummarySessionId,
-    createSession,
-    apiClient,
-  });
-
-  const {
-    createContactModalOpen,
-    selectedContactAgentId,
-    contactError,
-    setSelectedContactAgentId,
-    setContactError,
-    openCreateSessionModal,
-    closeCreateSessionModal,
-    handleCreateContactSession,
-  } = useContactSessionCreator({
-    agents: agents as any[],
-    currentSessionId: currentSession?.id || null,
-    loadContacts: loadContactsAction,
-    createContact: createContactAction,
-    ensureSessionForContact: ensureSessionForContact as any,
-    updateSession,
-    selectSession,
-  });
-
-  const { closeActionMenus, toggleActionMenu } = useInlineActionMenus();
-  const {
-    handleSelectSession,
-    handleOpenSummary,
-    handleOpenRuntimeContext,
-    handleRefreshSessions,
-    handleRefreshTerminals,
-    handleRefreshRemote,
-    openProjectModal,
-    openTerminalModal,
-    openRemoteModal,
-    handleCreateProject,
-    handleCreateTerminal,
-    handleSelectProject,
-    handleSelectTerminal,
-    handleSelectRemoteConnection,
-    handleOpenRemoteSftp,
-    focusTerminalPanel,
-    focusRemotePanel,
-  } = useSessionListActions({
-    contacts: contacts as ContactItem[],
-    currentSession,
-    terminals,
-    currentTerminal,
-    remoteConnections,
-    currentRemoteConnection,
-    ensureSessionForContact: ensureSessionForContact as any,
-    selectSession,
-    setActivePanel,
     onOpenSessionSummary,
     onOpenSessionRuntimeContext,
-    loadContactsAction,
-    loadTerminals,
-    loadRemoteConnections,
-    setIsRefreshing,
-    setIsRefreshingTerminals,
-    setIsRefreshingRemote,
-    setProjectRoot,
-    setProjectError,
-    setProjectModalOpen,
-    setTerminalRoot,
-    setTerminalError,
-    setTerminalModalOpen,
-    setKeyFilePickerOpen,
-    openRemoteModalBase,
-    createProject,
-    createTerminal,
-    selectProject,
-    selectTerminal,
-    selectRemoteConnection,
-    openRemoteSftp,
-    projectRoot,
-    terminalRoot,
-  });
-  const {
-    sessionsExpanded,
-    projectsExpanded,
-    terminalsExpanded,
-    remoteExpanded,
-    handleToggleSessionsSection,
-    handleToggleProjectsSection,
-    handleToggleTerminalsSection,
-    handleToggleRemoteSection,
-  } = useSectionExpansion({
-    onFocusTerminal: focusTerminalPanel,
-    onFocusRemote: focusRemotePanel,
-  });
-  const {
-    handleArchiveProject,
-    handleDeleteTerminal,
-    handleDeleteRemoteConnection,
-    handleDeleteSession,
-  } = useSessionListDeleteActions({
-    projects,
-    terminals,
-    remoteConnections,
-    displaySessions,
-    contacts,
-    currentSession,
-    deleteProject,
-    deleteTerminal,
-    deleteRemoteConnection,
-    deleteSession,
-    deleteContactAction,
-    loadContactsAction,
-    clearCachedSessionIdsForContact,
-    showConfirmDialog,
-  });
-
-  useSessionListBootstrap({
-    loadProjects,
-    loadAgents,
-    loadContacts: loadContactsAction,
-    loadTerminals,
-    loadRemoteConnections,
     isCollapsed,
-    terminalsExpanded,
-    remoteExpanded,
   });
 
   return (
@@ -385,36 +61,36 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
       {!isCollapsed && (
         <div className="flex-1 flex flex-col overflow-hidden">
           <SessionSection
-            expanded={sessionsExpanded}
-            sessions={displaySessions}
-            currentSessionId={currentDisplaySessionId}
-            summarySessionId={activeSummaryDisplaySessionId}
+            expanded={controller.sectionExpansion.sessionsExpanded}
+            sessions={controller.contactSessionState.displaySessions}
+            currentSessionId={controller.contactSessionState.currentDisplaySessionId}
+            summarySessionId={controller.contactSessionState.activeSummaryDisplaySessionId}
             runtimeContextSessionId={activeRuntimeContextSessionId}
-            displaySessionRuntimeIdMap={displaySessionRuntimeIdMap}
-            sessionChatState={sessionChatState}
-            taskReviewPanelsBySession={taskReviewPanelsBySession}
-            uiPromptPanelsBySession={uiPromptPanelsBySession}
+            displaySessionRuntimeIdMap={controller.contactSessionState.displaySessionRuntimeIdMap}
+            sessionChatState={controller.sessionChatState}
+            taskReviewPanelsBySession={controller.taskReviewPanelsBySession}
+            uiPromptPanelsBySession={controller.uiPromptPanelsBySession}
             hasMore={false}
-            isRefreshing={isRefreshing}
+            isRefreshing={controller.isRefreshing}
             isLoadingMore={false}
-            onToggle={handleToggleSessionsSection}
-            onRefresh={handleRefreshSessions}
+            onToggle={controller.sectionExpansion.handleToggleSessionsSection}
+            onRefresh={controller.sessionListActions.handleRefreshSessions}
             onCreateSession={() => {
-              void openCreateSessionModal();
+              void controller.contactSessionCreator.openCreateSessionModal();
             }}
             onSelectSession={(sessionId) => {
-              void handleSelectSession(sessionId).then((selectedSessionId) => {
+              void controller.sessionListActions.handleSelectSession(sessionId).then((selectedSessionId) => {
                 if (selectedSessionId) {
                   onSelectSession?.(selectedSessionId);
                 }
               });
             }}
-            onOpenSummary={handleOpenSummary}
-            onOpenRuntimeContext={handleOpenRuntimeContext}
-            onDeleteSession={handleDeleteSession}
+            onOpenSummary={controller.sessionListActions.handleOpenSummary}
+            onOpenRuntimeContext={controller.sessionListActions.handleOpenRuntimeContext}
+            onDeleteSession={controller.deleteActions.handleDeleteSession}
             onLoadMore={() => {}}
-            onToggleActionMenu={toggleActionMenu}
-            closeActionMenus={() => closeActionMenus()}
+            onToggleActionMenu={controller.inlineActionMenus.toggleActionMenu}
+            closeActionMenus={() => controller.inlineActionMenus.closeActionMenus()}
             formatTimeAgo={formatTimeAgo}
             getSessionStatus={getSessionStatus}
           />
@@ -422,171 +98,183 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
           <div className="my-2 border-t border-border" />
 
           <ProjectSection
-            expanded={projectsExpanded}
-            projects={projects}
-            currentProjectId={currentProject?.id}
-            onToggle={handleToggleProjectsSection}
-            onCreate={openProjectModal}
+            expanded={controller.sectionExpansion.projectsExpanded}
+            projects={controller.projects}
+            currentProjectId={controller.currentProject?.id}
+            projectRunStateById={controller.projectRunState.projectRunStateById}
+            runningProjectId={controller.projectRunState.runningProjectId}
+            projectLiveStateById={controller.projectRunState.projectLiveStateById}
+            onToggle={controller.sectionExpansion.handleToggleProjectsSection}
+            onCreate={controller.sessionListActions.openProjectModal}
             onSelect={(projectId) => {
-              void handleSelectProject(projectId);
+              void controller.sessionListActions.handleSelectProject(projectId);
+            }}
+            onRunProject={(project, targetId) => {
+              void controller.projectRunState.handleRunProject(project.id, targetId);
+            }}
+            onStopProject={(project) => {
+              void controller.projectRunState.handleStopProject(project.id);
+            }}
+            onRestartProject={(project) => {
+              void controller.projectRunState.handleRestartProject(project.id);
             }}
             onArchive={(projectId) => {
-              void handleArchiveProject(projectId);
+              void controller.deleteActions.handleArchiveProject(projectId);
             }}
-            onToggleActionMenu={toggleActionMenu}
-            closeActionMenus={() => closeActionMenus()}
+            onToggleActionMenu={controller.inlineActionMenus.toggleActionMenu}
+            closeActionMenus={() => controller.inlineActionMenus.closeActionMenus()}
           />
 
           <div className="my-2 border-t border-border" />
 
           <TerminalSection
-            expanded={terminalsExpanded}
-            terminals={terminals}
-            currentTerminalId={currentTerminal?.id}
-            isRefreshing={isRefreshingTerminals}
-            onToggle={handleToggleTerminalsSection}
-            onRefresh={handleRefreshTerminals}
-            onCreate={openTerminalModal}
+            expanded={controller.sectionExpansion.terminalsExpanded}
+            terminals={controller.terminals}
+            currentTerminalId={controller.currentTerminal?.id}
+            isRefreshing={controller.isRefreshingTerminals}
+            onToggle={controller.sectionExpansion.handleToggleTerminalsSection}
+            onRefresh={controller.sessionListActions.handleRefreshTerminals}
+            onCreate={controller.sessionListActions.openTerminalModal}
             onSelect={(terminalId) => {
-              void handleSelectTerminal(terminalId);
+              void controller.sessionListActions.handleSelectTerminal(terminalId);
             }}
-            onDelete={handleDeleteTerminal}
-            onToggleActionMenu={toggleActionMenu}
-            closeActionMenus={() => closeActionMenus()}
+            onDelete={controller.deleteActions.handleDeleteTerminal}
+            onToggleActionMenu={controller.inlineActionMenus.toggleActionMenu}
+            closeActionMenus={() => controller.inlineActionMenus.closeActionMenus()}
             formatTimeAgo={formatTimeAgo}
           />
 
           <div className="my-2 border-t border-border" />
 
           <RemoteSection
-            expanded={remoteExpanded}
-            remoteConnections={remoteConnections}
-            currentRemoteConnectionId={currentRemoteConnection?.id}
-            isRefreshing={isRefreshingRemote}
-            onToggle={handleToggleRemoteSection}
-            onRefresh={handleRefreshRemote}
-            onCreate={openRemoteModal}
+            expanded={controller.sectionExpansion.remoteExpanded}
+            remoteConnections={controller.remoteConnections}
+            currentRemoteConnectionId={controller.currentRemoteConnection?.id}
+            isRefreshing={controller.isRefreshingRemote}
+            onToggle={controller.sectionExpansion.handleToggleRemoteSection}
+            onRefresh={controller.sessionListActions.handleRefreshRemote}
+            onCreate={controller.sessionListActions.openRemoteModal}
             onSelect={(connectionId) => {
-              void handleSelectRemoteConnection(connectionId);
+              void controller.sessionListActions.handleSelectRemoteConnection(connectionId);
             }}
             onOpenSftp={(connectionId) => {
-              void handleOpenRemoteSftp(connectionId);
+              void controller.sessionListActions.handleOpenRemoteSftp(connectionId);
             }}
             onEdit={(connection) => {
-              setKeyFilePickerOpen(false);
-              openEditRemoteModal(connection);
+              controller.localFsPickers.setKeyFilePickerOpen(false);
+              controller.remoteForm.openEditRemoteModal(connection);
             }}
-            onTest={handleQuickTestRemoteConnection}
-            onDelete={handleDeleteRemoteConnection}
-            onToggleActionMenu={toggleActionMenu}
-            closeActionMenus={() => closeActionMenus()}
+            onTest={controller.remoteForm.handleQuickTestRemoteConnection}
+            onDelete={controller.deleteActions.handleDeleteRemoteConnection}
+            onToggleActionMenu={controller.inlineActionMenus.toggleActionMenu}
+            closeActionMenus={() => controller.inlineActionMenus.closeActionMenus()}
             formatTimeAgo={formatTimeAgo}
           />
         </div>
       )}
       <SessionListDialogs
-        createContactModalOpen={createContactModalOpen}
-        agents={(agents || []) as any[]}
-        existingContactAgentIds={existingContactAgentIds}
-        selectedContactAgentId={selectedContactAgentId}
-        contactError={contactError}
-        closeCreateSessionModal={closeCreateSessionModal}
-        setSelectedContactAgentId={setSelectedContactAgentId}
-        setContactError={setContactError}
-        handleCreateContactSession={handleCreateContactSession}
-        projectModalOpen={projectModalOpen}
-        projectRoot={projectRoot}
-        projectError={projectError}
-        setProjectModalOpen={setProjectModalOpen}
-        setProjectRoot={setProjectRoot}
+        createContactModalOpen={controller.contactSessionCreator.createContactModalOpen}
+        agents={(controller.agents || []) as any[]}
+        existingContactAgentIds={controller.existingContactAgentIds}
+        selectedContactAgentId={controller.contactSessionCreator.selectedContactAgentId}
+        contactError={controller.contactSessionCreator.contactError}
+        closeCreateSessionModal={controller.contactSessionCreator.closeCreateSessionModal}
+        setSelectedContactAgentId={controller.contactSessionCreator.setSelectedContactAgentId}
+        setContactError={controller.contactSessionCreator.setContactError}
+        handleCreateContactSession={controller.contactSessionCreator.handleCreateContactSession}
+        projectModalOpen={controller.projectModalOpen}
+        projectRoot={controller.projectRoot}
+        projectError={controller.projectError}
+        setProjectModalOpen={controller.setProjectModalOpen}
+        setProjectRoot={controller.setProjectRoot}
         openDirPickerForProject={() => {
-          void openDirPicker('project');
+          void controller.localFsPickers.openDirPicker('project');
         }}
-        handleCreateProject={handleCreateProject}
-        terminalModalOpen={terminalModalOpen}
-        terminalRoot={terminalRoot}
-        terminalError={terminalError}
-        setTerminalModalOpen={setTerminalModalOpen}
-        setTerminalRoot={setTerminalRoot}
+        handleCreateProject={controller.sessionListActions.handleCreateProject}
+        terminalModalOpen={controller.terminalModalOpen}
+        terminalRoot={controller.terminalRoot}
+        terminalError={controller.terminalError}
+        setTerminalModalOpen={controller.setTerminalModalOpen}
+        setTerminalRoot={controller.setTerminalRoot}
         openDirPickerForTerminal={() => {
-          void openDirPicker('terminal');
+          void controller.localFsPickers.openDirPicker('terminal');
         }}
-        handleCreateTerminal={handleCreateTerminal}
-        remoteModalOpen={remoteModalOpen}
-        editingRemoteConnectionId={editingRemoteConnectionId}
-        remoteName={remoteName}
-        remoteHost={remoteHost}
-        remotePort={remotePort}
-        remoteUsername={remoteUsername}
-        remoteAuthType={remoteAuthType}
-        remotePassword={remotePassword}
-        remotePrivateKeyPath={remotePrivateKeyPath}
-        remoteCertificatePath={remoteCertificatePath}
-        remoteDefaultPath={remoteDefaultPath}
-        remoteHostKeyPolicy={remoteHostKeyPolicy}
-        remoteJumpEnabled={remoteJumpEnabled}
-        remoteJumpHost={remoteJumpHost}
-        remoteJumpPort={remoteJumpPort}
-        remoteJumpUsername={remoteJumpUsername}
-        remoteJumpPrivateKeyPath={remoteJumpPrivateKeyPath}
-        remoteJumpPassword={remoteJumpPassword}
-        remoteError={remoteError}
-        remoteErrorAction={remoteErrorAction}
-        remoteSuccess={remoteSuccess}
-        remoteTesting={remoteTesting}
-        remoteSaving={remoteSaving}
-        setRemoteModalOpen={setRemoteModalOpen}
-        setRemoteName={setRemoteName}
-        setRemoteHost={setRemoteHost}
-        setRemotePort={setRemotePort}
-        setRemoteUsername={setRemoteUsername}
-        setRemoteAuthType={setRemoteAuthType}
-        setRemotePassword={setRemotePassword}
-        setRemotePrivateKeyPath={setRemotePrivateKeyPath}
-        setRemoteCertificatePath={setRemoteCertificatePath}
-        setRemoteDefaultPath={setRemoteDefaultPath}
-        setRemoteHostKeyPolicy={setRemoteHostKeyPolicy}
-        setRemoteJumpEnabled={setRemoteJumpEnabled}
-        setRemoteJumpHost={setRemoteJumpHost}
-        setRemoteJumpPort={setRemoteJumpPort}
-        setRemoteJumpUsername={setRemoteJumpUsername}
-        setRemoteJumpPrivateKeyPath={setRemoteJumpPrivateKeyPath}
-        setRemoteJumpPassword={setRemoteJumpPassword}
-        openKeyFilePicker={openKeyFilePicker}
-        handleTestRemoteConnection={handleTestRemoteConnection}
-        handleSaveRemoteConnection={handleSaveRemoteConnection}
-        keyFilePickerOpen={keyFilePickerOpen}
-        keyFilePickerTitle={keyFilePickerTitle}
-        keyFilePickerPath={keyFilePickerPath}
-        keyFilePickerParent={keyFilePickerParent}
-        keyFilePickerLoading={keyFilePickerLoading}
-        keyFilePickerItems={keyFilePickerItems}
-        keyFilePickerError={keyFilePickerError}
-        closeKeyFilePicker={closeKeyFilePicker}
-        loadKeyFileEntries={loadKeyFileEntries}
-        applySelectedKeyFile={applySelectedKeyFile}
-        dirPickerOpen={dirPickerOpen}
-        dirPickerTarget={dirPickerTarget}
-        dirPickerPath={dirPickerPath}
-        dirPickerParent={dirPickerParent}
-        dirPickerLoading={dirPickerLoading}
-        dirPickerItems={dirPickerItems}
-        dirPickerError={dirPickerError}
-        showHiddenDirs={showHiddenDirs}
-        dirPickerCreateModalOpen={dirPickerCreateModalOpen}
-        dirPickerNewFolderName={dirPickerNewFolderName}
-        dirPickerCreatingFolder={dirPickerCreatingFolder}
-        closeDirPicker={closeDirPicker}
-        chooseDir={chooseDir}
-        openCreateDirModal={openCreateDirModal}
-        setShowHiddenDirs={setShowHiddenDirs}
-        loadDirEntries={loadDirEntries}
-        setDirPickerCreateModalOpen={setDirPickerCreateModalOpen}
-        setDirPickerNewFolderName={setDirPickerNewFolderName}
-        createDirInPicker={createDirInPicker}
-        dialogState={dialogState}
-        handleConfirm={handleConfirm}
-        handleCancel={handleCancel}
+        handleCreateTerminal={controller.sessionListActions.handleCreateTerminal}
+        remoteModalOpen={controller.remoteForm.remoteModalOpen}
+        editingRemoteConnectionId={controller.remoteForm.editingRemoteConnectionId}
+        remoteName={controller.remoteForm.remoteName}
+        remoteHost={controller.remoteForm.remoteHost}
+        remotePort={controller.remoteForm.remotePort}
+        remoteUsername={controller.remoteForm.remoteUsername}
+        remoteAuthType={controller.remoteForm.remoteAuthType}
+        remotePassword={controller.remoteForm.remotePassword}
+        remotePrivateKeyPath={controller.remoteForm.remotePrivateKeyPath}
+        remoteCertificatePath={controller.remoteForm.remoteCertificatePath}
+        remoteDefaultPath={controller.remoteForm.remoteDefaultPath}
+        remoteHostKeyPolicy={controller.remoteForm.remoteHostKeyPolicy}
+        remoteJumpEnabled={controller.remoteForm.remoteJumpEnabled}
+        remoteJumpHost={controller.remoteForm.remoteJumpHost}
+        remoteJumpPort={controller.remoteForm.remoteJumpPort}
+        remoteJumpUsername={controller.remoteForm.remoteJumpUsername}
+        remoteJumpPrivateKeyPath={controller.remoteForm.remoteJumpPrivateKeyPath}
+        remoteJumpPassword={controller.remoteForm.remoteJumpPassword}
+        remoteError={controller.remoteForm.remoteError}
+        remoteErrorAction={controller.remoteForm.remoteErrorAction}
+        remoteSuccess={controller.remoteForm.remoteSuccess}
+        remoteTesting={controller.remoteForm.remoteTesting}
+        remoteSaving={controller.remoteForm.remoteSaving}
+        setRemoteModalOpen={controller.remoteForm.setRemoteModalOpen}
+        setRemoteName={controller.remoteForm.setRemoteName}
+        setRemoteHost={controller.remoteForm.setRemoteHost}
+        setRemotePort={controller.remoteForm.setRemotePort}
+        setRemoteUsername={controller.remoteForm.setRemoteUsername}
+        setRemoteAuthType={controller.remoteForm.setRemoteAuthType}
+        setRemotePassword={controller.remoteForm.setRemotePassword}
+        setRemotePrivateKeyPath={controller.remoteForm.setRemotePrivateKeyPath}
+        setRemoteCertificatePath={controller.remoteForm.setRemoteCertificatePath}
+        setRemoteDefaultPath={controller.remoteForm.setRemoteDefaultPath}
+        setRemoteHostKeyPolicy={controller.remoteForm.setRemoteHostKeyPolicy}
+        setRemoteJumpEnabled={controller.remoteForm.setRemoteJumpEnabled}
+        setRemoteJumpHost={controller.remoteForm.setRemoteJumpHost}
+        setRemoteJumpPort={controller.remoteForm.setRemoteJumpPort}
+        setRemoteJumpUsername={controller.remoteForm.setRemoteJumpUsername}
+        setRemoteJumpPrivateKeyPath={controller.remoteForm.setRemoteJumpPrivateKeyPath}
+        setRemoteJumpPassword={controller.remoteForm.setRemoteJumpPassword}
+        openKeyFilePicker={controller.localFsPickers.openKeyFilePicker}
+        handleTestRemoteConnection={controller.remoteForm.handleTestRemoteConnection}
+        handleSaveRemoteConnection={controller.remoteForm.handleSaveRemoteConnection}
+        keyFilePickerOpen={controller.localFsPickers.keyFilePickerOpen}
+        keyFilePickerTitle={controller.localFsPickers.keyFilePickerTitle}
+        keyFilePickerPath={controller.localFsPickers.keyFilePickerPath}
+        keyFilePickerParent={controller.localFsPickers.keyFilePickerParent}
+        keyFilePickerLoading={controller.localFsPickers.keyFilePickerLoading}
+        keyFilePickerItems={controller.localFsPickers.keyFilePickerItems}
+        keyFilePickerError={controller.localFsPickers.keyFilePickerError}
+        closeKeyFilePicker={controller.localFsPickers.closeKeyFilePicker}
+        loadKeyFileEntries={controller.localFsPickers.loadKeyFileEntries}
+        applySelectedKeyFile={controller.localFsPickers.applySelectedKeyFile}
+        dirPickerOpen={controller.localFsPickers.dirPickerOpen}
+        dirPickerTarget={controller.localFsPickers.dirPickerTarget}
+        dirPickerPath={controller.localFsPickers.dirPickerPath}
+        dirPickerParent={controller.localFsPickers.dirPickerParent}
+        dirPickerLoading={controller.localFsPickers.dirPickerLoading}
+        dirPickerItems={controller.localFsPickers.dirPickerItems}
+        dirPickerError={controller.localFsPickers.dirPickerError}
+        showHiddenDirs={controller.localFsPickers.showHiddenDirs}
+        dirPickerCreateModalOpen={controller.localFsPickers.dirPickerCreateModalOpen}
+        dirPickerNewFolderName={controller.localFsPickers.dirPickerNewFolderName}
+        dirPickerCreatingFolder={controller.localFsPickers.dirPickerCreatingFolder}
+        closeDirPicker={controller.localFsPickers.closeDirPicker}
+        chooseDir={controller.localFsPickers.chooseDir}
+        openCreateDirModal={controller.localFsPickers.openCreateDirModal}
+        setShowHiddenDirs={controller.localFsPickers.setShowHiddenDirs}
+        loadDirEntries={controller.localFsPickers.loadDirEntries}
+        setDirPickerCreateModalOpen={controller.localFsPickers.setDirPickerCreateModalOpen}
+        setDirPickerNewFolderName={controller.localFsPickers.setDirPickerNewFolderName}
+        createDirInPicker={controller.localFsPickers.createDirInPicker}
+        dialogState={controller.dialogState}
+        handleConfirm={controller.handleConfirm}
+        handleCancel={controller.handleCancel}
       />
     </div>
   );

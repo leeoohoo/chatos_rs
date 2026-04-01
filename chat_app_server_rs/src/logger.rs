@@ -1,7 +1,7 @@
 use crate::config::Config;
 use once_cell::sync::OnceCell;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 use tracing_appender::rolling;
 use tracing_subscriber::fmt::time::UtcTime;
@@ -15,20 +15,21 @@ struct LoggerGuards {
 static LOG_GUARDS: OnceCell<LoggerGuards> = OnceCell::new();
 
 pub fn init_logger(cfg: &Config) -> Result<(), String> {
-    let log_dir = Path::new("logs");
+    let log_dir = resolve_log_dir();
+    migrate_legacy_logs_if_needed(log_dir.as_path())?;
     if !log_dir.exists() {
-        fs::create_dir_all(log_dir).map_err(|e| format!("create log dir failed: {e}"))?;
+        fs::create_dir_all(&log_dir).map_err(|e| format!("create log dir failed: {e}"))?;
     }
 
-    cleanup_old_logs(log_dir, &cfg.log_max_files);
+    cleanup_old_logs(log_dir.as_path(), &cfg.log_max_files);
 
     let env_filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(cfg.log_level.clone()));
 
-    let file_appender = rolling::daily(log_dir, "server.log");
+    let file_appender = rolling::daily(log_dir.as_path(), "server.log");
     let (file_writer, file_guard) = tracing_appender::non_blocking(file_appender);
 
-    let error_appender = rolling::daily(log_dir, "error.log");
+    let error_appender = rolling::daily(log_dir.as_path(), "error.log");
     let (error_writer, error_guard) = tracing_appender::non_blocking(error_appender);
 
     let fmt_layer = fmt::layer()
@@ -80,6 +81,55 @@ pub fn init_logger(cfg: &Config) -> Result<(), String> {
         tracing::error!(panic = %payload, location = %location, backtrace = %backtrace, "panic");
     }));
 
+    Ok(())
+}
+
+fn resolve_log_dir() -> PathBuf {
+    if let Ok(value) = std::env::var("CHAT_APP_LOG_DIR") {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed);
+        }
+    }
+
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")))
+        .join(".local")
+        .join("chat_app_server")
+        .join("logs")
+}
+
+fn migrate_legacy_logs_if_needed(target: &Path) -> Result<(), String> {
+    let legacy_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("logs");
+    if target == legacy_dir.as_path() || !legacy_dir.exists() {
+        return Ok(());
+    }
+
+    fs::create_dir_all(target).map_err(|err| format!("create migrated log dir failed: {err}"))?;
+    let Ok(entries) = fs::read_dir(&legacy_dir) else {
+        return Ok(());
+    };
+    for entry in entries.flatten() {
+        let from = entry.path();
+        if !from.is_file() {
+            continue;
+        }
+        let Some(name) = from.file_name() else {
+            continue;
+        };
+        let to = target.join(name);
+        if to.exists() {
+            continue;
+        }
+        fs::rename(&from, &to).map_err(|err| {
+            format!(
+                "move legacy log file failed: {} -> {} ({err})",
+                from.display(),
+                to.display()
+            )
+        })?;
+    }
     Ok(())
 }
 

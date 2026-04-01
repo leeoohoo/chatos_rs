@@ -90,6 +90,10 @@ export const deriveNameFromPath = (path: string, fallback: string): string => {
 };
 
 export const deriveParentPath = (path: string): string | null => {
+  const trimmed = path.trim();
+  if (/^[A-Za-z]:[\\/]?$/.test(trimmed)) {
+    return `${trimmed.slice(0, 2)}\\`;
+  }
   const normalized = path.trim().replace(/[\\/]+$/, '');
   if (!normalized) return null;
   const idx = Math.max(normalized.lastIndexOf('/'), normalized.lastIndexOf('\\'));

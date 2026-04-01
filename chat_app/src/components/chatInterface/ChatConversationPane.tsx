@@ -1,33 +1,43 @@
-import React from 'react';
+import React, { type ComponentProps } from 'react';
 
 import { MessageList } from '../MessageList';
 import ChatComposerPanel from './ChatComposerPanel';
 import SummaryPane from './SummaryPane';
 import type { RuntimeGuidanceWorkbarItem } from '../TaskWorkbar';
+import type {
+  ChatInterfaceProps,
+  Message,
+  Project,
+  RemoteConnection,
+  Session,
+} from '../../types';
+
+type SummaryPaneProps = ComponentProps<typeof SummaryPane>;
+type ChatComposerPanelProps = ComponentProps<typeof ChatComposerPanel>;
 
 interface ChatConversationPaneProps {
-  currentSession: any;
+  currentSession: Session | null;
   sessionSummaryPaneVisible: boolean;
   currentContactName: string;
   currentProjectNameForMemory: string;
   currentProjectIdForMemory: string | null;
-  messages: any[];
+  messages: Message[];
   chatIsLoading: boolean;
   chatIsStreaming: boolean;
   chatIsStopping: boolean;
   hasMoreMessages: boolean;
   onLoadMore: () => void;
   onToggleTurnProcess: (userMessageId: string) => void;
-  customRenderer?: any;
-  sessionMemorySummaries: any[];
-  agentRecalls: any[];
+  customRenderer?: ChatInterfaceProps['customRenderer'];
+  sessionMemorySummaries: SummaryPaneProps['sessionSummaries'];
+  agentRecalls: SummaryPaneProps['agentRecalls'];
   memoryLoading: boolean;
   memoryError: string | null;
   onRefreshMemory: (sessionId: string) => void;
   onCloseSummary: () => void;
   toggleSidebar: () => void;
-  mergedCurrentTurnTasks: any[];
-  workbarHistoryTasks: any[];
+  mergedCurrentTurnTasks: ChatComposerPanelProps['mergedCurrentTurnTasks'];
+  workbarHistoryTasks: ChatComposerPanelProps['workbarHistoryTasks'];
   activeConversationTurnId: string | null;
   workbarLoading: boolean;
   workbarHistoryLoading: boolean;
@@ -39,15 +49,15 @@ interface ChatConversationPaneProps {
   onOpenUiPromptHistory: (sessionId: string) => void;
   uiPromptHistoryCount: number;
   uiPromptHistoryLoading: boolean;
-  onCompleteTask: (task: any) => void;
-  onDeleteTask: (task: any) => void;
-  onEditTask: (task: any) => void;
-  activeUiPromptPanel: any;
-  onUiPromptSubmit: (payload: any) => void;
+  onCompleteTask: ChatComposerPanelProps['onCompleteTask'];
+  onDeleteTask: ChatComposerPanelProps['onDeleteTask'];
+  onEditTask: ChatComposerPanelProps['onEditTask'];
+  activeUiPromptPanel: ChatComposerPanelProps['activeUiPromptPanel'];
+  onUiPromptSubmit: ChatComposerPanelProps['onUiPromptSubmit'];
   onUiPromptCancel: () => void;
-  activeTaskReviewPanel: any;
-  onTaskReviewConfirm: (payload: any) => void;
-  onTaskReviewCancel: (payload?: any) => void;
+  activeTaskReviewPanel: ChatComposerPanelProps['activeTaskReviewPanel'];
+  onTaskReviewConfirm: ChatComposerPanelProps['onTaskReviewConfirm'];
+  onTaskReviewCancel: ChatComposerPanelProps['onTaskReviewCancel'];
   onSend: (content: string, attachments?: File[], runtimeOptions?: {
     mcpEnabled?: boolean;
     remoteConnectionId?: string | null;
@@ -66,15 +76,15 @@ interface ChatConversationPaneProps {
   reasoningEnabled: boolean;
   onReasoningToggle: (enabled: boolean) => void;
   selectedModelId: string | null;
-  availableModels: any[];
+  availableModels: ChatComposerPanelProps['availableModels'];
   onModelChange: (modelId: string | null) => void;
-  availableProjects: any[];
-  currentProject: any;
+  availableProjects: Project[];
+  currentProject: Project | null;
   onProjectChange: (projectId: string | null) => void;
   workspaceRoot: string | null;
   onWorkspaceRootChange: (path: string | null) => void;
   currentRemoteConnectionId?: string | null;
-  availableRemoteConnections?: any[];
+  availableRemoteConnections?: RemoteConnection[];
   onRemoteConnectionChange?: (connectionId: string | null) => void;
   mcpEnabled: boolean;
   enabledMcpIds: string[];
@@ -87,21 +97,21 @@ interface ChatConversationPaneProps {
 }
 
 interface ChatMessagesPaneProps {
-  currentSession: any;
+  currentSession: Session | null;
   sessionSummaryPaneVisible: boolean;
   currentContactName: string;
   currentProjectNameForMemory: string;
   currentProjectIdForMemory: string | null;
-  messages: any[];
+  messages: Message[];
   chatIsLoading: boolean;
   chatIsStreaming: boolean;
   chatIsStopping: boolean;
   hasMoreMessages: boolean;
   onLoadMore: () => void;
   onToggleTurnProcess: (userMessageId: string) => void;
-  customRenderer?: any;
-  sessionMemorySummaries: any[];
-  agentRecalls: any[];
+  customRenderer?: ChatInterfaceProps['customRenderer'];
+  sessionMemorySummaries: SummaryPaneProps['sessionSummaries'];
+  agentRecalls: SummaryPaneProps['agentRecalls'];
   memoryLoading: boolean;
   memoryError: string | null;
   onRefreshMemory: (sessionId: string) => void;

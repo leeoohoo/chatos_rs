@@ -1,79 +1,22 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useChatApiClientFromContext, useChatStoreFromContext } from '../lib/store/ChatStoreContext';
 import { apiClient as globalApiClient } from '../lib/api/client';
 import { resolveRemoteSftpErrorMessage } from '../lib/api/remoteConnectionErrors';
 import { cn } from '../lib/utils';
-import type { FsEntry } from '../types';
 import { LocalBrowserPane, RemoteBrowserPane } from './remoteSftp/SftpBrowsers';
 import { TransferQueuePanel, TransferStatusBanner } from './remoteSftp/TransferPanels';
-import type { RemoteEntry, SftpTransferRequest, SftpTransferStatus } from './remoteSftp/types';
+import {
+  formatBytes,
+  joinLocalPath,
+  joinRemotePath,
+  remoteDirname,
+} from './remoteSftp/helpers';
+import { useRemoteSftpBrowsers } from './remoteSftp/useRemoteSftpBrowsers';
+import { useRemoteSftpTransfer } from './remoteSftp/useRemoteSftpTransfer';
 
 interface RemoteSftpPanelProps {
   className?: string;
 }
-
-const normalizeLocalEntry = (raw: any): FsEntry => ({
-  name: raw?.name ?? '',
-  path: raw?.path ?? '',
-  isDir: raw?.is_dir ?? raw?.isDir ?? false,
-  size: raw?.size ?? null,
-  modifiedAt: raw?.modified_at ?? raw?.modifiedAt ?? null,
-});
-
-const normalizeRemoteEntry = (raw: any): RemoteEntry => ({
-  name: raw?.name ?? '',
-  path: raw?.path ?? '',
-  isDir: raw?.is_dir ?? raw?.isDir ?? false,
-  size: raw?.size ?? null,
-  modifiedAt: raw?.modified_at ?? raw?.modifiedAt ?? null,
-});
-
-const normalizeTransferStatus = (raw: any): SftpTransferStatus => ({
-  id: raw?.id ?? '',
-  direction: (raw?.direction ?? 'upload') as 'upload' | 'download',
-  state: (raw?.state ?? 'pending') as 'pending' | 'running' | 'cancelling' | 'success' | 'error' | 'cancelled',
-  totalBytes: raw?.total_bytes ?? raw?.totalBytes ?? null,
-  transferredBytes: Number(raw?.transferred_bytes ?? raw?.transferredBytes ?? 0),
-  percent: typeof raw?.percent === 'number' ? raw.percent : null,
-  currentPath: raw?.current_path ?? raw?.currentPath ?? null,
-  message: raw?.message ?? null,
-  error: raw?.error ?? null,
-});
-
-const formatBytes = (value: number): string => {
-  if (!Number.isFinite(value) || value <= 0) return '0 B';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  let size = value;
-  let idx = 0;
-  while (size >= 1024 && idx < units.length - 1) {
-    size /= 1024;
-    idx += 1;
-  }
-  return `${size.toFixed(idx === 0 ? 0 : 1)} ${units[idx]}`;
-};
-
-const joinLocalPath = (base: string, name: string): string => {
-  const normalized = base.replace(/[\\/]+$/, '');
-  if (!normalized) return name;
-  const sep = normalized.includes('\\') ? '\\' : '/';
-  return `${normalized}${sep}${name}`;
-};
-
-const joinRemotePath = (base: string, name: string): string => {
-  const normalized = base.replace(/\/+$/, '');
-  if (!normalized || normalized === '.') return name;
-  if (normalized === '/') return `/${name}`;
-  return `${normalized}/${name}`;
-};
-
-const remoteDirname = (path: string): string => {
-  const normalized = path.trim().replace(/\/+$/, '');
-  if (!normalized || normalized === '.' || normalized === '/') return '.';
-  const idx = normalized.lastIndexOf('/');
-  if (idx < 0) return '.';
-  if (idx === 0) return '/';
-  return normalized.slice(0, idx);
-};
 
 const RemoteSftpPanel: React.FC<RemoteSftpPanelProps> = ({ className }) => {
   const {
@@ -85,211 +28,59 @@ const RemoteSftpPanel: React.FC<RemoteSftpPanelProps> = ({ className }) => {
   const currentRemoteConnectionId = currentRemoteConnection?.id ?? null;
   const currentRemoteDefaultPath = currentRemoteConnection?.defaultRemotePath || '.';
 
-  const [localPath, setLocalPath] = useState<string | null>(null);
-  const [localParent, setLocalParent] = useState<string | null>(null);
-  const [localEntries, setLocalEntries] = useState<FsEntry[]>([]);
-  const [localRoots, setLocalRoots] = useState<FsEntry[]>([]);
-  const [loadingLocal, setLoadingLocal] = useState(false);
-  const [selectedLocal, setSelectedLocal] = useState<FsEntry | null>(null);
-
-  const [remotePath, setRemotePath] = useState<string>('.');
-  const [remoteParent, setRemoteParent] = useState<string | null>(null);
-  const [remoteEntries, setRemoteEntries] = useState<RemoteEntry[]>([]);
-  const [loadingRemote, setLoadingRemote] = useState(false);
-  const [selectedRemote, setSelectedRemote] = useState<RemoteEntry | null>(null);
-
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [transfering, setTransfering] = useState(false);
-  const [transferStatus, setTransferStatus] = useState<SftpTransferStatus | null>(null);
-  const [queuedTransfers, setQueuedTransfers] = useState<SftpTransferRequest[]>([]);
   const [remoteActionLoading, setRemoteActionLoading] = useState(false);
-  const transferPollTimerRef = useRef<number | null>(null);
-  const transferPollingBusyRef = useRef(false);
-  const remotePathRef = useRef<string>('.');
-  const localPathRef = useRef<string | null>(null);
-  const transferQueueSeqRef = useRef(0);
-
-  const loadLocal = useCallback(async (path?: string | null) => {
-    setLoadingLocal(true);
-    setError(null);
-    try {
-      const data = await client.listFsEntries(path || undefined);
-      const entries = Array.isArray(data?.entries) ? data.entries.map(normalizeLocalEntry) : [];
-      const roots = Array.isArray(data?.roots) ? data.roots.map(normalizeLocalEntry) : [];
-      setLocalPath(data?.path ?? null);
-      setLocalParent(data?.parent ?? null);
-      setLocalEntries(entries);
-      setLocalRoots(roots);
-    } catch (err: any) {
-      setError(resolveRemoteSftpErrorMessage(err, '读取本地目录失败'));
-    } finally {
-      setLoadingLocal(false);
-    }
-  }, [client]);
-
-  const loadRemote = useCallback(async (path?: string) => {
-    if (!currentRemoteConnectionId) return;
-    setLoadingRemote(true);
-    setError(null);
-    try {
-      const data = await client.listRemoteSftpEntries(currentRemoteConnectionId, path);
-      const entries = Array.isArray(data?.entries) ? data.entries.map(normalizeRemoteEntry) : [];
-      setRemotePath(data?.path ?? '.');
-      setRemoteParent(data?.parent ?? null);
-      setRemoteEntries(entries);
-    } catch (err: any) {
-      setError(resolveRemoteSftpErrorMessage(err, '读取远端目录失败'));
-    } finally {
-      setLoadingRemote(false);
-    }
-  }, [client, currentRemoteConnectionId]);
-
-  useEffect(() => {
-    remotePathRef.current = remotePath;
-  }, [remotePath]);
-
-  useEffect(() => {
-    localPathRef.current = localPath;
-  }, [localPath]);
-
-  const stopTransferPolling = useCallback(() => {
-    if (transferPollTimerRef.current !== null) {
-      window.clearInterval(transferPollTimerRef.current);
-      transferPollTimerRef.current = null;
-    }
-    transferPollingBusyRef.current = false;
-  }, []);
+  const {
+    localPath,
+    localParent,
+    localEntries,
+    localRoots,
+    loadingLocal,
+    selectedLocal,
+    setSelectedLocal,
+    remotePath,
+    remoteParent,
+    remoteEntries,
+    loadingRemote,
+    selectedRemote,
+    setSelectedRemote,
+    loadLocal,
+    loadRemote,
+    remotePathRef,
+    localPathRef,
+  } = useRemoteSftpBrowsers({
+    client,
+    currentRemoteConnectionId,
+    currentRemoteDefaultPath,
+    setError,
+  });
+  const {
+    transfering,
+    transferStatus,
+    queuedTransfers,
+    enqueueTransfer,
+    handleRemoveQueuedTransfer,
+    handleClearQueuedTransfers,
+    handleCancelTransfer,
+    resetTransferState,
+  } = useRemoteSftpTransfer({
+    client,
+    currentRemoteConnectionId,
+    loadLocal,
+    loadRemote,
+    remotePathRef,
+    localPathRef,
+    setMessage,
+    setError,
+  });
 
   useEffect(() => {
     if (!currentRemoteConnectionId) return;
-    stopTransferPolling();
-    setSelectedLocal(null);
-    setSelectedRemote(null);
+    resetTransferState();
     setMessage(null);
     setError(null);
-    setTransferStatus(null);
-    setTransfering(false);
-    setQueuedTransfers([]);
-    void loadLocal(null);
-    void loadRemote(currentRemoteDefaultPath);
-  }, [currentRemoteConnectionId, currentRemoteDefaultPath, loadLocal, loadRemote, stopTransferPolling]);
-
-  useEffect(() => () => stopTransferPolling(), [stopTransferPolling]);
-
-  const startTransfer = useCallback(async (
-    direction: 'upload' | 'download',
-    localSource: string,
-    remoteSource: string,
-    fallbackSuccess: string,
-  ) => {
-    if (!currentRemoteConnectionId) return;
-
-    stopTransferPolling();
-    setTransfering(true);
-    setTransferStatus(null);
-    setError(null);
-    setMessage(null);
-
-    try {
-      const startedRaw = await client.startRemoteSftpTransfer(currentRemoteConnectionId, {
-        direction,
-        local_path: localSource,
-        remote_path: remoteSource,
-      });
-      const started = normalizeTransferStatus(startedRaw);
-      setTransferStatus(started);
-
-      transferPollTimerRef.current = window.setInterval(async () => {
-        if (transferPollingBusyRef.current) return;
-        transferPollingBusyRef.current = true;
-        try {
-          const latestRaw = await client.getRemoteSftpTransferStatus(currentRemoteConnectionId, started.id);
-          const latest = normalizeTransferStatus(latestRaw);
-          setTransferStatus(latest);
-          if (latest.state === 'success') {
-            stopTransferPolling();
-            setTransfering(false);
-            setMessage(latest.message || fallbackSuccess);
-            await loadRemote(remotePathRef.current);
-            if (localPathRef.current !== null) {
-              await loadLocal(localPathRef.current);
-            } else {
-              await loadLocal(null);
-            }
-          } else if (latest.state === 'cancelled') {
-            stopTransferPolling();
-            setTransfering(false);
-            setMessage(latest.message || '传输已取消');
-          } else if (latest.state === 'error') {
-            stopTransferPolling();
-            setTransfering(false);
-            setError(latest.error || '传输失败');
-          }
-        } catch (err: any) {
-          stopTransferPolling();
-          setTransfering(false);
-          setError(resolveRemoteSftpErrorMessage(err, '查询传输进度失败'));
-        } finally {
-          transferPollingBusyRef.current = false;
-        }
-      }, 350);
-    } catch (err: any) {
-      setTransfering(false);
-      setTransferStatus(null);
-      setError(resolveRemoteSftpErrorMessage(err, '启动传输失败'));
-    }
-  }, [client, currentRemoteConnectionId, loadLocal, loadRemote, stopTransferPolling]);
-
-  const enqueueTransfer = useCallback((request: Omit<SftpTransferRequest, 'id'>) => {
-    const queuedRequest: SftpTransferRequest = {
-      ...request,
-      id: `transfer-${Date.now()}-${transferQueueSeqRef.current}`,
-    };
-    transferQueueSeqRef.current += 1;
-
-    setQueuedTransfers((prev) => {
-      const next = [...prev, queuedRequest];
-      if (prev.length > 0 || transfering) {
-        setMessage(`已加入队列：${queuedRequest.label}（当前队列 ${next.length}）`);
-        setError(null);
-      }
-      return next;
-    });
-  }, [transfering]);
-
-  useEffect(() => {
-    if (!currentRemoteConnectionId || transfering || queuedTransfers.length === 0) return;
-    const [next, ...rest] = queuedTransfers;
-    setQueuedTransfers(rest);
-    setMessage(`开始队列任务：${next.label}${rest.length > 0 ? `（剩余 ${rest.length}）` : ''}`);
-    setError(null);
-    void startTransfer(next.direction, next.localSource, next.remoteSource, next.fallbackSuccess);
-  }, [currentRemoteConnectionId, queuedTransfers, transfering, startTransfer]);
-
-  const handleRemoveQueuedTransfer = useCallback((transferId: string) => {
-    setQueuedTransfers((prev) => prev.filter((item) => item.id !== transferId));
-  }, []);
-
-  const handleClearQueuedTransfers = useCallback(() => {
-    if (queuedTransfers.length === 0) return;
-    setQueuedTransfers([]);
-    setMessage('已清空传输队列');
-    setError(null);
-  }, [queuedTransfers.length]);
-
-  const handleCancelTransfer = useCallback(async () => {
-    if (!currentRemoteConnectionId || !transferStatus?.id || !transfering) return;
-    try {
-      const statusRaw = await client.cancelRemoteSftpTransfer(currentRemoteConnectionId, transferStatus.id);
-      const status = normalizeTransferStatus(statusRaw);
-      setTransferStatus(status);
-      setMessage(null);
-      setError(null);
-    } catch (err: any) {
-      setError(resolveRemoteSftpErrorMessage(err, '取消传输失败'));
-    }
-  }, [client, currentRemoteConnectionId, transferStatus?.id, transfering]);
+  }, [currentRemoteConnectionId, resetTransferState]);
 
   const handleUpload = async () => {
     if (!currentRemoteConnection) return;
@@ -348,8 +139,8 @@ const RemoteSftpPanel: React.FC<RemoteSftpPanelProps> = ({ className }) => {
       await client.createRemoteSftpDirectory(currentRemoteConnection.id, remotePath, trimmedName);
       setMessage(`已创建目录: ${trimmedName}`);
       await loadRemote(remotePath);
-    } catch (err: any) {
-      setError(resolveRemoteSftpErrorMessage(err, '创建目录失败'));
+    } catch (error) {
+      setError(resolveRemoteSftpErrorMessage(error, '创建目录失败'));
     } finally {
       setRemoteActionLoading(false);
     }
@@ -385,8 +176,8 @@ const RemoteSftpPanel: React.FC<RemoteSftpPanelProps> = ({ className }) => {
       setMessage(`已重命名: ${selectedRemote.name} → ${trimmedName}`);
       setSelectedRemote(null);
       await loadRemote(remotePath);
-    } catch (err: any) {
-      setError(resolveRemoteSftpErrorMessage(err, '重命名失败'));
+    } catch (error) {
+      setError(resolveRemoteSftpErrorMessage(error, '重命名失败'));
     } finally {
       setRemoteActionLoading(false);
     }
@@ -415,8 +206,8 @@ const RemoteSftpPanel: React.FC<RemoteSftpPanelProps> = ({ className }) => {
       setMessage(`已删除: ${selectedRemote.name}`);
       setSelectedRemote(null);
       await loadRemote(remotePath);
-    } catch (err: any) {
-      setError(resolveRemoteSftpErrorMessage(err, '删除失败'));
+    } catch (error) {
+      setError(resolveRemoteSftpErrorMessage(error, '删除失败'));
     } finally {
       setRemoteActionLoading(false);
     }

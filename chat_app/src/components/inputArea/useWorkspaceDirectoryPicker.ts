@@ -6,6 +6,13 @@ interface WorkspaceApiClient {
   listFsDirectories: (path?: string) => Promise<unknown>;
 }
 
+interface WorkspaceDirectoryResponse {
+  path?: string | null;
+  parent?: string | null;
+  entries?: unknown[];
+  roots?: unknown[];
+}
+
 interface UseWorkspaceDirectoryPickerOptions {
   client: WorkspaceApiClient;
   showWorkspaceRootPicker: boolean;
@@ -51,21 +58,25 @@ export const useWorkspaceDirectoryPicker = ({
     setWorkspaceLoading(true);
     setWorkspaceError(null);
     try {
-      const data: any = await client.listFsDirectories(nextPath || undefined);
+      const data = await client.listFsDirectories(nextPath || undefined) as WorkspaceDirectoryResponse;
       const path = typeof data?.path === 'string' ? data.path : null;
       const parent = typeof data?.parent === 'string' ? data.parent : null;
       const entries = Array.isArray(data?.entries)
-        ? data.entries.map((entry: any) => normalizeFsEntry(entry)).filter((entry: FsEntry) => entry.isDir)
+        ? data.entries
+          .map((entry) => normalizeFsEntry(entry as Record<string, unknown>))
+          .filter((entry: FsEntry) => entry.isDir)
         : [];
       const roots = Array.isArray(data?.roots)
-        ? data.roots.map((entry: any) => normalizeFsEntry(entry)).filter((entry: FsEntry) => entry.isDir)
+        ? data.roots
+          .map((entry) => normalizeFsEntry(entry as Record<string, unknown>))
+          .filter((entry: FsEntry) => entry.isDir)
         : [];
       setWorkspacePath(path);
       setWorkspaceParent(parent);
       setWorkspaceEntries(entries);
       setWorkspaceRoots(roots);
-    } catch (error: any) {
-      setWorkspaceError(error?.message || '加载目录失败');
+    } catch (error) {
+      setWorkspaceError(error instanceof Error ? error.message : '加载目录失败');
     } finally {
       setWorkspaceLoading(false);
     }

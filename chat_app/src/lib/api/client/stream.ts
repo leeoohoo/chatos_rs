@@ -1,6 +1,10 @@
 import type {
   RuntimeGuidanceSubmitPayload,
   RuntimeGuidanceSubmitResponse,
+  StopChatResponse,
+  StreamChatAttachmentPayload,
+  StreamChatModelConfigPayload,
+  StreamChatOptions,
 } from './types';
 import type { ApiRequestFn } from './workspace';
 
@@ -39,19 +43,11 @@ export const streamChat = async (
   context: StreamApiContext,
   sessionId: string,
   content: string,
-  modelConfig: any,
+  modelConfig: StreamChatModelConfigPayload,
   userId?: string,
-  attachments?: any[],
+  attachments?: StreamChatAttachmentPayload[],
   reasoningEnabled?: boolean,
-  options?: {
-    turnId?: string;
-    contactAgentId?: string | null;
-    remoteConnectionId?: string | null;
-    projectId?: string | null;
-    projectRoot?: string | null;
-    mcpEnabled?: boolean;
-    enabledMcpIds?: string[];
-  }
+  options?: StreamChatOptions,
 ): Promise<ReadableStream> => {
   const useResponses = modelConfig?.supports_responses === true;
   const url = `${context.baseUrl}/${useResponses ? 'agent_v3' : 'agent_v2'}/chat/stream`;
@@ -110,10 +106,10 @@ export const stopChat = (
   request: ApiRequestFn,
   sessionId: string,
   options?: { useResponses?: boolean }
-): Promise<any> => {
+): Promise<StopChatResponse> => {
   const useResponses = options?.useResponses === true;
   const path = useResponses ? '/agent_v3/chat/stop' : '/chat/stop';
-  return request<any>(path, {
+  return request<StopChatResponse>(path, {
     method: 'POST',
     body: JSON.stringify({
       session_id: sessionId,

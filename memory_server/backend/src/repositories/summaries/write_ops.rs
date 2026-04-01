@@ -18,7 +18,10 @@ fn is_duplicate_key_error(err: &mongodb::error::Error) -> bool {
     text.contains("e11000") || text.contains("duplicate key")
 }
 
-pub async fn create_summary(db: &Db, input: CreateSummaryInput) -> Result<CreateSummaryResult, String> {
+pub async fn create_summary(
+    db: &Db,
+    input: CreateSummaryInput,
+) -> Result<CreateSummaryResult, String> {
     let now = now_rfc3339();
     let source_digest = input
         .source_digest

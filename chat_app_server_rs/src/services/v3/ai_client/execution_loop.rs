@@ -19,7 +19,8 @@ use super::compat::{
 use super::input_transform::{build_current_input_items, to_message_item};
 use super::prev_context::{
     base_url_disallows_system_messages, is_response_parse_error,
-    is_transient_transport_or_parse_error, should_use_prev_id_for_next_turn,
+    is_transient_transport_or_parse_error, should_disable_prev_id_for_prefixed_input_items,
+    should_use_prev_id_for_next_turn,
 };
 use super::tool_plan::{
     build_tool_call_execution_plan, build_tool_call_items, expand_tool_results_with_aliases,
@@ -73,6 +74,17 @@ impl AiClient {
                     .as_ref()
                     .map(|sid| self.no_system_message_sessions.contains(sid))
                     .unwrap_or(false);
+        if use_prev_id
+            && should_disable_prev_id_for_prefixed_input_items(prefixed_input_items.as_slice())
+        {
+            info!(
+                "[AI_V3] disable previous_response_id inside execution loop because runtime prefixed input items are present: session_id={}",
+                session_id.clone().unwrap_or_else(|| "n/a".to_string())
+            );
+            use_prev_id = false;
+            can_use_prev_id = false;
+            previous_response_id = None;
+        }
         let mut stateless_context_items = if !use_prev_id {
             input.as_array().cloned()
         } else {

@@ -3,14 +3,16 @@ import { useCallback } from 'react';
 import type { Project, RemoteConnection, Session, Terminal } from '../../types';
 import { resolveRemoteConnectionErrorFeedback } from '../../lib/api/remoteConnectionErrors';
 import { readSessionRuntimeFromMetadata } from '../../lib/store/helpers/sessionRuntime';
+import type { ConfirmDialogOptions } from '../../hooks/useConfirmDialog';
 import { getSessionStatus } from './helpers';
+import type { ContactItem } from './types';
 
 interface UseSessionListDeleteActionsParams {
   projects: Project[];
   terminals: Terminal[];
   remoteConnections: RemoteConnection[];
   displaySessions: Session[];
-  contacts: any[];
+  contacts: ContactItem[];
   currentSession: Session | null;
   deleteProject: (id: string) => Promise<void>;
   deleteTerminal: (id: string) => Promise<void>;
@@ -19,7 +21,7 @@ interface UseSessionListDeleteActionsParams {
   deleteContactAction: (id: string) => Promise<void>;
   loadContactsAction: () => Promise<any>;
   clearCachedSessionIdsForContact: (contactId: string) => string[];
-  showConfirmDialog: (options: any) => void;
+  showConfirmDialog: (options: ConfirmDialogOptions) => void;
 }
 
 export const useSessionListDeleteActions = ({
@@ -119,7 +121,7 @@ export const useSessionListDeleteActions = ({
         try {
           let resolvedContactId = runtime?.contactId || null;
           if (!resolvedContactId && contactAgentId) {
-            const matched = contacts.find((item: any) => item.agentId === contactAgentId) || null;
+            const matched = contacts.find((item) => item.agentId === contactAgentId) || null;
             resolvedContactId = matched?.id || null;
           }
           if (resolvedContactId) {

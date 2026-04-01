@@ -44,7 +44,7 @@ pub struct DatabaseConfig {
 impl Default for SqliteConfig {
     fn default() -> Self {
         Self {
-            db_path: Some("data/chat_app.db".to_string()),
+            db_path: Some(".local/chat_app_server/data/chat_app.db".to_string()),
             timeout: Some(30000),
             busy_timeout: Some(30000),
         }

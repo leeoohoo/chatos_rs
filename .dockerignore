@@ -1,6 +1,15 @@
 .git
 .gitignore
 **/.DS_Store
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/*.sqlite3
+**/*.sqlite3-shm
+**/*.sqlite3-wal
+**/*.db
+**/*.db-shm
+**/*.db-wal
 
 chat_app/node_modules
 chat_app/dist
@@ -9,6 +18,17 @@ chat_app/.vite
 chat_app_server_rs/target
 chat_app_server_rs/data
 chat_app_server_rs/logs
+target-shared
+
+memory_server/backend/target
+memory_server/backend/data
+memory_server/frontend/node_modules
+memory_server/frontend/dist
+
+openai-codex-gateway/__pycache__
+openai-codex-gateway/*.sqlite3
+openai-codex-gateway/*.sqlite3-shm
+openai-codex-gateway/*.sqlite3-wal
 
 release
 rustup-init.exe

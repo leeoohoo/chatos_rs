@@ -1,4 +1,12 @@
-const tryParseJsonObject = (raw: string): Record<string, any> | null => {
+type ErrorRecord = Record<string, unknown>;
+
+const asErrorRecord = (value: unknown): ErrorRecord | null => (
+  value && typeof value === 'object' && !Array.isArray(value)
+    ? value as ErrorRecord
+    : null
+);
+
+const tryParseJsonObject = (raw: string): ErrorRecord | null => {
   const trimmed = raw.trim();
   if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) {
     return null;
@@ -6,7 +14,7 @@ const tryParseJsonObject = (raw: string): Record<string, any> | null => {
   try {
     const parsed = JSON.parse(trimmed);
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return parsed as Record<string, any>;
+      return parsed as ErrorRecord;
     }
   } catch {
     return null;
@@ -45,7 +53,10 @@ export const resolveNestedErrorDetails = (
     return {};
   }
 
-  const raw = candidate as Record<string, any>;
+  const raw = asErrorRecord(candidate);
+  if (!raw) {
+    return {};
+  }
   const directMessage = typeof raw.message === 'string' ? raw.message.trim() : '';
   const directCode = typeof raw.code === 'string'
     ? raw.code.trim()
@@ -72,16 +83,20 @@ export const resolveNestedErrorDetails = (
   return directCode ? { code: directCode } : {};
 };
 
-export const resolveStreamErrorPayload = (payload: any): { message: string; code?: string } => {
-  const directCode = typeof payload?.code === 'string'
-    ? payload.code.trim()
-    : (typeof payload?.data?.code === 'string' ? payload.data.code.trim() : '');
+export const resolveStreamErrorPayload = (
+  payload: unknown,
+): { message: string; code?: string } => {
+  const source = asErrorRecord(payload) || {};
+  const data = asErrorRecord(source.data) || {};
+  const directCode = typeof source.code === 'string'
+    ? source.code.trim()
+    : (typeof data.code === 'string' ? data.code.trim() : '');
 
   const candidates = [
-    payload?.message,
-    payload?.error,
-    payload?.data?.message,
-    payload?.data?.error,
+    source.message,
+    source.error,
+    data.message,
+    data.error,
   ];
 
   for (const candidate of candidates) {
@@ -119,11 +134,9 @@ export const resolveReadableErrorMessage = (inputError: unknown): string => {
   if (typeof inputError === 'string' && inputError.trim().length > 0) {
     return inputError.trim();
   }
-  if (inputError && typeof inputError === 'object') {
-    const maybeMessage = (inputError as any).message;
-    if (typeof maybeMessage === 'string' && maybeMessage.trim().length > 0) {
-      return maybeMessage.trim();
-    }
+  const raw = asErrorRecord(inputError);
+  if (raw && typeof raw.message === 'string' && raw.message.trim().length > 0) {
+    return raw.message.trim();
   }
   return '请求失败，请稍后重试';
 };

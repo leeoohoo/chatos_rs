@@ -3,7 +3,22 @@ import React, { useMemo } from 'react';
 import ChatComposerPanel from '../../chatInterface/ChatComposerPanel';
 import { buildSupportedFileTypes, resolveModelSupportFlags } from '../../chatInterface/helpers';
 import { MessageList } from '../../MessageList';
-import type { Project, RemoteConnection, Session } from '../../../types';
+import type {
+  Message,
+  Project,
+  RemoteConnection,
+  Session,
+  AiModelConfig,
+} from '../../../types';
+import type {
+  SendMessageRuntimeOptions,
+  TaskReviewDraft,
+  TaskReviewPanelState,
+  UiPromptPanelState,
+  UiPromptResponsePayload,
+} from '../../../lib/store/types';
+import type { SessionSummaryItem } from '../../../features/sessionSummary/useSessionSummaryPanel';
+import type { RuntimeGuidanceWorkbarItem, TaskWorkbarItem } from '../../TaskWorkbar';
 import type { ContactItem } from './types';
 import TeamMemberSummaryView from './TeamMemberSummaryView';
 
@@ -13,18 +28,18 @@ interface TeamMemberWorkspaceProps {
   selectedProjectSession: Session | null;
   isSelectedSessionActive: boolean;
   sessionSummaryPaneVisible: boolean;
-  summaryItems: any[];
+  summaryItems: SessionSummaryItem[];
   summaryLoading: boolean;
   summaryError: string | null;
   clearingSummaries: boolean;
   deletingSummaryId: string | null;
-  messages: any[];
+  messages: Message[];
   hasMoreMessages: boolean;
   chatIsLoading: boolean;
   chatIsStreaming: boolean;
   chatIsStopping: boolean;
   selectedModelId: string | null;
-  aiModelConfigs: any[];
+  aiModelConfigs: AiModelConfig[];
   supportsReasoning: boolean;
   reasoningEnabled: boolean;
   mcpEnabled: boolean;
@@ -41,14 +56,7 @@ interface TeamMemberWorkspaceProps {
   onSend: (
     content: string,
     attachments?: File[],
-    runtimeOptions?: {
-      mcpEnabled?: boolean;
-      remoteConnectionId?: string | null;
-      projectId?: string | null;
-      projectRoot?: string | null;
-      workspaceRoot?: string | null;
-      enabledMcpIds?: string[];
-    },
+    runtimeOptions?: SendMessageRuntimeOptions,
   ) => void | Promise<void>;
   onGuide: (content: string) => void | Promise<void>;
   onStop: () => void;
@@ -56,8 +64,8 @@ interface TeamMemberWorkspaceProps {
   onReasoningToggle: (enabled: boolean) => void;
   onMcpEnabledChange: (enabled: boolean) => void;
   onEnabledMcpIdsChange: (ids: string[]) => void;
-  mergedCurrentTurnTasks: any[];
-  workbarHistoryTasks: any[];
+  mergedCurrentTurnTasks: TaskWorkbarItem[];
+  workbarHistoryTasks: TaskWorkbarItem[];
   activeConversationTurnId: string | null;
   workbarLoading: boolean;
   workbarHistoryLoading: boolean;
@@ -66,19 +74,19 @@ interface TeamMemberWorkspaceProps {
   workbarActionLoadingTaskId: string | null;
   onRefreshWorkbarTasks: () => void;
   onOpenWorkbarHistory: (sessionId: string) => void;
-  onCompleteTask: (task: any) => void;
-  onDeleteTask: (task: any) => void;
-  onEditTask: (task: any) => void;
-  activeUiPromptPanel: any;
-  onUiPromptSubmit: (payload: any) => void;
+  onCompleteTask: (task: TaskWorkbarItem) => void;
+  onDeleteTask: (task: TaskWorkbarItem) => void;
+  onEditTask: (task: TaskWorkbarItem) => void;
+  activeUiPromptPanel: UiPromptPanelState | null;
+  onUiPromptSubmit: (payload: UiPromptResponsePayload) => void;
   onUiPromptCancel: () => void;
-  activeTaskReviewPanel: any;
-  onTaskReviewConfirm: (payload: any) => void;
-  onTaskReviewCancel: (payload?: any) => void;
+  activeTaskReviewPanel: TaskReviewPanelState | null;
+  onTaskReviewConfirm: (payload: TaskReviewDraft[]) => void;
+  onTaskReviewCancel: () => void;
   runtimeGuidancePendingCount?: number;
   runtimeGuidanceAppliedCount?: number;
   runtimeGuidanceLastAppliedAt?: string | null;
-  runtimeGuidanceItems?: any[];
+  runtimeGuidanceItems?: RuntimeGuidanceWorkbarItem[];
 }
 
 const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
@@ -144,7 +152,7 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
   runtimeGuidanceItems = [],
 }) => {
   const { supportsImages } = useMemo(
-    () => resolveModelSupportFlags(selectedModelId, aiModelConfigs as any[]),
+    () => resolveModelSupportFlags(selectedModelId, aiModelConfigs),
     [aiModelConfigs, selectedModelId],
   );
 

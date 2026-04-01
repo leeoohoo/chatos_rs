@@ -1,6 +1,7 @@
 import { useCallback, useEffect } from 'react';
 import type { MutableRefObject } from 'react';
 
+import type { TerminalLogResponse } from '../../lib/api/client/types';
 import type { Terminal } from '../../types';
 import type { CommandHistoryItem } from './commandHistory';
 import type { TerminalConnectionState, TerminalHistoryState } from './TerminalHeader';
@@ -18,7 +19,7 @@ interface TerminalApiClient {
   listTerminalLogs(
     terminalId: string,
     params?: { limit?: number; offset?: number; before?: string },
-  ): Promise<any[]>;
+  ): Promise<TerminalLogResponse[]>;
 }
 
 interface UseTerminalRuntimeParams {

@@ -158,11 +158,56 @@ pub(crate) fn agent_lookup_conditions(agent_id: &str) -> Vec<Document> {
     ]
 }
 
+fn with_field_prefix(prefix: &str, field: &str) -> String {
+    let normalized = prefix.trim().trim_end_matches('.');
+    if normalized.is_empty() {
+        field.to_string()
+    } else {
+        format!("{}.{}", normalized, field)
+    }
+}
+
+pub(crate) fn contact_or_agent_presence_match(prefix: &str) -> Document {
+    let fields = [
+        "metadata.contact.contact_id",
+        "metadata.contact.contactId",
+        "metadata.ui_contact.contact_id",
+        "metadata.ui_contact.contactId",
+        "metadata.chat_runtime.contact_id",
+        "metadata.chat_runtime.contactId",
+        "contact_id",
+        "contactId",
+        "metadata.contact.agent_id",
+        "metadata.contact.agentId",
+        "metadata.ui_contact.agent_id",
+        "metadata.ui_contact.agentId",
+        "metadata.ui_chat_selection.selected_agent_id",
+        "metadata.ui_chat_selection.selectedAgentId",
+        "metadata.chat_runtime.contact_agent_id",
+        "metadata.chat_runtime.contactAgentId",
+        "selected_agent_id",
+        "selectedAgentId",
+    ];
+    let mut or_conditions: Vec<Document> = Vec::with_capacity(fields.len());
+    for field in fields {
+        let mut cond = Document::new();
+        cond.insert(
+            with_field_prefix(prefix, field),
+            doc! {"$exists": true, "$type": "string"},
+        );
+        or_conditions.push(cond);
+    }
+    doc! {"$or": or_conditions}
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
-    use super::{agent_id_from_metadata, agent_lookup_conditions, normalize_session_metadata};
+    use super::{
+        agent_id_from_metadata, agent_lookup_conditions, contact_or_agent_presence_match,
+        normalize_session_metadata,
+    };
 
     #[test]
     fn reads_agent_id_from_legacy_metadata_keys() {
@@ -217,6 +262,30 @@ mod tests {
             row.get_str("selected_agent_id")
                 .map(|value| value == "agent_look")
                 .unwrap_or(false)
+        }));
+    }
+
+    #[test]
+    fn contact_presence_match_supports_session_lookup_prefix_and_legacy_keys() {
+        let doc = contact_or_agent_presence_match("session");
+        let rows = doc
+            .get_array("$or")
+            .expect("expected $or array in presence match");
+        assert!(rows.iter().any(|item| {
+            item.as_document()
+                .and_then(|row| {
+                    row.get_document("session.metadata.ui_chat_selection.selectedAgentId")
+                        .ok()
+                })
+                .is_some()
+        }));
+        assert!(rows.iter().any(|item| {
+            item.as_document()
+                .and_then(|row| {
+                    row.get_document("session.metadata.chat_runtime.contactAgentId")
+                        .ok()
+                })
+                .is_some()
         }));
     }
 }

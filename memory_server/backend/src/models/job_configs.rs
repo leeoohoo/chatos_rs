@@ -110,6 +110,14 @@ pub struct JobRun {
     pub trigger_type: Option<String>,
     pub input_count: i64,
     pub output_count: i64,
+    #[serde(default)]
+    pub pending_before_count: Option<i64>,
+    #[serde(default)]
+    pub selected_count: Option<i64>,
+    #[serde(default)]
+    pub marked_count: Option<i64>,
+    #[serde(default)]
+    pub pending_after_count: Option<i64>,
     pub error_message: Option<String>,
     pub started_at: String,
     pub finished_at: Option<String>,

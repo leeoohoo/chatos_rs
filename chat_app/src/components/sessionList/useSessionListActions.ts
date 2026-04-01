@@ -1,14 +1,6 @@
 import { useCallback } from 'react';
 import { deriveNameFromPath } from './helpers';
-
-type ContactItem = {
-  id: string;
-  agentId: string;
-  name: string;
-  status: string;
-  createdAt: Date;
-  updatedAt: Date;
-};
+import type { ContactItem } from './types';
 
 interface SessionListActionsParams {
   contacts: ContactItem[];

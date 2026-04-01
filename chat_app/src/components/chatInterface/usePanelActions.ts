@@ -6,10 +6,32 @@ import type {
   UiPromptResponsePayload,
 } from '../../lib/store/types';
 
+interface PanelActionsApiClient {
+  submitTaskReviewDecision: (
+    reviewId: string,
+    payload: {
+      action: 'confirm' | 'cancel';
+      tasks?: Array<{
+        title: string;
+        details: string;
+        priority: TaskReviewDraft['priority'];
+        status: TaskReviewDraft['status'];
+        tags: string[];
+        due_at?: string | null;
+      }>;
+      reason?: string;
+    },
+  ) => Promise<unknown>;
+  submitUiPromptResponse: (
+    promptId: string,
+    payload: UiPromptResponsePayload,
+  ) => Promise<unknown>;
+}
+
 interface UsePanelActionsArgs {
   activeTaskReviewPanel: TaskReviewPanelState | null;
   activeUiPromptPanel: UiPromptPanelState | null;
-  apiClient: any;
+  apiClient: PanelActionsApiClient;
   upsertTaskReviewPanel: (panel: TaskReviewPanelState) => void;
   removeTaskReviewPanel: (reviewId: string, sessionId?: string) => void;
   upsertUiPromptPanel: (panel: UiPromptPanelState) => void;

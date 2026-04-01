@@ -21,6 +21,20 @@ pub(super) struct TerminalLogQuery {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct DispatchTerminalCommandRequest {
+    pub(super) cwd: Option<String>,
+    pub(super) command: Option<String>,
+    pub(super) user_id: Option<String>,
+    pub(super) project_id: Option<String>,
+    pub(super) create_if_missing: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct InterruptTerminalRequest {
+    pub(super) reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
 pub(super) enum WsInput {
     #[serde(rename = "input")]

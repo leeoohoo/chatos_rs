@@ -11,6 +11,14 @@ import { createInternalId } from './internalId';
 const TASK_CREATE_REVIEW_REQUIRED_EVENT = 'task_create_review_required';
 const UI_PROMPT_REQUIRED_EVENT = 'ui_prompt_required';
 
+type AnyRecord = Record<string, unknown>;
+
+const asRecord = (value: unknown): AnyRecord | null => (
+  value && typeof value === 'object' && !Array.isArray(value)
+    ? value as AnyRecord
+    : null
+);
+
 const normalizeTaskPriority = (value: unknown): TaskReviewDraft['priority'] => {
   const normalized = String(value ?? '').trim().toLowerCase();
   if (normalized === 'high') return 'high';
@@ -46,19 +54,22 @@ const parseTaskTags = (value: unknown): string[] => {
   return tags;
 };
 
-const toTaskReviewDraft = (raw: any, index: number): TaskReviewDraft => {
-  const title = String(raw?.title ?? '').trim();
-  const details = String(raw?.details ?? raw?.description ?? '').trim();
-  const dueRaw = raw?.due_at ?? raw?.dueAt;
+const toTaskReviewDraft = (raw: unknown, index: number): TaskReviewDraft => {
+  const source = asRecord(raw) || {};
+  const title = String(source.title ?? '').trim();
+  const details = String(source.details ?? source.description ?? '').trim();
+  const dueRaw = source.due_at ?? source.dueAt;
   const dueAt = typeof dueRaw === 'string' ? dueRaw.trim() : '';
 
   return {
-    id: typeof raw?.id === 'string' && raw.id.trim() ? raw.id : createInternalId('draft' + (index + 1)),
+    id: typeof source.id === 'string' && source.id.trim()
+      ? source.id
+      : createInternalId(`draft${index + 1}`),
     title,
     details,
-    priority: normalizeTaskPriority(raw?.priority),
-    status: normalizeTaskStatus(raw?.status),
-    tags: parseTaskTags(raw?.tags),
+    priority: normalizeTaskPriority(source.priority),
+    status: normalizeTaskStatus(source.status),
+    tags: parseTaskTags(source.tags),
     dueAt: dueAt || null,
   };
 };
@@ -95,21 +106,23 @@ const normalizeUiPromptFields = (value: unknown): UiPromptField[] => {
 };
 
 const normalizeUiPromptChoice = (value: unknown): UiPromptChoice | undefined => {
-  if (!value || typeof value !== 'object') {
+  const source = asRecord(value);
+  if (!source) {
     return undefined;
   }
 
-  const optionsRaw = Array.isArray((value as any).options) ? (value as any).options : [];
+  const optionsRaw = Array.isArray(source.options) ? source.options : [];
   const options = optionsRaw
-    .map((item: any) => {
-      const optionValue = String(item?.value ?? '').trim();
+    .map((item) => {
+      const option = asRecord(item) || {};
+      const optionValue = String(option.value ?? '').trim();
       if (!optionValue) {
         return null;
       }
       return {
         value: optionValue,
-        label: typeof item?.label === 'string' ? item.label : '',
-        description: typeof item?.description === 'string' ? item.description : '',
+        label: typeof option.label === 'string' ? option.label : '',
+        description: typeof option.description === 'string' ? option.description : '',
       };
     })
     .filter(Boolean) as UiPromptChoice['options'];
@@ -118,9 +131,9 @@ const normalizeUiPromptChoice = (value: unknown): UiPromptChoice | undefined => 
     return undefined;
   }
 
-  const multiple = (value as any).multiple === true;
-  const minRaw = Number((value as any).min_selections ?? (multiple ? 0 : 0));
-  const maxRaw = Number((value as any).max_selections ?? (multiple ? options.length : 1));
+  const multiple = source.multiple === true;
+  const minRaw = Number(source.min_selections ?? (multiple ? 0 : 0));
+  const maxRaw = Number(source.max_selections ?? (multiple ? options.length : 1));
   const minSelections = Number.isFinite(minRaw) ? Math.max(0, Math.floor(minRaw)) : 0;
   const maxSelections = Number.isFinite(maxRaw)
     ? Math.max(0, Math.floor(maxRaw))
@@ -129,111 +142,115 @@ const normalizeUiPromptChoice = (value: unknown): UiPromptChoice | undefined => 
   return {
     multiple,
     options,
-    default: (value as any).default,
+    default: source.default as UiPromptChoice['default'],
     min_selections: Math.min(minSelections, maxSelections),
     max_selections: maxSelections,
   };
 };
 
 export const extractTaskReviewPanelFromToolStream = (
-  streamPayload: any,
+  streamPayload: unknown,
   fallbackSessionId: string,
-  fallbackTurnId: string
+  fallbackTurnId: string,
 ): TaskReviewPanelState | null => {
-  const rawContent = typeof streamPayload?.content === 'string' ? streamPayload.content.trim() : '';
+  const source = asRecord(streamPayload) || {};
+  const rawContent = typeof source.content === 'string' ? source.content.trim() : '';
   if (!rawContent) {
     return null;
   }
 
-  let parsedChunk: any = null;
+  let parsedChunk: unknown = null;
   try {
     parsedChunk = JSON.parse(rawContent);
   } catch (_) {
     return null;
   }
 
-  if (parsedChunk?.event !== TASK_CREATE_REVIEW_REQUIRED_EVENT) {
+  const eventEnvelope = asRecord(parsedChunk);
+  if (eventEnvelope?.event !== TASK_CREATE_REVIEW_REQUIRED_EVENT) {
     return null;
   }
 
-  const payload = parsedChunk?.data ?? {};
-  const reviewId = typeof payload?.review_id === 'string' ? payload.review_id.trim() : '';
+  const payload = asRecord(eventEnvelope?.data) || {};
+  const reviewId = typeof payload.review_id === 'string' ? payload.review_id.trim() : '';
   if (!reviewId) {
     return null;
   }
 
-  const payloadSessionId = typeof payload?.session_id === 'string' ? payload.session_id.trim() : '';
+  const payloadSessionId = typeof payload.session_id === 'string' ? payload.session_id.trim() : '';
   const sessionId = payloadSessionId || fallbackSessionId;
 
-  const payloadTurnId = typeof payload?.conversation_turn_id === 'string'
+  const payloadTurnId = typeof payload.conversation_turn_id === 'string'
     ? payload.conversation_turn_id.trim()
     : '';
   const conversationTurnId = payloadTurnId || fallbackTurnId;
 
-  const rawDraftTasks = Array.isArray(payload?.draft_tasks) ? payload.draft_tasks : [];
-  const drafts = rawDraftTasks.map((task: any, index: number) => toTaskReviewDraft(task, index));
+  const rawDraftTasks = Array.isArray(payload.draft_tasks) ? payload.draft_tasks : [];
+  const drafts = rawDraftTasks.map((task, index) => toTaskReviewDraft(task, index));
 
   return {
     reviewId,
     sessionId,
     conversationTurnId,
     drafts,
-    timeoutMs: typeof payload?.timeout_ms === 'number' ? payload.timeout_ms : undefined,
+    timeoutMs: typeof payload.timeout_ms === 'number' ? payload.timeout_ms : undefined,
     submitting: false,
     error: null,
   };
 };
 
 export const extractUiPromptPanelFromToolStream = (
-  streamPayload: any,
+  streamPayload: unknown,
   fallbackSessionId: string,
-  fallbackTurnId: string
+  fallbackTurnId: string,
 ): UiPromptPanelState | null => {
-  const rawContent = typeof streamPayload?.content === 'string' ? streamPayload.content.trim() : '';
+  const source = asRecord(streamPayload) || {};
+  const rawContent = typeof source.content === 'string' ? source.content.trim() : '';
   if (!rawContent) {
     return null;
   }
 
-  let parsedChunk: any = null;
+  let parsedChunk: unknown = null;
   try {
     parsedChunk = JSON.parse(rawContent);
   } catch (_) {
     return null;
   }
 
-  if (parsedChunk?.event !== UI_PROMPT_REQUIRED_EVENT) {
+  const eventEnvelope = asRecord(parsedChunk);
+  if (eventEnvelope?.event !== UI_PROMPT_REQUIRED_EVENT) {
     return null;
   }
 
-  const payload = parsedChunk?.data ?? {};
-  const promptId = typeof payload?.prompt_id === 'string' ? payload.prompt_id.trim() : '';
+  const payload = asRecord(eventEnvelope?.data) || {};
+  const promptId = typeof payload.prompt_id === 'string' ? payload.prompt_id.trim() : '';
   if (!promptId) {
     return null;
   }
 
-  const payloadSessionId = typeof payload?.session_id === 'string' ? payload.session_id.trim() : '';
+  const payloadSessionId = typeof payload.session_id === 'string' ? payload.session_id.trim() : '';
   const sessionId = payloadSessionId || fallbackSessionId;
-  const payloadTurnId = typeof payload?.conversation_turn_id === 'string'
+  const payloadTurnId = typeof payload.conversation_turn_id === 'string'
     ? payload.conversation_turn_id.trim()
     : '';
   const conversationTurnId = payloadTurnId || fallbackTurnId;
-  const kind = normalizeUiPromptKind(payload?.kind);
-  const shape = payload?.payload && typeof payload.payload === 'object' ? payload.payload : {};
-  const fields = normalizeUiPromptFields((shape as any).fields);
-  const choice = normalizeUiPromptChoice((shape as any).choice);
+  const kind = normalizeUiPromptKind(payload.kind);
+  const shape = asRecord(payload.payload) || {};
+  const fields = normalizeUiPromptFields(shape.fields);
+  const choice = normalizeUiPromptChoice(shape.choice);
 
   return {
     promptId,
     sessionId,
     conversationTurnId,
-    toolCallId: typeof streamPayload?.tool_call_id === 'string'
-      ? streamPayload.tool_call_id
-      : (typeof streamPayload?.toolCallId === 'string' ? streamPayload.toolCallId : null),
+    toolCallId: typeof source.tool_call_id === 'string'
+      ? source.tool_call_id
+      : (typeof source.toolCallId === 'string' ? source.toolCallId : null),
     kind,
-    title: typeof payload?.title === 'string' ? payload.title : '',
-    message: typeof payload?.message === 'string' ? payload.message : '',
-    allowCancel: payload?.allow_cancel !== false,
-    timeoutMs: typeof payload?.timeout_ms === 'number' ? payload.timeout_ms : undefined,
+    title: typeof payload.title === 'string' ? payload.title : '',
+    message: typeof payload.message === 'string' ? payload.message : '',
+    allowCancel: payload.allow_cancel !== false,
+    timeoutMs: typeof payload.timeout_ms === 'number' ? payload.timeout_ms : undefined,
     payload: {
       fields,
       choice,

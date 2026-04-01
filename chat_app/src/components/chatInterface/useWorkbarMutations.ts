@@ -1,8 +1,24 @@
 import { useCallback, useState } from 'react';
 import type { TaskWorkbarItem } from '../TaskWorkbar';
 
+interface WorkbarMutationApiClient {
+  completeTaskManagerTask: (sessionId: string, taskId: string) => Promise<unknown>;
+  deleteTaskManagerTask: (sessionId: string, taskId: string) => Promise<unknown>;
+  updateTaskManagerTask: (
+    sessionId: string,
+    taskId: string,
+    payload: {
+      title?: string;
+      details?: string;
+      priority?: TaskWorkbarItem['priority'];
+      status?: TaskWorkbarItem['status'];
+      due_at?: string | null;
+    },
+  ) => Promise<unknown>;
+}
+
 interface UseWorkbarMutationsArgs {
-  apiClient: any;
+  apiClient: WorkbarMutationApiClient;
   currentSessionId: string | null;
   refreshWorkbarTasks: () => Promise<void>;
   setWorkbarError: (value: string | null) => void;

@@ -1,27 +1,24 @@
 import type ApiClient from '../../api/client';
 import { debugLog } from '@/lib/utils';
+import { createDefaultSessionChatState } from './sendMessage/sessionState';
+import type {
+  ChatStoreGet,
+  ChatStoreSet,
+} from '../types';
 
 interface Deps {
-  set: any;
-  get: any;
+  set: ChatStoreSet;
+  get: ChatStoreGet;
   client: ApiClient;
 }
 
 export function createStreamingActions({ set, get, client }: Deps) {
-  const defaultSessionChatState = {
-    isLoading: false,
-    isStreaming: false,
-    isStopping: false,
-    streamingMessageId: null as string | null,
-    activeTurnId: null as string | null,
-  };
-
   return {
     startStreaming: (messageId: string) => {
-      set((state: any) => {
+      set((state) => {
         const sessionId = state.currentSessionId;
         if (sessionId) {
-          const prev = state.sessionChatState[sessionId] || defaultSessionChatState;
+          const prev = state.sessionChatState[sessionId] || createDefaultSessionChatState();
           state.sessionChatState[sessionId] = {
             ...prev,
             isStreaming: true,
@@ -35,9 +32,9 @@ export function createStreamingActions({ set, get, client }: Deps) {
     },
 
     updateStreamingMessage: (content: string) => {
-      set((state: any) => {
+      set((state) => {
         if (state.streamingMessageId) {
-          const messageIndex = state.messages.findIndex((m: any) => m.id === state.streamingMessageId);
+          const messageIndex = state.messages.findIndex((message) => message.id === state.streamingMessageId);
           if (messageIndex !== -1) {
             state.messages[messageIndex].content = content;
           }
@@ -46,10 +43,10 @@ export function createStreamingActions({ set, get, client }: Deps) {
     },
 
     stopStreaming: () => {
-      set((state: any) => {
+      set((state) => {
         const sessionId = state.currentSessionId;
         if (sessionId) {
-          const prev = state.sessionChatState[sessionId] || defaultSessionChatState;
+          const prev = state.sessionChatState[sessionId] || createDefaultSessionChatState();
           state.sessionChatState[sessionId] = {
             ...prev,
             isLoading: false,
@@ -76,12 +73,12 @@ export function createStreamingActions({ set, get, client }: Deps) {
 
       // 用户点击“停止”后保持会话在流式/加载态，直到后端 cancel 事件或流真正结束，
       // 避免按钮过早恢复为“发送”导致并发发送。
-      set((state: any) => {
+      set((state) => {
         const sessionId = state.currentSessionId;
         if (!sessionId) {
           return;
         }
-        const prev = state.sessionChatState[sessionId] || defaultSessionChatState;
+        const prev = state.sessionChatState[sessionId] || createDefaultSessionChatState();
         if (prev.isStopping) {
           return;
         }
@@ -102,7 +99,7 @@ export function createStreamingActions({ set, get, client }: Deps) {
         const sessionAiSelection = sessionAiSelectionBySession?.[currentSessionId];
         const effectiveSelectedModelId = sessionAiSelection?.selectedModelId ?? selectedModelId;
         const activeModel = effectiveSelectedModelId
-          ? aiModelConfigs.find((m: any) => m.id === effectiveSelectedModelId)
+          ? aiModelConfigs.find((model) => model.id === effectiveSelectedModelId)
           : null;
         const useResponses = activeModel?.supports_responses === true;
         await client.stopChat(currentSessionId, { useResponses });
@@ -110,12 +107,12 @@ export function createStreamingActions({ set, get, client }: Deps) {
       } catch (error) {
         console.error('❌ 停止对话失败:', error);
         // 停止请求失败时允许用户再次点击“停止”，但仍保持流式态，继续阻止新消息发送。
-        set((state: any) => {
+        set((state) => {
           const sessionId = state.currentSessionId;
           if (!sessionId || sessionId !== currentSessionId) {
             return;
           }
-          const prev = state.sessionChatState[sessionId] || defaultSessionChatState;
+          const prev = state.sessionChatState[sessionId] || createDefaultSessionChatState();
           state.sessionChatState[sessionId] = { ...prev, isStopping: false };
         });
       }

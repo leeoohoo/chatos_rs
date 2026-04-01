@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import type { Message } from '../../types';
 import type { TaskWorkbarItem } from '../TaskWorkbar';
 import {
   collectMessageToolCalls,
@@ -12,10 +13,25 @@ import {
 
 const CURRENT_TURN_MUTATION_FALLBACK_LIMIT = 8;
 
+interface SessionLike {
+  id: string;
+}
+
+interface WorkbarStateApiClient {
+  getTaskManagerTasks: (
+    sessionId: string,
+    options?: {
+      conversationTurnId?: string;
+      includeDone?: boolean;
+      limit?: number;
+    },
+  ) => Promise<unknown[]>;
+}
+
 interface UseWorkbarStateParams {
-  apiClient: any;
-  currentSession: any | null;
-  messages: any[];
+  apiClient: WorkbarStateApiClient;
+  currentSession: SessionLike | null;
+  messages: Message[];
 }
 
 export const useWorkbarState = ({
@@ -41,7 +57,7 @@ export const useWorkbarState = ({
     }
 
     for (let i = messages.length - 1; i >= 0; i -= 1) {
-      const message = messages[i] as any;
+      const message = messages[i];
       if (message?.sessionId && message.sessionId !== currentSession.id) {
         continue;
       }
@@ -64,7 +80,7 @@ export const useWorkbarState = ({
     const ids = new Set<string>();
     let lastKnownTurnId = '';
 
-    for (const message of messages as any[]) {
+    for (const message of messages) {
       if (message?.sessionId && message.sessionId !== currentSession.id) {
         continue;
       }

@@ -14,13 +14,9 @@ pub(crate) async fn ensure_session_access(
     auth: &AuthIdentity,
     session_id: &str,
 ) -> Result<(), (StatusCode, Json<Value>)> {
-    if auth.is_admin() {
-        return Ok(());
-    }
-
     match sessions::get_session_by_id(&state.pool, session_id).await {
         Ok(Some(session)) => {
-            if session.user_id == auth.user_id {
+            if auth.is_admin() || session.user_id == auth.user_id {
                 Ok(())
             } else {
                 Err((StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"}))))

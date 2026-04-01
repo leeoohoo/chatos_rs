@@ -61,12 +61,34 @@ export interface Project {
   updatedAt: Date;
 }
 
+export interface ProjectRunTarget {
+  id: string;
+  label: string;
+  kind: string;
+  cwd: string;
+  command: string;
+  source: string;
+  confidence: number;
+  isDefault?: boolean;
+}
+
+export interface ProjectRunCatalog {
+  projectId: string;
+  status: 'analyzing' | 'ready' | 'empty' | 'error' | string;
+  defaultTargetId?: string | null;
+  targets: ProjectRunTarget[];
+  errorMessage?: string | null;
+  analyzedAt?: string | null;
+  updatedAt?: string | null;
+}
+
 // 终端接口
 export interface Terminal {
   id: string;
   name: string;
   cwd: string;
   userId?: string | null;
+  projectId?: string | null;
   status: string;
   busy?: boolean;
   createdAt: Date;

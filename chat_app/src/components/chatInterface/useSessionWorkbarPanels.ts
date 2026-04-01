@@ -10,16 +10,65 @@ import { pickFirstSessionPanel, pickSessionScopedState } from './helpers';
 import { usePanelActions } from './usePanelActions';
 import { useWorkbarMutations } from './useWorkbarMutations';
 import { useWorkbarState } from './useWorkbarState';
+import type { Message } from '../../types';
+
+interface SessionWorkbarApiClient {
+  getTaskManagerTasks: (
+    sessionId: string,
+    options?: {
+      conversationTurnId?: string;
+      includeDone?: boolean;
+      limit?: number;
+    },
+  ) => Promise<unknown[]>;
+  completeTaskManagerTask: (sessionId: string, taskId: string) => Promise<unknown>;
+  deleteTaskManagerTask: (sessionId: string, taskId: string) => Promise<unknown>;
+  updateTaskManagerTask: (
+    sessionId: string,
+    taskId: string,
+    payload: {
+      title?: string;
+      details?: string;
+      priority?: 'high' | 'medium' | 'low';
+      status?: 'todo' | 'doing' | 'blocked' | 'done';
+      due_at?: string | null;
+    },
+  ) => Promise<unknown>;
+  submitTaskReviewDecision: (
+    reviewId: string,
+    payload: {
+      action: 'confirm' | 'cancel';
+      tasks?: Array<{
+        title: string;
+        details: string;
+        priority: 'high' | 'medium' | 'low';
+        status: 'todo' | 'doing' | 'blocked' | 'done';
+        tags: string[];
+        due_at?: string | null;
+      }>;
+      reason?: string;
+    },
+  ) => Promise<unknown>;
+  submitUiPromptResponse: (
+    promptId: string,
+    payload: {
+      status: 'ok' | 'canceled';
+      values?: Record<string, string>;
+      selection?: string | string[];
+      reason?: string;
+    },
+  ) => Promise<unknown>;
+}
 
 interface SessionLike {
   id: string;
 }
 
 interface UseSessionWorkbarPanelsArgs {
-  apiClient: any;
+  apiClient: SessionWorkbarApiClient;
   session: SessionLike | null;
   enabled?: boolean;
-  messages: any[];
+  messages: Message[];
   selectedSessionActiveTurnId?: string | null;
   sessionRuntimeGuidanceState: Record<string, SessionRuntimeGuidanceState | undefined>;
   taskReviewPanelsBySession: Record<string, TaskReviewPanelState[] | undefined>;

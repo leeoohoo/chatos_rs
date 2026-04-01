@@ -45,6 +45,10 @@ pub async fn create_job_run(
         trigger_type: trigger_type.map(|v| v.to_string()),
         input_count,
         output_count: 0,
+        pending_before_count: None,
+        selected_count: None,
+        marked_count: None,
+        pending_after_count: None,
         error_message: None,
         started_at: now_rfc3339(),
         finished_at: None,
@@ -86,6 +90,31 @@ pub async fn finish_job_run(
         .await
         .map_err(|e| e.to_string())?;
 
+    Ok(())
+}
+
+pub async fn update_job_run_diagnostics(
+    db: &Db,
+    job_run_id: &str,
+    pending_before_count: Option<i64>,
+    selected_count: Option<i64>,
+    marked_count: Option<i64>,
+    pending_after_count: Option<i64>,
+) -> Result<(), String> {
+    collection(db)
+        .update_one(
+            doc! {"id": job_run_id},
+            doc! {
+                "$set": {
+                    "pending_before_count": pending_before_count,
+                    "selected_count": selected_count,
+                    "marked_count": marked_count,
+                    "pending_after_count": pending_after_count,
+                }
+            },
+        )
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 

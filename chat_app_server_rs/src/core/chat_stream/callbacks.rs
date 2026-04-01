@@ -105,13 +105,26 @@ pub fn build_v2_callbacks(sender: &SseSender, session_id: &str) -> StreamCallbac
         );
     };
 
+    let sender_runtime_guidance = sender.clone();
+    let sid_runtime_guidance = sid.clone();
+    let on_runtime_guidance_applied = move |payload: Value| {
+        if abort_registry::is_aborted(&sid_runtime_guidance) {
+            return;
+        }
+        sender_runtime_guidance.send_json(&json!({
+            "type": Events::RUNTIME_GUIDANCE_APPLIED,
+            "timestamp": crate::core::time::now_rfc3339(),
+            "data": payload
+        }));
+    };
+
     let callbacks = V2AiClientCallbacks {
         on_chunk: Some(Arc::new(on_chunk)),
         on_thinking: Some(Arc::new(on_thinking)),
         on_tools_start: Some(Arc::new(on_tools_start)),
         on_tools_stream: Some(Arc::new(on_tools_stream)),
         on_tools_end: Some(Arc::new(on_tools_end)),
-        on_runtime_guidance_applied: None,
+        on_runtime_guidance_applied: Some(Arc::new(on_runtime_guidance_applied)),
         on_context_summarized_start: Some(Arc::new(on_sum_start)),
         on_context_summarized_stream: Some(Arc::new(on_sum_stream)),
         on_context_summarized_end: Some(Arc::new(on_sum_end)),

@@ -79,6 +79,7 @@ async fn process_session_locked(
         return Ok((0, 0));
     }
 
+    let mut pending_all_for_trigger: Option<Vec<crate::models::Message>> = None;
     let trigger = if pending_head.len() as i64 >= round_limit.max(1) {
         "message_count_limit".to_string()
     } else {
@@ -86,16 +87,20 @@ async fn process_session_locked(
         let all_texts: Vec<String> = all_pending.iter().map(message_to_summary_block).collect();
         let tokens = estimate_tokens_texts(all_texts.as_slice());
         if tokens >= token_limit.max(500) {
+            pending_all_for_trigger = Some(all_pending);
             "token_limit".to_string()
         } else {
             return Ok((0, 0));
         }
     };
 
-    let selected = if trigger == "message_count_limit" {
-        pending_head
+    let (selected, pending_before_count) = if trigger == "message_count_limit" {
+        let all_pending = messages::list_pending_messages(pool, session_id, None).await?;
+        (pending_head, all_pending.len() as i64)
     } else {
-        messages::list_pending_messages(pool, session_id, None).await?
+        let all_pending = pending_all_for_trigger.unwrap_or_default();
+        let pending_before = all_pending.len() as i64;
+        (all_pending, pending_before)
     };
 
     let mut summarizable_messages = Vec::new();
@@ -131,7 +136,8 @@ async fn process_session_locked(
             );
         }
 
-        if let Err(err) = memory_sync::sync_memories_from_summary(pool, session_id, &existing).await {
+        if let Err(err) = memory_sync::sync_memories_from_summary(pool, session_id, &existing).await
+        {
             return Err(err);
         }
 
@@ -335,14 +341,35 @@ async fn process_session_locked(
         );
     }
 
-    if let Err(err) = jobs::finish_job_run(
+    let pending_after_count = match messages::list_pending_messages(pool, session_id, None).await {
+        Ok(rows) => Some(rows.len() as i64),
+        Err(err) => {
+            warn!(
+                "[MEMORY-SUMMARY-L0] query pending after mark failed: session_id={} error={}",
+                session_id, err
+            );
+            None
+        }
+    };
+
+    if let Err(err) = jobs::update_job_run_diagnostics(
         pool,
         job_run.id.as_str(),
-        "done",
-        generated as i64,
-        None,
+        Some(pending_before_count),
+        Some(selected.len() as i64),
+        Some(marked as i64),
+        pending_after_count,
     )
     .await
+    {
+        warn!(
+            "[MEMORY-SUMMARY-L0] update job diagnostics failed: session_id={} job_run_id={} error={}",
+            session_id, job_run.id, err
+        );
+    }
+
+    if let Err(err) =
+        jobs::finish_job_run(pool, job_run.id.as_str(), "done", generated as i64, None).await
     {
         warn!(
             "[MEMORY-SUMMARY-L0] finish job run failed: session_id={} job_run_id={} error={}",

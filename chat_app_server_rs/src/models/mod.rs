@@ -4,6 +4,7 @@ pub mod application;
 pub mod mcp_config;
 pub mod message;
 pub mod project;
+pub mod project_run;
 pub mod remote_connection;
 pub mod session;
 pub mod session_mcp_server;

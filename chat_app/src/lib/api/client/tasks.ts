@@ -1,10 +1,17 @@
+import type {
+  TaskManagerTaskResponse,
+  TaskManagerUpdatePayload,
+  TaskReviewDecisionPayload,
+  UiPromptItemResponse,
+  UiPromptResponsePayload,
+} from './types';
 import type { ApiRequestFn } from './workspace';
 
 export const getTaskManagerTasks = async (
   request: ApiRequestFn,
   sessionId: string,
   options?: { conversationTurnId?: string; includeDone?: boolean; limit?: number }
-): Promise<any[]> => {
+): Promise<TaskManagerTaskResponse[]> => {
   if (!sessionId) {
     return [];
   }
@@ -21,7 +28,9 @@ export const getTaskManagerTasks = async (
     params.set('limit', String(options.limit));
   }
 
-  const result = await request<any>('/task-manager/tasks?' + params.toString());
+  const result = await request<{ tasks?: TaskManagerTaskResponse[] } | TaskManagerTaskResponse[]>(
+    '/task-manager/tasks?' + params.toString(),
+  );
   if (Array.isArray(result)) {
     return result;
   }
@@ -32,15 +41,8 @@ export const updateTaskManagerTask = (
   request: ApiRequestFn,
   sessionId: string,
   taskId: string,
-  payload: {
-    title?: string;
-    details?: string;
-    priority?: 'high' | 'medium' | 'low';
-    status?: 'todo' | 'doing' | 'blocked' | 'done';
-    tags?: string[];
-    due_at?: string | null;
-  }
-): Promise<any> => {
+  payload: TaskManagerUpdatePayload,
+): Promise<TaskManagerTaskResponse> => {
   if (!sessionId) {
     throw new Error('sessionId is required');
   }
@@ -50,17 +52,20 @@ export const updateTaskManagerTask = (
 
   const params = new URLSearchParams();
   params.set('session_id', sessionId);
-  return request<any>('/task-manager/tasks/' + encodeURIComponent(taskId) + '?' + params.toString(), {
+  return request<TaskManagerTaskResponse>(
+    '/task-manager/tasks/' + encodeURIComponent(taskId) + '?' + params.toString(),
+    {
     method: 'PATCH',
     body: JSON.stringify(payload),
-  });
+    },
+  );
 };
 
 export const completeTaskManagerTask = (
   request: ApiRequestFn,
   sessionId: string,
   taskId: string
-): Promise<any> => {
+): Promise<TaskManagerTaskResponse> => {
   if (!sessionId) {
     throw new Error('sessionId is required');
   }
@@ -70,17 +75,20 @@ export const completeTaskManagerTask = (
 
   const params = new URLSearchParams();
   params.set('session_id', sessionId);
-  return request<any>('/task-manager/tasks/' + encodeURIComponent(taskId) + '/complete?' + params.toString(), {
+  return request<TaskManagerTaskResponse>(
+    '/task-manager/tasks/' + encodeURIComponent(taskId) + '/complete?' + params.toString(),
+    {
     method: 'POST',
     body: JSON.stringify({}),
-  });
+    },
+  );
 };
 
 export const deleteTaskManagerTask = (
   request: ApiRequestFn,
   sessionId: string,
   taskId: string
-): Promise<any> => {
+): Promise<{ success?: boolean }> => {
   if (!sessionId) {
     throw new Error('sessionId is required');
   }
@@ -90,31 +98,37 @@ export const deleteTaskManagerTask = (
 
   const params = new URLSearchParams();
   params.set('session_id', sessionId);
-  return request<any>('/task-manager/tasks/' + encodeURIComponent(taskId) + '?' + params.toString(), {
+  return request<{ success?: boolean }>(
+    '/task-manager/tasks/' + encodeURIComponent(taskId) + '?' + params.toString(),
+    {
     method: 'DELETE',
-  });
+    },
+  );
 };
 
 export const submitTaskReviewDecision = (
   request: ApiRequestFn,
   reviewId: string,
-  payload: { action: 'confirm' | 'cancel'; tasks?: any[]; reason?: string }
-): Promise<any> => {
+  payload: TaskReviewDecisionPayload,
+): Promise<{ success?: boolean; status?: string }> => {
   if (!reviewId) {
     throw new Error('reviewId is required');
   }
 
-  return request<any>(`/task-manager/reviews/${encodeURIComponent(reviewId)}/decision`, {
+  return request<{ success?: boolean; status?: string }>(
+    `/task-manager/reviews/${encodeURIComponent(reviewId)}/decision`,
+    {
     method: 'POST',
     body: JSON.stringify(payload),
-  });
+    },
+  );
 };
 
 export const getPendingUiPrompts = async (
   request: ApiRequestFn,
   sessionId: string,
   options?: { limit?: number }
-): Promise<any[]> => {
+): Promise<UiPromptItemResponse[]> => {
   if (!sessionId) {
     return [];
   }
@@ -125,7 +139,9 @@ export const getPendingUiPrompts = async (
     params.set('limit', String(options.limit));
   }
 
-  const result = await request<any>('/ui-prompts/pending?' + params.toString());
+  const result = await request<{ prompts?: UiPromptItemResponse[] } | UiPromptItemResponse[]>(
+    '/ui-prompts/pending?' + params.toString(),
+  );
   if (Array.isArray(result)) {
     return result;
   }
@@ -136,7 +152,7 @@ export const getUiPromptHistory = async (
   request: ApiRequestFn,
   sessionId: string,
   options?: { limit?: number; includePending?: boolean }
-): Promise<any[]> => {
+): Promise<UiPromptItemResponse[]> => {
   if (!sessionId) {
     return [];
   }
@@ -150,7 +166,9 @@ export const getUiPromptHistory = async (
     params.set('include_pending', 'true');
   }
 
-  const result = await request<any>('/ui-prompts/history?' + params.toString());
+  const result = await request<{ prompts?: UiPromptItemResponse[] } | UiPromptItemResponse[]>(
+    '/ui-prompts/history?' + params.toString(),
+  );
   if (Array.isArray(result)) {
     return result;
   }
@@ -160,19 +178,17 @@ export const getUiPromptHistory = async (
 export const submitUiPromptResponse = (
   request: ApiRequestFn,
   promptId: string,
-  payload: {
-    status: 'ok' | 'canceled' | 'timeout';
-    values?: Record<string, string>;
-    selection?: string | string[];
-    reason?: string;
-  }
-): Promise<any> => {
+  payload: UiPromptResponsePayload,
+): Promise<{ success?: boolean; status?: string }> => {
   if (!promptId) {
     throw new Error('promptId is required');
   }
 
-  return request<any>(`/ui-prompts/${encodeURIComponent(promptId)}/respond`, {
+  return request<{ success?: boolean; status?: string }>(
+    `/ui-prompts/${encodeURIComponent(promptId)}/respond`,
+    {
     method: 'POST',
     body: JSON.stringify(payload),
-  });
+    },
+  );
 };

@@ -44,3 +44,16 @@ pub(super) struct ConfirmProjectChangesRequest {
     pub(super) paths: Option<Vec<String>>,
     pub(super) change_ids: Option<Vec<String>>,
 }
+
+#[derive(Debug, Deserialize)]
+pub(super) struct ProjectRunExecuteRequest {
+    pub(super) target_id: Option<String>,
+    pub(super) cwd: Option<String>,
+    pub(super) command: Option<String>,
+    pub(super) create_if_missing: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct ProjectRunDefaultRequest {
+    pub(super) target_id: Option<String>,
+}

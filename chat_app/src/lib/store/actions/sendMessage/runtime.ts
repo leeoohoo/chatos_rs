@@ -1,3 +1,4 @@
+import type { AiModelConfig } from '../../../../types';
 import type { SendMessageRuntimeOptions } from '../../types';
 
 interface SessionRuntimeLike {
@@ -89,12 +90,12 @@ export const resolveRuntimeConfig = (
 
 export const resolveSelectedModelOrThrow = (
   effectiveSelectedModelId: string | null | undefined,
-  aiModelConfigs: any[],
-): any => {
+  aiModelConfigs: AiModelConfig[],
+): AiModelConfig => {
   if (!effectiveSelectedModelId) {
     throw new Error('请先选择一个模型');
   }
-  const selectedModel = aiModelConfigs.find((model: any) => model.id === effectiveSelectedModelId);
+  const selectedModel = aiModelConfigs.find((model) => model.id === effectiveSelectedModelId);
   if (!selectedModel || !selectedModel.enabled) {
     throw new Error('选择的模型不可用');
   }

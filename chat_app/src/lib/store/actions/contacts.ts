@@ -54,7 +54,12 @@ export function createContactActions({ set, get, client, getUserIdParam }: Deps)
         agent_id: trimmedAgentId,
         agent_name_snapshot: agentNameSnapshot?.trim() || undefined,
       });
-      const normalized = normalizeContact(response?.contact || response);
+      const rawContact = (
+        response && typeof response === 'object' && 'contact' in response
+          ? response.contact
+          : response
+      );
+      const normalized = normalizeContact(rawContact);
       if (!normalized) {
         throw new Error('create contact returned invalid payload');
       }

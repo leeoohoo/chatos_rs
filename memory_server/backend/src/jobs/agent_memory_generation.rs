@@ -50,12 +50,18 @@ pub(crate) async fn generate_level0_recall_from_summaries(
     let source_digest = idempotency::digest_from_ids("agent_recall_l0", selected_ids.as_slice())
         .ok_or_else(|| "build agent l0 source digest failed".to_string())?;
 
-    if let Some(existing) =
-        memories::find_agent_recall_by_source_digest(pool, user_id, agent_id, 0, source_digest.as_str())
-            .await?
+    if let Some(existing) = memories::find_agent_recall_by_source_digest(
+        pool,
+        user_id,
+        agent_id,
+        0,
+        source_digest.as_str(),
+    )
+    .await?
     {
         let marked =
-            summaries::mark_summaries_agent_memory_summarized(pool, selected_ids.as_slice()).await?;
+            summaries::mark_summaries_agent_memory_summarized(pool, selected_ids.as_slice())
+                .await?;
         if marked < selected_ids.len() {
             warn!(
                 "[MEMORY-AGENT-RECALL] partial l0 mark on reuse: user_id={} agent_id={} selected={} marked={} recall_id={}",

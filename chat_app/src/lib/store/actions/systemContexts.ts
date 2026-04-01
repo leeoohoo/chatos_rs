@@ -1,4 +1,13 @@
 import type ApiClient from '../../api/client';
+import type {
+  SystemContextDraftEvaluatePayload,
+  SystemContextDraftEvaluateResponse,
+  SystemContextDraftGeneratePayload,
+  SystemContextDraftGenerateResponse,
+  SystemContextDraftOptimizePayload,
+  SystemContextDraftOptimizeResponse,
+  SystemContextResponse,
+} from '../../api/client/types';
 
 interface Deps {
   set: any;
@@ -42,7 +51,11 @@ export function createSystemContextActions({ set, client, getUserIdParam }: Deps
       }
     },
 
-    createSystemContext: async (name: string, content: string, appIds?: string[]) => {
+    createSystemContext: async (
+      name: string,
+      content: string,
+      appIds?: string[],
+    ): Promise<SystemContextResponse | null> => {
       try {
         const context = await client.createSystemContext({
           name,
@@ -63,7 +76,12 @@ export function createSystemContextActions({ set, client, getUserIdParam }: Deps
       }
     },
 
-    updateSystemContext: async (id: string, name: string, content: string, appIds?: string[]) => {
+    updateSystemContext: async (
+      id: string,
+      name: string,
+      content: string,
+      appIds?: string[],
+    ): Promise<SystemContextResponse | null> => {
       try {
         const updatedContext = await client.updateSystemContext(id, { name, content, app_ids: Array.isArray(appIds) ? appIds : undefined });
         set((state: any) => {
@@ -119,16 +137,9 @@ export function createSystemContextActions({ set, client, getUserIdParam }: Deps
       }
     },
 
-    generateSystemContextDraft: async (payload: {
-      scene: string;
-      style?: string;
-      language?: string;
-      output_format?: string;
-      constraints?: string[];
-      forbidden?: string[];
-      candidate_count?: number;
-      ai_model_config?: any;
-    }) => {
+    generateSystemContextDraft: async (
+      payload: Omit<SystemContextDraftGeneratePayload, 'user_id'>,
+    ): Promise<SystemContextDraftGenerateResponse> => {
       try {
         return await client.generateSystemContextDraft({
           user_id: getUserIdParam(),
@@ -144,12 +155,9 @@ export function createSystemContextActions({ set, client, getUserIdParam }: Deps
       }
     },
 
-    optimizeSystemContextDraft: async (payload: {
-      content: string;
-      goal?: string;
-      keep_intent?: boolean;
-      ai_model_config?: any;
-    }) => {
+    optimizeSystemContextDraft: async (
+      payload: Omit<SystemContextDraftOptimizePayload, 'user_id'>,
+    ): Promise<SystemContextDraftOptimizeResponse> => {
       try {
         return await client.optimizeSystemContextDraft({
           user_id: getUserIdParam(),
@@ -165,7 +173,9 @@ export function createSystemContextActions({ set, client, getUserIdParam }: Deps
       }
     },
 
-    evaluateSystemContextDraft: async (payload: { content: string }) => {
+    evaluateSystemContextDraft: async (
+      payload: SystemContextDraftEvaluatePayload,
+    ): Promise<SystemContextDraftEvaluateResponse> => {
       try {
         return await client.evaluateSystemContextDraft(payload);
       } catch (error) {

@@ -43,6 +43,7 @@ interface ProjectTreePaneProps {
   onConfirmAll: () => void;
   onOpenContextMenu: (event: React.MouseEvent, entry: FsEntry) => void;
   onSelectDeletedPath: (path: string) => void;
+  onSelectMarkedPath: (path: string) => void;
   onToggleDir: (entry: FsEntry) => void;
   onOpenFile: (entry: FsEntry) => void;
   onDragStart: (event: React.DragEvent, entry: FsEntry) => void;
@@ -90,6 +91,7 @@ export const ProjectTreePane: React.FC<ProjectTreePaneProps> = ({
   onConfirmAll,
   onOpenContextMenu,
   onSelectDeletedPath,
+  onSelectMarkedPath,
   onToggleDir,
   onOpenFile,
   onDragStart,
@@ -120,6 +122,30 @@ export const ProjectTreePane: React.FC<ProjectTreePaneProps> = ({
     const rootEntries = entriesMap[project.rootPath] || [];
     return rootEntries.filter((entry) => isEntryVisible(entry.path)).length;
   }, [entriesMap, project.rootPath, showOnlyChanged, aggregatedChangeKindByPath, normalizePath]);
+
+  const loadedEntryPathSet = useMemo(() => {
+    const out = new Set<string>();
+    Object.values(entriesMap).forEach((entries) => {
+      entries.forEach((entry) => {
+        const normalized = normalizePath(entry.path);
+        if (normalized) {
+          out.add(normalized);
+        }
+      });
+    });
+    return out;
+  }, [entriesMap, normalizePath]);
+
+  const hiddenFileMarks = useMemo(
+    () => changeSummary.fileMarks.filter((mark) => {
+      const normalizedMarkPath = normalizePath(mark.path);
+      if (!normalizedMarkPath) {
+        return false;
+      }
+      return !loadedEntryPathSet.has(normalizedMarkPath);
+    }),
+    [changeSummary.fileMarks, loadedEntryPathSet, normalizePath]
+  );
 
   const renderEntries = (path: string, depth: number): React.ReactNode => {
     const entries = (entriesMap[path] || []).filter((entry) => isEntryVisible(entry.path));
@@ -453,12 +479,49 @@ export const ProjectTreePane: React.FC<ProjectTreePaneProps> = ({
             </div>
           </div>
         )}
+        {showOnlyChanged && hiddenFileMarks.length > 0 && (
+          <div className="mt-2 border-t border-border/70">
+            <div className="px-3 py-2 text-[11px] font-medium text-amber-600 dark:text-amber-400">
+              未在当前目录树显示（未确认）
+            </div>
+            <div className="space-y-0.5 pb-2">
+              {hiddenFileMarks.map((mark) => {
+                const normalizedMarkPath = normalizePath(mark.path);
+                const isActive = selectedPath ? normalizePath(selectedPath) === normalizedMarkPath : false;
+                return (
+                  <button
+                    key={mark.lastChangeId || mark.path}
+                    type="button"
+                    onClick={() => onSelectMarkedPath(mark.path)}
+                    className={cn(
+                      'min-w-full w-max grid grid-cols-[12px_auto_64px] items-center gap-2 py-1.5 pr-2 text-left rounded hover:bg-accent transition-colors',
+                      isActive && 'bg-accent'
+                    )}
+                    style={{ paddingLeft: 12 + 14 }}
+                  >
+                    <span className={cn('inline-block h-2 w-2 rounded-full', CHANGE_KIND_COLOR_CLASS[mark.kind])} />
+                    <span className={cn('text-sm whitespace-nowrap truncate', CHANGE_KIND_TEXT_CLASS[mark.kind])}>
+                      {mark.relativePath || mark.path}
+                    </span>
+                    <span className="text-[11px] text-muted-foreground text-right tabular-nums whitespace-nowrap">
+                      {CHANGE_KIND_LABEL[mark.kind]}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
         {loadingPaths.has(project.rootPath) && (
           <div className="px-3 py-2 text-xs text-muted-foreground">加载中...</div>
         )}
         {!loadingPaths.has(project.rootPath) && visibleRootEntryCount === 0 && (
           <div className="px-3 py-2 text-xs text-muted-foreground">
-            {showOnlyChanged ? '暂无未确认变更文件' : '目录为空'}
+            {showOnlyChanged
+              ? (changeSummary.counts.total > 0
+                ? '存在未确认变更，但当前目录树未命中。请查看下方列表。'
+                : '暂无未确认变更文件')
+              : '目录为空'}
           </div>
         )}
       </div>

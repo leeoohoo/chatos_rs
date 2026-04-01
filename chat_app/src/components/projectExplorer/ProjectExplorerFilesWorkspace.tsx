@@ -35,8 +35,10 @@ interface ProjectExplorerFilesWorkspaceProps {
   contextMenuStyle?: React.CSSProperties;
   isContextRootEntry: boolean;
   setContextMenu: React.Dispatch<React.SetStateAction<ExplorerContextMenuState | null>>;
+  canRunFile: (entry: FsEntry) => boolean;
   onCreateDirectory: (path: string) => Promise<void> | void;
   onCreateFile: (path: string) => Promise<void> | void;
+  onRunFile: (entry: FsEntry) => Promise<void> | void;
   onDownloadSelected: (entry: FsEntry) => Promise<void> | void;
   onDeleteSelected: (entry: FsEntry) => Promise<void> | void;
 }
@@ -64,8 +66,10 @@ export const ProjectExplorerFilesWorkspace: React.FC<ProjectExplorerFilesWorkspa
   contextMenuStyle,
   isContextRootEntry,
   setContextMenu,
+  canRunFile,
   onCreateDirectory,
   onCreateFile,
+  onRunFile,
   onDownloadSelected,
   onDeleteSelected,
 }) => {
@@ -118,6 +122,7 @@ export const ProjectExplorerFilesWorkspace: React.FC<ProjectExplorerFilesWorkspa
         contextMenu={contextMenu}
         contextMenuStyle={contextMenuStyle}
         isContextRootEntry={isContextRootEntry}
+        canRunFile={canRunFile}
         onCreateDirectory={(path) => {
           setContextMenu(null);
           void onCreateDirectory(path);
@@ -125,6 +130,10 @@ export const ProjectExplorerFilesWorkspace: React.FC<ProjectExplorerFilesWorkspa
         onCreateFile={(path) => {
           setContextMenu(null);
           void onCreateFile(path);
+        }}
+        onRunFile={(entry) => {
+          setContextMenu(null);
+          void onRunFile(entry);
         }}
         onDownload={(entry) => {
           setContextMenu(null);

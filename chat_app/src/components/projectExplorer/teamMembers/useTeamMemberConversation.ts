@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import type { Session } from '../../../types';
-import type { ContactItem, ProjectContactRow } from './types';
+import type { Session, AiModelConfig } from '../../../types';
+import type { SendMessageRuntimeOptions } from '../../../lib/store/types';
+import type { ContactItem, ProjectContactRow, SessionChatStateMap } from './types';
 
 interface UseTeamMemberConversationParams {
   projectId: string;
@@ -10,20 +11,27 @@ interface UseTeamMemberConversationParams {
   projectContacts: ProjectContactRow[];
   normalizedContacts: ContactItem[];
   selectedModelId: string | null;
-  aiModelConfigs: any[];
-  sessionChatState: Record<string, any>;
+  aiModelConfigs: AiModelConfig[];
+  sessionChatState: SessionChatStateMap;
   summaryPaneSessionId: string | null;
   setSummaryPaneSessionId: (sessionId: string | null) => void;
   setSummaryError: (error: string | null) => void;
   resetSummaryState: () => void;
-  openSummaryForSession: (sessionId: string) => Promise<any>;
-  deleteSummary: (sessionId: string, summaryId: string) => Promise<any>;
-  clearSummaries: (sessionId: string, options: { confirmMessage?: string }) => Promise<any>;
-  loadSessionSummaries: (sessionId: string, options?: { silent?: boolean }) => Promise<any>;
+  openSummaryForSession: (sessionId: string) => Promise<void>;
+  deleteSummary: (sessionId: string, summaryId: string) => Promise<void>;
+  clearSummaries: (
+    sessionId: string,
+    options: { confirmMessage?: string },
+  ) => Promise<void>;
+  loadSessionSummaries: (sessionId: string, options?: { silent?: boolean }) => Promise<void>;
   ensureContactSession: (contact: ContactItem) => Promise<string | null>;
-  sendMessage: (content: string, attachments?: File[], runtimeOptions?: any) => Promise<any>;
-  toggleTurnProcess: (userMessageId: string) => Promise<any>;
-  loadMoreMessages: (sessionId: string) => void | Promise<any>;
+  sendMessage: (
+    content: string,
+    attachments?: File[],
+    runtimeOptions?: SendMessageRuntimeOptions,
+  ) => Promise<void>;
+  toggleTurnProcess: (userMessageId: string) => Promise<void>;
+  loadMoreMessages: (sessionId: string) => Promise<void>;
 }
 
 export const useTeamMemberConversation = ({
@@ -156,14 +164,7 @@ export const useTeamMemberConversation = ({
   const handleSendMessage = useCallback(async (
     content: string,
     attachments?: File[],
-    runtimeOptions?: {
-      mcpEnabled?: boolean;
-      remoteConnectionId?: string | null;
-      projectId?: string | null;
-      projectRoot?: string | null;
-      workspaceRoot?: string | null;
-      enabledMcpIds?: string[];
-    },
+    runtimeOptions?: SendMessageRuntimeOptions,
   ) => {
     if (!selectedContact) {
       return;

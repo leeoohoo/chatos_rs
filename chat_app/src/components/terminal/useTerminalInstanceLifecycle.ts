@@ -3,6 +3,7 @@ import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 
+import type { TerminalLogResponse } from '../../lib/api/client/types';
 import type { Terminal } from '../../types';
 import { normalizeTerminalLog } from '../../lib/store/helpers/terminals';
 import { debugLog } from '../../lib/utils';
@@ -39,7 +40,7 @@ interface TerminalApiClient {
   listTerminalLogs(
     terminalId: string,
     params?: { limit?: number; offset?: number; before?: string },
-  ): Promise<any[]>;
+  ): Promise<TerminalLogResponse[]>;
 }
 
 interface UseTerminalInstanceLifecycleParams {
