@@ -1,22 +1,27 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { normalizeProjectScopeId } from '../../../features/contactSession/sessionResolver';
+import type { ProjectContactLinkResponse } from '../../../lib/api/client/types';
+import type { ContactRecord } from '../../../lib/store/types';
 import type { ContactItem, ProjectContactLink } from './types';
 
 interface ProjectMembersApiClient {
   listProjectContacts: (
     projectId: string,
     paging?: { limit?: number; offset?: number },
-  ) => Promise<unknown[]>;
-  addProjectContact: (projectId: string, payload: { contact_id: string }) => Promise<unknown>;
-  removeProjectContact: (projectId: string, contactId: string) => Promise<unknown>;
+  ) => Promise<ProjectContactLinkResponse[]>;
+  addProjectContact: (
+    projectId: string,
+    payload: { contact_id: string },
+  ) => Promise<ProjectContactLinkResponse>;
+  removeProjectContact: (projectId: string, contactId: string) => Promise<{ success?: boolean }>;
 }
 
 interface UseProjectMembersManagerOptions {
   apiClient: ProjectMembersApiClient;
   projectId?: string | null;
   contacts: ContactItem[];
-  loadContacts: () => Promise<any[] | void>;
+  loadContacts: () => Promise<ContactRecord[] | void>;
   onMemberRemoved?: (contact: ContactItem) => Promise<void> | void;
 }
 

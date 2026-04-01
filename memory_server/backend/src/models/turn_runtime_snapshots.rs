@@ -38,8 +38,10 @@ pub struct TurnRuntimeSnapshotRuntime {
     pub model: Option<String>,
     pub provider: Option<String>,
     pub contact_agent_id: Option<String>,
+    pub remote_connection_id: Option<String>,
     pub project_id: Option<String>,
     pub project_root: Option<String>,
+    pub workspace_root: Option<String>,
     pub mcp_enabled: Option<bool>,
     #[serde(default)]
     pub enabled_mcp_ids: Vec<String>,

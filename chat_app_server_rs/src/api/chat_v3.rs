@@ -1,5 +1,3 @@
-use std::sync::{Arc, Mutex};
-
 use axum::http::StatusCode;
 use axum::{
     extract::{Path, Query},
@@ -9,31 +7,20 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use crate::api::chat_stream_common::{
+    build_prefixed_input_items, resolve_chat_stream_context, sync_chat_turn_snapshot,
+    validate_chat_stream_request, wire_implicit_command_tracking, ChatStreamRequest,
+};
 use crate::config::Config;
 use crate::core::ai_model_config::resolve_chat_model_config;
 use crate::core::ai_settings::chat_max_tokens_from_settings;
 use crate::core::auth::AuthUser;
-use crate::core::chat_context::{
-    maybe_spawn_session_title_rename, resolve_effective_user_id, resolve_system_prompt,
-};
-use crate::core::chat_runtime::{
-    compose_contact_command_system_prompt, compose_contact_system_prompt,
-    contact_agent_id_from_metadata, contact_id_from_metadata, enabled_mcp_ids_from_metadata,
-    mcp_enabled_from_metadata, normalize_id, parse_contact_command_invocation,
-    parse_implicit_command_selections_from_tools_end, project_id_from_metadata,
-    project_root_from_metadata, remote_connection_id_from_metadata, resolve_project_runtime,
-};
+use crate::core::chat_context::maybe_spawn_session_title_rename;
+use crate::core::chat_runtime::project_id_from_metadata;
 use crate::core::chat_stream::{
     build_v3_callbacks, handle_chat_result, send_error_event, send_start_event,
 };
-use crate::core::mcp_runtime::{
-    contact_agent_command_reader_server, contact_agent_plugin_reader_server,
-    contact_agent_skill_reader_server, has_any_mcp_server, load_mcp_servers_by_selection,
-    normalize_mcp_ids,
-};
-use crate::core::turn_runtime_snapshot::{
-    build_turn_runtime_snapshot_payload, BuildTurnRuntimeSnapshotInput,
-};
+use crate::core::mcp_runtime::{load_mcp_servers_by_selection, McpServerBundle};
 use crate::core::user_scope::{ensure_and_set_user_id, resolve_user_id};
 use crate::services::ai_common::normalize_turn_id;
 use crate::services::memory_server_client;
@@ -48,23 +35,6 @@ use crate::utils::log_helpers::{log_chat_begin, log_chat_cancelled, log_chat_err
 use crate::utils::sse::{sse_channel, SseSender};
 use tracing::warn;
 use uuid::Uuid;
-
-#[derive(Debug, Deserialize)]
-struct ChatRequest {
-    session_id: Option<String>,
-    content: Option<String>,
-    ai_model_config: Option<Value>,
-    user_id: Option<String>,
-    attachments: Option<Vec<Value>>,
-    reasoning_enabled: Option<bool>,
-    turn_id: Option<String>,
-    contact_agent_id: Option<String>,
-    project_id: Option<String>,
-    project_root: Option<String>,
-    remote_connection_id: Option<String>,
-    mcp_enabled: Option<bool>,
-    enabled_mcp_ids: Option<Vec<String>>,
-}
 
 #[derive(Debug, Deserialize)]
 struct UserQuery {
@@ -103,7 +73,7 @@ pub fn router() -> Router {
 
 async fn agent_chat_stream(
     auth: AuthUser,
-    Json(mut req): Json<ChatRequest>,
+    Json(mut req): Json<ChatStreamRequest>,
 ) -> Result<
     axum::response::Sse<
         impl futures::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>,
@@ -113,31 +83,8 @@ async fn agent_chat_stream(
     if let Err(err) = ensure_and_set_user_id(&mut req.user_id, &auth) {
         return Err(err);
     }
+    validate_chat_stream_request(&req, true)?;
     let session_id = req.session_id.clone().unwrap_or_default();
-    let content = req.content.clone().unwrap_or_default();
-    let has_text_content = !content.trim().is_empty();
-    let has_attachments = req
-        .attachments
-        .as_ref()
-        .map(|items| !items.is_empty())
-        .unwrap_or(false);
-    if session_id.is_empty() || (!has_text_content && !has_attachments) {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "session_id 不能为空，且 content 与 attachments 不能同时为空"})),
-        ));
-    }
-    if req
-        .ai_model_config
-        .as_ref()
-        .and_then(|cfg| cfg.get("supports_responses").and_then(|v| v.as_bool()))
-        != Some(true)
-    {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "当前模型未启用 Responses API"})),
-        ));
-    }
 
     abort_registry::reset(&session_id);
     let (sse, sender) = sse_channel();
@@ -150,7 +97,7 @@ async fn agent_tools(auth: AuthUser, Query(query): Query<UserQuery>) -> (StatusC
         Ok(user_id) => user_id,
         Err(err) => return err,
     };
-    let (http_servers, stdio_servers, builtin_servers) =
+    let (http_servers, stdio_servers, builtin_servers): McpServerBundle =
         load_mcp_servers_by_selection(Some(user_id), false, Vec::new(), None, None).await;
     let mut exec = McpToolExecute::new(
         http_servers.clone(),
@@ -392,7 +339,7 @@ async fn submit_runtime_guidance(
     )
 }
 
-async fn stream_chat_v3(sender: SseSender, req: ChatRequest) {
+async fn stream_chat_v3(sender: SseSender, req: ChatStreamRequest) {
     let session_id = req.session_id.clone().unwrap_or_default();
     let content = req.content.clone().unwrap_or_default();
     let cfg = Config::get();
@@ -401,7 +348,7 @@ async fn stream_chat_v3(sender: SseSender, req: ChatRequest) {
 
     maybe_spawn_session_title_rename(true, &session_id, &content, 30);
 
-    let model_cfg = req.ai_model_config.unwrap_or_else(|| json!({}));
+    let model_cfg: Value = req.ai_model_config.clone().unwrap_or_else(|| json!({}));
     if model_cfg
         .get("supports_responses")
         .and_then(|v| v.as_bool())
@@ -420,13 +367,6 @@ async fn stream_chat_v3(sender: SseSender, req: ChatRequest) {
         req.reasoning_enabled,
         true,
     );
-    let memory_session = memory_server_client::get_session_by_id(&session_id)
-        .await
-        .ok()
-        .flatten();
-    let session_metadata = memory_session
-        .as_ref()
-        .and_then(|session| session.metadata.as_ref());
 
     let mut ai_server = AiServer::new(
         model_runtime.api_key.clone(),
@@ -435,191 +375,24 @@ async fn stream_chat_v3(sender: SseSender, req: ChatRequest) {
         model_runtime.temperature,
         McpToolExecute::new(Vec::new(), Vec::new(), Vec::new()),
     );
-
-    let effective_user_id = resolve_effective_user_id(req.user_id.clone(), &session_id).await;
-    let mut contact_agent_id = normalize_id(req.contact_agent_id)
-        .or_else(|| contact_agent_id_from_metadata(session_metadata))
-        .or_else(|| {
-            memory_session
-                .as_ref()
-                .and_then(|session| normalize_id(session.selected_agent_id.clone()))
-        });
-    if contact_agent_id.is_none() {
-        if let Some(contact_id) = contact_id_from_metadata(session_metadata) {
-            if let Ok(contacts) = memory_server_client::list_memory_contacts(
-                effective_user_id.as_deref(),
-                Some(500),
-                0,
-            )
-            .await
-            {
-                if let Some(contact) = contacts
-                    .iter()
-                    .find(|item| item.id.trim() == contact_id.as_str())
-                {
-                    contact_agent_id = normalize_id(Some(contact.agent_id.clone()));
-                    if let Some(agent_id) = contact_agent_id.as_deref() {
-                        warn!(
-                            "resolved contact_agent_id from contact_id: session_id={} contact_id={} contact_agent_id={}",
-                            session_id, contact_id, agent_id
-                        );
-                    }
-                }
-            }
-        }
-    }
-
-    let contact_runtime_context = match contact_agent_id.as_deref() {
-        Some(agent_id) => {
-            match memory_server_client::get_memory_agent_runtime_context(agent_id).await {
-                Ok(value) => value,
-                Err(err) => {
-                    warn!(
-                    "load contact runtime context failed: session_id={} contact_agent_id={} detail={}",
-                    session_id, agent_id, err
-                );
-                    None
-                }
-            }
-        }
-        None => None,
-    };
-    if contact_agent_id.is_some() && contact_runtime_context.is_none() {
-        warn!(
-            "contact runtime context missing: session_id={} contact_agent_id={}",
-            session_id,
-            contact_agent_id.as_deref().unwrap_or_default()
-        );
-    }
-    let base_system_prompt = resolve_system_prompt(
+    let runtime_context = resolve_chat_stream_context(
+        &session_id,
+        &content,
+        &req,
         model_runtime.system_prompt.clone(),
         model_runtime.use_active_system_context,
-        effective_user_id.clone(),
     )
     .await;
-    let contact_system_prompt = compose_contact_system_prompt(contact_runtime_context.as_ref());
-    let selected_command =
-        parse_contact_command_invocation(content.as_str(), contact_runtime_context.as_ref());
-    let command_system_prompt = compose_contact_command_system_prompt(selected_command.as_ref());
-    let selected_commands_for_snapshot = Arc::new(Mutex::new(
-        selected_command
-            .as_ref()
-            .map(|command| {
-                vec![
-                    memory_server_client::TurnRuntimeSnapshotSelectedCommandDto {
-                        command_ref: Some(command.command_ref.clone()),
-                        name: Some(command.name.clone()),
-                        plugin_source: command.plugin_source.clone(),
-                        source_path: command.source_path.clone(),
-                        trigger: Some("explicit".to_string()),
-                        arguments: command.arguments.clone(),
-                    },
-                ]
-            })
-            .unwrap_or_default(),
-    ));
-    if base_system_prompt.is_some() {
-        ai_server.set_system_prompt(base_system_prompt.clone());
+    if runtime_context.base_system_prompt.is_some() {
+        ai_server.set_system_prompt(runtime_context.base_system_prompt.clone());
     }
-    let mut prefixed_input_items_vec = Vec::new();
-    if let Some(prompt) = contact_system_prompt.as_ref() {
-        prefixed_input_items_vec.push(json!({
-            "type": "message",
-            "role": "system",
-            "content": [
-                {
-                    "type": "input_text",
-                    "text": prompt,
-                }
-            ]
-        }));
-    }
-    if let Some(prompt) = command_system_prompt.as_ref() {
-        prefixed_input_items_vec.push(json!({
-            "type": "message",
-            "role": "system",
-            "content": [
-                {
-                    "type": "input_text",
-                    "text": prompt,
-                }
-            ]
-        }));
-    }
-    let prefixed_input_items = if prefixed_input_items_vec.is_empty() {
-        None
-    } else {
-        Some(prefixed_input_items_vec)
-    };
+    let prefixed_input_items = build_prefixed_input_items(
+        runtime_context.contact_system_prompt.as_deref(),
+        runtime_context.command_system_prompt.as_deref(),
+    );
 
-    let requested_project_id = normalize_id(req.project_id)
-        .or_else(|| project_id_from_metadata(session_metadata))
-        .or_else(|| {
-            memory_session
-                .as_ref()
-                .and_then(|session| normalize_id(session.project_id.clone()))
-        });
-    let requested_project_root =
-        normalize_id(req.project_root).or_else(|| project_root_from_metadata(session_metadata));
-    let (resolved_project_id, resolved_project_root) = resolve_project_runtime(
-        effective_user_id.as_deref(),
-        requested_project_id,
-        requested_project_root,
-    )
-    .await;
-    let requested_mcp_ids = req
-        .enabled_mcp_ids
-        .unwrap_or_else(|| enabled_mcp_ids_from_metadata(session_metadata));
-    let normalized_mcp_ids = normalize_mcp_ids(&requested_mcp_ids);
-    let enabled_mcp_ids_for_snapshot = normalized_mcp_ids.clone();
-    let default_remote_connection_id = normalize_id(req.remote_connection_id)
-        .or_else(|| remote_connection_id_from_metadata(session_metadata));
-    let mcp_enabled = req
-        .mcp_enabled
-        .or_else(|| mcp_enabled_from_metadata(session_metadata))
-        .unwrap_or(true);
-    let (http_servers, stdio_servers, mut builtin_servers) = if mcp_enabled {
-        load_mcp_servers_by_selection(
-            effective_user_id.clone(),
-            !normalized_mcp_ids.is_empty(),
-            normalized_mcp_ids,
-            resolved_project_root.as_deref(),
-            resolved_project_id.as_deref(),
-        )
-        .await
-    } else {
-        (Vec::new(), Vec::new(), Vec::new())
-    };
-    if let Some(agent_id) = contact_runtime_context
-        .as_ref()
-        .map(|context| context.agent_id.as_str())
-    {
-        if let Some(server) = contact_agent_skill_reader_server(
-            effective_user_id.clone(),
-            resolved_project_id.clone(),
-            agent_id,
-        ) {
-            builtin_servers.push(server);
-        }
-        if let Some(server) = contact_agent_command_reader_server(
-            effective_user_id.clone(),
-            resolved_project_id.clone(),
-            agent_id,
-        ) {
-            builtin_servers.push(server);
-        }
-        if let Some(server) = contact_agent_plugin_reader_server(
-            effective_user_id.clone(),
-            resolved_project_id.clone(),
-            agent_id,
-        ) {
-            builtin_servers.push(server);
-        }
-    }
-    for server in &mut builtin_servers {
-        server.remote_connection_id = default_remote_connection_id.clone();
-    }
-    let use_tools = has_any_mcp_server(&http_servers, &stdio_servers, &builtin_servers);
+    let (http_servers, stdio_servers, builtin_servers) = runtime_context.mcp_server_bundle.clone();
+    let use_tools = runtime_context.use_tools;
     let mut mcp_exec = McpToolExecute::new(
         http_servers.clone(),
         stdio_servers.clone(),
@@ -635,7 +408,7 @@ async fn stream_chat_v3(sender: SseSender, req: ChatRequest) {
     let mcp_tool_metadata = mcp_exec.tool_metadata.clone();
     ai_server.set_mcp_tool_execute(mcp_exec);
 
-    let effective_settings = get_effective_user_settings(effective_user_id.clone())
+    let effective_settings = get_effective_user_settings(runtime_context.effective_user_id.clone())
         .await
         .unwrap_or_else(|_| json!({}));
     apply_settings_to_ai_client(&mut ai_server.ai_client, &effective_settings);
@@ -653,75 +426,27 @@ async fn stream_chat_v3(sender: SseSender, req: ChatRequest) {
 
     let callback_bundle = build_v3_callbacks(&sender, &session_id, true);
     let mut callbacks = callback_bundle.callbacks.clone();
-    let original_on_tools_end = callbacks.on_tools_end.clone();
-    let selected_commands_for_snapshot_on_tools_end = selected_commands_for_snapshot.clone();
-    callbacks.on_tools_end = Some(Arc::new(move |result: Value| {
-        let implicit_items = parse_implicit_command_selections_from_tools_end(&result);
-        if !implicit_items.is_empty() {
-            if let Ok(mut snapshot_items) = selected_commands_for_snapshot_on_tools_end.lock() {
-                for item in implicit_items {
-                    snapshot_items.push(
-                        memory_server_client::TurnRuntimeSnapshotSelectedCommandDto {
-                            command_ref: item.command_ref,
-                            name: item.name,
-                            plugin_source: item.plugin_source,
-                            source_path: item.source_path,
-                            trigger: Some("implicit".to_string()),
-                            arguments: None,
-                        },
-                    );
-                }
-            }
-        }
-        if let Some(callback) = original_on_tools_end.as_ref() {
-            callback(result);
-        }
-    }));
+    wire_implicit_command_tracking(
+        &mut callbacks,
+        runtime_context.selected_commands_for_snapshot.clone(),
+    );
     let chunk_sent = callback_bundle.chunk_sent;
 
     let attachments_list = req.attachments.unwrap_or_default();
     let att = attachments::parse_attachments(&attachments_list);
-    let memory_summary_prompt = memory_server_client::compose_context(&session_id, 2)
-        .await
-        .ok()
-        .and_then(|payload| payload.0)
-        .and_then(|value| {
-            let trimmed = value.trim().to_string();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed)
-            }
-        });
     let user_message_id = Uuid::new_v4().to_string();
     let resolved_turn_id =
         normalize_turn_id(req.turn_id.as_deref()).unwrap_or_else(|| user_message_id.clone());
     runtime_guidance_manager().register_active_turn(&session_id, &resolved_turn_id);
-    let running_selected_commands = selected_commands_for_snapshot
-        .lock()
-        .map(|items| items.clone())
-        .unwrap_or_default();
-    let running_snapshot_payload =
-        build_turn_runtime_snapshot_payload(BuildTurnRuntimeSnapshotInput {
-            user_message_id: Some(user_message_id.clone()),
-            status: "running",
-            base_system_prompt: base_system_prompt.as_deref(),
-            contact_system_prompt: contact_system_prompt.as_deref(),
-            memory_summary_prompt: memory_summary_prompt.as_deref(),
-            tools: &mcp_tool_metadata,
-            model: Some(model_runtime.model.as_str()),
-            provider: Some(model_runtime.provider.as_str()),
-            contact_agent_id: contact_agent_id.as_deref(),
-            project_id: resolved_project_id.as_deref(),
-            project_root: resolved_project_root.as_deref(),
-            mcp_enabled,
-            enabled_mcp_ids: &enabled_mcp_ids_for_snapshot,
-            selected_commands: running_selected_commands.as_slice(),
-        });
-    if let Err(err) = memory_server_client::sync_turn_runtime_snapshot(
+    if let Err(err) = sync_chat_turn_snapshot(
         &session_id,
         &resolved_turn_id,
-        &running_snapshot_payload,
+        "running",
+        Some(user_message_id.clone()),
+        model_runtime.model.as_str(),
+        model_runtime.provider.as_str(),
+        &mcp_tool_metadata,
+        &runtime_context,
     )
     .await
     {
@@ -748,12 +473,12 @@ async fn stream_chat_v3(sender: SseSender, req: ChatRequest) {
                 reasoning_enabled: Some(model_runtime.effective_reasoning),
                 callbacks: Some(callbacks),
                 turn_id: Some(resolved_turn_id.clone()),
-                user_message_id: Some(user_message_id),
+                user_message_id: Some(user_message_id.clone()),
                 message_mode: Some("model".to_string()),
                 message_source: Some(model_runtime.model.clone()),
                 prefixed_input_items,
                 request_cwd: if model_runtime.use_codex_gateway_mcp_passthrough {
-                    resolved_project_root.clone()
+                    runtime_context.resolved_project_root.clone()
                 } else {
                     None
                 },
@@ -764,35 +489,15 @@ async fn stream_chat_v3(sender: SseSender, req: ChatRequest) {
         )
         .await;
 
-    let completed_selected_commands = selected_commands_for_snapshot
-        .lock()
-        .map(|items| items.clone())
-        .unwrap_or_default();
-    let completed_snapshot_payload =
-        build_turn_runtime_snapshot_payload(BuildTurnRuntimeSnapshotInput {
-            user_message_id: running_snapshot_payload.user_message_id.clone(),
-            status: if result.is_ok() {
-                "completed"
-            } else {
-                "failed"
-            },
-            base_system_prompt: base_system_prompt.as_deref(),
-            contact_system_prompt: contact_system_prompt.as_deref(),
-            memory_summary_prompt: memory_summary_prompt.as_deref(),
-            tools: &mcp_tool_metadata,
-            model: Some(model_runtime.model.as_str()),
-            provider: Some(model_runtime.provider.as_str()),
-            contact_agent_id: contact_agent_id.as_deref(),
-            project_id: resolved_project_id.as_deref(),
-            project_root: resolved_project_root.as_deref(),
-            mcp_enabled,
-            enabled_mcp_ids: &enabled_mcp_ids_for_snapshot,
-            selected_commands: completed_selected_commands.as_slice(),
-        });
-    if let Err(err) = memory_server_client::sync_turn_runtime_snapshot(
+    if let Err(err) = sync_chat_turn_snapshot(
         &session_id,
         &resolved_turn_id,
-        &completed_snapshot_payload,
+        if result.is_ok() { "completed" } else { "failed" },
+        Some(user_message_id.clone()),
+        model_runtime.model.as_str(),
+        model_runtime.provider.as_str(),
+        &mcp_tool_metadata,
+        &runtime_context,
     )
     .await
     {

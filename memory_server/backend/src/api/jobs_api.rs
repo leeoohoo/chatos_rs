@@ -219,7 +219,8 @@ async fn find_session_ids_by_prefix(
         .with_options(options)
         .await
         .map_err(|e| e.to_string())?;
-    let docs: Vec<mongodb::bson::Document> = cursor.try_collect().await.map_err(|e| e.to_string())?;
+    let docs: Vec<mongodb::bson::Document> =
+        cursor.try_collect().await.map_err(|e| e.to_string())?;
     Ok(docs
         .into_iter()
         .filter_map(|doc| doc.get_str("id").ok().map(|value| value.to_string()))
@@ -255,7 +256,9 @@ async fn get_session_lookup_session_by_id(
                 .collection::<Document>("sessions")
                 .find_one(doc! {"id": session_id})
                 .await
-                .map_err(|raw_err| format!("typed lookup failed: {}; raw lookup failed: {raw_err}", err))?;
+                .map_err(|raw_err| {
+                    format!("typed lookup failed: {}; raw lookup failed: {raw_err}", err)
+                })?;
 
             if let Some(doc) = raw_doc {
                 let fallback = SessionLookupSession {
@@ -264,7 +267,10 @@ async fn get_session_lookup_session_by_id(
                     title: bson_text(doc.get("title")),
                     metadata: bson_json_value(doc.get("metadata")),
                 };
-                let detail = format!("typed_decode_fallback:{}", compact_error_text(err.as_str(), 120));
+                let detail = format!(
+                    "typed_decode_fallback:{}",
+                    compact_error_text(err.as_str(), 120)
+                );
                 Ok((Some(fallback), Some(detail)))
             } else {
                 Ok((None, None))

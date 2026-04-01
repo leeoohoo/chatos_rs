@@ -6,8 +6,8 @@ export interface UiPromptHistoryItem {
   status: string;
   title: string;
   message: string;
-  prompt: any;
-  response: any;
+  prompt: Record<string, unknown>;
+  response: Record<string, unknown> | null;
   createdAt: string;
   updatedAt: string;
 }

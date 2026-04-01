@@ -1,11 +1,20 @@
+import type { ChatStoreDraft, TaskReviewPanelState, UiPromptPanelState } from '../../types';
 import { extractToolCallIdFromStreamData } from './toolEvents';
+import {
+  ensureStreamingMetadata,
+  ensureStreamingToolCalls,
+  type StreamingMessage,
+} from './types';
 
-export const upsertTaskReviewPanelState = (state: any, reviewPanel: any) => {
+export const upsertTaskReviewPanelState = (
+  state: ChatStoreDraft,
+  reviewPanel: TaskReviewPanelState,
+) => {
   const sessionId = reviewPanel.sessionId;
   const panels = Array.isArray(state.taskReviewPanelsBySession?.[sessionId])
     ? state.taskReviewPanelsBySession[sessionId]
     : [];
-  const index = panels.findIndex((item: any) => item.reviewId === reviewPanel.reviewId);
+  const index = panels.findIndex((item) => item.reviewId === reviewPanel.reviewId);
   if (index >= 0) {
     panels[index] = reviewPanel;
   } else {
@@ -18,12 +27,15 @@ export const upsertTaskReviewPanelState = (state: any, reviewPanel: any) => {
   }
 };
 
-export const upsertUiPromptPanelState = (state: any, panel: any) => {
+export const upsertUiPromptPanelState = (
+  state: ChatStoreDraft,
+  panel: UiPromptPanelState,
+) => {
   const sessionId = panel.sessionId;
   const panels = Array.isArray(state.uiPromptPanelsBySession?.[sessionId])
     ? state.uiPromptPanelsBySession[sessionId]
     : [];
-  const index = panels.findIndex((item: any) => item.promptId === panel.promptId);
+  const index = panels.findIndex((item) => item.promptId === panel.promptId);
   if (index >= 0) {
     panels[index] = panel;
   } else {
@@ -37,20 +49,18 @@ export const upsertUiPromptPanelState = (state: any, panel: any) => {
 };
 
 export const markToolCallAsWaitingForPanel = (
-  message: any,
-  streamData: any,
+  message: StreamingMessage,
+  streamData: unknown,
   waitingResult: string,
 ) => {
-  if (!message?.metadata?.toolCalls) {
-    return;
-  }
+  const toolCalls = ensureStreamingToolCalls(ensureStreamingMetadata(message));
 
   const toolCallId = extractToolCallIdFromStreamData(streamData);
   if (!toolCallId) {
     return;
   }
 
-  const toolCall = message.metadata.toolCalls.find((tc: any) => tc.id === toolCallId);
+  const toolCall = toolCalls.find((tc) => tc.id === toolCallId);
   if (!toolCall) {
     return;
   }

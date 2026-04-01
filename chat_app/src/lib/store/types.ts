@@ -1,4 +1,11 @@
 import type { Message, Session, ChatConfig, Theme, McpConfig, AiModelConfig, SystemContext, AgentConfig, Application, Project, Terminal, RemoteConnection } from '../../types';
+import type {
+  SystemContextDraftEvaluateResponse,
+  SystemContextDraftGenerateResponse,
+  SystemContextDraftOptimizeResponse,
+  SystemContextModelConfigPayload,
+  SystemContextResponse,
+} from '../api/client/types';
 
 export interface TaskReviewDraft {
   id: string;
@@ -333,8 +340,8 @@ export interface ChatActions {
   loadAgents: () => Promise<void>;
   setSelectedAgent: (agentId: string | null) => void;
   loadSystemContexts: () => Promise<void>;
-  createSystemContext: (name: string, content: string, appIds?: string[]) => Promise<any>;
-  updateSystemContext: (id: string, name: string, content: string, appIds?: string[]) => Promise<any>;
+  createSystemContext: (name: string, content: string, appIds?: string[]) => Promise<SystemContextResponse | null>;
+  updateSystemContext: (id: string, name: string, content: string, appIds?: string[]) => Promise<SystemContextResponse | null>;
   deleteSystemContext: (id: string) => Promise<void>;
   activateSystemContext: (id: string) => Promise<void>;
   generateSystemContextDraft: (payload: {
@@ -345,17 +352,17 @@ export interface ChatActions {
     constraints?: string[];
     forbidden?: string[];
     candidate_count?: number;
-    ai_model_config?: any;
-  }) => Promise<any>;
+    ai_model_config?: SystemContextModelConfigPayload;
+  }) => Promise<SystemContextDraftGenerateResponse>;
   optimizeSystemContextDraft: (payload: {
     content: string;
     goal?: string;
     keep_intent?: boolean;
-    ai_model_config?: any;
-  }) => Promise<any>;
+    ai_model_config?: SystemContextModelConfigPayload;
+  }) => Promise<SystemContextDraftOptimizeResponse>;
   evaluateSystemContextDraft: (payload: {
     content: string;
-  }) => Promise<any>;
+  }) => Promise<SystemContextDraftEvaluateResponse>;
   // 应用管理
   loadApplications: () => Promise<void>;
   createApplication: (name: string, url: string, iconUrl?: string) => Promise<void>;
@@ -374,3 +381,8 @@ export interface ChatStoreConfig {
   userId?: string;
   projectId?: string;
 }
+
+export type ChatStoreShape = ChatState & ChatActions;
+export type ChatStoreDraft = ChatState & Partial<ChatActions>;
+export type ChatStoreSet = (fn: (state: ChatStoreDraft) => void) => void;
+export type ChatStoreGet = () => ChatStoreShape;

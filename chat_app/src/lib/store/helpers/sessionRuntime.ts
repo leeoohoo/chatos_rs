@@ -10,6 +10,8 @@ export interface SessionRuntimeMetadata {
   workspaceRoot: string | null;
 }
 
+type MetadataRecord = Record<string, unknown>;
+
 const normalizeId = (value: unknown): string | null => {
   if (typeof value !== 'string') {
     return null;
@@ -32,15 +34,21 @@ const normalizeIdArray = (value: unknown): string[] => {
   return out;
 };
 
-const parseSessionMetadata = (metadata: any): Record<string, any> => {
+const asMetadataRecord = (value: unknown): MetadataRecord => (
+  value && typeof value === 'object' && !Array.isArray(value)
+    ? value as MetadataRecord
+    : {}
+);
+
+const parseSessionMetadata = (metadata: unknown): MetadataRecord => {
   if (metadata && typeof metadata === 'object' && !Array.isArray(metadata)) {
-    return { ...metadata };
+    return { ...(metadata as MetadataRecord) };
   }
   if (typeof metadata === 'string') {
     try {
       const parsed = JSON.parse(metadata);
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        return parsed;
+        return parsed as MetadataRecord;
       }
     } catch {
       // ignore parse errors and fallback to empty object
@@ -49,16 +57,16 @@ const parseSessionMetadata = (metadata: any): Record<string, any> => {
   return {};
 };
 
-const readUiChatSelectionModelId = (metadata: Record<string, any>): string | null => {
-  const uiChatSelection = metadata?.ui_chat_selection;
+const readUiChatSelectionModelId = (metadata: MetadataRecord): string | null => {
+  const uiChatSelection = asMetadataRecord(metadata.ui_chat_selection);
   if (!uiChatSelection || typeof uiChatSelection !== 'object' || Array.isArray(uiChatSelection)) {
     return null;
   }
   return normalizeId(uiChatSelection.selected_model_id ?? uiChatSelection.selectedModelId);
 };
 
-const readUiChatSelectionAgentId = (metadata: Record<string, any>): string | null => {
-  const uiChatSelection = metadata?.ui_chat_selection;
+const readUiChatSelectionAgentId = (metadata: MetadataRecord): string | null => {
+  const uiChatSelection = asMetadataRecord(metadata.ui_chat_selection);
   if (!uiChatSelection || typeof uiChatSelection !== 'object' || Array.isArray(uiChatSelection)) {
     return null;
   }
@@ -66,43 +74,44 @@ const readUiChatSelectionAgentId = (metadata: Record<string, any>): string | nul
 };
 
 export const readSessionRuntimeFromMetadata = (
-  metadata: any,
+  metadata: unknown,
 ): SessionRuntimeMetadata | null => {
   const meta = parseSessionMetadata(metadata);
-  const runtime = meta?.chat_runtime;
-  const contact = meta?.contact;
+  const runtime = asMetadataRecord(meta.chat_runtime);
+  const contact = asMetadataRecord(meta.contact);
+  const uiContact = asMetadataRecord(meta.ui_contact);
 
   const selectedModelId = normalizeId(
-    runtime?.selected_model_id ?? runtime?.selectedModelId,
+    runtime.selected_model_id ?? runtime.selectedModelId,
   ) || readUiChatSelectionModelId(meta);
 
   const contactAgentId = normalizeId(
-    contact?.agent_id
-      ?? contact?.agentId
-      ?? runtime?.contact_agent_id
-      ?? runtime?.contactAgentId
-      ?? meta?.ui_contact?.agent_id
-      ?? meta?.ui_contact?.agentId,
+    contact.agent_id
+      ?? contact.agentId
+      ?? runtime.contact_agent_id
+      ?? runtime.contactAgentId
+      ?? uiContact.agent_id
+      ?? uiContact.agentId,
   ) || readUiChatSelectionAgentId(meta);
   const contactId = normalizeId(
-    contact?.contact_id ?? contact?.contactId ?? meta?.ui_contact?.contact_id ?? meta?.ui_contact?.contactId,
+    contact.contact_id ?? contact.contactId ?? uiContact.contact_id ?? uiContact.contactId,
   );
   const remoteConnectionId = normalizeId(
-    runtime?.remote_connection_id ?? runtime?.remoteConnectionId,
+    runtime.remote_connection_id ?? runtime.remoteConnectionId,
   );
 
   const projectId = normalizeId(
-    runtime?.project_id ?? runtime?.projectId,
+    runtime.project_id ?? runtime.projectId,
   );
   const projectRoot = normalizeId(
-    runtime?.project_root ?? runtime?.projectRoot,
+    runtime.project_root ?? runtime.projectRoot,
   );
   const workspaceRoot = normalizeId(
-    runtime?.workspace_root ?? runtime?.workspaceRoot,
+    runtime.workspace_root ?? runtime.workspaceRoot,
   );
-  const mcpEnabledRaw = runtime?.mcp_enabled ?? runtime?.mcpEnabled;
+  const mcpEnabledRaw = runtime.mcp_enabled ?? runtime.mcpEnabled;
   const mcpEnabled = typeof mcpEnabledRaw === 'boolean' ? mcpEnabledRaw : true;
-  const enabledMcpIds = normalizeIdArray(runtime?.enabled_mcp_ids ?? runtime?.enabledMcpIds);
+  const enabledMcpIds = normalizeIdArray(runtime.enabled_mcp_ids ?? runtime.enabledMcpIds);
 
   if (
     !selectedModelId
@@ -132,9 +141,9 @@ export const readSessionRuntimeFromMetadata = (
 };
 
 export const mergeSessionRuntimeIntoMetadata = (
-  metadata: any,
+  metadata: unknown,
   runtime: Partial<SessionRuntimeMetadata>,
-): Record<string, any> => {
+): MetadataRecord => {
   const next = parseSessionMetadata(metadata);
   const existingRuntime = readSessionRuntimeFromMetadata(next);
 

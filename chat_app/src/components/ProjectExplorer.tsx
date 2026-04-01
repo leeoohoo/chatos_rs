@@ -1,21 +1,16 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useMemo } from 'react';
 import { apiClient as globalApiClient } from '../lib/api/client';
 import { useChatApiClientFromContext } from '../lib/store/ChatStoreContext';
 import type {
   Project,
   FsEntry,
-  ProjectRunTarget,
 } from '../types';
 import { cn } from '../lib/utils';
 import {
   EMPTY_CHANGE_SUMMARY,
   normalizeFile,
-  normalizeProjectRunCatalog,
 } from './projectExplorer/utils';
-import { buildSingleFileRunProfile } from './projectExplorer/runProfiles';
 import { ProjectExplorerFilesWorkspace } from './projectExplorer/ProjectExplorerFilesWorkspace';
-import { ProjectPreviewPane } from './projectExplorer/PreviewPane';
-import { ProjectTreePane } from './projectExplorer/TreePane';
 import TeamMembersPane from './projectExplorer/TeamMembersPane';
 import WorkspaceTabs from './projectExplorer/WorkspaceTabs';
 import { useProjectTreeActions } from './projectExplorer/useProjectTreeActions';
@@ -31,7 +26,9 @@ import {
 import {
   useProjectExplorerState,
 } from './projectExplorer/useProjectExplorerState';
+import { useProjectExplorerRunState } from './projectExplorer/useProjectExplorerRunState';
 import { useProjectExplorerUiPersistence } from './projectExplorer/useProjectExplorerUiPersistence';
+import { useProjectExplorerWorkspaceView } from './projectExplorer/useProjectExplorerWorkspaceView';
 
 interface ProjectExplorerProps {
   project: Project | null;
@@ -100,6 +97,10 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     keyToPath,
     getParentPath,
   } = useProjectExplorerPathHelpers(project?.rootPath);
+  const resolveParentPath = useCallback(
+    (path: string | null | undefined) => getParentPath(path || '') || '',
+    [getParentPath],
+  );
 
   const { loadEntries, loadChangeSummary } = useProjectExplorerDataLoading({
     client,
@@ -197,131 +198,32 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     () => (selectedEntry?.isDir ? selectedEntry.path : null),
     [selectedEntry]
   );
-
-  const [runStatus, setRunStatus] = useState<string>('analyzing');
-  const [runTargets, setRunTargets] = useState<ProjectRunTarget[]>([]);
-  const [runCatalogLoading, setRunCatalogLoading] = useState(false);
-  const [runCatalogError, setRunCatalogError] = useState<string | null>(null);
-  const [selectedRunTargetId, setSelectedRunTargetId] = useState<string | null>(null);
-
-  const runCwd = useMemo(() => {
-    if (!project?.rootPath) {
-      return '';
-    }
-    if (selectedEntry?.isDir) {
-      return selectedEntry.path;
-    }
-    if (selectedEntry && !selectedEntry.isDir) {
-      return getParentPath(selectedEntry.path) || project.rootPath;
-    }
-    if (selectedPath) {
-      return getParentPath(selectedPath) || project.rootPath;
-    }
-    return project.rootPath;
-  }, [getParentPath, project?.rootPath, selectedEntry, selectedPath]);
-
-  const handleDispatchTerminalCommand = useCallback(async (payload: { cwd: string; command: string }) => {
-    return client.dispatchTerminalCommand({
-      cwd: payload.cwd,
-      command: payload.command,
-      project_id: project?.id,
-      create_if_missing: true,
-    });
-  }, [client, project?.id]);
-
-  const handleInterruptTerminal = useCallback(async (terminalId: string, payload?: { reason?: string }) => {
-    return client.interruptTerminal(terminalId, payload);
-  }, [client]);
-
-  const handleGetTerminal = useCallback(async (terminalId: string) => {
-    return client.getTerminal(terminalId);
-  }, [client]);
-
-  const handleListTerminalLogs = useCallback(async (
-    terminalId: string,
-    params?: { limit?: number; offset?: number; before?: string }
-  ) => {
-    return client.listTerminalLogs(terminalId, params);
-  }, [client]);
-
-  const handleListTerminals = useCallback(async () => {
-    return client.listTerminals();
-  }, [client]);
-
-  const loadRunCatalog = useCallback(async (analyze = false) => {
-    if (!project?.id) return;
-    setRunCatalogLoading(true);
-    setRunCatalogError(null);
-    try {
-      const raw = analyze
-        ? await client.analyzeProjectRun(project.id)
-        : await client.getProjectRunCatalog(project.id);
-      const catalog = normalizeProjectRunCatalog(raw);
-      setRunStatus(catalog.status || (catalog.targets.length > 0 ? 'ready' : 'empty'));
-      setRunTargets(catalog.targets || []);
-      const nextDefault = catalog.defaultTargetId
-        ? String(catalog.defaultTargetId)
-        : (catalog.targets.find((item) => item.isDefault)?.id || null);
-      setSelectedRunTargetId(nextDefault);
-    } catch (err: any) {
-      setRunStatus('error');
-      setRunTargets([]);
-      setSelectedRunTargetId(null);
-      setRunCatalogError(err?.message || '运行目标分析失败');
-    } finally {
-      setRunCatalogLoading(false);
-    }
-  }, [client, project?.id]);
-
-  useEffect(() => {
-    setRunStatus('analyzing');
-    setRunTargets([]);
-    setSelectedRunTargetId(null);
-    setRunCatalogError(null);
-    if (!project?.id) {
-      return;
-    }
-    void loadRunCatalog(true);
-  }, [loadRunCatalog, project?.id]);
-
-  const handleAnalyzeRunTargets = useCallback(() => {
-    void loadRunCatalog(true);
-  }, [loadRunCatalog]);
-
-  const canRunFile = useCallback((entry: FsEntry) => {
-    if (entry.isDir) return false;
-    return Boolean(buildSingleFileRunProfile(entry.path));
-  }, []);
-
-  const handleRunFile = useCallback(async (entry: FsEntry) => {
-    const profile = buildSingleFileRunProfile(entry.path);
-    if (!profile) {
-      setActionError('该文件类型暂不支持直接运行');
-      return;
-    }
-    setActionLoading(true);
-    setActionError(null);
-    setActionMessage(null);
-    try {
-      const result = await client.dispatchTerminalCommand({
-        cwd: profile.cwd,
-        command: profile.command,
-        project_id: project?.id,
-        create_if_missing: true,
-      });
-      const terminalName = String(result?.terminal_name || result?.terminal_id || '');
-      setActionMessage(terminalName ? `已在终端 ${terminalName} 运行文件` : '已派发运行命令');
-    } catch (err: any) {
-      setActionError(err?.message || '运行文件失败');
-    } finally {
-      setActionLoading(false);
-    }
-  }, [client, project?.id, setActionError, setActionLoading, setActionMessage]);
-
-  const isContextRootEntry = useMemo(() => {
-    if (!contextMenu?.entry.path || !project?.rootPath) return false;
-    return normalizePath(contextMenu.entry.path) === normalizePath(project.rootPath);
-  }, [contextMenu?.entry.path, normalizePath, project?.rootPath]);
+  const {
+    runCwd,
+    runStatus,
+    runTargets,
+    runCatalogLoading,
+    runCatalogError,
+    selectedRunTargetId,
+    setSelectedRunTargetId,
+    handleDispatchTerminalCommand,
+    handleInterruptTerminal,
+    handleGetTerminal,
+    handleListTerminalLogs,
+    handleListTerminals,
+    handleAnalyzeRunTargets,
+    canRunFile,
+    handleRunFile,
+  } = useProjectExplorerRunState({
+    client,
+    project,
+    selectedEntry,
+    selectedPath,
+    getParentPath: resolveParentPath,
+    setActionError,
+    setActionLoading,
+    setActionMessage,
+  });
 
   const actionReloadPath = useMemo(() => {
     if (!selectedEntry) return project?.rootPath || null;
@@ -475,48 +377,6 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     openFile,
   });
 
-  const handleDragStart = useCallback((event: React.DragEvent, entry: FsEntry) => {
-    if (!entry.path) return;
-    clearDragExpandTimer();
-    clearDragAutoScroll();
-    setDraggingEntryPath(entry.path);
-    setDropTargetDirPath(null);
-    setMoveConflict(null);
-    event.dataTransfer.effectAllowed = 'move';
-    event.dataTransfer.setData('text/plain', entry.path);
-  }, [clearDragAutoScroll, clearDragExpandTimer]);
-
-  const handleDragEnd = useCallback(() => {
-    clearDragExpandTimer();
-    clearDragAutoScroll();
-    setDraggingEntryPath(null);
-    setDropTargetDirPath(null);
-  }, [clearDragAutoScroll, clearDragExpandTimer]);
-
-  const openEntryContextMenu = useCallback((event: React.MouseEvent, entry: FsEntry) => {
-    event.preventDefault();
-    event.stopPropagation();
-    setSelectedPath(entry.path);
-    if (entry.isDir) {
-      setSelectedFile(null);
-    }
-    setContextMenu({
-      x: event.clientX,
-      y: event.clientY,
-      entry,
-    });
-  }, []);
-
-  const contextMenuStyle = useMemo(() => {
-    if (!contextMenu) return undefined;
-    const maxX = typeof window !== 'undefined' ? window.innerWidth - 220 : contextMenu.x;
-    const maxY = typeof window !== 'undefined' ? window.innerHeight - 240 : contextMenu.y;
-    return {
-      left: `${Math.max(8, Math.min(contextMenu.x, maxX))}px`,
-      top: `${Math.max(8, Math.min(contextMenu.y, maxY))}px`,
-    };
-  }, [contextMenu]);
-
   useProjectExplorerProjectLifecycle({
     projectId: project?.id,
     projectRootPath: project?.rootPath,
@@ -577,8 +437,18 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
       </div>
     );
   }
-
-  const treePaneProps: React.ComponentProps<typeof ProjectTreePane> = {
+  const {
+    treePaneProps,
+    previewPaneProps,
+    contextMenuStyle,
+    isContextRootEntry,
+    canRunFile: workspaceCanRunFile,
+    handleRunFile: workspaceHandleRunFile,
+    handleCreateDirectory: workspaceHandleCreateDirectory,
+    handleCreateFile: workspaceHandleCreateFile,
+    handleDownloadSelected: workspaceHandleDownloadSelected,
+    handleDeleteSelected: workspaceHandleDeleteSelected,
+  } = useProjectExplorerWorkspaceView({
     project,
     treeWidth,
     treeScrollRef,
@@ -591,6 +461,7 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     dropTargetDirPath,
     actionLoading,
     actionReloadPath,
+    contextMenu,
     canConfirmCurrent,
     showOnlyChanged,
     changeSummary,
@@ -602,79 +473,49 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     normalizePath,
     toExpandedKey,
     canDropToDirectory,
-    onSelectProjectRoot: () => {
-      void selectProjectRoot();
-    },
-    onToggleShowOnlyChanged: () => {
-      setShowOnlyChanged((prev) => !prev);
-    },
-    onCreateDirectoryAtRoot: () => {
-      void handleCreateDirectory(project.rootPath);
-    },
-    onCreateFileAtRoot: () => {
-      void handleCreateFile(project.rootPath);
-    },
-    onRefresh: () => {
-      void handleRefresh();
-    },
-    onConfirmCurrent: () => {
-      void handleConfirmCurrentChanges();
-    },
-    onConfirmAll: () => {
-      void handleConfirmAllChanges();
-    },
-    onOpenContextMenu: openEntryContextMenu,
-    onSelectDeletedPath: (path) => {
-      setSelectedPath(path);
-      setSelectedFile(null);
-    },
-    onSelectMarkedPath: (path) => {
-      setSelectedPath(path);
-      setSelectedFile(null);
-    },
-    onToggleDir: (entry) => {
-      void toggleDir(entry);
-    },
-    onOpenFile: (entry) => {
-      void openFile(entry);
-    },
-    onDragStart: handleDragStart,
-    onDragEnd: handleDragEnd,
-    onSetDropTargetDirPath: setDropTargetDirPath,
-    onSetDraggingEntryPath: setDraggingEntryPath,
-    onMoveEntryByDrop: (sourcePath, targetDirPath) => {
-      void handleMoveEntryByDrop(sourcePath, targetDirPath);
-    },
-    onScheduleDragExpand: scheduleDragExpand,
-    onCancelDragExpandIfMatches: cancelDragExpandIfMatches,
-    onClearDragExpandTimer: clearDragExpandTimer,
-    onStartDragAutoScroll: startDragAutoScroll,
-    onClearDragAutoScroll: clearDragAutoScroll,
-  };
-
-  const previewPaneProps: React.ComponentProps<typeof ProjectPreviewPane> = {
-    projectId: project.id,
-    selectedFile,
-    selectedPath,
-    selectedEntry,
+    setSelectedPath,
+    setSelectedFile,
+    setShowOnlyChanged,
+    setDraggingEntryPath,
+    setDropTargetDirPath,
+    setMoveConflict,
+    setContextMenu,
+    clearDragExpandTimer,
+    cancelDragExpandIfMatches,
+    scheduleDragExpand,
+    clearDragAutoScroll,
+    startDragAutoScroll,
+    selectProjectRoot,
+    toggleDir,
+    openFile,
+    handleCreateDirectory,
+    handleCreateFile,
+    handleRefresh,
+    handleConfirmCurrentChanges,
+    handleConfirmAllChanges,
+    handleMoveEntryByDrop,
+    handleDispatchTerminalCommand,
+    handleInterruptTerminal,
+    handleGetTerminal,
+    handleListTerminalLogs,
+    handleListTerminals,
+    canRunFile,
+    handleRunFile,
+    handleDownloadSelected,
+    handleDeleteSelected,
     loadingFile,
     error,
+    selectedFile,
     selectedLog,
     runCwd,
-    projectRootPath: project.rootPath,
-    onRunCommand: handleDispatchTerminalCommand,
-    onInterruptTerminal: handleInterruptTerminal,
-    onGetTerminal: handleGetTerminal,
-    onListTerminalLogs: handleListTerminalLogs,
-    onListTerminals: handleListTerminals,
     runTargets,
     runStatus,
     runCatalogLoading,
     runCatalogError,
     selectedRunTargetId,
-    onSelectRunTarget: setSelectedRunTargetId,
-    onAnalyzeRunTargets: handleAnalyzeRunTargets,
-  };
+    setSelectedRunTargetId,
+    handleAnalyzeRunTargets,
+  });
 
   return (
     <div ref={containerRef} className={cn('flex h-full flex-col overflow-hidden', className)}>
@@ -713,12 +554,12 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
             contextMenuStyle={contextMenuStyle}
             isContextRootEntry={isContextRootEntry}
             setContextMenu={setContextMenu}
-            canRunFile={canRunFile}
-            onCreateDirectory={handleCreateDirectory}
-            onCreateFile={handleCreateFile}
-            onRunFile={handleRunFile}
-            onDownloadSelected={handleDownloadSelected}
-            onDeleteSelected={handleDeleteSelected}
+            canRunFile={workspaceCanRunFile}
+            onCreateDirectory={workspaceHandleCreateDirectory}
+            onCreateFile={workspaceHandleCreateFile}
+            onRunFile={workspaceHandleRunFile}
+            onDownloadSelected={workspaceHandleDownloadSelected}
+            onDeleteSelected={workspaceHandleDeleteSelected}
           />
         )}
       </div>

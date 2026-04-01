@@ -1,17 +1,42 @@
+import type { ChatStoreDraft, ChatStoreSet } from '../../types';
 import {
   cloneStreamingMessageDraft,
   joinStreamingText,
   normalizeStreamedText,
 } from './streamText';
+import {
+  createDefaultHistoryProcessState,
+  ensureContentSegments,
+  ensureStreamingMetadata,
+  touchStreamingMessage,
+  type MessageHistoryProcessState,
+  type StreamingContentSegment,
+  type StreamingMessage,
+} from './types';
 
 interface StreamingStateParams {
-  set: (fn: (state: any) => void) => void;
+  set: ChatStoreSet;
   currentSessionId: string;
-  tempAssistantMessage: any;
+  tempAssistantMessage: StreamingMessage;
   tempUserId: string | null;
   conversationTurnId: string;
   streamedTextRef: { value: string };
 }
+
+type HistoryProcessUpdater = (
+  current: MessageHistoryProcessState,
+) => Partial<MessageHistoryProcessState>;
+
+const isTextSegment = (
+  segment: StreamingContentSegment | undefined,
+): segment is StreamingContentSegment => (
+  Boolean(segment && segment.type === 'text')
+);
+
+const collectVisibleText = (segments: StreamingContentSegment[]): string => segments
+  .filter((segment) => segment.type === 'text')
+  .map((segment) => (typeof segment.content === 'string' ? segment.content : ''))
+  .join('');
 
 export const createStreamingMessageStateHelpers = ({
   set,
@@ -21,24 +46,36 @@ export const createStreamingMessageStateHelpers = ({
   conversationTurnId,
   streamedTextRef,
 }: StreamingStateParams) => {
-  const ensureStreamingMessage = (state: any) => {
-    let message = state.messages.find((m: any) => m.id === tempAssistantMessage.id);
+  const ensureStreamingMessage = (
+    state: ChatStoreDraft,
+  ): StreamingMessage | undefined => {
+    let message = state.messages.find(
+      (item): item is StreamingMessage => item.id === tempAssistantMessage.id,
+    );
     if (!message) {
       const savedDraft = state.sessionStreamingMessageDrafts?.[currentSessionId];
       const fallbackMessage = savedDraft
         ? cloneStreamingMessageDraft(savedDraft)
-        : {
+        : cloneStreamingMessageDraft({
             ...tempAssistantMessage,
             role: 'assistant' as const,
             status: 'streaming' as const,
             content: streamedTextRef.value,
-            metadata: {
-              ...(tempAssistantMessage.metadata || {}),
-              toolCalls: [],
-              contentSegments: [{ content: streamedTextRef.value, type: 'text' as const }],
-              currentSegmentIndex: 0,
-            },
-          };
+          });
+
+      const metadata = ensureStreamingMetadata(fallbackMessage);
+      if (!Array.isArray(metadata.toolCalls)) {
+        metadata.toolCalls = [];
+      }
+      if (!Array.isArray(metadata.contentSegments) || metadata.contentSegments.length === 0) {
+        metadata.contentSegments = [{
+          content: streamedTextRef.value,
+          type: 'text' as const,
+        }];
+      }
+      if (!Number.isInteger(metadata.currentSegmentIndex)) {
+        metadata.currentSegmentIndex = 0;
+      }
 
       if (state.currentSessionId === currentSessionId) {
         state.messages.push(fallbackMessage);
@@ -48,7 +85,10 @@ export const createStreamingMessageStateHelpers = ({
     return message;
   };
 
-  const persistStreamingMessageDraft = (state: any, message: any) => {
+  const persistStreamingMessageDraft = (
+    state: ChatStoreDraft,
+    message: StreamingMessage | undefined,
+  ) => {
     if (!message) {
       return;
     }
@@ -58,35 +98,32 @@ export const createStreamingMessageStateHelpers = ({
     state.sessionStreamingMessageDrafts[currentSessionId] = cloneStreamingMessageDraft(message);
   };
 
-  const updateTurnHistoryProcess = (state: any, updater: (current: any) => Partial<any>) => {
+  const updateTurnHistoryProcess = (
+    state: ChatStoreDraft,
+    updater: HistoryProcessUpdater,
+  ) => {
     if (!tempUserId) {
       return;
     }
 
-    const userMessage = state.messages.find((m: any) => m.id === tempUserId && m.role === 'user');
+    const userMessage = state.messages.find(
+      (message): message is StreamingMessage => (
+        message.id === tempUserId && message.role === 'user'
+      ),
+    );
     if (!userMessage) {
       return;
     }
 
-    if (!userMessage.metadata) {
-      userMessage.metadata = {} as any;
-    }
-
-    const current = userMessage.metadata.historyProcess || {
-      hasProcess: false,
-      toolCallCount: 0,
-      thinkingCount: 0,
-      processMessageCount: 0,
+    const metadata = ensureStreamingMetadata(userMessage);
+    const current = metadata.historyProcess || createDefaultHistoryProcessState({
       userMessageId: tempUserId,
       turnId: conversationTurnId,
       finalAssistantMessageId: tempAssistantMessage.id,
-      expanded: false,
-      loaded: false,
-      loading: false,
-    };
+    });
 
     const patch = updater(current) || {};
-    const next = {
+    const next: MessageHistoryProcessState = {
       ...current,
       ...patch,
       userMessageId: tempUserId,
@@ -97,63 +134,72 @@ export const createStreamingMessageStateHelpers = ({
     const toolCallCount = Number(next.toolCallCount || 0);
     const thinkingCount = Number(next.thinkingCount || 0);
     const processMessageCount = Number(next.processMessageCount || 0);
-    next.hasProcess = Boolean(next.hasProcess || toolCallCount > 0 || thinkingCount > 0 || processMessageCount > 0);
+    next.hasProcess = Boolean(
+      next.hasProcess || toolCallCount > 0 || thinkingCount > 0 || processMessageCount > 0,
+    );
 
-    userMessage.metadata.historyProcess = next;
+    metadata.historyProcess = next;
 
-    const assistantMessage = state.messages.find((m: any) => m.id === tempAssistantMessage.id && m.role === 'assistant');
-    if (assistantMessage?.metadata) {
-      assistantMessage.metadata.historyProcessExpanded = next.expanded === true;
+    const assistantMessage = state.messages.find(
+      (message): message is StreamingMessage => (
+        message.id === tempAssistantMessage.id && message.role === 'assistant'
+      ),
+    );
+    if (assistantMessage) {
+      ensureStreamingMetadata(assistantMessage).historyProcessExpanded = next.expanded === true;
     }
   };
 
   const applyTextDeltaToMessage = (contentStr: string) => {
-    if (!contentStr) return;
+    if (!contentStr) {
+      return;
+    }
 
-    set((state: any) => {
+    set((state) => {
       const message = ensureStreamingMessage(state);
-      if (message && message.metadata) {
-        const currentIndex = Number.isInteger(message.metadata.currentSegmentIndex)
-          ? Number(message.metadata.currentSegmentIndex)
-          : -1;
-        const segments = message.metadata.contentSegments || [];
-        let textIndex = -1;
+      if (!message) {
+        return;
+      }
 
-        if (currentIndex >= 0 && segments[currentIndex] && segments[currentIndex].type === 'text') {
-          textIndex = currentIndex;
-        } else {
-          for (let i = segments.length - 1; i >= 0; i -= 1) {
-            if (segments[i]?.type === 'text') {
-              textIndex = i;
-              break;
-            }
+      const metadata = ensureStreamingMetadata(message);
+      const segments = ensureContentSegments(metadata);
+      const currentIndex = Number.isInteger(metadata.currentSegmentIndex)
+        ? Number(metadata.currentSegmentIndex)
+        : -1;
+      let textIndex = -1;
+
+      if (currentIndex >= 0 && isTextSegment(segments[currentIndex])) {
+        textIndex = currentIndex;
+      } else {
+        for (let i = segments.length - 1; i >= 0; i -= 1) {
+          if (isTextSegment(segments[i])) {
+            textIndex = i;
+            break;
           }
         }
-
-        if (textIndex >= 0) {
-          const currentText = typeof segments[textIndex].content === 'string'
-            ? segments[textIndex].content
-            : '';
-          segments[textIndex].content = normalizeStreamedText(
-            joinStreamingText(currentText, contentStr),
-          );
-        } else {
-          segments.push({
-            content: normalizeStreamedText(contentStr),
-            type: 'text' as const,
-          });
-          textIndex = segments.length - 1;
-        }
-
-        message.metadata.currentSegmentIndex = textIndex;
-        message.metadata.contentSegments = segments;
-        message.content = segments
-          .filter((s: any) => s.type === 'text')
-          .map((s: any) => s.content)
-          .join('');
-        streamedTextRef.value = message.content;
-        (message as any).updatedAt = new Date();
       }
+
+      if (textIndex >= 0) {
+        const currentSegment = segments[textIndex];
+        const currentText = typeof currentSegment?.content === 'string'
+          ? currentSegment.content
+          : '';
+        segments[textIndex].content = normalizeStreamedText(
+          joinStreamingText(currentText, contentStr),
+        );
+      } else {
+        segments.push({
+          content: normalizeStreamedText(contentStr),
+          type: 'text' as const,
+        });
+        textIndex = segments.length - 1;
+      }
+
+      metadata.currentSegmentIndex = textIndex;
+      metadata.contentSegments = segments;
+      message.content = collectVisibleText(segments);
+      streamedTextRef.value = message.content;
+      touchStreamingMessage(message);
       persistStreamingMessageDraft(state, message);
     });
   };
@@ -209,7 +255,9 @@ export const createStreamingMessageStateHelpers = ({
   };
 
   const appendTextToStreamingMessage = (contentStr: string) => {
-    if (!contentStr) return;
+    if (!contentStr) {
+      return;
+    }
     pendingTextDelta = pendingTextDelta
       ? normalizeStreamedText(joinStreamingText(pendingTextDelta, contentStr))
       : normalizeStreamedText(contentStr);
@@ -222,13 +270,14 @@ export const createStreamingMessageStateHelpers = ({
     }
     flushPendingTextToStreamingMessage();
 
-    set((state: any) => {
+    set((state) => {
       const message = ensureStreamingMessage(state);
-      if (!message || !message.metadata) {
+      if (!message) {
         return;
       }
 
-      const segments = message.metadata.contentSegments || [];
+      const metadata = ensureStreamingMetadata(message);
+      const segments = ensureContentSegments(metadata);
       const lastIdx = segments.length - 1;
       let createdThinkingSegment = false;
 
@@ -242,42 +291,39 @@ export const createStreamingMessageStateHelpers = ({
         createdThinkingSegment = true;
       }
 
-      message.content = segments
-        .filter((s: any) => s.type === 'text')
-        .map((s: any) => s.content)
-        .join('');
+      message.content = collectVisibleText(segments);
 
-      updateTurnHistoryProcess(state, (current: any) => ({
+      updateTurnHistoryProcess(state, (current) => ({
         hasProcess: true,
-        thinkingCount: Number(current?.thinkingCount || 0) + (createdThinkingSegment ? 1 : 0),
-        processMessageCount: Number(current?.processMessageCount || 0) + (createdThinkingSegment ? 1 : 0),
+        thinkingCount: Number(current.thinkingCount || 0) + (createdThinkingSegment ? 1 : 0),
+        processMessageCount: Number(current.processMessageCount || 0)
+          + (createdThinkingSegment ? 1 : 0),
       }));
 
-      (message as any).updatedAt = new Date();
+      touchStreamingMessage(message);
       persistStreamingMessageDraft(state, message);
     });
   };
 
   const applyCompleteContent = (finalContent: string) => {
-    if (!finalContent) return;
+    if (!finalContent) {
+      return;
+    }
     pendingTextDelta = '';
     clearTextFlushHandles();
-    const normalizedFinalContent = normalizeStreamedText(finalContent);
-    const normalizedCurrentContent = normalizeStreamedText(streamedTextRef.value || '');
-    // complete 事件在后端已经做过流式文本合并，这里不要再做一次拼接，避免正文重复。
-    // 若 complete 内容意外更短，保留已接收的更长内容兜底。
-    const safeFinalContent = normalizedFinalContent.length >= normalizedCurrentContent.length
-      ? normalizedFinalContent
-      : normalizedCurrentContent;
+    const safeFinalContent = normalizeStreamedText(finalContent);
     streamedTextRef.value = safeFinalContent;
 
-    set((state: any) => {
+    set((state) => {
       const message = ensureStreamingMessage(state);
-      if (!message || !message.metadata) return;
+      if (!message) {
+        return;
+      }
 
-      const segments = message.metadata.contentSegments || [];
+      const metadata = ensureStreamingMetadata(message);
+      const segments = ensureContentSegments(metadata);
       let textIndex = -1;
-      for (let i = segments.length - 1; i >= 0; i--) {
+      for (let i = segments.length - 1; i >= 0; i -= 1) {
         if (segments[i].type === 'text') {
           textIndex = i;
           break;
@@ -289,17 +335,17 @@ export const createStreamingMessageStateHelpers = ({
         textIndex = segments.length - 1;
       } else {
         segments[textIndex].content = safeFinalContent;
-        for (let i = 0; i < segments.length; i++) {
+        for (let i = 0; i < segments.length; i += 1) {
           if (i !== textIndex && segments[i].type === 'text') {
             segments[i].content = '';
           }
         }
       }
 
-      message.metadata.contentSegments = segments;
-      message.metadata.currentSegmentIndex = textIndex;
+      metadata.contentSegments = segments;
+      metadata.currentSegmentIndex = textIndex;
       message.content = safeFinalContent;
-      (message as any).updatedAt = new Date();
+      touchStreamingMessage(message);
       persistStreamingMessageDraft(state, message);
     });
   };
@@ -314,3 +360,5 @@ export const createStreamingMessageStateHelpers = ({
     applyCompleteContent,
   };
 };
+
+export type StreamingMessageStateHelpers = ReturnType<typeof createStreamingMessageStateHelpers>;

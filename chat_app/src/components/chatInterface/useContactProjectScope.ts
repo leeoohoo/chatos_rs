@@ -3,7 +3,7 @@ import {
   normalizeProjectScopeId,
   resolveSessionProjectScopeId,
 } from '../../features/contactSession/sessionResolver';
-import type { Session } from '../../types';
+import type { Project, Session } from '../../types';
 
 interface ContactProjectScopeApiClient {
   getContactProjects: (
@@ -17,9 +17,13 @@ interface ContactProjectScopeProject {
   name?: string;
 }
 
-interface UseContactProjectScopeOptions<TProject extends ContactProjectScopeProject> {
+interface ContactProjectLinkRow {
+  project_id?: string;
+}
+
+interface UseContactProjectScopeOptions<TProject extends ContactProjectScopeProject = Project> {
   apiClient: ContactProjectScopeApiClient;
-  currentSession: Session | Record<string, any> | null;
+  currentSession: Session | null;
   currentContactId: string;
   projects: TProject[];
 }
@@ -50,7 +54,7 @@ export const useContactProjectScope = <TProject extends ContactProjectScopeProje
     if (fromComposer !== '0') {
       return fromComposer;
     }
-    const fromSession = resolveSessionProjectScopeId(currentSession as any);
+    const fromSession = resolveSessionProjectScopeId(currentSession);
     if (fromSession !== '0') {
       return fromSession;
     }
@@ -77,7 +81,7 @@ export const useContactProjectScope = <TProject extends ContactProjectScopeProje
   }, [contactScopedProjectIds, currentContactId, projects]);
 
   useEffect(() => {
-    const sessionProjectId = resolveSessionProjectScopeId(currentSession as any);
+    const sessionProjectId = resolveSessionProjectScopeId(currentSession);
     setComposerProjectId(sessionProjectId !== '0' ? sessionProjectId : null);
   }, [currentSession?.id, currentSession?.metadata]);
 
@@ -96,7 +100,10 @@ export const useContactProjectScope = <TProject extends ContactProjectScopeProje
         }
         const ids = Array.from(new Set(
           (Array.isArray(rows) ? rows : [])
-            .map((item: any) => (typeof item?.project_id === 'string' ? item.project_id.trim() : ''))
+            .map((item) => {
+              const row = (item && typeof item === 'object' ? item : {}) as ContactProjectLinkRow;
+              return typeof row.project_id === 'string' ? row.project_id.trim() : '';
+            })
             .filter((projectId: string) => projectId.length > 0 && projectId !== '0'),
         ));
         setContactScopedProjectIds(ids);

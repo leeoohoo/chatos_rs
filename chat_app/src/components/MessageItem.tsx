@@ -1,212 +1,15 @@
 import React, { useEffect, useMemo, useState, memo } from 'react';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { AttachmentRenderer } from './AttachmentRenderer';
-import { ToolCallRenderer } from './ToolCallRenderer';
 import { cn, formatTime } from '../lib/utils';
 import type { Message, Attachment, ToolCall } from '../types';
-
-interface ToolCallTimelineProps {
-  toolCalls: ToolCall[];
-  toolResultById?: Map<string, Message>;
-}
-
-const ToolCallTimeline: React.FC<ToolCallTimelineProps> = ({
-  toolCalls,
-  toolResultById,
-}) => {
-  const [expanded, setExpanded] = useState(false);
-  const shouldClampTimeline = toolCalls.length > 6;
-
-  const resolveToolResult = (toolCall: ToolCall) => {
-    if (toolCall.result !== undefined && toolCall.result !== null) return toolCall.result;
-    const direct = toolResultById?.get(String(toolCall.id));
-    if (direct?.content !== undefined && direct?.content !== null) return direct.content;
-    return undefined;
-  };
-
-  const getToolStatus = (toolCall: ToolCall) => {
-    if (toolCall.error) return 'error';
-    const result = resolveToolResult(toolCall);
-    if (result !== undefined && result !== null) return 'success';
-    return 'pending';
-  };
-
-  const summaryStatus = useMemo(() => {
-    let hasError = false;
-    let allDone = true;
-    toolCalls.forEach(tc => {
-      const status = getToolStatus(tc);
-      if (status === 'error') hasError = true;
-      if (status !== 'success') allDone = false;
-    });
-    if (hasError) return 'error';
-    if (allDone) return 'success';
-    return 'pending';
-  }, [toolCalls, toolResultById]);
-
-  const summaryNames = useMemo(() => {
-    const names = toolCalls.map(tc => tc?.name).filter(Boolean);
-    if (names.length === 0) return '';
-    const shown = names.slice(0, 2).map(name => `@${name}`).join(' · ');
-    const more = names.length - 2;
-    return more > 0 ? `${shown} · +${more}` : shown;
-  }, [toolCalls]);
-
-  const statusDotClass = summaryStatus === 'error'
-    ? 'bg-red-500'
-    : summaryStatus === 'success'
-      ? 'bg-emerald-500'
-      : 'bg-amber-500';
-
-  return (
-    <div className="rounded-md border border-border bg-muted/30">
-      <div className="flex items-center justify-between px-3 py-2">
-        <div className="flex items-center gap-2 text-xs text-muted-foreground min-w-0">
-          <span className={`inline-flex h-2 w-2 rounded-full ${statusDotClass}`} />
-          <span className="font-medium text-foreground">工具调用</span>
-          <span>· {toolCalls.length} 个</span>
-          {summaryNames && (
-            <span className="hidden sm:inline truncate">{summaryNames}</span>
-          )}
-        </div>
-        <button
-          type="button"
-          onClick={() => setExpanded(!expanded)}
-          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-          aria-label={expanded ? '收起工具时间线' : '展开工具时间线'}
-          aria-expanded={expanded}
-        >
-          <span>{expanded ? '收起' : '展开'}</span>
-          <svg className={`w-3 h-3 transition-transform ${expanded ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <polyline points="6 9 12 15 18 9" />
-          </svg>
-        </button>
-      </div>
-
-      {expanded && (
-        <div
-          className={cn(
-            'px-3 pb-3 space-y-2',
-            shouldClampTimeline && 'max-h-72 overflow-y-auto pr-1',
-          )}
-        >
-          {toolCalls.map((toolCall, index) => {
-            const status = getToolStatus(toolCall);
-            const dotClass = status === 'error'
-              ? 'bg-red-500'
-              : status === 'success'
-                ? 'bg-emerald-500'
-                : 'bg-amber-500';
-            return (
-              <div key={toolCall.id || `tool-${index}`} className="flex gap-3">
-                <div className="relative flex flex-col items-center pt-1">
-                  <span className={`h-2.5 w-2.5 rounded-full ${dotClass}`} />
-                  {index < toolCalls.length - 1 && (
-                    <span className="w-px flex-1 bg-border mt-1" />
-                  )}
-                </div>
-                <div className="flex-1">
-                  <ToolCallRenderer
-                    toolCall={toolCall}
-                    toolResultById={toolResultById}
-                  />
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-};
-
-
-export type DerivedProcessStats = {
-  hasProcess: boolean;
-  hasStreamingAssistant: boolean;
-  toolCallCount: number;
-  thinkingCount: number;
-  processMessageCount: number;
-};
-
-type RenderSegment = {
-  type: 'text' | 'thinking' | 'tool_call';
-  content?: string;
-  toolCallId?: string;
-};
-
-const compactTextChunks = (chunks: string[]): string => {
-  let merged = '';
-  for (const rawChunk of chunks) {
-    const chunk = typeof rawChunk === 'string' ? rawChunk : '';
-    if (!chunk) {
-      continue;
-    }
-    if (!merged) {
-      merged = chunk;
-      continue;
-    }
-    if (chunk.startsWith(merged)) {
-      merged = chunk;
-      continue;
-    }
-    if (merged.startsWith(chunk) || merged.endsWith(chunk)) {
-      continue;
-    }
-    merged += chunk;
-  }
-  return merged;
-};
-
-const normalizeContentSegmentsForRender = (segments: any[]): RenderSegment[] => {
-  if (!Array.isArray(segments) || segments.length === 0) {
-    return [];
-  }
-
-  const normalized: RenderSegment[] = [];
-  let index = 0;
-  while (index < segments.length) {
-    const segment = segments[index];
-    const type = String(segment?.type || '').trim();
-    if (type === 'text') {
-      const textChunks: string[] = [];
-      while (index < segments.length && String(segments[index]?.type || '').trim() === 'text') {
-        const chunk = typeof segments[index]?.content === 'string' ? segments[index].content : '';
-        if (chunk) {
-          textChunks.push(chunk);
-        }
-        index += 1;
-      }
-      const mergedText = compactTextChunks(textChunks);
-      if (mergedText.trim().length > 0) {
-        normalized.push({ type: 'text', content: mergedText });
-      }
-      continue;
-    }
-
-    if (type === 'thinking') {
-      const content = typeof segment?.content === 'string' ? segment.content : '';
-      if (content.trim().length > 0) {
-        normalized.push({ type: 'thinking', content });
-      }
-      index += 1;
-      continue;
-    }
-
-    if (type === 'tool_call') {
-      const toolCallId = typeof segment?.toolCallId === 'string' ? segment.toolCallId.trim() : '';
-      if (toolCallId) {
-        normalized.push({ type: 'tool_call', toolCallId });
-      }
-      index += 1;
-      continue;
-    }
-
-    index += 1;
-  }
-
-  return normalized;
-};
+import { MessageContentRenderer } from './messageItem/MessageContentRenderer';
+import {
+  EMPTY_DERIVED_PROCESS_STATS,
+  normalizeContentSegmentsForRender,
+} from './messageItem/helpers';
+import type { DerivedProcessStats } from './messageItem/types';
+export type { DerivedProcessStats } from './messageItem/types';
 
 
 interface MessageItemProps {
@@ -267,24 +70,13 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
 
   const historyProcess = isUser ? (message.metadata?.historyProcess as any) : null;
 
-  const normalizeMetaId = (value: unknown): string => (
-    typeof value === 'string' ? value.trim() : ''
-  );
-  const emptyDerivedStats: DerivedProcessStats = {
-    hasProcess: false,
-    hasStreamingAssistant: false,
-    toolCallCount: 0,
-    thinkingCount: 0,
-    processMessageCount: 0,
-  };
-
   // 部分历史数据只把过程信息保存在最终assistant消息里，user消息的historyProcess.hasProcess可能为false
   const derivedProcessStats = useMemo(() => {
     if (!isUser) {
-      return emptyDerivedStats;
+      return EMPTY_DERIVED_PROCESS_STATS;
     }
 
-    return derivedProcessStatsByUserId?.get(message.id) || emptyDerivedStats;
+    return derivedProcessStatsByUserId?.get(message.id) || EMPTY_DERIVED_PROCESS_STATS;
   }, [
     isUser,
     message.id,
@@ -521,152 +313,18 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
           </div>
         ) : (
           <div className="space-y-3">
-            {/* 使用新的内容分段渲染机制 */}
-            {(() => {
-              const contentSegments = renderContentSegments;
-              const hasContent = message.content && message.content.trim().length > 0;
-              const isCurrentlyStreaming = isStreaming && isLast;
-              
-              // 如果有内容分段，使用分段渲染
-              if (contentSegments.length > 0) {
-                const nodes: React.ReactNode[] = [];
-                let index = 0;
-                while (index < contentSegments.length) {
-                  const segment = contentSegments[index];
-
-                  if (segment.type === 'tool_call') {
-                    const groupedToolCalls: ToolCall[] = [];
-                    const groupedToolCallIds = new Set<string>();
-                    let j = index;
-                    while (j < contentSegments.length && contentSegments[j].type === 'tool_call') {
-                      const seg = contentSegments[j];
-                      const toolCallId = normalizeMetaId(seg?.toolCallId);
-                      if (toolCallId && !groupedToolCallIds.has(toolCallId)) {
-                        groupedToolCallIds.add(toolCallId);
-                        const matchedToolCall = toolCallsById.get(toolCallId) || assistantToolCallsById?.get(toolCallId);
-                        if (matchedToolCall) {
-                          groupedToolCalls.push({
-                            ...matchedToolCall,
-                            id: toolCallId,
-                            messageId: matchedToolCall.messageId || message.id,
-                            name: matchedToolCall.name || 'unknown_tool',
-                            arguments: matchedToolCall.arguments ?? {},
-                            createdAt: matchedToolCall.createdAt || message.createdAt,
-                          } as ToolCall);
-                        } else {
-                          groupedToolCalls.push({
-                            id: toolCallId,
-                            messageId: message.id,
-                            name: 'unknown_tool',
-                            arguments: {},
-                            createdAt: message.createdAt,
-                          } as ToolCall);
-                        }
-                      }
-                      j += 1;
-                    }
-
-                    if (collapseAssistantProcessByDefault) {
-                      index = j;
-                      continue;
-                    }
-
-                    if (groupedToolCalls.length > 0) {
-                      nodes.push(
-                        <ToolCallTimeline
-                          key={`tool-group-${index}`}
-                          toolCalls={groupedToolCalls}
-                          toolResultById={toolResultById}
-                        />
-                      );
-                    }
-
-                    index = j;
-                    continue;
-                  }
-
-                  if (segment.type === 'text') {
-                    const renderSegmentContent = typeof segment.content === 'string' && segment.content.trim().length > 0
-                      ? segment.content
-                      : '';
-                    const nextIndex = index + 1;
-                    const shouldRenderStreamingCursor = isCurrentlyStreaming && nextIndex === contentSegments.length;
-                    if (!renderSegmentContent && !shouldRenderStreamingCursor) {
-                      index = nextIndex;
-                      continue;
-                    }
-                    nodes.push(
-                      <div key={`segment-${index}`} className="prose prose-sm max-w-none">
-                        <MarkdownRenderer
-                          content={renderSegmentContent}
-                          isStreaming={shouldRenderStreamingCursor}
-                          onApplyCode={handleApplyCode}
-                        />
-                      </div>
-                    );
-                    index = nextIndex;
-                    continue;
-                  }
-                  if (segment.type === 'thinking') {
-                    if (collapseAssistantProcessByDefault) {
-                      index += 1;
-                      continue;
-                    }
-
-                    nodes.push(
-                      <details
-                        key={`thinking-${index}`}
-                        className="group border border-gray-200 dark:border-gray-700 rounded-md bg-muted px-3 py-2"
-                      >
-                        <summary className="cursor-pointer text-xs text-gray-500 dark:text-gray-400 select-none">
-                          Thinking
-                        </summary>
-                        <div className="mt-1">
-                          <MarkdownRenderer
-                            content={(segment.content as string) || ''}
-                            isStreaming={isCurrentlyStreaming && index === contentSegments.length - 1}
-                            onApplyCode={handleApplyCode}
-                            className="thinking not-prose"
-                          />
-                        </div>
-                      </details>
-                    );
-                    index += 1;
-                    continue;
-                  }
-
-                  index += 1;
-                }
-
-                return <div className="space-y-0.5">{nodes}</div>;
-              }
-              
-              // 回退到传统渲染方式（向后兼容）
-              return (
-                <div className="space-y-0.5">
-                  {/* 渲染文本内容 */}
-                  {hasContent && (
-                    <div className="prose prose-sm max-w-none">
-                      <MarkdownRenderer
-                        content={message.content}
-                        isStreaming={isCurrentlyStreaming}
-                        onApplyCode={handleApplyCode}
-                      />
-                    </div>
-                  )}
-                  
-                  {/* 渲染工具调用（历史消息兼容） - 修复：确保工具调用总是被渲染 */}
-                  {!collapseAssistantProcessByDefault && toolCalls.length > 0 && (
-                    <div className="space-y-0.5">
-                      <ToolCallTimeline
-                        toolCalls={toolCalls as ToolCall[]}
-                        toolResultById={toolResultById}
-                      />
-                     </div>
-                  )}
-                </div>
-              );
-            })()}
+            <MessageContentRenderer
+              message={message}
+              isLast={isLast}
+              isStreaming={isStreaming}
+              renderContentSegments={renderContentSegments}
+              toolCalls={toolCalls as ToolCall[]}
+              toolCallsById={toolCallsById}
+              assistantToolCallsById={assistantToolCallsById}
+              toolResultById={toolResultById}
+              collapseAssistantProcessByDefault={collapseAssistantProcessByDefault}
+              onApplyCode={handleApplyCode}
+            />
           </div>
         )}
 

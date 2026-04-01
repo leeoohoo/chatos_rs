@@ -2,15 +2,7 @@ import { useCallback, useState, type Dispatch, type SetStateAction } from 'react
 import type { Session } from '../../types';
 import { mergeSessionRuntimeIntoMetadata } from '../../lib/store/helpers/sessionRuntime';
 import { CONTACT_CHAT_PROJECT_ID } from './useContactSessionListState';
-
-interface ContactItem {
-  id: string;
-  agentId: string;
-  name: string;
-  status: string;
-  createdAt: Date;
-  updatedAt: Date;
-}
+import type { ContactItem } from './types';
 
 interface UseContactSessionCreatorOptions {
   agents: any[];

@@ -1,9 +1,58 @@
-import type { UiPromptPanelState } from '../../lib/store/types';
+import type { AiModelConfig, Message } from '../../types';
+import type { UiPromptChoice, UiPromptPanelState } from '../../lib/store/types';
 import type { SessionSummaryWorkbarItem, TaskWorkbarItem } from '../TaskWorkbar';
 import type { UiPromptHistoryItem } from './types';
 
-export const toUiPromptPanelFromRecord = (record: any): UiPromptPanelState | null => {
-  const source = record?.prompt && typeof record.prompt === 'object' ? record.prompt : record;
+interface UiPromptRecordLike {
+  prompt?: Record<string, unknown>;
+  response?: Record<string, unknown> | null;
+  payload?: Record<string, unknown>;
+  id?: string;
+  kind?: string;
+  status?: string;
+  title?: string;
+  message?: string;
+  prompt_id?: string;
+  session_id?: string;
+  conversation_turn_id?: string;
+  tool_call_id?: string;
+  allow_cancel?: boolean;
+  timeout_ms?: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+interface ToolCallLike {
+  id?: string;
+  name?: string;
+  tool_call_id?: string;
+  toolCallId?: string;
+  result?: unknown;
+  finalResult?: unknown;
+  error?: unknown;
+  completed?: boolean;
+}
+
+interface MessageWithToolCalls {
+  sessionId?: string;
+  toolCalls?: ToolCallLike[];
+  metadata?: (NonNullable<Message['metadata']> & {
+    conversation_turn_id?: string;
+    toolCalls?: ToolCallLike[];
+  }) | undefined;
+}
+
+const asRecord = (value: unknown): Record<string, unknown> => (
+  value && typeof value === 'object' ? value as Record<string, unknown> : {}
+);
+
+const getString = (value: unknown): string => (typeof value === 'string' ? value : '');
+
+export const toUiPromptPanelFromRecord = (record: unknown): UiPromptPanelState | null => {
+  const normalizedRecord = asRecord(record) as UiPromptRecordLike;
+  const source = normalizedRecord.prompt && typeof normalizedRecord.prompt === 'object'
+    ? normalizedRecord.prompt
+    : normalizedRecord;
   const promptId = typeof source?.prompt_id === 'string' ? source.prompt_id.trim() : '';
   const sessionId = typeof source?.session_id === 'string' ? source.session_id.trim() : '';
   const conversationTurnId = typeof source?.conversation_turn_id === 'string'
@@ -16,10 +65,10 @@ export const toUiPromptPanelFromRecord = (record: any): UiPromptPanelState | nul
   const kindRaw = String(source?.kind || 'kv').trim().toLowerCase();
   const kind = kindRaw === 'choice' ? 'choice' : (kindRaw === 'mixed' ? 'mixed' : 'kv');
 
-  const payload = source?.payload && typeof source.payload === 'object' ? source.payload : {};
-  const fields = Array.isArray((payload as any).fields) ? (payload as any).fields : [];
-  const choice = (payload as any).choice && typeof (payload as any).choice === 'object'
-    ? (payload as any).choice
+  const payload = asRecord(source?.payload);
+  const fields = Array.isArray(payload.fields) ? payload.fields : [];
+  const choice = payload.choice && typeof payload.choice === 'object' && Array.isArray((payload.choice as UiPromptChoice).options)
+    ? payload.choice as UiPromptChoice
     : undefined;
 
   return {
@@ -38,37 +87,38 @@ export const toUiPromptPanelFromRecord = (record: any): UiPromptPanelState | nul
   };
 };
 
-export const normalizeUiPromptHistoryItem = (raw: any): UiPromptHistoryItem | null => {
+export const normalizeUiPromptHistoryItem = (raw: unknown): UiPromptHistoryItem | null => {
   if (!raw || typeof raw !== 'object') {
     return null;
   }
 
-  const promptId = typeof raw.id === 'string' ? raw.id.trim() : '';
-  const sessionId = typeof raw.session_id === 'string' ? raw.session_id.trim() : '';
-  const conversationTurnId = typeof raw.conversation_turn_id === 'string'
-    ? raw.conversation_turn_id.trim()
+  const record = raw as UiPromptRecordLike;
+  const promptId = typeof record.id === 'string' ? record.id.trim() : '';
+  const sessionId = typeof record.session_id === 'string' ? record.session_id.trim() : '';
+  const conversationTurnId = typeof record.conversation_turn_id === 'string'
+    ? record.conversation_turn_id.trim()
     : '';
   if (!promptId || !sessionId) {
     return null;
   }
 
-  const prompt = raw.prompt && typeof raw.prompt === 'object' ? raw.prompt : {};
-  const response = raw.response && typeof raw.response === 'object' ? raw.response : null;
-  const title = typeof (prompt as any).title === 'string' ? (prompt as any).title : '';
-  const message = typeof (prompt as any).message === 'string' ? (prompt as any).message : '';
+  const prompt = asRecord(record.prompt);
+  const response = record.response && typeof record.response === 'object' ? record.response : null;
+  const title = getString(prompt.title);
+  const message = getString(prompt.message);
 
   return {
     id: promptId,
     sessionId,
     conversationTurnId,
-    kind: String(raw.kind || ''),
-    status: String(raw.status || ''),
+    kind: String(record.kind || ''),
+    status: String(record.status || ''),
     title,
     message,
     prompt,
     response,
-    createdAt: String(raw.created_at || ''),
-    updatedAt: String(raw.updated_at || ''),
+    createdAt: String(record.created_at || ''),
+    updatedAt: String(record.updated_at || ''),
   };
 };
 
@@ -88,12 +138,12 @@ export const buildSupportedFileTypes = (supportsImages: boolean): string[] => (
 
 export const resolveModelSupportFlags = (
   selectedModelId: string | null,
-  aiModelConfigs: any[],
+  aiModelConfigs: AiModelConfig[],
 ): { supportsImages: boolean; supportsReasoning: boolean } => {
   if (!selectedModelId) {
     return { supportsImages: false, supportsReasoning: false };
   }
-  const matched = (aiModelConfigs || []).find((item: any) => item?.id === selectedModelId);
+  const matched = (aiModelConfigs || []).find((item) => item?.id === selectedModelId);
   return {
     supportsImages: matched?.supports_images === true,
     supportsReasoning: matched?.supports_reasoning === true,
@@ -143,7 +193,7 @@ export const isTaskMutationToolName = (name: unknown): boolean => {
     || normalized.includes('delete_task');
 };
 
-export const collectMessageToolCalls = (message: any): any[] => {
+export const collectMessageToolCalls = (message: MessageWithToolCalls): ToolCallLike[] => {
   const topLevel = Array.isArray(message?.toolCalls) ? message.toolCalls : [];
   const metadataLevel = Array.isArray(message?.metadata?.toolCalls)
     ? message.metadata.toolCalls
@@ -155,7 +205,7 @@ export const collectMessageToolCalls = (message: any): any[] => {
   }
 
   const seen = new Set<string>();
-  return merged.filter((toolCall: any, index: number) => {
+  return merged.filter((toolCall, index) => {
     const key = String(
       toolCall?.id || toolCall?.tool_call_id || toolCall?.toolCallId || `${index}:${toolCall?.name || ''}`
     );
@@ -167,14 +217,14 @@ export const collectMessageToolCalls = (message: any): any[] => {
   });
 };
 
-export const shouldRefreshForTaskMutationToolCall = (toolCall: any): boolean => {
+export const shouldRefreshForTaskMutationToolCall = (toolCall: ToolCallLike): boolean => {
   if (isTaskMutationToolName(toolCall?.name)) {
     return true;
   }
   return false;
 };
 
-export const hasToolCallError = (toolCall: any): boolean => {
+export const hasToolCallError = (toolCall: ToolCallLike): boolean => {
   if (toolCall?.error === null || toolCall?.error === undefined) {
     return false;
   }
@@ -258,7 +308,7 @@ export const collectTaskIdsFromToolResult = (
   Object.values(record).forEach((child) => collectTaskIdsFromToolResult(child, collector, depth + 1));
 };
 
-export const extractTaskIdsFromToolCall = (toolCall: any): string[] => {
+export const extractTaskIdsFromToolCall = (toolCall: ToolCallLike): string[] => {
   const output = new Set<string>();
 
   const candidates = [
@@ -272,51 +322,55 @@ export const extractTaskIdsFromToolCall = (toolCall: any): string[] => {
   return Array.from(output);
 };
 
-export const normalizeWorkbarTask = (raw: any): TaskWorkbarItem => {
-  const statusRaw = String(raw?.status || 'todo').toLowerCase();
+export const normalizeWorkbarTask = (raw: unknown): TaskWorkbarItem => {
+  const record = asRecord(raw);
+  const statusRaw = String(record.status || 'todo').toLowerCase();
   const status: TaskWorkbarItem['status'] =
     statusRaw === 'doing' || statusRaw === 'blocked' || statusRaw === 'done'
       ? statusRaw
       : 'todo';
 
-  const priorityRaw = String(raw?.priority || 'medium').toLowerCase();
+  const priorityRaw = String(record.priority || 'medium').toLowerCase();
   const priority: TaskWorkbarItem['priority'] =
     priorityRaw === 'high' || priorityRaw === 'low' ? priorityRaw : 'medium';
 
-  const conversationTurnId = String(raw?.conversation_turn_id ?? raw?.conversationTurnId ?? '').trim();
-  const createdAt = String(raw?.created_at ?? raw?.createdAt ?? '');
-  const dueAtRaw = raw?.due_at ?? raw?.dueAt;
+  const conversationTurnId = String(record.conversation_turn_id ?? record.conversationTurnId ?? '').trim();
+  const createdAt = String(record.created_at ?? record.createdAt ?? '');
+  const dueAtRaw = record.due_at ?? record.dueAt;
 
   return {
-    id: String(raw?.id || '').trim(),
-    title: String(raw?.title || ''),
-    details: String(raw?.details || raw?.description || ''),
+    id: String(record.id || '').trim(),
+    title: String(record.title || ''),
+    details: String(record.details || record.description || ''),
     status,
     priority,
     conversationTurnId,
     createdAt,
     dueAt: dueAtRaw ? String(dueAtRaw) : null,
-    tags: Array.isArray(raw?.tags)
-      ? raw.tags
-          .map((tag: any) => String(tag).trim())
+    tags: Array.isArray(record.tags)
+      ? record.tags
+          .map((tag) => String(tag).trim())
           .filter((tag: string) => tag.length > 0)
       : [],
   };
 };
 
-export const normalizeWorkbarSummary = (raw: any): SessionSummaryWorkbarItem => ({
-  id: String(raw?.id || '').trim(),
-  summaryText: String(raw?.summary_text ?? raw?.summaryText ?? ''),
-  summaryModel: String(raw?.summary_model ?? raw?.summaryModel ?? ''),
-  triggerType: String(raw?.trigger_type ?? raw?.triggerType ?? ''),
-  sourceMessageCount: Number(raw?.source_message_count ?? raw?.sourceMessageCount ?? 0),
-  sourceEstimatedTokens: Number(raw?.source_estimated_tokens ?? raw?.sourceEstimatedTokens ?? 0),
-  createdAt: String(raw?.created_at ?? raw?.createdAt ?? ''),
-  status: typeof raw?.status === 'string' ? raw.status : undefined,
-  errorMessage: typeof raw?.error_message === 'string'
-    ? raw.error_message
-    : (typeof raw?.errorMessage === 'string' ? raw.errorMessage : null),
-});
+export const normalizeWorkbarSummary = (raw: unknown): SessionSummaryWorkbarItem => {
+  const record = asRecord(raw);
+  return {
+    id: String(record.id || '').trim(),
+    summaryText: String(record.summary_text ?? record.summaryText ?? ''),
+    summaryModel: String(record.summary_model ?? record.summaryModel ?? ''),
+    triggerType: String(record.trigger_type ?? record.triggerType ?? ''),
+    sourceMessageCount: Number(record.source_message_count ?? record.sourceMessageCount ?? 0),
+    sourceEstimatedTokens: Number(record.source_estimated_tokens ?? record.sourceEstimatedTokens ?? 0),
+    createdAt: String(record.created_at ?? record.createdAt ?? ''),
+    status: typeof record.status === 'string' ? record.status : undefined,
+    errorMessage: typeof record.error_message === 'string'
+      ? record.error_message
+      : (typeof record.errorMessage === 'string' ? record.errorMessage : null),
+  };
+};
 
 export const selectLatestTurnTasks = (tasks: TaskWorkbarItem[]): TaskWorkbarItem[] => {
   if (tasks.length === 0) {

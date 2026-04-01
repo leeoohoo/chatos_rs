@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useMemo } from 'react';
 import { shallow } from 'zustand/shallow';
 
 import { ProjectContactPickerModal } from '../sessionList/ProjectContactPickerModal';
@@ -6,7 +6,6 @@ import { apiClient as globalApiClient } from '../../lib/api/client';
 import { useChatApiClientFromContext, useChatStoreSelector } from '../../lib/store/ChatStoreContext';
 import { cn } from '../../lib/utils';
 import type { Project, Session } from '../../types';
-import type { TurnRuntimeSnapshotLookupResponse } from '../../lib/api/client/types';
 import {
   findLatestMatchedSession,
   normalizeProjectScopeId,
@@ -28,6 +27,7 @@ import TeamMembersSidebar from './teamMembers/TeamMembersSidebar';
 import TeamMemberWorkspace from './teamMembers/TeamMemberWorkspace';
 import { useTeamMemberConversation } from './teamMembers/useTeamMemberConversation';
 import { useProjectMembersManager } from './teamMembers/useProjectMembersManager';
+import { useTeamMemberRuntimeContext } from './teamMembers/useTeamMemberRuntimeContext';
 
 interface TeamMembersPaneProps {
   project: Project;
@@ -103,13 +103,6 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
     () => apiClientFromContext || globalApiClient,
     [apiClientFromContext],
   );
-  const [runtimeContextOpen, setRuntimeContextOpen] = useState(false);
-  const [runtimeContextSessionId, setRuntimeContextSessionId] = useState<string | null>(null);
-  const [runtimeContextData, setRuntimeContextData] =
-    useState<TurnRuntimeSnapshotLookupResponse | null>(null);
-  const [runtimeContextLoading, setRuntimeContextLoading] = useState(false);
-  const [runtimeContextError, setRuntimeContextError] = useState<string | null>(null);
-  const [openingRuntimeContextContactId, setOpeningRuntimeContextContactId] = useState<string | null>(null);
 
   const normalizedProjectId = normalizeProjectScopeId(project?.id || null);
   const normalizedContacts = useMemo<ContactItem[]>(() => (
@@ -320,7 +313,7 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
     apiClient,
     session: isSelectedSessionActive ? selectedProjectSession : null,
     enabled: Boolean(isSelectedSessionActive && selectedProjectSession?.id),
-    messages: messages as any[],
+    messages,
     selectedSessionActiveTurnId,
     sessionRuntimeGuidanceState,
     taskReviewPanelsBySession,
@@ -346,65 +339,23 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
       await handleSelectContact(contactId);
     }
   }, [confirmAddMemberFromManager, handleSelectContact]);
-
-  const loadLatestRuntimeContext = useCallback(async (sessionId: string) => {
-    if (!sessionId) {
-      return;
-    }
-    setRuntimeContextLoading(true);
-    setRuntimeContextError(null);
-    try {
-      const payload = await apiClient.getSessionLatestTurnRuntimeContext(sessionId);
-      setRuntimeContextData(payload);
-    } catch (error) {
-      console.error('Failed to load turn runtime context in team pane:', error);
-      setRuntimeContextError(error instanceof Error ? error.message : '加载上下文失败');
-    } finally {
-      setRuntimeContextLoading(false);
-    }
-  }, [apiClient]);
-
-  const handleOpenRuntimeContext = useCallback(async (contact: ContactItem) => {
-    setOpeningRuntimeContextContactId(contact.id);
-    setSelectedContactId(contact.id);
-    try {
-      const sessionId = await ensureContactSession(contact);
-      if (!sessionId) {
-        return;
-      }
-      const targetSession = (sessions || []).find((item) => item.id === sessionId) || null;
-      if (targetSession && resolveSessionProjectScopeId(targetSession) !== normalizedProjectId) {
-        setRuntimeContextError('检测到跨项目会话，已阻止加载上下文');
-        setRuntimeContextOpen(false);
-        return;
-      }
-      if (runtimeContextOpen && runtimeContextSessionId === sessionId) {
-        setRuntimeContextOpen(false);
-        return;
-      }
-      setRuntimeContextOpen(true);
-      setRuntimeContextSessionId(sessionId);
-      setRuntimeContextData(null);
-      await loadLatestRuntimeContext(sessionId);
-    } finally {
-      setOpeningRuntimeContextContactId((prev) => (prev === contact.id ? null : prev));
-    }
-  }, [
-    ensureContactSession,
-    loadLatestRuntimeContext,
-    normalizedProjectId,
+  const {
     runtimeContextOpen,
+    setRuntimeContextOpen,
     runtimeContextSessionId,
-    sessions,
+    runtimeContextData,
+    runtimeContextLoading,
+    runtimeContextError,
+    openingRuntimeContextContactId,
+    handleOpenRuntimeContext,
+    handleRefreshRuntimeContext,
+  } = useTeamMemberRuntimeContext({
+    apiClient,
+    sessions: sessions || [],
+    normalizedProjectId,
+    ensureContactSession,
     setSelectedContactId,
-  ]);
-
-  const handleRefreshRuntimeContext = useCallback(() => {
-    if (!runtimeContextSessionId) {
-      return;
-    }
-    void loadLatestRuntimeContext(runtimeContextSessionId);
-  }, [loadLatestRuntimeContext, runtimeContextSessionId]);
+  });
 
   const handleRuntimeGuidanceSend = useCallback(async (content: string) => {
     if (!selectedProjectSession) {

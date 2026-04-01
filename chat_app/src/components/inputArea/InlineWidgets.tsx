@@ -1,5 +1,6 @@
 import React from 'react';
 import { cn, formatFileSize } from '../../lib/utils';
+import type { AiModelConfig } from '../../types';
 
 interface InputAreaAttachmentsPreviewProps {
   attachments: File[];
@@ -72,7 +73,7 @@ interface InputAreaFloatingModelPickerProps {
   currentAiLabel: string;
   pickerOpen: boolean;
   setPickerOpen: React.Dispatch<React.SetStateAction<boolean>>;
-  enabledModels: any[];
+  enabledModels: AiModelConfig[];
   selectedModelId?: string | null;
   onModelChange?: (modelId: string | null) => void;
 }
@@ -114,7 +115,7 @@ export const InputAreaFloatingModelPicker: React.FC<InputAreaFloatingModelPicker
           {enabledModels.length > 0 && (
             <>
               <div className="px-2 py-1 text-[11px] uppercase tracking-wide text-muted-foreground">模型</div>
-              {enabledModels.map((model: any) => (
+              {enabledModels.map((model) => (
                 <button
                   key={model.id}
                   className={cn('w-full text-left px-3 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground', selectedModelId === model.id && 'bg-accent/40')}

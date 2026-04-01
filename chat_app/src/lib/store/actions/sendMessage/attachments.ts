@@ -1,3 +1,8 @@
+import type {
+  ApiAttachmentPayload,
+  PreviewAttachment,
+} from './types';
+
 const MAX_EMBED_BYTES = 5 * 1024 * 1024; // 5MB 上限，超出不内联内容
 
 const readFileAsDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
@@ -14,7 +19,7 @@ const readFileAsText = (file: File) => new Promise<string>((resolve, reject) => 
   reader.readAsText(file);
 });
 
-const makePreviewAttachment = async (file: File) => {
+const makePreviewAttachment = async (file: File): Promise<PreviewAttachment> => {
   const isImage = file.type.startsWith('image/');
   const isAudio = file.type.startsWith('audio/');
   const url = isImage || isAudio ? await readFileAsDataUrl(file) : URL.createObjectURL(file);
@@ -30,7 +35,7 @@ const makePreviewAttachment = async (file: File) => {
   };
 };
 
-const makeApiAttachment = async (file: File) => {
+const makeApiAttachment = async (file: File): Promise<ApiAttachmentPayload> => {
   const isImage = file.type.startsWith('image/');
   const isText = file.type.startsWith('text/') || file.type === 'application/json';
   const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
@@ -54,11 +59,18 @@ const makeApiAttachment = async (file: File) => {
 };
 
 export async function prepareAttachmentsForStreaming(
-  attachments: any[],
-  supportsImages: boolean
-): Promise<{ previewAttachments: any[]; apiAttachments: any[] }> {
+  attachments: File[],
+  supportsImages: boolean,
+): Promise<{
+  previewAttachments: PreviewAttachment[];
+  apiAttachments: ApiAttachmentPayload[];
+}> {
   const safeAttachments = Array.isArray(attachments)
-    ? (supportsImages ? attachments : attachments.filter((f: any) => !(f && typeof f.type === 'string' && f.type.startsWith('image/'))))
+    ? (
+      supportsImages
+        ? attachments
+        : attachments.filter((file) => !file.type.startsWith('image/'))
+    )
     : [];
 
   const previewAttachments = await Promise.all((safeAttachments || []).map(makePreviewAttachment));

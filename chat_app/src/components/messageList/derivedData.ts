@@ -1,5 +1,5 @@
 import type { Message } from '../../types';
-import type { DerivedProcessStats } from '../MessageItem';
+import type { DerivedProcessStats } from '../messageItem/types';
 
 export const normalizeTurnId = (value: unknown): string => (
   typeof value === 'string' ? value.trim() : ''

@@ -4,7 +4,10 @@ use tracing::info;
 use super::input_transform::{
     build_current_input_items, extract_raw_input, normalize_input_for_provider,
 };
-use super::prev_context::{model_supports_prev_response_id, should_prefer_stateless_context};
+use super::prev_context::{
+    model_supports_prev_response_id, should_disable_prev_id_for_prefixed_input_items,
+    should_prefer_stateless_context,
+};
 use super::{AiClient, ProcessOptions};
 
 impl AiClient {
@@ -98,7 +101,18 @@ impl AiClient {
             .as_ref()
             .map(|s| !self.prev_response_id_disabled_sessions.contains(s))
             .unwrap_or(true);
-        let can_use_prev_id = allow_prev_id && model_supports_prev_response_id(supports_responses);
+        let mut can_use_prev_id =
+            allow_prev_id && model_supports_prev_response_id(supports_responses);
+        if can_use_prev_id
+            && should_disable_prev_id_for_prefixed_input_items(prefixed_input_items.as_slice())
+        {
+            info!(
+                "[AI_V3] disable previous_response_id because runtime prefixed input items are present: session_id={}",
+                session_id.clone().unwrap_or_else(|| "n/a".to_string())
+            );
+            can_use_prev_id = false;
+            previous_response_id = None;
+        }
         let use_prev_id = !prefer_stateless && previous_response_id.is_some() && can_use_prev_id;
         let stateless_history_limit = if !use_prev_id && history_limit == 0 {
             tracing::warn!("[AI_V3] history_limit=0 with stateless mode; fallback to 20");

@@ -1,6 +1,8 @@
 import type { McpConfig } from '../../../types';
+import type { McpConfigResponse, McpConfigUpdatePayload } from '../../api/client/types';
 import type ApiClient from '../../api/client';
 import { debugLog } from '@/lib/utils';
+import { generateId } from '@/lib/utils';
 
 interface Deps {
   set: any;
@@ -8,6 +10,37 @@ interface Deps {
   client: ApiClient;
   getUserIdParam: () => string;
 }
+
+const toDate = (value?: string): Date => {
+  if (!value) {
+    return new Date();
+  }
+
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+};
+
+const normalizeMcpConfig = (config: McpConfigResponse): McpConfig => {
+  const createdAt = config.created_at || config.createdAt;
+  const updatedAt = config.updated_at || config.updatedAt || createdAt;
+
+  return {
+    id: config.id,
+    name: config.name,
+    display_name: config.display_name ?? config.displayName ?? undefined,
+    command: config.command,
+    type: config.type,
+    args: config.args ?? null,
+    env: config.env ?? null,
+    cwd: config.cwd ?? null,
+    enabled: config.enabled === true,
+    readonly: config.readonly,
+    builtin: config.builtin,
+    config: config.config ?? undefined,
+    createdAt: toDate(createdAt),
+    updatedAt: toDate(updatedAt),
+  };
+};
 
 export function createMcpActions({ set, get, client, getUserIdParam }: Deps) {
   return {
@@ -19,7 +52,7 @@ export function createMcpActions({ set, get, client, getUserIdParam }: Deps) {
         debugLog('🔍 [后端返回] loadMcpConfigs 返回的数据:', configs);
 
         set((state: any) => {
-          state.mcpConfigs = configs as McpConfig[];
+          state.mcpConfigs = configs.map(normalizeMcpConfig);
         });
       } catch (error) {
         console.error('Failed to load MCP configs:', error);
@@ -34,44 +67,43 @@ export function createMcpActions({ set, get, client, getUserIdParam }: Deps) {
         const userId = getUserIdParam();
         debugLog('🔍 updateMcpConfig 调用:', {
           userId,
-          configId: (config as any).id,
-          configName: (config as any).name,
+          configId: config.id,
+          configName: config.name,
         });
 
-        let saved: McpConfig | null = null;
-        if ((config as any).id) {
-          const updateData: any = {
-            id: (config as any).id,
-            name: (config as any).name,
-            command: (config as any).command,
-            type: (config as any).type,
-            args: (config as any).args ?? undefined,
-            env: (config as any).env ?? undefined,
-            cwd: (config as any).cwd ?? undefined,
-            enabled: (config as any).enabled,
-            userId
+        let saved: McpConfigResponse | null = null;
+        if (config.id) {
+          const updateData: McpConfigUpdatePayload = {
+            id: config.id,
+            name: config.name,
+            command: config.command,
+            type: config.type,
+            args: config.args ?? undefined,
+            env: config.env ?? undefined,
+            cwd: config.cwd ?? undefined,
+            enabled: config.enabled,
+            userId,
           };
           debugLog('🔍 updateMcpConfig 更新数据:', updateData);
-          saved = await (client as any).updateMcpConfig((config as any).id, updateData);
+          saved = await client.updateMcpConfig(config.id, updateData);
         } else {
-          // 如果没有 id，视为创建
-          const createData: any = {
-            name: (config as any).name,
-            command: (config as any).command,
-            type: (config as any).type,
-            args: (config as any).args ?? undefined,
-            env: (config as any).env ?? undefined,
-            cwd: (config as any).cwd ?? undefined,
-            enabled: (config as any).enabled,
-            user_id: userId
+          const createData = {
+            id: generateId(),
+            name: config.name,
+            command: config.command,
+            type: config.type,
+            args: config.args ?? undefined,
+            env: config.env ?? undefined,
+            cwd: config.cwd ?? undefined,
+            enabled: config.enabled,
+            user_id: userId,
           };
-          saved = await (client as any).createMcpConfig(createData);
+          saved = await client.createMcpConfig(createData);
         }
 
-        // 重新加载配置
         await get().loadMcpConfigs();
 
-        return saved;
+        return saved ? normalizeMcpConfig(saved) : null;
       } catch (error) {
         console.error('Failed to update MCP config:', error);
         set((state: any) => {

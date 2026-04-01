@@ -1,14 +1,21 @@
 import { useMemo } from 'react';
 
 import { readSessionRuntimeFromMetadata } from '../../lib/store/helpers/sessionRuntime';
+import type { Project, RemoteConnection, Session, Terminal } from '../../types';
+
+interface SessionHeaderContactItem {
+  id: string;
+  name: string;
+  agentId?: string | null;
+}
 
 interface UseSessionHeaderMetaParams {
-  currentSession: any | null;
-  contacts: any[];
+  currentSession: Session | null;
+  contacts: SessionHeaderContactItem[];
   activePanel: string;
-  currentProject: any;
-  currentTerminal: any;
-  currentRemoteConnection: any;
+  currentProject: Project | null;
+  currentTerminal: Terminal | null;
+  currentRemoteConnection: RemoteConnection | null;
 }
 
 export const useSessionHeaderMeta = ({
@@ -23,13 +30,13 @@ export const useSessionHeaderMeta = ({
     if (!currentSession) {
       return '';
     }
-    const runtime = readSessionRuntimeFromMetadata((currentSession as any).metadata);
+    const runtime = readSessionRuntimeFromMetadata(currentSession.metadata);
     const contactId = typeof runtime?.contactId === 'string' ? runtime.contactId.trim() : '';
     const contactAgentId = typeof runtime?.contactAgentId === 'string' ? runtime.contactAgentId.trim() : '';
     if (!contactId && !contactAgentId) {
       return '';
     }
-    const matched = (contacts || []).find((item: any) => {
+    const matched = (contacts || []).find((item) => {
       if (contactId && typeof item?.id === 'string' && item.id === contactId) {
         return true;
       }
@@ -45,7 +52,7 @@ export const useSessionHeaderMeta = ({
     if (!currentSession) {
       return '';
     }
-    const runtime = readSessionRuntimeFromMetadata((currentSession as any).metadata);
+    const runtime = readSessionRuntimeFromMetadata(currentSession.metadata);
     const directContactId = typeof runtime?.contactId === 'string' ? runtime.contactId.trim() : '';
     if (directContactId) {
       return directContactId;
@@ -54,7 +61,7 @@ export const useSessionHeaderMeta = ({
     if (!contactAgentId) {
       return '';
     }
-    const matched = (contacts || []).find((item: any) => item?.agentId === contactAgentId);
+    const matched = (contacts || []).find((item) => item?.agentId === contactAgentId);
     return typeof matched?.id === 'string' ? matched.id : '';
   }, [contacts, currentSession]);
 

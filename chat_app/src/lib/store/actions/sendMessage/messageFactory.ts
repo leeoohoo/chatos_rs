@@ -1,17 +1,10 @@
-import type { Message } from '../../../../types';
-
-const buildModelConfigMetadata = (selectedModel: any) => (
-  selectedModel
-    ? {
-        modelConfig: {
-          id: selectedModel.id,
-          name: selectedModel.name,
-          base_url: selectedModel.base_url,
-          model_name: selectedModel.model_name,
-        },
-      }
-    : {}
-);
+import type { AiModelConfig, Message } from '../../../../types';
+import {
+  buildModelConfigMetadata,
+  createDefaultHistoryProcessState,
+  type PreviewAttachment,
+  type StreamingMessage,
+} from './types';
 
 export const createDraftUserMessage = ({
   sessionId,
@@ -24,8 +17,8 @@ export const createDraftUserMessage = ({
   sessionId: string;
   content: string;
   conversationTurnId: string;
-  selectedModel: any;
-  previewAttachments: any[];
+  selectedModel: AiModelConfig;
+  previewAttachments: PreviewAttachment[];
   createdAt: Date;
 }): Message => ({
   id: `temp_user_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
@@ -36,20 +29,14 @@ export const createDraftUserMessage = ({
   createdAt,
   metadata: {
     conversation_turn_id: conversationTurnId,
-    ...(previewAttachments.length > 0 ? { attachments: previewAttachments as any } : {}),
+    ...(previewAttachments.length > 0 ? { attachments: previewAttachments } : {}),
     model: selectedModel.model_name,
     ...buildModelConfigMetadata(selectedModel),
-    historyProcess: {
-      hasProcess: false,
-      toolCallCount: 0,
-      thinkingCount: 0,
-      processMessageCount: 0,
+    historyProcess: createDefaultHistoryProcessState({
       userMessageId: '',
+      turnId: conversationTurnId,
       finalAssistantMessageId: null,
-      expanded: false,
-      loaded: false,
-      loading: false,
-    },
+    }),
   },
 });
 
@@ -62,10 +49,10 @@ export const createDraftAssistantMessage = ({
 }: {
   sessionId: string;
   conversationTurnId: string;
-  selectedModel: any;
+  selectedModel: AiModelConfig;
   userMessage: Message;
   userMessageTime: Date;
-}) => ({
+}): StreamingMessage => ({
   id: `temp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
   sessionId,
   role: 'assistant' as const,

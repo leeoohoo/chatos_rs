@@ -1,6 +1,13 @@
+import type { AiModelConfig, ChatConfig } from '../../../../types';
+import type {
+  ApiAttachmentPayload,
+  StreamChatLogPayload,
+  StreamChatRuntimeOptions,
+} from './types';
+
 export const resolveModelCapabilities = (
-  selectedModel: any,
-  chatConfig: any,
+  selectedModel: AiModelConfig,
+  chatConfig: ChatConfig,
 ): {
   supportsImages: boolean;
   supportsReasoning: boolean;
@@ -36,10 +43,10 @@ export const buildChatRequestLogPayload = ({
   sessionId: string;
   turnId: string;
   content: string;
-  selectedModel: any;
-  chatConfig: any;
+  selectedModel: AiModelConfig;
+  chatConfig: ChatConfig;
   systemContext: string;
-  attachments: any[];
+  attachments: ApiAttachmentPayload[];
   reasoningEnabled: boolean;
   contactAgentId: string | null;
   remoteConnectionId: string | null;
@@ -47,7 +54,7 @@ export const buildChatRequestLogPayload = ({
   projectRoot: string | null;
   mcpEnabled: boolean;
   enabledMcpIds: string[];
-}) => ({
+}): StreamChatLogPayload => ({
   session_id: sessionId,
   turn_id: turnId,
   message: content,
@@ -88,7 +95,7 @@ export const buildStreamChatRuntimeOptions = ({
   projectRoot: string | null;
   mcpEnabled: boolean;
   enabledMcpIds: string[];
-}) => ({
+}): StreamChatRuntimeOptions => ({
   turnId,
   contactAgentId,
   remoteConnectionId,

@@ -1,35 +1,14 @@
-use std::sync::{Arc, Mutex};
-
-use serde_json::json;
-
-use super::text::ensure_complete_event_content;
+use super::text::join_stream_text;
 
 #[test]
-fn ensure_complete_event_content_prefers_longer_streamed_text() {
-    let acc = Arc::new(Mutex::new("你好，世界。完整内容".to_string()));
-    let result = json!({
-        "success": true,
-        "content": "世界。完整内容"
-    });
-
-    let patched = ensure_complete_event_content(&result, Some(&acc));
-    assert_eq!(
-        patched.get("content").and_then(|v| v.as_str()),
-        Some("你好，世界。完整内容")
-    );
+fn join_stream_text_prefers_longer_snapshot() {
+    assert_eq!(join_stream_text("hello", "hello world"), "hello world");
 }
 
 #[test]
-fn ensure_complete_event_content_keeps_longer_result_text() {
-    let acc = Arc::new(Mutex::new("hello".to_string()));
-    let result = json!({
-        "success": true,
-        "content": "hello world"
-    });
-
-    let patched = ensure_complete_event_content(&result, Some(&acc));
+fn join_stream_text_merges_suffix_overlap() {
     assert_eq!(
-        patched.get("content").and_then(|v| v.as_str()),
-        Some("hello world")
+        join_stream_text("这是第一段内容ABCDEF", "内容ABCDEF第二段"),
+        "这是第一段内容ABCDEF第二段"
     );
 }

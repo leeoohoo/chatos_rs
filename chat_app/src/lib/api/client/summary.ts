@@ -1,24 +1,23 @@
+import type {
+  SessionSummariesListResponse,
+  SessionSummaryJobConfigPayload,
+  SessionSummaryJobConfigResponse,
+} from './types';
 import type { ApiRequestFn } from './workspace';
 
-export const getSessionSummaryJobConfig = (request: ApiRequestFn, userId?: string): Promise<any> => {
+export const getSessionSummaryJobConfig = (
+  request: ApiRequestFn,
+  userId?: string,
+): Promise<SessionSummaryJobConfigResponse> => {
   const params = userId ? `?user_id=${encodeURIComponent(userId)}` : '';
-  return request<any>(`/session-summary-job-config${params}`);
+  return request<SessionSummaryJobConfigResponse>(`/session-summary-job-config${params}`);
 };
 
 export const updateSessionSummaryJobConfig = (
   request: ApiRequestFn,
-  payload: {
-    user_id?: string;
-    enabled?: boolean;
-    summary_model_config_id?: string | null;
-    token_limit?: number;
-    message_count_limit?: number;
-    round_limit?: number;
-    target_summary_tokens?: number;
-    job_interval_seconds?: number;
-  }
-): Promise<any> => {
-  return request<any>('/session-summary-job-config', {
+  payload: SessionSummaryJobConfigPayload,
+): Promise<SessionSummaryJobConfigResponse> => {
+  return request<SessionSummaryJobConfigResponse>('/session-summary-job-config', {
     method: 'PUT',
     body: JSON.stringify(payload),
   });
@@ -26,18 +25,9 @@ export const updateSessionSummaryJobConfig = (
 
 export const patchSessionSummaryJobConfig = (
   request: ApiRequestFn,
-  payload: {
-    user_id?: string;
-    enabled?: boolean;
-    summary_model_config_id?: string | null;
-    token_limit?: number;
-    message_count_limit?: number;
-    round_limit?: number;
-    target_summary_tokens?: number;
-    job_interval_seconds?: number;
-  }
-): Promise<any> => {
-  return request<any>('/session-summary-job-config', {
+  payload: SessionSummaryJobConfigPayload,
+): Promise<SessionSummaryJobConfigResponse> => {
+  return request<SessionSummaryJobConfigResponse>('/session-summary-job-config', {
     method: 'PATCH',
     body: JSON.stringify(payload),
   });
@@ -47,7 +37,7 @@ export const getSessionSummaries = async (
   request: ApiRequestFn,
   sessionId: string,
   options?: { limit?: number; offset?: number }
-): Promise<{ items: any[]; total: number; has_summary: boolean }> => {
+): Promise<SessionSummariesListResponse> => {
   if (!sessionId) {
     return { items: [], total: 0, has_summary: false };
   }
@@ -60,7 +50,7 @@ export const getSessionSummaries = async (
     params.set('offset', String(options.offset));
   }
   const query = params.toString();
-  const result = await request<any>(
+  const result = await request<Partial<SessionSummariesListResponse>>(
     `/sessions/${encodeURIComponent(sessionId)}/summaries${query ? `?${query}` : ''}`
   );
 
@@ -75,7 +65,7 @@ export const deleteSessionSummary = (
   request: ApiRequestFn,
   sessionId: string,
   summaryId: string
-): Promise<any> => {
+): Promise<{ success?: boolean }> => {
   if (!sessionId) {
     throw new Error('sessionId is required');
   }
@@ -83,18 +73,21 @@ export const deleteSessionSummary = (
     throw new Error('summaryId is required');
   }
 
-  return request<any>(
+  return request<{ success?: boolean }>(
     `/sessions/${encodeURIComponent(sessionId)}/summaries/${encodeURIComponent(summaryId)}`,
     { method: 'DELETE' }
   );
 };
 
-export const clearSessionSummaries = (request: ApiRequestFn, sessionId: string): Promise<any> => {
+export const clearSessionSummaries = (
+  request: ApiRequestFn,
+  sessionId: string,
+): Promise<{ success?: boolean }> => {
   if (!sessionId) {
     throw new Error('sessionId is required');
   }
 
-  return request<any>(`/sessions/${encodeURIComponent(sessionId)}/summaries`, {
+  return request<{ success?: boolean }>(`/sessions/${encodeURIComponent(sessionId)}/summaries`, {
     method: 'DELETE',
   });
 };

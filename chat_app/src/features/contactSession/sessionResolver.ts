@@ -6,64 +6,78 @@ export interface ContactSessionRef {
   agentId: string;
 }
 
+type SessionLike = {
+  id?: string;
+  title?: string;
+  projectId?: string | null;
+  project_id?: string | null;
+  metadata?: Session['metadata'];
+  updatedAt?: string | Date;
+  updated_at?: string | Date;
+  createdAt?: string | Date;
+  created_at?: string | Date;
+  archived?: boolean;
+  status?: string;
+};
+
 export const normalizeProjectScopeId = (projectId: string | null | undefined): string => {
   const trimmed = typeof projectId === 'string' ? projectId.trim() : '';
   return trimmed.length > 0 ? trimmed : '0';
 };
 
 export const resolveSessionProjectScopeId = (
-  session: Session | Record<string, any> | null | undefined,
+  session: SessionLike | null | undefined,
 ): string => {
   if (!session) {
     return '0';
   }
-  const rawProjectId = typeof (session as any).projectId === 'string'
-    ? (session as any).projectId.trim()
-    : (typeof (session as any).project_id === 'string'
-      ? (session as any).project_id.trim()
+  const rawProjectId = typeof session.projectId === 'string'
+    ? session.projectId.trim()
+    : (typeof session.project_id === 'string'
+      ? session.project_id.trim()
       : '');
   if (rawProjectId.length > 0) {
     return normalizeProjectScopeId(rawProjectId);
   }
-  const runtime = readSessionRuntimeFromMetadata((session as any).metadata);
+  const runtime = readSessionRuntimeFromMetadata(session.metadata);
   return normalizeProjectScopeId(runtime?.projectId ?? null);
 };
 
 export const resolveSessionTimestamp = (
-  session: Session | Record<string, any> | null | undefined,
+  session: SessionLike | null | undefined,
 ): number => {
   if (!session) {
     return 0;
   }
-  const raw = (session as any).updatedAt
-    ?? (session as any).updated_at
-    ?? (session as any).createdAt
-    ?? (session as any).created_at
+  const raw = session.updatedAt
+    ?? session.updated_at
+    ?? session.createdAt
+    ?? session.created_at
     ?? Date.now();
   const ts = new Date(raw).getTime();
   return Number.isFinite(ts) ? ts : 0;
 };
 
 export const isSessionActive = (
-  session: Session | Record<string, any> | null | undefined,
+  session: SessionLike | null | undefined,
 ): boolean => {
   if (!session) {
     return false;
   }
-  const archived = (session as any).archived === true;
-  const status = typeof (session as any).status === 'string'
-    ? (session as any).status.toLowerCase()
+  const archived = session.archived === true;
+  const status = typeof session.status === 'string'
+    ? session.status.toLowerCase()
     : '';
   return !archived && status !== 'archived' && status !== 'archiving';
 };
 
 export const resolveContactAgentIdFromSession = (
-  session: Session | Record<string, any> | null | undefined,
+  session: SessionLike | null | undefined,
 ): string | null => {
   if (!session) {
     return null;
   }
-  const runtime = readSessionRuntimeFromMetadata((session as any).metadata);
+  const runtime = readSessionRuntimeFromMetadata(session.metadata);
   if (!runtime?.contactAgentId) {
     return null;
   }
@@ -72,12 +86,12 @@ export const resolveContactAgentIdFromSession = (
 };
 
 export const resolveContactIdFromSession = (
-  session: Session | Record<string, any> | null | undefined,
+  session: SessionLike | null | undefined,
 ): string | null => {
   if (!session) {
     return null;
   }
-  const runtime = readSessionRuntimeFromMetadata((session as any).metadata);
+  const runtime = readSessionRuntimeFromMetadata(session.metadata);
   if (!runtime?.contactId) {
     return null;
   }
@@ -86,7 +100,7 @@ export const resolveContactIdFromSession = (
 };
 
 export const isSessionMatchedContactAndProject = (
-  session: Session | Record<string, any> | null | undefined,
+  session: SessionLike | null | undefined,
   contact: ContactSessionRef,
   projectId: string | null | undefined,
 ): boolean => {
@@ -94,7 +108,7 @@ export const isSessionMatchedContactAndProject = (
     return false;
   }
 
-  const runtime = readSessionRuntimeFromMetadata((session as any).metadata);
+  const runtime = readSessionRuntimeFromMetadata(session.metadata);
   const contactId = typeof runtime?.contactId === 'string' ? runtime.contactId.trim() : '';
   const contactAgentId = typeof runtime?.contactAgentId === 'string' ? runtime.contactAgentId.trim() : '';
 

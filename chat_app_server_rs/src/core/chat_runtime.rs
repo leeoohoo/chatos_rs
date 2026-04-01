@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::repositories::projects;
@@ -27,6 +28,19 @@ pub struct ParsedImplicitCommandSelection {
     pub name: Option<String>,
     pub plugin_source: String,
     pub source_path: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatRuntimeMetadata {
+    pub contact_agent_id: Option<String>,
+    pub contact_id: Option<String>,
+    pub project_id: Option<String>,
+    pub project_root: Option<String>,
+    pub workspace_root: Option<String>,
+    pub remote_connection_id: Option<String>,
+    pub mcp_enabled: Option<bool>,
+    #[serde(default)]
+    pub enabled_mcp_ids: Vec<String>,
 }
 
 fn normalize_optional_string(value: Option<String>) -> Option<String> {
@@ -87,52 +101,115 @@ pub fn metadata_string_list(metadata: Option<&Value>, path: &[&str]) -> Vec<Stri
     out
 }
 
+fn metadata_string_aliases(metadata: Option<&Value>, paths: &[&[&str]]) -> Option<String> {
+    paths.iter()
+        .find_map(|path| metadata_string(metadata, path))
+}
+
+fn metadata_bool_aliases(metadata: Option<&Value>, paths: &[&[&str]]) -> Option<bool> {
+    paths.iter().find_map(|path| metadata_bool(metadata, path))
+}
+
+fn metadata_string_list_aliases(metadata: Option<&Value>, paths: &[&[&str]]) -> Vec<String> {
+    paths.iter()
+        .find_map(|path| {
+            let values = metadata_string_list(metadata, path);
+            if values.is_empty() { None } else { Some(values) }
+        })
+        .unwrap_or_default()
+}
+
+impl ChatRuntimeMetadata {
+    pub fn from_metadata(metadata: Option<&Value>) -> Self {
+        Self {
+            contact_agent_id: metadata_string_aliases(
+                metadata,
+                &[
+                    &["chat_runtime", "contact_agent_id"],
+                    &["chat_runtime", "contactAgentId"],
+                    &["contact", "agent_id"],
+                    &["contact", "agentId"],
+                    &["ui_contact", "agent_id"],
+                    &["ui_contact", "agentId"],
+                    &["ui_chat_selection", "selected_agent_id"],
+                    &["ui_chat_selection", "selectedAgentId"],
+                ],
+            ),
+            contact_id: metadata_string_aliases(
+                metadata,
+                &[
+                    &["chat_runtime", "contact_id"],
+                    &["chat_runtime", "contactId"],
+                    &["contact", "contact_id"],
+                    &["contact", "contactId"],
+                    &["ui_contact", "contact_id"],
+                    &["ui_contact", "contactId"],
+                ],
+            ),
+            project_id: metadata_string_aliases(
+                metadata,
+                &[&["chat_runtime", "project_id"], &["chat_runtime", "projectId"]],
+            ),
+            project_root: metadata_string_aliases(
+                metadata,
+                &[&["chat_runtime", "project_root"], &["chat_runtime", "projectRoot"]],
+            ),
+            workspace_root: metadata_string_aliases(
+                metadata,
+                &[&["chat_runtime", "workspace_root"], &["chat_runtime", "workspaceRoot"]],
+            ),
+            remote_connection_id: metadata_string_aliases(
+                metadata,
+                &[
+                    &["chat_runtime", "remote_connection_id"],
+                    &["chat_runtime", "remoteConnectionId"],
+                ],
+            ),
+            mcp_enabled: metadata_bool_aliases(
+                metadata,
+                &[&["chat_runtime", "mcp_enabled"], &["chat_runtime", "mcpEnabled"]],
+            ),
+            enabled_mcp_ids: metadata_string_list_aliases(
+                metadata,
+                &[
+                    &["chat_runtime", "enabled_mcp_ids"],
+                    &["chat_runtime", "enabledMcpIds"],
+                ],
+            ),
+        }
+    }
+}
+
 pub fn contact_agent_id_from_metadata(metadata: Option<&Value>) -> Option<String> {
-    metadata_string(metadata, &["contact", "agent_id"])
-        .or_else(|| metadata_string(metadata, &["contact", "agentId"]))
-        .or_else(|| metadata_string(metadata, &["ui_contact", "agent_id"]))
-        .or_else(|| metadata_string(metadata, &["ui_contact", "agentId"]))
-        .or_else(|| metadata_string(metadata, &["ui_chat_selection", "selected_agent_id"]))
-        .or_else(|| metadata_string(metadata, &["ui_chat_selection", "selectedAgentId"]))
-        .or_else(|| metadata_string(metadata, &["chat_runtime", "contact_agent_id"]))
-        .or_else(|| metadata_string(metadata, &["chat_runtime", "contactAgentId"]))
+    ChatRuntimeMetadata::from_metadata(metadata).contact_agent_id
 }
 
 pub fn contact_id_from_metadata(metadata: Option<&Value>) -> Option<String> {
-    metadata_string(metadata, &["contact", "contact_id"])
-        .or_else(|| metadata_string(metadata, &["contact", "contactId"]))
-        .or_else(|| metadata_string(metadata, &["ui_contact", "contact_id"]))
-        .or_else(|| metadata_string(metadata, &["ui_contact", "contactId"]))
-        .or_else(|| metadata_string(metadata, &["chat_runtime", "contact_id"]))
-        .or_else(|| metadata_string(metadata, &["chat_runtime", "contactId"]))
+    ChatRuntimeMetadata::from_metadata(metadata).contact_id
 }
 
 pub fn project_id_from_metadata(metadata: Option<&Value>) -> Option<String> {
-    metadata_string(metadata, &["chat_runtime", "project_id"])
-        .or_else(|| metadata_string(metadata, &["chat_runtime", "projectId"]))
+    ChatRuntimeMetadata::from_metadata(metadata).project_id
 }
 
 pub fn project_root_from_metadata(metadata: Option<&Value>) -> Option<String> {
-    metadata_string(metadata, &["chat_runtime", "project_root"])
-        .or_else(|| metadata_string(metadata, &["chat_runtime", "projectRoot"]))
+    ChatRuntimeMetadata::from_metadata(metadata).project_root
+}
+
+pub fn workspace_root_from_metadata(metadata: Option<&Value>) -> Option<String> {
+    ChatRuntimeMetadata::from_metadata(metadata).workspace_root
 }
 
 pub fn remote_connection_id_from_metadata(metadata: Option<&Value>) -> Option<String> {
-    metadata_string(metadata, &["chat_runtime", "remote_connection_id"])
-        .or_else(|| metadata_string(metadata, &["chat_runtime", "remoteConnectionId"]))
+    ChatRuntimeMetadata::from_metadata(metadata).remote_connection_id
 }
 
 pub fn mcp_enabled_from_metadata(metadata: Option<&Value>) -> Option<bool> {
-    metadata_bool(metadata, &["chat_runtime", "mcp_enabled"])
-        .or_else(|| metadata_bool(metadata, &["chat_runtime", "mcpEnabled"]))
+    ChatRuntimeMetadata::from_metadata(metadata).mcp_enabled
 }
 
 pub fn enabled_mcp_ids_from_metadata(metadata: Option<&Value>) -> Vec<String> {
-    let from_new = metadata_string_list(metadata, &["chat_runtime", "enabled_mcp_ids"]);
-    if !from_new.is_empty() {
-        return from_new;
-    }
-    metadata_string_list(metadata, &["chat_runtime", "enabledMcpIds"])
+    ChatRuntimeMetadata::from_metadata(metadata).enabled_mcp_ids
 }
 
 fn normalize_lookup_token(value: &str) -> String {
@@ -671,6 +748,7 @@ pub async fn resolve_project_runtime(
 mod tests {
     use super::{
         compose_contact_command_system_prompt, compose_contact_system_prompt,
+        ChatRuntimeMetadata,
         parse_contact_command_invocation, parse_implicit_command_selections_from_tools_end,
         remote_connection_id_from_metadata, CONTACT_COMMAND_READER_TOOL_NAME,
         CONTACT_PLUGIN_READER_TOOL_NAME, CONTACT_SKILL_READER_TOOL_NAME,
@@ -797,6 +875,34 @@ mod tests {
             remote_connection_id_from_metadata(Some(&metadata)),
             Some("conn_2".to_string())
         );
+    }
+
+    #[test]
+    fn normalizes_runtime_metadata_from_standard_and_legacy_paths() {
+        let metadata = json!({
+            "contact": {
+                "agentId": " agent_1 ",
+                "contact_id": " contact_1 "
+            },
+            "chat_runtime": {
+                "projectId": " project_1 ",
+                "project_root": " /tmp/workspace ",
+                "workspaceRoot": " /tmp/ws ",
+                "remoteConnectionId": " conn_1 ",
+                "mcpEnabled": true,
+                "enabledMcpIds": ["alpha", " alpha ", "beta", ""]
+            }
+        });
+
+        let runtime = ChatRuntimeMetadata::from_metadata(Some(&metadata));
+        assert_eq!(runtime.contact_agent_id.as_deref(), Some("agent_1"));
+        assert_eq!(runtime.contact_id.as_deref(), Some("contact_1"));
+        assert_eq!(runtime.project_id.as_deref(), Some("project_1"));
+        assert_eq!(runtime.project_root.as_deref(), Some("/tmp/workspace"));
+        assert_eq!(runtime.workspace_root.as_deref(), Some("/tmp/ws"));
+        assert_eq!(runtime.remote_connection_id.as_deref(), Some("conn_1"));
+        assert_eq!(runtime.mcp_enabled, Some(true));
+        assert_eq!(runtime.enabled_mcp_ids, vec!["alpha", "beta"]);
     }
 
     #[test]

@@ -11,6 +11,46 @@ interface TurnRuntimeContextDrawerProps {
   onClose: () => void;
 }
 
+function renderValue(value?: string | null): string {
+  const normalized = value?.trim();
+  return normalized ? normalized : '-';
+}
+
+function renderBoolean(value?: boolean | null): string {
+  if (value === true) {
+    return 'true';
+  }
+  if (value === false) {
+    return 'false';
+  }
+  return '-';
+}
+
+interface RuntimeFieldProps {
+  label: string;
+  value: string;
+  tone?: 'default' | 'code';
+}
+
+const RuntimeField: React.FC<RuntimeFieldProps> = ({
+  label,
+  value,
+  tone = 'default',
+}) => (
+  <div className="rounded-md border border-border bg-background/70 p-2">
+    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
+    <div
+      className={
+        tone === 'code'
+          ? 'mt-1 break-all font-mono text-xs text-foreground'
+          : 'mt-1 break-words text-xs text-foreground'
+      }
+    >
+      {value}
+    </div>
+  </div>
+);
+
 const TurnRuntimeContextDrawer: React.FC<TurnRuntimeContextDrawerProps> = ({
   open,
   sessionId,
@@ -94,6 +134,10 @@ const TurnRuntimeContextDrawer: React.FC<TurnRuntimeContextDrawerProps> = ({
               <div>{`status: ${status}`}</div>
               <div>{`snapshot_source: ${snapshotSource}`}</div>
               <div>{`captured_at: ${snapshot?.captured_at || '-'}`}</div>
+            </div>
+
+            <div className="mb-3 rounded-md border border-sky-500/30 bg-sky-500/10 p-3 text-xs text-sky-950 dark:text-sky-100">
+              这里展示的是最近一轮已经发送到后端并被快照记录的 runtime，不包含输入框里尚未发送的临时目录、工具或 MCP 改动。
             </div>
 
             {snapshotSource !== 'captured' || !snapshot ? (
@@ -229,14 +273,64 @@ const TurnRuntimeContextDrawer: React.FC<TurnRuntimeContextDrawerProps> = ({
 
                 <div>
                   <div className="mb-2 text-sm font-medium text-foreground">运行时</div>
-                  <div className="rounded-md border border-border bg-background/80 p-2 text-xs text-muted-foreground">
-                    <div>{`model: ${runtime?.model || '-'}`}</div>
-                    <div>{`provider: ${runtime?.provider || '-'}`}</div>
-                    <div>{`contact_agent_id: ${runtime?.contact_agent_id || '-'}`}</div>
-                    <div>{`project_id: ${runtime?.project_id || '-'}`}</div>
-                    <div>{`project_root: ${runtime?.project_root || '-'}`}</div>
-                    <div>{`mcp_enabled: ${runtime?.mcp_enabled === true ? 'true' : runtime?.mcp_enabled === false ? 'false' : '-'}`}</div>
-                    <div>{`enabled_mcp_ids: ${Array.isArray(runtime?.enabled_mcp_ids) ? runtime?.enabled_mcp_ids.join(', ') : '-'}`}</div>
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <RuntimeField label="model" value={renderValue(runtime?.model)} />
+                      <RuntimeField label="provider" value={renderValue(runtime?.provider)} />
+                      <RuntimeField
+                        label="contact_agent_id"
+                        value={renderValue(runtime?.contact_agent_id)}
+                        tone="code"
+                      />
+                      <RuntimeField
+                        label="remote_connection_id"
+                        value={renderValue(runtime?.remote_connection_id)}
+                        tone="code"
+                      />
+                      <RuntimeField
+                        label="project_id"
+                        value={renderValue(runtime?.project_id)}
+                        tone="code"
+                      />
+                      <RuntimeField
+                        label="mcp_enabled"
+                        value={renderBoolean(runtime?.mcp_enabled)}
+                      />
+                    </div>
+
+                    <div className="rounded-md border border-border bg-background/80 p-3">
+                      <div className="mb-2 text-xs font-medium text-foreground">目录上下文</div>
+                      <div className="space-y-2">
+                        <RuntimeField
+                          label="本轮执行根目录（后端字段 project_root）"
+                          value={renderValue(runtime?.project_root)}
+                          tone="code"
+                        />
+                        <RuntimeField
+                          label="workspace_root"
+                          value={renderValue(runtime?.workspace_root)}
+                          tone="code"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="rounded-md border border-border bg-background/80 p-3">
+                      <div className="mb-2 text-xs font-medium text-foreground">MCP</div>
+                      {Array.isArray(runtime?.enabled_mcp_ids) && runtime.enabled_mcp_ids.length > 0 ? (
+                        <div className="flex flex-wrap gap-2">
+                          {runtime.enabled_mcp_ids.map((mcpId) => (
+                            <span
+                              key={mcpId}
+                              className="rounded-full border border-border bg-background px-2 py-1 font-mono text-[11px] text-foreground"
+                            >
+                              {mcpId}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="text-xs text-muted-foreground">本轮未启用任何 MCP ID</div>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>

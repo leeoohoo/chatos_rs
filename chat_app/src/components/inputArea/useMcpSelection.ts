@@ -18,6 +18,14 @@ export interface SelectableMcpConfig {
   builtin: boolean;
 }
 
+interface McpConfigLike {
+  id?: string;
+  name?: string;
+  display_name?: string;
+  enabled?: boolean;
+  builtin?: boolean;
+}
+
 interface McpApiClient {
   getMcpConfigs: () => Promise<unknown>;
 }
@@ -130,8 +138,9 @@ export const useMcpSelection = ({
       const rows = await client.getMcpConfigs();
       const seenIds = new Set<string>();
       const normalized = (Array.isArray(rows) ? rows : [])
-        .map((item: any) => {
-          const id = typeof item?.id === 'string' ? item.id.trim() : '';
+        .map((item) => {
+          const candidate = (item && typeof item === 'object' ? item : {}) as McpConfigLike;
+          const id = typeof candidate.id === 'string' ? candidate.id.trim() : '';
           if (!id || id === AGENT_BUILDER_MCP_ID) {
             return null;
           }
@@ -139,17 +148,17 @@ export const useMcpSelection = ({
             return null;
           }
           seenIds.add(id);
-          const enabled = typeof item?.enabled === 'boolean' ? item.enabled : true;
+          const enabled = typeof candidate.enabled === 'boolean' ? candidate.enabled : true;
           if (!enabled) {
             return null;
           }
-          const displayNameRaw = typeof item?.display_name === 'string' ? item.display_name.trim() : '';
-          const nameRaw = typeof item?.name === 'string' ? item.name.trim() : '';
+          const displayNameRaw = typeof candidate.display_name === 'string' ? candidate.display_name.trim() : '';
+          const nameRaw = typeof candidate.name === 'string' ? candidate.name.trim() : '';
           return {
             id,
             name: nameRaw || id,
             displayName: displayNameRaw || nameRaw || id,
-            builtin: item?.builtin === true,
+            builtin: candidate.builtin === true,
           } satisfies SelectableMcpConfig;
         })
         .filter((item: SelectableMcpConfig | null): item is SelectableMcpConfig => item !== null)
@@ -161,8 +170,8 @@ export const useMcpSelection = ({
         });
 
       setAvailableMcpConfigs(normalized);
-    } catch (error: any) {
-      setMcpConfigsError(error?.message || '加载 MCP 列表失败');
+    } catch (error) {
+      setMcpConfigsError(error instanceof Error ? error.message : '加载 MCP 列表失败');
       setAvailableMcpConfigs([]);
     } finally {
       setMcpConfigsLoading(false);

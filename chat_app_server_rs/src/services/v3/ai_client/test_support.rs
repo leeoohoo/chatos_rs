@@ -1,3 +1,4 @@
+use std::sync::Once;
 use std::collections::VecDeque;
 use std::sync::Arc;
 
@@ -11,9 +12,18 @@ use serde_json::{json, Value};
 use tokio::sync::Mutex;
 
 use super::{AiClient, AiClientCallbacks};
+use crate::config::Config;
 use crate::services::v3::ai_request_handler::AiRequestHandler;
 use crate::services::v3::mcp_tool_execute::McpToolExecute;
 use crate::services::v3::message_manager::MessageManager;
+
+static TEST_CONFIG_INIT: Once = Once::new();
+
+fn ensure_test_config() {
+    TEST_CONFIG_INIT.call_once(|| {
+        let _ = Config::init_global();
+    });
+}
 
 #[derive(Clone)]
 struct MockProviderState {
@@ -108,6 +118,7 @@ pub(super) async fn start_mock_provider(
 }
 
 pub(super) fn build_test_client(base_url: String) -> AiClient {
+    ensure_test_config();
     let message_manager = MessageManager::new();
     AiClient::new(
         AiRequestHandler::new("test-key".to_string(), base_url, message_manager.clone()),
@@ -143,6 +154,7 @@ pub(super) fn demo_echo_tool() -> Value {
 
 pub(super) struct RunProcessWithToolsArgs {
     pub input: Value,
+    pub session_id: Option<String>,
     pub previous_response_id: Option<String>,
     pub tools: Vec<Value>,
     pub callbacks: AiClientCallbacks,
@@ -150,6 +162,7 @@ pub(super) struct RunProcessWithToolsArgs {
     pub use_prev_id: bool,
     pub can_use_prev_id: bool,
     pub raw_input: Option<Value>,
+    pub prefixed_input_items: Vec<Value>,
     pub history_limit: i64,
     pub stable_prefix_mode: bool,
     pub prefer_stateless: bool,
@@ -160,6 +173,7 @@ impl Default for RunProcessWithToolsArgs {
     fn default() -> Self {
         Self {
             input: Value::String("hello".to_string()),
+            session_id: None,
             previous_response_id: None,
             tools: Vec::new(),
             callbacks: AiClientCallbacks::default(),
@@ -167,6 +181,7 @@ impl Default for RunProcessWithToolsArgs {
             use_prev_id: false,
             can_use_prev_id: false,
             raw_input: None,
+            prefixed_input_items: Vec::new(),
             history_limit: 8,
             stable_prefix_mode: false,
             prefer_stateless: false,
@@ -185,7 +200,7 @@ pub(super) async fn run_process_with_tools(
             args.input,
             args.previous_response_id,
             args.tools,
-            None,
+            args.session_id,
             None,
             "gpt-4o".to_string(),
             "gpt".to_string(),
@@ -203,7 +218,7 @@ pub(super) async fn run_process_with_tools(
             args.history_limit,
             args.stable_prefix_mode,
             false,
-            Vec::new(),
+            args.prefixed_input_items,
             args.prefer_stateless,
             None,
             None,
