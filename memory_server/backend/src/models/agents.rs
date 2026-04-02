@@ -17,6 +17,7 @@ pub struct MemoryAgent {
     pub name: String,
     pub description: Option<String>,
     pub category: Option<String>,
+    pub model_config_id: Option<String>,
     pub role_definition: String,
     #[serde(default)]
     pub plugin_sources: Vec<String>,
@@ -40,6 +41,7 @@ pub struct CreateMemoryAgentRequest {
     pub name: String,
     pub description: Option<String>,
     pub category: Option<String>,
+    pub model_config_id: Option<String>,
     pub role_definition: String,
     pub plugin_sources: Option<Vec<String>>,
     pub skills: Option<Vec<MemoryAgentSkill>>,
@@ -55,6 +57,7 @@ pub struct UpdateMemoryAgentRequest {
     pub name: Option<String>,
     pub description: Option<String>,
     pub category: Option<String>,
+    pub model_config_id: Option<String>,
     pub role_definition: Option<String>,
     pub plugin_sources: Option<Vec<String>>,
     pub skills: Option<Vec<MemoryAgentSkill>>,
@@ -104,6 +107,7 @@ pub struct MemoryAgentRuntimeContext {
     pub name: String,
     pub description: Option<String>,
     pub category: Option<String>,
+    pub model_config_id: Option<String>,
     pub role_definition: String,
     #[serde(default)]
     pub plugin_sources: Vec<String>,

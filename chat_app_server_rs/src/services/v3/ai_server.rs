@@ -28,7 +28,24 @@ impl AiServer {
         default_temperature: f64,
         mcp_tool_execute: McpToolExecute,
     ) -> Self {
-        let message_manager = MessageManager::new();
+        Self::new_with_message_manager(
+            openai_api_key,
+            base_url,
+            default_model,
+            default_temperature,
+            mcp_tool_execute,
+            MessageManager::new(),
+        )
+    }
+
+    pub fn new_with_message_manager(
+        openai_api_key: String,
+        base_url: String,
+        default_model: String,
+        default_temperature: f64,
+        mcp_tool_execute: McpToolExecute,
+        message_manager: MessageManager,
+    ) -> Self {
         let ai_request_handler = AiRequestHandler::new(
             openai_api_key.clone(),
             base_url.clone(),

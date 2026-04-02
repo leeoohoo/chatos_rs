@@ -23,9 +23,7 @@ use crate::core::turn_runtime_snapshot::{
     build_turn_runtime_snapshot_payload, BuildTurnRuntimeSnapshotInput,
 };
 use crate::services::ai_client_common::AiClientCallbacks;
-use crate::services::memory_server_client::{
-    self, TurnRuntimeSnapshotSelectedCommandDto,
-};
+use crate::services::memory_server_client::{self, TurnRuntimeSnapshotSelectedCommandDto};
 
 #[derive(Debug, Deserialize, Clone)]
 pub(crate) struct ChatStreamRequest {
@@ -103,10 +101,14 @@ pub(crate) async fn resolve_chat_stream_context(
     default_system_prompt: Option<String>,
     use_active_system_context: bool,
 ) -> ResolvedChatStreamContext {
-    let memory_session = memory_server_client::get_session_by_id(session_id)
-        .await
-        .ok()
-        .flatten();
+    let memory_session = if session_id.trim().is_empty() {
+        None
+    } else {
+        memory_server_client::get_session_by_id(session_id)
+            .await
+            .ok()
+            .flatten()
+    };
     let session_metadata = memory_session
         .as_ref()
         .and_then(|session| session.metadata.as_ref());
@@ -130,10 +132,7 @@ pub(crate) async fn resolve_chat_stream_context(
             )
             .await
             {
-                if let Some(contact) = contacts
-                    .iter()
-                    .find(|item| item.id.trim() == contact_id)
-                {
+                if let Some(contact) = contacts.iter().find(|item| item.id.trim() == contact_id) {
                     contact_agent_id = normalize_id(Some(contact.agent_id.clone()));
                     if let Some(agent_id) = contact_agent_id.as_deref() {
                         warn!(
@@ -179,8 +178,9 @@ pub(crate) async fn resolve_chat_stream_context(
     let selected_command =
         parse_contact_command_invocation(content, contact_runtime_context.as_ref());
     let command_system_prompt = compose_contact_command_system_prompt(selected_command.as_ref());
-    let selected_commands_for_snapshot =
-        Arc::new(Mutex::new(seed_selected_commands(selected_command.as_ref())));
+    let selected_commands_for_snapshot = Arc::new(Mutex::new(seed_selected_commands(
+        selected_command.as_ref(),
+    )));
 
     let requested_project_id = normalize_id(req.project_id.clone())
         .or_else(|| runtime_metadata.project_id.clone())

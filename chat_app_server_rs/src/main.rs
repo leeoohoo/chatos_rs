@@ -44,6 +44,7 @@ async fn main() {
         std::process::exit(1);
     }
 
+    services::task_execution_runner::start();
     info!("Memory-only mode enabled, skip local session background jobs");
 
     cfg.print();

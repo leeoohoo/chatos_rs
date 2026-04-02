@@ -4,6 +4,7 @@ use tracing::info;
 use crate::core::mcp_tools::ToolResult;
 use crate::models::message::Message;
 use crate::models::session_summary_v2::SessionSummaryV2;
+use crate::services::memory_server_client::TaskExecutionScopeBinding;
 use crate::services::message_manager_common::MessageManagerCore;
 
 #[derive(Clone)]
@@ -15,6 +16,12 @@ impl MessageManager {
     pub fn new() -> Self {
         Self {
             core: MessageManagerCore::new(),
+        }
+    }
+
+    pub fn new_task_execution(scope: TaskExecutionScopeBinding) -> Self {
+        Self {
+            core: MessageManagerCore::new_task_execution(scope),
         }
     }
 
@@ -122,8 +129,9 @@ impl MessageManager {
 
     pub async fn get_last_response_id(&self, session_id: &str, limit: i64) -> Option<String> {
         let memory_summary_limit = Some(2);
-        let (_summaries, messages) = self
-            .get_session_memory_history(session_id, Some(limit), memory_summary_limit)
+        let messages = self
+            .core
+            .get_history_messages_after_summary(session_id, Some(limit), memory_summary_limit)
             .await;
         info!(
             "[AI_V3][prev-id] scan start: session_id={}, limit={}, message_count={}",

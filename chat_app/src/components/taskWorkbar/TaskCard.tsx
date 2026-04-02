@@ -39,6 +39,7 @@ const TaskCard = ({
   const actionClass = compact
     ? 'rounded border border-border bg-background px-1.5 py-0.5 text-[10px] text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50'
     : 'rounded border border-border bg-background px-2 py-0.5 text-[11px] text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50';
+  const isTerminal = task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled';
 
   return (
     <div className={cardClass}>
@@ -62,7 +63,7 @@ const TaskCard = ({
 
       {(onCompleteTask || onEditTask || onDeleteTask) ? (
         <div className={compact ? 'mt-1 flex items-center gap-1' : 'mt-2 flex items-center gap-1'}>
-          {onCompleteTask && task.status !== 'done' ? (
+          {onCompleteTask && !isTerminal ? (
             <button type="button" className={actionClass} onClick={() => onCompleteTask(task)} disabled={isMutating}>
               完成
             </button>

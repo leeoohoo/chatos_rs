@@ -52,8 +52,8 @@ cd openai-codex-gateway
 
 默认日志与 PID：
 
-- `/tmp/chatos_rs_dev/codex_gateway.log`
-- `/tmp/chatos_rs_dev/codex_gateway.pid`
+- `logs/codex_gateway.log`
+- `logs/codex_gateway.pid`
 
 可选参数：
 

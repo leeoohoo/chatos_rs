@@ -148,6 +148,7 @@ export interface MemoryAgent {
   name: string;
   description?: string | null;
   category?: string | null;
+  model_config_id?: string | null;
   role_definition: string;
   plugin_sources: string[];
   skills: MemoryAgentSkill[];

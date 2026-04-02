@@ -181,6 +181,7 @@ pub(super) async fn build_create_agent_request(
         name,
         description,
         category,
+        model_config_id: None,
         role_definition,
         plugin_sources: if plugin_sources.is_empty() {
             None

@@ -65,8 +65,8 @@ python server.py --host 127.0.0.1 --port 8089
 ```
 
 默认日志与 PID：
-- `/tmp/chatos_rs_dev/codex_gateway.log`
-- `/tmp/chatos_rs_dev/codex_gateway.pid`
+- `logs/codex_gateway.log`
+- `logs/codex_gateway.pid`
 
 ## 说明
 - 默认优先使用 `vendor/` 下内置 SDK。

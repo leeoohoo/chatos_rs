@@ -38,7 +38,11 @@ pub(super) fn task_record_from_doc(doc: &Document) -> Option<TaskRecord> {
     let title = doc.get_str("title").ok()?.to_string();
     let details = doc.get_str("details").ok().unwrap_or_default().to_string();
     let priority = doc.get_str("priority").ok().unwrap_or("medium").to_string();
-    let status = doc.get_str("status").ok().unwrap_or("todo").to_string();
+    let status = doc
+        .get_str("status")
+        .ok()
+        .unwrap_or("pending_confirm")
+        .to_string();
     let created_at = doc
         .get_str("created_at")
         .ok()

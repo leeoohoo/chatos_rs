@@ -21,7 +21,7 @@ const createEmptyDraft = (): TaskReviewDraft => ({
   title: '',
   details: '',
   priority: 'medium',
-  status: 'todo',
+  status: 'pending_confirm',
   tags: [],
   dueAt: null,
 });
@@ -164,10 +164,12 @@ export const TaskDraftPanel: React.FC<TaskDraftPanelProps> = ({ panel, onConfirm
                   className="rounded-md border border-slate-300 bg-white px-2 py-1 text-sm text-slate-900 outline-none focus:border-primary dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                   disabled={panel.submitting === true}
                 >
-                  <option value="todo">todo</option>
-                  <option value="doing">doing</option>
-                  <option value="blocked">blocked</option>
-                  <option value="done">done</option>
+                  <option value="pending_confirm">pending_confirm</option>
+                  <option value="pending_execute">pending_execute</option>
+                  <option value="running">running</option>
+                  <option value="completed">completed</option>
+                  <option value="failed">failed</option>
+                  <option value="cancelled">cancelled</option>
                 </select>
               </label>
 

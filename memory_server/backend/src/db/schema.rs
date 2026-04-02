@@ -10,6 +10,7 @@ use super::Db;
 pub async fn init_schema(db: &Db) -> Result<(), String> {
     ensure_session_indexes(db).await?;
     ensure_message_indexes(db).await?;
+    ensure_task_execution_indexes(db).await?;
     ensure_summary_indexes(db).await?;
     ensure_config_indexes(db).await?;
     ensure_job_run_indexes(db).await?;
@@ -71,6 +72,61 @@ async fn ensure_message_indexes(db: &Db) -> Result<(), String> {
     )
     .await?;
     ensure_index(db.collection("messages"), doc! {"summary_id": 1}).await?;
+    Ok(())
+}
+
+async fn ensure_task_execution_indexes(db: &Db) -> Result<(), String> {
+    ensure_unique_index(db.collection("task_execution_messages"), doc! {"id": 1}).await?;
+    ensure_index(
+        db.collection("task_execution_messages"),
+        doc! {"user_id": 1, "contact_agent_id": 1, "project_id": 1, "created_at": 1},
+    )
+    .await?;
+    ensure_index(
+        db.collection("task_execution_messages"),
+        doc! {"scope_key": 1, "created_at": 1},
+    )
+    .await?;
+    ensure_index(
+        db.collection("task_execution_messages"),
+        doc! {"user_id": 1, "summary_status": 1, "created_at": 1},
+    )
+    .await?;
+    ensure_index(
+        db.collection("task_execution_messages"),
+        doc! {"scope_key": 1, "summary_status": 1, "created_at": 1},
+    )
+    .await?;
+    ensure_index(
+        db.collection("task_execution_messages"),
+        doc! {"summary_id": 1},
+    )
+    .await?;
+
+    ensure_unique_index(db.collection("task_execution_summaries"), doc! {"id": 1}).await?;
+    ensure_index(
+        db.collection("task_execution_summaries"),
+        doc! {"user_id": 1, "contact_agent_id": 1, "project_id": 1, "created_at": 1},
+    )
+    .await?;
+    ensure_index(
+        db.collection("task_execution_summaries"),
+        doc! {"scope_key": 1, "created_at": 1},
+    )
+    .await?;
+    ensure_index(
+        db.collection("task_execution_summaries"),
+        doc! {"scope_key": 1, "status": 1, "level": 1, "created_at": 1},
+    )
+    .await?;
+    ensure_unique_partial_index(
+        db.collection("task_execution_summaries"),
+        doc! {"scope_key": 1, "level": 1, "source_digest": 1},
+        doc! {
+            "source_digest": {"$exists": true, "$type": "string"},
+        },
+    )
+    .await?;
     Ok(())
 }
 

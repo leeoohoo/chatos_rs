@@ -23,6 +23,21 @@ fn parse_task_drafts_supports_single_task_shape() {
 }
 
 #[test]
+fn parse_task_drafts_falls_back_to_single_task_when_tasks_array_is_empty() {
+    let args = json!({
+        "title": "Ship task manager",
+        "details": "single task fallback",
+        "priority": "high",
+        "tasks": [],
+    });
+    let drafts = parse_task_drafts(&args).expect("empty tasks array should fall back");
+    assert_eq!(drafts.len(), 1);
+    assert_eq!(drafts[0].title, "Ship task manager");
+    assert_eq!(drafts[0].details, "single task fallback");
+    assert_eq!(drafts[0].priority, "high");
+}
+
+#[test]
 fn add_task_schema_is_strict_and_compatible() {
     let service = TaskManagerService::new(TaskManagerOptions {
         server_name: "task_manager".to_string(),

@@ -68,6 +68,18 @@ pub async fn send_list<T: DeserializeOwned>(
     Ok(resp.items)
 }
 
+pub async fn send_list_without_service_token<T: DeserializeOwned>(
+    path: &str,
+    params: &[(String, String)],
+) -> Result<Vec<T>, String> {
+    let req = client()
+        .get(build_url(path).as_str())
+        .timeout(timeout_duration())
+        .query(params);
+    let resp: ListResponse<T> = send_json_without_service_token(req).await?;
+    Ok(resp.items)
+}
+
 pub async fn send_json<T: DeserializeOwned>(req: RequestBuilder) -> Result<T, String> {
     let resp = apply_auth(req).send().await.map_err(|e| e.to_string())?;
     if !resp.status().is_success() {
@@ -82,6 +94,21 @@ pub async fn send_optional_json<T: DeserializeOwned>(
     req: RequestBuilder,
 ) -> Result<Option<T>, String> {
     let resp = apply_auth(req).send().await.map_err(|e| e.to_string())?;
+    if resp.status().as_u16() == 404 {
+        return Ok(None);
+    }
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let detail = resp.text().await.unwrap_or_default();
+        return Err(format!("status={} detail={}", status, detail));
+    }
+    resp.json::<T>().await.map(Some).map_err(|e| e.to_string())
+}
+
+pub async fn send_optional_json_without_service_token<T: DeserializeOwned>(
+    req: RequestBuilder,
+) -> Result<Option<T>, String> {
+    let resp = req.send().await.map_err(|e| e.to_string())?;
     if resp.status().as_u16() == 404 {
         return Ok(None);
     }

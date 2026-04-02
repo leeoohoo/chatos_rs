@@ -4,6 +4,13 @@ use crate::services::task_manager::{TaskDraft, TaskUpdatePatch};
 
 pub(super) fn parse_task_drafts(args: &Value) -> Result<Vec<TaskDraft>, String> {
     if let Some(items) = args.get("tasks").and_then(|value| value.as_array()) {
+        if items.is_empty() && args.get("title").and_then(|value| value.as_str()).is_some() {
+            return Ok(vec![task_draft_from_map(
+                args.as_object()
+                    .ok_or_else(|| "task payload must be an object".to_string())?,
+            )?]);
+        }
+
         let mut out = Vec::new();
         for item in items {
             out.push(task_draft_from_value(item)?);
@@ -133,7 +140,7 @@ fn task_draft_from_map(map: &Map<String, Value>) -> Result<TaskDraft, String> {
         .unwrap_or_default();
 
     let priority = optional_string(map, "priority").unwrap_or_else(|| "medium".to_string());
-    let status = optional_string(map, "status").unwrap_or_else(|| "todo".to_string());
+    let status = optional_string(map, "status").unwrap_or_else(|| "pending_confirm".to_string());
     let due_at = optional_string(map, "due_at").or_else(|| optional_string(map, "dueAt"));
 
     let tags = match map.get("tags") {

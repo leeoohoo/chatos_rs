@@ -1,10 +1,12 @@
 import type { RuntimeGuidanceWorkbarItem, TaskWorkbarItem } from './types';
 
 export const statusStyles: Record<TaskWorkbarItem['status'], string> = {
-  todo: 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-100',
-  doing: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-200',
-  blocked: 'bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-200',
-  done: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-200',
+  pending_confirm: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200',
+  pending_execute: 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-100',
+  running: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-200',
+  completed: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-200',
+  failed: 'bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-200',
+  cancelled: 'bg-slate-300 text-slate-700 dark:bg-slate-800 dark:text-slate-200',
 };
 
 export const priorityStyles: Record<TaskWorkbarItem['priority'], string> = {
@@ -14,10 +16,12 @@ export const priorityStyles: Record<TaskWorkbarItem['priority'], string> = {
 };
 
 export const statusText: Record<TaskWorkbarItem['status'], string> = {
-  todo: '待办',
-  doing: '进行中',
-  blocked: '阻塞',
-  done: '已完成',
+  pending_confirm: '待确认',
+  pending_execute: '待执行',
+  running: '执行中',
+  completed: '已完成',
+  failed: '执行失败',
+  cancelled: '已取消',
 };
 
 export const priorityText: Record<TaskWorkbarItem['priority'], string> = {

@@ -30,7 +30,7 @@ interface SessionWorkbarApiClient {
       title?: string;
       details?: string;
       priority?: 'high' | 'medium' | 'low';
-      status?: 'todo' | 'doing' | 'blocked' | 'done';
+      status?: 'pending_confirm' | 'pending_execute' | 'running' | 'completed' | 'failed' | 'cancelled';
       due_at?: string | null;
     },
   ) => Promise<unknown>;
@@ -42,7 +42,7 @@ interface SessionWorkbarApiClient {
         title: string;
         details: string;
         priority: 'high' | 'medium' | 'low';
-        status: 'todo' | 'doing' | 'blocked' | 'done';
+        status: 'pending_confirm' | 'pending_execute' | 'running' | 'completed' | 'failed' | 'cancelled';
         tags: string[];
         due_at?: string | null;
       }>;

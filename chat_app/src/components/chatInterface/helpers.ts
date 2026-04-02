@@ -324,11 +324,16 @@ export const extractTaskIdsFromToolCall = (toolCall: ToolCallLike): string[] => 
 
 export const normalizeWorkbarTask = (raw: unknown): TaskWorkbarItem => {
   const record = asRecord(raw);
-  const statusRaw = String(record.status || 'todo').toLowerCase();
+  const statusRaw = String(record.status || 'pending_confirm').toLowerCase();
   const status: TaskWorkbarItem['status'] =
-    statusRaw === 'doing' || statusRaw === 'blocked' || statusRaw === 'done'
+    statusRaw === 'pending_confirm'
+    || statusRaw === 'pending_execute'
+    || statusRaw === 'running'
+    || statusRaw === 'completed'
+    || statusRaw === 'failed'
+    || statusRaw === 'cancelled'
       ? statusRaw
-      : 'todo';
+      : 'pending_confirm';
 
   const priorityRaw = String(record.priority || 'medium').toLowerCase();
   const priority: TaskWorkbarItem['priority'] =

@@ -59,6 +59,53 @@ pub(super) async fn create_model_config(
     }
 }
 
+pub(super) async fn get_model_config(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Path(model_id): Path<String>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match require_auth(&state, &headers) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    let cfg = match configs::get_model_config_by_id(&state.pool, model_id.as_str()).await {
+        Ok(Some(cfg)) => cfg,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "model config not found"})),
+            )
+        }
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "load model config failed", "detail": err})),
+            )
+        }
+    };
+    if !auth.is_admin() && cfg.user_id != auth.user_id {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"})));
+    }
+    (StatusCode::OK, Json(json!(cfg)))
+}
+
+pub(super) async fn internal_get_model_config(
+    State(state): State<SharedState>,
+    Path(model_id): Path<String>,
+) -> (StatusCode, Json<Value>) {
+    match configs::get_model_config_by_id(&state.pool, model_id.as_str()).await {
+        Ok(Some(cfg)) => (StatusCode::OK, Json(json!(cfg))),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "model config not found"})),
+        ),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "load model config failed", "detail": err})),
+        ),
+    }
+}
+
 pub(super) async fn update_model_config(
     State(state): State<SharedState>,
     headers: HeaderMap,

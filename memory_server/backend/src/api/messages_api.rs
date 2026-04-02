@@ -91,6 +91,36 @@ pub(super) async fn sync_message(
     }
 }
 
+pub(super) async fn internal_sync_message(
+    State(state): State<SharedState>,
+    Path((session_id, message_id)): Path<(String, String)>,
+    Json(req): Json<SyncMessageRequest>,
+) -> (StatusCode, Json<Value>) {
+    let created_at = req
+        .created_at
+        .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
+    let input = messages::SyncMessageInput {
+        message_id,
+        role: req.role,
+        content: req.content,
+        message_mode: req.message_mode,
+        message_source: req.message_source,
+        tool_calls_json: req.tool_calls.map(|v| v.to_string()),
+        tool_call_id: req.tool_call_id,
+        reasoning: req.reasoning,
+        metadata_json: req.metadata.map(|v| v.to_string()),
+        created_at,
+    };
+
+    match messages::upsert_message_sync(&state.pool, session_id.as_str(), input).await {
+        Ok(message) => (StatusCode::OK, Json(json!(message))),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "sync message failed", "detail": err})),
+        ),
+    }
+}
+
 pub(super) async fn batch_create_messages(
     State(state): State<SharedState>,
     headers: HeaderMap,

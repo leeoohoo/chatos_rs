@@ -6,8 +6,9 @@ use super::dto::{
 };
 use super::http::{
     build_url, client, push_limit_offset_params, send_delete_result, send_json, send_list,
-    send_optional_json, timeout_duration,
+    send_optional_json, send_optional_json_without_service_token, timeout_duration,
 };
+use super::current_access_token;
 
 pub async fn list_memory_agents(
     user_id: Option<&str>,
@@ -28,10 +29,17 @@ pub async fn list_memory_agents(
 }
 
 pub async fn get_memory_agent(agent_id: &str) -> Result<Option<MemoryAgentDto>, String> {
-    let req = client()
-        .get(build_url(&format!("/agents/{}", urlencoding::encode(agent_id))).as_str())
-        .timeout(timeout_duration());
-    send_optional_json(req).await
+    let path = if current_access_token().is_some() {
+        format!("/agents/{}", urlencoding::encode(agent_id))
+    } else {
+        format!("/internal/agents/{}", urlencoding::encode(agent_id))
+    };
+    let req = client().get(build_url(path.as_str()).as_str()).timeout(timeout_duration());
+    if current_access_token().is_some() {
+        send_optional_json(req).await
+    } else {
+        send_optional_json_without_service_token(req).await
+    }
 }
 
 pub async fn create_memory_agent(
@@ -66,16 +74,20 @@ pub async fn delete_memory_agent(agent_id: &str) -> Result<bool, String> {
 pub async fn get_memory_agent_runtime_context(
     agent_id: &str,
 ) -> Result<Option<MemoryAgentRuntimeContextDto>, String> {
-    let req = client()
-        .get(
-            build_url(&format!(
-                "/agents/{}/runtime-context",
-                urlencoding::encode(agent_id)
-            ))
-            .as_str(),
+    let path = if current_access_token().is_some() {
+        format!("/agents/{}/runtime-context", urlencoding::encode(agent_id))
+    } else {
+        format!(
+            "/internal/agents/{}/runtime-context",
+            urlencoding::encode(agent_id)
         )
-        .timeout(timeout_duration());
-    send_optional_json(req).await
+    };
+    let req = client().get(build_url(path.as_str()).as_str()).timeout(timeout_duration());
+    if current_access_token().is_some() {
+        send_optional_json(req).await
+    } else {
+        send_optional_json_without_service_token(req).await
+    }
 }
 
 pub async fn ai_create_memory_agent(payload: &Value) -> Result<Value, String> {

@@ -42,7 +42,7 @@ mod tests {
         assert_eq!(normalized.title, "Build review panel");
         assert_eq!(normalized.details, "Some details");
         assert_eq!(normalized.priority, "medium");
-        assert_eq!(normalized.status, "todo");
+        assert_eq!(normalized.status, "pending_confirm");
         assert_eq!(normalized.tags, vec!["ui"]);
         assert_eq!(normalized.due_at, None);
     }
@@ -62,7 +62,7 @@ mod tests {
         assert_eq!(normalized.title.as_deref(), Some("Refine workbar"));
         assert_eq!(normalized.details.as_deref(), Some("trim me"));
         assert_eq!(normalized.priority.as_deref(), Some("medium"));
-        assert_eq!(normalized.status.as_deref(), Some("todo"));
+        assert_eq!(normalized.status.as_deref(), Some("pending_confirm"));
         assert_eq!(normalized.tags, Some(vec!["ui".to_string()]));
         assert_eq!(normalized.due_at, Some(None));
     }
@@ -73,7 +73,7 @@ mod tests {
             title: "Initial task".to_string(),
             details: "detail".to_string(),
             priority: "medium".to_string(),
-            status: "todo".to_string(),
+            status: "pending_confirm".to_string(),
             tags: vec!["one".to_string()],
             due_at: None,
         };
@@ -87,7 +87,7 @@ mod tests {
             title: "Updated task".to_string(),
             details: "updated".to_string(),
             priority: "high".to_string(),
-            status: "doing".to_string(),
+            status: "running".to_string(),
             tags: vec!["backend".to_string()],
             due_at: Some("2026-03-01T10:00:00Z".to_string()),
         }];
@@ -109,7 +109,7 @@ mod tests {
         assert_eq!(decision.tasks.len(), 1);
         assert_eq!(decision.tasks[0].title, "Updated task");
         assert_eq!(decision.tasks[0].priority, "high");
-        assert_eq!(decision.tasks[0].status, "doing");
+        assert_eq!(decision.tasks[0].status, "running");
     }
 
     #[tokio::test]
@@ -118,7 +118,7 @@ mod tests {
             title: "Cancel me".to_string(),
             details: String::new(),
             priority: "medium".to_string(),
-            status: "todo".to_string(),
+            status: "pending_confirm".to_string(),
             tags: Vec::new(),
             due_at: None,
         };

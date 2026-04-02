@@ -10,6 +10,7 @@ mod message_handlers;
 mod session_handlers;
 mod summary_handlers;
 mod support;
+mod ws_handlers;
 
 use self::mcp_server_handlers::{add_mcp_server, delete_mcp_server, list_mcp_servers};
 use self::message_handlers::{
@@ -23,6 +24,7 @@ use self::session_handlers::{
 use self::summary_handlers::{
     clear_session_memory_summaries, delete_session_memory_summary, list_session_memory_summaries,
 };
+use self::ws_handlers::session_events_ws;
 
 pub fn router() -> Router {
     Router::new()
@@ -43,6 +45,7 @@ pub fn router() -> Router {
             "/api/sessions/:session_id/messages",
             get(get_session_messages).post(create_session_message),
         )
+        .route("/api/sessions/:session_id/ws", get(session_events_ws))
         .route(
             "/api/sessions/:session_id/turns/:user_message_id/process",
             get(get_session_turn_process_messages),

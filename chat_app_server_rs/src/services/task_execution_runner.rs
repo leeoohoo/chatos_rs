@@ -1,0 +1,623 @@
+use std::time::Duration;
+
+use dashmap::DashSet;
+use once_cell::sync::Lazy;
+use serde_json::{json, Value};
+use tracing::{info, warn};
+
+use crate::api::chat_stream_common::{
+    build_prefixed_input_items, resolve_chat_stream_context, ChatStreamRequest,
+};
+use crate::config::Config;
+use crate::core::ai_model_config::resolve_chat_model_config;
+use crate::core::ai_settings::chat_max_tokens_from_settings;
+use crate::core::messages::MessageOut;
+use crate::models::ai_model_config::AiModelConfig;
+use crate::models::message::Message;
+use crate::services::memory_server_client::{self, TaskExecutionScopeBinding};
+use crate::services::session_event_hub::session_event_hub;
+use crate::services::task_service_client::{
+    self, AckAllDoneRequestDto, SchedulerRequestDto, TaskExecutionScopeDto, TaskRecordDto,
+    UpdateTaskRequestDto,
+};
+use crate::services::user_settings::{apply_settings_to_ai_client, get_effective_user_settings};
+use crate::services::v3::ai_server::{AiServer, ChatOptions};
+use crate::services::v3::mcp_tool_execute::McpToolExecute;
+use crate::services::v3::message_manager::MessageManager;
+
+static ACTIVE_SCOPE_JOBS: Lazy<DashSet<String>> = Lazy::new(DashSet::new);
+
+pub fn start() {
+    if !Config::get().task_scheduler_enabled {
+        info!("[TASK-RUNNER] disabled by config");
+        return;
+    }
+
+    tokio::spawn(async move {
+        let interval_secs = Config::get().task_scheduler_interval_secs.max(1) as u64;
+        let mut ticker = tokio::time::interval(Duration::from_secs(interval_secs));
+        loop {
+            ticker.tick().await;
+            dispatch_tick().await;
+        }
+    });
+}
+
+async fn dispatch_tick() {
+    let limit = Some(Config::get().task_scheduler_scope_limit.max(1));
+    let scopes = match task_service_client::list_scheduler_scopes(None, limit).await {
+        Ok(items) => items,
+        Err(err) => {
+            warn!("[TASK-RUNNER] list scopes failed: {}", err);
+            return;
+        }
+    };
+
+    for scope in scopes {
+        if ACTIVE_SCOPE_JOBS.insert(scope.scope_key.clone()) {
+            tokio::spawn(async move {
+                let scope_key = scope.scope_key.clone();
+                let result = process_scope(scope).await;
+                if let Err(err) = result {
+                    warn!("[TASK-RUNNER] scope processing failed: {}", err);
+                }
+                ACTIVE_SCOPE_JOBS.remove(&scope_key);
+            });
+        }
+    }
+}
+
+async fn process_scope(scope: TaskExecutionScopeDto) -> Result<(), String> {
+    let decision = task_service_client::scheduler_next(&SchedulerRequestDto {
+        user_id: Some(scope.user_id.clone()),
+        contact_agent_id: scope.contact_agent_id.clone(),
+        project_id: scope.project_id.clone(),
+    })
+    .await?;
+
+    match decision.decision.as_str() {
+        "task" => {
+            let task = decision
+                .task
+                .ok_or_else(|| format!("scope {} missing task payload", scope.scope_key))?;
+            execute_task(scope, task).await
+        }
+        "all_done" => handle_all_done(scope).await,
+        "pass" => Ok(()),
+        other => Err(format!(
+            "scope {} returned unsupported decision {}",
+            scope.scope_key, other
+        )),
+    }
+}
+
+async fn execute_task(scope: TaskExecutionScopeDto, task: TaskRecordDto) -> Result<(), String> {
+    info!(
+        "[TASK-RUNNER] execute task start: scope={} task_id={} session_id={}",
+        scope.scope_key,
+        task.id,
+        task.session_id.as_deref().unwrap_or("")
+    );
+
+    let mut task_runtime = match build_task_runtime(scope.clone(), Some(&task)).await {
+        Ok(runtime) => runtime,
+        Err(err) => return fail_task(scope, task, err.as_str()).await,
+    };
+    let result = task_runtime
+        .ai_server
+        .chat(
+            task_runtime.runtime_session_key.as_str(),
+            task.content.as_str(),
+            task_runtime.chat_options(task.id.as_str()),
+        )
+        .await;
+
+    match result {
+        Ok(payload) => {
+            let final_text = payload
+                .get("content")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            let saved_notice = match save_task_notice_message(
+                task.session_id.as_deref(),
+                "task_execution_notice",
+                "completed",
+                &scope,
+                Some(&task),
+                if final_text.is_empty() {
+                    format!("任务“{}”已完成。", task.title)
+                } else {
+                        format!("任务“{}”已完成。\n\n{}", task.title, final_text)
+                },
+            )
+            .await
+            {
+                Ok(message) => message,
+                Err(err) => {
+                    warn!(
+                        "[TASK-RUNNER] save completion notice failed: scope={} task_id={} error={}",
+                        scope.scope_key, task.id, err
+                    );
+                    None
+                }
+            };
+
+            if let Err(err) = task_service_client::update_task_internal(
+                task.id.as_str(),
+                &UpdateTaskRequestDto {
+                    status: Some("completed".to_string()),
+                    result_summary: Some(Some(compact_result_summary(
+                        if final_text.is_empty() {
+                            format!("任务“{}”已完成", task.title)
+                        } else {
+                            final_text.clone()
+                        }
+                        .as_str(),
+                    ))),
+                    result_message_id: Some(
+                        saved_notice
+                            .as_ref()
+                            .map(|m| Some(m.id.clone()))
+                            .unwrap_or(None),
+                    ),
+                    last_error: Some(None),
+                    ..UpdateTaskRequestDto::default()
+                },
+            )
+            .await
+            {
+                warn!(
+                    "[TASK-RUNNER] update completed status failed: scope={} task_id={} error={}",
+                    scope.scope_key, task.id, err
+                );
+            }
+            info!(
+                "[TASK-RUNNER] execute task completed: scope={} task_id={}",
+                scope.scope_key, task.id
+            );
+            Ok(())
+        }
+        Err(err) => {
+            if let Err(notice_err) = save_task_notice_message(
+                task.session_id.as_deref(),
+                "task_execution_notice",
+                "failed",
+                &scope,
+                Some(&task),
+                format!("任务“{}”执行失败：{}", task.title, err),
+            )
+            .await
+            {
+                warn!(
+                    "[TASK-RUNNER] save failure notice failed: scope={} task_id={} error={}",
+                    scope.scope_key, task.id, notice_err
+                );
+            }
+            if let Err(update_err) = task_service_client::update_task_internal(
+                task.id.as_str(),
+                &UpdateTaskRequestDto {
+                    status: Some("failed".to_string()),
+                    result_summary: Some(None),
+                    result_message_id: Some(None),
+                    last_error: Some(Some(err.clone())),
+                    ..UpdateTaskRequestDto::default()
+                },
+            )
+            .await
+            {
+                warn!(
+                    "[TASK-RUNNER] update failed status failed: scope={} task_id={} error={}",
+                    scope.scope_key, task.id, update_err
+                );
+            }
+            Err(format!(
+                "scope {} task {} execution failed: {}",
+                scope.scope_key, task.id, err
+            ))
+        }
+    }
+}
+
+async fn fail_task(
+    scope: TaskExecutionScopeDto,
+    task: TaskRecordDto,
+    err: &str,
+) -> Result<(), String> {
+    if let Err(notice_err) = save_task_notice_message(
+        task.session_id.as_deref(),
+        "task_execution_notice",
+        "failed",
+        &scope,
+        Some(&task),
+        format!("任务“{}”执行失败：{}", task.title, err),
+    )
+    .await
+    {
+        warn!(
+            "[TASK-RUNNER] save setup-failure notice failed: scope={} task_id={} error={}",
+            scope.scope_key, task.id, notice_err
+        );
+    }
+    if let Err(update_err) = task_service_client::update_task_internal(
+        task.id.as_str(),
+        &UpdateTaskRequestDto {
+            status: Some("failed".to_string()),
+            result_summary: Some(None),
+            result_message_id: Some(None),
+            last_error: Some(Some(err.to_string())),
+            ..UpdateTaskRequestDto::default()
+        },
+    )
+    .await
+    {
+        warn!(
+            "[TASK-RUNNER] update setup-failure status failed: scope={} task_id={} error={}",
+            scope.scope_key, task.id, update_err
+        );
+    }
+    Err(format!(
+        "scope {} task {} execution failed: {}",
+        scope.scope_key, task.id, err
+    ))
+}
+
+async fn handle_all_done(scope: TaskExecutionScopeDto) -> Result<(), String> {
+    let Some(session_id) = scope
+        .latest_session_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string())
+    else {
+        task_service_client::ack_all_done(&AckAllDoneRequestDto {
+            user_id: Some(scope.user_id.clone()),
+            contact_agent_id: scope.contact_agent_id.clone(),
+            project_id: scope.project_id.clone(),
+            ack_at: None,
+        })
+        .await?;
+        return Ok(());
+    };
+
+    let mut task_runtime = build_task_runtime(scope.clone(), None).await?;
+    let summary_prompt = "当前这个联系人的后台任务都已经执行完成。请基于已有任务执行记录，给用户一段简短、自然的结语：说明任务已全部完成，并概括最终结果；不要输出过程推理，不要编造未完成事项。";
+    let result = task_runtime
+        .ai_server
+        .chat(
+            task_runtime.runtime_session_key.as_str(),
+            summary_prompt,
+            task_runtime.chat_options("all_done"),
+        )
+        .await?;
+    let final_text = result
+        .get("content")
+        .and_then(|v| v.as_str())
+        .unwrap_or("后台任务已全部执行完成。")
+        .trim()
+        .to_string();
+
+    if let Err(err) = save_task_notice_message(
+        Some(session_id.as_str()),
+        "task_execution_notice",
+        "all_done",
+        &scope,
+        None,
+        if final_text.is_empty() {
+            "后台任务已全部执行完成。".to_string()
+        } else {
+            final_text
+        },
+    )
+    .await
+    {
+        warn!(
+            "[TASK-RUNNER] save all-done notice failed: scope={} error={}",
+            scope.scope_key, err
+        );
+    }
+
+    task_service_client::ack_all_done(&AckAllDoneRequestDto {
+        user_id: Some(scope.user_id.clone()),
+        contact_agent_id: scope.contact_agent_id.clone(),
+        project_id: scope.project_id.clone(),
+        ack_at: None,
+    })
+    .await?;
+    Ok(())
+}
+
+struct PreparedTaskRuntime {
+    ai_server: AiServer,
+    model_runtime: crate::core::ai_model_config::ResolvedChatModelConfig,
+    runtime_context: crate::api::chat_stream_common::ResolvedChatStreamContext,
+    runtime_session_key: String,
+    max_tokens: Option<i64>,
+}
+
+impl PreparedTaskRuntime {
+    fn chat_options(&self, turn_suffix: &str) -> ChatOptions {
+        ChatOptions {
+            model: Some(self.model_runtime.model.clone()),
+            provider: Some(self.model_runtime.provider.clone()),
+            thinking_level: self.model_runtime.thinking_level.clone(),
+            supports_responses: Some(self.model_runtime.supports_responses),
+            temperature: Some(self.model_runtime.temperature),
+            max_tokens: self.max_tokens,
+            use_tools: Some(self.runtime_context.use_tools),
+            attachments: Some(Vec::new()),
+            supports_images: Some(self.model_runtime.supports_images),
+            reasoning_enabled: Some(self.model_runtime.effective_reasoning),
+            callbacks: None,
+            turn_id: Some(format!("task-exec-{}", turn_suffix)),
+            user_message_id: None,
+            message_mode: Some("model".to_string()),
+            message_source: Some(self.model_runtime.model.clone()),
+            prefixed_input_items: build_prefixed_input_items(
+                self.runtime_context.contact_system_prompt.as_deref(),
+                self.runtime_context.command_system_prompt.as_deref(),
+            ),
+            request_cwd: if self.model_runtime.use_codex_gateway_mcp_passthrough {
+                self.runtime_context.resolved_project_root.clone()
+            } else {
+                None
+            },
+            use_codex_gateway_mcp_passthrough: Some(
+                self.model_runtime.use_codex_gateway_mcp_passthrough,
+            ),
+        }
+    }
+}
+
+async fn build_task_runtime(
+    scope: TaskExecutionScopeDto,
+    task: Option<&TaskRecordDto>,
+) -> Result<PreparedTaskRuntime, String> {
+    let model_config = resolve_execution_model(scope.clone(), task).await?;
+    let model_config_json = json!({
+        "model_name": model_config.model,
+        "provider": model_config.provider,
+        "thinking_level": model_config.thinking_level,
+        "api_key": model_config.api_key,
+        "base_url": model_config.base_url,
+        "supports_images": model_config.supports_images,
+        "supports_reasoning": model_config.supports_reasoning,
+        "supports_responses": model_config.supports_responses,
+    });
+    let cfg = Config::get();
+    let model_runtime = resolve_chat_model_config(
+        &model_config_json,
+        "gpt-4o",
+        &cfg.openai_api_key,
+        &cfg.openai_base_url,
+        None,
+        true,
+    );
+
+    let binding = TaskExecutionScopeBinding {
+        user_id: scope.user_id.clone(),
+        contact_agent_id: scope.contact_agent_id.clone(),
+        project_id: scope.project_id.clone(),
+        task_id: task.map(|item| item.id.clone()),
+        source_session_id: task
+            .and_then(|item| item.session_id.clone())
+            .or_else(|| scope.latest_session_id.clone()),
+    };
+    let mut ai_server = AiServer::new_with_message_manager(
+        model_runtime.api_key.clone(),
+        model_runtime.base_url.clone(),
+        model_runtime.model.clone(),
+        model_runtime.temperature,
+        McpToolExecute::new(Vec::new(), Vec::new(), Vec::new()),
+        MessageManager::new_task_execution(binding),
+    );
+
+    let request = ChatStreamRequest {
+        session_id: task
+            .and_then(|item| item.session_id.clone())
+            .or_else(|| scope.latest_session_id.clone()),
+        content: Some(task.map(|item| item.content.clone()).unwrap_or_default()),
+        ai_model_config: None,
+        user_id: Some(scope.user_id.clone()),
+        attachments: None,
+        reasoning_enabled: Some(model_runtime.effective_reasoning),
+        turn_id: None,
+        contact_agent_id: Some(scope.contact_agent_id.clone()),
+        project_id: Some(scope.project_id.clone()),
+        project_root: None,
+        remote_connection_id: None,
+        mcp_enabled: Some(true),
+        enabled_mcp_ids: None,
+    };
+    let runtime_context = resolve_chat_stream_context(
+        request.session_id.as_deref().unwrap_or(""),
+        request.content.as_deref().unwrap_or(""),
+        &request,
+        model_runtime.system_prompt.clone(),
+        model_runtime.use_active_system_context,
+    )
+    .await;
+    if runtime_context.base_system_prompt.is_some() {
+        ai_server.set_system_prompt(runtime_context.base_system_prompt.clone());
+    }
+
+    let (http_servers, stdio_servers, builtin_servers) = runtime_context.mcp_server_bundle.clone();
+    let mut mcp_exec = McpToolExecute::new(
+        http_servers.clone(),
+        stdio_servers.clone(),
+        builtin_servers.clone(),
+    );
+    if runtime_context.use_tools {
+        let init_result = if model_runtime.use_codex_gateway_mcp_passthrough {
+            mcp_exec.init_builtin_only().await
+        } else {
+            mcp_exec.init().await
+        };
+        if let Err(err) = init_result {
+            warn!(
+                "[TASK-RUNNER] init tools failed for scope={}: {}",
+                scope.scope_key, err
+            );
+        }
+    }
+    ai_server.set_mcp_tool_execute(mcp_exec);
+
+    let effective_settings = get_effective_user_settings(Some(scope.user_id.clone()))
+        .await
+        .unwrap_or_else(|_| json!({}));
+    apply_settings_to_ai_client(&mut ai_server.ai_client, &effective_settings);
+    let max_tokens = chat_max_tokens_from_settings(&effective_settings);
+
+    Ok(PreparedTaskRuntime {
+        ai_server,
+        model_runtime,
+        runtime_context,
+        runtime_session_key: format!("task-exec-scope:{}", scope.scope_key),
+        max_tokens,
+    })
+}
+
+async fn resolve_execution_model(
+    scope: TaskExecutionScopeDto,
+    task: Option<&TaskRecordDto>,
+) -> Result<AiModelConfig, String> {
+    let agent_model_id = resolve_contact_agent_model_config_id(scope.contact_agent_id.as_str()).await?;
+    let model_id = normalize_optional_model_id(task.and_then(|item| item.model_config_id.clone()))
+        .or(agent_model_id)
+        .ok_or_else(|| {
+            format!(
+                "scope {} missing model_config_id for contact {}",
+                scope.scope_key, scope.contact_agent_id
+            )
+        })?;
+    let config = memory_server_client::get_memory_model_config(model_id.as_str())
+        .await?
+        .ok_or_else(|| format!("model config not found: {}", model_id))?;
+    Ok(AiModelConfig {
+        id: config.id,
+        name: config.name,
+        provider: if config.provider.trim().eq_ignore_ascii_case("openai") {
+            "gpt".to_string()
+        } else {
+            config.provider
+        },
+        model: config.model,
+        thinking_level: config.thinking_level,
+        api_key: config.api_key,
+        base_url: config.base_url,
+        user_id: Some(config.user_id),
+        enabled: config.enabled == 1,
+        supports_images: config.supports_images == 1,
+        supports_reasoning: config.supports_reasoning == 1,
+        supports_responses: config.supports_responses == 1,
+        created_at: config.created_at,
+        updated_at: config.updated_at,
+    })
+}
+
+async fn resolve_contact_agent_model_config_id(
+    contact_agent_id: &str,
+) -> Result<Option<String>, String> {
+    let Some(agent) = memory_server_client::get_memory_agent_runtime_context(contact_agent_id).await?
+    else {
+        return Ok(None);
+    };
+
+    if let Some(model_id) = normalize_optional_model_id(agent.model_config_id.clone()) {
+        return Ok(Some(model_id));
+    }
+
+    let Some(source_agent_id) = extract_clone_source_agent_id(agent.project_policy.as_ref()) else {
+        return Ok(None);
+    };
+
+    let source_agent = memory_server_client::get_memory_agent(source_agent_id.as_str()).await?;
+    Ok(source_agent.and_then(|item| normalize_optional_model_id(item.model_config_id)))
+}
+
+fn extract_clone_source_agent_id(project_policy: Option<&Value>) -> Option<String> {
+    project_policy
+        .and_then(|policy| policy.get("__chatos_clone_meta"))
+        .and_then(|meta| meta.get("source_agent_id"))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string())
+}
+
+fn normalize_optional_model_id(value: Option<String>) -> Option<String> {
+    value.and_then(|item| {
+        let trimmed = item.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
+}
+
+async fn save_task_notice_message(
+    session_id: Option<&str>,
+    notice_type: &str,
+    event: &str,
+    scope: &TaskExecutionScopeDto,
+    task: Option<&TaskRecordDto>,
+    content: String,
+) -> Result<Option<Message>, String> {
+    let Some(session_id) = session_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string())
+    else {
+        return Ok(None);
+    };
+
+    let message = Message {
+        id: uuid::Uuid::new_v4().to_string(),
+        session_id: session_id.clone(),
+        role: "assistant".to_string(),
+        content,
+        message_mode: Some("task_notice".to_string()),
+        message_source: Some("task_execution_runner".to_string()),
+        summary: None,
+        tool_calls: None,
+        tool_call_id: None,
+        reasoning: None,
+        metadata: Some(json!({
+            "type": notice_type,
+            "hidden_from_model": true,
+            "task_execution": {
+                "event": event,
+                "scope_key": scope.scope_key,
+                "user_id": scope.user_id,
+                "contact_agent_id": scope.contact_agent_id,
+                "project_id": scope.project_id,
+                "task_id": task.map(|item| item.id.clone()),
+                "task_title": task.map(|item| item.title.clone()),
+            }
+        })),
+        created_at: crate::core::time::now_rfc3339(),
+    };
+    let saved = memory_server_client::upsert_message(&message).await?;
+    let payload = json!({
+        "type": "task_execution.notice",
+        "timestamp": crate::core::time::now_rfc3339(),
+        "event": event,
+        "session_id": session_id,
+        "message": serde_json::to_value(MessageOut::from(saved.clone())).unwrap_or(Value::Null),
+        "task": task,
+        "scope": scope,
+    });
+    session_event_hub().publish(session_id.as_str(), payload);
+    Ok(Some(saved))
+}
+
+fn compact_result_summary(text: &str) -> String {
+    let trimmed = text.trim();
+    if trimmed.chars().count() <= 500 {
+        return trimmed.to_string();
+    }
+    let compact: String = trimmed.chars().take(500).collect();
+    format!("{}...", compact)
+}

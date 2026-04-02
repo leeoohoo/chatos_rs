@@ -73,7 +73,9 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
     [historyTasks, sortedTasks]
   );
   const processedHistoryTasks = useMemo(
-    () => sortedHistoryTasks.filter((task) => task.status === 'done'),
+    () => sortedHistoryTasks.filter((task) => (
+      task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled'
+    )),
     [sortedHistoryTasks]
   );
   const visibleHistoryTasks = historyFilter === 'processed'

@@ -61,7 +61,10 @@ fn command_token_from(command: &str) -> Option<String> {
         if token.is_empty() {
             continue;
         }
-        if token.contains('=') && !token.starts_with('/') && !token.starts_with("./") && !token.starts_with("../")
+        if token.contains('=')
+            && !token.starts_with('/')
+            && !token.starts_with("./")
+            && !token.starts_with("../")
         {
             let mut parts = token.splitn(2, '=');
             let key = parts.next().unwrap_or_default().trim();
@@ -114,7 +117,10 @@ pub fn validate_command_preflight(command: &str, cwd: &str) -> Result<(), String
     if command_exists_in_path(&token) {
         return Ok(());
     }
-    Err(format!("运行失败：缺少运行环境 `{}`（command not found）", token))
+    Err(format!(
+        "运行失败：缺少运行环境 `{}`（command not found）",
+        token
+    ))
 }
 
 fn is_same_cwd(left: &str, right: &str) -> bool {
@@ -137,10 +143,9 @@ fn push_target(out: &mut Vec<ProjectRunTarget>, target: ProjectRunTarget) {
     if out.len() >= MAX_TARGETS {
         return;
     }
-    if out
-        .iter()
-        .any(|item| is_same_cwd(item.cwd.as_str(), target.cwd.as_str()) && item.command == target.command)
-    {
+    if out.iter().any(|item| {
+        is_same_cwd(item.cwd.as_str(), target.cwd.as_str()) && item.command == target.command
+    }) {
         return;
     }
     out.push(target);
@@ -310,7 +315,9 @@ fn detect_python_targets(dir: &Path, files: &HashSet<String>, out: &mut Vec<Proj
             },
         );
     }
-    if files.contains("pytest.ini") || files.contains("pyproject.toml") || files.contains("requirements.txt")
+    if files.contains("pytest.ini")
+        || files.contains("pyproject.toml")
+        || files.contains("requirements.txt")
     {
         push_target(
             out,
@@ -467,7 +474,11 @@ fn detect_targets_sync(root: PathBuf) -> Result<Vec<ProjectRunTarget>, String> {
     targets.sort_by(|a, b| {
         default_target_priority(b)
             .cmp(&default_target_priority(a))
-            .then_with(|| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal))
+            .then_with(|| {
+                b.confidence
+                    .partial_cmp(&a.confidence)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
             .then_with(|| a.label.cmp(&b.label))
     });
 
@@ -480,10 +491,11 @@ pub async fn analyze_project(project: &Project) -> ProjectRunCatalog {
     let now = now_rfc3339();
     let root_path = project.root_path.clone();
 
-    let detected = tokio::task::spawn_blocking(move || detect_targets_sync(PathBuf::from(root_path)))
-        .await
-        .ok()
-        .and_then(Result::ok);
+    let detected =
+        tokio::task::spawn_blocking(move || detect_targets_sync(PathBuf::from(root_path)))
+            .await
+            .ok()
+            .and_then(Result::ok);
 
     match detected {
         Some(mut targets) => {

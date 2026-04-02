@@ -40,6 +40,7 @@ export interface AgentsPageDataResult {
   isReadonlyForScope: (agent: MemoryAgent) => boolean;
   resolvePluginDisplayName: (pluginSource: string) => string;
   resolveSkillDisplayName: (agent: MemoryAgent, skillId: string) => string;
+  resolveModelDisplayName: (modelConfigId?: string | null) => string;
   mergePluginSourcesWithSkills: (pluginSources: string[], skillIds: string[]) => string[];
   openCreate: () => void;
   openAiCreate: () => void;
@@ -114,10 +115,11 @@ export function useAgentsPageData({
     setLoading(true);
     setError(null);
     try {
-      const [agents, plugins, skills] = await Promise.all([
+      const [agents, plugins, skills, models] = await Promise.all([
         api.listAgents(scopeUserId, { include_shared: false, limit: 200, offset: 0 }),
         api.listSkillPlugins(scopeUserId, { limit: 1000, offset: 0 }),
         api.listSkills(scopeUserId, { limit: 1000, offset: 0 }),
+        api.listModelConfigs(scopeUserId),
       ]);
       setItems(agents);
       setPluginCatalog(
@@ -136,6 +138,7 @@ export function useAgentsPageData({
           return acc;
         }, {}),
       );
+      setAiModelConfigs(models.filter((item) => item.enabled === 1));
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -215,6 +218,7 @@ export function useAgentsPageData({
       name: agent.name || '',
       description: agent.description || '',
       category: agent.category || '',
+      modelConfigId: agent.model_config_id || '',
       roleDefinition: agent.role_definition || '',
       pluginSources: mergePluginSourcesWithSkills(
         Array.isArray(agent.plugin_sources) ? agent.plugin_sources : [],
@@ -250,6 +254,7 @@ export function useAgentsPageData({
           name,
           description: editor.description.trim() || undefined,
           category: editor.category.trim() || undefined,
+          model_config_id: editor.modelConfigId.trim() || undefined,
           role_definition: roleDefinition,
           plugin_sources: pluginSources,
           skill_ids: skillIds,
@@ -262,6 +267,7 @@ export function useAgentsPageData({
           name,
           description: editor.description.trim() || undefined,
           category: editor.category.trim() || undefined,
+          model_config_id: editor.modelConfigId.trim() || undefined,
           role_definition: roleDefinition,
           plugin_sources: pluginSources,
           skill_ids: skillIds,
@@ -364,6 +370,20 @@ export function useAgentsPageData({
     return t('agents.unnamedSkill');
   };
 
+  const resolveModelDisplayName = (modelConfigId?: string | null): string => {
+    const normalized = `${modelConfigId || ''}`.trim();
+    if (!normalized) {
+      return '-';
+    }
+    const model = aiModelConfigs.find((item) => item.id === normalized);
+    if (!model) {
+      return normalized;
+    }
+    return [model.name, model.provider, model.model]
+      .filter((part) => part && `${part}`.trim())
+      .join(' | ');
+  };
+
   const runAiCreate = async () => {
     const requirement = aiRequirement.trim();
     if (!requirement) {
@@ -448,6 +468,7 @@ export function useAgentsPageData({
     isReadonlyForScope,
     resolvePluginDisplayName,
     resolveSkillDisplayName,
+    resolveModelDisplayName,
     mergePluginSourcesWithSkills,
     openCreate,
     openAiCreate,

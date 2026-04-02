@@ -243,6 +243,7 @@ export const api = {
     name: string;
     description?: string;
     category?: string;
+    model_config_id?: string;
     role_definition: string;
     plugin_sources?: string[];
     skill_ids?: string[];
@@ -259,6 +260,7 @@ export const api = {
       name?: string;
       description?: string;
       category?: string;
+      model_config_id?: string;
       role_definition?: string;
       plugin_sources?: string[];
       skill_ids?: string[];

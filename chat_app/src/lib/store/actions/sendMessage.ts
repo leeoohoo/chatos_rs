@@ -31,6 +31,11 @@ import {
   readSessionRuntimeFromMetadata,
 } from '../helpers/sessionRuntime';
 import type {
+  StreamChatAttachmentPayload,
+  StreamChatModelConfigPayload,
+  StreamChatOptions,
+} from '../../api/client/types';
+import type {
   ChatStoreGet,
   ChatStoreSet,
   SendMessageRuntimeOptions,
@@ -43,11 +48,21 @@ export function createSendMessageHandler({
   get,
   client,
   getUserIdParam,
+  streamChat,
 }: {
   set: ChatStoreSet;
   get: ChatStoreGet;
   client: ApiClient;
   getUserIdParam: () => string;
+  streamChat: (
+    sessionId: string,
+    content: string,
+    modelConfig: StreamChatModelConfigPayload,
+    userId?: string,
+    attachments?: StreamChatAttachmentPayload[],
+    reasoningEnabled?: boolean,
+    options?: StreamChatOptions,
+  ) => Promise<ReadableStream>;
 }) {
   return async function sendMessage(
     content: string,
@@ -214,7 +229,7 @@ export function createSendMessageHandler({
 
       debugLog('🚀 开始调用后端流式聊天API:', chatRequest);
 
-      const response = await client.streamChat(
+      const response = await streamChat(
         currentSessionId,
         content,
         selectedModel,

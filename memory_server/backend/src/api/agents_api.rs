@@ -38,6 +38,7 @@ pub(super) struct CreateAgentRequest {
     name: String,
     description: Option<String>,
     category: Option<String>,
+    model_config_id: Option<String>,
     role_definition: String,
     plugin_sources: Option<Vec<String>>,
     skills: Option<Vec<MemoryAgentSkill>>,
@@ -100,6 +101,7 @@ async fn ensure_user_clone_for_source_agent(
         name: source_agent.name.clone(),
         description: source_agent.description.clone(),
         category: source_agent.category.clone(),
+        model_config_id: source_agent.model_config_id.clone(),
         role_definition: source_agent.role_definition.clone(),
         plugin_sources: Some(source_agent.plugin_sources.clone()),
         skills: Some(source_agent.skills.clone()),
@@ -120,6 +122,7 @@ async fn ensure_user_clone_for_source_agent(
                 name: req.name,
                 description: req.description,
                 category: req.category,
+                model_config_id: req.model_config_id,
                 role_definition: req.role_definition,
                 plugin_sources: Some(Vec::new()),
                 skills: req.skills,
@@ -337,6 +340,7 @@ pub(super) async fn create_agent(
         name,
         description: req.description,
         category: req.category,
+        model_config_id: req.model_config_id,
         role_definition,
         plugin_sources: req.plugin_sources,
         skills: req.skills,
@@ -369,6 +373,23 @@ pub(super) async fn get_agent(
     match ensure_agent_read_access(state.as_ref(), &auth, agent_id.as_str()).await {
         Ok(agent) => (StatusCode::OK, Json(json!(agent))),
         Err(err) => err,
+    }
+}
+
+pub(super) async fn internal_get_agent(
+    State(state): State<SharedState>,
+    Path(agent_id): Path<String>,
+) -> (StatusCode, Json<Value>) {
+    match agents_repo::get_agent_by_id(&state.pool, agent_id.as_str()).await {
+        Ok(Some(agent)) => (StatusCode::OK, Json(json!(agent))),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "agent not found"})),
+        ),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "load agent failed", "detail": err})),
+        ),
     }
 }
 
@@ -438,6 +459,23 @@ pub(super) async fn get_agent_runtime_context(
         return err;
     }
 
+    match agents_repo::get_runtime_context(&state.pool, agent_id.as_str()).await {
+        Ok(Some(context)) => (StatusCode::OK, Json(json!(context))),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "agent not found"})),
+        ),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "load runtime context failed", "detail": err})),
+        ),
+    }
+}
+
+pub(super) async fn internal_get_agent_runtime_context(
+    State(state): State<SharedState>,
+    Path(agent_id): Path<String>,
+) -> (StatusCode, Json<Value>) {
     match agents_repo::get_runtime_context(&state.pool, agent_id.as_str()).await {
         Ok(Some(context)) => (StatusCode::OK, Json(json!(context))),
         Ok(None) => (

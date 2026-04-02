@@ -23,6 +23,25 @@ pub(crate) struct ListResponse<T> {
     pub items: Vec<T>,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct MemoryAiModelConfigDto {
+    pub id: String,
+    pub user_id: String,
+    pub name: String,
+    pub provider: String,
+    pub model: String,
+    pub base_url: Option<String>,
+    pub api_key: Option<String>,
+    pub supports_images: i64,
+    pub supports_reasoning: i64,
+    pub supports_responses: i64,
+    pub temperature: Option<f64>,
+    pub thinking_level: Option<String>,
+    pub enabled: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 #[derive(Debug, Deserialize)]
 pub(crate) struct MemorySession {
     pub id: String,
@@ -130,6 +149,7 @@ pub struct MemoryAgentDto {
     pub name: String,
     pub description: Option<String>,
     pub category: Option<String>,
+    pub model_config_id: Option<String>,
     pub role_definition: String,
     #[serde(default)]
     pub plugin_sources: Vec<String>,
@@ -271,6 +291,7 @@ pub struct MemoryAgentRuntimeContextDto {
     pub name: String,
     pub description: Option<String>,
     pub category: Option<String>,
+    pub model_config_id: Option<String>,
     pub role_definition: String,
     #[serde(default)]
     pub plugin_sources: Vec<String>,
@@ -446,6 +467,80 @@ pub(crate) struct SyncMessageRequest {
     pub reasoning: Option<String>,
     pub metadata: Option<Value>,
     pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TaskExecutionMessageDto {
+    pub id: String,
+    pub user_id: String,
+    pub contact_agent_id: String,
+    pub project_id: String,
+    pub scope_key: String,
+    pub task_id: Option<String>,
+    pub source_session_id: Option<String>,
+    pub role: String,
+    pub content: String,
+    pub message_mode: Option<String>,
+    pub message_source: Option<String>,
+    pub tool_calls: Option<Value>,
+    pub tool_call_id: Option<String>,
+    pub reasoning: Option<String>,
+    pub metadata: Option<Value>,
+    pub summary_status: String,
+    pub summary_id: Option<String>,
+    pub summarized_at: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SyncTaskExecutionMessageRequestDto {
+    pub user_id: String,
+    pub contact_agent_id: String,
+    pub project_id: String,
+    pub task_id: Option<String>,
+    pub source_session_id: Option<String>,
+    pub role: String,
+    pub content: String,
+    pub message_mode: Option<String>,
+    pub message_source: Option<String>,
+    pub tool_calls: Option<Value>,
+    pub tool_call_id: Option<String>,
+    pub reasoning: Option<String>,
+    pub metadata: Option<Value>,
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TaskExecutionSummaryDto {
+    pub id: String,
+    pub user_id: String,
+    pub contact_agent_id: String,
+    pub project_id: String,
+    pub scope_key: String,
+    pub source_digest: Option<String>,
+    pub summary_text: String,
+    pub summary_model: String,
+    pub trigger_type: String,
+    pub source_start_message_id: Option<String>,
+    pub source_end_message_id: Option<String>,
+    pub source_message_count: i64,
+    pub source_estimated_tokens: i64,
+    pub status: String,
+    pub error_message: Option<String>,
+    pub level: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct TaskExecutionComposeResponseDto {
+    pub user_id: String,
+    pub contact_agent_id: String,
+    pub project_id: String,
+    pub merged_summary: Option<String>,
+    pub summary_count: usize,
+    pub messages: Vec<TaskExecutionMessageDto>,
+    pub meta: Value,
 }
 
 #[derive(Debug, Serialize)]

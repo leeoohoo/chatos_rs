@@ -1,8 +1,16 @@
+export type TaskWorkbarStatus =
+  | 'pending_confirm'
+  | 'pending_execute'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
+
 export interface TaskWorkbarItem {
   id: string;
   title: string;
   details: string;
-  status: 'todo' | 'doing' | 'blocked' | 'done';
+  status: TaskWorkbarStatus;
   priority: 'high' | 'medium' | 'low';
   conversationTurnId: string;
   createdAt: string;

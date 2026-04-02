@@ -137,5 +137,5 @@ fn default_priority() -> String {
 }
 
 fn default_status() -> String {
-    "todo".to_string()
+    "pending_confirm".to_string()
 }

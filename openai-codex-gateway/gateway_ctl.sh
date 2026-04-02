@@ -3,9 +3,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 SERVER_FILE="$SCRIPT_DIR/server.py"
 
-RUNTIME_DIR="${CODEX_GATEWAY_RUNTIME_DIR:-/tmp/chatos_rs_dev}"
+RUNTIME_DIR="${CODEX_GATEWAY_RUNTIME_DIR:-$ROOT_DIR/logs}"
 PID_FILE="${CODEX_GATEWAY_PID_FILE:-$RUNTIME_DIR/codex_gateway.pid}"
 LOG_FILE="${CODEX_GATEWAY_LOG_FILE:-$RUNTIME_DIR/codex_gateway.log}"
 

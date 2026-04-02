@@ -10,7 +10,7 @@ use crate::ai::AiClient;
 use crate::repositories::{configs, sessions};
 use crate::state::AppState;
 
-use super::{agent_memory, rollup, summary};
+use super::{agent_memory, rollup, summary, task_execution_summary};
 
 #[derive(Default)]
 struct WorkerState {
@@ -73,6 +73,38 @@ async fn tick_once(
                     Err(err) => {
                         warn!(
                             "[MEMORY-WORKER] summary run failed user_id={} error={}",
+                            user_id, err
+                        );
+                    }
+                }
+                mark_run(&worker_state, key.as_str(), now_ts);
+            }
+        }
+
+        if summary_cfg.enabled == 1 {
+            let key = format!("task_exec_summary:{}", user_id);
+            if is_due(
+                &worker_state,
+                key.as_str(),
+                now_ts,
+                summary_cfg.job_interval_seconds,
+            ) {
+                let result = task_execution_summary::run_once(&state.pool, &ai, user_id.as_str()).await;
+                match result {
+                    Ok(result) => {
+                        info!(
+                            "[MEMORY-WORKER] task execution summary run user_id={} processed={} summarized={} generated={} marked={} failed={}",
+                            user_id,
+                            result.processed_scopes,
+                            result.summarized_scopes,
+                            result.generated_summaries,
+                            result.marked_messages,
+                            result.failed_scopes
+                        );
+                    }
+                    Err(err) => {
+                        warn!(
+                            "[MEMORY-WORKER] task execution summary run failed user_id={} error={}",
                             user_id, err
                         );
                     }

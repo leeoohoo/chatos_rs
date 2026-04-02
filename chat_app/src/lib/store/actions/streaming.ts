@@ -10,9 +10,10 @@ interface Deps {
   set: ChatStoreSet;
   get: ChatStoreGet;
   client: ApiClient;
+  abortSessionChat?: (sessionId: string) => Promise<boolean> | boolean;
 }
 
-export function createStreamingActions({ set, get, client }: Deps) {
+export function createStreamingActions({ set, get, client, abortSessionChat }: Deps) {
   return {
     startStreaming: (messageId: string) => {
       set((state) => {
@@ -91,6 +92,12 @@ export function createStreamingActions({ set, get, client }: Deps) {
       });
 
       try {
+        const handledBySessionWs = await abortSessionChat?.(currentSessionId);
+        if (handledBySessionWs) {
+          debugLog('✅ 已通过 session websocket 请求停止当前对话');
+          return;
+        }
+
         const {
           selectedModelId,
           aiModelConfigs,

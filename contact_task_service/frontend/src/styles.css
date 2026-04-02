@@ -1,0 +1,24 @@
+html,
+body,
+#root {
+  margin: 0;
+  min-height: 100%;
+  background:
+    radial-gradient(circle at top left, rgba(255, 236, 214, 0.9), transparent 35%),
+    linear-gradient(180deg, #f6f2eb 0%, #f0ede6 100%);
+}
+
+body {
+  font-family: "IBM Plex Sans", "Noto Sans SC", sans-serif;
+}
+
+.page-shell {
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.auth-wrap {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+}

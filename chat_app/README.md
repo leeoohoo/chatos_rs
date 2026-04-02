@@ -19,7 +19,7 @@ React AI Chat Component and Node server. Bilingual README (中文/English).
 ## 代码结构 Repository Structure
 
 - 根目录 Root: React 组件库 React component library (Vite + TS)
-- server/chat_app_node_server: Node API 服务 Node API server (Express, SSE, MCP, SQLite/MongoDB)
+- server/chat_app_node_server: Node API 服务 Node API server (Express/WebSocket, MCP, SQLite/MongoDB)
 - examples/complete-example: 集成示例 Example app (web/Electron)
 
 ## 快速开始 Quick Start
@@ -145,7 +145,8 @@ NODE_ENV=development
 - MCP: `/api/mcp-configs` CRUD, resource reading
 - AI Model Configs: `/api/ai-model-configs` CRUD
 - System Contexts: `/api/system-contexts` CRUD, active context
-- Streaming chat: `/api/agent_v2/chat/stream` (SSE)
+- Session realtime channel: `/api/sessions/:session_id/ws` (WebSocket, carries chat stream + task notices)
+- Legacy streaming chat endpoints kept for compatibility: `/api/agent_v2/chat/stream`, `/api/agent_v3/chat/stream`
 
 详细见 See details: `server/chat_app_node_server/README.md`
 

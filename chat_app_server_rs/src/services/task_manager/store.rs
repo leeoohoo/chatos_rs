@@ -1,5 +1,6 @@
 mod create_ops;
 mod read_ops;
+mod remote_support;
 mod row;
 mod write_ops;
 

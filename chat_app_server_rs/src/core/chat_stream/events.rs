@@ -4,11 +4,11 @@ use std::sync::{Arc, Mutex};
 use serde_json::{json, Value};
 
 use crate::utils::abort_registry;
+use crate::utils::chat_event_sender::ChatEventSender;
 use crate::utils::events::Events;
-use crate::utils::sse::SseSender;
 
 pub fn send_fallback_chunk_if_needed(
-    sender: &SseSender,
+    sender: &impl ChatEventSender,
     chunk_sent: &Arc<AtomicBool>,
     result: &Value,
 ) {
@@ -25,25 +25,25 @@ pub fn send_fallback_chunk_if_needed(
     }
 }
 
-pub fn send_start_event(sender: &SseSender, session_id: &str) {
+pub fn send_start_event(sender: &impl ChatEventSender, session_id: &str) {
     sender.send_json(
         &json!({ "type": Events::START, "timestamp": crate::core::time::now_rfc3339(), "session_id": session_id }),
     );
 }
 
-pub fn send_complete_event(sender: &SseSender, result: &Value) {
+pub fn send_complete_event(sender: &impl ChatEventSender, result: &Value) {
     sender.send_json(
         &json!({ "type": Events::COMPLETE, "timestamp": crate::core::time::now_rfc3339(), "result": result }),
     );
 }
 
-pub fn send_cancelled_event(sender: &SseSender) {
+pub fn send_cancelled_event(sender: &impl ChatEventSender) {
     sender.send_json(
         &json!({ "type": Events::CANCELLED, "timestamp": crate::core::time::now_rfc3339() }),
     );
 }
 
-pub fn send_error_event(sender: &SseSender, error: &str) {
+pub fn send_error_event(sender: &impl ChatEventSender, error: &str) {
     sender.send_json(&json!({
         "type": Events::ERROR,
         "timestamp": crate::core::time::now_rfc3339(),
@@ -56,7 +56,7 @@ pub fn send_error_event(sender: &SseSender, error: &str) {
 }
 
 pub fn handle_chat_result(
-    sender: &SseSender,
+    sender: &impl ChatEventSender,
     session_id: &str,
     chunk_sent: Option<&Arc<AtomicBool>>,
     streamed_content: Option<&Arc<Mutex<String>>>,

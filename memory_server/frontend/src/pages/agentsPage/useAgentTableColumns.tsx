@@ -12,6 +12,7 @@ interface UseAgentTableColumnsParams {
   isReadonlyForScope: (agent: MemoryAgent) => boolean;
   resolvePluginDisplayName: (pluginSource: string) => string;
   resolveSkillDisplayName: (agent: MemoryAgent, skillId: string) => string;
+  resolveModelDisplayName: (modelConfigId?: string | null) => string;
   onOpenConversation: (agent: MemoryAgent) => void | Promise<void>;
   onOpenEdit: (agent: MemoryAgent) => void;
   onOpenPluginPreview: (pluginSource: string) => void | Promise<void>;
@@ -25,6 +26,7 @@ export function useAgentTableColumns({
   isReadonlyForScope,
   resolvePluginDisplayName,
   resolveSkillDisplayName,
+  resolveModelDisplayName,
   onOpenConversation,
   onOpenEdit,
   onOpenPluginPreview,
@@ -131,6 +133,13 @@ export function useAgentTableColumns({
           {value ? t('common.enabled') : t('common.disabled')}
         </Tag>
       ),
+    },
+    {
+      title: t('agents.executionModel'),
+      dataIndex: 'model_config_id',
+      key: 'model_config_id',
+      width: 220,
+      render: (value?: string | null) => resolveModelDisplayName(value),
     },
     {
       title: t('agents.updatedAt'),

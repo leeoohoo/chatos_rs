@@ -9,6 +9,7 @@ interface AgentEditorModalProps {
   open: boolean;
   saving: boolean;
   editor: AgentEditorState;
+  modelOptions: Array<{ value: string; label: string }>;
   pluginOptions: Array<{ value: string; label: string }>;
   skillOptions: Array<{ value: string; label: string }>;
   onCancel: () => void;
@@ -22,6 +23,7 @@ export function AgentEditorModal({
   open,
   saving,
   editor,
+  modelOptions,
   pluginOptions,
   skillOptions,
   onCancel,
@@ -62,6 +64,16 @@ export function AgentEditorModal({
           onChange={(event) => onChange((prev) => ({ ...prev, roleDefinition: event.target.value }))}
           placeholder={t('agents.roleDefinition')}
           rows={6}
+        />
+        <Select
+          showSearch
+          allowClear
+          value={editor.modelConfigId || undefined}
+          onChange={(value) => onChange((prev) => ({ ...prev, modelConfigId: value || '' }))}
+          options={modelOptions}
+          placeholder={t('agents.executionModel')}
+          optionFilterProp="label"
+          style={{ width: '100%' }}
         />
         <Select
           mode="multiple"

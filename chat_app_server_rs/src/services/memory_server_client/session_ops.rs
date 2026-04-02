@@ -11,9 +11,10 @@ use super::dto::{
 };
 use super::http::{
     build_url, client, context_timeout_duration, push_limit_offset_params, send_delete_result,
-    send_json, send_list, send_optional_json, timeout_duration,
+    send_json, send_json_without_service_token, send_list, send_optional_json, timeout_duration,
 };
 use super::mapping::map_memory_session;
+use super::current_access_token;
 
 pub async fn list_sessions(
     user_id: Option<&str>,
@@ -111,11 +112,20 @@ pub async fn delete_session(session_id: &str) -> Result<bool, String> {
 }
 
 pub async fn upsert_message(message: &Message) -> Result<Message, String> {
-    let path = format!(
-        "/sessions/{}/messages/{}/sync",
-        urlencoding::encode(message.session_id.as_str()),
-        urlencoding::encode(message.id.as_str())
-    );
+    let internal_mode = current_access_token().is_none();
+    let path = if internal_mode {
+        format!(
+            "/internal/sessions/{}/messages/{}/sync",
+            urlencoding::encode(message.session_id.as_str()),
+            urlencoding::encode(message.id.as_str())
+        )
+    } else {
+        format!(
+            "/sessions/{}/messages/{}/sync",
+            urlencoding::encode(message.session_id.as_str()),
+            urlencoding::encode(message.id.as_str())
+        )
+    };
 
     let req = client()
         .put(build_url(path.as_str()).as_str())
@@ -132,7 +142,11 @@ pub async fn upsert_message(message: &Message) -> Result<Message, String> {
             created_at: Some(message.created_at.clone()),
         });
 
-    send_json(req).await
+    if internal_mode {
+        send_json_without_service_token(req).await
+    } else {
+        send_json(req).await
+    }
 }
 
 pub async fn sync_turn_runtime_snapshot(

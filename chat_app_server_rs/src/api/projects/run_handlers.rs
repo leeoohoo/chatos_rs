@@ -1,8 +1,4 @@
-use axum::{
-    extract::Path,
-    http::StatusCode,
-    Json,
-};
+use axum::{extract::Path, http::StatusCode, Json};
 use serde_json::{json, Value};
 
 use crate::core::auth::AuthUser;
@@ -17,7 +13,9 @@ use super::contracts::{ProjectRunDefaultRequest, ProjectRunExecuteRequest};
 async fn load_or_analyze_catalog(
     project: &crate::models::project::Project,
 ) -> Result<crate::models::project_run::ProjectRunCatalog, String> {
-    if let Some(cached) = project_run_catalogs::get_catalog_by_project_id(project.id.as_str()).await? {
+    if let Some(cached) =
+        project_run_catalogs::get_catalog_by_project_id(project.id.as_str()).await?
+    {
         return Ok(cached);
     }
     let analyzed = analyze_project(project).await;

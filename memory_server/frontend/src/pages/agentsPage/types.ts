@@ -12,6 +12,7 @@ export interface AgentEditorState {
   name: string;
   description: string;
   category: string;
+  modelConfigId: string;
   roleDefinition: string;
   pluginSources: string[];
   skillIds: string[];
@@ -22,6 +23,7 @@ export const EMPTY_EDITOR: AgentEditorState = {
   name: '',
   description: '',
   category: '',
+  modelConfigId: '',
   roleDefinition: '',
   pluginSources: [],
   skillIds: [],

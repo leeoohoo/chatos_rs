@@ -87,7 +87,10 @@ export function useWorkbarMutations({
     if (nextPriorityRaw === null) {
       return;
     }
-    const nextStatusRaw = window.prompt('Status (todo/doing/blocked/done)', task.status);
+    const nextStatusRaw = window.prompt(
+      'Status (pending_confirm/pending_execute/running/completed/failed/cancelled)',
+      task.status,
+    );
     if (nextStatusRaw === null) {
       return;
     }
@@ -97,7 +100,14 @@ export function useWorkbarMutations({
     }
 
     const allowedPriority: Array<TaskWorkbarItem['priority']> = ['high', 'medium', 'low'];
-    const allowedStatus: Array<TaskWorkbarItem['status']> = ['todo', 'doing', 'blocked', 'done'];
+    const allowedStatus: Array<TaskWorkbarItem['status']> = [
+      'pending_confirm',
+      'pending_execute',
+      'running',
+      'completed',
+      'failed',
+      'cancelled',
+    ];
     const nextPriority = nextPriorityRaw.trim().toLowerCase() as TaskWorkbarItem['priority'];
     const nextStatus = nextStatusRaw.trim().toLowerCase() as TaskWorkbarItem['status'];
 
@@ -106,7 +116,7 @@ export function useWorkbarMutations({
       return;
     }
     if (!allowedStatus.includes(nextStatus)) {
-      setWorkbarError('Status must be todo / doing / blocked / done');
+      setWorkbarError('Status must be pending_confirm / pending_execute / running / completed / failed / cancelled');
       return;
     }
 

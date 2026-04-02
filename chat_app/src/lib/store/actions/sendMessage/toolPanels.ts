@@ -28,10 +28,12 @@ const normalizeTaskPriority = (value: unknown): TaskReviewDraft['priority'] => {
 
 const normalizeTaskStatus = (value: unknown): TaskReviewDraft['status'] => {
   const normalized = String(value ?? '').trim().toLowerCase();
-  if (normalized === 'doing') return 'doing';
-  if (normalized === 'blocked') return 'blocked';
-  if (normalized === 'done') return 'done';
-  return 'todo';
+  if (normalized === 'pending_execute') return 'pending_execute';
+  if (normalized === 'running') return 'running';
+  if (normalized === 'completed') return 'completed';
+  if (normalized === 'failed') return 'failed';
+  if (normalized === 'cancelled') return 'cancelled';
+  return 'pending_confirm';
 };
 
 const parseTaskTags = (value: unknown): string[] => {

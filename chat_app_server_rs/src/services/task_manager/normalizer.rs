@@ -35,10 +35,13 @@ pub(super) fn normalize_priority(value: &str) -> String {
 
 pub(super) fn normalize_status(value: &str) -> String {
     match value.trim().to_ascii_lowercase().as_str() {
-        "doing" => "doing".to_string(),
-        "blocked" => "blocked".to_string(),
-        "done" => "done".to_string(),
-        _ => "todo".to_string(),
+        "pending_confirm" => "pending_confirm".to_string(),
+        "pending_execute" => "pending_execute".to_string(),
+        "running" => "running".to_string(),
+        "completed" => "completed".to_string(),
+        "failed" => "failed".to_string(),
+        "cancelled" => "cancelled".to_string(),
+        _ => "pending_confirm".to_string(),
     }
 }
 

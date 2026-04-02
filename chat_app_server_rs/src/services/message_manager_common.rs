@@ -10,6 +10,7 @@ use crate::models::message::Message;
 use crate::models::session_summary_v2::SessionSummaryV2;
 use crate::services::ai_common::build_tool_result_metadata;
 use crate::services::memory_server_client;
+use crate::services::memory_server_client::TaskExecutionScopeBinding;
 
 #[derive(Debug, Default, Clone)]
 struct Stats {
@@ -29,6 +30,7 @@ struct State {
 #[derive(Clone)]
 pub(crate) struct MessageManagerCore {
     state: Arc<Mutex<State>>,
+    store: MessageStore,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -36,6 +38,12 @@ pub(crate) struct ChatHistoryContext {
     pub merged_summary: Option<String>,
     pub summary_count: usize,
     pub messages: Vec<Message>,
+}
+
+#[derive(Clone)]
+enum MessageStore {
+    Session,
+    TaskExecution(TaskExecutionScopeBinding),
 }
 
 impl MessageManagerCore {
@@ -46,6 +54,18 @@ impl MessageManagerCore {
                 pending_saves: VecDeque::new(),
                 stats: Stats::default(),
             })),
+            store: MessageStore::Session,
+        }
+    }
+
+    pub(crate) fn new_task_execution(scope: TaskExecutionScopeBinding) -> Self {
+        Self {
+            state: Arc::new(Mutex::new(State {
+                recent_messages: HashMap::new(),
+                pending_saves: VecDeque::new(),
+                stats: Stats::default(),
+            })),
+            store: MessageStore::TaskExecution(scope),
         }
     }
 
@@ -144,7 +164,12 @@ impl MessageManagerCore {
     }
 
     async fn persist_message(&self, message: Message) -> Result<Message, String> {
-        memory_server_client::upsert_message(&message).await
+        match &self.store {
+            MessageStore::Session => memory_server_client::upsert_message(&message).await,
+            MessageStore::TaskExecution(scope) => {
+                memory_server_client::upsert_task_execution_message(scope, &message).await
+            }
+        }
     }
 
     pub(crate) async fn get_session_messages(
@@ -152,15 +177,46 @@ impl MessageManagerCore {
         session_id: &str,
         limit: Option<i64>,
     ) -> Vec<Message> {
-        let result = if let Some(value) = limit {
-            memory_server_client::list_messages(session_id, Some(value), 0, false)
-                .await
-                .map(|mut items| {
-                    items.reverse();
-                    items
-                })
-        } else {
-            memory_server_client::list_messages(session_id, None, 0, true).await
+        let result = match &self.store {
+            MessageStore::Session => {
+                if let Some(value) = limit {
+                    memory_server_client::list_messages(session_id, Some(value), 0, false)
+                        .await
+                        .map(|mut items| {
+                            items.reverse();
+                            items
+                        })
+                } else {
+                    memory_server_client::list_messages(session_id, None, 0, true).await
+                }
+            }
+            MessageStore::TaskExecution(scope) => {
+                if let Some(value) = limit {
+                    memory_server_client::list_task_execution_messages(
+                        &scope.user_id,
+                        &scope.contact_agent_id,
+                        &scope.project_id,
+                        Some(value),
+                        0,
+                        false,
+                    )
+                    .await
+                    .map(|mut items| {
+                        items.reverse();
+                        items
+                    })
+                } else {
+                    memory_server_client::list_task_execution_messages(
+                        &scope.user_id,
+                        &scope.contact_agent_id,
+                        &scope.project_id,
+                        None,
+                        0,
+                        true,
+                    )
+                    .await
+                }
+            }
         };
 
         match result {
@@ -183,6 +239,14 @@ impl MessageManagerCore {
         memory_summary_limit: Option<i64>,
         filter_empty_summaries: bool,
     ) -> (Vec<SessionSummaryV2>, Vec<Message>) {
+        if matches!(&self.store, MessageStore::TaskExecution(_)) {
+            return (
+                Vec::new(),
+                self.get_history_messages_after_summary(session_id, limit, memory_summary_limit)
+                    .await,
+            );
+        }
+
         let mut summaries =
             match memory_server_client::list_summaries(session_id, memory_summary_limit, 0).await {
                 Ok(items) => items,
@@ -238,11 +302,9 @@ impl MessageManagerCore {
         session_id: &str,
         memory_summary_limit: usize,
     ) -> ChatHistoryContext {
-        match try_get_memory_chat_history_context_from_memory_server(
-            session_id,
-            memory_summary_limit,
-        )
-        .await
+        match self
+            .try_get_memory_chat_history_context(session_id, memory_summary_limit)
+            .await
         {
             Ok(context) => context,
             Err(err) => {
@@ -254,6 +316,96 @@ impl MessageManagerCore {
                     merged_summary: None,
                     summary_count: 0,
                     messages: self.get_session_messages(session_id, None).await,
+                }
+            }
+        }
+    }
+
+    pub(crate) async fn get_history_messages_after_summary(
+        &self,
+        session_id: &str,
+        limit: Option<i64>,
+        memory_summary_limit: Option<i64>,
+    ) -> Vec<Message> {
+        match &self.store {
+            MessageStore::Session => {
+                let mut summaries =
+                    match memory_server_client::list_summaries(session_id, memory_summary_limit, 0)
+                        .await
+                    {
+                        Ok(items) => items,
+                        Err(err) => {
+                            error!("list_summaries from memory_server failed: {}", err);
+                            Vec::new()
+                        }
+                    };
+                summaries.retain(|summary| !summary.summary_text.trim().is_empty());
+
+                if summaries.is_empty() {
+                    return self.get_session_messages(session_id, limit).await;
+                }
+
+                let mut messages =
+                    match memory_server_client::list_messages(session_id, None, 0, true).await {
+                        Ok(items) => items,
+                        Err(err) => {
+                            error!(
+                                "get_history_messages_after_summary list_messages failed: {}",
+                                err
+                            );
+                            Vec::new()
+                        }
+                    };
+
+                if let Some(last_message_id) = summaries
+                    .last()
+                    .and_then(|summary| summary.source_end_message_id.clone())
+                {
+                    if let Some(last_idx) = messages
+                        .iter()
+                        .position(|message| message.id == last_message_id)
+                    {
+                        messages = messages.into_iter().skip(last_idx + 1).collect();
+                    }
+                }
+
+                if let Some(v) = limit {
+                    if v > 0 && messages.len() > v as usize {
+                        messages = messages[messages.len() - v as usize..].to_vec();
+                    }
+                }
+
+                let mut state = self.state.lock();
+                state.stats.messages_retrieved += messages.len();
+                messages
+            }
+            MessageStore::TaskExecution(scope) => {
+                let summary_limit = memory_summary_limit.unwrap_or(2).max(1) as usize;
+                match memory_server_client::compose_task_execution_context(
+                    &scope.user_id,
+                    &scope.contact_agent_id,
+                    &scope.project_id,
+                    summary_limit,
+                )
+                .await
+                {
+                    Ok((_merged_summary, _summary_count, mut messages)) => {
+                        if let Some(v) = limit {
+                            if v > 0 && messages.len() > v as usize {
+                                messages = messages[messages.len() - v as usize..].to_vec();
+                            }
+                        }
+                        let mut state = self.state.lock();
+                        state.stats.messages_retrieved += messages.len();
+                        messages
+                    }
+                    Err(err) => {
+                        error!(
+                            "task_execution compose context failed: scope={} error={}",
+                            scope.contact_agent_id, err
+                        );
+                        Vec::new()
+                    }
                 }
             }
         }
@@ -271,7 +423,10 @@ impl MessageManagerCore {
             return Some(cached);
         }
 
-        let result = memory_server_client::get_message_by_id(message_id).await;
+        let result = match &self.store {
+            MessageStore::Session => memory_server_client::get_message_by_id(message_id).await,
+            MessageStore::TaskExecution(_) => Ok(None),
+        };
 
         match result {
             Ok(Some(message)) => {
@@ -329,6 +484,36 @@ impl MessageManagerCore {
 
         state.recent_messages.insert(message.id.clone(), message);
         state.stats.messages_saved += 1;
+    }
+
+    async fn try_get_memory_chat_history_context(
+        &self,
+        session_id: &str,
+        memory_summary_limit: usize,
+    ) -> Result<ChatHistoryContext, String> {
+        match &self.store {
+            MessageStore::Session => {
+                try_get_memory_chat_history_context_from_memory_server(
+                    session_id,
+                    memory_summary_limit,
+                )
+                .await
+            }
+            MessageStore::TaskExecution(scope) => {
+                let payload = memory_server_client::compose_task_execution_context(
+                    &scope.user_id,
+                    &scope.contact_agent_id,
+                    &scope.project_id,
+                    memory_summary_limit,
+                )
+                .await?;
+                Ok(ChatHistoryContext {
+                    merged_summary: payload.0,
+                    summary_count: payload.1,
+                    messages: payload.2,
+                })
+            }
+        }
     }
 }
 

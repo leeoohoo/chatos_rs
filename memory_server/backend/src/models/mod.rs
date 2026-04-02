@@ -38,6 +38,7 @@ mod memories;
 mod messages;
 mod sessions;
 mod summaries;
+mod task_execution;
 mod turn_runtime_snapshots;
 
 pub use self::agents::{
@@ -60,6 +61,11 @@ pub use self::sessions::{
     Session, UpdateSessionRequest,
 };
 pub use self::summaries::{CreateSummaryInput, SessionSummary};
+pub use self::task_execution::{
+    CreateTaskExecutionMessageRequest, CreateTaskExecutionSummaryInput, TaskExecutionComposeRequest,
+    TaskExecutionComposeResponse, TaskExecutionMessage, TaskExecutionScope,
+    TaskExecutionSummary,
+};
 pub use self::turn_runtime_snapshots::{
     SyncTurnRuntimeSnapshotRequest, TurnRuntimeSnapshot, TurnRuntimeSnapshotLookupResponse,
 };

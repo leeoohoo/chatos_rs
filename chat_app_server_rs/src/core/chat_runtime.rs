@@ -102,7 +102,8 @@ pub fn metadata_string_list(metadata: Option<&Value>, path: &[&str]) -> Vec<Stri
 }
 
 fn metadata_string_aliases(metadata: Option<&Value>, paths: &[&[&str]]) -> Option<String> {
-    paths.iter()
+    paths
+        .iter()
         .find_map(|path| metadata_string(metadata, path))
 }
 
@@ -111,10 +112,15 @@ fn metadata_bool_aliases(metadata: Option<&Value>, paths: &[&[&str]]) -> Option<
 }
 
 fn metadata_string_list_aliases(metadata: Option<&Value>, paths: &[&[&str]]) -> Vec<String> {
-    paths.iter()
+    paths
+        .iter()
         .find_map(|path| {
             let values = metadata_string_list(metadata, path);
-            if values.is_empty() { None } else { Some(values) }
+            if values.is_empty() {
+                None
+            } else {
+                Some(values)
+            }
         })
         .unwrap_or_default()
 }
@@ -148,15 +154,24 @@ impl ChatRuntimeMetadata {
             ),
             project_id: metadata_string_aliases(
                 metadata,
-                &[&["chat_runtime", "project_id"], &["chat_runtime", "projectId"]],
+                &[
+                    &["chat_runtime", "project_id"],
+                    &["chat_runtime", "projectId"],
+                ],
             ),
             project_root: metadata_string_aliases(
                 metadata,
-                &[&["chat_runtime", "project_root"], &["chat_runtime", "projectRoot"]],
+                &[
+                    &["chat_runtime", "project_root"],
+                    &["chat_runtime", "projectRoot"],
+                ],
             ),
             workspace_root: metadata_string_aliases(
                 metadata,
-                &[&["chat_runtime", "workspace_root"], &["chat_runtime", "workspaceRoot"]],
+                &[
+                    &["chat_runtime", "workspace_root"],
+                    &["chat_runtime", "workspaceRoot"],
+                ],
             ),
             remote_connection_id: metadata_string_aliases(
                 metadata,
@@ -167,7 +182,10 @@ impl ChatRuntimeMetadata {
             ),
             mcp_enabled: metadata_bool_aliases(
                 metadata,
-                &[&["chat_runtime", "mcp_enabled"], &["chat_runtime", "mcpEnabled"]],
+                &[
+                    &["chat_runtime", "mcp_enabled"],
+                    &["chat_runtime", "mcpEnabled"],
+                ],
             ),
             enabled_mcp_ids: metadata_string_list_aliases(
                 metadata,
@@ -748,9 +766,8 @@ pub async fn resolve_project_runtime(
 mod tests {
     use super::{
         compose_contact_command_system_prompt, compose_contact_system_prompt,
-        ChatRuntimeMetadata,
         parse_contact_command_invocation, parse_implicit_command_selections_from_tools_end,
-        remote_connection_id_from_metadata, CONTACT_COMMAND_READER_TOOL_NAME,
+        remote_connection_id_from_metadata, ChatRuntimeMetadata, CONTACT_COMMAND_READER_TOOL_NAME,
         CONTACT_PLUGIN_READER_TOOL_NAME, CONTACT_SKILL_READER_TOOL_NAME,
     };
     use crate::services::memory_server_client::{
@@ -766,6 +783,7 @@ mod tests {
             name: "小林".to_string(),
             description: Some("负责前端排障".to_string()),
             category: Some("frontend".to_string()),
+            model_config_id: Some("model_1".to_string()),
             role_definition: "专注组件与状态问题".to_string(),
             plugin_sources: vec!["frontend_toolkit".to_string()],
             runtime_plugins: vec![MemoryAgentRuntimePluginSummaryDto {
@@ -821,6 +839,7 @@ mod tests {
             name: "小林".to_string(),
             description: None,
             category: None,
+            model_config_id: Some("model_1".to_string()),
             role_definition: "专注问题排查".to_string(),
             plugin_sources: vec!["frontend_toolkit".to_string()],
             runtime_plugins: vec![],

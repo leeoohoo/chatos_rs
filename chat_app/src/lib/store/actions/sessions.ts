@@ -38,6 +38,7 @@ interface Deps {
   getSessionParams: () => { userId: string; projectId: string };
   customUserId?: string;
   customProjectId?: string;
+  onSessionActivated?: (sessionId: string | null) => void;
 }
 
 export function createSessionActions({
@@ -47,6 +48,7 @@ export function createSessionActions({
   getSessionParams,
   customUserId,
   customProjectId,
+  onSessionActivated,
 }: Deps) {
   return {
     loadSessions: async (options: any = {}) => {
@@ -365,6 +367,7 @@ export function createSessionActions({
         deleteSessionMessagesCacheEntry(formattedSession.id);
         localStorage.setItem(`lastSessionId_${userId}_${effectiveProjectId}`, formattedSession.id);
         debugLog('🔍 保存新创建的会话ID到 localStorage:', formattedSession.id);
+        onSessionActivated?.(formattedSession.id);
 
         return formattedSession.id;
       } catch (error) {
@@ -447,6 +450,7 @@ export function createSessionActions({
           perfMs: stopPerfMeasure() ?? null,
           elapsedMs: Date.now() - selectStartedAt,
         });
+        onSessionActivated?.(sessionId);
       } catch (error) {
         console.error('Failed to select session:', error);
         debugLog('[Store] selectSession failed', {
@@ -558,6 +562,9 @@ export function createSessionActions({
           }
         });
         deleteSessionMessagesCacheEntry(sessionId);
+        if (get().currentSessionId === null) {
+          onSessionActivated?.(null);
+        }
       } catch (error) {
         console.error('Failed to delete session:', error);
         set((state: any) => {

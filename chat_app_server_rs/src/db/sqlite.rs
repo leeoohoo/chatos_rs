@@ -97,8 +97,7 @@ fn repo_runtime_root() -> PathBuf {
 }
 
 fn migrate_legacy_sqlite_files_if_needed(target: &Path) -> Result<(), String> {
-    let legacy_db = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join(LEGACY_SQLITE_DB_PATH);
+    let legacy_db = Path::new(env!("CARGO_MANIFEST_DIR")).join(LEGACY_SQLITE_DB_PATH);
     if target == legacy_db.as_path() || target.exists() || !legacy_db.exists() {
         return Ok(());
     }

@@ -1,4 +1,4 @@
-// Canonical event type constants for SSE/chat
+// Canonical event type constants for chat streaming transports
 pub struct Events;
 
 impl Events {
@@ -13,6 +13,7 @@ impl Events {
     pub const CONTEXT_SUMMARIZED_END: &'static str = "context_summarized_end";
     pub const CONTEXT_SUMMARIZED: &'static str = "context_summarized";
     pub const COMPLETE: &'static str = "complete";
+    pub const DONE: &'static str = "done";
     pub const CANCELLED: &'static str = "cancelled";
     pub const ERROR: &'static str = "error";
     pub const TASK_CREATE_REVIEW_REQUIRED: &'static str = "task_create_review_required";

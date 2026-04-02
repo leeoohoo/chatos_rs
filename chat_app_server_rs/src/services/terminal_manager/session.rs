@@ -15,9 +15,7 @@ use super::directory_guard::{
 use super::io_runtime::{spawn_shell, spawn_terminal_output_persist, spawn_terminal_touch};
 use super::output_history::{OutputHistory, SNAPSHOT_MAX_LINES};
 use super::path_utils::{canonicalize_path, path_is_within_root};
-use super::prompt_parser::{
-    extract_prompt_cwd, infer_prompt_cwd_from_context, strip_ansi,
-};
+use super::prompt_parser::{extract_prompt_cwd, infer_prompt_cwd_from_context, strip_ansi};
 use super::{input_triggers_busy, now_millis, TerminalEvent};
 
 pub struct TerminalSession {
@@ -114,17 +112,17 @@ impl TerminalSession {
                             let mut parts = line_buffer.split('\n').collect::<Vec<_>>();
                             let tail = parts.pop().unwrap_or("");
                             for line in parts.iter() {
-                                let is_prompt = session_clone.sync_current_cwd_from_prompt_line(line);
+                                let is_prompt =
+                                    session_clone.sync_current_cwd_from_prompt_line(line);
                                 session_clone.observe_output_line(line, is_prompt);
                                 if is_prompt {
                                     saw_prompt = true;
                                 }
                             }
                             line_buffer = tail.to_string();
-                            let tail_is_prompt =
-                                session_clone.sync_current_cwd_from_prompt_line(line_buffer.as_str());
-                            session_clone
-                                .observe_output_line(line_buffer.as_str(), tail_is_prompt);
+                            let tail_is_prompt = session_clone
+                                .sync_current_cwd_from_prompt_line(line_buffer.as_str());
+                            session_clone.observe_output_line(line_buffer.as_str(), tail_is_prompt);
                             if !saw_prompt && tail_is_prompt {
                                 saw_prompt = true;
                             }
@@ -370,10 +368,8 @@ impl TerminalSession {
     fn mark_input(&self, data: &str) {
         self.last_input_at.store(now_millis(), Ordering::Relaxed);
         if input_triggers_busy(data) {
-            self.awaiting_command_output.store(
-                has_visible_command_text(data),
-                Ordering::Relaxed,
-            );
+            self.awaiting_command_output
+                .store(has_visible_command_text(data), Ordering::Relaxed);
             self.set_busy(true);
         }
     }
@@ -409,7 +405,8 @@ impl TerminalSession {
 }
 
 fn has_visible_command_text(data: &str) -> bool {
-    data.chars().any(|ch| !ch.is_control() && !ch.is_whitespace())
+    data.chars()
+        .any(|ch| !ch.is_control() && !ch.is_whitespace())
 }
 
 #[cfg(test)]

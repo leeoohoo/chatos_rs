@@ -14,6 +14,8 @@ mod session_support;
 pub mod sessions;
 pub mod skills;
 pub mod summaries;
+pub mod task_execution_messages;
+pub mod task_execution_summaries;
 mod summaries_support;
 pub mod turn_runtime_snapshots;
 

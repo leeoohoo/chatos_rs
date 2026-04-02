@@ -1,10 +1,12 @@
-use mongodb::bson::Document;
-use uuid::Uuid;
-
-use crate::repositories::db::with_db;
-use crate::services::task_manager::mapper::task_record_to_doc;
 use crate::services::task_manager::normalizer::{normalize_task_drafts, trimmed_non_empty};
 use crate::services::task_manager::types::{TaskDraft, TaskRecord};
+use crate::services::task_service_client::{self, ConfirmTaskRequestDto, CreateTaskRequestDto};
+
+use super::remote_support::{map_remote_task_to_record, resolve_task_scope_context};
+
+fn is_model_not_configured_error(err: &str) -> bool {
+    err.contains("当前联系人未配置执行模型")
+}
 
 pub async fn create_tasks_for_turn(
     session_id: &str,
@@ -22,68 +24,45 @@ pub async fn create_tasks_for_turn(
         return Ok(Vec::new());
     }
 
-    let now = crate::core::time::now_rfc3339();
-    let records: Vec<TaskRecord> = draft_tasks
-        .into_iter()
-        .map(|draft| TaskRecord {
-            id: Uuid::new_v4().to_string(),
-            session_id: session_id.clone(),
-            conversation_turn_id: conversation_turn_id.clone(),
-            title: draft.title,
-            details: draft.details,
-            priority: draft.priority,
-            status: draft.status,
-            tags: draft.tags,
-            due_at: draft.due_at,
-            created_at: now.clone(),
-            updated_at: now.clone(),
+    let scope = resolve_task_scope_context(session_id.as_str()).await?;
+    let mut out = Vec::with_capacity(draft_tasks.len());
+    for draft in draft_tasks {
+        let created = task_service_client::create_task(&CreateTaskRequestDto {
+            user_id: Some(scope.user_id.clone()),
+            contact_agent_id: scope.contact_agent_id.clone(),
+            project_id: scope.project_id.clone(),
+            session_id: Some(session_id.clone()),
+            conversation_turn_id: Some(conversation_turn_id.clone()),
+            source_message_id: None,
+            model_config_id: scope.model_config_id.clone(),
+            title: draft.title.clone(),
+            content: if draft.details.trim().is_empty() {
+                draft.title.clone()
+            } else {
+                draft.details.clone()
+            },
+            priority: Some(draft.priority.clone()),
+            confirm_note: None,
+            execution_note: None,
         })
-        .collect();
+        .await?;
 
-    let mongo_records = records.clone();
-    let sqlite_records = records.clone();
+        let final_task = match task_service_client::confirm_task(
+            created.id.as_str(),
+            &ConfirmTaskRequestDto {
+                user_id: Some(scope.user_id.clone()),
+                note: None,
+            },
+        )
+        .await
+        {
+            Ok(Some(task)) => task,
+            Ok(None) => created,
+            Err(err) if is_model_not_configured_error(err.as_str()) => created,
+            Err(err) => return Err(err),
+        };
+        out.push(map_remote_task_to_record(final_task));
+    }
 
-    with_db(
-        move |db| {
-            let records = mongo_records.clone();
-            Box::pin(async move {
-                let docs: Vec<Document> = records.iter().map(task_record_to_doc).collect();
-                db.collection::<Document>("task_manager_tasks")
-                    .insert_many(docs, None)
-                    .await
-                    .map_err(|err| err.to_string())?;
-                Ok(records)
-            })
-        },
-        move |pool| {
-            let records = sqlite_records.clone();
-            Box::pin(async move {
-                let mut tx = pool.begin().await.map_err(|err| err.to_string())?;
-                for task in &records {
-                    let tags_json =
-                        serde_json::to_string(&task.tags).unwrap_or_else(|_| "[]".to_string());
-                    sqlx::query(
-                        "INSERT INTO task_manager_tasks (id, session_id, conversation_turn_id, title, details, priority, status, tags_json, due_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    )
-                    .bind(&task.id)
-                    .bind(&task.session_id)
-                    .bind(&task.conversation_turn_id)
-                    .bind(&task.title)
-                    .bind(&task.details)
-                    .bind(&task.priority)
-                    .bind(&task.status)
-                    .bind(tags_json)
-                    .bind(&task.due_at)
-                    .bind(&task.created_at)
-                    .bind(&task.updated_at)
-                    .execute(&mut *tx)
-                    .await
-                    .map_err(|err| err.to_string())?;
-                }
-                tx.commit().await.map_err(|err| err.to_string())?;
-                Ok(records)
-            })
-        },
-    )
-    .await
+    Ok(out)
 }

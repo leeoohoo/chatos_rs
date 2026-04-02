@@ -28,6 +28,7 @@ mod shared;
 mod skills_api;
 mod skills_manage_api;
 mod summaries_api;
+mod task_execution_api;
 mod turn_runtime_snapshots_api;
 use self::shared::{
     build_ai_client, build_auth_token, default_project_name, ensure_admin,
@@ -75,6 +76,10 @@ pub fn router(state: SharedState) -> Router {
         .route(
             "/api/memory/v1/sessions/:session_id/messages/:message_id/sync",
             put(messages_summaries_api::sync_message),
+        )
+        .route(
+            "/api/memory/v1/internal/sessions/:session_id/messages/:message_id/sync",
+            put(messages_summaries_api::internal_sync_message),
         )
         .route(
             "/api/memory/v1/sessions/:session_id/messages/batch",
@@ -171,6 +176,14 @@ pub fn router(state: SharedState) -> Router {
             get(agents_api::get_agent_runtime_context),
         )
         .route(
+            "/api/memory/v1/internal/agents/:agent_id",
+            get(agents_api::internal_get_agent),
+        )
+        .route(
+            "/api/memory/v1/internal/agents/:agent_id/runtime-context",
+            get(agents_api::internal_get_agent_runtime_context),
+        )
+        .route(
             "/api/memory/v1/agents/:agent_id",
             get(agents_api::get_agent)
                 .patch(agents_api::update_agent)
@@ -198,15 +211,22 @@ pub fn router(state: SharedState) -> Router {
         )
         .route(
             "/api/memory/v1/configs/models",
-            get(configs_api::list_model_configs).post(configs_api::create_model_config),
+            get(configs_models_api::list_model_configs)
+                .post(configs_models_api::create_model_config),
         )
         .route(
             "/api/memory/v1/configs/models/:model_id",
-            patch(configs_api::update_model_config).delete(configs_api::delete_model_config),
+            get(configs_models_api::get_model_config)
+                .patch(configs_models_api::update_model_config)
+                .delete(configs_models_api::delete_model_config),
+        )
+        .route(
+            "/api/memory/v1/internal/configs/models/:model_id",
+            get(configs_models_api::internal_get_model_config),
         )
         .route(
             "/api/memory/v1/configs/models/:model_id/test",
-            post(configs_api::test_model_config),
+            post(configs_models_api::test_model_config),
         )
         .route(
             "/api/memory/v1/configs/summary-job",
@@ -239,6 +259,40 @@ pub fn router(state: SharedState) -> Router {
         .route(
             "/api/memory/v1/context/compose",
             post(context_api::compose_context),
+        )
+        .route(
+            "/api/memory/v1/task-executions/messages",
+            post(task_execution_api::create_message)
+                .get(task_execution_api::list_messages)
+                .delete(task_execution_api::clear_messages),
+        )
+        .route(
+            "/api/memory/v1/task-executions/messages/:message_id/sync",
+            put(task_execution_api::sync_message),
+        )
+        .route(
+            "/api/memory/v1/internal/task-executions/messages",
+            get(task_execution_api::internal_list_messages),
+        )
+        .route(
+            "/api/memory/v1/internal/task-executions/messages/:message_id/sync",
+            put(task_execution_api::internal_sync_message),
+        )
+        .route(
+            "/api/memory/v1/task-executions/summaries",
+            get(task_execution_api::list_summaries),
+        )
+        .route(
+            "/api/memory/v1/task-executions/summaries/:summary_id",
+            delete(task_execution_api::delete_summary),
+        )
+        .route(
+            "/api/memory/v1/task-executions/context/compose",
+            post(task_execution_api::compose_context),
+        )
+        .route(
+            "/api/memory/v1/internal/task-executions/context/compose",
+            post(task_execution_api::internal_compose_context),
         )
         .with_state(state)
 }

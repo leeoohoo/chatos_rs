@@ -122,13 +122,7 @@ impl AiClient {
         }
 
         for msg in history {
-            if msg
-                .metadata
-                .as_ref()
-                .and_then(|m| m.get("type"))
-                .and_then(|v| v.as_str())
-                == Some("session_summary")
-            {
+            if is_context_filtered_message(&msg) {
                 continue;
             }
 
@@ -232,4 +226,14 @@ impl AiClient {
         );
         items
     }
+}
+
+fn is_context_filtered_message(message: &crate::models::message::Message) -> bool {
+    let Some(metadata) = message.metadata.as_ref() else {
+        return false;
+    };
+    let Some(kind) = metadata.get("type").and_then(|v| v.as_str()) else {
+        return false;
+    };
+    kind == "session_summary" || kind == "task_execution_notice"
 }

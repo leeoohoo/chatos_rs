@@ -164,11 +164,13 @@ mod tests {
 
     #[test]
     fn disables_prev_id_when_runtime_prefixed_items_exist() {
-        assert!(should_disable_prev_id_for_prefixed_input_items(&[serde_json::json!({
-            "type": "message",
-            "role": "system",
-            "content": [{ "type": "input_text", "text": "contact runtime" }]
-        })]));
+        assert!(should_disable_prev_id_for_prefixed_input_items(&[
+            serde_json::json!({
+                "type": "message",
+                "role": "system",
+                "content": [{ "type": "input_text", "text": "contact runtime" }]
+            })
+        ]));
         assert!(!should_disable_prev_id_for_prefixed_input_items(&[]));
     }
 

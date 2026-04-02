@@ -92,6 +92,7 @@ export const enUS: Record<string, string> = {
   'agents.nameOptional': 'Name (optional)',
   'agents.description': 'Description',
   'agents.category': 'Category',
+  'agents.executionModel': 'Execution Model',
   'agents.categoryOptional': 'Category (optional)',
   'agents.roleDefinition': 'Role Definition',
   'agents.plugins': 'Plugin References',

@@ -145,7 +145,7 @@ impl TaskManagerService {
                                 "title": { "type": "string" },
                                 "details": { "type": "string" },
                                 "priority": { "type": "string", "enum": ["high", "medium", "low"] },
-                                "status": { "type": "string", "enum": ["todo", "doing", "blocked", "done"] },
+                                "status": { "type": "string", "enum": ["pending_confirm", "pending_execute", "running", "completed", "failed", "cancelled"] },
                                 "tags": { "type": "array", "items": { "type": "string" } },
                                 "due_at": { "type": "string" }
                             },
@@ -156,7 +156,7 @@ impl TaskManagerService {
                     "title": { "type": "string" },
                     "details": { "type": "string" },
                     "priority": { "type": "string", "enum": ["high", "medium", "low"] },
-                    "status": { "type": "string", "enum": ["todo", "doing", "blocked", "done"] },
+                    "status": { "type": "string", "enum": ["pending_confirm", "pending_execute", "running", "completed", "failed", "cancelled"] },
                     "tags": { "type": "array", "items": { "type": "string" } },
                     "due_at": { "type": "string" }
                 },
@@ -169,7 +169,7 @@ impl TaskManagerService {
     fn register_list_tasks(&mut self) {
         self.register_tool(
             "list_tasks",
-            "List tasks in the current session. Optionally scope to the current conversation turn.",
+            "List tasks in the current session. Returns task-service statuses directly: pending_confirm, pending_execute, running, completed, failed, cancelled. Optionally scope to the current conversation turn.",
             json!({
                 "type": "object",
                 "properties": {
@@ -224,7 +224,7 @@ impl TaskManagerService {
     fn register_update_task(&mut self) {
         self.register_tool(
             "update_task",
-            "Update a task in current session by task_id. Provide changes as a JSON string (example: {\"status\":\"doing\"}).",
+            "Update a task in current session by task_id. Provide changes as a JSON string (example: {\"status\":\"running\"}).",
             json!({
                 "type": "object",
                 "properties": {
@@ -257,7 +257,7 @@ impl TaskManagerService {
     fn register_complete_task(&mut self) {
         self.register_tool(
             "complete_task",
-            "Mark a task as done in current session by task_id.",
+            "Mark a task as completed in current session by task_id.",
             json!({
                 "type": "object",
                 "properties": {

@@ -65,8 +65,8 @@ Common commands:
 ```
 
 Default log and PID paths:
-- `/tmp/chatos_rs_dev/codex_gateway.log`
-- `/tmp/chatos_rs_dev/codex_gateway.pid`
+- `logs/codex_gateway.log`
+- `logs/codex_gateway.pid`
 
 ## Notes
 - The gateway prefers bundled SDK code under `vendor/` by default.

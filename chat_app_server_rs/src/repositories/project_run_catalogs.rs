@@ -7,7 +7,9 @@ use crate::repositories::db::{to_doc, with_db};
 
 fn parse_targets_from_doc(doc: &Document) -> Vec<ProjectRunTarget> {
     if let Some(Bson::Array(arr)) = doc.get("targets") {
-        if let Ok(items) = mongodb::bson::from_bson::<Vec<ProjectRunTarget>>(Bson::Array(arr.clone())) {
+        if let Ok(items) =
+            mongodb::bson::from_bson::<Vec<ProjectRunTarget>>(Bson::Array(arr.clone()))
+        {
             return items;
         }
     }
@@ -32,7 +34,9 @@ fn normalize_doc(doc: &Document) -> Option<ProjectRunCatalog> {
     })
 }
 
-pub async fn get_catalog_by_project_id(project_id: &str) -> Result<Option<ProjectRunCatalog>, String> {
+pub async fn get_catalog_by_project_id(
+    project_id: &str,
+) -> Result<Option<ProjectRunCatalog>, String> {
     with_db(
         |db| {
             let project_id = project_id.to_string();

@@ -36,6 +36,7 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
     isReadonlyForScope: controller.isReadonlyForScope,
     resolvePluginDisplayName: controller.resolvePluginDisplayName,
     resolveSkillDisplayName: controller.resolveSkillDisplayName,
+    resolveModelDisplayName: controller.resolveModelDisplayName,
     onOpenConversation: controller.openConversationDrawer,
     onOpenEdit: controller.openEdit,
     onOpenPluginPreview: controller.openPluginPreview,
@@ -104,6 +105,7 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
         open={controller.editorOpen}
         saving={controller.saving}
         editor={controller.editorState}
+        modelOptions={controller.aiModelOptions}
         pluginOptions={controller.editorPluginOptions}
         skillOptions={controller.editorSkillOptions}
         onCancel={controller.closeEditor}

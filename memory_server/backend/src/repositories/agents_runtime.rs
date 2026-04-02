@@ -441,6 +441,7 @@ mod tests {
             name: "Agent".to_string(),
             description: None,
             category: None,
+            model_config_id: Some("model-1".to_string()),
             role_definition: "role".to_string(),
             plugin_sources: vec!["plugin-a".to_string()],
             skills: vec![MemoryAgentSkill {

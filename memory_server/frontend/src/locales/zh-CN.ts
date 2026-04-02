@@ -92,6 +92,7 @@ export const zhCN: Record<string, string> = {
   'agents.nameOptional': '名称（可选）',
   'agents.description': '描述',
   'agents.category': '分类',
+  'agents.executionModel': '执行模型',
   'agents.categoryOptional': '分类（可选）',
   'agents.roleDefinition': '角色定义',
   'agents.plugins': '插件引用',

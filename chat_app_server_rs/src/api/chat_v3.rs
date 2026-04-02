@@ -31,8 +31,9 @@ use crate::services::v3::mcp_tool_execute::McpToolExecute;
 use crate::services::v3::message_manager::MessageManager;
 use crate::utils::abort_registry;
 use crate::utils::attachments;
+use crate::utils::chat_event_sender::ChatEventSender;
 use crate::utils::log_helpers::{log_chat_begin, log_chat_cancelled, log_chat_error};
-use crate::utils::sse::{sse_channel, SseSender};
+use crate::utils::sse::sse_channel;
 use tracing::warn;
 use uuid::Uuid;
 
@@ -339,7 +340,10 @@ async fn submit_runtime_guidance(
     )
 }
 
-async fn stream_chat_v3(sender: SseSender, req: ChatStreamRequest) {
+pub(crate) async fn stream_chat_v3<T>(sender: T, req: ChatStreamRequest)
+where
+    T: ChatEventSender,
+{
     let session_id = req.session_id.clone().unwrap_or_default();
     let content = req.content.clone().unwrap_or_default();
     let cfg = Config::get();
@@ -492,7 +496,11 @@ async fn stream_chat_v3(sender: SseSender, req: ChatStreamRequest) {
     if let Err(err) = sync_chat_turn_snapshot(
         &session_id,
         &resolved_turn_id,
-        if result.is_ok() { "completed" } else { "failed" },
+        if result.is_ok() {
+            "completed"
+        } else {
+            "failed"
+        },
         Some(user_message_id.clone()),
         model_runtime.model.as_str(),
         model_runtime.provider.as_str(),

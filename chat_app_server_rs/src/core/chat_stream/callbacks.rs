@@ -6,18 +6,21 @@ use serde_json::{json, Value};
 use crate::services::v2::ai_client::AiClientCallbacks as V2AiClientCallbacks;
 use crate::services::v3::ai_client::AiClientCallbacks as V3AiClientCallbacks;
 use crate::utils::abort_registry;
+use crate::utils::chat_event_sender::ChatEventSender;
 use crate::utils::events::Events;
-use crate::utils::sse::SseSender;
 
 use super::text::join_stream_text;
 use super::{StreamCallbacksV2, StreamCallbacksV3};
 
-pub fn build_v2_callbacks(sender: &SseSender, session_id: &str) -> StreamCallbacksV2 {
+pub fn build_v2_callbacks<T>(sender: &T, session_id: &str) -> StreamCallbacksV2
+where
+    T: ChatEventSender,
+{
     let sid = session_id.to_string();
     let chunk_sent = Arc::new(AtomicBool::new(false));
     let streamed_content = Arc::new(Mutex::new(String::new()));
 
-    let sender_chunk = sender.clone();
+    let sender_chunk = (*sender).clone();
     let sid_chunk = sid.clone();
     let chunk_flag = chunk_sent.clone();
     let streamed_content_chunk = streamed_content.clone();
@@ -34,7 +37,7 @@ pub fn build_v2_callbacks(sender: &SseSender, session_id: &str) -> StreamCallbac
         );
     };
 
-    let sender_thinking = sender.clone();
+    let sender_thinking = (*sender).clone();
     let sid_thinking = sid.clone();
     let on_thinking = move |chunk: String| {
         if abort_registry::is_aborted(&sid_thinking) {
@@ -45,7 +48,7 @@ pub fn build_v2_callbacks(sender: &SseSender, session_id: &str) -> StreamCallbac
         );
     };
 
-    let sender_tools_start = sender.clone();
+    let sender_tools_start = (*sender).clone();
     let sid_tools_start = sid.clone();
     let on_tools_start = move |tool_calls: Value| {
         if abort_registry::is_aborted(&sid_tools_start) {
@@ -54,7 +57,7 @@ pub fn build_v2_callbacks(sender: &SseSender, session_id: &str) -> StreamCallbac
         sender_tools_start.send_json(&json!({ "type": Events::TOOLS_START, "timestamp": crate::core::time::now_rfc3339(), "data": { "tool_calls": tool_calls } }));
     };
 
-    let sender_tools_stream = sender.clone();
+    let sender_tools_stream = (*sender).clone();
     let sid_tools_stream = sid.clone();
     let on_tools_stream = move |result: Value| {
         if abort_registry::is_aborted(&sid_tools_stream) {
@@ -65,7 +68,7 @@ pub fn build_v2_callbacks(sender: &SseSender, session_id: &str) -> StreamCallbac
         );
     };
 
-    let sender_tools_end = sender.clone();
+    let sender_tools_end = (*sender).clone();
     let sid_tools_end = sid.clone();
     let on_tools_end = move |result: Value| {
         if abort_registry::is_aborted(&sid_tools_end) {
@@ -76,7 +79,7 @@ pub fn build_v2_callbacks(sender: &SseSender, session_id: &str) -> StreamCallbac
         );
     };
 
-    let sender_sum_start = sender.clone();
+    let sender_sum_start = (*sender).clone();
     let sid_sum_start = sid.clone();
     let on_sum_start = move |info: Value| {
         if abort_registry::is_aborted(&sid_sum_start) {
@@ -85,7 +88,7 @@ pub fn build_v2_callbacks(sender: &SseSender, session_id: &str) -> StreamCallbac
         sender_sum_start.send_json(&json!({ "type": Events::CONTEXT_SUMMARIZED_START, "timestamp": crate::core::time::now_rfc3339(), "data": info }));
     };
 
-    let sender_sum_stream = sender.clone();
+    let sender_sum_stream = (*sender).clone();
     let sid_sum_stream = sid.clone();
     let on_sum_stream = move |chunk: Value| {
         if abort_registry::is_aborted(&sid_sum_stream) {
@@ -94,7 +97,7 @@ pub fn build_v2_callbacks(sender: &SseSender, session_id: &str) -> StreamCallbac
         sender_sum_stream.send_json(&json!({ "type": Events::CONTEXT_SUMMARIZED_STREAM, "timestamp": crate::core::time::now_rfc3339(), "data": chunk }));
     };
 
-    let sender_sum_end = sender.clone();
+    let sender_sum_end = (*sender).clone();
     let sid_sum_end = sid.clone();
     let on_sum_end = move |info: Value| {
         if abort_registry::is_aborted(&sid_sum_end) {
@@ -105,7 +108,7 @@ pub fn build_v2_callbacks(sender: &SseSender, session_id: &str) -> StreamCallbac
         );
     };
 
-    let sender_runtime_guidance = sender.clone();
+    let sender_runtime_guidance = (*sender).clone();
     let sid_runtime_guidance = sid.clone();
     let on_runtime_guidance_applied = move |payload: Value| {
         if abort_registry::is_aborted(&sid_runtime_guidance) {
@@ -137,16 +140,15 @@ pub fn build_v2_callbacks(sender: &SseSender, session_id: &str) -> StreamCallbac
     }
 }
 
-pub fn build_v3_callbacks(
-    sender: &SseSender,
-    session_id: &str,
-    enable_tools: bool,
-) -> StreamCallbacksV3 {
+pub fn build_v3_callbacks<T>(sender: &T, session_id: &str, enable_tools: bool) -> StreamCallbacksV3
+where
+    T: ChatEventSender,
+{
     let sid = session_id.to_string();
     let chunk_sent = Arc::new(AtomicBool::new(false));
     let streamed_content = Arc::new(Mutex::new(String::new()));
 
-    let sender_chunk = sender.clone();
+    let sender_chunk = (*sender).clone();
     let sid_chunk = sid.clone();
     let chunk_flag = chunk_sent.clone();
     let streamed_content_chunk = streamed_content.clone();
@@ -163,7 +165,7 @@ pub fn build_v3_callbacks(
         );
     };
 
-    let sender_thinking = sender.clone();
+    let sender_thinking = (*sender).clone();
     let sid_thinking = sid.clone();
     let on_thinking = move |chunk: String| {
         if abort_registry::is_aborted(&sid_thinking) {
@@ -175,7 +177,7 @@ pub fn build_v3_callbacks(
     };
 
     let on_tools_start = if enable_tools {
-        let sender_tools_start = sender.clone();
+        let sender_tools_start = (*sender).clone();
         let sid_tools_start = sid.clone();
         Some(Arc::new(move |tool_calls: Value| {
             if abort_registry::is_aborted(&sid_tools_start) {
@@ -188,7 +190,7 @@ pub fn build_v3_callbacks(
     };
 
     let on_tools_stream = if enable_tools {
-        let sender_tools_stream = sender.clone();
+        let sender_tools_stream = (*sender).clone();
         let sid_tools_stream = sid.clone();
         Some(Arc::new(move |result: Value| {
             if abort_registry::is_aborted(&sid_tools_stream) {
@@ -203,7 +205,7 @@ pub fn build_v3_callbacks(
     };
 
     let on_tools_end = if enable_tools {
-        let sender_tools_end = sender.clone();
+        let sender_tools_end = (*sender).clone();
         let sid_tools_end = sid.clone();
         Some(Arc::new(move |result: Value| {
             if abort_registry::is_aborted(&sid_tools_end) {
@@ -217,7 +219,7 @@ pub fn build_v3_callbacks(
         None
     };
 
-    let sender_sum_start = sender.clone();
+    let sender_sum_start = (*sender).clone();
     let sid_sum_start = sid.clone();
     let on_sum_start = Arc::new(move |info: Value| {
         if abort_registry::is_aborted(&sid_sum_start) {
@@ -226,7 +228,7 @@ pub fn build_v3_callbacks(
         sender_sum_start.send_json(&json!({ "type": Events::CONTEXT_SUMMARIZED_START, "timestamp": crate::core::time::now_rfc3339(), "data": info }));
     }) as Arc<dyn Fn(Value) + Send + Sync>;
 
-    let sender_sum_stream = sender.clone();
+    let sender_sum_stream = (*sender).clone();
     let sid_sum_stream = sid.clone();
     let on_sum_stream = Arc::new(move |chunk: Value| {
         if abort_registry::is_aborted(&sid_sum_stream) {
@@ -235,7 +237,7 @@ pub fn build_v3_callbacks(
         sender_sum_stream.send_json(&json!({ "type": Events::CONTEXT_SUMMARIZED_STREAM, "timestamp": crate::core::time::now_rfc3339(), "data": chunk }));
     }) as Arc<dyn Fn(Value) + Send + Sync>;
 
-    let sender_sum_end = sender.clone();
+    let sender_sum_end = (*sender).clone();
     let sid_sum_end = sid;
     let on_sum_end = Arc::new(move |info: Value| {
         if abort_registry::is_aborted(&sid_sum_end) {
@@ -244,7 +246,7 @@ pub fn build_v3_callbacks(
         sender_sum_end.send_json(&json!({ "type": Events::CONTEXT_SUMMARIZED_END, "timestamp": crate::core::time::now_rfc3339(), "data": info }));
     }) as Arc<dyn Fn(Value) + Send + Sync>;
 
-    let sender_runtime_guidance = sender.clone();
+    let sender_runtime_guidance = (*sender).clone();
     let sid_runtime_guidance = session_id.to_string();
     let on_runtime_guidance_applied = Arc::new(move |payload: Value| {
         if abort_registry::is_aborted(&sid_runtime_guidance) {

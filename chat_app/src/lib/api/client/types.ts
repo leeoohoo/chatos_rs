@@ -934,7 +934,7 @@ export interface TaskManagerUpdatePayload {
   title?: string;
   details?: string;
   priority?: 'high' | 'medium' | 'low';
-  status?: 'todo' | 'doing' | 'blocked' | 'done';
+  status?: 'pending_confirm' | 'pending_execute' | 'running' | 'completed' | 'failed' | 'cancelled';
   tags?: string[];
   due_at?: string | null;
 }
@@ -944,7 +944,7 @@ export interface TaskManagerTaskResponse {
   title?: string;
   details?: string | null;
   priority?: 'high' | 'medium' | 'low' | null;
-  status?: 'todo' | 'doing' | 'blocked' | 'done' | null;
+  status?: 'pending_confirm' | 'pending_execute' | 'running' | 'completed' | 'failed' | 'cancelled' | null;
   tags?: string[];
   due_at?: string | null;
   created_at?: string;
@@ -957,7 +957,7 @@ export interface TaskReviewTaskDraft {
   title?: string;
   details?: string;
   priority?: 'high' | 'medium' | 'low';
-  status?: 'todo' | 'doing' | 'blocked' | 'done';
+  status?: 'pending_confirm' | 'pending_execute' | 'running' | 'completed' | 'failed' | 'cancelled';
   tags?: string[];
   due_at?: string | null;
   [key: string]: unknown;

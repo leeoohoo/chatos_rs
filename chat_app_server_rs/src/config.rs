@@ -31,9 +31,31 @@ pub struct Config {
     pub memory_server_service_token: String,
     pub memory_server_context_timeout_ms: i64,
     pub memory_server_request_timeout_ms: i64,
+    pub task_service_base_url: String,
+    pub task_service_service_token: String,
+    pub task_service_request_timeout_ms: i64,
+    pub task_scheduler_enabled: bool,
+    pub task_scheduler_interval_secs: i64,
+    pub task_scheduler_scope_limit: i64,
 }
 
 static CONFIG: OnceCell<Config> = OnceCell::new();
+
+fn read_task_service_token(node_env: &str) -> String {
+    std::env::var("TASK_SERVICE_SERVICE_TOKEN")
+        .or_else(|_| std::env::var("CONTACT_TASK_SERVICE_SERVICE_TOKEN"))
+        .or_else(|_| std::env::var("MEMORY_SERVER_SERVICE_TOKEN"))
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| {
+            if node_env.eq_ignore_ascii_case("production") {
+                String::new()
+            } else {
+                "chatos-dev-service-token".to_string()
+            }
+        })
+}
 
 impl Config {
     pub fn init_global() -> Result<&'static Config, String> {
@@ -124,6 +146,17 @@ impl Config {
             read_int("MEMORY_SERVER_CONTEXT_TIMEOUT_MS", 3000).max(300);
         let memory_server_request_timeout_ms =
             read_int("MEMORY_SERVER_REQUEST_TIMEOUT_MS", 5000).max(300);
+        let task_service_base_url = std::env::var("TASK_SERVICE_BASE_URL")
+            .unwrap_or_else(|_| "http://127.0.0.1:8096/api/task-service/v1".to_string());
+        let task_service_service_token = read_task_service_token(node_env.as_str());
+        let task_service_request_timeout_ms =
+            read_int("TASK_SERVICE_REQUEST_TIMEOUT_MS", 5000).max(300);
+        let task_scheduler_enabled = std::env::var("TASK_SCHEDULER_ENABLED")
+            .unwrap_or_else(|_| "true".to_string())
+            .to_lowercase()
+            != "false";
+        let task_scheduler_interval_secs = read_int("TASK_SCHEDULER_INTERVAL_SECS", 5).max(1);
+        let task_scheduler_scope_limit = read_int("TASK_SCHEDULER_SCOPE_LIMIT", 500).max(1);
 
         Ok(Config {
             openai_api_key,
@@ -154,6 +187,12 @@ impl Config {
             memory_server_service_token,
             memory_server_context_timeout_ms,
             memory_server_request_timeout_ms,
+            task_service_base_url,
+            task_service_service_token,
+            task_service_request_timeout_ms,
+            task_scheduler_enabled,
+            task_scheduler_interval_secs,
+            task_scheduler_scope_limit,
         })
     }
 
@@ -249,6 +288,36 @@ impl Config {
         println!(
             "    • MEMORY_SERVER_REQUEST_TIMEOUT_MS: {}",
             self.memory_server_request_timeout_ms
+        );
+        println!("  - 任务调度配置:");
+        println!(
+            "    • TASK_SCHEDULER_ENABLED: {}",
+            self.task_scheduler_enabled
+        );
+        println!(
+            "    • TASK_SCHEDULER_INTERVAL_SECS: {}",
+            self.task_scheduler_interval_secs
+        );
+        println!(
+            "    • TASK_SCHEDULER_SCOPE_LIMIT: {}",
+            self.task_scheduler_scope_limit
+        );
+        println!("  - Task Service 配置:");
+        println!(
+            "    • TASK_SERVICE_BASE_URL: {}",
+            self.task_service_base_url
+        );
+        println!(
+            "    • TASK_SERVICE_SERVICE_TOKEN: {}",
+            if self.task_service_service_token.is_empty() {
+                "未设置"
+            } else {
+                "已设置"
+            }
+        );
+        println!(
+            "    • TASK_SERVICE_REQUEST_TIMEOUT_MS: {}",
+            self.task_service_request_timeout_ms
         );
     }
 }

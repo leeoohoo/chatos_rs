@@ -51,10 +51,10 @@
 ```
 
 默认日志路径：
-- `/tmp/chatos_rs_dev/backend.log`
-- `/tmp/chatos_rs_dev/frontend.log`
-- `/tmp/chatos_rs_dev/memory_backend.log`
-- `/tmp/chatos_rs_dev/memory_frontend.log`
+- `logs/backend.log`
+- `logs/frontend.log`
+- `logs/memory_backend.log`
+- `logs/memory_frontend.log`
 
 ## 开发方案归档
 方案/评估/契约文档统一收纳在：

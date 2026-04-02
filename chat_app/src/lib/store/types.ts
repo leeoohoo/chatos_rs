@@ -12,7 +12,7 @@ export interface TaskReviewDraft {
   title: string;
   details: string;
   priority: 'high' | 'medium' | 'low';
-  status: 'todo' | 'doing' | 'blocked' | 'done';
+  status: 'pending_confirm' | 'pending_execute' | 'running' | 'completed' | 'failed' | 'cancelled';
   tags: string[];
   dueAt?: string | null;
 }
