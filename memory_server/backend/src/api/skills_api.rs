@@ -111,6 +111,31 @@ pub(super) async fn get_skill(
     }
 }
 
+pub(super) async fn internal_get_skill(
+    State(state): State<SharedState>,
+    Path(skill_id): Path<String>,
+) -> (StatusCode, Json<Value>) {
+    let skill_id = skill_id.trim();
+    if skill_id.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "skill_id is required"})),
+        );
+    }
+
+    match skills_repo::get_skill_by_id_any(&state.pool, skill_id).await {
+        Ok(Some(item)) => (StatusCode::OK, Json(json!(item))),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "skill not found"})),
+        ),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "get skill failed", "detail": err})),
+        ),
+    }
+}
+
 pub(super) async fn list_skill_plugins(
     State(state): State<SharedState>,
     headers: HeaderMap,
@@ -219,6 +244,35 @@ pub(super) async fn get_skill_plugin(
             }
             (StatusCode::OK, Json(json!(item)))
         }
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "plugin not found"})),
+        ),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "get skill plugin failed", "detail": err})),
+        ),
+    }
+}
+
+pub(super) async fn internal_get_skill_plugin(
+    State(state): State<SharedState>,
+    Query(q): Query<GetSkillPluginQuery>,
+) -> (StatusCode, Json<Value>) {
+    let source = q
+        .source
+        .as_deref()
+        .map(normalize_plugin_source)
+        .filter(|item| !item.is_empty());
+    let Some(source) = source else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "source is required"})),
+        );
+    };
+
+    match skills_repo::get_plugin_by_source_any(&state.pool, source.as_str()).await {
+        Ok(Some(item)) => (StatusCode::OK, Json(json!(item))),
         Ok(None) => (
             StatusCode::NOT_FOUND,
             Json(json!({"error": "plugin not found"})),

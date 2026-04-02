@@ -149,6 +149,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   } = useSessionRuntimeSettings({
     session: currentSession,
     updateSession,
+    disableSessionMcpSelection: activePanel === 'chat',
   });
   const {
     currentProjectIdForMemory,

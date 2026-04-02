@@ -14,6 +14,7 @@ interface UseSessionRuntimeSettingsOptions {
   defaultMcpEnabled?: boolean;
   defaultEnabledMcpIds?: string[];
   defaultWorkspaceRoot?: string | null;
+  disableSessionMcpSelection?: boolean;
 }
 
 interface UseSessionRuntimeSettingsResult {
@@ -66,6 +67,7 @@ export const useSessionRuntimeSettings = ({
   defaultMcpEnabled = true,
   defaultEnabledMcpIds = EMPTY_MCP_ID_LIST,
   defaultWorkspaceRoot = null,
+  disableSessionMcpSelection = false,
 }: UseSessionRuntimeSettingsOptions): UseSessionRuntimeSettingsResult => {
   const normalizedDefaultMcpIds = useMemo(
     () => normalizeIdList(defaultEnabledMcpIds),
@@ -82,8 +84,12 @@ export const useSessionRuntimeSettings = ({
 
   useEffect(() => {
     const runtime = readSessionRuntimeFromMetadata(session?.metadata);
-    const nextEnabled = runtime?.mcpEnabled ?? defaultMcpEnabled;
-    const nextMcpIds = normalizeIdList(runtime?.enabledMcpIds ?? normalizedDefaultMcpIds);
+    const nextEnabled = disableSessionMcpSelection
+      ? true
+      : (runtime?.mcpEnabled ?? defaultMcpEnabled);
+    const nextMcpIds = disableSessionMcpSelection
+      ? []
+      : normalizeIdList(runtime?.enabledMcpIds ?? normalizedDefaultMcpIds);
     const nextWorkspaceRoot = normalizeNullableText(runtime?.workspaceRoot ?? normalizedDefaultWorkspaceRoot);
 
     setMcpEnabledState((prev) => (prev === nextEnabled ? prev : nextEnabled));
@@ -91,6 +97,7 @@ export const useSessionRuntimeSettings = ({
     setWorkspaceRootState((prev) => (prev === nextWorkspaceRoot ? prev : nextWorkspaceRoot));
   }, [
     defaultMcpEnabled,
+    disableSessionMcpSelection,
     normalizedDefaultMcpIds,
     normalizedDefaultWorkspaceRoot,
     session?.id,
@@ -106,12 +113,20 @@ export const useSessionRuntimeSettings = ({
       return;
     }
     const runtime = readSessionRuntimeFromMetadata(session.metadata);
-    const currentEnabled = runtime?.mcpEnabled ?? defaultMcpEnabled;
-    const currentMcpIds = normalizeIdList(runtime?.enabledMcpIds ?? normalizedDefaultMcpIds);
+    const currentEnabled = disableSessionMcpSelection
+      ? true
+      : (runtime?.mcpEnabled ?? defaultMcpEnabled);
+    const currentMcpIds = disableSessionMcpSelection
+      ? []
+      : normalizeIdList(runtime?.enabledMcpIds ?? normalizedDefaultMcpIds);
     const currentWorkspaceRoot = runtime?.workspaceRoot ?? normalizedDefaultWorkspaceRoot;
 
-    const nextEnabled = typeof patch.mcpEnabled === 'boolean' ? patch.mcpEnabled : currentEnabled;
-    const nextMcpIds = patch.enabledMcpIds ? normalizeIdList(patch.enabledMcpIds) : currentMcpIds;
+    const nextEnabled = disableSessionMcpSelection
+      ? true
+      : (typeof patch.mcpEnabled === 'boolean' ? patch.mcpEnabled : currentEnabled);
+    const nextMcpIds = disableSessionMcpSelection
+      ? []
+      : (patch.enabledMcpIds ? normalizeIdList(patch.enabledMcpIds) : currentMcpIds);
     const nextWorkspaceRoot = patch.workspaceRoot !== undefined
       ? normalizeNullableText(patch.workspaceRoot)
       : currentWorkspaceRoot;
@@ -132,6 +147,7 @@ export const useSessionRuntimeSettings = ({
     void updateSession(session.id, { metadata } as Partial<Session>);
   }, [
     defaultMcpEnabled,
+    disableSessionMcpSelection,
     normalizedDefaultMcpIds,
     normalizedDefaultWorkspaceRoot,
     session,
@@ -139,15 +155,21 @@ export const useSessionRuntimeSettings = ({
   ]);
 
   const setMcpEnabled = useCallback((enabled: boolean) => {
+    if (disableSessionMcpSelection) {
+      return;
+    }
     setMcpEnabledState((prev) => (prev === enabled ? prev : enabled));
     persistRuntimePatch({
       mcpEnabled: enabled,
       enabledMcpIds,
       workspaceRoot,
     });
-  }, [enabledMcpIds, persistRuntimePatch, workspaceRoot]);
+  }, [disableSessionMcpSelection, enabledMcpIds, persistRuntimePatch, workspaceRoot]);
 
   const setEnabledMcpIds = useCallback((ids: string[]) => {
+    if (disableSessionMcpSelection) {
+      return;
+    }
     const normalized = normalizeIdList(ids);
     setEnabledMcpIdsState((prev) => (isSameStringArray(prev, normalized) ? prev : normalized));
     persistRuntimePatch({
@@ -155,7 +177,7 @@ export const useSessionRuntimeSettings = ({
       enabledMcpIds: normalized,
       workspaceRoot,
     });
-  }, [mcpEnabled, persistRuntimePatch, workspaceRoot]);
+  }, [disableSessionMcpSelection, mcpEnabled, persistRuntimePatch, workspaceRoot]);
 
   const setWorkspaceRoot = useCallback((path: string | null) => {
     const normalized = normalizeNullableText(path);

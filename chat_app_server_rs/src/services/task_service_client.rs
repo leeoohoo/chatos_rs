@@ -29,6 +29,29 @@ fn timeout_duration() -> Duration {
     Duration::from_millis(Config::get().task_service_request_timeout_ms.max(300) as u64)
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TaskContextAssetRefDto {
+    pub asset_type: String,
+    pub asset_id: String,
+    pub display_name: Option<String>,
+    pub source_type: Option<String>,
+    pub source_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TaskExecutionResultContractDto {
+    pub result_required: bool,
+    pub preferred_format: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TaskPlanningSnapshotDto {
+    #[serde(default)]
+    pub contact_authorized_builtin_mcp_ids: Vec<String>,
+    pub selected_model_config_id: Option<String>,
+    pub planned_at: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum TaskServiceAuth {
     ServiceToken(String),
@@ -125,6 +148,8 @@ pub struct CreateTaskRequestDto {
     pub user_id: Option<String>,
     pub contact_agent_id: String,
     pub project_id: String,
+    pub project_root: Option<String>,
+    pub remote_connection_id: Option<String>,
     pub session_id: Option<String>,
     pub conversation_turn_id: Option<String>,
     pub source_message_id: Option<String>,
@@ -134,6 +159,12 @@ pub struct CreateTaskRequestDto {
     pub priority: Option<String>,
     pub confirm_note: Option<String>,
     pub execution_note: Option<String>,
+    #[serde(default)]
+    pub planned_builtin_mcp_ids: Vec<String>,
+    #[serde(default)]
+    pub planned_context_assets: Vec<TaskContextAssetRefDto>,
+    pub execution_result_contract: Option<TaskExecutionResultContractDto>,
+    pub planning_snapshot: Option<TaskPlanningSnapshotDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -144,6 +175,12 @@ pub struct UpdateTaskRequestDto {
     pub status: Option<String>,
     pub confirm_note: Option<String>,
     pub execution_note: Option<String>,
+    pub project_root: Option<Option<String>>,
+    pub remote_connection_id: Option<Option<String>>,
+    pub planned_builtin_mcp_ids: Option<Vec<String>>,
+    pub planned_context_assets: Option<Vec<TaskContextAssetRefDto>>,
+    pub execution_result_contract: Option<TaskExecutionResultContractDto>,
+    pub planning_snapshot: Option<TaskPlanningSnapshotDto>,
     pub model_config_id: Option<Option<String>>,
     pub result_summary: Option<Option<String>>,
     pub result_message_id: Option<Option<String>>,
@@ -178,6 +215,8 @@ pub struct TaskRecordDto {
     pub contact_agent_id: String,
     pub project_id: String,
     pub scope_key: String,
+    pub project_root: Option<String>,
+    pub remote_connection_id: Option<String>,
     pub session_id: Option<String>,
     pub conversation_turn_id: Option<String>,
     pub source_message_id: Option<String>,
@@ -188,6 +227,12 @@ pub struct TaskRecordDto {
     pub status: String,
     pub confirm_note: Option<String>,
     pub execution_note: Option<String>,
+    #[serde(default)]
+    pub planned_builtin_mcp_ids: Vec<String>,
+    #[serde(default)]
+    pub planned_context_assets: Vec<TaskContextAssetRefDto>,
+    pub execution_result_contract: Option<TaskExecutionResultContractDto>,
+    pub planning_snapshot: Option<TaskPlanningSnapshotDto>,
     pub created_by: Option<String>,
     pub created_at: String,
     pub updated_at: String,
@@ -207,8 +252,13 @@ pub struct SchedulerDecisionDto {
 }
 
 pub async fn create_task(req_body: &CreateTaskRequestDto) -> Result<TaskRecordDto, String> {
+    let path = if current_access_token().is_some() {
+        build_url("/tasks")
+    } else {
+        build_internal_url("/tasks")
+    };
     let req = client()
-        .post(build_url("/tasks").as_str())
+        .post(path.as_str())
         .timeout(timeout_duration())
         .json(req_body);
     send_json(req).await
@@ -249,17 +299,24 @@ pub async fn list_tasks(
     if offset > 0 {
         params.push(("offset".to_string(), offset.to_string()));
     }
-    let req = client()
-        .get(build_url("/tasks").as_str())
-        .timeout(timeout_duration())
-        .query(&params);
+    let path = if current_access_token().is_some() {
+        build_url("/tasks")
+    } else {
+        build_internal_url("/tasks")
+    };
+    let req = client().get(path.as_str()).timeout(timeout_duration()).query(&params);
     let resp: ListResponse<TaskRecordDto> = send_json(req).await?;
     Ok(resp.items)
 }
 
 pub async fn get_task(task_id: &str) -> Result<Option<TaskRecordDto>, String> {
+    let path = if current_access_token().is_some() {
+        build_url(&format!("/tasks/{}", urlencoding::encode(task_id)))
+    } else {
+        build_internal_url(&format!("/tasks/{}", urlencoding::encode(task_id)))
+    };
     let req = client()
-        .get(build_url(&format!("/tasks/{}", urlencoding::encode(task_id))).as_str())
+        .get(path.as_str())
         .timeout(timeout_duration());
     send_optional_json(req).await
 }

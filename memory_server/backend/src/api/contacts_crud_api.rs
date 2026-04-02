@@ -29,6 +29,11 @@ pub(super) struct CreateContactPayload {
     agent_name_snapshot: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub(super) struct UpdateBuiltinMcpGrantsPayload {
+    authorized_builtin_mcp_ids: Vec<String>,
+}
+
 const CLONE_META_KEY: &str = "__chatos_clone_meta";
 
 fn with_clone_meta_project_policy(
@@ -177,6 +182,47 @@ pub(super) async fn list_contacts(
     }
 }
 
+pub(super) async fn internal_list_contacts(
+    State(state): State<SharedState>,
+    Query(q): Query<ListContactsQuery>,
+) -> (StatusCode, Json<Value>) {
+    let scope_user_id = q
+        .user_id
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+    let Some(scope_user_id) = scope_user_id else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "user_id is required"})),
+        );
+    };
+
+    let limit = q.limit.unwrap_or(200);
+    let offset = q.offset.unwrap_or(0);
+    let status = q
+        .status
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("active");
+
+    match contacts_repo::list_contacts(
+        &state.pool,
+        scope_user_id.as_str(),
+        Some(status),
+        limit,
+        offset,
+    )
+    .await
+    {
+        Ok(items) => (StatusCode::OK, Json(json!({"items": items}))),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "list contacts failed", "detail": err})),
+        ),
+    }
+}
+
 pub(super) async fn create_contact(
     State(state): State<SharedState>,
     headers: HeaderMap,
@@ -297,6 +343,7 @@ pub(super) async fn create_contact(
         user_id: scope_user_id,
         agent_id: managed_agent.id,
         agent_name_snapshot: snapshot_name,
+        authorized_builtin_mcp_ids: Vec::new(),
     };
 
     match contacts_repo::create_contact_idempotent(&state.pool, create_req).await {
@@ -357,6 +404,70 @@ pub(super) async fn delete_contact(
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": "delete contact failed", "detail": err})),
+        ),
+    }
+}
+
+pub(super) async fn get_contact_builtin_mcp_grants(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Path(contact_id): Path<String>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match require_auth(&state, &headers) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    let contact = match ensure_contact_manage_access(state.as_ref(), &auth, contact_id.as_str()).await
+    {
+        Ok(contact) => contact,
+        Err(err) => return err,
+    };
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "contact_id": contact.id,
+            "authorized_builtin_mcp_ids": contact.authorized_builtin_mcp_ids,
+        })),
+    )
+}
+
+pub(super) async fn update_contact_builtin_mcp_grants(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Path(contact_id): Path<String>,
+    Json(req): Json<UpdateBuiltinMcpGrantsPayload>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match require_auth(&state, &headers) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    match ensure_contact_manage_access(state.as_ref(), &auth, contact_id.as_str()).await {
+        Ok(_) => {}
+        Err(err) => return err,
+    };
+
+    match contacts_repo::update_contact_builtin_mcp_grants(
+        &state.pool,
+        contact_id.as_str(),
+        req.authorized_builtin_mcp_ids,
+    )
+    .await
+    {
+        Ok(Some(contact)) => (
+            StatusCode::OK,
+            Json(json!({
+                "contact_id": contact.id,
+                "authorized_builtin_mcp_ids": contact.authorized_builtin_mcp_ids,
+            })),
+        ),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "contact not found"})),
+        ),
+        Err(err) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "update builtin mcp grants failed", "detail": err})),
         ),
     }
 }

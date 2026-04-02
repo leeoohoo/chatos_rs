@@ -3,7 +3,7 @@ use crate::models::mcp_config::McpConfig;
 use crate::repositories::mcp_configs;
 use crate::services::builtin_mcp::{
     builtin_kind_by_command, builtin_kind_by_id, get_builtin_mcp_config, is_builtin_mcp_id,
-    list_builtin_mcp_configs, BuiltinMcpKind,
+    is_internal_only_builtin_mcp_id, list_builtin_mcp_configs, BuiltinMcpKind,
 };
 use crate::utils::workspace::resolve_workspace_dir;
 
@@ -31,6 +31,7 @@ pub struct McpBuiltinServer {
     pub project_id: Option<String>,
     pub remote_connection_id: Option<String>,
     pub contact_agent_id: Option<String>,
+    pub current_task_id: Option<String>,
     pub allow_writes: bool,
     pub max_file_bytes: i64,
     pub max_write_bytes: i64,
@@ -89,6 +90,7 @@ fn build_servers_from_configs(
                 project_id: project_id.clone(),
                 remote_connection_id: None,
                 contact_agent_id: None,
+                current_task_id: None,
                 allow_writes,
                 max_file_bytes: 256 * 1024,
                 max_write_bytes: 5 * 1024 * 1024,
@@ -164,6 +166,9 @@ pub async fn load_mcp_configs_for_user(
         }
     } else {
         for cfg in list_builtin_mcp_configs() {
+            if is_internal_only_builtin_mcp_id(&cfg.id) {
+                continue;
+            }
             if seen_ids.insert(cfg.id.clone()) {
                 configs.push(cfg);
             }

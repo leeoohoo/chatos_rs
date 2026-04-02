@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   normalizeProjectScopeId,
-  resolveSessionProjectScopeId,
+  resolveProjectScopeIdFromRecord,
 } from '../../features/contactSession/sessionResolver';
 import type { Project, Session } from '../../types';
 
@@ -54,7 +54,7 @@ export const useContactProjectScope = <TProject extends ContactProjectScopeProje
     if (fromComposer !== '0') {
       return fromComposer;
     }
-    const fromSession = resolveSessionProjectScopeId(currentSession);
+    const fromSession = resolveProjectScopeIdFromRecord(currentSession);
     if (fromSession !== '0') {
       return fromSession;
     }
@@ -81,7 +81,7 @@ export const useContactProjectScope = <TProject extends ContactProjectScopeProje
   }, [contactScopedProjectIds, currentContactId, projects]);
 
   useEffect(() => {
-    const sessionProjectId = resolveSessionProjectScopeId(currentSession);
+    const sessionProjectId = resolveProjectScopeIdFromRecord(currentSession);
     setComposerProjectId(sessionProjectId !== '0' ? sessionProjectId : null);
   }, [currentSession?.id, currentSession?.metadata]);
 

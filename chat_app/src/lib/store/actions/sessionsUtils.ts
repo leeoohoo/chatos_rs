@@ -101,7 +101,7 @@ export const normalizeProjectScopeId = (projectId: string | null | undefined): s
   return trimmed.length > 0 ? trimmed : '0';
 };
 
-export const resolveSessionProjectScopeId = (session: Session | null | undefined): string => {
+export const resolveProjectScopeIdFromSessionRecord = (session: Session | null | undefined): string => {
   if (!session) {
     return '0';
   }
@@ -123,7 +123,7 @@ export const resolveSessionProjectScopeId = (session: Session | null | undefined
   return '0';
 };
 
-export const resolveSessionContactIdentity = (session: Session | null | undefined): {
+export const resolveContactScopeIdentityFromSessionRecord = (session: Session | null | undefined): {
   contactId: string | null;
   contactAgentId: string | null;
 } => {
@@ -149,7 +149,7 @@ export const isSessionActive = (session: Session | null | undefined): boolean =>
   return !((session as any).archived || status === 'archived' || status === 'archiving');
 };
 
-export const matchSessionContactProjectScope = (
+export const matchContactProjectScopeSessionRecord = (
   session: Session | null | undefined,
   target: {
     contactId?: string | null;
@@ -163,7 +163,7 @@ export const matchSessionContactProjectScope = (
 
   const contactId = typeof target.contactId === 'string' ? target.contactId.trim() : '';
   const contactAgentId = typeof target.contactAgentId === 'string' ? target.contactAgentId.trim() : '';
-  const identity = resolveSessionContactIdentity(session);
+  const identity = resolveContactScopeIdentityFromSessionRecord(session);
 
   let sameContact = false;
   if (contactId) {
@@ -179,7 +179,7 @@ export const matchSessionContactProjectScope = (
     return false;
   }
 
-  return resolveSessionProjectScopeId(session) === normalizeProjectScopeId(target.projectId);
+  return resolveProjectScopeIdFromSessionRecord(session) === normalizeProjectScopeId(target.projectId);
 };
 
 export const splitSessionsByMappedContacts = (
@@ -198,7 +198,7 @@ export const splitSessionsByMappedContacts = (
     if (!isSessionActive(session)) {
       return false;
     }
-    const identity = resolveSessionContactIdentity(session);
+    const identity = resolveContactScopeIdentityFromSessionRecord(session);
     if (identity.contactId && contactsById.has(identity.contactId)) {
       mappedContactIds.add(identity.contactId);
       const mappedContact = contactsById.get(identity.contactId);
@@ -231,15 +231,15 @@ export const splitSessionsByMappedContacts = (
   };
 };
 
-export const normalizeContactSessions = (sessions: Session[]): Session[] => {
+export const normalizeContactProjectScopeSessions = (sessions: Session[]): Session[] => {
   const byContactProject = new Map<string, Session>();
   for (const session of sessions) {
-    const identity = resolveSessionContactIdentity(session);
+    const identity = resolveContactScopeIdentityFromSessionRecord(session);
     const contactKey = identity.contactId || identity.contactAgentId;
     if (!contactKey) {
       continue;
     }
-    const key = `${contactKey}::${resolveSessionProjectScopeId(session)}`;
+    const key = `${contactKey}::${resolveProjectScopeIdFromSessionRecord(session)}`;
     const existing = byContactProject.get(key);
     if (!existing || resolveSessionTimestamp(session) >= resolveSessionTimestamp(existing)) {
       byContactProject.set(key, session);
@@ -249,6 +249,11 @@ export const normalizeContactSessions = (sessions: Session[]): Session[] => {
     (a, b) => resolveSessionTimestamp(b) - resolveSessionTimestamp(a),
   );
 };
+
+export const resolveSessionProjectScopeId = resolveProjectScopeIdFromSessionRecord;
+export const resolveSessionContactIdentity = resolveContactScopeIdentityFromSessionRecord;
+export const matchSessionContactProjectScope = matchContactProjectScopeSessionRecord;
+export const normalizeContactSessions = normalizeContactProjectScopeSessions;
 
 export const resolveUserByTurnId = (messages: any[], turnId: string) => {
   if (!turnId) {

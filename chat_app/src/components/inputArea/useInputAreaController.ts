@@ -33,6 +33,7 @@ type UseInputAreaControllerParams = Pick<
   | 'enabledMcpIds'
   | 'onMcpEnabledChange'
   | 'onEnabledMcpIdsChange'
+  | 'fixedMcpProfile'
 >;
 
 const DEFAULT_SUPPORTED_FILE_TYPES = [
@@ -66,6 +67,7 @@ export function useInputAreaController({
   enabledMcpIds = [],
   onMcpEnabledChange,
   onEnabledMcpIdsChange,
+  fixedMcpProfile = false,
 }: UseInputAreaControllerParams) {
   const isGuidingMode = isStreaming && !isStopping;
   const effectiveAllowAttachments = allowAttachments && !isGuidingMode;
@@ -167,6 +169,7 @@ export function useInputAreaController({
     client,
     mcpEnabled,
     enabledMcpIds,
+    selectionDisabled: fixedMcpProfile,
     hasDirectoryContext,
     hasRemoteContext,
     disabled,

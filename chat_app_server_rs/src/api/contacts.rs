@@ -26,6 +26,11 @@ struct CreateContactRequest {
 }
 
 #[derive(Debug, Deserialize)]
+struct UpdateContactBuiltinMcpGrantsRequest {
+    authorized_builtin_mcp_ids: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct ContactMemoryQuery {
     limit: Option<i64>,
     offset: Option<i64>,
@@ -37,6 +42,10 @@ pub fn router() -> Router {
         .route(
             "/api/contacts/:contact_id",
             axum::routing::delete(delete_contact),
+        )
+        .route(
+            "/api/contacts/:contact_id/builtin-mcp-grants",
+            get(get_contact_builtin_mcp_grants).patch(update_contact_builtin_mcp_grants),
         )
         .route(
             "/api/contacts/:contact_id/project-memories",
@@ -105,6 +114,7 @@ async fn create_contact(
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(ToOwned::to_owned),
+        authorized_builtin_mcp_ids: Vec::new(),
     };
 
     match memory_server_client::create_memory_contact(&payload).await {
@@ -119,6 +129,44 @@ async fn create_contact(
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": "create contact failed", "detail": err})),
+        ),
+    }
+}
+
+async fn get_contact_builtin_mcp_grants(
+    _auth: AuthUser,
+    Path(contact_id): Path<String>,
+) -> (StatusCode, Json<Value>) {
+    match memory_server_client::get_contact_builtin_mcp_grants(contact_id.as_str()).await {
+        Ok(Some(result)) => (StatusCode::OK, Json(json!(result))),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "contact not found"})),
+        ),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "get contact builtin mcp grants failed", "detail": err})),
+        ),
+    }
+}
+
+async fn update_contact_builtin_mcp_grants(
+    _auth: AuthUser,
+    Path(contact_id): Path<String>,
+    Json(req): Json<UpdateContactBuiltinMcpGrantsRequest>,
+) -> (StatusCode, Json<Value>) {
+    match memory_server_client::update_contact_builtin_mcp_grants(
+        contact_id.as_str(),
+        &memory_server_client::UpdateContactBuiltinMcpGrantsRequestDto {
+            authorized_builtin_mcp_ids: req.authorized_builtin_mcp_ids,
+        },
+    )
+    .await
+    {
+        Ok(result) => (StatusCode::OK, Json(json!(result))),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "update contact builtin mcp grants failed", "detail": err})),
         ),
     }
 }

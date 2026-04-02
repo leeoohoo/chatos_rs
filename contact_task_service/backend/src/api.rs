@@ -41,8 +41,16 @@ pub fn router(state: SharedState) -> Router {
             post(create_task).get(list_tasks),
         )
         .route(
+            "/api/task-service/v1/internal/tasks",
+            post(internal_create_task).get(internal_list_tasks),
+        )
+        .route(
             "/api/task-service/v1/tasks/:task_id",
             get(get_task).patch(update_task).delete(delete_task),
+        )
+        .route(
+            "/api/task-service/v1/internal/tasks/:task_id",
+            get(internal_get_task).patch(internal_update_task),
         )
         .route(
             "/api/task-service/v1/tasks/:task_id/execution-messages",
@@ -60,10 +68,6 @@ pub fn router(state: SharedState) -> Router {
         .route(
             "/api/task-service/v1/internal/scheduler/next",
             post(internal_scheduler_next),
-        )
-        .route(
-            "/api/task-service/v1/internal/tasks/:task_id",
-            axum::routing::patch(internal_update_task),
         )
         .route(
             "/api/task-service/v1/internal/scheduler/scopes",
@@ -194,6 +198,56 @@ async fn list_tasks(
     }
 }
 
+async fn internal_create_task(
+    State(state): State<SharedState>,
+    Json(req): Json<CreateTaskRequest>,
+) -> (StatusCode, Json<Value>) {
+    let scope_user_id = req
+        .user_id
+        .clone()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+    let Some(scope_user_id) = scope_user_id else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "user_id is required"})),
+        );
+    };
+    match repository::create_task(&state.db, scope_user_id.as_str(), scope_user_id.as_str(), req).await
+    {
+        Ok(task) => (StatusCode::OK, Json(json!(task))),
+        Err(err) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "create task failed", "detail": err})),
+        ),
+    }
+}
+
+async fn internal_list_tasks(
+    State(state): State<SharedState>,
+    Query(q): Query<ListTasksQuery>,
+) -> (StatusCode, Json<Value>) {
+    match repository::list_tasks(
+        &state.db,
+        internal_visible_user_ids(q.user_id).as_slice(),
+        q.contact_agent_id.as_deref(),
+        q.project_id.as_deref(),
+        q.session_id.as_deref(),
+        q.conversation_turn_id.as_deref(),
+        q.status.as_deref(),
+        q.limit.unwrap_or(100),
+        q.offset.unwrap_or(0),
+    )
+    .await
+    {
+        Ok(items) => (StatusCode::OK, Json(json!({"items": items}))),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "list tasks failed", "detail": err})),
+        ),
+    }
+}
+
 async fn get_task(
     State(state): State<SharedState>,
     headers: HeaderMap,
@@ -208,6 +262,23 @@ async fn get_task(
             (StatusCode::OK, Json(json!(task)))
         }
         Ok(Some(_)) => (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"}))),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "task not found"})),
+        ),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "get task failed", "detail": err})),
+        ),
+    }
+}
+
+async fn internal_get_task(
+    State(state): State<SharedState>,
+    Path(task_id): Path<String>,
+) -> (StatusCode, Json<Value>) {
+    match repository::get_task(&state.db, task_id.as_str()).await {
+        Ok(Some(task)) => (StatusCode::OK, Json(json!(task))),
         Ok(None) => (
             StatusCode::NOT_FOUND,
             Json(json!({"error": "task not found"})),

@@ -75,6 +75,7 @@ interface ChatComposerPanelProps {
   enabledMcpIds?: string[];
   onMcpEnabledChange: (enabled: boolean) => void;
   onEnabledMcpIdsChange: (ids: string[]) => void;
+  fixedMcpProfile?: boolean;
   runtimeGuidancePendingCount?: number;
   runtimeGuidanceAppliedCount?: number;
   runtimeGuidanceLastAppliedAt?: string | null;
@@ -134,6 +135,7 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
   enabledMcpIds,
   onMcpEnabledChange,
   onEnabledMcpIdsChange,
+  fixedMcpProfile = false,
   runtimeGuidancePendingCount = 0,
   runtimeGuidanceAppliedCount = 0,
   runtimeGuidanceLastAppliedAt = null,
@@ -209,6 +211,7 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
       enabledMcpIds={enabledMcpIds}
       onMcpEnabledChange={onMcpEnabledChange}
       onEnabledMcpIdsChange={onEnabledMcpIdsChange}
+      fixedMcpProfile={fixedMcpProfile}
     />
   </div>
 );

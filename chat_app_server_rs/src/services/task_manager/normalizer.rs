@@ -22,6 +22,7 @@ pub(super) fn normalize_task_draft(mut draft: TaskDraft) -> Result<TaskDraft, St
         .as_deref()
         .and_then(trimmed_non_empty)
         .map(|value| value.to_string());
+    draft.planned_builtin_mcp_ids = normalize_unique_string_list(draft.planned_builtin_mcp_ids);
     Ok(draft)
 }
 
@@ -46,9 +47,13 @@ pub(super) fn normalize_status(value: &str) -> String {
 }
 
 pub(super) fn normalize_tags(tags: Vec<String>) -> Vec<String> {
+    normalize_unique_string_list(tags)
+}
+
+pub(super) fn normalize_unique_string_list(values: Vec<String>) -> Vec<String> {
     let mut out = Vec::new();
-    for tag in tags {
-        let trimmed = tag.trim();
+    for value in values {
+        let trimmed = value.trim();
         if trimmed.is_empty() {
             continue;
         }

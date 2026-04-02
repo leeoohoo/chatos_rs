@@ -26,6 +26,35 @@ import type { AuthUser, ContactTask, TaskExecutionMessage } from './types';
 const { Header, Content } = Layout;
 const { Title, Text, Paragraph } = Typography;
 
+const BUILTIN_MCP_LABELS: Record<string, string> = {
+  builtin_code_maintainer_read: '查看',
+  builtin_code_maintainer_write: '读写',
+  builtin_task_planner: '任务',
+  builtin_terminal_controller: '终端',
+  builtin_remote_connection_controller: '远程连接',
+  builtin_notepad: 'Notepad',
+  builtin_agent_builder: 'Agent Builder',
+  builtin_ui_prompter: 'UI Prompter',
+  builtin_task_executor: '任务执行',
+};
+
+const ASSET_TYPE_LABELS: Record<string, string> = {
+  skill: '技能',
+  plugin: '插件',
+  common: 'Commons',
+};
+
+function formatBuiltinMcpLabel(id: string): string {
+  return BUILTIN_MCP_LABELS[id] || id;
+}
+
+function formatAssetTypeLabel(assetType?: string | null): string {
+  if (!assetType) {
+    return '资产';
+  }
+  return ASSET_TYPE_LABELS[assetType] || assetType;
+}
+
 function App() {
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [bootLoading, setBootLoading] = useState(true);
@@ -227,6 +256,16 @@ function App() {
         render: (value?: string | null) => value || '-',
       },
       {
+        title: '计划资源',
+        key: 'planned_resources',
+        render: (_: unknown, record: ContactTask) => (
+          <Space direction="vertical" size={2}>
+            <Text>{record.planned_builtin_mcp_ids?.length ?? 0} 个 MCP</Text>
+            <Text type="secondary">{record.planned_context_assets?.length ?? 0} 个上下文资产</Text>
+          </Space>
+        ),
+      },
+      {
         title: '更新时间',
         dataIndex: 'updated_at',
         key: 'updated_at',
@@ -363,6 +402,120 @@ function App() {
                       <Space direction="vertical" size={8} style={{ width: '100%' }}>
                         <Text strong>任务内容</Text>
                         <Paragraph style={{ marginBottom: 0 }}>{record.content}</Paragraph>
+                        <Text strong>计划使用的内置 MCP</Text>
+                        {(record.planned_builtin_mcp_ids?.length ?? 0) > 0 ? (
+                          <Space wrap>
+                            {record.planned_builtin_mcp_ids.map((mcpId) => (
+                              <Tag key={mcpId} color="processing">
+                                {formatBuiltinMcpLabel(mcpId)}
+                                {' '}
+                                ({mcpId})
+                              </Tag>
+                            ))}
+                          </Space>
+                        ) : (
+                          <Text type="secondary">未配置计划使用的内置 MCP。</Text>
+                        )}
+                        <Text strong>计划使用的上下文资产</Text>
+                        {(record.planned_context_assets?.length ?? 0) > 0 ? (
+                          <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                            {record.planned_context_assets.map((asset) => (
+                              <Card
+                                key={`${asset.asset_type}:${asset.asset_id}`}
+                                size="small"
+                                bodyStyle={{ padding: 12 }}
+                                style={{ width: '100%' }}
+                              >
+                                <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                                  <Space wrap>
+                                    <Tag color="cyan">{formatAssetTypeLabel(asset.asset_type)}</Tag>
+                                    <Text strong>{asset.display_name || asset.asset_id}</Text>
+                                  </Space>
+                                  <Text type="secondary">ID: {asset.asset_id}</Text>
+                                  {asset.source_type && (
+                                    <Text type="secondary">来源类型: {asset.source_type}</Text>
+                                  )}
+                                  {asset.source_path && (
+                                    <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+                                      来源路径: {asset.source_path}
+                                    </Paragraph>
+                                  )}
+                                </Space>
+                              </Card>
+                            ))}
+                          </Space>
+                        ) : (
+                          <Text type="secondary">未配置计划使用的上下文资产。</Text>
+                        )}
+                        <Text strong>执行上下文</Text>
+                        <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                          {record.project_root ? (
+                            <Paragraph style={{ marginBottom: 0 }}>
+                              项目路径:
+                              {' '}
+                              {record.project_root}
+                            </Paragraph>
+                          ) : (
+                            <Text type="secondary">未记录 project_root。</Text>
+                          )}
+                          {record.remote_connection_id ? (
+                            <Text type="secondary">
+                              远程连接:
+                              {' '}
+                              {record.remote_connection_id}
+                            </Text>
+                          ) : (
+                            <Text type="secondary">未记录 remote_connection_id。</Text>
+                          )}
+                        </Space>
+                        {record.execution_result_contract && (
+                          <>
+                            <Text strong>结果要求</Text>
+                            <Space wrap>
+                              <Tag color={record.execution_result_contract.result_required ? 'green' : 'default'}>
+                                {record.execution_result_contract.result_required ? '必须产出结果' : '结果非必填'}
+                              </Tag>
+                              {record.execution_result_contract.preferred_format && (
+                                <Tag>{record.execution_result_contract.preferred_format}</Tag>
+                              )}
+                            </Space>
+                          </>
+                        )}
+                        {record.planning_snapshot && (
+                          <>
+                            <Text strong>规划快照</Text>
+                            <Space direction="vertical" size={6} style={{ width: '100%' }}>
+                              {record.planning_snapshot.selected_model_config_id && (
+                                <Text type="secondary">
+                                  规划时模型配置:
+                                  {' '}
+                                  {record.planning_snapshot.selected_model_config_id}
+                                </Text>
+                              )}
+                              {record.planning_snapshot.planned_at && (
+                                <Text type="secondary">
+                                  规划时间:
+                                  {' '}
+                                  {new Date(record.planning_snapshot.planned_at).toLocaleString()}
+                                </Text>
+                              )}
+                              <Text type="secondary">当时联系人已授权的内置 MCP:</Text>
+                              {(record.planning_snapshot.contact_authorized_builtin_mcp_ids?.length ?? 0) > 0 ? (
+                                <Space wrap>
+                                  {record.planning_snapshot.contact_authorized_builtin_mcp_ids.map((mcpId) => (
+                                    <Tag key={`authorized-${mcpId}`}>
+                                      {formatBuiltinMcpLabel(mcpId)}
+                                      {' '}
+                                      ({mcpId})
+                                    </Tag>
+                                  ))}
+                                </Space>
+                              ) : (
+                                <Text type="secondary">当时没有可用的联系人授权内置 MCP。</Text>
+                              )}
+                            </Space>
+                          </>
+                        )}
                         {record.result_summary && (
                           <>
                             <Text strong>执行结果摘要</Text>

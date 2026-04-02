@@ -102,8 +102,17 @@ pub fn router(state: SharedState) -> Router {
             get(contacts_api::list_contacts).post(contacts_api::create_contact),
         )
         .route(
+            "/api/memory/v1/internal/contacts",
+            get(contacts_api::internal_list_contacts),
+        )
+        .route(
             "/api/memory/v1/contacts/:contact_id",
             delete(contacts_api::delete_contact),
+        )
+        .route(
+            "/api/memory/v1/contacts/:contact_id/builtin-mcp-grants",
+            get(contacts_api::get_contact_builtin_mcp_grants)
+                .patch(contacts_api::update_contact_builtin_mcp_grants),
         )
         .route(
             "/api/memory/v1/contacts/:contact_id/project-memories",
@@ -148,8 +157,16 @@ pub fn router(state: SharedState) -> Router {
             get(skills_api::get_skill),
         )
         .route(
+            "/api/memory/v1/internal/skills/:skill_id",
+            get(skills_api::internal_get_skill),
+        )
+        .route(
             "/api/memory/v1/skills/plugins/detail",
             get(skills_api::get_skill_plugin),
+        )
+        .route(
+            "/api/memory/v1/internal/skills/plugins/detail",
+            get(skills_api::internal_get_skill_plugin),
         )
         .route(
             "/api/memory/v1/skills/plugins",

@@ -5,11 +5,14 @@ import { apiClient as globalApiClient } from '../../lib/api/client';
 import { useChatApiClientFromContext, useChatStoreContext } from '../../lib/store/ChatStoreContext';
 import { useChatStore } from '../../lib/store';
 import {
-  useContactSessionCreator,
+  useContactScopeCreator,
 } from './useContactSessionCreator';
 import {
-  useContactSessionListState,
+  useContactScopeListState,
 } from './useContactSessionListState';
+import {
+  CONTACT_TASK_AUTHORIZABLE_BUILTIN_MCP_ID_SET,
+} from './ContactBuiltinMcpGrantsModal';
 import { useInlineActionMenus } from './useInlineActionMenus';
 import { useSectionExpansion } from './useSectionExpansion';
 import { useSessionListBootstrap } from './useSessionListBootstrap';
@@ -91,6 +94,13 @@ export const useSessionListController = ({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isRefreshingTerminals, setIsRefreshingTerminals] = useState(false);
   const [isRefreshingRemote, setIsRefreshingRemote] = useState(false);
+  const [builtinMcpGrantsModalOpen, setBuiltinMcpGrantsModalOpen] = useState(false);
+  const [builtinMcpGrantsContactId, setBuiltinMcpGrantsContactId] = useState<string | null>(null);
+  const [builtinMcpGrantsContactName, setBuiltinMcpGrantsContactName] = useState('');
+  const [builtinMcpGrantsSelectedIds, setBuiltinMcpGrantsSelectedIds] = useState<string[]>([]);
+  const [builtinMcpGrantsLoading, setBuiltinMcpGrantsLoading] = useState(false);
+  const [builtinMcpGrantsSaving, setBuiltinMcpGrantsSaving] = useState(false);
+  const [builtinMcpGrantsError, setBuiltinMcpGrantsError] = useState<string | null>(null);
 
   const [projectModalOpen, setProjectModalOpen] = useState(false);
   const [projectRoot, setProjectRoot] = useState('');
@@ -130,7 +140,7 @@ export const useSessionListController = ({
     [contacts],
   );
 
-  const contactSessionState = useContactSessionListState({
+  const contactScopeState = useContactScopeListState({
     contacts,
     sessions: sessions || [],
     currentSession,
@@ -140,12 +150,12 @@ export const useSessionListController = ({
     apiClient,
   });
 
-  const contactSessionCreator = useContactSessionCreator({
+  const contactScopeCreator = useContactScopeCreator({
     agents: agents as any[],
     currentSessionId: currentSession?.id || null,
     loadContacts: loadContactsAction,
     createContact: createContactAction,
-    ensureSessionForContact: contactSessionState.ensureSessionForContact as any,
+    ensureBackingSessionForContactScope: contactScopeState.ensureBackingSessionForContactScope as any,
     updateSession,
     selectSession,
   });
@@ -159,7 +169,7 @@ export const useSessionListController = ({
     currentTerminal,
     remoteConnections,
     currentRemoteConnection,
-    ensureSessionForContact: contactSessionState.ensureSessionForContact as any,
+    ensureBackingSessionForContactScope: contactScopeState.ensureBackingSessionForContactScope as any,
     selectSession,
     setActivePanel,
     onOpenSessionSummary,
@@ -197,7 +207,7 @@ export const useSessionListController = ({
     projects,
     terminals,
     remoteConnections,
-    displaySessions: contactSessionState.displaySessions,
+    displaySessions: contactScopeState.displayScopeSessions,
     contacts,
     currentSession,
     deleteProject,
@@ -206,7 +216,7 @@ export const useSessionListController = ({
     deleteSession,
     deleteContactAction,
     loadContactsAction,
-    clearCachedSessionIdsForContact: contactSessionState.clearCachedSessionIdsForContact,
+    clearCachedSessionIdsForContact: contactScopeState.clearCachedBackingSessionIdsForContact,
     showConfirmDialog,
   });
 
@@ -240,11 +250,92 @@ export const useSessionListController = ({
     setActivePanel,
   });
 
+  const openBuiltinMcpGrantsModal = async (displaySessionId: string) => {
+    const contactId = displaySessionId.startsWith('contact-placeholder:')
+      ? displaySessionId.replace('contact-placeholder:', '').trim()
+      : displaySessionId.trim();
+    if (!contactId) {
+      return;
+    }
+    const matchedContact = (contacts as ContactItem[]).find((item) => item.id === contactId);
+    setBuiltinMcpGrantsModalOpen(true);
+    setBuiltinMcpGrantsContactId(contactId);
+    setBuiltinMcpGrantsContactName(matchedContact?.name || '联系人');
+    setBuiltinMcpGrantsSelectedIds(
+      (matchedContact?.authorizedBuiltinMcpIds || [])
+        .filter((item) => CONTACT_TASK_AUTHORIZABLE_BUILTIN_MCP_ID_SET.has(item)),
+    );
+    setBuiltinMcpGrantsError(null);
+    setBuiltinMcpGrantsLoading(true);
+    try {
+      const result = await apiClient.getContactBuiltinMcpGrants(contactId);
+      setBuiltinMcpGrantsSelectedIds(
+        Array.isArray(result?.authorized_builtin_mcp_ids)
+          ? result.authorized_builtin_mcp_ids.filter((item: string) =>
+            CONTACT_TASK_AUTHORIZABLE_BUILTIN_MCP_ID_SET.has(item))
+          : [],
+      );
+    } catch (error) {
+      setBuiltinMcpGrantsError(error instanceof Error ? error.message : '加载联系人内置 MCP 授权失败');
+    } finally {
+      setBuiltinMcpGrantsLoading(false);
+    }
+  };
+
+  const closeBuiltinMcpGrantsModal = () => {
+    if (builtinMcpGrantsSaving) {
+      return;
+    }
+    setBuiltinMcpGrantsModalOpen(false);
+    setBuiltinMcpGrantsContactId(null);
+    setBuiltinMcpGrantsContactName('');
+    setBuiltinMcpGrantsSelectedIds([]);
+    setBuiltinMcpGrantsLoading(false);
+    setBuiltinMcpGrantsError(null);
+  };
+
+  const toggleBuiltinMcpGrant = (mcpId: string) => {
+    if (!mcpId || !CONTACT_TASK_AUTHORIZABLE_BUILTIN_MCP_ID_SET.has(mcpId)) {
+      return;
+    }
+    setBuiltinMcpGrantsSelectedIds((current) => (
+      current.includes(mcpId)
+        ? current.filter((item) => item !== mcpId)
+        : [...current, mcpId]
+    ));
+  };
+
+  const saveBuiltinMcpGrants = async () => {
+    if (!builtinMcpGrantsContactId) {
+      return;
+    }
+    const nextIds = Array.from(new Set(
+      builtinMcpGrantsSelectedIds.filter((item) =>
+        CONTACT_TASK_AUTHORIZABLE_BUILTIN_MCP_ID_SET.has(item)),
+    ));
+    setBuiltinMcpGrantsSaving(true);
+    setBuiltinMcpGrantsError(null);
+    try {
+      await apiClient.updateContactBuiltinMcpGrants(builtinMcpGrantsContactId, {
+        authorized_builtin_mcp_ids: nextIds,
+      });
+      await loadContactsAction();
+      setBuiltinMcpGrantsSelectedIds(nextIds);
+      setBuiltinMcpGrantsModalOpen(false);
+    } catch (error) {
+      setBuiltinMcpGrantsError(error instanceof Error ? error.message : '保存联系人内置 MCP 授权失败');
+    } finally {
+      setBuiltinMcpGrantsSaving(false);
+    }
+  };
+
   return {
     agents,
     apiClient,
-    contactSessionCreator,
-    contactSessionState,
+    contactScopeCreator,
+    contactScopeState,
+    contactSessionCreator: contactScopeCreator,
+    contactSessionState: contactScopeState,
     currentProject,
     currentRemoteConnection,
     currentTerminal,
@@ -253,6 +344,13 @@ export const useSessionListController = ({
     existingContactAgentIds,
     handleCancel,
     handleConfirm,
+    builtinMcpGrantsContactName,
+    builtinMcpGrantsError,
+    builtinMcpGrantsLoading,
+    builtinMcpGrantsModalOpen,
+    builtinMcpGrantsSaving,
+    builtinMcpGrantsSelectedIds,
+    closeBuiltinMcpGrantsModal,
     inlineActionMenus,
     isRefreshing,
     isRefreshingRemote,
@@ -265,6 +363,7 @@ export const useSessionListController = ({
     projects,
     remoteConnections,
     remoteForm,
+    saveBuiltinMcpGrants,
     sectionExpansion,
     sessionChatState,
     sessionListActions,
@@ -273,11 +372,13 @@ export const useSessionListController = ({
     setProjectRoot,
     setTerminalModalOpen,
     setTerminalRoot,
+    toggleBuiltinMcpGrant,
     taskReviewPanelsBySession,
     terminals,
     terminalError,
     terminalModalOpen,
     terminalRoot,
+    openBuiltinMcpGrantsModal,
     uiPromptPanelsBySession,
   };
 };

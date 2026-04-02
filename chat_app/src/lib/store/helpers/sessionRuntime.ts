@@ -109,9 +109,14 @@ export const readSessionRuntimeFromMetadata = (
   const workspaceRoot = normalizeId(
     runtime.workspace_root ?? runtime.workspaceRoot,
   );
+  const usesFixedContactBuiltinProfile = Boolean(contactAgentId);
   const mcpEnabledRaw = runtime.mcp_enabled ?? runtime.mcpEnabled;
-  const mcpEnabled = typeof mcpEnabledRaw === 'boolean' ? mcpEnabledRaw : true;
-  const enabledMcpIds = normalizeIdArray(runtime.enabled_mcp_ids ?? runtime.enabledMcpIds);
+  const mcpEnabled = usesFixedContactBuiltinProfile
+    ? true
+    : (typeof mcpEnabledRaw === 'boolean' ? mcpEnabledRaw : true);
+  const enabledMcpIds = usesFixedContactBuiltinProfile
+    ? []
+    : normalizeIdArray(runtime.enabled_mcp_ids ?? runtime.enabledMcpIds);
 
   if (
     !selectedModelId
@@ -177,17 +182,20 @@ export const mergeSessionRuntimeIntoMetadata = (
   const enabledMcpIds = runtime.enabledMcpIds
     ? normalizeIdArray(runtime.enabledMcpIds)
     : (existingRuntime?.enabledMcpIds ?? []);
+  const usesFixedContactBuiltinProfile = Boolean(contactAgentId);
 
   next.chat_runtime = {
     selected_model_id: selectedModelId,
     contact_agent_id: contactAgentId,
     remote_connection_id: remoteConnectionId,
-    mcp_enabled: mcpEnabled,
-    enabled_mcp_ids: enabledMcpIds,
     project_id: projectId,
     project_root: projectRoot,
     workspace_root: workspaceRoot,
   };
+  if (!usesFixedContactBuiltinProfile) {
+    (next.chat_runtime as MetadataRecord).mcp_enabled = mcpEnabled;
+    (next.chat_runtime as MetadataRecord).enabled_mcp_ids = enabledMcpIds;
+  }
   next.contact = {
     type: 'memory_agent',
     agent_id: contactAgentId,

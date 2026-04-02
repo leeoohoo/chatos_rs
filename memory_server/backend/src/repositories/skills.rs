@@ -87,6 +87,16 @@ pub async fn get_skill_by_id(
         .map_err(|e| e.to_string())
 }
 
+pub async fn get_skill_by_id_any(
+    db: &Db,
+    skill_id: &str,
+) -> Result<Option<MemorySkill>, String> {
+    skill_collection(db)
+        .find_one(doc! { "id": skill_id })
+        .await
+        .map_err(|e| e.to_string())
+}
+
 pub async fn list_skills_by_ids(
     db: &Db,
     user_ids: &[String],
@@ -260,6 +270,23 @@ pub async fn get_plugin_by_source_for_user_ids(
         }
     }
     Ok(items.first().cloned())
+}
+
+pub async fn get_plugin_by_source_any(
+    db: &Db,
+    source: &str,
+) -> Result<Option<MemorySkillPlugin>, String> {
+    let options = FindOptions::builder().sort(doc! {"updated_at": -1}).build();
+    let cursor = plugin_collection(db)
+        .find(doc! { "source": source })
+        .with_options(options)
+        .await
+        .map_err(|e| e.to_string())?;
+    let items = cursor
+        .try_collect::<Vec<MemorySkillPlugin>>()
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(items.into_iter().next())
 }
 
 pub async fn upsert_plugin(

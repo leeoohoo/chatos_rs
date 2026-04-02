@@ -2,16 +2,16 @@ import { useCallback, useRef } from 'react';
 
 import type { Session } from '../../types';
 import {
-  findLatestMatchedSession,
-  isSessionMatchedContactAndProject,
+  findLatestRecordForContactProjectScope,
+  isRecordMatchedContactProjectScope,
   normalizeProjectScopeId,
-  resolveContactAgentIdFromSession,
-  resolveContactIdFromSession,
-  resolveSessionProjectScopeId,
+  resolveContactAgentIdFromScopeRecord,
+  resolveContactIdFromScopeRecord,
+  resolveProjectScopeIdFromRecord,
   resolveSessionTimestamp,
 } from './sessionResolver';
 
-export interface ContactSessionEntity {
+export interface ContactScopeEntity {
   id: string;
   agentId: string;
   name?: string;
@@ -31,7 +31,7 @@ type CreateSessionFn = (
   options?: { keepActivePanel?: boolean },
 ) => Promise<string | undefined | null>;
 
-interface SessionResolverApiClient {
+interface ScopeResolverApiClient {
   getSessions: (
     userId?: string,
     projectId?: string,
@@ -43,16 +43,16 @@ interface SessionResolverApiClient {
   ) => Promise<unknown[]>;
 }
 
-interface UseContactSessionResolverOptions {
+interface UseContactScopeResolverOptions {
   sessions: Session[];
   currentSession: Session | null | undefined;
   createSession: CreateSessionFn;
-  apiClient?: SessionResolverApiClient;
+  apiClient?: ScopeResolverApiClient;
   defaultProjectId?: string | null;
   includeApiLookup?: boolean;
 }
 
-interface EnsureContactSessionOptions {
+interface EnsureBackingSessionOptions {
   projectId?: string | null;
   title?: string;
   selectedModelId?: string | null;
@@ -62,11 +62,11 @@ interface EnsureContactSessionOptions {
   createSessionOptions?: { keepActivePanel?: boolean };
 }
 
-interface DisplayRuntimeSessionOptions {
+interface DisplayScopeSessionOptions {
   projectId?: string | null;
 }
 
-interface BuildDisplayRuntimeMapOptions extends DisplayRuntimeSessionOptions {
+interface BuildDisplayScopeMapOptions extends DisplayScopeSessionOptions {
   keyPrefix?: string;
 }
 
@@ -96,14 +96,15 @@ const readStringField = (value: unknown, key: string): string => {
   return typeof raw === 'string' ? raw.trim() : '';
 };
 
-export const useContactSessionResolver = ({
+export const useContactScopeResolver = ({
   sessions,
   currentSession,
   createSession,
   apiClient,
   defaultProjectId = '0',
   includeApiLookup = true,
-}: UseContactSessionResolverOptions) => {
+}: UseContactScopeResolverOptions) => {
+  // Hook 名字暂时保留，但它解析的是“联系人 + 项目作用域 -> backing session 容器”。
   const sessionCacheRef = useRef<Record<string, string>>({});
 
   const resolveProjectId = useCallback((projectId?: string | null): string => {
@@ -128,27 +129,31 @@ export const useContactSessionResolver = ({
 
   const isSessionIdStillMatched = useCallback((
     sessionId: string,
-    contact: ContactSessionEntity,
+    contact: ContactScopeEntity,
     projectId?: string | null,
   ): boolean => {
     const matchedSession = findSessionInStoreById(sessionId);
     if (!matchedSession) {
       return false;
     }
-    return isSessionMatchedContactAndProject(matchedSession, contact, resolveProjectId(projectId));
+    return isRecordMatchedContactProjectScope(matchedSession, contact, resolveProjectId(projectId));
   }, [findSessionInStoreById, resolveProjectId]);
 
   const findExistingSessionIdInStore = useCallback((
-    contact: ContactSessionEntity,
+    contact: ContactScopeEntity,
     projectId?: string | null,
   ): string | null => {
-    const matched = findLatestMatchedSession(sessions || [], contact, resolveProjectId(projectId));
+    const matched = findLatestRecordForContactProjectScope(
+      sessions || [],
+      contact,
+      resolveProjectId(projectId),
+    );
     const sessionId = typeof matched?.id === 'string' ? matched.id.trim() : '';
     return sessionId || null;
   }, [resolveProjectId, sessions]);
 
   const findExistingSessionIdFromApi = useCallback(async (
-    contact: ContactSessionEntity,
+    contact: ContactScopeEntity,
     projectId?: string | null,
   ): Promise<string | null> => {
     if (!apiClient || !includeApiLookup) {
@@ -169,7 +174,11 @@ export const useContactSessionResolver = ({
         break;
       }
       for (const row of rows) {
-        if (isSessionMatchedContactAndProject(row as Record<string, unknown>, contact, normalizedProjectId)) {
+        if (isRecordMatchedContactProjectScope(
+          row as Record<string, unknown>,
+          contact,
+          normalizedProjectId,
+        )) {
           candidates.push(row);
         }
       }
@@ -210,16 +219,16 @@ export const useContactSessionResolver = ({
     return fallback ? readStringField(fallback, 'id') : null;
   }, [apiClient, includeApiLookup, resolveProjectId]);
 
-  const resolveDisplayRuntimeSessionId = useCallback((
-    contact: ContactSessionEntity,
-    options?: DisplayRuntimeSessionOptions,
+  const resolveDisplayBackingSessionId = useCallback((
+    contact: ContactScopeEntity,
+    options?: DisplayScopeSessionOptions,
   ): string | null => {
     const normalizedProjectId = resolveProjectId(options?.projectId);
     const cacheKey = resolveCacheKey(contact.id, normalizedProjectId);
 
-    const currentContactId = resolveContactIdFromSession(currentSession);
-    const currentContactAgentId = resolveContactAgentIdFromSession(currentSession);
-    const currentSessionProjectId = resolveSessionProjectScopeId(currentSession);
+    const currentContactId = resolveContactIdFromScopeRecord(currentSession);
+    const currentContactAgentId = resolveContactAgentIdFromScopeRecord(currentSession);
+    const currentSessionProjectId = resolveProjectScopeIdFromRecord(currentSession);
     if (
       currentSession?.id
       && (
@@ -255,14 +264,14 @@ export const useContactSessionResolver = ({
     resolveProjectId,
   ]);
 
-  const buildDisplayRuntimeSessionIdMap = useCallback((
-    contacts: ContactSessionEntity[],
-    options?: BuildDisplayRuntimeMapOptions,
+  const buildDisplayBackingSessionIdMap = useCallback((
+    contacts: ContactScopeEntity[],
+    options?: BuildDisplayScopeMapOptions,
   ): Record<string, string> => {
     const prefix = options?.keyPrefix ?? '';
     const map: Record<string, string> = {};
     for (const contact of contacts || []) {
-      const sessionId = resolveDisplayRuntimeSessionId(contact, {
+      const sessionId = resolveDisplayBackingSessionId(contact, {
         projectId: options?.projectId,
       });
       if (!sessionId) {
@@ -271,11 +280,11 @@ export const useContactSessionResolver = ({
       map[`${prefix}${contact.id}`] = sessionId;
     }
     return map;
-  }, [resolveDisplayRuntimeSessionId]);
+  }, [resolveDisplayBackingSessionId]);
 
-  const ensureContactSession = useCallback(async (
-    contact: ContactSessionEntity,
-    options?: EnsureContactSessionOptions,
+  const ensureBackingSessionForContactScope = useCallback(async (
+    contact: ContactScopeEntity,
+    options?: EnsureBackingSessionOptions,
   ): Promise<string | null> => {
     const normalizedProjectId = resolveProjectId(options?.projectId);
     const cacheKey = resolveCacheKey(contact.id, normalizedProjectId);
@@ -289,7 +298,9 @@ export const useContactSessionResolver = ({
       delete sessionCacheRef.current[cacheKey];
     }
 
-    const runtimeSessionId = resolveDisplayRuntimeSessionId(contact, { projectId: normalizedProjectId });
+    const runtimeSessionId = resolveDisplayBackingSessionId(contact, {
+      projectId: normalizedProjectId,
+    });
     if (runtimeSessionId) {
       sessionCacheRef.current[cacheKey] = runtimeSessionId;
       return runtimeSessionId;
@@ -327,11 +338,11 @@ export const useContactSessionResolver = ({
     findExistingSessionIdFromApi,
     isSessionIdStillMatched,
     resolveCacheKey,
-    resolveDisplayRuntimeSessionId,
+    resolveDisplayBackingSessionId,
     resolveProjectId,
   ]);
 
-  const clearCachedSessionIdsForContact = useCallback((
+  const clearCachedBackingSessionIdsForContact = useCallback((
     contactId: string,
     projectId?: string | null,
   ): string[] => {
@@ -355,9 +366,16 @@ export const useContactSessionResolver = ({
   }, [resolveProjectId]);
 
   return {
-    ensureContactSession,
-    resolveDisplayRuntimeSessionId,
-    buildDisplayRuntimeSessionIdMap,
-    clearCachedSessionIdsForContact,
+    ensureBackingSessionForContactScope,
+    resolveDisplayBackingSessionId,
+    buildDisplayBackingSessionIdMap,
+    clearCachedBackingSessionIdsForContact,
+    ensureContactSession: ensureBackingSessionForContactScope,
+    resolveDisplayRuntimeSessionId: resolveDisplayBackingSessionId,
+    buildDisplayRuntimeSessionIdMap: buildDisplayBackingSessionIdMap,
+    clearCachedSessionIdsForContact: clearCachedBackingSessionIdsForContact,
   };
 };
+
+export type ContactSessionEntity = ContactScopeEntity;
+export const useContactSessionResolver = useContactScopeResolver;

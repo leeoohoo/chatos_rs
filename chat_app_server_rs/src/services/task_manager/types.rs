@@ -1,5 +1,9 @@
 use serde::{Deserialize, Serialize};
 
+use crate::services::task_service_client::{
+    TaskContextAssetRefDto, TaskExecutionResultContractDto,
+};
+
 use super::normalizer::{normalize_priority, normalize_status, normalize_tags, trimmed_non_empty};
 
 pub const REVIEW_TIMEOUT_MS_DEFAULT: u64 = 86_400_000;
@@ -20,6 +24,12 @@ pub struct TaskDraft {
     pub tags: Vec<String>,
     #[serde(default)]
     pub due_at: Option<String>,
+    #[serde(default)]
+    pub planned_builtin_mcp_ids: Vec<String>,
+    #[serde(default)]
+    pub planned_context_assets: Vec<TaskContextAssetRefDto>,
+    #[serde(default)]
+    pub execution_result_contract: Option<TaskExecutionResultContractDto>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -43,12 +53,25 @@ pub struct TaskRecord {
     pub id: String,
     pub session_id: String,
     pub conversation_turn_id: String,
+    pub project_root: Option<String>,
+    pub remote_connection_id: Option<String>,
     pub title: String,
     pub details: String,
     pub priority: String,
     pub status: String,
     pub tags: Vec<String>,
     pub due_at: Option<String>,
+    #[serde(default)]
+    pub planned_builtin_mcp_ids: Vec<String>,
+    #[serde(default)]
+    pub planned_context_assets: Vec<TaskContextAssetRefDto>,
+    pub execution_result_contract: Option<TaskExecutionResultContractDto>,
+    pub planning_snapshot: Option<crate::services::task_service_client::TaskPlanningSnapshotDto>,
+    pub result_summary: Option<String>,
+    pub last_error: Option<String>,
+    pub confirmed_at: Option<String>,
+    pub started_at: Option<String>,
+    pub finished_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }

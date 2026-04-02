@@ -9,7 +9,7 @@ interface SessionListActionsParams {
   currentTerminal: any;
   remoteConnections: any[];
   currentRemoteConnection: any;
-  ensureSessionForContact: (contact: ContactItem) => Promise<string | null>;
+  ensureBackingSessionForContactScope: (contact: ContactItem) => Promise<string | null>;
   selectSession: (sessionId: string) => Promise<any>;
   setActivePanel: (panel: any) => void;
   onOpenSessionSummary?: (sessionId: string) => void;
@@ -45,7 +45,7 @@ export const useSessionListActions = ({
   currentTerminal,
   remoteConnections,
   currentRemoteConnection,
-  ensureSessionForContact,
+  ensureBackingSessionForContactScope,
   selectSession,
   setActivePanel,
   onOpenSessionSummary,
@@ -81,7 +81,7 @@ export const useSessionListActions = ({
         if (!contact) {
           return null;
         }
-        const ensuredSessionId = await ensureSessionForContact(contact);
+        const ensuredSessionId = await ensureBackingSessionForContactScope(contact);
         if (!ensuredSessionId) {
           return null;
         }
@@ -102,7 +102,7 @@ export const useSessionListActions = ({
       console.error('Failed to select session:', error);
       return null;
     }
-  }, [contacts, currentSession?.id, ensureSessionForContact, selectSession, setActivePanel]);
+  }, [contacts, currentSession?.id, ensureBackingSessionForContactScope, selectSession, setActivePanel]);
 
   const handleOpenSummary = useCallback((sessionId: string) => {
     void handleSelectSession(sessionId).then((selectedSessionId) => {

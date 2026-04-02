@@ -3,6 +3,7 @@ import * as messagesApi from '../messages';
 import * as workspaceApi from '../workspace';
 import type {
   ContactAgentRecallResponse,
+  ContactBuiltinMcpGrantsResponse,
   ContactCreateResponse,
   ContactProjectLinkResponse,
   ContactProjectMemoryResponse,
@@ -51,6 +52,11 @@ export interface WorkspaceFacade {
   deleteSession(id: string): Promise<DeleteSuccessResponse>;
   getContacts(userId?: string, paging?: PagingOptions): Promise<ContactResponse[]>;
   createContact(data: { agent_id: string; agent_name_snapshot?: string; user_id?: string }): Promise<ContactCreateResponse>;
+  getContactBuiltinMcpGrants(contactId: string): Promise<ContactBuiltinMcpGrantsResponse>;
+  updateContactBuiltinMcpGrants(
+    contactId: string,
+    data: { authorized_builtin_mcp_ids: string[] },
+  ): Promise<ContactBuiltinMcpGrantsResponse>;
   deleteContact(contactId: string): Promise<DeleteSuccessResponse>;
   getContactProjectMemories(
     contactId: string,
@@ -177,6 +183,12 @@ export const workspaceFacade: WorkspaceFacade & ThisType<ApiClient> = {
   },
   async createContact(data) {
     return workspaceApi.createContact(this.getRequestFn(), data);
+  },
+  async getContactBuiltinMcpGrants(contactId) {
+    return workspaceApi.getContactBuiltinMcpGrants(this.getRequestFn(), contactId);
+  },
+  async updateContactBuiltinMcpGrants(contactId, data) {
+    return workspaceApi.updateContactBuiltinMcpGrants(this.getRequestFn(), contactId, data);
   },
   async deleteContact(contactId) {
     return workspaceApi.deleteContact(this.getRequestFn(), contactId);

@@ -62,12 +62,18 @@ export interface ContactResponse {
   user_id: string;
   agent_id: string;
   agent_name_snapshot?: string | null;
+  authorized_builtin_mcp_ids?: string[];
   status?: string | null;
   created_at?: string;
   updated_at?: string;
 }
 
 export type ContactCreateResponse = ContactResponse | { contact: ContactResponse };
+
+export interface ContactBuiltinMcpGrantsResponse {
+  contact_id: string;
+  authorized_builtin_mcp_ids?: string[];
+}
 
 export interface ContactProjectMemoryResponse {
   id: string;
@@ -527,6 +533,7 @@ export interface McpConfigResponse {
   enabled?: boolean;
   readonly?: boolean;
   builtin?: boolean;
+  internal_only?: boolean;
   config?: Record<string, unknown> | null;
   user_id?: string | null;
   userId?: string | null;
@@ -950,6 +957,30 @@ export interface TaskManagerTaskResponse {
   created_at?: string;
   updated_at?: string;
   conversation_turn_id?: string | null;
+  project_root?: string | null;
+  remote_connection_id?: string | null;
+  planned_builtin_mcp_ids?: string[];
+  planned_context_assets?: Array<{
+    asset_type?: string;
+    asset_id?: string;
+    display_name?: string | null;
+    source_type?: string | null;
+    source_path?: string | null;
+  }>;
+  execution_result_contract?: {
+    result_required?: boolean;
+    preferred_format?: string | null;
+  } | null;
+  planning_snapshot?: {
+    contact_authorized_builtin_mcp_ids?: string[];
+    selected_model_config_id?: string | null;
+    planned_at?: string | null;
+  } | null;
+  result_summary?: string | null;
+  last_error?: string | null;
+  confirmed_at?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
 }
 
 export interface TaskReviewTaskDraft {

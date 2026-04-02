@@ -264,6 +264,7 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
         enabledMcpIds={enabledMcpIds}
         onMcpEnabledChange={onMcpEnabledChange}
         onEnabledMcpIdsChange={onEnabledMcpIdsChange}
+        fixedMcpProfile={true}
         runtimeGuidancePendingCount={runtimeGuidancePendingCount}
         runtimeGuidanceAppliedCount={runtimeGuidanceAppliedCount}
         runtimeGuidanceLastAppliedAt={runtimeGuidanceLastAppliedAt}

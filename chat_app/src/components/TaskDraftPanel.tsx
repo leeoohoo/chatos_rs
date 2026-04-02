@@ -24,6 +24,9 @@ const createEmptyDraft = (): TaskReviewDraft => ({
   status: 'pending_confirm',
   tags: [],
   dueAt: null,
+  plannedBuiltinMcpIds: [],
+  plannedContextAssets: [],
+  executionResultContract: null,
 });
 
 const normalizeDraft = (draft: TaskReviewDraft): TaskReviewDraft => ({
@@ -35,6 +38,26 @@ const normalizeDraft = (draft: TaskReviewDraft): TaskReviewDraft => ({
     .map((tag) => String(tag || '').trim())
     .filter((tag, index, arr) => Boolean(tag) && arr.indexOf(tag) === index),
   dueAt: draft.dueAt ? String(draft.dueAt).trim() : null,
+  plannedBuiltinMcpIds: (draft.plannedBuiltinMcpIds || [])
+    .map((item) => String(item || '').trim())
+    .filter((item, index, arr) => Boolean(item) && arr.indexOf(item) === index),
+  plannedContextAssets: (draft.plannedContextAssets || [])
+    .map((asset) => ({
+      assetType: String(asset.assetType || '').trim(),
+      assetId: String(asset.assetId || '').trim(),
+      displayName: asset.displayName ? String(asset.displayName).trim() : null,
+      sourceType: asset.sourceType ? String(asset.sourceType).trim() : null,
+      sourcePath: asset.sourcePath ? String(asset.sourcePath).trim() : null,
+    }))
+    .filter((asset) => asset.assetType && asset.assetId),
+  executionResultContract: draft.executionResultContract
+    ? {
+      resultRequired: draft.executionResultContract.resultRequired !== false,
+      preferredFormat: draft.executionResultContract.preferredFormat
+        ? String(draft.executionResultContract.preferredFormat).trim()
+        : null,
+    }
+    : null,
 });
 
 export const TaskDraftPanel: React.FC<TaskDraftPanelProps> = ({ panel, onConfirm, onCancel }) => {

@@ -6,8 +6,31 @@ use uuid::Uuid;
 use crate::db::Db;
 use crate::models::{
     scope_key, ContactTask, ContactTaskScopeRuntime, CreateTaskRequest, SchedulerDecision,
-    TaskExecutionScopeView, UpdateTaskRequest,
+    TaskExecutionResultContract, TaskExecutionScopeView, UpdateTaskRequest,
 };
+
+fn normalize_builtin_mcp_ids(ids: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    for item in ids {
+        let trimmed = item.trim();
+        if trimmed.is_empty() || out.iter().any(|existing: &String| existing == trimmed) {
+            continue;
+        }
+        out.push(trimmed.to_string());
+    }
+    out
+}
+
+fn normalize_optional_text(value: Option<String>) -> Option<String> {
+    value.and_then(|item| {
+        let trimmed = item.trim().to_string();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    })
+}
 
 fn tasks(db: &Db) -> mongodb::Collection<ContactTask> {
     db.collection::<ContactTask>("contact_tasks")
@@ -23,6 +46,10 @@ pub async fn create_task(
     auth_user_id: &str,
     req: CreateTaskRequest,
 ) -> Result<ContactTask, String> {
+    let planned_builtin_mcp_ids = normalize_builtin_mcp_ids(req.planned_builtin_mcp_ids.as_slice());
+    if planned_builtin_mcp_ids.is_empty() {
+        return Err("planned_builtin_mcp_ids is required and cannot be empty".to_string());
+    }
     let now = chrono::Utc::now().to_rfc3339();
     let (priority, priority_rank) = crate::models::normalize_priority(req.priority.as_deref());
     let item = ContactTask {
@@ -35,6 +62,8 @@ pub async fn create_task(
             req.contact_agent_id.as_str(),
             req.project_id.as_str(),
         ),
+        project_root: normalize_optional_text(req.project_root),
+        remote_connection_id: normalize_optional_text(req.remote_connection_id),
         session_id: req.session_id,
         conversation_turn_id: req.conversation_turn_id,
         source_message_id: req.source_message_id,
@@ -46,6 +75,16 @@ pub async fn create_task(
         status: "pending_confirm".to_string(),
         confirm_note: req.confirm_note,
         execution_note: req.execution_note,
+        planned_builtin_mcp_ids,
+        planned_context_assets: req.planned_context_assets,
+        execution_result_contract: Some(
+            req.execution_result_contract
+                .unwrap_or(TaskExecutionResultContract {
+                    result_required: true,
+                    preferred_format: None,
+                }),
+        ),
+        planning_snapshot: req.planning_snapshot,
         created_by: Some(auth_user_id.to_string()),
         created_at: now.clone(),
         updated_at: now,
@@ -201,6 +240,14 @@ pub async fn update_task(
         contact_agent_id: existing.contact_agent_id.clone(),
         project_id: existing.project_id.clone(),
         scope_key: existing.scope_key.clone(),
+        project_root: req
+            .project_root
+            .map(normalize_optional_text)
+            .unwrap_or(existing.project_root.clone()),
+        remote_connection_id: req
+            .remote_connection_id
+            .map(normalize_optional_text)
+            .unwrap_or(existing.remote_connection_id.clone()),
         session_id: existing.session_id.clone(),
         conversation_turn_id: existing.conversation_turn_id.clone(),
         source_message_id: existing.source_message_id.clone(),
@@ -214,6 +261,17 @@ pub async fn update_task(
         status,
         confirm_note: req.confirm_note.or(existing.confirm_note.clone()),
         execution_note: req.execution_note.or(existing.execution_note.clone()),
+        planned_builtin_mcp_ids: req
+            .planned_builtin_mcp_ids
+            .map(|ids| normalize_builtin_mcp_ids(ids.as_slice()))
+            .unwrap_or(existing.planned_builtin_mcp_ids.clone()),
+        planned_context_assets: req
+            .planned_context_assets
+            .unwrap_or(existing.planned_context_assets.clone()),
+        execution_result_contract: req
+            .execution_result_contract
+            .or(existing.execution_result_contract.clone()),
+        planning_snapshot: req.planning_snapshot.or(existing.planning_snapshot.clone()),
         created_by: existing.created_by.clone(),
         created_at: existing.created_at.clone(),
         updated_at: now.clone(),
@@ -271,6 +329,12 @@ pub async fn confirm_task(
             status: Some("pending_execute".to_string()),
             confirm_note: note,
             execution_note: None,
+            project_root: None,
+            remote_connection_id: None,
+            planned_builtin_mcp_ids: None,
+            planned_context_assets: None,
+            execution_result_contract: None,
+            planning_snapshot: None,
             model_config_id: None,
             result_summary: None,
             result_message_id: None,

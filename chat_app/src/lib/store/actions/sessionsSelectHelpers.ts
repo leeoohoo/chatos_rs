@@ -1,5 +1,5 @@
 import { applyTurnProcessCache } from '../helpers/messages';
-import { normalizeContactSessions } from './sessionsUtils';
+import { normalizeContactProjectScopeSessions } from './sessionsUtils';
 import {
   buildDraftUserMessageForStreaming,
   cloneStreamingMessageDraft,
@@ -169,7 +169,7 @@ export const applySelectSessionState = ({
     const isActive = isSessionActive(session as any);
     if (isActive) {
       const merged = [session, ...(state.sessions || []).filter((s: any) => s?.id !== session.id)];
-      state.sessions = normalizeContactSessions(merged);
+      state.sessions = normalizeContactProjectScopeSessions(merged);
     }
   }
 

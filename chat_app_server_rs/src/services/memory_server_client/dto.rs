@@ -172,6 +172,8 @@ pub struct MemoryContactDto {
     pub user_id: String,
     pub agent_id: String,
     pub agent_name_snapshot: Option<String>,
+    #[serde(default)]
+    pub authorized_builtin_mcp_ids: Vec<String>,
     pub status: String,
     pub created_at: String,
     pub updated_at: String,
@@ -277,12 +279,26 @@ pub struct CreateMemoryContactRequestDto {
     pub user_id: Option<String>,
     pub agent_id: String,
     pub agent_name_snapshot: Option<String>,
+    #[serde(default)]
+    pub authorized_builtin_mcp_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CreateMemoryContactResponseDto {
     pub created: bool,
     pub contact: MemoryContactDto,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ContactBuiltinMcpGrantsDto {
+    pub contact_id: String,
+    #[serde(default)]
+    pub authorized_builtin_mcp_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UpdateContactBuiltinMcpGrantsRequestDto {
+    pub authorized_builtin_mcp_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

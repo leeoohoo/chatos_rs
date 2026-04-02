@@ -1,6 +1,7 @@
 import React from 'react';
 
 import ConfirmDialog from '../ui/ConfirmDialog';
+import { ContactBuiltinMcpGrantsModal } from './ContactBuiltinMcpGrantsModal';
 import { CreateContactModal } from './CreateContactModal';
 import { CreateProjectModal, CreateTerminalModal } from './CreateResourceModals';
 import { DirPickerDialog, KeyFilePickerDialog } from './Pickers';
@@ -16,6 +17,16 @@ interface SessionListDialogsProps {
   setSelectedContactAgentId: (value: string) => void;
   setContactError: (value: string | null) => void;
   handleCreateContactSession: () => Promise<void> | void;
+
+  builtinMcpGrantsModalOpen: boolean;
+  builtinMcpGrantsContactName: string;
+  builtinMcpGrantsSelectedIds: string[];
+  builtinMcpGrantsLoading: boolean;
+  builtinMcpGrantsSaving: boolean;
+  builtinMcpGrantsError: string | null;
+  closeBuiltinMcpGrantsModal: () => void;
+  toggleBuiltinMcpGrant: (mcpId: string) => void;
+  saveBuiltinMcpGrants: () => Promise<void> | void;
 
   projectModalOpen: boolean;
   projectRoot: string;
@@ -123,6 +134,15 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
   setSelectedContactAgentId,
   setContactError,
   handleCreateContactSession,
+  builtinMcpGrantsModalOpen,
+  builtinMcpGrantsContactName,
+  builtinMcpGrantsSelectedIds,
+  builtinMcpGrantsLoading,
+  builtinMcpGrantsSaving,
+  builtinMcpGrantsError,
+  closeBuiltinMcpGrantsModal,
+  toggleBuiltinMcpGrant,
+  saveBuiltinMcpGrants,
   projectModalOpen,
   projectRoot,
   projectError,
@@ -214,6 +234,20 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
   handleCancel,
 }) => (
   <>
+    <ContactBuiltinMcpGrantsModal
+      isOpen={builtinMcpGrantsModalOpen}
+      contactName={builtinMcpGrantsContactName}
+      selectedIds={builtinMcpGrantsSelectedIds}
+      loading={builtinMcpGrantsLoading}
+      saving={builtinMcpGrantsSaving}
+      error={builtinMcpGrantsError}
+      onClose={closeBuiltinMcpGrantsModal}
+      onToggle={toggleBuiltinMcpGrant}
+      onSave={() => {
+        void saveBuiltinMcpGrants();
+      }}
+    />
+
     <CreateContactModal
       isOpen={createContactModalOpen}
       agents={(agents || []) as any[]}

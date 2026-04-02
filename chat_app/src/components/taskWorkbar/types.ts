@@ -6,6 +6,25 @@ export type TaskWorkbarStatus =
   | 'failed'
   | 'cancelled';
 
+export interface TaskWorkbarContextAsset {
+  assetType: string;
+  assetId: string;
+  displayName?: string | null;
+  sourceType?: string | null;
+  sourcePath?: string | null;
+}
+
+export interface TaskWorkbarExecutionResultContract {
+  resultRequired: boolean;
+  preferredFormat?: string | null;
+}
+
+export interface TaskWorkbarPlanningSnapshot {
+  contactAuthorizedBuiltinMcpIds: string[];
+  selectedModelConfigId?: string | null;
+  plannedAt?: string | null;
+}
+
 export interface TaskWorkbarItem {
   id: string;
   title: string;
@@ -16,6 +35,17 @@ export interface TaskWorkbarItem {
   createdAt: string;
   dueAt?: string | null;
   tags: string[];
+  plannedBuiltinMcpIds?: string[];
+  plannedContextAssets?: TaskWorkbarContextAsset[];
+  projectRoot?: string | null;
+  remoteConnectionId?: string | null;
+  executionResultContract?: TaskWorkbarExecutionResultContract | null;
+  planningSnapshot?: TaskWorkbarPlanningSnapshot | null;
+  resultSummary?: string | null;
+  lastError?: string | null;
+  confirmedAt?: string | null;
+  startedAt?: string | null;
+  finishedAt?: string | null;
 }
 
 export interface SessionSummaryWorkbarItem {

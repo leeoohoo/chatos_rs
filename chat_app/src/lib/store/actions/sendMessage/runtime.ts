@@ -69,12 +69,21 @@ export const resolveRuntimeConfig = (
     ? null
     : (requestedProjectRoot || sessionProjectRoot || null);
   const effectiveExecutionRoot = effectiveWorkspaceRoot || effectiveProjectRoot;
-  const effectiveMcpEnabled = typeof runtimeOptions?.mcpEnabled === 'boolean'
-    ? runtimeOptions.mcpEnabled
-    : (sessionRuntime?.mcpEnabled ?? true);
-  const effectiveEnabledMcpIds = Array.isArray(runtimeOptions?.enabledMcpIds)
-    ? runtimeOptions.enabledMcpIds
-    : (sessionRuntime?.enabledMcpIds ?? []);
+  const usesFixedContactBuiltinProfile = Boolean(effectiveContactAgentId);
+  const effectiveMcpEnabled = usesFixedContactBuiltinProfile
+    ? true
+    : (
+      typeof runtimeOptions?.mcpEnabled === 'boolean'
+        ? runtimeOptions.mcpEnabled
+        : (sessionRuntime?.mcpEnabled ?? true)
+    );
+  const effectiveEnabledMcpIds = usesFixedContactBuiltinProfile
+    ? []
+    : (
+      Array.isArray(runtimeOptions?.enabledMcpIds)
+        ? runtimeOptions.enabledMcpIds
+        : (sessionRuntime?.enabledMcpIds ?? [])
+    );
 
   return {
     effectiveContactAgentId,

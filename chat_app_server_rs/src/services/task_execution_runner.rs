@@ -14,7 +14,12 @@ use crate::core::ai_settings::chat_max_tokens_from_settings;
 use crate::core::messages::MessageOut;
 use crate::models::ai_model_config::AiModelConfig;
 use crate::models::message::Message;
+use crate::services::builtin_mcp::{BuiltinMcpKind, TASK_EXECUTOR_SERVER_NAME};
+use crate::services::contact_agent_model::{
+    normalize_optional_model_id, resolve_effective_contact_agent_model_config_id,
+};
 use crate::services::memory_server_client::{self, TaskExecutionScopeBinding};
+use crate::services::mcp_loader::McpBuiltinServer;
 use crate::services::session_event_hub::session_event_hub;
 use crate::services::task_service_client::{
     self, AckAllDoneRequestDto, SchedulerRequestDto, TaskExecutionScopeDto, TaskRecordDto,
@@ -108,7 +113,7 @@ async fn execute_task(scope: TaskExecutionScopeDto, task: TaskRecordDto) -> Resu
         .chat(
             task_runtime.runtime_session_key.as_str(),
             task.content.as_str(),
-            task_runtime.chat_options(task.id.as_str()),
+            task_runtime.chat_options(task.id.as_str(), Some(&task)),
         )
         .await;
 
@@ -288,7 +293,7 @@ async fn handle_all_done(scope: TaskExecutionScopeDto) -> Result<(), String> {
         .chat(
             task_runtime.runtime_session_key.as_str(),
             summary_prompt,
-            task_runtime.chat_options("all_done"),
+            task_runtime.chat_options("all_done", None),
         )
         .await?;
     let final_text = result
@@ -337,7 +342,7 @@ struct PreparedTaskRuntime {
 }
 
 impl PreparedTaskRuntime {
-    fn chat_options(&self, turn_suffix: &str) -> ChatOptions {
+    fn chat_options(&self, turn_suffix: &str, task: Option<&TaskRecordDto>) -> ChatOptions {
         ChatOptions {
             model: Some(self.model_runtime.model.clone()),
             provider: Some(self.model_runtime.provider.clone()),
@@ -354,9 +359,9 @@ impl PreparedTaskRuntime {
             user_message_id: None,
             message_mode: Some("model".to_string()),
             message_source: Some(self.model_runtime.model.clone()),
-            prefixed_input_items: build_prefixed_input_items(
-                self.runtime_context.contact_system_prompt.as_deref(),
-                self.runtime_context.command_system_prompt.as_deref(),
+            prefixed_input_items: build_task_execution_prefixed_input_items(
+                &self.runtime_context,
+                task,
             ),
             request_cwd: if self.model_runtime.use_codex_gateway_mcp_passthrough {
                 self.runtime_context.resolved_project_root.clone()
@@ -374,6 +379,7 @@ async fn build_task_runtime(
     scope: TaskExecutionScopeDto,
     task: Option<&TaskRecordDto>,
 ) -> Result<PreparedTaskRuntime, String> {
+    validate_task_execution_grants(scope.clone(), task).await?;
     let model_config = resolve_execution_model(scope.clone(), task).await?;
     let model_config_json = json!({
         "model_name": model_config.model,
@@ -425,10 +431,14 @@ async fn build_task_runtime(
         turn_id: None,
         contact_agent_id: Some(scope.contact_agent_id.clone()),
         project_id: Some(scope.project_id.clone()),
-        project_root: None,
-        remote_connection_id: None,
+        project_root: task.and_then(|item| item.project_root.clone()),
+        remote_connection_id: task.and_then(|item| item.remote_connection_id.clone()),
         mcp_enabled: Some(true),
-        enabled_mcp_ids: None,
+        enabled_mcp_ids: Some(
+            task.map(|item| item.planned_builtin_mcp_ids.clone())
+                .unwrap_or_default(),
+        ),
+        execution_context: Some(true),
     };
     let runtime_context = resolve_chat_stream_context(
         request.session_id.as_deref().unwrap_or(""),
@@ -442,7 +452,27 @@ async fn build_task_runtime(
         ai_server.set_system_prompt(runtime_context.base_system_prompt.clone());
     }
 
-    let (http_servers, stdio_servers, builtin_servers) = runtime_context.mcp_server_bundle.clone();
+    let execution_asset_context =
+        build_task_execution_asset_context(scope.contact_agent_id.as_str(), task).await?;
+
+    let (http_servers, stdio_servers, mut builtin_servers) =
+        runtime_context.mcp_server_bundle.clone();
+    if let Some(task) = task {
+        builtin_servers.push(McpBuiltinServer {
+            name: TASK_EXECUTOR_SERVER_NAME.to_string(),
+            kind: BuiltinMcpKind::TaskExecutor,
+            workspace_dir: String::new(),
+            user_id: Some(scope.user_id.clone()),
+            project_id: Some(scope.project_id.clone()),
+            remote_connection_id: None,
+            contact_agent_id: Some(scope.contact_agent_id.clone()),
+            current_task_id: Some(task.id.clone()),
+            allow_writes: false,
+            max_file_bytes: 0,
+            max_write_bytes: 0,
+            search_limit: 0,
+        });
+    }
     let mut mcp_exec = McpToolExecute::new(
         http_servers.clone(),
         stdio_servers.clone(),
@@ -472,17 +502,232 @@ async fn build_task_runtime(
     Ok(PreparedTaskRuntime {
         ai_server,
         model_runtime,
-        runtime_context,
+        runtime_context: crate::api::chat_stream_common::ResolvedChatStreamContext {
+            contact_system_prompt: merge_execution_prompts(
+                runtime_context.contact_system_prompt.as_deref(),
+                execution_asset_context.as_deref(),
+            ),
+            ..runtime_context
+        },
         runtime_session_key: format!("task-exec-scope:{}", scope.scope_key),
         max_tokens,
     })
+}
+
+async fn validate_task_execution_grants(
+    scope: TaskExecutionScopeDto,
+    task: Option<&TaskRecordDto>,
+) -> Result<(), String> {
+    let Some(task) = task else {
+        return Ok(());
+    };
+
+    if task.planned_builtin_mcp_ids.is_empty() {
+        return Err(format!(
+            "task {} missing planned_builtin_mcp_ids",
+            task.id
+        ));
+    }
+
+    let contacts = memory_server_client::list_memory_contacts(Some(scope.user_id.as_str()), Some(500), 0)
+        .await?;
+    let authorized_builtin_mcp_ids = contacts
+        .into_iter()
+        .find(|contact| contact.agent_id.trim() == scope.contact_agent_id.trim())
+        .map(|contact| contact.authorized_builtin_mcp_ids)
+        .unwrap_or_default();
+
+    let unauthorized = task
+        .planned_builtin_mcp_ids
+        .iter()
+        .filter(|item| {
+            !authorized_builtin_mcp_ids
+                .iter()
+                .any(|allowed| allowed == *item)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+
+    if unauthorized.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "task {} contains builtin MCP ids no longer authorized for contact {}: {}",
+            task.id,
+            scope.contact_agent_id,
+            unauthorized.join(", ")
+        ))
+    }
+}
+
+fn build_task_execution_prefixed_input_items(
+    runtime_context: &crate::api::chat_stream_common::ResolvedChatStreamContext,
+    task: Option<&TaskRecordDto>,
+) -> Option<Vec<Value>> {
+    let mut items = build_prefixed_input_items(
+        runtime_context.contact_system_prompt.as_deref(),
+        runtime_context.command_system_prompt.as_deref(),
+    )
+    .unwrap_or_default();
+
+    if let Some(summary) = runtime_context
+        .memory_summary_prompt
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        items.push(system_input_item(format!("历史上下文总结：\n{}", summary).as_str()));
+    }
+
+    if let Some(task) = task {
+        let mut lines = vec![
+            "当前处于后台任务执行阶段。".to_string(),
+            format!("task_id={}", task.id),
+            format!("任务标题={}", task.title),
+            format!("任务状态={}", task.status),
+        ];
+        if !task.planned_builtin_mcp_ids.is_empty() {
+            lines.push(format!(
+                "本次任务允许使用的内置 MCP={}",
+                task.planned_builtin_mcp_ids.join(", ")
+            ));
+        }
+        if let Some(contract) = task.execution_result_contract.as_ref() {
+            lines.push(format!(
+                "结果必填={}",
+                if contract.result_required { "true" } else { "false" }
+            ));
+            if let Some(format) = contract
+                .preferred_format
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                lines.push(format!("结果格式偏好={}", format));
+            }
+        }
+        lines.push("执行完成后，应输出明确结果；如失败，也必须说明失败结果。".to_string());
+        items.push(system_input_item(lines.join("\n").as_str()));
+    }
+
+    if items.is_empty() {
+        None
+    } else {
+        Some(items)
+    }
+}
+
+fn system_input_item(text: &str) -> Value {
+    json!({
+        "type": "message",
+        "role": "system",
+        "content": [{ "type": "input_text", "text": text }],
+    })
+}
+
+fn merge_execution_prompts(base: Option<&str>, extra: Option<&str>) -> Option<String> {
+    match (
+        base.map(str::trim).filter(|value| !value.is_empty()),
+        extra.map(str::trim).filter(|value| !value.is_empty()),
+    ) {
+        (Some(base), Some(extra)) => Some(format!("{}\n\n{}", base, extra)),
+        (Some(base), None) => Some(base.to_string()),
+        (None, Some(extra)) => Some(extra.to_string()),
+        (None, None) => None,
+    }
+}
+
+async fn build_task_execution_asset_context(
+    contact_agent_id: &str,
+    task: Option<&TaskRecordDto>,
+) -> Result<Option<String>, String> {
+    let Some(task) = task else {
+        return Ok(None);
+    };
+    if task.planned_context_assets.is_empty() {
+        return Ok(None);
+    }
+
+    let runtime_context = memory_server_client::get_memory_agent_runtime_context(contact_agent_id)
+        .await?
+        .ok_or_else(|| format!("agent runtime context not found: {}", contact_agent_id))?;
+
+    let mut sections = Vec::new();
+    for asset in &task.planned_context_assets {
+        match asset.asset_type.trim().to_ascii_lowercase().as_str() {
+            "skill" => {
+                let Some(skill) = memory_server_client::get_memory_skill(asset.asset_id.as_str()).await? else {
+                    continue;
+                };
+                sections.push(format!(
+                    "[技能] {} ({})\n{}",
+                    skill.name,
+                    skill.id,
+                    skill.content.trim()
+                ));
+            }
+            "plugin" => {
+                let Some(plugin) =
+                    memory_server_client::get_memory_skill_plugin(asset.asset_id.as_str()).await?
+                else {
+                    continue;
+                };
+                let mut text = format!(
+                    "[插件] {} ({})\n{}",
+                    plugin.name,
+                    plugin.source,
+                    plugin.content.as_deref().map(str::trim).unwrap_or("")
+                );
+                if !plugin.commands.is_empty() {
+                    text.push_str("\n\n插件命令：");
+                    for command in &plugin.commands {
+                        text.push_str(
+                            format!(
+                                "\n- {} [{}]\n{}",
+                                command.name,
+                                command.source_path,
+                                command.content.trim()
+                            )
+                            .as_str(),
+                        );
+                    }
+                }
+                sections.push(text);
+            }
+            "common" => {
+                let Some(command) = runtime_context.runtime_commands.iter().find(|item| {
+                    item.command_ref.trim() == asset.asset_id.trim()
+                        || item.source_path.trim() == asset.asset_id.trim()
+                }) else {
+                    continue;
+                };
+                sections.push(format!(
+                    "[Common] {} ({})\n{}",
+                    command.name,
+                    command.command_ref,
+                    command.content.trim()
+                ));
+            }
+            _ => {}
+        }
+    }
+
+    if sections.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(format!(
+            "以下是本次任务明确选中的技能 / 插件 / commons 全文，请严格基于这些内容执行：\n\n{}",
+            sections.join("\n\n---\n\n")
+        )))
+    }
 }
 
 async fn resolve_execution_model(
     scope: TaskExecutionScopeDto,
     task: Option<&TaskRecordDto>,
 ) -> Result<AiModelConfig, String> {
-    let agent_model_id = resolve_contact_agent_model_config_id(scope.contact_agent_id.as_str()).await?;
+    let agent_model_id =
+        resolve_effective_contact_agent_model_config_id(scope.contact_agent_id.as_str()).await?;
     let model_id = normalize_optional_model_id(task.and_then(|item| item.model_config_id.clone()))
         .or(agent_model_id)
         .ok_or_else(|| {
@@ -513,47 +758,6 @@ async fn resolve_execution_model(
         supports_responses: config.supports_responses == 1,
         created_at: config.created_at,
         updated_at: config.updated_at,
-    })
-}
-
-async fn resolve_contact_agent_model_config_id(
-    contact_agent_id: &str,
-) -> Result<Option<String>, String> {
-    let Some(agent) = memory_server_client::get_memory_agent_runtime_context(contact_agent_id).await?
-    else {
-        return Ok(None);
-    };
-
-    if let Some(model_id) = normalize_optional_model_id(agent.model_config_id.clone()) {
-        return Ok(Some(model_id));
-    }
-
-    let Some(source_agent_id) = extract_clone_source_agent_id(agent.project_policy.as_ref()) else {
-        return Ok(None);
-    };
-
-    let source_agent = memory_server_client::get_memory_agent(source_agent_id.as_str()).await?;
-    Ok(source_agent.and_then(|item| normalize_optional_model_id(item.model_config_id)))
-}
-
-fn extract_clone_source_agent_id(project_policy: Option<&Value>) -> Option<String> {
-    project_policy
-        .and_then(|policy| policy.get("__chatos_clone_meta"))
-        .and_then(|meta| meta.get("source_agent_id"))
-        .and_then(|value| value.as_str())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| value.to_string())
-}
-
-fn normalize_optional_model_id(value: Option<String>) -> Option<String> {
-    value.and_then(|item| {
-        let trimmed = item.trim();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed.to_string())
-        }
     })
 }
 

@@ -182,13 +182,19 @@ export const isTaskMutationToolName = (name: unknown): boolean => {
     return false;
   }
 
-  const taskScope = normalized.includes('task_manager') || normalized.includes('task');
+  const taskScope = normalized.includes('task_planner')
+    || normalized.includes('task_executor')
+    || normalized.includes('task_manager')
+    || normalized.includes('task');
   if (!taskScope) {
     return false;
   }
 
-  return normalized.includes('add_task')
+  return normalized.includes('create_tasks')
+    || normalized.includes('add_task')
     || normalized.includes('update_task')
+    || normalized.includes('complete_current_task')
+    || normalized.includes('fail_current_task')
     || normalized.includes('complete_task')
     || normalized.includes('delete_task');
 };
@@ -342,6 +348,37 @@ export const normalizeWorkbarTask = (raw: unknown): TaskWorkbarItem => {
   const conversationTurnId = String(record.conversation_turn_id ?? record.conversationTurnId ?? '').trim();
   const createdAt = String(record.created_at ?? record.createdAt ?? '');
   const dueAtRaw = record.due_at ?? record.dueAt;
+  const projectRoot = typeof (record.project_root ?? record.projectRoot) === 'string'
+    ? String(record.project_root ?? record.projectRoot).trim()
+    : '';
+  const remoteConnectionId = typeof (record.remote_connection_id ?? record.remoteConnectionId) === 'string'
+    ? String(record.remote_connection_id ?? record.remoteConnectionId).trim()
+    : '';
+  const plannedBuiltinMcpIds = Array.isArray(record.planned_builtin_mcp_ids)
+    ? record.planned_builtin_mcp_ids
+        .map((item) => String(item).trim())
+        .filter((item: string) => item.length > 0)
+    : [];
+  const plannedContextAssets = Array.isArray(record.planned_context_assets)
+    ? record.planned_context_assets
+        .map((item) => asRecord(item))
+        .map((item) => ({
+          assetType: String(item.asset_type ?? item.assetType ?? '').trim(),
+          assetId: String(item.asset_id ?? item.assetId ?? '').trim(),
+          displayName: typeof (item.display_name ?? item.displayName) === 'string'
+            ? String(item.display_name ?? item.displayName).trim()
+            : null,
+          sourceType: typeof (item.source_type ?? item.sourceType) === 'string'
+            ? String(item.source_type ?? item.sourceType).trim()
+            : null,
+          sourcePath: typeof (item.source_path ?? item.sourcePath) === 'string'
+            ? String(item.source_path ?? item.sourcePath).trim()
+            : null,
+        }))
+        .filter((item) => item.assetType.length > 0 && item.assetId.length > 0)
+    : [];
+  const executionResultContractRecord = asRecord(record.execution_result_contract ?? record.executionResultContract);
+  const planningSnapshotRecord = asRecord(record.planning_snapshot ?? record.planningSnapshot);
 
   return {
     id: String(record.id || '').trim(),
@@ -357,6 +394,38 @@ export const normalizeWorkbarTask = (raw: unknown): TaskWorkbarItem => {
           .map((tag) => String(tag).trim())
           .filter((tag: string) => tag.length > 0)
       : [],
+    projectRoot: projectRoot.length > 0 ? projectRoot : null,
+    remoteConnectionId: remoteConnectionId.length > 0 ? remoteConnectionId : null,
+    plannedBuiltinMcpIds,
+    plannedContextAssets,
+    executionResultContract: Object.keys(executionResultContractRecord).length > 0
+      ? {
+        resultRequired: executionResultContractRecord.result_required !== false,
+        preferredFormat: typeof executionResultContractRecord.preferred_format === 'string'
+          ? executionResultContractRecord.preferred_format
+          : null,
+      }
+      : null,
+    planningSnapshot: Object.keys(planningSnapshotRecord).length > 0
+      ? {
+        contactAuthorizedBuiltinMcpIds: Array.isArray(planningSnapshotRecord.contact_authorized_builtin_mcp_ids)
+          ? planningSnapshotRecord.contact_authorized_builtin_mcp_ids
+              .map((item) => String(item).trim())
+              .filter((item: string) => item.length > 0)
+          : [],
+        selectedModelConfigId: typeof planningSnapshotRecord.selected_model_config_id === 'string'
+          ? planningSnapshotRecord.selected_model_config_id
+          : null,
+        plannedAt: typeof planningSnapshotRecord.planned_at === 'string'
+          ? planningSnapshotRecord.planned_at
+          : null,
+      }
+      : null,
+    resultSummary: typeof record.result_summary === 'string' ? record.result_summary : null,
+    lastError: typeof record.last_error === 'string' ? record.last_error : null,
+    confirmedAt: typeof record.confirmed_at === 'string' ? record.confirmed_at : null,
+    startedAt: typeof record.started_at === 'string' ? record.started_at : null,
+    finishedAt: typeof record.finished_at === 'string' ? record.finished_at : null,
   };
 };
 

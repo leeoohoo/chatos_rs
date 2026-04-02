@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react';
 
 import {
-  resolveSessionProjectScopeId,
+  resolveProjectScopeIdFromRecord,
 } from '../../../features/contactSession/sessionResolver';
 import type { TurnRuntimeSnapshotLookupResponse } from '../../../lib/api/client/types';
 import type { Session } from '../../../types';
@@ -62,7 +62,7 @@ export const useTeamMemberRuntimeContext = ({
         return;
       }
       const targetSession = sessions.find((item) => item.id === sessionId) || null;
-      if (targetSession && resolveSessionProjectScopeId(targetSession) !== normalizedProjectId) {
+      if (targetSession && resolveProjectScopeIdFromRecord(targetSession) !== normalizedProjectId) {
         setRuntimeContextError('检测到跨项目会话，已阻止加载上下文');
         setRuntimeContextOpen(false);
         return;

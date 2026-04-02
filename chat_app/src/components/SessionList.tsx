@@ -62,11 +62,11 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
         <div className="flex-1 flex flex-col overflow-hidden">
           <SessionSection
             expanded={controller.sectionExpansion.sessionsExpanded}
-            sessions={controller.contactSessionState.displaySessions}
-            currentSessionId={controller.contactSessionState.currentDisplaySessionId}
-            summarySessionId={controller.contactSessionState.activeSummaryDisplaySessionId}
+            sessions={controller.contactScopeState.displayScopeSessions}
+            currentSessionId={controller.contactScopeState.currentDisplayScopeSessionId}
+            summarySessionId={controller.contactScopeState.activeSummaryDisplayScopeSessionId}
             runtimeContextSessionId={activeRuntimeContextSessionId}
-            displaySessionRuntimeIdMap={controller.contactSessionState.displaySessionRuntimeIdMap}
+            displaySessionRuntimeIdMap={controller.contactScopeState.displayBackingSessionIdMap}
             sessionChatState={controller.sessionChatState}
             taskReviewPanelsBySession={controller.taskReviewPanelsBySession}
             uiPromptPanelsBySession={controller.uiPromptPanelsBySession}
@@ -76,7 +76,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
             onToggle={controller.sectionExpansion.handleToggleSessionsSection}
             onRefresh={controller.sessionListActions.handleRefreshSessions}
             onCreateSession={() => {
-              void controller.contactSessionCreator.openCreateSessionModal();
+              void controller.contactScopeCreator.openCreateSessionModal();
             }}
             onSelectSession={(sessionId) => {
               void controller.sessionListActions.handleSelectSession(sessionId).then((selectedSessionId) => {
@@ -87,6 +87,9 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
             }}
             onOpenSummary={controller.sessionListActions.handleOpenSummary}
             onOpenRuntimeContext={controller.sessionListActions.handleOpenRuntimeContext}
+            onManageBuiltinMcpGrants={(sessionId) => {
+              void controller.openBuiltinMcpGrantsModal(sessionId);
+            }}
             onDeleteSession={controller.deleteActions.handleDeleteSession}
             onLoadMore={() => {}}
             onToggleActionMenu={controller.inlineActionMenus.toggleActionMenu}
@@ -173,15 +176,24 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
         </div>
       )}
       <SessionListDialogs
-        createContactModalOpen={controller.contactSessionCreator.createContactModalOpen}
+        createContactModalOpen={controller.contactScopeCreator.createContactModalOpen}
         agents={(controller.agents || []) as any[]}
         existingContactAgentIds={controller.existingContactAgentIds}
-        selectedContactAgentId={controller.contactSessionCreator.selectedContactAgentId}
-        contactError={controller.contactSessionCreator.contactError}
-        closeCreateSessionModal={controller.contactSessionCreator.closeCreateSessionModal}
-        setSelectedContactAgentId={controller.contactSessionCreator.setSelectedContactAgentId}
-        setContactError={controller.contactSessionCreator.setContactError}
-        handleCreateContactSession={controller.contactSessionCreator.handleCreateContactSession}
+        selectedContactAgentId={controller.contactScopeCreator.selectedContactAgentId}
+        contactError={controller.contactScopeCreator.contactError}
+        closeCreateSessionModal={controller.contactScopeCreator.closeCreateSessionModal}
+        setSelectedContactAgentId={controller.contactScopeCreator.setSelectedContactAgentId}
+        setContactError={controller.contactScopeCreator.setContactError}
+        handleCreateContactSession={controller.contactScopeCreator.handleCreateContactSession}
+        builtinMcpGrantsModalOpen={controller.builtinMcpGrantsModalOpen}
+        builtinMcpGrantsContactName={controller.builtinMcpGrantsContactName}
+        builtinMcpGrantsSelectedIds={controller.builtinMcpGrantsSelectedIds}
+        builtinMcpGrantsLoading={controller.builtinMcpGrantsLoading}
+        builtinMcpGrantsSaving={controller.builtinMcpGrantsSaving}
+        builtinMcpGrantsError={controller.builtinMcpGrantsError}
+        closeBuiltinMcpGrantsModal={controller.closeBuiltinMcpGrantsModal}
+        toggleBuiltinMcpGrant={controller.toggleBuiltinMcpGrant}
+        saveBuiltinMcpGrants={controller.saveBuiltinMcpGrants}
         projectModalOpen={controller.projectModalOpen}
         projectRoot={controller.projectRoot}
         projectError={controller.projectError}

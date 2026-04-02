@@ -4,17 +4,17 @@ import { mergeSessionRuntimeIntoMetadata } from '../../lib/store/helpers/session
 import { CONTACT_CHAT_PROJECT_ID } from './useContactSessionListState';
 import type { ContactItem } from './types';
 
-interface UseContactSessionCreatorOptions {
+interface UseContactScopeCreatorOptions {
   agents: any[];
   currentSessionId: string | null;
   loadContacts: () => Promise<unknown>;
   createContact: (agentId: string, name?: string) => Promise<any>;
-  ensureSessionForContact: (contact: ContactItem) => Promise<string | null>;
+  ensureBackingSessionForContactScope: (contact: ContactItem) => Promise<string | null>;
   updateSession: (sessionId: string, patch: Partial<Session>) => Promise<unknown>;
   selectSession: (sessionId: string) => Promise<unknown>;
 }
 
-interface UseContactSessionCreatorResult {
+interface UseContactScopeCreatorResult {
   createContactModalOpen: boolean;
   selectedContactAgentId: string | null;
   contactError: string | null;
@@ -25,15 +25,15 @@ interface UseContactSessionCreatorResult {
   handleCreateContactSession: () => Promise<void>;
 }
 
-export const useContactSessionCreator = ({
+export const useContactScopeCreator = ({
   agents,
   currentSessionId,
   loadContacts,
   createContact,
-  ensureSessionForContact,
+  ensureBackingSessionForContactScope,
   updateSession,
   selectSession,
-}: UseContactSessionCreatorOptions): UseContactSessionCreatorResult => {
+}: UseContactScopeCreatorOptions): UseContactScopeCreatorResult => {
   const [createContactModalOpen, setCreateContactModalOpen] = useState(false);
   const [selectedContactAgentId, setSelectedContactAgentId] = useState<string | null>(null);
   const [contactError, setContactError] = useState<string | null>(null);
@@ -75,11 +75,12 @@ export const useContactSessionCreator = ({
         id: createdContact.id,
         agentId: createdContact.agentId,
         name: createdContact.name,
+        authorizedBuiltinMcpIds: createdContact.authorizedBuiltinMcpIds,
         status: createdContact.status,
         createdAt: createdContact.createdAt,
         updatedAt: createdContact.updatedAt,
       };
-      const ensuredSessionId = await ensureSessionForContact(matchedContact);
+      const ensuredSessionId = await ensureBackingSessionForContactScope(matchedContact);
       if (ensuredSessionId) {
         const metadata = mergeSessionRuntimeIntoMetadata(null, {
           contactAgentId: selectedAgent.id,
@@ -107,7 +108,7 @@ export const useContactSessionCreator = ({
     closeCreateSessionModal,
     createContact,
     currentSessionId,
-    ensureSessionForContact,
+    ensureBackingSessionForContactScope,
     loadContacts,
     selectedContactAgentId,
     selectSession,
@@ -125,3 +126,5 @@ export const useContactSessionCreator = ({
     handleCreateContactSession,
   };
 };
+
+export const useContactSessionCreator = useContactScopeCreator;

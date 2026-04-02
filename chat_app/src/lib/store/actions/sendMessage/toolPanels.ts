@@ -56,6 +56,63 @@ const parseTaskTags = (value: unknown): string[] => {
   return tags;
 };
 
+const parseStringArray = (value: unknown): string[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const out: string[] = [];
+  value.forEach((item) => {
+    const normalized = String(item ?? '').trim();
+    if (!normalized || out.includes(normalized)) {
+      return;
+    }
+    out.push(normalized);
+  });
+  return out;
+};
+
+const parseTaskContextAssets = (value: unknown): NonNullable<TaskReviewDraft['plannedContextAssets']> => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item) => {
+      const source = asRecord(item) || {};
+      const assetType = String(source.asset_type ?? source.assetType ?? '').trim();
+      const assetId = String(source.asset_id ?? source.assetId ?? '').trim();
+      if (!assetType || !assetId) {
+        return null;
+      }
+      return {
+        assetType,
+        assetId,
+        displayName: typeof (source.display_name ?? source.displayName) === 'string'
+          ? String(source.display_name ?? source.displayName).trim()
+          : null,
+        sourceType: typeof (source.source_type ?? source.sourceType) === 'string'
+          ? String(source.source_type ?? source.sourceType).trim()
+          : null,
+        sourcePath: typeof (source.source_path ?? source.sourcePath) === 'string'
+          ? String(source.source_path ?? source.sourcePath).trim()
+          : null,
+      };
+    })
+    .filter(Boolean) as NonNullable<TaskReviewDraft['plannedContextAssets']>;
+};
+
+const parseExecutionResultContract = (value: unknown): TaskReviewDraft['executionResultContract'] => {
+  const source = asRecord(value);
+  if (!source) {
+    return null;
+  }
+  return {
+    resultRequired: source.result_required !== false && source.resultRequired !== false,
+    preferredFormat: typeof (source.preferred_format ?? source.preferredFormat) === 'string'
+      ? String(source.preferred_format ?? source.preferredFormat).trim()
+      : null,
+  };
+};
+
 const toTaskReviewDraft = (raw: unknown, index: number): TaskReviewDraft => {
   const source = asRecord(raw) || {};
   const title = String(source.title ?? '').trim();
@@ -73,6 +130,15 @@ const toTaskReviewDraft = (raw: unknown, index: number): TaskReviewDraft => {
     status: normalizeTaskStatus(source.status),
     tags: parseTaskTags(source.tags),
     dueAt: dueAt || null,
+    plannedBuiltinMcpIds: parseStringArray(
+      source.planned_builtin_mcp_ids ?? source.plannedBuiltinMcpIds,
+    ),
+    plannedContextAssets: parseTaskContextAssets(
+      source.planned_context_assets ?? source.plannedContextAssets,
+    ),
+    executionResultContract: parseExecutionResultContract(
+      source.execution_result_contract ?? source.executionResultContract,
+    ),
   };
 };
 

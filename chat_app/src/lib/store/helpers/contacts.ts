@@ -31,6 +31,14 @@ export const normalizeContact = (raw: any): ContactRecord | null => {
     id,
     agentId,
     name,
+    authorizedBuiltinMcpIds: Array.isArray(raw.authorized_builtin_mcp_ids)
+      ? raw.authorized_builtin_mcp_ids
+        .filter((item: unknown): item is string => typeof item === 'string')
+        .map((item: string) => item.trim())
+        .filter((item: string, index: number, list: string[]) => (
+          item.length > 0 && list.indexOf(item) === index
+        ))
+      : [],
     status,
     createdAt,
     updatedAt,

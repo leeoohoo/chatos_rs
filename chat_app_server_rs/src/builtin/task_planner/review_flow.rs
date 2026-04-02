@@ -9,10 +9,10 @@ use crate::services::task_manager::{
 };
 use crate::utils::events::Events;
 
+use super::context::ToolContext;
 use super::parsing::parse_task_drafts;
-use super::ToolContext;
 
-pub(super) fn handle_add_task(
+pub(crate) fn handle_create_tasks(
     args: Value,
     ctx: &ToolContext,
     default_timeout_ms: u64,
@@ -22,13 +22,11 @@ pub(super) fn handle_add_task(
         return Err("tasks is required".to_string());
     }
 
-    let timeout_ms = default_timeout_ms;
-
     let (review_payload, receiver) = block_on_result(create_task_review(
         ctx.session_id,
         ctx.conversation_turn_id,
         draft_tasks,
-        timeout_ms,
+        default_timeout_ms,
     ))?;
 
     emit_review_required_event(ctx.on_stream_chunk.as_ref(), &review_payload);

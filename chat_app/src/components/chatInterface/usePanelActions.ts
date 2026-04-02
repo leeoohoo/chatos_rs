@@ -18,6 +18,18 @@ interface PanelActionsApiClient {
         status: TaskReviewDraft['status'];
         tags: string[];
         due_at?: string | null;
+        planned_builtin_mcp_ids?: string[];
+        planned_context_assets?: Array<{
+          asset_type: string;
+          asset_id: string;
+          display_name?: string | null;
+          source_type?: string | null;
+          source_path?: string | null;
+        }>;
+        execution_result_contract?: {
+          result_required: boolean;
+          preferred_format?: string | null;
+        } | null;
       }>;
       reason?: string;
     },
@@ -78,6 +90,20 @@ export function usePanelActions({
           status: draft.status,
           tags: draft.tags,
           due_at: draft.dueAt || undefined,
+          planned_builtin_mcp_ids: draft.plannedBuiltinMcpIds || [],
+          planned_context_assets: (draft.plannedContextAssets || []).map((asset) => ({
+            asset_type: asset.assetType,
+            asset_id: asset.assetId,
+            display_name: asset.displayName || undefined,
+            source_type: asset.sourceType || undefined,
+            source_path: asset.sourcePath || undefined,
+          })),
+          execution_result_contract: draft.executionResultContract
+            ? {
+              result_required: draft.executionResultContract.resultRequired !== false,
+              preferred_format: draft.executionResultContract.preferredFormat || undefined,
+            }
+            : undefined,
         })),
       });
       removeTaskReviewPanel(activeTaskReviewPanel.reviewId, activeTaskReviewPanel.sessionId);

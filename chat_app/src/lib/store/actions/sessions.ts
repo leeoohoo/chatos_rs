@@ -20,9 +20,9 @@ import {
   createPerfMeasureStopper,
   deleteSessionMessagesCacheEntry,
   isSessionActive,
-  matchSessionContactProjectScope,
+  matchContactProjectScopeSessionRecord,
   normalizeContact,
-  normalizeContactSessions,
+  normalizeContactProjectScopeSessions,
   normalizeProjectScopeId,
   resolveSessionTimestamp,
   splitSessionsByMappedContacts,
@@ -135,7 +135,7 @@ export function createSessionActions({
             dedupedById.push(s);
           }
         }
-        const deduped = normalizeContactSessions(dedupedById);
+        const deduped = normalizeContactProjectScopeSessions(dedupedById);
 
         set((state: any) => {
           state.sessions = deduped;
@@ -238,7 +238,7 @@ export function createSessionActions({
 
         if (contactId || contactAgentId) {
           const existingSession = (stateBeforeCreate.sessions || []).find((session: Session) => (
-            matchSessionContactProjectScope(session, {
+            matchContactProjectScopeSessionRecord(session, {
               contactId,
               contactAgentId,
               projectId: effectiveProjectId,
@@ -260,7 +260,7 @@ export function createSessionActions({
             const remoteMatched = (Array.isArray(remoteRows) ? remoteRows : [])
               .map(normalizeSession)
               .filter((session: Session) => (
-                matchSessionContactProjectScope(session, {
+                matchContactProjectScopeSessionRecord(session, {
                   contactId,
                   contactAgentId,
                   projectId: effectiveProjectId,

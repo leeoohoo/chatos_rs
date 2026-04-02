@@ -1,3 +1,5 @@
+import { useState } from 'react';
+
 import {
   priorityStyles,
   priorityText,
@@ -23,6 +25,7 @@ const TaskCard = ({
   onEditTask,
   isMutating = false,
 }: TaskCardProps) => {
+  const [expanded, setExpanded] = useState(false);
   const cardClass = compact
     ? 'min-w-[160px] max-w-[190px] min-w-0 overflow-hidden rounded-md border border-border bg-background p-2'
     : 'min-w-0 overflow-hidden rounded-lg border border-border bg-background p-2.5';
@@ -40,6 +43,13 @@ const TaskCard = ({
     ? 'rounded border border-border bg-background px-1.5 py-0.5 text-[10px] text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50'
     : 'rounded border border-border bg-background px-2 py-0.5 text-[11px] text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50';
   const isTerminal = task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled';
+  const hasExecutionManifest = (task.plannedBuiltinMcpIds?.length || 0) > 0
+    || (task.plannedContextAssets?.length || 0) > 0
+    || !!task.projectRoot
+    || !!task.remoteConnectionId
+    || !!task.executionResultContract
+    || !!task.resultSummary
+    || !!task.lastError;
 
   return (
     <div className={cardClass}>
@@ -59,6 +69,8 @@ const TaskCard = ({
         <div className="truncate" title={task.conversationTurnId}>
           轮次 {task.conversationTurnId}
         </div>
+        {task.startedAt ? <div>开始 {task.startedAt}</div> : null}
+        {task.finishedAt ? <div>结束 {task.finishedAt}</div> : null}
       </div>
 
       {(onCompleteTask || onEditTask || onDeleteTask) ? (
@@ -78,6 +90,11 @@ const TaskCard = ({
               删除
             </button>
           ) : null}
+          {hasExecutionManifest ? (
+            <button type="button" className={actionClass} onClick={() => setExpanded((value) => !value)}>
+              {expanded ? '收起清单' : '执行清单'}
+            </button>
+          ) : null}
           {isMutating ? (
             <span className={compact ? 'text-[10px] text-muted-foreground' : 'text-[11px] text-muted-foreground'}>
               处理中...
@@ -89,6 +106,78 @@ const TaskCard = ({
       {task.dueAt ? (
         <div className={compact ? 'mt-1 truncate text-[10px] text-muted-foreground' : 'mt-1 truncate text-[11px] text-muted-foreground'} title={task.dueAt}>
           截止 {task.dueAt}
+        </div>
+      ) : null}
+
+      {expanded ? (
+        <div className={compact ? 'mt-1 space-y-1 text-[10px] text-muted-foreground' : 'mt-2 space-y-1.5 text-[11px] text-muted-foreground'}>
+          {task.plannedBuiltinMcpIds && task.plannedBuiltinMcpIds.length > 0 ? (
+            <div>
+              <div className="font-medium text-foreground/90">内置 MCP</div>
+              <div className="break-all">{task.plannedBuiltinMcpIds.join(', ')}</div>
+            </div>
+          ) : null}
+          {task.plannedContextAssets && task.plannedContextAssets.length > 0 ? (
+            <div>
+              <div className="font-medium text-foreground/90">上下文资产</div>
+              <div className="space-y-1">
+                {task.plannedContextAssets.map((asset) => (
+                  <div key={`${asset.assetType}:${asset.assetId}`} className="break-all">
+                    {`${asset.assetType} · ${asset.displayName || asset.assetId}`}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+          {task.projectRoot ? (
+            <div>
+              <div className="font-medium text-foreground/90">项目路径</div>
+              <div className="break-all whitespace-pre-wrap">{task.projectRoot}</div>
+            </div>
+          ) : null}
+          {task.remoteConnectionId ? (
+            <div>
+              <div className="font-medium text-foreground/90">远程连接</div>
+              <div className="break-all">{task.remoteConnectionId}</div>
+            </div>
+          ) : null}
+          {task.executionResultContract ? (
+            <div>
+              <div className="font-medium text-foreground/90">结果契约</div>
+              <div>{`必填结果: ${task.executionResultContract.resultRequired ? '是' : '否'}`}</div>
+              {task.executionResultContract.preferredFormat ? (
+                <div>{`格式: ${task.executionResultContract.preferredFormat}`}</div>
+              ) : null}
+            </div>
+          ) : null}
+          {task.planningSnapshot ? (
+            <div>
+              <div className="font-medium text-foreground/90">规划快照</div>
+              {task.planningSnapshot.selectedModelConfigId ? (
+                <div>{`模型配置: ${task.planningSnapshot.selectedModelConfigId}`}</div>
+              ) : null}
+              {task.planningSnapshot.contactAuthorizedBuiltinMcpIds.length > 0 ? (
+                <div className="break-all">
+                  {`联系人授权: ${task.planningSnapshot.contactAuthorizedBuiltinMcpIds.join(', ')}`}
+                </div>
+              ) : null}
+              {task.planningSnapshot.plannedAt ? (
+                <div>{`规划时间: ${task.planningSnapshot.plannedAt}`}</div>
+              ) : null}
+            </div>
+          ) : null}
+          {task.resultSummary ? (
+            <div>
+              <div className="font-medium text-foreground/90">执行结果</div>
+              <div className="break-all whitespace-pre-wrap">{task.resultSummary}</div>
+            </div>
+          ) : null}
+          {task.lastError ? (
+            <div>
+              <div className="font-medium text-rose-600 dark:text-rose-300">失败原因</div>
+              <div className="break-all whitespace-pre-wrap text-rose-700 dark:text-rose-200">{task.lastError}</div>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>

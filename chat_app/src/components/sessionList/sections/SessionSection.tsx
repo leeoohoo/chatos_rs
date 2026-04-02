@@ -33,6 +33,7 @@ interface SessionSectionProps {
   onSelectSession: (sessionId: string) => void;
   onOpenSummary: (sessionId: string) => void;
   onOpenRuntimeContext: (sessionId: string) => void;
+  onManageBuiltinMcpGrants: (sessionId: string) => void;
   onDeleteSession: (sessionId: string) => void;
   onLoadMore: () => void;
   onToggleActionMenu: (event: React.MouseEvent<HTMLButtonElement>) => void;
@@ -60,6 +61,7 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
   onSelectSession,
   onOpenSummary,
   onOpenRuntimeContext,
+  onManageBuiltinMcpGrants,
   onDeleteSession,
   onLoadMore,
   onToggleActionMenu,
@@ -225,6 +227,23 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
                         </button>
                         <div className="js-inline-action-menu hidden absolute right-0 z-10 mt-1 w-32 bg-popover border border-border rounded-md shadow-lg">
                           <div className="py-1">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (isArchivedSession) {
+                                  return;
+                                }
+                                onManageBuiltinMcpGrants(session.id);
+                                closeActionMenus();
+                              }}
+                              disabled={isArchivedSession}
+                              className={cn(
+                                'flex items-center w-full px-3 py-2 text-sm text-foreground hover:bg-accent',
+                                isArchivedSession && 'opacity-50 cursor-not-allowed hover:bg-transparent',
+                              )}
+                            >
+                              内置能力
+                            </button>
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();

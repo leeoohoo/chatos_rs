@@ -1,14 +1,16 @@
 use serde_json::Value;
 
 use super::dto::{
-    CreateMemoryContactRequestDto, CreateMemoryContactResponseDto, MemoryAgentRecallDto,
-    MemoryContactDto, MemoryProjectAgentLinkDto, MemoryProjectContactDto, MemoryProjectDto,
-    MemoryProjectMemoryDto, SyncMemoryProjectRequestDto, SyncProjectAgentLinkRequestDto,
+    ContactBuiltinMcpGrantsDto, CreateMemoryContactRequestDto, CreateMemoryContactResponseDto,
+    MemoryAgentRecallDto, MemoryContactDto, MemoryProjectAgentLinkDto, MemoryProjectContactDto,
+    MemoryProjectDto, MemoryProjectMemoryDto, SyncMemoryProjectRequestDto,
+    SyncProjectAgentLinkRequestDto, UpdateContactBuiltinMcpGrantsRequestDto,
 };
 use super::http::{
     build_url, client, push_limit_offset_params, send_delete_result, send_json, send_list,
-    timeout_duration,
+    send_list_without_service_token, send_optional_json, timeout_duration,
 };
+use super::current_access_token;
 
 pub async fn list_memory_contacts(
     user_id: Option<&str>,
@@ -21,7 +23,11 @@ pub async fn list_memory_contacts(
     }
     push_limit_offset_params(&mut params, limit, offset);
 
-    send_list("/contacts", &params).await
+    if current_access_token().is_some() {
+        send_list("/contacts", &params).await
+    } else {
+        send_list_without_service_token("/internal/contacts", &params).await
+    }
 }
 
 pub async fn create_memory_contact(
@@ -40,6 +46,44 @@ pub async fn delete_memory_contact(contact_id: &str) -> Result<bool, String> {
         .timeout(timeout_duration());
 
     send_delete_result(req).await
+}
+
+pub async fn get_contact_builtin_mcp_grants(
+    contact_id: &str,
+) -> Result<Option<ContactBuiltinMcpGrantsDto>, String> {
+    let req = client()
+        .get(
+            build_url(
+                format!(
+                    "/contacts/{}/builtin-mcp-grants",
+                    urlencoding::encode(contact_id)
+                )
+                .as_str(),
+            )
+            .as_str(),
+        )
+        .timeout(timeout_duration());
+    send_optional_json(req).await
+}
+
+pub async fn update_contact_builtin_mcp_grants(
+    contact_id: &str,
+    payload: &UpdateContactBuiltinMcpGrantsRequestDto,
+) -> Result<ContactBuiltinMcpGrantsDto, String> {
+    let req = client()
+        .patch(
+            build_url(
+                format!(
+                    "/contacts/{}/builtin-mcp-grants",
+                    urlencoding::encode(contact_id)
+                )
+                .as_str(),
+            )
+            .as_str(),
+        )
+        .timeout(timeout_duration())
+        .json(payload);
+    send_json(req).await
 }
 
 pub async fn sync_memory_project(

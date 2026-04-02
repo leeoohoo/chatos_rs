@@ -9,7 +9,8 @@ use crate::builtin::notepad::{NotepadBuiltinService, NotepadOptions};
 use crate::builtin::remote_connection_controller::{
     RemoteConnectionControllerOptions, RemoteConnectionControllerService,
 };
-use crate::builtin::task_manager::{TaskManagerOptions, TaskManagerService};
+use crate::builtin::task_executor::{TaskExecutorOptions, TaskExecutorService};
+use crate::builtin::task_planner::{TaskPlannerOptions, TaskPlannerService};
 use crate::builtin::terminal_controller::{TerminalControllerOptions, TerminalControllerService};
 use crate::builtin::ui_prompter::{UiPrompterOptions, UiPrompterService};
 use crate::services::builtin_mcp::BuiltinMcpKind;
@@ -21,7 +22,8 @@ use super::ToolStreamChunkCallback;
 pub enum BuiltinToolService {
     CodeMaintainer(CodeMaintainerService),
     TerminalController(TerminalControllerService),
-    TaskManager(TaskManagerService),
+    TaskPlanner(TaskPlannerService),
+    TaskExecutor(TaskExecutorService),
     Notepad(NotepadBuiltinService),
     AgentBuilder(AgentBuilderService),
     UiPrompter(UiPrompterService),
@@ -36,7 +38,8 @@ impl BuiltinToolService {
         match self {
             Self::CodeMaintainer(service) => service.list_tools(),
             Self::TerminalController(service) => service.list_tools(),
-            Self::TaskManager(service) => service.list_tools(),
+            Self::TaskPlanner(service) => service.list_tools(),
+            Self::TaskExecutor(service) => service.list_tools(),
             Self::Notepad(service) => service.list_tools(),
             Self::AgentBuilder(service) => service.list_tools(),
             Self::UiPrompter(service) => service.list_tools(),
@@ -58,13 +61,14 @@ impl BuiltinToolService {
         match self {
             Self::CodeMaintainer(service) => service.call_tool(name, args, session_id),
             Self::TerminalController(service) => service.call_tool(name, args, session_id),
-            Self::TaskManager(service) => service.call_tool(
+            Self::TaskPlanner(service) => service.call_tool(
                 name,
                 args,
                 session_id,
                 conversation_turn_id,
                 on_stream_chunk,
             ),
+            Self::TaskExecutor(service) => service.call_tool(name, args),
             Self::Notepad(service) => service.call_tool(name, args),
             Self::AgentBuilder(service) => service.call_tool(
                 name,
@@ -135,12 +139,25 @@ pub fn build_builtin_tool_service(server: &McpBuiltinServer) -> Result<BuiltinTo
             })?;
             Ok(BuiltinToolService::TerminalController(service))
         }
-        BuiltinMcpKind::TaskManager => {
-            let service = TaskManagerService::new(TaskManagerOptions {
+        BuiltinMcpKind::TaskPlanner => {
+            let service = TaskPlannerService::new(TaskPlannerOptions {
                 server_name: server.name.clone(),
                 review_timeout_ms: crate::services::task_manager::REVIEW_TIMEOUT_MS_DEFAULT,
             })?;
-            Ok(BuiltinToolService::TaskManager(service))
+            Ok(BuiltinToolService::TaskPlanner(service))
+        }
+        BuiltinMcpKind::TaskExecutor => {
+            let current_task_id = server
+                .current_task_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| "missing current task id for task_executor".to_string())?;
+            let service = TaskExecutorService::new(TaskExecutorOptions {
+                server_name: server.name.clone(),
+                current_task_id: current_task_id.to_string(),
+            })?;
+            Ok(BuiltinToolService::TaskExecutor(service))
         }
         BuiltinMcpKind::Notepad => {
             let service = NotepadBuiltinService::new(NotepadOptions {

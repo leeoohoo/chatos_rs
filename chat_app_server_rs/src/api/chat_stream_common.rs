@@ -22,6 +22,7 @@ use crate::core::mcp_tools::ToolInfo;
 use crate::core::turn_runtime_snapshot::{
     build_turn_runtime_snapshot_payload, BuildTurnRuntimeSnapshotInput,
 };
+use crate::services::builtin_mcp::contact_chat_default_mcp_ids;
 use crate::services::ai_client_common::AiClientCallbacks;
 use crate::services::memory_server_client::{self, TurnRuntimeSnapshotSelectedCommandDto};
 
@@ -40,6 +41,7 @@ pub(crate) struct ChatStreamRequest {
     pub remote_connection_id: Option<String>,
     pub mcp_enabled: Option<bool>,
     pub enabled_mcp_ids: Option<Vec<String>>,
+    pub execution_context: Option<bool>,
 }
 
 pub(crate) fn validate_chat_stream_request(
@@ -198,11 +200,31 @@ pub(crate) async fn resolve_chat_stream_context(
     )
     .await;
 
+    let is_contact_chat_context =
+        req.execution_context != Some(true) && contact_agent_id.is_some();
+    let contact_system_prompt = if is_contact_chat_context {
+        merge_prompt_sections(
+            contact_system_prompt.as_deref(),
+            Some(CONTACT_CHAT_TASK_PLANNING_RULES),
+        )
+    } else {
+        contact_system_prompt
+    };
+
     let requested_mcp_ids = req
         .enabled_mcp_ids
         .clone()
         .unwrap_or_else(|| runtime_metadata.enabled_mcp_ids.clone());
-    let normalized_mcp_ids = normalize_mcp_ids(&requested_mcp_ids);
+    let mcp_selection_configured = if is_contact_chat_context {
+        true
+    } else {
+        req.enabled_mcp_ids.is_some() || !runtime_metadata.enabled_mcp_ids.is_empty()
+    };
+    let normalized_mcp_ids = if is_contact_chat_context {
+        contact_chat_default_mcp_ids()
+    } else {
+        normalize_mcp_ids(&requested_mcp_ids)
+    };
     let enabled_mcp_ids_for_snapshot = normalized_mcp_ids.clone();
     let default_remote_connection_id = normalize_id(req.remote_connection_id.clone())
         .or_else(|| runtime_metadata.remote_connection_id.clone());
@@ -211,11 +233,16 @@ pub(crate) async fn resolve_chat_stream_context(
         .mcp_enabled
         .or(runtime_metadata.mcp_enabled)
         .unwrap_or(true);
+    let mcp_enabled = if is_contact_chat_context {
+        true
+    } else {
+        mcp_enabled
+    };
 
     let (http_servers, stdio_servers, mut builtin_servers) = if mcp_enabled {
         load_mcp_servers_by_selection(
             effective_user_id.clone(),
-            !normalized_mcp_ids.is_empty(),
+            mcp_selection_configured,
             normalized_mcp_ids,
             resolved_project_root.as_deref(),
             resolved_project_id.as_deref(),
@@ -225,30 +252,32 @@ pub(crate) async fn resolve_chat_stream_context(
         empty_mcp_server_bundle()
     };
 
-    if let Some(agent_id) = contact_runtime_context
-        .as_ref()
-        .map(|context| context.agent_id.as_str())
-    {
-        if let Some(server) = contact_agent_skill_reader_server(
-            effective_user_id.clone(),
-            resolved_project_id.clone(),
-            agent_id,
-        ) {
-            builtin_servers.push(server);
-        }
-        if let Some(server) = contact_agent_command_reader_server(
-            effective_user_id.clone(),
-            resolved_project_id.clone(),
-            agent_id,
-        ) {
-            builtin_servers.push(server);
-        }
-        if let Some(server) = contact_agent_plugin_reader_server(
-            effective_user_id.clone(),
-            resolved_project_id.clone(),
-            agent_id,
-        ) {
-            builtin_servers.push(server);
+    if req.execution_context != Some(true) {
+        if let Some(agent_id) = contact_runtime_context
+            .as_ref()
+            .map(|context| context.agent_id.as_str())
+        {
+            if let Some(server) = contact_agent_skill_reader_server(
+                effective_user_id.clone(),
+                resolved_project_id.clone(),
+                agent_id,
+            ) {
+                builtin_servers.push(server);
+            }
+            if let Some(server) = contact_agent_command_reader_server(
+                effective_user_id.clone(),
+                resolved_project_id.clone(),
+                agent_id,
+            ) {
+                builtin_servers.push(server);
+            }
+            if let Some(server) = contact_agent_plugin_reader_server(
+                effective_user_id.clone(),
+                resolved_project_id.clone(),
+                agent_id,
+            ) {
+                builtin_servers.push(server);
+            }
         }
     }
     for server in &mut builtin_servers {
@@ -411,6 +440,20 @@ fn seed_selected_commands(
             }]
         })
         .unwrap_or_default()
+}
+
+const CONTACT_CHAT_TASK_PLANNING_RULES: &str = "当前处于联系人聊天/任务规划阶段，而不是后台任务执行阶段。你当前只能做三类事：1. 查看和理解上下文；2. 与用户交互确认；3. 规划并创建任务。你不能假装已经执行未来任务，也不能把写入、终端、远程等未来执行动作当场完成。如果未来任务需要这些能力，必须在创建任务时明确写入 planned_builtin_mcp_ids 和 planned_context_assets。";
+
+fn merge_prompt_sections(base: Option<&str>, extra: Option<&str>) -> Option<String> {
+    match (
+        base.map(str::trim).filter(|value| !value.is_empty()),
+        extra.map(str::trim).filter(|value| !value.is_empty()),
+    ) {
+        (Some(base), Some(extra)) => Some(format!("{}\n\n{}", base, extra)),
+        (Some(base), None) => Some(base.to_string()),
+        (None, Some(extra)) => Some(extra.to_string()),
+        (None, None) => None,
+    }
 }
 
 fn normalize_optional_text(value: Option<&str>) -> Option<String> {

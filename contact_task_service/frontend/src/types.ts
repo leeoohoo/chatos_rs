@@ -3,11 +3,32 @@ export interface AuthUser {
   role: string;
 }
 
+export interface TaskContextAssetRef {
+  asset_type: string;
+  asset_id: string;
+  display_name?: string | null;
+  source_type?: string | null;
+  source_path?: string | null;
+}
+
+export interface TaskExecutionResultContract {
+  result_required: boolean;
+  preferred_format?: string | null;
+}
+
+export interface TaskPlanningSnapshot {
+  contact_authorized_builtin_mcp_ids: string[];
+  selected_model_config_id?: string | null;
+  planned_at?: string | null;
+}
+
 export interface ContactTask {
   id: string;
   user_id: string;
   contact_agent_id: string;
   project_id: string;
+  project_root?: string | null;
+  remote_connection_id?: string | null;
   session_id?: string | null;
   source_message_id?: string | null;
   model_config_id?: string | null;
@@ -17,6 +38,10 @@ export interface ContactTask {
   status: string;
   confirm_note?: string | null;
   execution_note?: string | null;
+  planned_builtin_mcp_ids: string[];
+  planned_context_assets: TaskContextAssetRef[];
+  execution_result_contract?: TaskExecutionResultContract | null;
+  planning_snapshot?: TaskPlanningSnapshot | null;
   created_by?: string | null;
   created_at: string;
   updated_at: string;

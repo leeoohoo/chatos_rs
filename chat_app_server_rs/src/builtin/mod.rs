@@ -6,6 +6,6 @@ pub mod memory_skill_reader;
 pub mod notepad;
 pub mod remote_connection_controller;
 pub mod terminal_controller;
+pub mod task_executor;
 pub mod ui_prompter;
-
-pub mod task_manager;
+pub mod task_planner;

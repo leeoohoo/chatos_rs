@@ -7,12 +7,12 @@ import { useChatApiClientFromContext, useChatStoreSelector } from '../../lib/sto
 import { cn } from '../../lib/utils';
 import type { Project, Session } from '../../types';
 import {
-  findLatestMatchedSession,
+  findLatestRecordForContactProjectScope,
   normalizeProjectScopeId,
-  resolveSessionProjectScopeId,
+  resolveProjectScopeIdFromRecord,
   resolveSessionTimestamp,
 } from '../../features/contactSession/sessionResolver';
-import { useContactSessionResolver } from '../../features/contactSession/useContactSessionResolver';
+import { useContactScopeResolver } from '../../features/contactSession/useContactSessionResolver';
 import { useSessionRuntimeSettings } from '../../features/sessionRuntime/useSessionRuntimeSettings';
 import {
   useSessionSummaryPanel,
@@ -143,9 +143,15 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
   });
 
   const findProjectSessionForContact = useCallback((contact: ContactItem): Session | null => {
-    return findLatestMatchedSession(sessions || [], contact, normalizedProjectId);
+    return findLatestRecordForContactProjectScope(
+      sessions || [],
+      contact,
+      normalizedProjectId,
+    );
   }, [normalizedProjectId, sessions]);
-  const { ensureContactSession: ensureContactSessionFromResolver } = useContactSessionResolver({
+  const {
+    ensureBackingSessionForContactScope: resolveBackingSessionForProjectContact,
+  } = useContactScopeResolver({
     sessions: sessions || [],
     currentSession,
     createSession,
@@ -188,8 +194,8 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
     clearSummaries,
   } = useSessionSummaryPanel(apiClient);
 
-  const ensureContactSession = useCallback(async (contact: ContactItem): Promise<string | null> => {
-    const sessionId = await ensureContactSessionFromResolver(contact, {
+  const ensureBackingSessionForProjectContact = useCallback(async (contact: ContactItem): Promise<string | null> => {
+    const sessionId = await resolveBackingSessionForProjectContact(contact, {
       projectId: normalizedProjectId,
       title: contact.name || '联系人',
       selectedModelId: selectedModelId ?? null,
@@ -205,7 +211,7 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
     return sessionId;
   }, [
     currentSession?.id,
-    ensureContactSessionFromResolver,
+    resolveBackingSessionForProjectContact,
     normalizedProjectId,
     project.rootPath,
     selectSession,
@@ -248,7 +254,7 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
     deleteSummary,
     clearSummaries,
     loadSessionSummaries,
-    ensureContactSession,
+    ensureContactSession: ensureBackingSessionForProjectContact,
     sendMessage,
     toggleTurnProcess,
     loadMoreMessages,
@@ -272,6 +278,7 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
   } = useSessionRuntimeSettings({
     session: runtimeSourceSession,
     updateSession,
+    disableSessionMcpSelection: true,
   });
 
   const handleOpenAddMember = useCallback(async () => {
@@ -353,7 +360,7 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
     apiClient,
     sessions: sessions || [],
     normalizedProjectId,
-    ensureContactSession,
+    ensureContactSession: ensureBackingSessionForProjectContact,
     setSelectedContactId,
   });
 
@@ -361,7 +368,7 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
     if (!selectedProjectSession) {
       return;
     }
-    if (resolveSessionProjectScopeId(selectedProjectSession) !== normalizedProjectId) {
+    if (resolveProjectScopeIdFromRecord(selectedProjectSession) !== normalizedProjectId) {
       console.warn('Blocked runtime guidance for cross-project session in team pane.');
       return;
     }

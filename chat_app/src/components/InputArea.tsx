@@ -53,6 +53,7 @@ export const InputArea: React.FC<InputAreaProps> = ({
   enabledMcpIds = [],
   onMcpEnabledChange,
   onEnabledMcpIdsChange,
+  fixedMcpProfile = false,
 }) => {
   const {
     isGuidingMode,
@@ -152,6 +153,7 @@ export const InputArea: React.FC<InputAreaProps> = ({
     enabledMcpIds,
     onMcpEnabledChange,
     onEnabledMcpIdsChange,
+    fixedMcpProfile,
   });
 
   return (
@@ -185,6 +187,7 @@ export const InputArea: React.FC<InputAreaProps> = ({
         onRemoteConnectionChange={onRemoteConnectionChange}
         mcpEnabled={mcpEnabled}
         onMcpEnabledChange={onMcpEnabledChange}
+        fixedMcpProfile={fixedMcpProfile}
         reasoningSupported={reasoningSupported}
         reasoningEnabled={reasoningEnabled}
         onReasoningToggle={onReasoningToggle}

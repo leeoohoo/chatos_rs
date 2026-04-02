@@ -36,6 +36,7 @@ const normalizeMcpConfig = (config: McpConfigResponse): McpConfig => {
     enabled: config.enabled === true,
     readonly: config.readonly,
     builtin: config.builtin,
+    internal_only: config.internal_only,
     config: config.config ?? undefined,
     createdAt: toDate(createdAt),
     updatedAt: toDate(updatedAt),

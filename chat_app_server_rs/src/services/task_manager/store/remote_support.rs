@@ -1,18 +1,21 @@
 use crate::core::chat_runtime::ChatRuntimeMetadata;
+use crate::services::contact_agent_model::resolve_effective_contact_agent_model_config_id;
 use crate::services::task_manager::normalizer::trimmed_non_empty;
 use crate::services::task_manager::types::TaskRecord;
 use crate::services::{memory_server_client, task_service_client};
 use tracing::warn;
 
 #[derive(Debug, Clone)]
-pub(super) struct TaskScopeContext {
+pub struct TaskScopeContext {
     pub user_id: String,
     pub contact_agent_id: String,
     pub project_id: String,
+    pub project_root: Option<String>,
+    pub remote_connection_id: Option<String>,
     pub model_config_id: Option<String>,
 }
 
-pub(super) async fn resolve_task_scope_context(
+pub async fn resolve_task_scope_context(
     session_id: &str,
 ) -> Result<TaskScopeContext, String> {
     let session_id =
@@ -47,22 +50,26 @@ pub(super) async fn resolve_task_scope_context(
         .map(ToOwned::to_owned)
         .or(metadata.project_id)
         .unwrap_or_else(|| "0".to_string());
+    let project_root = if let Some(root) = metadata.project_root.clone() {
+        Some(root)
+    } else if project_id != "0" {
+        crate::repositories::projects::get_project_by_id(project_id.as_str())
+            .await?
+            .and_then(|project| trimmed_non_empty(project.root_path.as_str()).map(ToOwned::to_owned))
+            .or_else(|| metadata.workspace_root.clone())
+    } else {
+        metadata.workspace_root.clone()
+    };
+    let remote_connection_id = metadata.remote_connection_id.clone();
     let model_config_id =
-        match memory_server_client::get_memory_agent_runtime_context(contact_agent_id.as_str())
-            .await
-        {
-            Ok(Some(context)) => context
-                .model_config_id
-                .as_deref()
-                .and_then(trimmed_non_empty)
-                .map(ToOwned::to_owned),
-            _ => None,
-        };
+        resolve_effective_contact_agent_model_config_id(contact_agent_id.as_str()).await?;
 
     Ok(TaskScopeContext {
         user_id,
         contact_agent_id,
         project_id,
+        project_root,
+        remote_connection_id,
         model_config_id,
     })
 }
@@ -100,12 +107,23 @@ pub(super) fn map_remote_task_to_record(task: task_service_client::TaskRecordDto
         id: task.id,
         session_id: task.session_id.unwrap_or_default(),
         conversation_turn_id: task.conversation_turn_id.unwrap_or_default(),
+        project_root: task.project_root,
+        remote_connection_id: task.remote_connection_id,
         title: task.title,
         details: task.content,
         priority: normalize_remote_priority(task.priority.as_str()),
         status: normalize_remote_status(task.status.as_str()),
         tags: Vec::new(),
         due_at: None,
+        planned_builtin_mcp_ids: task.planned_builtin_mcp_ids,
+        planned_context_assets: task.planned_context_assets,
+        execution_result_contract: task.execution_result_contract,
+        planning_snapshot: task.planning_snapshot,
+        result_summary: task.result_summary,
+        last_error: task.last_error,
+        confirmed_at: task.confirmed_at,
+        started_at: task.started_at,
+        finished_at: task.finished_at,
         created_at: task.created_at,
         updated_at: task.updated_at,
     }

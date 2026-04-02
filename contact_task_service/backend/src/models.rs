@@ -12,6 +12,34 @@ fn default_priority_rank() -> i32 {
     20
 }
 
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskContextAssetRef {
+    pub asset_type: String,
+    pub asset_id: String,
+    pub display_name: Option<String>,
+    pub source_type: Option<String>,
+    pub source_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskExecutionResultContract {
+    #[serde(default = "default_true")]
+    pub result_required: bool,
+    pub preferred_format: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskPlanningSnapshot {
+    #[serde(default)]
+    pub contact_authorized_builtin_mcp_ids: Vec<String>,
+    pub selected_model_config_id: Option<String>,
+    pub planned_at: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthUser {
     pub user_id: String,
@@ -28,6 +56,8 @@ pub struct ContactTask {
     pub contact_agent_id: String,
     pub project_id: String,
     pub scope_key: String,
+    pub project_root: Option<String>,
+    pub remote_connection_id: Option<String>,
     pub session_id: Option<String>,
     pub conversation_turn_id: Option<String>,
     pub source_message_id: Option<String>,
@@ -42,6 +72,12 @@ pub struct ContactTask {
     pub status: String,
     pub confirm_note: Option<String>,
     pub execution_note: Option<String>,
+    #[serde(default)]
+    pub planned_builtin_mcp_ids: Vec<String>,
+    #[serde(default)]
+    pub planned_context_assets: Vec<TaskContextAssetRef>,
+    pub execution_result_contract: Option<TaskExecutionResultContract>,
+    pub planning_snapshot: Option<TaskPlanningSnapshot>,
     pub created_by: Option<String>,
     pub created_at: String,
     pub updated_at: String,
@@ -75,6 +111,8 @@ pub struct CreateTaskRequest {
     pub user_id: Option<String>,
     pub contact_agent_id: String,
     pub project_id: String,
+    pub project_root: Option<String>,
+    pub remote_connection_id: Option<String>,
     pub session_id: Option<String>,
     pub conversation_turn_id: Option<String>,
     pub source_message_id: Option<String>,
@@ -84,6 +122,12 @@ pub struct CreateTaskRequest {
     pub priority: Option<String>,
     pub confirm_note: Option<String>,
     pub execution_note: Option<String>,
+    #[serde(default)]
+    pub planned_builtin_mcp_ids: Vec<String>,
+    #[serde(default)]
+    pub planned_context_assets: Vec<TaskContextAssetRef>,
+    pub execution_result_contract: Option<TaskExecutionResultContract>,
+    pub planning_snapshot: Option<TaskPlanningSnapshot>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -94,6 +138,12 @@ pub struct UpdateTaskRequest {
     pub status: Option<String>,
     pub confirm_note: Option<String>,
     pub execution_note: Option<String>,
+    pub project_root: Option<Option<String>>,
+    pub remote_connection_id: Option<Option<String>>,
+    pub planned_builtin_mcp_ids: Option<Vec<String>>,
+    pub planned_context_assets: Option<Vec<TaskContextAssetRef>>,
+    pub execution_result_contract: Option<TaskExecutionResultContract>,
+    pub planning_snapshot: Option<TaskPlanningSnapshot>,
     pub model_config_id: Option<Option<String>>,
     pub result_summary: Option<Option<String>>,
     pub result_message_id: Option<Option<String>>,

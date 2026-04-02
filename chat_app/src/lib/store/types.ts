@@ -15,6 +15,18 @@ export interface TaskReviewDraft {
   status: 'pending_confirm' | 'pending_execute' | 'running' | 'completed' | 'failed' | 'cancelled';
   tags: string[];
   dueAt?: string | null;
+  plannedBuiltinMcpIds?: string[];
+  plannedContextAssets?: Array<{
+    assetType: string;
+    assetId: string;
+    displayName?: string | null;
+    sourceType?: string | null;
+    sourcePath?: string | null;
+  }>;
+  executionResultContract?: {
+    resultRequired: boolean;
+    preferredFormat?: string | null;
+  } | null;
 }
 
 export interface TaskReviewPanelState {
@@ -145,6 +157,7 @@ export interface ContactRecord {
   id: string;
   agentId: string;
   name: string;
+  authorizedBuiltinMcpIds: string[];
   status: string;
   createdAt: Date;
   updatedAt: Date;

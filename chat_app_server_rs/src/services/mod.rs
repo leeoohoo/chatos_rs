@@ -2,6 +2,7 @@ pub(crate) mod ai_client_common;
 pub(crate) mod ai_common;
 pub mod ai_prompt_tool;
 pub mod builtin_mcp;
+pub mod contact_agent_model;
 pub mod llm_prompt_runner;
 pub mod mcp_loader;
 pub mod memory_server_client;

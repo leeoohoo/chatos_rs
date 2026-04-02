@@ -1,7 +1,9 @@
 import type { Session } from '../../types';
 import { readSessionRuntimeFromMetadata } from '../../lib/store/helpers/sessionRuntime';
 
-export interface ContactSessionRef {
+// 这里解析的是“联系人 + 项目作用域”与其背后的承载 session 的映射关系。
+// session 仍然存在，但只是消息/流式/历史记录的技术容器，不再是业务主体。
+export interface ContactProjectScopeRef {
   id: string;
   agentId: string;
 }
@@ -25,7 +27,7 @@ export const normalizeProjectScopeId = (projectId: string | null | undefined): s
   return trimmed.length > 0 ? trimmed : '0';
 };
 
-export const resolveSessionProjectScopeId = (
+export const resolveProjectScopeIdFromRecord = (
   session: SessionLike | null | undefined,
 ): string => {
   if (!session) {
@@ -71,7 +73,7 @@ export const isSessionActive = (
   return !archived && status !== 'archived' && status !== 'archiving';
 };
 
-export const resolveContactAgentIdFromSession = (
+export const resolveContactAgentIdFromScopeRecord = (
   session: SessionLike | null | undefined,
 ): string | null => {
   if (!session) {
@@ -85,7 +87,7 @@ export const resolveContactAgentIdFromSession = (
   return trimmed.length > 0 ? trimmed : null;
 };
 
-export const resolveContactIdFromSession = (
+export const resolveContactIdFromScopeRecord = (
   session: SessionLike | null | undefined,
 ): string | null => {
   if (!session) {
@@ -99,9 +101,9 @@ export const resolveContactIdFromSession = (
   return trimmed.length > 0 ? trimmed : null;
 };
 
-export const isSessionMatchedContactAndProject = (
+export const isRecordMatchedContactProjectScope = (
   session: SessionLike | null | undefined,
-  contact: ContactSessionRef,
+  contact: ContactProjectScopeRef,
   projectId: string | null | undefined,
 ): boolean => {
   if (!session || !isSessionActive(session)) {
@@ -125,17 +127,17 @@ export const isSessionMatchedContactAndProject = (
   }
 
   const normalizedProjectId = normalizeProjectScopeId(projectId);
-  const sessionProjectId = resolveSessionProjectScopeId(session);
+  const sessionProjectId = resolveProjectScopeIdFromRecord(session);
   return sessionProjectId === normalizedProjectId;
 };
 
-export const findLatestMatchedSession = (
+export const findLatestRecordForContactProjectScope = (
   sessions: Session[],
-  contact: ContactSessionRef,
+  contact: ContactProjectScopeRef,
   projectId: string | null | undefined,
 ): Session | null => {
   const candidates = (sessions || []).filter((session: Session) =>
-    isSessionMatchedContactAndProject(session, contact, projectId),
+    isRecordMatchedContactProjectScope(session, contact, projectId),
   );
   if (candidates.length === 0) {
     return null;
@@ -143,3 +145,10 @@ export const findLatestMatchedSession = (
   candidates.sort((left, right) => resolveSessionTimestamp(right) - resolveSessionTimestamp(left));
   return candidates[0] || null;
 };
+
+export type ContactSessionRef = ContactProjectScopeRef;
+export const resolveSessionProjectScopeId = resolveProjectScopeIdFromRecord;
+export const resolveContactAgentIdFromSession = resolveContactAgentIdFromScopeRecord;
+export const resolveContactIdFromSession = resolveContactIdFromScopeRecord;
+export const isSessionMatchedContactAndProject = isRecordMatchedContactProjectScope;
+export const findLatestMatchedSession = findLatestRecordForContactProjectScope;

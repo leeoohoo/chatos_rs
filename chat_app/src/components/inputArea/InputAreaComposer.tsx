@@ -47,6 +47,7 @@ interface InputAreaComposerProps {
   onRemoteConnectionChange?: (connectionId: string | null) => void;
   mcpEnabled: boolean;
   onMcpEnabledChange?: (enabled: boolean) => void;
+  fixedMcpProfile: boolean;
   reasoningSupported: boolean;
   reasoningEnabled: boolean;
   onReasoningToggle?: (enabled: boolean) => void;
@@ -142,6 +143,7 @@ export default function InputAreaComposer({
   onRemoteConnectionChange,
   mcpEnabled,
   onMcpEnabledChange,
+  fixedMcpProfile,
   reasoningSupported,
   reasoningEnabled,
   onReasoningToggle,
@@ -315,32 +317,41 @@ export default function InputAreaComposer({
         isStopping={isStopping}
       />
 
-      <InputAreaMcpPicker
-        mcpPickerRef={mcpPickerRef}
-        mcpEnabled={mcpEnabled}
-        onMcpEnabledChange={onMcpEnabledChange}
-        disabled={disabled}
-        isStreaming={isStreaming}
-        isStopping={isStopping}
-        onToggleMcpPicker={() => { void handleToggleMcpPicker(); }}
-        mcpPickerOpen={mcpPickerOpen}
-        isAllMcpSelected={isAllMcpSelected}
-        selectableMcpIds={selectableMcpIds}
-        selectedMcpCount={selectedMcpCount}
-        mcpConfigsLoading={mcpConfigsLoading}
-        mcpConfigsError={mcpConfigsError}
-        availableMcpConfigs={availableMcpConfigs}
-        builtinMcpConfigs={builtinMcpConfigs}
-        customMcpConfigs={customMcpConfigs}
-        hasDirectoryContext={hasDirectoryContext}
-        hasRemoteContext={hasRemoteContext}
-        isProjectRequiredMcpId={isProjectRequiredMcpId}
-        isRemoteRequiredMcpId={isRemoteRequiredMcpId}
-        sanitizedEnabledMcpIds={sanitizedEnabledMcpIds}
-        onRefreshMcpConfigs={() => { void loadAvailableMcpConfigs(); }}
-        onSelectAllMcp={handleSelectAllMcp}
-        onToggleMcpSelection={handleToggleMcpSelection}
-      />
+      {fixedMcpProfile ? (
+        <div
+          className="flex-shrink-0 px-2 py-1 text-xs rounded-md bg-muted text-muted-foreground"
+          title="联系人聊天固定使用：查看、任务、ui_prompter"
+        >
+          固定 MCP
+        </div>
+      ) : (
+        <InputAreaMcpPicker
+          mcpPickerRef={mcpPickerRef}
+          mcpEnabled={mcpEnabled}
+          onMcpEnabledChange={onMcpEnabledChange}
+          disabled={disabled}
+          isStreaming={isStreaming}
+          isStopping={isStopping}
+          onToggleMcpPicker={() => { void handleToggleMcpPicker(); }}
+          mcpPickerOpen={mcpPickerOpen}
+          isAllMcpSelected={isAllMcpSelected}
+          selectableMcpIds={selectableMcpIds}
+          selectedMcpCount={selectedMcpCount}
+          mcpConfigsLoading={mcpConfigsLoading}
+          mcpConfigsError={mcpConfigsError}
+          availableMcpConfigs={availableMcpConfigs}
+          builtinMcpConfigs={builtinMcpConfigs}
+          customMcpConfigs={customMcpConfigs}
+          hasDirectoryContext={hasDirectoryContext}
+          hasRemoteContext={hasRemoteContext}
+          isProjectRequiredMcpId={isProjectRequiredMcpId}
+          isRemoteRequiredMcpId={isRemoteRequiredMcpId}
+          sanitizedEnabledMcpIds={sanitizedEnabledMcpIds}
+          onRefreshMcpConfigs={() => { void loadAvailableMcpConfigs(); }}
+          onSelectAllMcp={handleSelectAllMcp}
+          onToggleMcpSelection={handleToggleMcpSelection}
+        />
+      )}
 
       {reasoningSupported && (
         <button

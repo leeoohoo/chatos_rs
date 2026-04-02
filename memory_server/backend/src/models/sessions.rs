@@ -3,6 +3,10 @@ use serde_json::Value;
 
 use super::{default_active, default_i64_0};
 
+fn default_contact_authorized_builtin_mcp_ids() -> Vec<String> {
+    Vec::new()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
     pub id: String,
@@ -38,6 +42,8 @@ pub struct Contact {
     pub user_id: String,
     pub agent_id: String,
     pub agent_name_snapshot: Option<String>,
+    #[serde(default = "default_contact_authorized_builtin_mcp_ids")]
+    pub authorized_builtin_mcp_ids: Vec<String>,
     #[serde(default = "default_active")]
     pub status: String,
     pub created_at: String,
@@ -83,4 +89,6 @@ pub struct CreateContactRequest {
     pub user_id: String,
     pub agent_id: String,
     pub agent_name_snapshot: Option<String>,
+    #[serde(default = "default_contact_authorized_builtin_mcp_ids")]
+    pub authorized_builtin_mcp_ids: Vec<String>,
 }

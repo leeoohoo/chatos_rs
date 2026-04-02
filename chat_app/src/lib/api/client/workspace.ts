@@ -3,6 +3,7 @@ import { debugLog } from '@/lib/utils';
 import { buildQuery } from './shared';
 import type {
   ContactAgentRecallResponse,
+  ContactBuiltinMcpGrantsResponse,
   ContactCreateResponse,
   ContactProjectLinkResponse,
   ContactProjectMemoryResponse,
@@ -134,6 +135,29 @@ export const createContact = (
     method: 'POST',
     body: JSON.stringify(data),
   });
+};
+
+export const getContactBuiltinMcpGrants = (
+  request: ApiRequestFn,
+  contactId: string,
+): Promise<ContactBuiltinMcpGrantsResponse> => {
+  return request<ContactBuiltinMcpGrantsResponse>(
+    `/contacts/${encodeURIComponent(contactId)}/builtin-mcp-grants`,
+  );
+};
+
+export const updateContactBuiltinMcpGrants = (
+  request: ApiRequestFn,
+  contactId: string,
+  data: { authorized_builtin_mcp_ids: string[] },
+): Promise<ContactBuiltinMcpGrantsResponse> => {
+  return request<ContactBuiltinMcpGrantsResponse>(
+    `/contacts/${encodeURIComponent(contactId)}/builtin-mcp-grants`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    },
+  );
 };
 
 export const deleteContact = (

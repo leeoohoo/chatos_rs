@@ -278,11 +278,14 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
   runtimeGuidanceAppliedCount = 0,
   runtimeGuidanceLastAppliedAt = null,
   runtimeGuidanceItems = [],
-}) => (
-  <div className="flex-1 min-h-0 flex overflow-hidden">
-    <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
-      <div className="flex-1 overflow-hidden">
-        <ChatMessagesPane
+}) => {
+  const fixedMcpProfile = true;
+
+  return (
+    <div className="flex-1 min-h-0 flex overflow-hidden">
+      <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
+        <div className="flex-1 overflow-hidden">
+          <ChatMessagesPane
           currentSession={currentSession}
           sessionSummaryPaneVisible={sessionSummaryPaneVisible}
           currentContactName={currentContactName}
@@ -304,10 +307,10 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
           onCloseSummary={onCloseSummary}
           toggleSidebar={toggleSidebar}
         />
-      </div>
+        </div>
 
-      {currentSession && (
-        <ChatComposerPanel
+        {currentSession && (
+          <ChatComposerPanel
           sessionId={currentSession.id}
           mergedCurrentTurnTasks={mergedCurrentTurnTasks}
           workbarHistoryTasks={workbarHistoryTasks}
@@ -360,14 +363,16 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
           enabledMcpIds={enabledMcpIds}
           onMcpEnabledChange={onMcpEnabledChange}
           onEnabledMcpIdsChange={onEnabledMcpIdsChange}
+          fixedMcpProfile={fixedMcpProfile}
           runtimeGuidancePendingCount={runtimeGuidancePendingCount}
           runtimeGuidanceAppliedCount={runtimeGuidanceAppliedCount}
           runtimeGuidanceLastAppliedAt={runtimeGuidanceLastAppliedAt}
           runtimeGuidanceItems={runtimeGuidanceItems}
         />
-      )}
+        )}
+      </div>
     </div>
-  </div>
-);
+  );
+};
 
 export default ChatConversationPane;

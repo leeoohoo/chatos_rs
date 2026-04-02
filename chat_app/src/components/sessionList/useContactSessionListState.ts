@@ -3,10 +3,10 @@ import { useCallback, useMemo } from 'react';
 import type { Session } from '../../types';
 import { mergeSessionRuntimeIntoMetadata } from '../../lib/store/helpers/sessionRuntime';
 import {
-  resolveContactAgentIdFromSession,
-  resolveContactIdFromSession,
+  resolveContactAgentIdFromScopeRecord,
+  resolveContactIdFromScopeRecord,
 } from '../../features/contactSession/sessionResolver';
-import { useContactSessionResolver } from '../../features/contactSession/useContactSessionResolver';
+import { useContactScopeResolver } from '../../features/contactSession/useContactSessionResolver';
 
 export const CONTACT_CHAT_PROJECT_ID = '0';
 const CONTACT_PLACEHOLDER_PREFIX = 'contact-placeholder:';
@@ -33,7 +33,7 @@ type CreateSessionFn = (
   options?: { keepActivePanel?: boolean },
 ) => Promise<string | undefined | null>;
 
-interface SessionResolverApiClient {
+interface ScopeResolverApiClient {
   getSessions: (
     userId?: string,
     projectId?: string,
@@ -52,10 +52,16 @@ interface UseContactSessionListStateOptions {
   activePanel: string;
   activeSummarySessionId?: string | null;
   createSession: CreateSessionFn;
-  apiClient: SessionResolverApiClient;
+  apiClient: ScopeResolverApiClient;
 }
 
 interface UseContactSessionListStateResult {
+  ensureBackingSessionForContactScope: (contact: SessionListContact) => Promise<string | null>;
+  displayBackingSessionIdMap: Record<string, string>;
+  displayScopeSessions: Session[];
+  currentDisplayScopeSessionId: string | null;
+  activeSummaryDisplayScopeSessionId: string | null;
+  clearCachedBackingSessionIdsForContact: (contactId: string, projectId?: string | null) => string[];
   ensureSessionForContact: (contact: SessionListContact) => Promise<string | null>;
   displaySessionRuntimeIdMap: Record<string, string>;
   displaySessions: Session[];
@@ -64,7 +70,7 @@ interface UseContactSessionListStateResult {
   clearCachedSessionIdsForContact: (contactId: string, projectId?: string | null) => string[];
 }
 
-export const useContactSessionListState = ({
+export const useContactScopeListState = ({
   contacts,
   sessions,
   currentSession,
@@ -74,10 +80,10 @@ export const useContactSessionListState = ({
   apiClient,
 }: UseContactSessionListStateOptions): UseContactSessionListStateResult => {
   const {
-    ensureContactSession,
-    buildDisplayRuntimeSessionIdMap,
-    clearCachedSessionIdsForContact,
-  } = useContactSessionResolver({
+    ensureBackingSessionForContactScope,
+    buildDisplayBackingSessionIdMap,
+    clearCachedBackingSessionIdsForContact,
+  } = useContactScopeResolver({
     sessions: sessions || [],
     currentSession,
     createSession,
@@ -85,8 +91,8 @@ export const useContactSessionListState = ({
     defaultProjectId: CONTACT_CHAT_PROJECT_ID,
   });
 
-  const ensureSessionForContact = useCallback((contact: SessionListContact): Promise<string | null> => {
-    return ensureContactSession(contact, {
+  const ensureBackingSession = useCallback((contact: SessionListContact): Promise<string | null> => {
+    return ensureBackingSessionForContactScope(contact, {
       projectId: CONTACT_CHAT_PROJECT_ID,
       title: contact.name || '联系人',
       selectedModelId: null,
@@ -94,19 +100,19 @@ export const useContactSessionListState = ({
       mcpEnabled: true,
       enabledMcpIds: [],
     });
-  }, [ensureContactSession]);
+  }, [ensureBackingSessionForContactScope]);
 
-  const displaySessionRuntimeIdMap = useMemo<Record<string, string>>(() => {
-    return buildDisplayRuntimeSessionIdMap(contacts || [], {
+  const displayBackingSessionIdMap = useMemo<Record<string, string>>(() => {
+    return buildDisplayBackingSessionIdMap(contacts || [], {
       projectId: CONTACT_CHAT_PROJECT_ID,
       keyPrefix: CONTACT_PLACEHOLDER_PREFIX,
     });
-  }, [buildDisplayRuntimeSessionIdMap, contacts]);
+  }, [buildDisplayBackingSessionIdMap, contacts]);
 
-  const displaySessions = useMemo<Session[]>(() => {
+  const displayScopeSessions = useMemo<Session[]>(() => {
     return contacts.map((contact) => {
       const placeholderId = `${CONTACT_PLACEHOLDER_PREFIX}${contact.id}`;
-      const runtimeSessionId = displaySessionRuntimeIdMap[placeholderId] || null;
+      const runtimeSessionId = displayBackingSessionIdMap[placeholderId] || null;
       const runtimeSession = runtimeSessionId
         ? sessions.find((item: Session) => item.id === runtimeSessionId)
         : null;
@@ -131,18 +137,18 @@ export const useContactSessionListState = ({
         }),
       } as Session;
     });
-  }, [contacts, displaySessionRuntimeIdMap, sessions]);
+  }, [contacts, displayBackingSessionIdMap, sessions]);
 
-  const currentDisplaySessionId = useMemo(() => {
+  const currentDisplayScopeSessionId = useMemo(() => {
     if (activePanel !== 'chat') {
       return null;
     }
-    const currentContactId = resolveContactIdFromSession(currentSession);
+    const currentContactId = resolveContactIdFromScopeRecord(currentSession);
     if (currentContactId) {
       return `${CONTACT_PLACEHOLDER_PREFIX}${currentContactId}`;
     }
 
-    const currentContactAgentId = resolveContactAgentIdFromSession(currentSession);
+    const currentContactAgentId = resolveContactAgentIdFromScopeRecord(currentSession);
     if (!currentContactAgentId) {
       return null;
     }
@@ -153,22 +159,30 @@ export const useContactSessionListState = ({
     return `${CONTACT_PLACEHOLDER_PREFIX}${matched.id}`;
   }, [activePanel, contacts, currentSession]);
 
-  const activeSummaryDisplaySessionId = useMemo(() => {
+  const activeSummaryDisplayScopeSessionId = useMemo(() => {
     if (!activeSummarySessionId || !currentSession?.id) {
       return null;
     }
     if (activeSummarySessionId !== currentSession.id) {
       return null;
     }
-    return currentDisplaySessionId;
-  }, [activeSummarySessionId, currentDisplaySessionId, currentSession?.id]);
+    return currentDisplayScopeSessionId;
+  }, [activeSummarySessionId, currentDisplayScopeSessionId, currentSession?.id]);
 
   return {
-    ensureSessionForContact,
-    displaySessionRuntimeIdMap,
-    displaySessions,
-    currentDisplaySessionId,
-    activeSummaryDisplaySessionId,
-    clearCachedSessionIdsForContact,
+    ensureBackingSessionForContactScope: ensureBackingSession,
+    displayBackingSessionIdMap,
+    displayScopeSessions,
+    currentDisplayScopeSessionId,
+    activeSummaryDisplayScopeSessionId,
+    clearCachedBackingSessionIdsForContact,
+    ensureSessionForContact: ensureBackingSession,
+    displaySessionRuntimeIdMap: displayBackingSessionIdMap,
+    displaySessions: displayScopeSessions,
+    currentDisplaySessionId: currentDisplayScopeSessionId,
+    activeSummaryDisplaySessionId: activeSummaryDisplayScopeSessionId,
+    clearCachedSessionIdsForContact: clearCachedBackingSessionIdsForContact,
   };
 };
+
+export const useContactSessionListState = useContactScopeListState;

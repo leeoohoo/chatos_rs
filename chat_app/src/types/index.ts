@@ -250,6 +250,7 @@ export interface McpConfig {
   enabled: boolean;
   readonly?: boolean;
   builtin?: boolean;
+  internal_only?: boolean;
   config?: any;
   createdAt: Date;
   updatedAt: Date;
@@ -422,6 +423,7 @@ export interface InputAreaProps {
   enabledMcpIds?: string[];
   onMcpEnabledChange?: (enabled: boolean) => void;
   onEnabledMcpIdsChange?: (ids: string[]) => void;
+  fixedMcpProfile?: boolean;
 }
 
 export interface SessionListProps {

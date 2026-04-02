@@ -16,6 +16,26 @@ fn is_duplicate_key_error(err: &mongodb::error::Error) -> bool {
     err.to_string().contains("E11000")
 }
 
+fn normalize_builtin_mcp_ids(ids: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    for item in ids {
+        let trimmed = item.trim();
+        if trimmed.is_empty()
+            || out.iter().any(|existing: &String| existing == trimmed)
+        {
+            continue;
+        }
+        out.push(trimmed.to_string());
+    }
+    out
+}
+
+fn sanitize_contact(mut contact: Contact) -> Contact {
+    contact.authorized_builtin_mcp_ids =
+        normalize_builtin_mcp_ids(contact.authorized_builtin_mcp_ids.as_slice());
+    contact
+}
+
 pub async fn list_contacts(
     db: &Db,
     user_id: &str,
@@ -41,13 +61,15 @@ pub async fn list_contacts(
         .with_options(options)
         .await
         .map_err(|e| e.to_string())?;
-    cursor.try_collect().await.map_err(|e| e.to_string())
+    let items: Vec<Contact> = cursor.try_collect().await.map_err(|e| e.to_string())?;
+    Ok(items.into_iter().map(sanitize_contact).collect())
 }
 
 pub async fn get_contact_by_id(db: &Db, contact_id: &str) -> Result<Option<Contact>, String> {
     collection(db)
         .find_one(doc! {"id": contact_id})
         .await
+        .map(|item| item.map(sanitize_contact))
         .map_err(|e| e.to_string())
 }
 
@@ -62,6 +84,7 @@ pub async fn get_contact_by_user_and_agent(
             "agent_id": agent_id,
         })
         .await
+        .map(|item| item.map(sanitize_contact))
         .map_err(|e| e.to_string())
 }
 
@@ -89,7 +112,8 @@ pub async fn list_contacts_by_ids(
         .with_options(options)
         .await
         .map_err(|e| e.to_string())?;
-    cursor.try_collect().await.map_err(|e| e.to_string())
+    let items: Vec<Contact> = cursor.try_collect().await.map_err(|e| e.to_string())?;
+    Ok(items.into_iter().map(sanitize_contact).collect())
 }
 
 pub async fn create_contact_idempotent(
@@ -108,13 +132,16 @@ pub async fn create_contact_idempotent(
         user_id: req.user_id,
         agent_id: req.agent_id,
         agent_name_snapshot: req.agent_name_snapshot,
+        authorized_builtin_mcp_ids: normalize_builtin_mcp_ids(
+            req.authorized_builtin_mcp_ids.as_slice(),
+        ),
         status: "active".to_string(),
         created_at: now.clone(),
         updated_at: now,
     };
 
     match collection(db).insert_one(contact.clone()).await {
-        Ok(_) => Ok((contact, true)),
+        Ok(_) => Ok((sanitize_contact(contact), true)),
         Err(err) => {
             if is_duplicate_key_error(&err) {
                 if let Some(existing) = get_contact_by_user_and_agent(
@@ -156,6 +183,27 @@ pub async fn update_contact_agent(
 
     let result = collection(db)
         .update_one(doc! {"id": contact_id}, doc! {"$set": set_doc})
+        .await
+        .map_err(|e| e.to_string())?;
+    if result.matched_count == 0 {
+        return Ok(None);
+    }
+    get_contact_by_id(db, contact_id).await
+}
+
+pub async fn update_contact_builtin_mcp_grants(
+    db: &Db,
+    contact_id: &str,
+    authorized_builtin_mcp_ids: Vec<String>,
+) -> Result<Option<Contact>, String> {
+    let result = collection(db)
+        .update_one(
+            doc! {"id": contact_id},
+            doc! {"$set": {
+                "authorized_builtin_mcp_ids": normalize_builtin_mcp_ids(authorized_builtin_mcp_ids.as_slice()),
+                "updated_at": now_rfc3339(),
+            }},
+        )
         .await
         .map_err(|e| e.to_string())?;
     if result.matched_count == 0 {
