@@ -6,8 +6,12 @@ use crate::db::Db;
 pub use self::job_configs::{
     get_agent_memory_job_config, get_effective_agent_memory_job_config,
     get_effective_summary_job_config, get_effective_summary_rollup_job_config,
-    get_summary_job_config, get_summary_rollup_job_config, upsert_agent_memory_job_config,
+    get_effective_task_execution_rollup_job_config,
+    get_effective_task_execution_summary_job_config, get_summary_job_config,
+    get_summary_rollup_job_config, get_task_execution_rollup_job_config,
+    get_task_execution_summary_job_config, upsert_agent_memory_job_config,
     upsert_summary_job_config, upsert_summary_rollup_job_config,
+    upsert_task_execution_rollup_job_config, upsert_task_execution_summary_job_config,
 };
 pub use self::model_configs::{
     create_model_config, delete_model_config, get_model_config_by_id, list_model_configs,

@@ -39,6 +39,7 @@ mod messages;
 mod sessions;
 mod summaries;
 mod task_execution;
+mod task_result_briefs;
 mod turn_runtime_snapshots;
 
 pub use self::agents::{
@@ -51,8 +52,11 @@ pub use self::ai_models::{AiModelConfig, UpsertAiModelConfigRequest};
 pub use self::compose::{ComposeContextMeta, ComposeContextRequest, ComposeContextResponse};
 pub use self::job_configs::{
     AgentMemoryJobConfig, JobRun, SummaryJobConfig, SummaryRollupJobConfig,
-    UpsertAgentMemoryJobConfigRequest, UpsertSummaryJobConfigRequest,
-    UpsertSummaryRollupJobConfigRequest, DEFAULT_SUMMARY_PROMPT_TEMPLATE,
+    TaskExecutionRollupJobConfig, TaskExecutionSummaryJobConfig, UpsertAgentMemoryJobConfigRequest,
+    UpsertSummaryJobConfigRequest, UpsertSummaryRollupJobConfigRequest,
+    UpsertTaskExecutionRollupJobConfigRequest, UpsertTaskExecutionSummaryJobConfigRequest,
+    DEFAULT_SUMMARY_PROMPT_TEMPLATE, DEFAULT_TASK_EXECUTION_ROLLUP_PROMPT_TEMPLATE,
+    DEFAULT_TASK_EXECUTION_SUMMARY_PROMPT_TEMPLATE,
 };
 pub use self::memories::{AgentRecall, ProjectMemory};
 pub use self::messages::{BatchCreateMessagesRequest, CreateMessageRequest, Message};
@@ -62,10 +66,11 @@ pub use self::sessions::{
 };
 pub use self::summaries::{CreateSummaryInput, SessionSummary};
 pub use self::task_execution::{
-    CreateTaskExecutionMessageRequest, CreateTaskExecutionSummaryInput, TaskExecutionComposeRequest,
-    TaskExecutionComposeResponse, TaskExecutionMessage, TaskExecutionScope,
-    TaskExecutionSummary,
+    CreateTaskExecutionMessageRequest, CreateTaskExecutionSummaryInput,
+    TaskExecutionComposeRequest, TaskExecutionComposeResponse, TaskExecutionMessage,
+    TaskExecutionScope, TaskExecutionSummary,
 };
+pub use self::task_result_briefs::{TaskResultBrief, UpsertTaskResultBriefRequest};
 pub use self::turn_runtime_snapshots::{
     SyncTurnRuntimeSnapshotRequest, TurnRuntimeSnapshot, TurnRuntimeSnapshotLookupResponse,
 };

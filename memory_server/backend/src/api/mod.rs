@@ -29,6 +29,7 @@ mod skills_api;
 mod skills_manage_api;
 mod summaries_api;
 mod task_execution_api;
+mod task_result_briefs_api;
 mod turn_runtime_snapshots_api;
 use self::shared::{
     build_ai_client, build_auth_token, default_project_name, ensure_admin,
@@ -260,6 +261,16 @@ pub fn router(state: SharedState) -> Router {
                 .put(configs_api::put_agent_memory_job_config),
         )
         .route(
+            "/api/memory/v1/configs/task-execution-summary-job",
+            get(configs_api::get_task_execution_summary_job_config)
+                .put(configs_api::put_task_execution_summary_job_config),
+        )
+        .route(
+            "/api/memory/v1/configs/task-execution-rollup-job",
+            get(configs_api::get_task_execution_rollup_job_config)
+                .put(configs_api::put_task_execution_rollup_job_config),
+        )
+        .route(
             "/api/memory/v1/jobs/summary/run-once",
             post(jobs_api::run_summary_once),
         )
@@ -270,6 +281,14 @@ pub fn router(state: SharedState) -> Router {
         .route(
             "/api/memory/v1/jobs/agent-memory/run-once",
             post(jobs_api::run_agent_memory_once),
+        )
+        .route(
+            "/api/memory/v1/jobs/task-execution-summary/run-once",
+            post(jobs_api::run_task_execution_summary_once),
+        )
+        .route(
+            "/api/memory/v1/jobs/task-execution-rollup/run-once",
+            post(jobs_api::run_task_execution_rollup_once),
         )
         .route("/api/memory/v1/jobs/runs", get(jobs_api::list_job_runs))
         .route("/api/memory/v1/jobs/stats", get(jobs_api::job_stats))
@@ -302,6 +321,18 @@ pub fn router(state: SharedState) -> Router {
         .route(
             "/api/memory/v1/task-executions/summaries/:summary_id",
             delete(task_execution_api::delete_summary),
+        )
+        .route(
+            "/api/memory/v1/task-result-briefs",
+            get(task_result_briefs_api::list_task_result_briefs),
+        )
+        .route(
+            "/api/memory/v1/internal/task-result-briefs/by-task/:task_id",
+            get(task_result_briefs_api::internal_get_task_result_brief_by_task),
+        )
+        .route(
+            "/api/memory/v1/internal/task-result-briefs/by-task/:task_id/sync",
+            put(task_result_briefs_api::internal_upsert_task_result_brief),
         )
         .route(
             "/api/memory/v1/task-executions/context/compose",

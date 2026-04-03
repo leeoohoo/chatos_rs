@@ -504,7 +504,10 @@ Body paragraph
             command_display_name("   ", "tools/run-build.md"),
             "run-build".to_string()
         );
-        assert_eq!(command_display_name("   ", "   "), "unnamed-command".to_string());
+        assert_eq!(
+            command_display_name("   ", "   "),
+            "unnamed-command".to_string()
+        );
     }
 
     #[test]

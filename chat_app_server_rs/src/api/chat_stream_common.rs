@@ -22,8 +22,8 @@ use crate::core::mcp_tools::ToolInfo;
 use crate::core::turn_runtime_snapshot::{
     build_turn_runtime_snapshot_payload, BuildTurnRuntimeSnapshotInput,
 };
-use crate::services::builtin_mcp::contact_chat_default_mcp_ids;
 use crate::services::ai_client_common::AiClientCallbacks;
+use crate::services::builtin_mcp::contact_chat_default_mcp_ids;
 use crate::services::memory_server_client::{self, TurnRuntimeSnapshotSelectedCommandDto};
 
 #[derive(Debug, Deserialize, Clone)]
@@ -200,8 +200,7 @@ pub(crate) async fn resolve_chat_stream_context(
     )
     .await;
 
-    let is_contact_chat_context =
-        req.execution_context != Some(true) && contact_agent_id.is_some();
+    let is_contact_chat_context = req.execution_context != Some(true) && contact_agent_id.is_some();
     let contact_system_prompt = if is_contact_chat_context {
         merge_prompt_sections(
             contact_system_prompt.as_deref(),

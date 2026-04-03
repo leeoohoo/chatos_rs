@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 use crate::auth::{login_via_memory, require_auth, resolve_scope_user_id, AuthIdentity};
 use crate::models::{
     AckAllDoneRequest, ConfirmTaskRequest, CreateTaskRequest, LoginRequest, SchedulerRequest,
-    TaskExecutionMessageView, UpdateTaskRequest,
+    TaskExecutionMessageView, TaskResultBriefView, UpdateTaskRequest,
 };
 use crate::{repository, AppState};
 
@@ -55,6 +55,10 @@ pub fn router(state: SharedState) -> Router {
         .route(
             "/api/task-service/v1/tasks/:task_id/execution-messages",
             get(list_task_execution_messages),
+        )
+        .route(
+            "/api/task-service/v1/tasks/:task_id/result-brief",
+            get(get_task_result_brief),
         )
         .route(
             "/api/task-service/v1/tasks/:task_id/confirm",
@@ -213,7 +217,13 @@ async fn internal_create_task(
             Json(json!({"error": "user_id is required"})),
         );
     };
-    match repository::create_task(&state.db, scope_user_id.as_str(), scope_user_id.as_str(), req).await
+    match repository::create_task(
+        &state.db,
+        scope_user_id.as_str(),
+        scope_user_id.as_str(),
+        req,
+    )
+    .await
     {
         Ok(task) => (StatusCode::OK, Json(json!(task))),
         Err(err) => (
@@ -319,7 +329,10 @@ async fn list_task_execution_messages(
     }
 
     let req = MEMORY_HTTP
-        .get(build_memory_url(&state, "/internal/task-executions/messages"))
+        .get(build_memory_url(
+            &state,
+            "/internal/task-executions/messages",
+        ))
         .timeout(memory_timeout_duration(&state))
         .query(&[
             ("user_id", task.user_id.as_str()),
@@ -344,7 +357,9 @@ async fn list_task_execution_messages(
         let detail = resp.text().await.unwrap_or_default();
         return (
             StatusCode::BAD_GATEWAY,
-            Json(json!({"error": "list execution messages failed", "detail": format!("status={} body={}", status, detail)})),
+            Json(
+                json!({"error": "list execution messages failed", "detail": format!("status={} body={}", status, detail)}),
+            ),
         );
     }
 
@@ -353,7 +368,9 @@ async fn list_task_execution_messages(
         Err(err) => {
             return (
                 StatusCode::BAD_GATEWAY,
-                Json(json!({"error": "invalid execution messages response", "detail": err.to_string()})),
+                Json(
+                    json!({"error": "invalid execution messages response", "detail": err.to_string()}),
+                ),
             )
         }
     };
@@ -366,6 +383,80 @@ async fn list_task_execution_messages(
         .collect::<Vec<_>>();
 
     (StatusCode::OK, Json(json!({ "items": items })))
+}
+
+async fn get_task_result_brief(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Path(task_id): Path<String>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match require_auth(&headers, &state.config).await {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    let task = match repository::get_task(&state.db, task_id.as_str()).await {
+        Ok(Some(task)) => task,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "task not found"})),
+            )
+        }
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "load task failed", "detail": err})),
+            )
+        }
+    };
+    if !auth.is_admin() && task.user_id != auth.user_id {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"})));
+    }
+
+    let resp = match MEMORY_HTTP
+        .get(build_memory_url(
+            &state,
+            format!("/internal/task-result-briefs/by-task/{}", task.id.as_str()).as_str(),
+        ))
+        .timeout(memory_timeout_duration(&state))
+        .send()
+        .await
+    {
+        Ok(resp) => resp,
+        Err(err) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({"error": "get task result brief failed", "detail": err.to_string()})),
+            )
+        }
+    };
+    if resp.status().as_u16() == 404 {
+        return (StatusCode::OK, Json(json!({ "item": Value::Null })));
+    }
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let detail = resp.text().await.unwrap_or_default();
+        return (
+            StatusCode::BAD_GATEWAY,
+            Json(
+                json!({"error": "get task result brief failed", "detail": format!("status={} body={}", status, detail)}),
+            ),
+        );
+    }
+
+    let item = match resp.json::<TaskResultBriefView>().await {
+        Ok(item) => item,
+        Err(err) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(
+                    json!({"error": "invalid task result brief response", "detail": err.to_string()}),
+                ),
+            )
+        }
+    };
+
+    (StatusCode::OK, Json(json!({ "item": item })))
 }
 
 fn task_execution_message_matches_task(item: &TaskExecutionMessageView, task_id: &str) -> bool {
@@ -690,7 +781,10 @@ async fn internal_ack_all_done(
     )
     .await
     {
-        Ok(()) => (StatusCode::OK, Json(json!({"success": true, "ack_at": ack_at}))),
+        Ok(()) => (
+            StatusCode::OK,
+            Json(json!({"success": true, "ack_at": ack_at})),
+        ),
         Err(err) => (
             StatusCode::BAD_REQUEST,
             Json(json!({"error": "ack all done failed", "detail": err})),

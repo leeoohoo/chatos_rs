@@ -21,7 +21,11 @@ pub fn build_scope_key(user_id: &str, contact_agent_id: &str, project_id: &str) 
     )
 }
 
-fn scope_filter(user_id: &str, contact_agent_id: &str, project_id: &str) -> mongodb::bson::Document {
+fn scope_filter(
+    user_id: &str,
+    contact_agent_id: &str,
+    project_id: &str,
+) -> mongodb::bson::Document {
     doc! {
         "user_id": user_id.trim(),
         "contact_agent_id": contact_agent_id.trim(),

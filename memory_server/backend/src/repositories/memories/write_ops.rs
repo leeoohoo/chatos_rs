@@ -104,6 +104,11 @@ pub struct UpsertAgentRecallInput {
     pub source_digest: Option<String>,
     pub recall_text: String,
     pub level: i64,
+    pub source_kind: Option<String>,
+    pub source_scope_kind: Option<String>,
+    pub contact_agent_id: Option<String>,
+    pub project_ids: Vec<String>,
+    pub task_ids: Vec<String>,
     pub confidence: Option<f64>,
     pub last_seen_at: Option<String>,
 }
@@ -123,6 +128,8 @@ pub async fn upsert_agent_recall(
         "recall_text": input.recall_text.as_str(),
         "level": input.level.max(0),
         "updated_at": now.as_str(),
+        "project_ids": input.project_ids,
+        "task_ids": input.task_ids,
     };
     if let Some(source_digest) = input
         .source_digest
@@ -136,6 +143,36 @@ pub async fn upsert_agent_recall(
     }
     if let Some(confidence) = input.confidence {
         set_doc.insert("confidence", confidence);
+    }
+    if let Some(source_kind) = input
+        .source_kind
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        set_doc.insert("source_kind", source_kind);
+    } else {
+        set_doc.insert("source_kind", Bson::Null);
+    }
+    if let Some(source_scope_kind) = input
+        .source_scope_kind
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        set_doc.insert("source_scope_kind", source_scope_kind);
+    } else {
+        set_doc.insert("source_scope_kind", Bson::Null);
+    }
+    if let Some(contact_agent_id) = input
+        .contact_agent_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        set_doc.insert("contact_agent_id", contact_agent_id);
+    } else {
+        set_doc.insert("contact_agent_id", Bson::Null);
     }
     if let Some(last_seen_at) = input.last_seen_at.as_deref() {
         if !last_seen_at.trim().is_empty() {

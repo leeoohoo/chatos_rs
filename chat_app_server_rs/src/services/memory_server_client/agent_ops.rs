@@ -1,5 +1,6 @@
 use serde_json::Value;
 
+use super::current_access_token;
 use super::dto::{
     CreateMemoryAgentRequestDto, MemoryAgentDto, MemoryAgentRuntimeContextDto,
     UpdateMemoryAgentRequestDto,
@@ -8,7 +9,6 @@ use super::http::{
     build_url, client, push_limit_offset_params, send_delete_result, send_json, send_list,
     send_optional_json, send_optional_json_without_service_token, timeout_duration,
 };
-use super::current_access_token;
 
 pub async fn list_memory_agents(
     user_id: Option<&str>,
@@ -34,7 +34,9 @@ pub async fn get_memory_agent(agent_id: &str) -> Result<Option<MemoryAgentDto>, 
     } else {
         format!("/internal/agents/{}", urlencoding::encode(agent_id))
     };
-    let req = client().get(build_url(path.as_str()).as_str()).timeout(timeout_duration());
+    let req = client()
+        .get(build_url(path.as_str()).as_str())
+        .timeout(timeout_duration());
     if current_access_token().is_some() {
         send_optional_json(req).await
     } else {
@@ -82,7 +84,9 @@ pub async fn get_memory_agent_runtime_context(
             urlencoding::encode(agent_id)
         )
     };
-    let req = client().get(build_url(path.as_str()).as_str()).timeout(timeout_duration());
+    let req = client()
+        .get(build_url(path.as_str()).as_str())
+        .timeout(timeout_duration());
     if current_access_token().is_some() {
         send_optional_json(req).await
     } else {

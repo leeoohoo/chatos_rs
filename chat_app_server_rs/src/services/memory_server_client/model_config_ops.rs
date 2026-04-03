@@ -13,7 +13,9 @@ pub async fn get_memory_model_config(
     } else {
         format!("/internal/configs/models/{}", urlencoding::encode(model_id))
     };
-    let req = client().get(build_url(path.as_str()).as_str()).timeout(timeout_duration());
+    let req = client()
+        .get(build_url(path.as_str()).as_str())
+        .timeout(timeout_duration());
     if current_access_token().is_some() {
         send_optional_json(req).await
     } else {

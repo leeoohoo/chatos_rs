@@ -17,6 +17,28 @@ interface SummaryJobConfigForm {
   job_interval_seconds: number;
 }
 
+interface TaskExecutionSummaryJobConfigForm {
+  enabled: boolean;
+  summary_model_config_id: string;
+  token_limit: number;
+  round_limit: number;
+  target_summary_tokens: number;
+  job_interval_seconds: number;
+  max_scopes_per_tick: number;
+}
+
+interface TaskExecutionRollupJobConfigForm {
+  enabled: boolean;
+  summary_model_config_id: string;
+  token_limit: number;
+  round_limit: number;
+  target_summary_tokens: number;
+  job_interval_seconds: number;
+  keep_raw_level0_count: number;
+  max_level: number;
+  max_scopes_per_tick: number;
+}
+
 interface RangeLimit {
   min: number;
   max?: number;
@@ -27,6 +49,24 @@ interface SummaryJobLimits {
   message_count_limit: RangeLimit;
   target_summary_tokens: RangeLimit;
   job_interval_seconds: RangeLimit;
+}
+
+interface TaskExecutionSummaryLimits {
+  token_limit: RangeLimit;
+  round_limit: RangeLimit;
+  target_summary_tokens: RangeLimit;
+  job_interval_seconds: RangeLimit;
+  max_scopes_per_tick: RangeLimit;
+}
+
+interface TaskExecutionRollupLimits {
+  token_limit: RangeLimit;
+  round_limit: RangeLimit;
+  target_summary_tokens: RangeLimit;
+  job_interval_seconds: RangeLimit;
+  keep_raw_level0_count: RangeLimit;
+  max_level: RangeLimit;
+  max_scopes_per_tick: RangeLimit;
 }
 
 const DEFAULT_SUMMARY_FORM: SummaryJobConfigForm = {
@@ -43,6 +83,46 @@ const DEFAULT_SUMMARY_LIMITS: SummaryJobLimits = {
   message_count_limit: { min: 1 },
   target_summary_tokens: { min: 200 },
   job_interval_seconds: { min: 10 },
+};
+
+const DEFAULT_TASK_EXECUTION_SUMMARY_FORM: TaskExecutionSummaryJobConfigForm = {
+  enabled: true,
+  summary_model_config_id: '',
+  token_limit: 6000,
+  round_limit: 8,
+  target_summary_tokens: 700,
+  job_interval_seconds: 30,
+  max_scopes_per_tick: 50,
+};
+
+const DEFAULT_TASK_EXECUTION_SUMMARY_LIMITS: TaskExecutionSummaryLimits = {
+  token_limit: { min: 500 },
+  round_limit: { min: 1 },
+  target_summary_tokens: { min: 200 },
+  job_interval_seconds: { min: 10 },
+  max_scopes_per_tick: { min: 1 },
+};
+
+const DEFAULT_TASK_EXECUTION_ROLLUP_FORM: TaskExecutionRollupJobConfigForm = {
+  enabled: true,
+  summary_model_config_id: '',
+  token_limit: 6000,
+  round_limit: 50,
+  target_summary_tokens: 700,
+  job_interval_seconds: 60,
+  keep_raw_level0_count: 20,
+  max_level: 4,
+  max_scopes_per_tick: 50,
+};
+
+const DEFAULT_TASK_EXECUTION_ROLLUP_LIMITS: TaskExecutionRollupLimits = {
+  token_limit: { min: 500 },
+  round_limit: { min: 3 },
+  target_summary_tokens: { min: 200 },
+  job_interval_seconds: { min: 10 },
+  keep_raw_level0_count: { min: 0 },
+  max_level: { min: 1 },
+  max_scopes_per_tick: { min: 1 },
 };
 
 function clampNumber(value: number, range: RangeLimit): number {
@@ -93,6 +173,51 @@ function parseSummaryLimits(config: any): SummaryJobLimits {
   };
 }
 
+function parseTaskExecutionSummaryLimits(config: any): TaskExecutionSummaryLimits {
+  const limits = config?.limits || {};
+  return {
+    token_limit: parseRangeLimit(limits?.token_limit, DEFAULT_TASK_EXECUTION_SUMMARY_LIMITS.token_limit),
+    round_limit: parseRangeLimit(limits?.round_limit, DEFAULT_TASK_EXECUTION_SUMMARY_LIMITS.round_limit),
+    target_summary_tokens: parseRangeLimit(
+      limits?.target_summary_tokens,
+      DEFAULT_TASK_EXECUTION_SUMMARY_LIMITS.target_summary_tokens,
+    ),
+    job_interval_seconds: parseRangeLimit(
+      limits?.job_interval_seconds,
+      DEFAULT_TASK_EXECUTION_SUMMARY_LIMITS.job_interval_seconds,
+    ),
+    max_scopes_per_tick: parseRangeLimit(
+      limits?.max_scopes_per_tick,
+      DEFAULT_TASK_EXECUTION_SUMMARY_LIMITS.max_scopes_per_tick,
+    ),
+  };
+}
+
+function parseTaskExecutionRollupLimits(config: any): TaskExecutionRollupLimits {
+  const limits = config?.limits || {};
+  return {
+    token_limit: parseRangeLimit(limits?.token_limit, DEFAULT_TASK_EXECUTION_ROLLUP_LIMITS.token_limit),
+    round_limit: parseRangeLimit(limits?.round_limit, DEFAULT_TASK_EXECUTION_ROLLUP_LIMITS.round_limit),
+    target_summary_tokens: parseRangeLimit(
+      limits?.target_summary_tokens,
+      DEFAULT_TASK_EXECUTION_ROLLUP_LIMITS.target_summary_tokens,
+    ),
+    job_interval_seconds: parseRangeLimit(
+      limits?.job_interval_seconds,
+      DEFAULT_TASK_EXECUTION_ROLLUP_LIMITS.job_interval_seconds,
+    ),
+    keep_raw_level0_count: parseRangeLimit(
+      limits?.keep_raw_level0_count,
+      DEFAULT_TASK_EXECUTION_ROLLUP_LIMITS.keep_raw_level0_count,
+    ),
+    max_level: parseRangeLimit(limits?.max_level, DEFAULT_TASK_EXECUTION_ROLLUP_LIMITS.max_level),
+    max_scopes_per_tick: parseRangeLimit(
+      limits?.max_scopes_per_tick,
+      DEFAULT_TASK_EXECUTION_ROLLUP_LIMITS.max_scopes_per_tick,
+    ),
+  };
+}
+
 const UserSettingsPanel: React.FC<Props> = ({ onClose }) => {
   const clientFromContext = useChatApiClientFromContext();
   const client = clientFromContext || globalApiClient;
@@ -106,6 +231,18 @@ const UserSettingsPanel: React.FC<Props> = ({ onClose }) => {
   const [settings, setSettings] = React.useState<any>({});
   const [summaryForm, setSummaryForm] = React.useState<SummaryJobConfigForm>(DEFAULT_SUMMARY_FORM);
   const [summaryLimits, setSummaryLimits] = React.useState<SummaryJobLimits>(DEFAULT_SUMMARY_LIMITS);
+  const [taskSummaryForm, setTaskSummaryForm] = React.useState<TaskExecutionSummaryJobConfigForm>(
+    DEFAULT_TASK_EXECUTION_SUMMARY_FORM,
+  );
+  const [taskSummaryLimits, setTaskSummaryLimits] = React.useState<TaskExecutionSummaryLimits>(
+    DEFAULT_TASK_EXECUTION_SUMMARY_LIMITS,
+  );
+  const [taskRollupForm, setTaskRollupForm] = React.useState<TaskExecutionRollupJobConfigForm>(
+    DEFAULT_TASK_EXECUTION_ROLLUP_FORM,
+  );
+  const [taskRollupLimits, setTaskRollupLimits] = React.useState<TaskExecutionRollupLimits>(
+    DEFAULT_TASK_EXECUTION_ROLLUP_LIMITS,
+  );
 
   const modelOptions = React.useMemo(
     () =>
@@ -127,9 +264,11 @@ const UserSettingsPanel: React.FC<Props> = ({ onClose }) => {
       setLoading(true);
       setError(null);
       try {
-        const [settingsResp, summaryResp] = await Promise.allSettled([
+        const [settingsResp, summaryResp, taskSummaryResp, taskRollupResp] = await Promise.allSettled([
           client.getUserSettings(userId),
           client.getSessionSummaryJobConfig(userId),
+          client.getTaskExecutionSummaryJobConfig(userId),
+          client.getTaskExecutionRollupJobConfig(userId),
         ]);
         if (!mounted) return;
 
@@ -172,6 +311,76 @@ const UserSettingsPanel: React.FC<Props> = ({ onClose }) => {
           loadErrors.push(String(summaryResp.reason?.message || summaryResp.reason || '定时总结配置加载失败'));
         }
 
+        if (taskSummaryResp.status === 'fulfilled') {
+          const loadedLimits = parseTaskExecutionSummaryLimits(taskSummaryResp.value);
+          setTaskSummaryLimits(loadedLimits);
+          setTaskSummaryForm({
+            enabled: taskSummaryResp.value?.enabled !== false,
+            summary_model_config_id: String(taskSummaryResp.value?.summary_model_config_id || ''),
+            token_limit: clampNumber(
+              Number(taskSummaryResp.value?.token_limit || DEFAULT_TASK_EXECUTION_SUMMARY_FORM.token_limit),
+              loadedLimits.token_limit,
+            ),
+            round_limit: clampNumber(
+              Number(taskSummaryResp.value?.round_limit || DEFAULT_TASK_EXECUTION_SUMMARY_FORM.round_limit),
+              loadedLimits.round_limit,
+            ),
+            target_summary_tokens: clampNumber(
+              Number(taskSummaryResp.value?.target_summary_tokens || DEFAULT_TASK_EXECUTION_SUMMARY_FORM.target_summary_tokens),
+              loadedLimits.target_summary_tokens,
+            ),
+            job_interval_seconds: clampNumber(
+              Number(taskSummaryResp.value?.job_interval_seconds || DEFAULT_TASK_EXECUTION_SUMMARY_FORM.job_interval_seconds),
+              loadedLimits.job_interval_seconds,
+            ),
+            max_scopes_per_tick: clampNumber(
+              Number(taskSummaryResp.value?.max_scopes_per_tick || DEFAULT_TASK_EXECUTION_SUMMARY_FORM.max_scopes_per_tick),
+              loadedLimits.max_scopes_per_tick,
+            ),
+          });
+        } else {
+          loadErrors.push(String(taskSummaryResp.reason?.message || taskSummaryResp.reason || '任务执行总结配置加载失败'));
+        }
+
+        if (taskRollupResp.status === 'fulfilled') {
+          const loadedLimits = parseTaskExecutionRollupLimits(taskRollupResp.value);
+          setTaskRollupLimits(loadedLimits);
+          setTaskRollupForm({
+            enabled: taskRollupResp.value?.enabled !== false,
+            summary_model_config_id: String(taskRollupResp.value?.summary_model_config_id || ''),
+            token_limit: clampNumber(
+              Number(taskRollupResp.value?.token_limit || DEFAULT_TASK_EXECUTION_ROLLUP_FORM.token_limit),
+              loadedLimits.token_limit,
+            ),
+            round_limit: clampNumber(
+              Number(taskRollupResp.value?.round_limit || DEFAULT_TASK_EXECUTION_ROLLUP_FORM.round_limit),
+              loadedLimits.round_limit,
+            ),
+            target_summary_tokens: clampNumber(
+              Number(taskRollupResp.value?.target_summary_tokens || DEFAULT_TASK_EXECUTION_ROLLUP_FORM.target_summary_tokens),
+              loadedLimits.target_summary_tokens,
+            ),
+            job_interval_seconds: clampNumber(
+              Number(taskRollupResp.value?.job_interval_seconds || DEFAULT_TASK_EXECUTION_ROLLUP_FORM.job_interval_seconds),
+              loadedLimits.job_interval_seconds,
+            ),
+            keep_raw_level0_count: clampNumber(
+              Number(taskRollupResp.value?.keep_raw_level0_count ?? DEFAULT_TASK_EXECUTION_ROLLUP_FORM.keep_raw_level0_count),
+              loadedLimits.keep_raw_level0_count,
+            ),
+            max_level: clampNumber(
+              Number(taskRollupResp.value?.max_level || DEFAULT_TASK_EXECUTION_ROLLUP_FORM.max_level),
+              loadedLimits.max_level,
+            ),
+            max_scopes_per_tick: clampNumber(
+              Number(taskRollupResp.value?.max_scopes_per_tick || DEFAULT_TASK_EXECUTION_ROLLUP_FORM.max_scopes_per_tick),
+              loadedLimits.max_scopes_per_tick,
+            ),
+          });
+        } else {
+          loadErrors.push(String(taskRollupResp.reason?.message || taskRollupResp.reason || '任务执行 rollup 配置加载失败'));
+        }
+
         if (loadErrors.length > 0) {
           setError(loadErrors.join('；'));
         }
@@ -194,6 +403,20 @@ const UserSettingsPanel: React.FC<Props> = ({ onClose }) => {
     setSummaryForm((prev) => ({ ...prev, [key]: value }));
   };
 
+  const setTaskSummaryField = <K extends keyof TaskExecutionSummaryJobConfigForm>(
+    key: K,
+    value: TaskExecutionSummaryJobConfigForm[K],
+  ) => {
+    setTaskSummaryForm((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const setTaskRollupField = <K extends keyof TaskExecutionRollupJobConfigForm>(
+    key: K,
+    value: TaskExecutionRollupJobConfigForm[K],
+  ) => {
+    setTaskRollupForm((prev) => ({ ...prev, [key]: value }));
+  };
+
   const save = async () => {
     if (!userId) { setError('缺少 userId，无法保存'); return; }
     setSaving(true);
@@ -212,19 +435,76 @@ const UserSettingsPanel: React.FC<Props> = ({ onClose }) => {
       const rawMessageCountLimit = Number(summaryForm.message_count_limit || 0);
       const rawTargetSummaryTokens = Number(summaryForm.target_summary_tokens || 0);
       const rawJobIntervalSeconds = Number(summaryForm.job_interval_seconds || 0);
+      const rawTaskSummaryTokenLimit = Number(taskSummaryForm.token_limit || 0);
+      const rawTaskSummaryRoundLimit = Number(taskSummaryForm.round_limit || 0);
+      const rawTaskSummaryTargetSummaryTokens = Number(taskSummaryForm.target_summary_tokens || 0);
+      const rawTaskSummaryJobIntervalSeconds = Number(taskSummaryForm.job_interval_seconds || 0);
+      const rawTaskSummaryMaxScopesPerTick = Number(taskSummaryForm.max_scopes_per_tick || 0);
+      const rawTaskRollupTokenLimit = Number(taskRollupForm.token_limit || 0);
+      const rawTaskRollupRoundLimit = Number(taskRollupForm.round_limit || 0);
+      const rawTaskRollupTargetSummaryTokens = Number(taskRollupForm.target_summary_tokens || 0);
+      const rawTaskRollupJobIntervalSeconds = Number(taskRollupForm.job_interval_seconds || 0);
+      const rawTaskRollupKeepRawLevel0Count = Number(taskRollupForm.keep_raw_level0_count || 0);
+      const rawTaskRollupMaxLevel = Number(taskRollupForm.max_level || 0);
+      const rawTaskRollupMaxScopesPerTick = Number(taskRollupForm.max_scopes_per_tick || 0);
 
       const tokenLimit = clampNumber(rawTokenLimit, summaryLimits.token_limit);
       const messageCountLimit = clampNumber(rawMessageCountLimit, summaryLimits.message_count_limit);
       const targetSummaryTokens = clampNumber(rawTargetSummaryTokens, summaryLimits.target_summary_tokens);
       const jobIntervalSeconds = clampNumber(rawJobIntervalSeconds, summaryLimits.job_interval_seconds);
+      const taskSummaryTokenLimit = clampNumber(rawTaskSummaryTokenLimit, taskSummaryLimits.token_limit);
+      const taskSummaryRoundLimit = clampNumber(rawTaskSummaryRoundLimit, taskSummaryLimits.round_limit);
+      const taskSummaryTargetSummaryTokens = clampNumber(
+        rawTaskSummaryTargetSummaryTokens,
+        taskSummaryLimits.target_summary_tokens,
+      );
+      const taskSummaryJobIntervalSeconds = clampNumber(
+        rawTaskSummaryJobIntervalSeconds,
+        taskSummaryLimits.job_interval_seconds,
+      );
+      const taskSummaryMaxScopesPerTick = clampNumber(
+        rawTaskSummaryMaxScopesPerTick,
+        taskSummaryLimits.max_scopes_per_tick,
+      );
+      const taskRollupTokenLimit = clampNumber(rawTaskRollupTokenLimit, taskRollupLimits.token_limit);
+      const taskRollupRoundLimit = clampNumber(rawTaskRollupRoundLimit, taskRollupLimits.round_limit);
+      const taskRollupTargetSummaryTokens = clampNumber(
+        rawTaskRollupTargetSummaryTokens,
+        taskRollupLimits.target_summary_tokens,
+      );
+      const taskRollupJobIntervalSeconds = clampNumber(
+        rawTaskRollupJobIntervalSeconds,
+        taskRollupLimits.job_interval_seconds,
+      );
+      const taskRollupKeepRawLevel0Count = clampNumber(
+        rawTaskRollupKeepRawLevel0Count,
+        taskRollupLimits.keep_raw_level0_count,
+      );
+      const taskRollupMaxLevel = clampNumber(rawTaskRollupMaxLevel, taskRollupLimits.max_level);
+      const taskRollupMaxScopesPerTick = clampNumber(
+        rawTaskRollupMaxScopesPerTick,
+        taskRollupLimits.max_scopes_per_tick,
+      );
 
       const clampedFields: string[] = [];
       if (tokenLimit !== rawTokenLimit) clampedFields.push(`长度阈值(${rangeText(summaryLimits.token_limit)})`);
       if (messageCountLimit !== rawMessageCountLimit) clampedFields.push(`消息条数阈值(${rangeText(summaryLimits.message_count_limit)})`);
       if (targetSummaryTokens !== rawTargetSummaryTokens) clampedFields.push(`目标摘要长度(${rangeText(summaryLimits.target_summary_tokens)})`);
       if (jobIntervalSeconds !== rawJobIntervalSeconds) clampedFields.push(`任务间隔(${rangeText(summaryLimits.job_interval_seconds)})`);
+      if (taskSummaryTokenLimit !== rawTaskSummaryTokenLimit) clampedFields.push(`任务执行总结长度阈值(${rangeText(taskSummaryLimits.token_limit)})`);
+      if (taskSummaryRoundLimit !== rawTaskSummaryRoundLimit) clampedFields.push(`任务执行总结轮次阈值(${rangeText(taskSummaryLimits.round_limit)})`);
+      if (taskSummaryTargetSummaryTokens !== rawTaskSummaryTargetSummaryTokens) clampedFields.push(`任务执行总结目标长度(${rangeText(taskSummaryLimits.target_summary_tokens)})`);
+      if (taskSummaryJobIntervalSeconds !== rawTaskSummaryJobIntervalSeconds) clampedFields.push(`任务执行总结间隔(${rangeText(taskSummaryLimits.job_interval_seconds)})`);
+      if (taskSummaryMaxScopesPerTick !== rawTaskSummaryMaxScopesPerTick) clampedFields.push(`任务执行总结每轮 scope 数(${rangeText(taskSummaryLimits.max_scopes_per_tick)})`);
+      if (taskRollupTokenLimit !== rawTaskRollupTokenLimit) clampedFields.push(`任务执行 rollup 长度阈值(${rangeText(taskRollupLimits.token_limit)})`);
+      if (taskRollupRoundLimit !== rawTaskRollupRoundLimit) clampedFields.push(`任务执行 rollup 轮次阈值(${rangeText(taskRollupLimits.round_limit)})`);
+      if (taskRollupTargetSummaryTokens !== rawTaskRollupTargetSummaryTokens) clampedFields.push(`任务执行 rollup 目标长度(${rangeText(taskRollupLimits.target_summary_tokens)})`);
+      if (taskRollupJobIntervalSeconds !== rawTaskRollupJobIntervalSeconds) clampedFields.push(`任务执行 rollup 间隔(${rangeText(taskRollupLimits.job_interval_seconds)})`);
+      if (taskRollupKeepRawLevel0Count !== rawTaskRollupKeepRawLevel0Count) clampedFields.push(`任务执行 rollup 保留 L0 数(${rangeText(taskRollupLimits.keep_raw_level0_count)})`);
+      if (taskRollupMaxLevel !== rawTaskRollupMaxLevel) clampedFields.push(`任务执行 rollup 最大层级(${rangeText(taskRollupLimits.max_level)})`);
+      if (taskRollupMaxScopesPerTick !== rawTaskRollupMaxScopesPerTick) clampedFields.push(`任务执行 rollup 每轮 scope 数(${rangeText(taskRollupLimits.max_scopes_per_tick)})`);
 
-      const [savedSettings, savedSummary] = await Promise.all([
+      const [savedSettings, savedSummary, savedTaskSummary, savedTaskRollup] = await Promise.all([
         client.updateUserSettings(userId, userSettingsPayload),
         client.updateSessionSummaryJobConfig({
           user_id: userId,
@@ -235,6 +515,28 @@ const UserSettingsPanel: React.FC<Props> = ({ onClose }) => {
           round_limit: messageCountLimit,
           target_summary_tokens: targetSummaryTokens,
           job_interval_seconds: jobIntervalSeconds,
+        }),
+        client.updateTaskExecutionSummaryJobConfig({
+          user_id: userId,
+          enabled: taskSummaryForm.enabled,
+          summary_model_config_id: taskSummaryForm.summary_model_config_id || null,
+          token_limit: taskSummaryTokenLimit,
+          round_limit: taskSummaryRoundLimit,
+          target_summary_tokens: taskSummaryTargetSummaryTokens,
+          job_interval_seconds: taskSummaryJobIntervalSeconds,
+          max_scopes_per_tick: taskSummaryMaxScopesPerTick,
+        }),
+        client.updateTaskExecutionRollupJobConfig({
+          user_id: userId,
+          enabled: taskRollupForm.enabled,
+          summary_model_config_id: taskRollupForm.summary_model_config_id || null,
+          token_limit: taskRollupTokenLimit,
+          round_limit: taskRollupRoundLimit,
+          target_summary_tokens: taskRollupTargetSummaryTokens,
+          job_interval_seconds: taskRollupJobIntervalSeconds,
+          keep_raw_level0_count: taskRollupKeepRawLevel0Count,
+          max_level: taskRollupMaxLevel,
+          max_scopes_per_tick: taskRollupMaxScopesPerTick,
         }),
       ]);
 
@@ -260,6 +562,68 @@ const UserSettingsPanel: React.FC<Props> = ({ onClose }) => {
         job_interval_seconds: clampNumber(
           Number(savedSummary?.job_interval_seconds || jobIntervalSeconds),
           savedLimits.job_interval_seconds,
+        ),
+      });
+
+      const savedTaskSummaryLimits = parseTaskExecutionSummaryLimits(savedTaskSummary);
+      setTaskSummaryLimits(savedTaskSummaryLimits);
+      setTaskSummaryForm({
+        enabled: savedTaskSummary?.enabled !== false,
+        summary_model_config_id: String(savedTaskSummary?.summary_model_config_id || ''),
+        token_limit: clampNumber(
+          Number(savedTaskSummary?.token_limit || taskSummaryTokenLimit),
+          savedTaskSummaryLimits.token_limit,
+        ),
+        round_limit: clampNumber(
+          Number(savedTaskSummary?.round_limit || taskSummaryRoundLimit),
+          savedTaskSummaryLimits.round_limit,
+        ),
+        target_summary_tokens: clampNumber(
+          Number(savedTaskSummary?.target_summary_tokens || taskSummaryTargetSummaryTokens),
+          savedTaskSummaryLimits.target_summary_tokens,
+        ),
+        job_interval_seconds: clampNumber(
+          Number(savedTaskSummary?.job_interval_seconds || taskSummaryJobIntervalSeconds),
+          savedTaskSummaryLimits.job_interval_seconds,
+        ),
+        max_scopes_per_tick: clampNumber(
+          Number(savedTaskSummary?.max_scopes_per_tick || taskSummaryMaxScopesPerTick),
+          savedTaskSummaryLimits.max_scopes_per_tick,
+        ),
+      });
+
+      const savedTaskRollupLimits = parseTaskExecutionRollupLimits(savedTaskRollup);
+      setTaskRollupLimits(savedTaskRollupLimits);
+      setTaskRollupForm({
+        enabled: savedTaskRollup?.enabled !== false,
+        summary_model_config_id: String(savedTaskRollup?.summary_model_config_id || ''),
+        token_limit: clampNumber(
+          Number(savedTaskRollup?.token_limit || taskRollupTokenLimit),
+          savedTaskRollupLimits.token_limit,
+        ),
+        round_limit: clampNumber(
+          Number(savedTaskRollup?.round_limit || taskRollupRoundLimit),
+          savedTaskRollupLimits.round_limit,
+        ),
+        target_summary_tokens: clampNumber(
+          Number(savedTaskRollup?.target_summary_tokens || taskRollupTargetSummaryTokens),
+          savedTaskRollupLimits.target_summary_tokens,
+        ),
+        job_interval_seconds: clampNumber(
+          Number(savedTaskRollup?.job_interval_seconds || taskRollupJobIntervalSeconds),
+          savedTaskRollupLimits.job_interval_seconds,
+        ),
+        keep_raw_level0_count: clampNumber(
+          Number(savedTaskRollup?.keep_raw_level0_count ?? taskRollupKeepRawLevel0Count),
+          savedTaskRollupLimits.keep_raw_level0_count,
+        ),
+        max_level: clampNumber(
+          Number(savedTaskRollup?.max_level || taskRollupMaxLevel),
+          savedTaskRollupLimits.max_level,
+        ),
+        max_scopes_per_tick: clampNumber(
+          Number(savedTaskRollup?.max_scopes_per_tick || taskRollupMaxScopesPerTick),
+          savedTaskRollupLimits.max_scopes_per_tick,
         ),
       });
 
@@ -401,6 +765,212 @@ const UserSettingsPanel: React.FC<Props> = ({ onClose }) => {
                         min={summaryLimits.job_interval_seconds.min}
                         max={summaryLimits.job_interval_seconds.max}
                         onChange={(event) => setSummaryField('job_interval_seconds', Number(event.target.value || 0))}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-border/60 overflow-hidden">
+                <div className="px-4 py-2.5 border-b border-border/60 bg-accent/10 text-sm font-medium">任务执行总结</div>
+                <div className="p-4 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="text-sm font-medium">启用任务执行总结</div>
+                      <div className="text-[11px] text-muted-foreground mt-1">用于压缩后台任务执行过程，保障后续任务衔接</div>
+                    </div>
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4"
+                      checked={taskSummaryForm.enabled}
+                      onChange={(event) => setTaskSummaryField('enabled', event.target.checked)}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-xs text-muted-foreground">总结模型</label>
+                    <select
+                      className="w-full mt-1 p-2 border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/40"
+                      value={taskSummaryForm.summary_model_config_id}
+                      onChange={(event) => setTaskSummaryField('summary_model_config_id', event.target.value)}
+                    >
+                      <option value="">默认模型（环境变量）</option>
+                      {modelOptions.map((option: any) => (
+                        <option key={option.id} value={option.id}>
+                          {option.name}（{option.model_name || 'unknown'}）
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-xs text-muted-foreground">长度阈值（Token，{rangeText(taskSummaryLimits.token_limit)}）</label>
+                      <input
+                        type="number"
+                        className="w-full mt-1 p-2 border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/40"
+                        value={taskSummaryForm.token_limit}
+                        min={taskSummaryLimits.token_limit.min}
+                        max={taskSummaryLimits.token_limit.max}
+                        onChange={(event) => setTaskSummaryField('token_limit', Number(event.target.value || 0))}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted-foreground">执行轮次阈值（{rangeText(taskSummaryLimits.round_limit)}）</label>
+                      <input
+                        type="number"
+                        className="w-full mt-1 p-2 border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/40"
+                        value={taskSummaryForm.round_limit}
+                        min={taskSummaryLimits.round_limit.min}
+                        max={taskSummaryLimits.round_limit.max}
+                        onChange={(event) => setTaskSummaryField('round_limit', Number(event.target.value || 0))}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted-foreground">目标摘要长度（Token，{rangeText(taskSummaryLimits.target_summary_tokens)}）</label>
+                      <input
+                        type="number"
+                        className="w-full mt-1 p-2 border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/40"
+                        value={taskSummaryForm.target_summary_tokens}
+                        min={taskSummaryLimits.target_summary_tokens.min}
+                        max={taskSummaryLimits.target_summary_tokens.max}
+                        onChange={(event) => setTaskSummaryField('target_summary_tokens', Number(event.target.value || 0))}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted-foreground">任务间隔（秒，{rangeText(taskSummaryLimits.job_interval_seconds)}）</label>
+                      <input
+                        type="number"
+                        className="w-full mt-1 p-2 border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/40"
+                        value={taskSummaryForm.job_interval_seconds}
+                        min={taskSummaryLimits.job_interval_seconds.min}
+                        max={taskSummaryLimits.job_interval_seconds.max}
+                        onChange={(event) => setTaskSummaryField('job_interval_seconds', Number(event.target.value || 0))}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted-foreground">每轮最多扫描 scope 数（{rangeText(taskSummaryLimits.max_scopes_per_tick)}）</label>
+                      <input
+                        type="number"
+                        className="w-full mt-1 p-2 border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/40"
+                        value={taskSummaryForm.max_scopes_per_tick}
+                        min={taskSummaryLimits.max_scopes_per_tick.min}
+                        max={taskSummaryLimits.max_scopes_per_tick.max}
+                        onChange={(event) => setTaskSummaryField('max_scopes_per_tick', Number(event.target.value || 0))}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-border/60 overflow-hidden">
+                <div className="px-4 py-2.5 border-b border-border/60 bg-accent/10 text-sm font-medium">任务执行 Rollup</div>
+                <div className="p-4 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="text-sm font-medium">启用任务执行 Rollup</div>
+                      <div className="text-[11px] text-muted-foreground mt-1">把多段任务执行总结继续压缩成高层总结，供长期衔接与回忆使用</div>
+                    </div>
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4"
+                      checked={taskRollupForm.enabled}
+                      onChange={(event) => setTaskRollupField('enabled', event.target.checked)}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-xs text-muted-foreground">Rollup 模型</label>
+                    <select
+                      className="w-full mt-1 p-2 border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/40"
+                      value={taskRollupForm.summary_model_config_id}
+                      onChange={(event) => setTaskRollupField('summary_model_config_id', event.target.value)}
+                    >
+                      <option value="">默认模型（环境变量）</option>
+                      {modelOptions.map((option: any) => (
+                        <option key={option.id} value={option.id}>
+                          {option.name}（{option.model_name || 'unknown'}）
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-xs text-muted-foreground">长度阈值（Token，{rangeText(taskRollupLimits.token_limit)}）</label>
+                      <input
+                        type="number"
+                        className="w-full mt-1 p-2 border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/40"
+                        value={taskRollupForm.token_limit}
+                        min={taskRollupLimits.token_limit.min}
+                        max={taskRollupLimits.token_limit.max}
+                        onChange={(event) => setTaskRollupField('token_limit', Number(event.target.value || 0))}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted-foreground">参与聚合的 L0 条数阈值（{rangeText(taskRollupLimits.round_limit)}）</label>
+                      <input
+                        type="number"
+                        className="w-full mt-1 p-2 border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/40"
+                        value={taskRollupForm.round_limit}
+                        min={taskRollupLimits.round_limit.min}
+                        max={taskRollupLimits.round_limit.max}
+                        onChange={(event) => setTaskRollupField('round_limit', Number(event.target.value || 0))}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted-foreground">目标摘要长度（Token，{rangeText(taskRollupLimits.target_summary_tokens)}）</label>
+                      <input
+                        type="number"
+                        className="w-full mt-1 p-2 border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/40"
+                        value={taskRollupForm.target_summary_tokens}
+                        min={taskRollupLimits.target_summary_tokens.min}
+                        max={taskRollupLimits.target_summary_tokens.max}
+                        onChange={(event) => setTaskRollupField('target_summary_tokens', Number(event.target.value || 0))}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted-foreground">任务间隔（秒，{rangeText(taskRollupLimits.job_interval_seconds)}）</label>
+                      <input
+                        type="number"
+                        className="w-full mt-1 p-2 border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/40"
+                        value={taskRollupForm.job_interval_seconds}
+                        min={taskRollupLimits.job_interval_seconds.min}
+                        max={taskRollupLimits.job_interval_seconds.max}
+                        onChange={(event) => setTaskRollupField('job_interval_seconds', Number(event.target.value || 0))}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted-foreground">保留未聚合的 L0 数量（{rangeText(taskRollupLimits.keep_raw_level0_count)}）</label>
+                      <input
+                        type="number"
+                        className="w-full mt-1 p-2 border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/40"
+                        value={taskRollupForm.keep_raw_level0_count}
+                        min={taskRollupLimits.keep_raw_level0_count.min}
+                        max={taskRollupLimits.keep_raw_level0_count.max}
+                        onChange={(event) => setTaskRollupField('keep_raw_level0_count', Number(event.target.value || 0))}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted-foreground">最大 Rollup 层级（{rangeText(taskRollupLimits.max_level)}）</label>
+                      <input
+                        type="number"
+                        className="w-full mt-1 p-2 border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/40"
+                        value={taskRollupForm.max_level}
+                        min={taskRollupLimits.max_level.min}
+                        max={taskRollupLimits.max_level.max}
+                        onChange={(event) => setTaskRollupField('max_level', Number(event.target.value || 0))}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted-foreground">每轮最多扫描 scope 数（{rangeText(taskRollupLimits.max_scopes_per_tick)}）</label>
+                      <input
+                        type="number"
+                        className="w-full mt-1 p-2 border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/40"
+                        value={taskRollupForm.max_scopes_per_tick}
+                        min={taskRollupLimits.max_scopes_per_tick.min}
+                        max={taskRollupLimits.max_scopes_per_tick.max}
+                        onChange={(event) => setTaskRollupField('max_scopes_per_tick', Number(event.target.value || 0))}
                       />
                     </div>
                   </div>

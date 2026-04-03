@@ -19,9 +19,7 @@ use crate::services::contact_agent_model::{
 };
 use crate::services::memory_server_client;
 use crate::services::task_manager::{list_tasks_for_context, resolve_task_scope_context};
-use crate::services::task_service_client::{
-    self, ConfirmTaskRequestDto, UpdateTaskRequestDto,
-};
+use crate::services::task_service_client::{self, ConfirmTaskRequestDto, UpdateTaskRequestDto};
 
 use self::context::ToolContext;
 use self::parsing::trimmed_non_empty;

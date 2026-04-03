@@ -1,5 +1,6 @@
 use serde_json::Value;
 
+use super::current_access_token;
 use super::dto::{
     ContactBuiltinMcpGrantsDto, CreateMemoryContactRequestDto, CreateMemoryContactResponseDto,
     MemoryAgentRecallDto, MemoryContactDto, MemoryProjectAgentLinkDto, MemoryProjectContactDto,
@@ -10,7 +11,6 @@ use super::http::{
     build_url, client, push_limit_offset_params, send_delete_result, send_json, send_list,
     send_list_without_service_token, send_optional_json, timeout_duration,
 };
-use super::current_access_token;
 
 pub async fn list_memory_contacts(
     user_id: Option<&str>,

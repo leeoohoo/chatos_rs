@@ -30,6 +30,7 @@ pub(super) fn collection(db: &Db) -> mongodb::Collection<SessionSummary> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentMemorySummarySource {
     pub id: String,
+    pub source_kind: String,
     pub session_id: String,
     pub summary_text: String,
     pub summary_model: String,

@@ -379,6 +379,7 @@ export const normalizeWorkbarTask = (raw: unknown): TaskWorkbarItem => {
     : [];
   const executionResultContractRecord = asRecord(record.execution_result_contract ?? record.executionResultContract);
   const planningSnapshotRecord = asRecord(record.planning_snapshot ?? record.planningSnapshot);
+  const taskResultBriefRecord = asRecord(record.task_result_brief ?? record.taskResultBrief);
 
   return {
     id: String(record.id || '').trim(),
@@ -416,8 +417,41 @@ export const normalizeWorkbarTask = (raw: unknown): TaskWorkbarItem => {
         selectedModelConfigId: typeof planningSnapshotRecord.selected_model_config_id === 'string'
           ? planningSnapshotRecord.selected_model_config_id
           : null,
+        sourceUserGoalSummary: typeof planningSnapshotRecord.source_user_goal_summary === 'string'
+          ? planningSnapshotRecord.source_user_goal_summary
+          : null,
+        sourceConstraintsSummary: typeof planningSnapshotRecord.source_constraints_summary === 'string'
+          ? planningSnapshotRecord.source_constraints_summary
+          : null,
         plannedAt: typeof planningSnapshotRecord.planned_at === 'string'
           ? planningSnapshotRecord.planned_at
+          : null,
+      }
+      : null,
+    taskResultBrief: Object.keys(taskResultBriefRecord).length > 0
+      ? {
+        taskId: String(taskResultBriefRecord.task_id ?? taskResultBriefRecord.taskId ?? '').trim(),
+        taskStatus: typeof (taskResultBriefRecord.task_status ?? taskResultBriefRecord.taskStatus) === 'string'
+          ? String(taskResultBriefRecord.task_status ?? taskResultBriefRecord.taskStatus)
+          : null,
+        resultSummary: String(taskResultBriefRecord.result_summary ?? taskResultBriefRecord.resultSummary ?? '').trim(),
+        resultFormat: typeof (taskResultBriefRecord.result_format ?? taskResultBriefRecord.resultFormat) === 'string'
+          ? String(taskResultBriefRecord.result_format ?? taskResultBriefRecord.resultFormat)
+          : null,
+        resultMessageId: typeof (taskResultBriefRecord.result_message_id ?? taskResultBriefRecord.resultMessageId) === 'string'
+          ? String(taskResultBriefRecord.result_message_id ?? taskResultBriefRecord.resultMessageId)
+          : null,
+        sourceSessionId: typeof (taskResultBriefRecord.source_session_id ?? taskResultBriefRecord.sourceSessionId) === 'string'
+          ? String(taskResultBriefRecord.source_session_id ?? taskResultBriefRecord.sourceSessionId)
+          : null,
+        sourceTurnId: typeof (taskResultBriefRecord.source_turn_id ?? taskResultBriefRecord.sourceTurnId) === 'string'
+          ? String(taskResultBriefRecord.source_turn_id ?? taskResultBriefRecord.sourceTurnId)
+          : null,
+        finishedAt: typeof (taskResultBriefRecord.finished_at ?? taskResultBriefRecord.finishedAt) === 'string'
+          ? String(taskResultBriefRecord.finished_at ?? taskResultBriefRecord.finishedAt)
+          : null,
+        updatedAt: typeof (taskResultBriefRecord.updated_at ?? taskResultBriefRecord.updatedAt) === 'string'
+          ? String(taskResultBriefRecord.updated_at ?? taskResultBriefRecord.updatedAt)
           : null,
       }
       : null,

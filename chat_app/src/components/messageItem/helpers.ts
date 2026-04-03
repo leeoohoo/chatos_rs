@@ -31,6 +31,43 @@ const compactTextChunks = (chunks: string[]): string => {
   return merged;
 };
 
+const segmentSignature = (segment: RenderSegment): string => {
+  if (segment.type === 'tool_call') {
+    return `tool:${typeof segment.toolCallId === 'string' ? segment.toolCallId.trim() : ''}`;
+  }
+  if (segment.type === 'thinking') {
+    return `thinking:${typeof segment.content === 'string' ? segment.content.trim() : ''}`;
+  }
+  return `text:${typeof segment.content === 'string' ? segment.content.trim() : ''}`;
+};
+
+const collapseRepeatedWholeSequence = (segments: RenderSegment[]): RenderSegment[] => {
+  if (segments.length < 2) {
+    return segments;
+  }
+
+  const signatures = segments.map(segmentSignature);
+  for (let blockLength = 1; blockLength <= Math.floor(segments.length / 2); blockLength += 1) {
+    if (segments.length % blockLength !== 0) {
+      continue;
+    }
+
+    let repeated = true;
+    for (let index = blockLength; index < signatures.length; index += 1) {
+      if (signatures[index] !== signatures[index % blockLength]) {
+        repeated = false;
+        break;
+      }
+    }
+
+    if (repeated) {
+      return segments.slice(0, blockLength);
+    }
+  }
+
+  return segments;
+};
+
 export const normalizeMetaId = (value: unknown): string => (
   typeof value === 'string' ? value.trim() : ''
 );
@@ -88,5 +125,5 @@ export const normalizeContentSegmentsForRender = (segments: unknown[]): RenderSe
     index += 1;
   }
 
-  return normalized;
+  return collapseRepeatedWholeSequence(normalized);
 };

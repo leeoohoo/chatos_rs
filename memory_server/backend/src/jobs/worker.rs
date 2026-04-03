@@ -10,7 +10,7 @@ use crate::ai::AiClient;
 use crate::repositories::{configs, sessions};
 use crate::state::AppState;
 
-use super::{agent_memory, rollup, summary, task_execution_summary};
+use super::{agent_memory, rollup, summary, task_execution_rollup, task_execution_summary};
 
 #[derive(Default)]
 struct WorkerState {
@@ -81,15 +81,19 @@ async fn tick_once(
             }
         }
 
-        if summary_cfg.enabled == 1 {
+        let task_execution_summary_cfg =
+            configs::get_effective_task_execution_summary_job_config(&state.pool, user_id.as_str())
+                .await?;
+        if task_execution_summary_cfg.enabled == 1 {
             let key = format!("task_exec_summary:{}", user_id);
             if is_due(
                 &worker_state,
                 key.as_str(),
                 now_ts,
-                summary_cfg.job_interval_seconds,
+                task_execution_summary_cfg.job_interval_seconds,
             ) {
-                let result = task_execution_summary::run_once(&state.pool, &ai, user_id.as_str()).await;
+                let result =
+                    task_execution_summary::run_once(&state.pool, &ai, user_id.as_str()).await;
                 match result {
                     Ok(result) => {
                         info!(
@@ -139,6 +143,42 @@ async fn tick_once(
                     Err(err) => {
                         warn!(
                             "[MEMORY-WORKER] rollup run failed user_id={} error={}",
+                            user_id, err
+                        );
+                    }
+                }
+                mark_run(&worker_state, key.as_str(), now_ts);
+            }
+        }
+
+        let task_execution_rollup_cfg =
+            configs::get_effective_task_execution_rollup_job_config(&state.pool, user_id.as_str())
+                .await?;
+        if task_execution_rollup_cfg.enabled == 1 {
+            let key = format!("task_exec_rollup:{}", user_id);
+            if is_due(
+                &worker_state,
+                key.as_str(),
+                now_ts,
+                task_execution_rollup_cfg.job_interval_seconds,
+            ) {
+                let result =
+                    task_execution_rollup::run_once(&state.pool, &ai, user_id.as_str()).await;
+                match result {
+                    Ok(result) => {
+                        info!(
+                            "[MEMORY-WORKER] task execution rollup run user_id={} processed={} rolled_up={} generated={} marked={} failed={}",
+                            user_id,
+                            result.processed_scopes,
+                            result.rolled_up_scopes,
+                            result.generated_summaries,
+                            result.marked_summaries,
+                            result.failed_scopes
+                        );
+                    }
+                    Err(err) => {
+                        warn!(
+                            "[MEMORY-WORKER] task execution rollup run failed user_id={} error={}",
                             user_id, err
                         );
                     }

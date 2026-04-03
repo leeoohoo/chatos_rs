@@ -2,6 +2,10 @@ import type {
   SessionSummariesListResponse,
   SessionSummaryJobConfigPayload,
   SessionSummaryJobConfigResponse,
+  TaskExecutionRollupJobConfigPayload,
+  TaskExecutionRollupJobConfigResponse,
+  TaskExecutionSummaryJobConfigPayload,
+  TaskExecutionSummaryJobConfigResponse,
 } from './types';
 import type { ApiRequestFn } from './workspace';
 
@@ -28,6 +32,66 @@ export const patchSessionSummaryJobConfig = (
   payload: SessionSummaryJobConfigPayload,
 ): Promise<SessionSummaryJobConfigResponse> => {
   return request<SessionSummaryJobConfigResponse>('/session-summary-job-config', {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+};
+
+export const getTaskExecutionSummaryJobConfig = (
+  request: ApiRequestFn,
+  userId?: string,
+): Promise<TaskExecutionSummaryJobConfigResponse> => {
+  const params = userId ? `?user_id=${encodeURIComponent(userId)}` : '';
+  return request<TaskExecutionSummaryJobConfigResponse>(
+    `/task-execution-summary-job-config${params}`
+  );
+};
+
+export const updateTaskExecutionSummaryJobConfig = (
+  request: ApiRequestFn,
+  payload: TaskExecutionSummaryJobConfigPayload,
+): Promise<TaskExecutionSummaryJobConfigResponse> => {
+  return request<TaskExecutionSummaryJobConfigResponse>('/task-execution-summary-job-config', {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+};
+
+export const patchTaskExecutionSummaryJobConfig = (
+  request: ApiRequestFn,
+  payload: TaskExecutionSummaryJobConfigPayload,
+): Promise<TaskExecutionSummaryJobConfigResponse> => {
+  return request<TaskExecutionSummaryJobConfigResponse>('/task-execution-summary-job-config', {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+};
+
+export const getTaskExecutionRollupJobConfig = (
+  request: ApiRequestFn,
+  userId?: string,
+): Promise<TaskExecutionRollupJobConfigResponse> => {
+  const params = userId ? `?user_id=${encodeURIComponent(userId)}` : '';
+  return request<TaskExecutionRollupJobConfigResponse>(
+    `/task-execution-rollup-job-config${params}`
+  );
+};
+
+export const updateTaskExecutionRollupJobConfig = (
+  request: ApiRequestFn,
+  payload: TaskExecutionRollupJobConfigPayload,
+): Promise<TaskExecutionRollupJobConfigResponse> => {
+  return request<TaskExecutionRollupJobConfigResponse>('/task-execution-rollup-job-config', {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+};
+
+export const patchTaskExecutionRollupJobConfig = (
+  request: ApiRequestFn,
+  payload: TaskExecutionRollupJobConfigPayload,
+): Promise<TaskExecutionRollupJobConfigResponse> => {
+  return request<TaskExecutionRollupJobConfigResponse>('/task-execution-rollup-job-config', {
     method: 'PATCH',
     body: JSON.stringify(payload),
   });

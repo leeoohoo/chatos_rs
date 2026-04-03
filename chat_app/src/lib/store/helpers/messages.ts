@@ -49,6 +49,77 @@ const isSessionSummaryMessage = (message: Message): boolean => (
   message.role === 'assistant' && message.metadata?.type === 'session_summary'
 );
 
+const buildProcessMessageSignature = (message: Message): string => {
+  const metadata = message.metadata || {};
+  const raw = message as any;
+  const segments = Array.isArray(metadata.contentSegments) ? metadata.contentSegments : [];
+  const metadataToolCalls = Array.isArray(metadata.toolCalls) ? metadata.toolCalls : [];
+  const topLevelToolCalls = Array.isArray(raw?.toolCalls) ? raw.toolCalls : [];
+  const toolCallIds = [...metadataToolCalls, ...topLevelToolCalls]
+    .map((toolCall: any) => {
+      const id = typeof toolCall?.id === 'string' ? toolCall.id.trim() : '';
+      const name = typeof toolCall?.name === 'string' ? toolCall.name.trim() : '';
+      return id || name;
+    })
+    .filter(Boolean);
+  const segmentSignature = segments.map((segment: any) => {
+    const type = typeof segment?.type === 'string' ? segment.type.trim() : '';
+    if (type === 'tool_call') {
+      const toolCallId = typeof segment?.toolCallId === 'string' ? segment.toolCallId.trim() : '';
+      return `tool:${toolCallId}`;
+    }
+    if (type === 'thinking') {
+      const content = typeof segment?.content === 'string' ? segment.content.trim() : '';
+      return `thinking:${content}`;
+    }
+    if (type === 'text') {
+      const content = typeof segment?.content === 'string' ? segment.content.trim() : '';
+      return `text:${content}`;
+    }
+    return '';
+  }).filter(Boolean);
+  const toolResultId = typeof raw?.tool_call_id === 'string'
+    ? raw.tool_call_id.trim()
+    : typeof raw?.toolCallId === 'string'
+      ? raw.toolCallId.trim()
+      : typeof metadata.tool_call_id === 'string'
+        ? metadata.tool_call_id.trim()
+        : typeof metadata.toolCallId === 'string'
+          ? metadata.toolCallId.trim()
+          : '';
+  const content = typeof message.content === 'string' ? message.content.trim() : '';
+
+  return JSON.stringify({
+    role: message.role,
+    status: String(message.status || ''),
+    content,
+    toolResultId,
+    toolCallIds,
+    segmentSignature,
+  });
+};
+
+const dedupeProcessMessages = (messages: Message[]): Message[] => {
+  if (!Array.isArray(messages) || messages.length <= 1) {
+    return messages;
+  }
+
+  const seen = new Set<string>();
+  const deduped: Message[] = [];
+
+  messages.forEach((message) => {
+    const signature = buildProcessMessageSignature(message);
+    if (!signature || !seen.has(signature)) {
+      if (signature) {
+        seen.add(signature);
+      }
+      deduped.push(message);
+    }
+  });
+
+  return deduped;
+};
+
 const ensureCompactHistoryShape = (messages: Message[]): Message[] => {
   if (!Array.isArray(messages) || messages.length === 0) {
     return messages;
@@ -164,7 +235,8 @@ const ensureCompactHistoryShape = (messages: Message[]): Message[] => {
       }
     }
 
-    const processMessageCount = inlineProcessMessages.length;
+    const dedupedInlineProcessMessages = dedupeProcessMessages(inlineProcessMessages);
+    const processMessageCount = dedupedInlineProcessMessages.length;
 
     result.push({
       ...userMessage,
@@ -179,7 +251,7 @@ const ensureCompactHistoryShape = (messages: Message[]): Message[] => {
           ...(conversationTurnId ? { turnId: conversationTurnId } : {}),
           finalAssistantMessageId: finalAssistantIndex >= 0 ? messages[finalAssistantIndex].id : null,
         },
-        ...(processMessageCount > 0 ? { historyProcessInlineMessages: inlineProcessMessages } : {}),
+        ...(processMessageCount > 0 ? { historyProcessInlineMessages: dedupedInlineProcessMessages } : {}),
       },
     });
 
@@ -253,7 +325,7 @@ export const fetchTurnProcessMessages = async (
   } else {
     rawMessages = await client.getSessionTurnProcessMessages(sessionId, userMessageId);
   }
-  const normalized = normalizeRawMessages(rawMessages, sessionId);
+  const normalized = dedupeProcessMessages(normalizeRawMessages(rawMessages, sessionId));
 
   return normalized.map((message) => ({
     ...message,
@@ -383,9 +455,10 @@ export const mergeTurnProcessMessages = (
 ): Message[] => {
   const processKey = normalizeTurnId(options.processKey) || userMessageId;
   const hasTurnProcessKey = Boolean(processKey && processKey !== userMessageId);
+  const dedupedProcessMessages = dedupeProcessMessages(processMessages);
 
   const processById = new Map<string, Message>();
-  processMessages.forEach((message) => {
+  dedupedProcessMessages.forEach((message) => {
     processById.set(message.id, message);
   });
 
@@ -447,7 +520,7 @@ export const mergeTurnProcessMessages = (
   });
 
   const existingIds = new Set(merged.map((message) => message.id));
-  const missingMessages = processMessages.filter((message) => !existingIds.has(message.id));
+  const missingMessages = dedupedProcessMessages.filter((message) => !existingIds.has(message.id));
   if (missingMessages.length === 0) {
     return merged;
   }

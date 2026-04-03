@@ -43,6 +43,7 @@ impl TaskRow {
             finished_at: None,
             created_at: self.created_at,
             updated_at: self.updated_at,
+            task_result_brief: None,
         }
     }
 }

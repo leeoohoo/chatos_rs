@@ -92,5 +92,6 @@ pub(super) fn task_record_from_doc(doc: &Document) -> Option<TaskRecord> {
         finished_at: None,
         created_at,
         updated_at,
+        task_result_brief: None,
     })
 }

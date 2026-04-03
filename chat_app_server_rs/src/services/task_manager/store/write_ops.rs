@@ -1,9 +1,11 @@
 use crate::services::task_manager::normalizer::trimmed_non_empty;
 use crate::services::task_manager::types::{TaskRecord, TaskUpdatePatch, TASK_NOT_FOUND_ERR};
 use crate::services::task_service_client::{self, UpdateTaskRequestDto};
+use tracing::warn;
 
 use super::remote_support::{
-    map_legacy_status_to_remote, map_remote_task_to_record, resolve_task_scope_context,
+    map_legacy_status_to_remote, map_remote_result_brief, map_remote_task_to_record,
+    resolve_task_scope_context,
 };
 
 async fn load_session_scoped_remote_task(
@@ -30,6 +32,22 @@ async fn load_session_scoped_remote_task(
         return Err(TASK_NOT_FOUND_ERR.to_string());
     }
     Ok(task)
+}
+
+async fn enrich_remote_task(task: task_service_client::TaskRecordDto) -> TaskRecord {
+    let task_id = task.id.clone();
+    let task_result_brief = match task_service_client::get_task_result_brief(task_id.as_str()).await
+    {
+        Ok(item) => item.map(map_remote_result_brief),
+        Err(err) => {
+            warn!(
+                "load task result brief failed after task mutation: task_id={} detail={}",
+                task_id, err
+            );
+            None
+        }
+    };
+    map_remote_task_to_record(task, task_result_brief)
 }
 
 pub async fn update_task_by_id(
@@ -67,7 +85,7 @@ pub async fn update_task_by_id(
     .await?
     .ok_or_else(|| TASK_NOT_FOUND_ERR.to_string())?;
 
-    Ok(map_remote_task_to_record(updated))
+    Ok(enrich_remote_task(updated).await)
 }
 
 pub async fn complete_task_by_id(session_id: &str, task_id: &str) -> Result<TaskRecord, String> {
@@ -81,7 +99,7 @@ pub async fn complete_task_by_id(session_id: &str, task_id: &str) -> Result<Task
     )
     .await?
     .ok_or_else(|| TASK_NOT_FOUND_ERR.to_string())?;
-    Ok(map_remote_task_to_record(updated))
+    Ok(enrich_remote_task(updated).await)
 }
 
 pub async fn delete_task_by_id(session_id: &str, task_id: &str) -> Result<bool, String> {

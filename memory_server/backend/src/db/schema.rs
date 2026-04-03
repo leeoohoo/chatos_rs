@@ -11,6 +11,7 @@ pub async fn init_schema(db: &Db) -> Result<(), String> {
     ensure_session_indexes(db).await?;
     ensure_message_indexes(db).await?;
     ensure_task_execution_indexes(db).await?;
+    ensure_task_result_brief_indexes(db).await?;
     ensure_summary_indexes(db).await?;
     ensure_config_indexes(db).await?;
     ensure_job_run_indexes(db).await?;
@@ -119,6 +120,21 @@ async fn ensure_task_execution_indexes(db: &Db) -> Result<(), String> {
         doc! {"scope_key": 1, "status": 1, "level": 1, "created_at": 1},
     )
     .await?;
+    ensure_index(
+        db.collection("task_execution_summaries"),
+        doc! {"user_id": 1, "status": 1, "level": 1, "created_at": 1},
+    )
+    .await?;
+    ensure_index(
+        db.collection("task_execution_summaries"),
+        doc! {"status": 1, "level": 1, "agent_memory_summarized": 1, "created_at": 1},
+    )
+    .await?;
+    ensure_index(
+        db.collection("task_execution_summaries"),
+        doc! {"rollup_summary_id": 1},
+    )
+    .await?;
     ensure_unique_partial_index(
         db.collection("task_execution_summaries"),
         doc! {"scope_key": 1, "level": 1, "source_digest": 1},
@@ -173,6 +189,27 @@ async fn ensure_summary_indexes(db: &Db) -> Result<(), String> {
     Ok(())
 }
 
+async fn ensure_task_result_brief_indexes(db: &Db) -> Result<(), String> {
+    ensure_unique_index(db.collection("task_result_briefs"), doc! {"id": 1}).await?;
+    ensure_unique_index(db.collection("task_result_briefs"), doc! {"task_id": 1}).await?;
+    ensure_index(
+        db.collection("task_result_briefs"),
+        doc! {"user_id": 1, "contact_agent_id": 1, "project_id": 1, "finished_at": -1},
+    )
+    .await?;
+    ensure_index(
+        db.collection("task_result_briefs"),
+        doc! {"source_session_id": 1, "finished_at": -1},
+    )
+    .await?;
+    ensure_index(
+        db.collection("task_result_briefs"),
+        doc! {"user_id": 1, "contact_agent_id": 1, "agent_memory_summarized": 1, "created_at": 1},
+    )
+    .await?;
+    Ok(())
+}
+
 async fn ensure_config_indexes(db: &Db) -> Result<(), String> {
     ensure_unique_index(db.collection("ai_model_configs"), doc! {"id": 1}).await?;
     ensure_index(
@@ -187,6 +224,16 @@ async fn ensure_config_indexes(db: &Db) -> Result<(), String> {
     ensure_unique_index(db.collection("summary_job_configs"), doc! {"user_id": 1}).await?;
     ensure_unique_index(
         db.collection("summary_rollup_job_configs"),
+        doc! {"user_id": 1},
+    )
+    .await?;
+    ensure_unique_index(
+        db.collection("task_execution_summary_job_configs"),
+        doc! {"user_id": 1},
+    )
+    .await?;
+    ensure_unique_index(
+        db.collection("task_execution_rollup_job_configs"),
         doc! {"user_id": 1},
     )
     .await?;

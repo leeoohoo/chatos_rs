@@ -27,6 +27,10 @@ import type {
   StreamChatAttachmentPayload,
   StreamChatModelConfigPayload,
   StreamChatOptions,
+  TaskExecutionRollupJobConfigPayload,
+  TaskExecutionRollupJobConfigResponse,
+  TaskExecutionSummaryJobConfigPayload,
+  TaskExecutionSummaryJobConfigResponse,
   TaskManagerTaskResponse,
   TaskManagerUpdatePayload,
   TaskReviewDecisionPayload,
@@ -86,6 +90,12 @@ export interface RuntimeFacade {
   getSessionSummaryJobConfig(userId?: string): Promise<SessionSummaryJobConfigResponse>;
   updateSessionSummaryJobConfig(payload: SessionSummaryJobConfigPayload): Promise<SessionSummaryJobConfigResponse>;
   patchSessionSummaryJobConfig(payload: SessionSummaryJobConfigPayload): Promise<SessionSummaryJobConfigResponse>;
+  getTaskExecutionSummaryJobConfig(userId?: string): Promise<TaskExecutionSummaryJobConfigResponse>;
+  updateTaskExecutionSummaryJobConfig(payload: TaskExecutionSummaryJobConfigPayload): Promise<TaskExecutionSummaryJobConfigResponse>;
+  patchTaskExecutionSummaryJobConfig(payload: TaskExecutionSummaryJobConfigPayload): Promise<TaskExecutionSummaryJobConfigResponse>;
+  getTaskExecutionRollupJobConfig(userId?: string): Promise<TaskExecutionRollupJobConfigResponse>;
+  updateTaskExecutionRollupJobConfig(payload: TaskExecutionRollupJobConfigPayload): Promise<TaskExecutionRollupJobConfigResponse>;
+  patchTaskExecutionRollupJobConfig(payload: TaskExecutionRollupJobConfigPayload): Promise<TaskExecutionRollupJobConfigResponse>;
   getSessionSummaries(
     sessionId: string,
     options?: { limit?: number; offset?: number },
@@ -184,6 +194,24 @@ export const runtimeFacade: RuntimeFacade & ThisType<ApiClient> = {
   },
   async patchSessionSummaryJobConfig(payload) {
     return summaryApi.patchSessionSummaryJobConfig(this.getRequestFn(), payload);
+  },
+  async getTaskExecutionSummaryJobConfig(userId) {
+    return summaryApi.getTaskExecutionSummaryJobConfig(this.getRequestFn(), userId);
+  },
+  async updateTaskExecutionSummaryJobConfig(payload) {
+    return summaryApi.updateTaskExecutionSummaryJobConfig(this.getRequestFn(), payload);
+  },
+  async patchTaskExecutionSummaryJobConfig(payload) {
+    return summaryApi.patchTaskExecutionSummaryJobConfig(this.getRequestFn(), payload);
+  },
+  async getTaskExecutionRollupJobConfig(userId) {
+    return summaryApi.getTaskExecutionRollupJobConfig(this.getRequestFn(), userId);
+  },
+  async updateTaskExecutionRollupJobConfig(payload) {
+    return summaryApi.updateTaskExecutionRollupJobConfig(this.getRequestFn(), payload);
+  },
+  async patchTaskExecutionRollupJobConfig(payload) {
+    return summaryApi.patchTaskExecutionRollupJobConfig(this.getRequestFn(), payload);
   },
   async getSessionSummaries(sessionId, options) {
     return summaryApi.getSessionSummaries(this.getRequestFn(), sessionId, options);

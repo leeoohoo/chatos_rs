@@ -4,8 +4,12 @@ use crate::services::task_service_client::{
     self, CreateTaskRequestDto, TaskContextAssetRefDto, TaskExecutionResultContractDto,
     TaskPlanningSnapshotDto,
 };
+use tracing::warn;
 
-use super::remote_support::{map_remote_task_to_record, resolve_task_scope_context, TaskScopeContext};
+use super::remote_support::{
+    map_remote_result_brief, map_remote_task_to_record, resolve_task_scope_context,
+    TaskScopeContext,
+};
 
 fn planned_builtin_requires_project_root(id: &str) -> bool {
     matches!(
@@ -21,7 +25,9 @@ fn planned_builtin_requires_remote_connection(id: &str) -> bool {
     matches!(id.trim(), "builtin_remote_connection_controller")
 }
 
-fn ensure_planned_builtin_mcp_ids_present(planned_builtin_mcp_ids: &[String]) -> Result<(), String> {
+fn ensure_planned_builtin_mcp_ids_present(
+    planned_builtin_mcp_ids: &[String],
+) -> Result<(), String> {
     if planned_builtin_mcp_ids.is_empty() {
         Err("planned_builtin_mcp_ids is required and cannot be empty".to_string())
     } else {
@@ -35,7 +41,11 @@ fn ensure_planned_builtin_mcp_ids_authorized(
 ) -> Result<(), String> {
     let unauthorized = planned_builtin_mcp_ids
         .iter()
-        .filter(|item| !authorized_builtin_mcp_ids.iter().any(|allowed| allowed == *item))
+        .filter(|item| {
+            !authorized_builtin_mcp_ids
+                .iter()
+                .any(|allowed| allowed == *item)
+        })
         .cloned()
         .collect::<Vec<_>>();
 
@@ -64,7 +74,9 @@ fn ensure_runtime_requirements(
             .unwrap_or("")
             .is_empty()
     {
-        return Err("当前任务计划使用查看/读写/终端能力，但当前会话没有可用的 project_root".to_string());
+        return Err(
+            "当前任务计划使用查看/读写/终端能力，但当前会话没有可用的 project_root".to_string(),
+        );
     }
 
     if planned_builtin_mcp_ids
@@ -77,15 +89,21 @@ fn ensure_runtime_requirements(
             .unwrap_or("")
             .is_empty()
     {
-        return Err("当前任务计划使用远程连接能力，但当前会话没有选中的 remote_connection_id".to_string());
+        return Err(
+            "当前任务计划使用远程连接能力，但当前会话没有选中的 remote_connection_id".to_string(),
+        );
     }
 
     Ok(())
 }
 
 async fn resolve_contact_builtin_mcp_grants(scope: &TaskScopeContext) -> Vec<String> {
-    let Ok(contacts) =
-        crate::services::memory_server_client::list_memory_contacts(Some(scope.user_id.as_str()), Some(500), 0).await
+    let Ok(contacts) = crate::services::memory_server_client::list_memory_contacts(
+        Some(scope.user_id.as_str()),
+        Some(500),
+        0,
+    )
+    .await
     else {
         return Vec::new();
     };
@@ -117,12 +135,7 @@ fn resolve_runtime_skill<'a>(
     runtime_context.runtime_skills.iter().find(|item| {
         item.id.trim() == asset_id
             || (!source_path.is_empty()
-                && item
-                    .source_path
-                    .as_deref()
-                    .map(str::trim)
-                    .unwrap_or("")
-                    == source_path)
+                && item.source_path.as_deref().map(str::trim).unwrap_or("") == source_path)
             || (!display_name.is_empty() && item.name.trim() == display_name)
     })
 }
@@ -258,6 +271,184 @@ async fn hydrate_context_assets(
     Ok(out)
 }
 
+async fn build_task_planning_snapshot(
+    session_id: &str,
+    conversation_turn_id: &str,
+    scope: &TaskScopeContext,
+    contact_authorized_builtin_mcp_ids: &[String],
+) -> TaskPlanningSnapshotDto {
+    let turn_messages = fetch_turn_messages(session_id, conversation_turn_id)
+        .await
+        .unwrap_or_default();
+    let runtime_snapshot =
+        crate::services::memory_server_client::get_turn_runtime_snapshot_by_turn(
+            session_id,
+            conversation_turn_id,
+        )
+        .await
+        .ok()
+        .and_then(|payload| payload.snapshot);
+
+    TaskPlanningSnapshotDto {
+        contact_authorized_builtin_mcp_ids: contact_authorized_builtin_mcp_ids.to_vec(),
+        selected_model_config_id: scope.model_config_id.clone(),
+        source_user_goal_summary: build_source_user_goal_summary(turn_messages.as_slice()),
+        source_constraints_summary: build_source_constraints_summary(
+            turn_messages.as_slice(),
+            scope,
+            runtime_snapshot.as_ref(),
+        ),
+        planned_at: Some(crate::core::time::now_rfc3339()),
+    }
+}
+
+async fn fetch_turn_messages(
+    session_id: &str,
+    conversation_turn_id: &str,
+) -> Result<Vec<crate::models::message::Message>, String> {
+    let turn_id = conversation_turn_id.trim();
+    if turn_id.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let messages =
+        crate::services::memory_server_client::list_messages(session_id, Some(200), 0, true)
+            .await?;
+    Ok(messages
+        .into_iter()
+        .filter(|message| message_turn_id(message) == Some(turn_id))
+        .collect())
+}
+
+fn message_turn_id(message: &crate::models::message::Message) -> Option<&str> {
+    message
+        .metadata
+        .as_ref()
+        .and_then(|meta| {
+            meta.get("conversation_turn_id")
+                .and_then(serde_json::Value::as_str)
+        })
+        .or_else(|| {
+            message.metadata.as_ref().and_then(|meta| {
+                meta.get("conversationTurnId")
+                    .and_then(serde_json::Value::as_str)
+            })
+        })
+}
+
+fn build_source_user_goal_summary(messages: &[crate::models::message::Message]) -> Option<String> {
+    let user_texts = messages
+        .iter()
+        .filter(|message| message.role.trim().eq_ignore_ascii_case("user"))
+        .map(|message| message.content.trim())
+        .filter(|content| !content.is_empty())
+        .collect::<Vec<_>>();
+    if user_texts.is_empty() {
+        return None;
+    }
+
+    let joined = user_texts.join("\n");
+    Some(limit_text(joined.as_str(), 600))
+}
+
+fn build_source_constraints_summary(
+    messages: &[crate::models::message::Message],
+    scope: &TaskScopeContext,
+    runtime_snapshot: Option<&crate::services::memory_server_client::TurnRuntimeSnapshotDto>,
+) -> Option<String> {
+    let mut lines = Vec::new();
+
+    let explicit_constraints = messages
+        .iter()
+        .filter(|message| message.role.trim().eq_ignore_ascii_case("user"))
+        .flat_map(|message| message.content.lines())
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .filter(|line| {
+            ["不要", "不能", "必须", "只", "优先", "限定", "通过", "使用"]
+                .iter()
+                .any(|keyword| line.contains(keyword))
+        })
+        .take(6)
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    if !explicit_constraints.is_empty() {
+        lines.push("用户在本轮显式提出的约束:".to_string());
+        lines.extend(
+            explicit_constraints
+                .iter()
+                .map(|line| format!("- {}", limit_text(line.as_str(), 160))),
+        );
+    }
+
+    lines.push(format!("- project_id={}", scope.project_id));
+    if let Some(project_root) = scope
+        .project_root
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        lines.push(format!("- project_root={}", project_root));
+    }
+    if let Some(remote_connection_id) = scope
+        .remote_connection_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        lines.push(format!("- remote_connection_id={}", remote_connection_id));
+    }
+
+    if let Some(snapshot) = runtime_snapshot {
+        if let Some(runtime) = snapshot.runtime.as_ref() {
+            if !runtime.enabled_mcp_ids.is_empty() {
+                lines.push(format!(
+                    "- 本轮会话启用的 MCP={}",
+                    runtime.enabled_mcp_ids.join(", ")
+                ));
+            }
+            if !runtime.selected_commands.is_empty() {
+                let selected = runtime
+                    .selected_commands
+                    .iter()
+                    .filter_map(|item| {
+                        item.name
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty())
+                            .map(ToOwned::to_owned)
+                            .or_else(|| Some(item.source_path.trim().to_string()))
+                    })
+                    .take(6)
+                    .collect::<Vec<_>>();
+                if !selected.is_empty() {
+                    lines.push(format!("- 本轮已选择命令/commons={}", selected.join(", ")));
+                }
+            }
+        }
+    }
+
+    let text = lines
+        .into_iter()
+        .map(|line| limit_text(line.as_str(), 240))
+        .collect::<Vec<_>>()
+        .join("\n");
+    if text.trim().is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+fn limit_text(input: &str, max_chars: usize) -> String {
+    let trimmed = input.trim();
+    if trimmed.chars().count() <= max_chars {
+        return trimmed.to_string();
+    }
+    let truncated = trimmed.chars().take(max_chars).collect::<String>();
+    format!("{}...", truncated)
+}
+
 pub async fn create_tasks_for_turn(
     session_id: &str,
     conversation_turn_id: &str,
@@ -286,6 +477,13 @@ pub async fn create_tasks_for_turn(
             scope.contact_agent_id
         )
     })?;
+    let planning_snapshot = build_task_planning_snapshot(
+        session_id.as_str(),
+        conversation_turn_id.as_str(),
+        &scope,
+        contact_authorized_builtin_mcp_ids.as_slice(),
+    )
+    .await;
     let mut out = Vec::with_capacity(draft_tasks.len());
     for mut draft in draft_tasks {
         ensure_planned_builtin_mcp_ids_present(draft.planned_builtin_mcp_ids.as_slice())?;
@@ -294,11 +492,9 @@ pub async fn create_tasks_for_turn(
             contact_authorized_builtin_mcp_ids.as_slice(),
         )?;
         ensure_runtime_requirements(draft.planned_builtin_mcp_ids.as_slice(), &scope)?;
-        draft.planned_context_assets = hydrate_context_assets(
-            draft.planned_context_assets.as_slice(),
-            &runtime_context,
-        )
-        .await?;
+        draft.planned_context_assets =
+            hydrate_context_assets(draft.planned_context_assets.as_slice(), &runtime_context)
+                .await?;
         let created = task_service_client::create_task(&CreateTaskRequestDto {
             user_id: Some(scope.user_id.clone()),
             contact_agent_id: scope.contact_agent_id.clone(),
@@ -326,14 +522,22 @@ pub async fn create_tasks_for_turn(
                     preferred_format: None,
                 },
             )),
-            planning_snapshot: Some(TaskPlanningSnapshotDto {
-                contact_authorized_builtin_mcp_ids: contact_authorized_builtin_mcp_ids.clone(),
-                selected_model_config_id: scope.model_config_id.clone(),
-                planned_at: Some(crate::core::time::now_rfc3339()),
-            }),
+            planning_snapshot: Some(planning_snapshot.clone()),
         })
         .await?;
-        out.push(map_remote_task_to_record(created));
+        let task_id = created.id.clone();
+        let task_result_brief =
+            match task_service_client::get_task_result_brief(task_id.as_str()).await {
+                Ok(item) => item.map(map_remote_result_brief),
+                Err(err) => {
+                    warn!(
+                        "load task result brief failed after task create: task_id={} detail={}",
+                        task_id, err
+                    );
+                    None
+                }
+            };
+        out.push(map_remote_task_to_record(created, task_result_brief));
     }
 
     Ok(out)

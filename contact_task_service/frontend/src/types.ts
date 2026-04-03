@@ -19,6 +19,8 @@ export interface TaskExecutionResultContract {
 export interface TaskPlanningSnapshot {
   contact_authorized_builtin_mcp_ids: string[];
   selected_model_config_id?: string | null;
+  source_user_goal_summary?: string | null;
+  source_constraints_summary?: string | null;
   planned_at?: string | null;
 }
 
@@ -65,4 +67,22 @@ export interface TaskExecutionMessage {
   reasoning?: string | null;
   metadata?: Record<string, unknown> | null;
   created_at: string;
+}
+
+export interface TaskResultBrief {
+  id: string;
+  task_id: string;
+  user_id: string;
+  contact_agent_id: string;
+  project_id: string;
+  source_session_id?: string | null;
+  source_turn_id?: string | null;
+  task_title: string;
+  task_status: string;
+  result_summary: string;
+  result_format?: string | null;
+  result_message_id?: string | null;
+  finished_at?: string | null;
+  created_at: string;
+  updated_at: string;
 }

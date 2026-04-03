@@ -5,7 +5,8 @@ use crate::services::memory_server_client;
 pub async fn resolve_effective_contact_agent_model_config_id(
     contact_agent_id: &str,
 ) -> Result<Option<String>, String> {
-    let Some(agent) = memory_server_client::get_memory_agent_runtime_context(contact_agent_id).await?
+    let Some(agent) =
+        memory_server_client::get_memory_agent_runtime_context(contact_agent_id).await?
     else {
         return Ok(None);
     };

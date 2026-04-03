@@ -974,7 +974,20 @@ export interface TaskManagerTaskResponse {
   planning_snapshot?: {
     contact_authorized_builtin_mcp_ids?: string[];
     selected_model_config_id?: string | null;
+    source_user_goal_summary?: string | null;
+    source_constraints_summary?: string | null;
     planned_at?: string | null;
+  } | null;
+  task_result_brief?: {
+    task_id?: string;
+    task_status?: string | null;
+    result_summary?: string | null;
+    result_format?: string | null;
+    result_message_id?: string | null;
+    source_session_id?: string | null;
+    source_turn_id?: string | null;
+    finished_at?: string | null;
+    updated_at?: string | null;
   } | null;
   result_summary?: string | null;
   last_error?: string | null;
@@ -1123,6 +1136,43 @@ export interface SessionSummaryJobConfigResponse extends SessionSummaryJobConfig
   id?: string;
   created_at?: string;
   updated_at?: string;
+  limits?: Record<string, { min?: number; max?: number }>;
+}
+
+export interface TaskExecutionSummaryJobConfigPayload {
+  user_id?: string;
+  enabled?: boolean;
+  summary_model_config_id?: string | null;
+  token_limit?: number;
+  round_limit?: number;
+  target_summary_tokens?: number;
+  job_interval_seconds?: number;
+  max_scopes_per_tick?: number;
+}
+
+export interface TaskExecutionSummaryJobConfigResponse
+  extends TaskExecutionSummaryJobConfigPayload {
+  updated_at?: string;
+  limits?: Record<string, { min?: number; max?: number }>;
+}
+
+export interface TaskExecutionRollupJobConfigPayload {
+  user_id?: string;
+  enabled?: boolean;
+  summary_model_config_id?: string | null;
+  token_limit?: number;
+  round_limit?: number;
+  target_summary_tokens?: number;
+  job_interval_seconds?: number;
+  keep_raw_level0_count?: number;
+  max_level?: number;
+  max_scopes_per_tick?: number;
+}
+
+export interface TaskExecutionRollupJobConfigResponse
+  extends TaskExecutionRollupJobConfigPayload {
+  updated_at?: string;
+  limits?: Record<string, { min?: number; max?: number }>;
 }
 
 export interface SessionSummaryResponse {

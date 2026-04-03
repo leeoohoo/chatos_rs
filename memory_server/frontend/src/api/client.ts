@@ -14,6 +14,7 @@ import type {
   ProjectMemory,
   Session,
   SessionSummary,
+  TaskExecutionSummary,
   UserItem,
 } from '../types';
 
@@ -456,6 +457,24 @@ export const api = {
       session_id: data.session_id ?? null,
       items: data.items ?? [],
     };
+  },
+
+  async listTaskExecutionSummaries(
+    userId: string,
+    contactAgentId: string,
+    projectId: string,
+    params?: { limit?: number; offset?: number },
+  ): Promise<TaskExecutionSummary[]> {
+    const { data } = await client.get('/task-executions/summaries', {
+      params: {
+        user_id: userId,
+        contact_agent_id: contactAgentId,
+        project_id: projectId,
+        limit: params?.limit ?? 200,
+        offset: params?.offset ?? 0,
+      },
+    });
+    return data.items ?? [];
   },
 
   async listContactAgentRecalls(

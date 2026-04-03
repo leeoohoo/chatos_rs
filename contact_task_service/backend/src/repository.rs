@@ -77,13 +77,12 @@ pub async fn create_task(
         execution_note: req.execution_note,
         planned_builtin_mcp_ids,
         planned_context_assets: req.planned_context_assets,
-        execution_result_contract: Some(
-            req.execution_result_contract
-                .unwrap_or(TaskExecutionResultContract {
-                    result_required: true,
-                    preferred_format: None,
-                }),
-        ),
+        execution_result_contract: Some(req.execution_result_contract.unwrap_or(
+            TaskExecutionResultContract {
+                result_required: true,
+                preferred_format: None,
+            },
+        )),
         planning_snapshot: req.planning_snapshot,
         created_by: Some(auth_user_id.to_string()),
         created_at: now.clone(),

@@ -9,5 +9,7 @@ mod rollup_generation;
 pub mod summary;
 mod summary_generation;
 mod summary_support;
+pub mod task_execution_rollup;
+mod task_execution_rollup_generation;
 pub mod task_execution_summary;
 pub mod worker;

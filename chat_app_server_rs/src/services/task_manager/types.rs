@@ -74,6 +74,20 @@ pub struct TaskRecord {
     pub finished_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    pub task_result_brief: Option<TaskResultBrief>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskResultBrief {
+    pub task_id: String,
+    pub task_status: String,
+    pub result_summary: String,
+    pub result_format: Option<String>,
+    pub result_message_id: Option<String>,
+    pub source_session_id: Option<String>,
+    pub source_turn_id: Option<String>,
+    pub finished_at: Option<String>,
+    pub updated_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

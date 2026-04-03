@@ -5,12 +5,16 @@ import type {
   AgentMemoryJobConfig,
   RollupJobConfig,
   SummaryJobConfig,
+  TaskExecutionRollupJobConfig,
+  TaskExecutionSummaryJobConfig,
   UserItem,
 } from '../../types';
 import {
   createAgentMemoryConfig,
   createRollupConfig,
   createSummaryConfig,
+  createTaskExecutionRollupConfig,
+  createTaskExecutionSummaryConfig,
   normalizeMinInteger,
 } from './helpers';
 
@@ -29,6 +33,8 @@ export interface JobConfigsPageDataResult {
   usersLoading: boolean;
   summaryCfg: SummaryJobConfig | null;
   rollupCfg: RollupJobConfig | null;
+  taskExecutionSummaryCfg: TaskExecutionSummaryJobConfig | null;
+  taskExecutionRollupCfg: TaskExecutionRollupJobConfig | null;
   agentMemoryCfg: AgentMemoryJobConfig | null;
   modelOptions: Array<{ label: string; value: string }>;
   loading: boolean;
@@ -40,20 +46,38 @@ export interface JobConfigsPageDataResult {
   setTargetUserId: (userId: string) => void;
   setSummaryCfg: (cfg: SummaryJobConfig | null) => void;
   setRollupCfg: (cfg: RollupJobConfig | null) => void;
+  setTaskExecutionSummaryCfg: (cfg: TaskExecutionSummaryJobConfig | null) => void;
+  setTaskExecutionRollupCfg: (cfg: TaskExecutionRollupJobConfig | null) => void;
   setAgentMemoryCfg: (cfg: AgentMemoryJobConfig | null) => void;
   loadUsers: () => Promise<void>;
   load: () => Promise<void>;
   saveSummary: () => Promise<void>;
   saveRollup: () => Promise<void>;
+  saveTaskExecutionSummary: () => Promise<void>;
+  saveTaskExecutionRollup: () => Promise<void>;
   saveAgentMemory: () => Promise<void>;
   runSummaryNow: () => Promise<void>;
   runRollupNow: () => Promise<void>;
+  runTaskExecutionSummaryNow: () => Promise<void>;
+  runTaskExecutionRollupNow: () => Promise<void>;
   runAgentMemoryNow: () => Promise<void>;
   createEmptySummaryConfig: () => void;
   createEmptyRollupConfig: () => void;
+  createEmptyTaskExecutionSummaryConfig: () => void;
+  createEmptyTaskExecutionRollupConfig: () => void;
   createEmptyAgentMemoryConfig: () => void;
   setSummaryNumber: (key: keyof SummaryJobConfig, value: number | null, min: number) => void;
   setRollupNumber: (key: keyof RollupJobConfig, value: number | null, min: number) => void;
+  setTaskExecutionSummaryNumber: (
+    key: keyof TaskExecutionSummaryJobConfig,
+    value: number | null,
+    min: number,
+  ) => void;
+  setTaskExecutionRollupNumber: (
+    key: keyof TaskExecutionRollupJobConfig,
+    value: number | null,
+    min: number,
+  ) => void;
   setAgentMemoryNumber: (
     key: keyof AgentMemoryJobConfig,
     value: number | null,
@@ -74,6 +98,10 @@ export function useJobConfigsPageData({
   const [usersLoading, setUsersLoading] = useState(false);
   const [summaryCfg, setSummaryCfg] = useState<SummaryJobConfig | null>(null);
   const [rollupCfg, setRollupCfg] = useState<RollupJobConfig | null>(null);
+  const [taskExecutionSummaryCfg, setTaskExecutionSummaryCfg] =
+    useState<TaskExecutionSummaryJobConfig | null>(null);
+  const [taskExecutionRollupCfg, setTaskExecutionRollupCfg] =
+    useState<TaskExecutionRollupJobConfig | null>(null);
   const [agentMemoryCfg, setAgentMemoryCfg] = useState<AgentMemoryJobConfig | null>(null);
   const [modelOptions, setModelOptions] = useState<Array<{ label: string; value: string }>>([]);
   const [loading, setLoading] = useState(false);
@@ -139,6 +167,8 @@ export function useJobConfigsPageData({
     if (disabled) {
       setSummaryCfg(null);
       setRollupCfg(null);
+      setTaskExecutionSummaryCfg(null);
+      setTaskExecutionRollupCfg(null);
       setAgentMemoryCfg(null);
       setModelOptions([]);
       return;
@@ -148,14 +178,27 @@ export function useJobConfigsPageData({
     setError(null);
     try {
       const uid = targetUserId.trim();
-      const [summary, rollup, agentMemory, models] = await Promise.all([
+      const [summary, rollup, taskExecutionSummary, taskExecutionRollup, agentMemory, models] =
+        await Promise.all([
         api.getSummaryJobConfig(uid),
         api.getRollupJobConfig(uid),
+        api.getTaskExecutionSummaryJobConfig(uid),
+        api.getTaskExecutionRollupJobConfig(uid),
         api.getAgentMemoryJobConfig(uid),
         api.listModelConfigs(uid),
       ]);
       setSummaryCfg(summary ? { ...createSummaryConfig(uid), ...summary } : null);
       setRollupCfg(rollup ? { ...createRollupConfig(uid), ...rollup } : null);
+      setTaskExecutionSummaryCfg(
+        taskExecutionSummary
+          ? { ...createTaskExecutionSummaryConfig(uid), ...taskExecutionSummary }
+          : null,
+      );
+      setTaskExecutionRollupCfg(
+        taskExecutionRollup
+          ? { ...createTaskExecutionRollupConfig(uid), ...taskExecutionRollup }
+          : null,
+      );
       setAgentMemoryCfg(
         agentMemory
           ? { ...createAgentMemoryConfig(uid), ...agentMemory }
@@ -239,6 +282,42 @@ export function useJobConfigsPageData({
     }
   };
 
+  const saveTaskExecutionSummary = async () => {
+    if (!taskExecutionSummaryCfg) {
+      return;
+    }
+    setError(null);
+    setMessage(null);
+    try {
+      const saved = await api.saveTaskExecutionSummaryJobConfig({
+        ...taskExecutionSummaryCfg,
+        user_id: targetUserId.trim(),
+      });
+      setTaskExecutionSummaryCfg(saved);
+      setMessage(savedMessage);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
+  const saveTaskExecutionRollup = async () => {
+    if (!taskExecutionRollupCfg) {
+      return;
+    }
+    setError(null);
+    setMessage(null);
+    try {
+      const saved = await api.saveTaskExecutionRollupJobConfig({
+        ...taskExecutionRollupCfg,
+        user_id: targetUserId.trim(),
+      });
+      setTaskExecutionRollupCfg(saved);
+      setMessage(savedMessage);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
   const runSummaryNow = async () => {
     setError(null);
     setMessage(null);
@@ -272,6 +351,28 @@ export function useJobConfigsPageData({
     }
   };
 
+  const runTaskExecutionSummaryNow = async () => {
+    setError(null);
+    setMessage(null);
+    try {
+      const data = await api.runTaskExecutionSummaryOnce(targetUserId.trim());
+      setMessage(JSON.stringify(data));
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
+  const runTaskExecutionRollupNow = async () => {
+    setError(null);
+    setMessage(null);
+    try {
+      const data = await api.runTaskExecutionRollupOnce(targetUserId.trim());
+      setMessage(JSON.stringify(data));
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
   const createEmptySummaryConfig = () => {
     const uid = targetUserId.trim();
     if (!uid) {
@@ -294,6 +395,22 @@ export function useJobConfigsPageData({
       return;
     }
     setAgentMemoryCfg(createAgentMemoryConfig(uid));
+  };
+
+  const createEmptyTaskExecutionSummaryConfig = () => {
+    const uid = targetUserId.trim();
+    if (!uid) {
+      return;
+    }
+    setTaskExecutionSummaryCfg(createTaskExecutionSummaryConfig(uid));
+  };
+
+  const createEmptyTaskExecutionRollupConfig = () => {
+    const uid = targetUserId.trim();
+    if (!uid) {
+      return;
+    }
+    setTaskExecutionRollupCfg(createTaskExecutionRollupConfig(uid));
   };
 
   const setSummaryNumber = (key: keyof SummaryJobConfig, value: number | null, min: number) => {
@@ -327,12 +444,40 @@ export function useJobConfigsPageData({
     });
   };
 
+  const setTaskExecutionSummaryNumber = (
+    key: keyof TaskExecutionSummaryJobConfig,
+    value: number | null,
+    min: number,
+  ) => {
+    setTaskExecutionSummaryCfg((prev) => {
+      if (!prev) {
+        return prev;
+      }
+      return { ...prev, [key]: normalizeMinInteger(value, min) };
+    });
+  };
+
+  const setTaskExecutionRollupNumber = (
+    key: keyof TaskExecutionRollupJobConfig,
+    value: number | null,
+    min: number,
+  ) => {
+    setTaskExecutionRollupCfg((prev) => {
+      if (!prev) {
+        return prev;
+      }
+      return { ...prev, [key]: normalizeMinInteger(value, min) };
+    });
+  };
+
   return {
     targetUserId,
     users,
     usersLoading,
     summaryCfg,
     rollupCfg,
+    taskExecutionSummaryCfg,
+    taskExecutionRollupCfg,
     agentMemoryCfg,
     modelOptions,
     loading,
@@ -344,20 +489,30 @@ export function useJobConfigsPageData({
     setTargetUserId,
     setSummaryCfg,
     setRollupCfg,
+    setTaskExecutionSummaryCfg,
+    setTaskExecutionRollupCfg,
     setAgentMemoryCfg,
     loadUsers,
     load,
     saveSummary,
     saveRollup,
+    saveTaskExecutionSummary,
+    saveTaskExecutionRollup,
     saveAgentMemory,
     runSummaryNow,
     runRollupNow,
+    runTaskExecutionSummaryNow,
+    runTaskExecutionRollupNow,
     runAgentMemoryNow,
     createEmptySummaryConfig,
     createEmptyRollupConfig,
+    createEmptyTaskExecutionSummaryConfig,
+    createEmptyTaskExecutionRollupConfig,
     createEmptyAgentMemoryConfig,
     setSummaryNumber,
     setRollupNumber,
+    setTaskExecutionSummaryNumber,
+    setTaskExecutionRollupNumber,
     setAgentMemoryNumber,
   };
 }

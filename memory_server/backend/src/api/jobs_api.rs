@@ -107,6 +107,54 @@ pub(super) async fn run_agent_memory_once(
     }
 }
 
+pub(super) async fn run_task_execution_summary_once(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Json(req): Json<RunJobRequest>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match require_auth(&state, &headers) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    let scope_user_id = resolve_scope_user_id(&auth, req.user_id);
+    let ai = match build_ai_client(&state) {
+        Ok(client) => client,
+        Err(err) => return err,
+    };
+
+    match jobs::task_execution_summary::run_once(&state.pool, &ai, scope_user_id.as_str()).await {
+        Ok(data) => (StatusCode::OK, Json(json!({"ok": true, "data": data}))),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"ok": false, "error": err})),
+        ),
+    }
+}
+
+pub(super) async fn run_task_execution_rollup_once(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Json(req): Json<RunJobRequest>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match require_auth(&state, &headers) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    let scope_user_id = resolve_scope_user_id(&auth, req.user_id);
+    let ai = match build_ai_client(&state) {
+        Ok(client) => client,
+        Err(err) => return err,
+    };
+
+    match jobs::task_execution_rollup::run_once(&state.pool, &ai, scope_user_id.as_str()).await {
+        Ok(data) => (StatusCode::OK, Json(json!({"ok": true, "data": data}))),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"ok": false, "error": err})),
+        ),
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub(super) struct JobRunsQuery {
     job_type: Option<String>,

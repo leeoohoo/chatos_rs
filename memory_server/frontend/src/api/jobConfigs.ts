@@ -9,6 +9,8 @@ import type {
   SummaryJobConfig,
   SummaryLevelItem,
   SessionSummary,
+  TaskExecutionRollupJobConfig,
+  TaskExecutionSummaryJobConfig,
 } from '../types';
 
 function normalizeOptionalPrompt(value: string | null | undefined): string | null | undefined {
@@ -110,6 +112,72 @@ export function buildJobConfigsApi(client: AxiosInstance) {
       return data;
     },
 
+    async getTaskExecutionSummaryJobConfig(
+      userId: string,
+    ): Promise<TaskExecutionSummaryJobConfig | null> {
+      const { data } = await client.get('/configs/task-execution-summary-job', {
+        params: { user_id: userId },
+      });
+      return data ?? null;
+    },
+
+    async saveTaskExecutionSummaryJobConfig(
+      payload: Partial<TaskExecutionSummaryJobConfig> & { user_id: string },
+    ) {
+      const req = {
+        user_id: payload.user_id,
+        enabled:
+          payload.enabled === undefined
+            ? undefined
+            : typeof payload.enabled === 'number'
+              ? payload.enabled === 1
+              : Boolean(payload.enabled),
+        summary_model_config_id: payload.summary_model_config_id,
+        summary_prompt: normalizeOptionalPrompt(payload.summary_prompt),
+        token_limit: payload.token_limit,
+        round_limit: payload.round_limit,
+        target_summary_tokens: payload.target_summary_tokens,
+        job_interval_seconds: payload.job_interval_seconds,
+        max_scopes_per_tick: payload.max_scopes_per_tick,
+      };
+      const { data } = await client.put('/configs/task-execution-summary-job', req);
+      return data;
+    },
+
+    async getTaskExecutionRollupJobConfig(
+      userId: string,
+    ): Promise<TaskExecutionRollupJobConfig | null> {
+      const { data } = await client.get('/configs/task-execution-rollup-job', {
+        params: { user_id: userId },
+      });
+      return data ?? null;
+    },
+
+    async saveTaskExecutionRollupJobConfig(
+      payload: Partial<TaskExecutionRollupJobConfig> & { user_id: string },
+    ) {
+      const req = {
+        user_id: payload.user_id,
+        enabled:
+          payload.enabled === undefined
+            ? undefined
+            : typeof payload.enabled === 'number'
+              ? payload.enabled === 1
+              : Boolean(payload.enabled),
+        summary_model_config_id: payload.summary_model_config_id,
+        summary_prompt: normalizeOptionalPrompt(payload.summary_prompt),
+        token_limit: payload.token_limit,
+        round_limit: payload.round_limit,
+        target_summary_tokens: payload.target_summary_tokens,
+        job_interval_seconds: payload.job_interval_seconds,
+        keep_raw_level0_count: payload.keep_raw_level0_count,
+        max_level: payload.max_level,
+        max_scopes_per_tick: payload.max_scopes_per_tick,
+      };
+      const { data } = await client.put('/configs/task-execution-rollup-job', req);
+      return data;
+    },
+
     async runSummaryOnce(userId: string, sessionId?: string) {
       const { data } = await client.post('/jobs/summary/run-once', {
         user_id: userId,
@@ -157,6 +225,20 @@ export function buildJobConfigsApi(client: AxiosInstance) {
 
     async runAgentMemoryOnce(userId: string) {
       const { data } = await client.post('/jobs/agent-memory/run-once', {
+        user_id: userId,
+      });
+      return data;
+    },
+
+    async runTaskExecutionSummaryOnce(userId: string) {
+      const { data } = await client.post('/jobs/task-execution-summary/run-once', {
+        user_id: userId,
+      });
+      return data;
+    },
+
+    async runTaskExecutionRollupOnce(userId: string) {
+      const { data } = await client.post('/jobs/task-execution-rollup/run-once', {
         user_id: userId,
       });
       return data;

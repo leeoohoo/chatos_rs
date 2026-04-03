@@ -6,7 +6,8 @@ use serde_json::{json, Value};
 
 use crate::models::{
     UpsertAgentMemoryJobConfigRequest, UpsertSummaryJobConfigRequest,
-    UpsertSummaryRollupJobConfigRequest,
+    UpsertSummaryRollupJobConfigRequest, UpsertTaskExecutionRollupJobConfigRequest,
+    UpsertTaskExecutionSummaryJobConfigRequest,
 };
 use crate::repositories::configs;
 
@@ -110,6 +111,84 @@ pub(super) async fn get_agent_memory_job_config(
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": "get agent memory job config failed", "detail": err})),
+        ),
+    }
+}
+
+pub(super) async fn get_task_execution_summary_job_config(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Query(q): Query<UserIdQuery>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match require_auth(&state, &headers) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    let user_id = resolve_scope_user_id(&auth, q.user_id);
+    match configs::get_task_execution_summary_job_config(&state.pool, user_id.as_str()).await {
+        Ok(cfg) => (StatusCode::OK, Json(json!(cfg))),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "get task execution summary job config failed", "detail": err})),
+        ),
+    }
+}
+
+pub(super) async fn put_task_execution_summary_job_config(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Json(mut req): Json<UpsertTaskExecutionSummaryJobConfigRequest>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match require_auth(&state, &headers) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    req.user_id = resolve_scope_user_id(&auth, Some(req.user_id.clone()));
+
+    match configs::upsert_task_execution_summary_job_config(&state.pool, req).await {
+        Ok(cfg) => (StatusCode::OK, Json(json!(cfg))),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "save task execution summary job config failed", "detail": err})),
+        ),
+    }
+}
+
+pub(super) async fn get_task_execution_rollup_job_config(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Query(q): Query<UserIdQuery>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match require_auth(&state, &headers) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    let user_id = resolve_scope_user_id(&auth, q.user_id);
+    match configs::get_task_execution_rollup_job_config(&state.pool, user_id.as_str()).await {
+        Ok(cfg) => (StatusCode::OK, Json(json!(cfg))),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "get task execution rollup job config failed", "detail": err})),
+        ),
+    }
+}
+
+pub(super) async fn put_task_execution_rollup_job_config(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Json(mut req): Json<UpsertTaskExecutionRollupJobConfigRequest>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match require_auth(&state, &headers) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    req.user_id = resolve_scope_user_id(&auth, Some(req.user_id.clone()));
+
+    match configs::upsert_task_execution_rollup_job_config(&state.pool, req).await {
+        Ok(cfg) => (StatusCode::OK, Json(json!(cfg))),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "save task execution rollup job config failed", "detail": err})),
         ),
     }
 }

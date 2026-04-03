@@ -1,9 +1,17 @@
 use super::job_support;
 use crate::db::Db;
 use crate::models::AgentRecall;
+use crate::models::TaskResultBrief;
 use crate::repositories::memories;
 use crate::repositories::summaries::AgentMemorySummarySource;
 use crate::services::summarizer::estimate_tokens_text;
+use std::collections::BTreeSet;
+
+#[derive(Debug, Clone)]
+pub(crate) enum AgentMemorySourceItem {
+    ChatSummary(AgentMemorySummarySource),
+    TaskResultBrief(TaskResultBrief),
+}
 
 #[derive(Debug, Clone)]
 pub(crate) struct RecallRollupSelection {
@@ -19,11 +27,11 @@ pub(crate) fn recall_to_rollup_block(recall: &AgentRecall) -> String {
     )
 }
 
-pub(crate) fn select_summary_batch(
-    candidates: &[AgentMemorySummarySource],
+pub(crate) fn select_source_batch(
+    candidates: &[AgentMemorySourceItem],
     round_limit: i64,
     token_limit: i64,
-) -> Option<Vec<AgentMemorySummarySource>> {
+) -> Option<Vec<AgentMemorySourceItem>> {
     if candidates.is_empty() {
         return None;
     }
@@ -40,13 +48,90 @@ pub(crate) fn select_summary_batch(
 
     let token_sum = candidates
         .iter()
-        .map(|item| estimate_tokens_text(item.summary_text.as_str()))
+        .map(agent_memory_source_to_text)
+        .map(|text| estimate_tokens_text(text.as_str()))
         .sum::<i64>();
     if token_sum >= token_limit {
         return Some(candidates.to_vec());
     }
 
     None
+}
+
+pub(crate) fn agent_memory_source_to_text(item: &AgentMemorySourceItem) -> String {
+    match item {
+        AgentMemorySourceItem::ChatSummary(item) => format!(
+            "[source_kind=chat_summary][project_id={}][summary_id={}][created_at={}][trigger_type={}]\n{}",
+            item.project_id.clone().unwrap_or_else(|| "0".to_string()),
+            item.id,
+            item.created_at,
+            item.trigger_type,
+            item.summary_text
+        ),
+        AgentMemorySourceItem::TaskResultBrief(item) => format!(
+            "[source_kind=task_result][project_id={}][task_id={}][task_status={}][finished_at={}]\n{}",
+            item.project_id,
+            item.task_id,
+            item.task_status,
+            item.finished_at
+                .clone()
+                .unwrap_or_else(|| item.updated_at.clone()),
+            item.result_summary
+        ),
+    }
+}
+
+pub(crate) fn agent_memory_source_digest_id(item: &AgentMemorySourceItem) -> String {
+    match item {
+        AgentMemorySourceItem::ChatSummary(item) => format!("chat_summary:{}", item.id),
+        AgentMemorySourceItem::TaskResultBrief(item) => format!("task_result:{}", item.id),
+    }
+}
+
+pub(crate) fn aggregate_project_ids_from_sources(
+    candidates: &[AgentMemorySourceItem],
+) -> Vec<String> {
+    let mut project_ids = BTreeSet::new();
+    for item in candidates {
+        match item {
+            AgentMemorySourceItem::ChatSummary(item) => {
+                project_ids.insert(item.project_id.clone().unwrap_or_else(|| "0".to_string()));
+            }
+            AgentMemorySourceItem::TaskResultBrief(item) => {
+                project_ids.insert(item.project_id.clone());
+            }
+        }
+    }
+    project_ids.into_iter().collect()
+}
+
+pub(crate) fn aggregate_task_ids_from_sources(candidates: &[AgentMemorySourceItem]) -> Vec<String> {
+    let mut task_ids = BTreeSet::new();
+    for item in candidates {
+        if let AgentMemorySourceItem::TaskResultBrief(item) = item {
+            task_ids.insert(item.task_id.clone());
+        }
+    }
+    task_ids.into_iter().collect()
+}
+
+pub(crate) fn resolve_source_kind(candidates: &[AgentMemorySourceItem]) -> Option<String> {
+    let mut kinds = BTreeSet::new();
+    for item in candidates {
+        match item {
+            AgentMemorySourceItem::ChatSummary(_) => {
+                kinds.insert("chat_summary");
+            }
+            AgentMemorySourceItem::TaskResultBrief(_) => {
+                kinds.insert("task_result");
+            }
+        }
+    }
+    match kinds.len() {
+        0 => None,
+        1 => kinds.iter().next().map(|value| (*value).to_string()),
+        _ => Some("mixed".to_string()),
+    }
 }
 
 pub(crate) async fn select_rollup_batch(

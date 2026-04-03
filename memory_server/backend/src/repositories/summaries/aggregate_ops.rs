@@ -152,6 +152,7 @@ pub async fn list_pending_agent_memory_summaries_by_agent(
         doc! {"$project": {
             "_id": 0,
             "id": 1,
+            "source_kind": {"$literal": "chat_summary"},
             "session_id": 1,
             "summary_text": 1,
             "summary_model": 1,

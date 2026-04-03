@@ -1,10 +1,12 @@
 import { Alert, Button, Card, Form, Input, InputNumber, Select, Space, Switch } from 'antd';
 
-import type { RollupJobConfig } from '../../types';
+import type { RollupJobConfig, TaskExecutionRollupJobConfig } from '../../types';
 import { DEFAULT_SUMMARY_PROMPT_TEMPLATE } from './helpers';
 
+type RollupConfigLike = RollupJobConfig | TaskExecutionRollupJobConfig;
+
 interface RollupConfigCardProps {
-  config: RollupJobConfig | null;
+  config: RollupConfigLike | null;
   modelOptions: Array<{ label: string; value: string }>;
   title: string;
   enabledLabel: string;
@@ -18,14 +20,15 @@ interface RollupConfigCardProps {
   intervalLabel: string;
   keepRawLabel: string;
   maxLevelLabel: string;
-  maxSessionsLabel: string;
+  maxCountLabel: string;
+  maxCountKey: 'max_sessions_per_tick' | 'max_scopes_per_tick';
   saveLabel: string;
   notConfiguredMessage: string;
   createConfigLabel: string;
   keepRawWarning: string | null;
   triggerHint: string | null;
-  onChange: (config: RollupJobConfig) => void;
-  onSetNumber: (key: keyof RollupJobConfig, value: number | null, min: number) => void;
+  onChange: (config: RollupConfigLike) => void;
+  onSetNumber: (key: keyof RollupConfigLike, value: number | null, min: number) => void;
   onSave: () => void;
   onCreate: () => void;
 }
@@ -45,7 +48,8 @@ export function RollupConfigCard({
   intervalLabel,
   keepRawLabel,
   maxLevelLabel,
-  maxSessionsLabel,
+  maxCountLabel,
+  maxCountKey,
   saveLabel,
   notConfiguredMessage,
   createConfigLabel,
@@ -158,11 +162,11 @@ export function RollupConfigCard({
               style={{ width: '100%' }}
             />
           </Form.Item>
-          <Form.Item label={maxSessionsLabel}>
+          <Form.Item label={maxCountLabel}>
             <InputNumber
               min={1}
-              value={config.max_sessions_per_tick}
-              onChange={(value) => onSetNumber('max_sessions_per_tick', value, 1)}
+              value={config[maxCountKey]}
+              onChange={(value) => onSetNumber(maxCountKey, value, 1)}
               style={{ width: '100%' }}
             />
           </Form.Item>

@@ -18,8 +18,8 @@ use crate::services::builtin_mcp::{BuiltinMcpKind, TASK_EXECUTOR_SERVER_NAME};
 use crate::services::contact_agent_model::{
     normalize_optional_model_id, resolve_effective_contact_agent_model_config_id,
 };
-use crate::services::memory_server_client::{self, TaskExecutionScopeBinding};
 use crate::services::mcp_loader::McpBuiltinServer;
+use crate::services::memory_server_client::{self, TaskExecutionScopeBinding};
 use crate::services::session_event_hub::session_event_hub;
 use crate::services::task_service_client::{
     self, AckAllDoneRequestDto, SchedulerRequestDto, TaskExecutionScopeDto, TaskRecordDto,
@@ -134,7 +134,7 @@ async fn execute_task(scope: TaskExecutionScopeDto, task: TaskRecordDto) -> Resu
                 if final_text.is_empty() {
                     format!("任务“{}”已完成。", task.title)
                 } else {
-                        format!("任务“{}”已完成。\n\n{}", task.title, final_text)
+                    format!("任务“{}”已完成。\n\n{}", task.title, final_text)
                 },
             )
             .await
@@ -149,18 +149,19 @@ async fn execute_task(scope: TaskExecutionScopeDto, task: TaskRecordDto) -> Resu
                 }
             };
 
-            if let Err(err) = task_service_client::update_task_internal(
+            let result_summary = compact_result_summary(
+                if final_text.is_empty() {
+                    format!("任务“{}”已完成", task.title)
+                } else {
+                    final_text.clone()
+                }
+                .as_str(),
+            );
+            let updated_task = match task_service_client::update_task_internal(
                 task.id.as_str(),
                 &UpdateTaskRequestDto {
                     status: Some("completed".to_string()),
-                    result_summary: Some(Some(compact_result_summary(
-                        if final_text.is_empty() {
-                            format!("任务“{}”已完成", task.title)
-                        } else {
-                            final_text.clone()
-                        }
-                        .as_str(),
-                    ))),
+                    result_summary: Some(Some(result_summary.clone())),
                     result_message_id: Some(
                         saved_notice
                             .as_ref()
@@ -173,9 +174,34 @@ async fn execute_task(scope: TaskExecutionScopeDto, task: TaskRecordDto) -> Resu
             )
             .await
             {
+                Ok(task) => task,
+                Err(err) => {
+                    warn!(
+                        "[TASK-RUNNER] update completed status failed: scope={} task_id={} error={}",
+                        scope.scope_key, task.id, err
+                    );
+                    None
+                }
+            };
+            if let Some(updated_task) = updated_task.as_ref() {
+                if let Err(err) = sync_task_result_brief(
+                    &scope,
+                    updated_task,
+                    "completed",
+                    result_summary.as_str(),
+                    saved_notice.as_ref().map(|item| item.id.as_str()),
+                )
+                .await
+                {
+                    warn!(
+                        "[TASK-RUNNER] sync completion brief failed: scope={} task_id={} error={}",
+                        scope.scope_key, task.id, err
+                    );
+                }
+            } else {
                 warn!(
                     "[TASK-RUNNER] update completed status failed: scope={} task_id={} error={}",
-                    scope.scope_key, task.id, err
+                    scope.scope_key, task.id, "task not returned after update"
                 );
             }
             info!(
@@ -200,11 +226,11 @@ async fn execute_task(scope: TaskExecutionScopeDto, task: TaskRecordDto) -> Resu
                     scope.scope_key, task.id, notice_err
                 );
             }
-            if let Err(update_err) = task_service_client::update_task_internal(
+            let updated_task = match task_service_client::update_task_internal(
                 task.id.as_str(),
                 &UpdateTaskRequestDto {
                     status: Some("failed".to_string()),
-                    result_summary: Some(None),
+                    result_summary: Some(Some(compact_result_summary(err.as_str()))),
                     result_message_id: Some(None),
                     last_error: Some(Some(err.clone())),
                     ..UpdateTaskRequestDto::default()
@@ -212,9 +238,28 @@ async fn execute_task(scope: TaskExecutionScopeDto, task: TaskRecordDto) -> Resu
             )
             .await
             {
+                Ok(task) => task,
+                Err(update_err) => {
+                    warn!(
+                        "[TASK-RUNNER] update failed status failed: scope={} task_id={} error={}",
+                        scope.scope_key, task.id, update_err
+                    );
+                    None
+                }
+            };
+            if let Some(updated_task) = updated_task.as_ref() {
+                if let Err(bridge_err) =
+                    sync_task_result_brief(&scope, updated_task, "failed", err.as_str(), None).await
+                {
+                    warn!(
+                        "[TASK-RUNNER] sync failure brief failed: scope={} task_id={} error={}",
+                        scope.scope_key, task.id, bridge_err
+                    );
+                }
+            } else {
                 warn!(
                     "[TASK-RUNNER] update failed status failed: scope={} task_id={} error={}",
-                    scope.scope_key, task.id, update_err
+                    scope.scope_key, task.id, "task not returned after update"
                 );
             }
             Err(format!(
@@ -245,11 +290,11 @@ async fn fail_task(
             scope.scope_key, task.id, notice_err
         );
     }
-    if let Err(update_err) = task_service_client::update_task_internal(
+    let updated_task = match task_service_client::update_task_internal(
         task.id.as_str(),
         &UpdateTaskRequestDto {
             status: Some("failed".to_string()),
-            result_summary: Some(None),
+            result_summary: Some(Some(compact_result_summary(err))),
             result_message_id: Some(None),
             last_error: Some(Some(err.to_string())),
             ..UpdateTaskRequestDto::default()
@@ -257,9 +302,28 @@ async fn fail_task(
     )
     .await
     {
+        Ok(task) => task,
+        Err(update_err) => {
+            warn!(
+                "[TASK-RUNNER] update setup-failure status failed: scope={} task_id={} error={}",
+                scope.scope_key, task.id, update_err
+            );
+            None
+        }
+    };
+    if let Some(updated_task) = updated_task.as_ref() {
+        if let Err(bridge_err) =
+            sync_task_result_brief(&scope, updated_task, "failed", err, None).await
+        {
+            warn!(
+                "[TASK-RUNNER] sync setup-failure brief failed: scope={} task_id={} error={}",
+                scope.scope_key, task.id, bridge_err
+            );
+        }
+    } else {
         warn!(
             "[TASK-RUNNER] update setup-failure status failed: scope={} task_id={} error={}",
-            scope.scope_key, task.id, update_err
+            scope.scope_key, task.id, "task not returned after update"
         );
     }
     Err(format!(
@@ -523,14 +587,12 @@ async fn validate_task_execution_grants(
     };
 
     if task.planned_builtin_mcp_ids.is_empty() {
-        return Err(format!(
-            "task {} missing planned_builtin_mcp_ids",
-            task.id
-        ));
+        return Err(format!("task {} missing planned_builtin_mcp_ids", task.id));
     }
 
-    let contacts = memory_server_client::list_memory_contacts(Some(scope.user_id.as_str()), Some(500), 0)
-        .await?;
+    let contacts =
+        memory_server_client::list_memory_contacts(Some(scope.user_id.as_str()), Some(500), 0)
+            .await?;
     let authorized_builtin_mcp_ids = contacts
         .into_iter()
         .find(|contact| contact.agent_id.trim() == scope.contact_agent_id.trim())
@@ -576,7 +638,9 @@ fn build_task_execution_prefixed_input_items(
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
-        items.push(system_input_item(format!("历史上下文总结：\n{}", summary).as_str()));
+        items.push(system_input_item(
+            format!("历史上下文总结：\n{}", summary).as_str(),
+        ));
     }
 
     if let Some(task) = task {
@@ -586,6 +650,26 @@ fn build_task_execution_prefixed_input_items(
             format!("任务标题={}", task.title),
             format!("任务状态={}", task.status),
         ];
+        if let Some(snapshot) = task.planning_snapshot.as_ref() {
+            if let Some(source_goal) = snapshot
+                .source_user_goal_summary
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                lines.push("来源用户目标摘要:".to_string());
+                lines.push(source_goal.to_string());
+            }
+            if let Some(source_constraints) = snapshot
+                .source_constraints_summary
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                lines.push("来源约束摘要:".to_string());
+                lines.push(source_constraints.to_string());
+            }
+        }
         if !task.planned_builtin_mcp_ids.is_empty() {
             lines.push(format!(
                 "本次任务允许使用的内置 MCP={}",
@@ -595,7 +679,11 @@ fn build_task_execution_prefixed_input_items(
         if let Some(contract) = task.execution_result_contract.as_ref() {
             lines.push(format!(
                 "结果必填={}",
-                if contract.result_required { "true" } else { "false" }
+                if contract.result_required {
+                    "true"
+                } else {
+                    "false"
+                }
             ));
             if let Some(format) = contract
                 .preferred_format
@@ -656,7 +744,9 @@ async fn build_task_execution_asset_context(
     for asset in &task.planned_context_assets {
         match asset.asset_type.trim().to_ascii_lowercase().as_str() {
             "skill" => {
-                let Some(skill) = memory_server_client::get_memory_skill(asset.asset_id.as_str()).await? else {
+                let Some(skill) =
+                    memory_server_client::get_memory_skill(asset.asset_id.as_str()).await?
+                else {
                     continue;
                 };
                 sections.push(format!(
@@ -815,6 +905,44 @@ async fn save_task_notice_message(
     });
     session_event_hub().publish(session_id.as_str(), payload);
     Ok(Some(saved))
+}
+
+async fn sync_task_result_brief(
+    scope: &TaskExecutionScopeDto,
+    task: &TaskRecordDto,
+    task_status: &str,
+    result_summary: &str,
+    result_message_id: Option<&str>,
+) -> Result<(), String> {
+    let result_summary = result_summary.trim();
+    if result_summary.is_empty() {
+        return Ok(());
+    }
+
+    memory_server_client::upsert_task_result_brief(
+        &memory_server_client::UpsertTaskResultBriefRequestDto {
+            task_id: task.id.clone(),
+            user_id: scope.user_id.clone(),
+            contact_agent_id: scope.contact_agent_id.clone(),
+            project_id: scope.project_id.clone(),
+            source_session_id: task.session_id.clone(),
+            source_turn_id: task.conversation_turn_id.clone(),
+            task_title: task.title.clone(),
+            task_status: task_status.trim().to_string(),
+            result_summary: compact_result_summary(result_summary),
+            result_format: task
+                .execution_result_contract
+                .as_ref()
+                .and_then(|item| item.preferred_format.clone()),
+            result_message_id: result_message_id
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| value.to_string()),
+            finished_at: task.finished_at.clone(),
+        },
+    )
+    .await?;
+    Ok(())
 }
 
 fn compact_result_summary(text: &str) -> String {

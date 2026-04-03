@@ -7,7 +7,9 @@ use tracing::{info, warn};
 use crate::ai::AiClient;
 use crate::db::Db;
 use crate::models::{AiModelConfig, CreateTaskExecutionSummaryInput, TaskExecutionScope};
-use crate::repositories::{configs, jobs, locks, task_execution_messages, task_execution_summaries};
+use crate::repositories::{
+    configs, jobs, locks, task_execution_messages, task_execution_summaries,
+};
 use crate::services::summarizer::{
     estimate_tokens_text, estimate_tokens_texts, summarize_texts_with_split,
 };
@@ -28,7 +30,7 @@ pub async fn run_once(
     ai: &AiClient,
     user_id: &str,
 ) -> Result<TaskExecutionSummaryRunResult, String> {
-    let config = configs::get_effective_summary_job_config(pool, user_id).await?;
+    let config = configs::get_effective_task_execution_summary_job_config(pool, user_id).await?;
     if config.enabled != 1 {
         return Ok(TaskExecutionSummaryRunResult {
             processed_scopes: 0,
@@ -53,7 +55,7 @@ pub async fn run_once(
     let scopes = task_execution_messages::list_pending_scopes_by_user(
         pool,
         user_id,
-        config.max_sessions_per_tick,
+        config.max_scopes_per_tick,
     )
     .await?;
 
@@ -69,7 +71,7 @@ pub async fn run_once(
     }
 
     let concurrency = job_support::resolve_tick_concurrency(
-        config.max_sessions_per_tick,
+        config.max_scopes_per_tick,
         "MEMORY_SERVER_TASK_EXECUTION_SUMMARY_CONCURRENCY",
         2,
     );
@@ -221,7 +223,10 @@ async fn process_scope_locked(
             None,
         )
         .await?;
-        let all_texts: Vec<String> = all_pending.iter().map(task_message_to_summary_block).collect();
+        let all_texts: Vec<String> = all_pending
+            .iter()
+            .map(task_message_to_summary_block)
+            .collect();
         let tokens = estimate_tokens_texts(all_texts.as_slice());
         if tokens >= token_limit.max(500) {
             pending_all_for_trigger = Some(all_pending);
@@ -415,7 +420,12 @@ async fn process_scope_locked(
 
 fn task_message_to_summary_block(message: &crate::models::TaskExecutionMessage) -> String {
     let mut extras = Vec::new();
-    if let Some(task_id) = message.task_id.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+    if let Some(task_id) = message
+        .task_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
         extras.push(format!("task_id={task_id}"));
     }
     if let Some(source_session_id) = message

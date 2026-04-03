@@ -14,9 +14,10 @@ mod session_support;
 pub mod sessions;
 pub mod skills;
 pub mod summaries;
+mod summaries_support;
 pub mod task_execution_messages;
 pub mod task_execution_summaries;
-mod summaries_support;
+pub mod task_result_briefs;
 pub mod turn_runtime_snapshots;
 
 pub fn normalize_optional_text(value: Option<&str>) -> Option<String> {

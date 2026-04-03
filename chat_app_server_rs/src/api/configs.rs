@@ -14,7 +14,8 @@ use crate::core::user_scope::resolve_user_id;
 use crate::models::mcp_config::McpConfig;
 use crate::repositories::mcp_configs as mcp_repo;
 use crate::services::builtin_mcp::{
-    builtin_display_name, is_builtin_mcp_id, is_internal_only_builtin_mcp_id, list_builtin_mcp_configs,
+    builtin_display_name, is_builtin_mcp_id, is_internal_only_builtin_mcp_id,
+    list_builtin_mcp_configs,
 };
 
 mod ai_model;

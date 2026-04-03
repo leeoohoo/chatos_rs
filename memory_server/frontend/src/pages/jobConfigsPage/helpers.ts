@@ -2,6 +2,8 @@ import type {
   AgentMemoryJobConfig,
   RollupJobConfig,
   SummaryJobConfig,
+  TaskExecutionRollupJobConfig,
+  TaskExecutionSummaryJobConfig,
 } from '../../types';
 
 export const DEFAULT_SUMMARY_PROMPT_TEMPLATE =
@@ -45,6 +47,36 @@ export const createAgentMemoryConfig = (uid: string): AgentMemoryJobConfig => ({
   keep_raw_level0_count: 0,
   max_level: 4,
   max_agents_per_tick: 50,
+});
+
+export const createTaskExecutionSummaryConfig = (
+  uid: string,
+): TaskExecutionSummaryJobConfig => ({
+  user_id: uid,
+  enabled: 1,
+  summary_model_config_id: null,
+  summary_prompt: DEFAULT_SUMMARY_PROMPT_TEMPLATE,
+  token_limit: 6000,
+  round_limit: 8,
+  target_summary_tokens: 700,
+  job_interval_seconds: 30,
+  max_scopes_per_tick: 50,
+});
+
+export const createTaskExecutionRollupConfig = (
+  uid: string,
+): TaskExecutionRollupJobConfig => ({
+  user_id: uid,
+  enabled: 1,
+  summary_model_config_id: null,
+  summary_prompt: DEFAULT_SUMMARY_PROMPT_TEMPLATE,
+  token_limit: 6000,
+  round_limit: 50,
+  target_summary_tokens: 700,
+  job_interval_seconds: 60,
+  keep_raw_level0_count: 0,
+  max_level: 4,
+  max_scopes_per_tick: 50,
 });
 
 export const normalizeMinInteger = (value: number | null, min: number): number => {

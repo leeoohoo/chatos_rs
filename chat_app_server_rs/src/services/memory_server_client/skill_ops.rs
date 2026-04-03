@@ -1,19 +1,20 @@
+use super::current_access_token;
 use super::dto::{MemorySkillDto, MemorySkillPluginDto};
 use super::http::{
     build_url, client, send_optional_json, send_optional_json_without_service_token,
     timeout_duration,
 };
-use super::current_access_token;
 
 pub async fn get_memory_skill(skill_id: &str) -> Result<Option<MemorySkillDto>, String> {
     let path = if current_access_token().is_some() {
         build_url(&format!("/skills/{}", urlencoding::encode(skill_id)))
     } else {
-        build_url(&format!("/internal/skills/{}", urlencoding::encode(skill_id)))
+        build_url(&format!(
+            "/internal/skills/{}",
+            urlencoding::encode(skill_id)
+        ))
     };
-    let req = client()
-        .get(path.as_str())
-        .timeout(timeout_duration());
+    let req = client().get(path.as_str()).timeout(timeout_duration());
     if current_access_token().is_some() {
         send_optional_json(req).await
     } else {

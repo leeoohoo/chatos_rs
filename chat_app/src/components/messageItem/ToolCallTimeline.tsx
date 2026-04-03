@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import type { Message, ToolCall } from '../../types';
 import { cn } from '../../lib/utils';
 import { ToolCallRenderer } from '../ToolCallRenderer';
@@ -13,7 +13,18 @@ export const ToolCallTimeline: React.FC<ToolCallTimelineProps> = ({
   toolResultById,
 }) => {
   const [expanded, setExpanded] = useState(false);
-  const shouldClampTimeline = toolCalls.length > 6;
+  const [activeToolIndex, setActiveToolIndex] = useState(0);
+
+  useEffect(() => {
+    if (toolCalls.length === 0) {
+      setActiveToolIndex(0);
+      return;
+    }
+
+    setActiveToolIndex((current) => (
+      current >= toolCalls.length ? toolCalls.length - 1 : current
+    ));
+  }, [toolCalls]);
 
   const resolveToolResult = (toolCall: ToolCall) => {
     if (toolCall.result !== undefined && toolCall.result !== null) {
@@ -61,13 +72,10 @@ export const ToolCallTimeline: React.FC<ToolCallTimelineProps> = ({
   }, [toolCalls, toolResultById]);
 
   const summaryNames = useMemo(() => {
-    const names = toolCalls.map((toolCall) => toolCall?.name).filter(Boolean);
-    if (names.length === 0) {
-      return '';
-    }
-    const shown = names.slice(0, 2).map((name) => `@${name}`).join(' · ');
-    const more = names.length - 2;
-    return more > 0 ? `${shown} · +${more}` : shown;
+    const names = toolCalls
+      .map((toolCall) => toolCall?.name)
+      .filter((name): name is string => Boolean(name));
+    return names.slice(0, 3);
   }, [toolCalls]);
 
   const statusDotClass = summaryStatus === 'error'
@@ -75,22 +83,47 @@ export const ToolCallTimeline: React.FC<ToolCallTimelineProps> = ({
     : summaryStatus === 'success'
       ? 'bg-emerald-500'
       : 'bg-amber-500';
+  const statusBadgeClass = summaryStatus === 'error'
+    ? 'border-red-200 bg-red-50 text-red-700 dark:border-red-900/80 dark:bg-red-950/30 dark:text-red-300'
+    : summaryStatus === 'success'
+      ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/80 dark:bg-emerald-950/30 dark:text-emerald-300'
+      : 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/80 dark:bg-amber-950/30 dark:text-amber-300';
+  const activeTool = toolCalls[activeToolIndex] || null;
 
   return (
-    <div className="rounded-md border border-border bg-muted/30">
-      <div className="flex items-center justify-between px-3 py-2">
-        <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-          <span className={`inline-flex h-2 w-2 rounded-full ${statusDotClass}`} />
-          <span className="font-medium text-foreground">工具调用</span>
-          <span>· {toolCalls.length} 个</span>
-          {summaryNames && (
-            <span className="hidden truncate sm:inline">{summaryNames}</span>
+    <div className="rounded-xl border border-border/70 bg-card/80 shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+          <span
+            className={cn(
+              'inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-[11px] font-medium',
+              statusBadgeClass,
+            )}
+          >
+            <span className={`inline-flex h-2 w-2 rounded-full ${statusDotClass}`} />
+            工具调用
+          </span>
+          <span className="inline-flex items-center rounded-full bg-muted px-2.5 py-1 text-[11px] text-muted-foreground">
+            {toolCalls.length} 个
+          </span>
+          {summaryNames.map((name, index) => (
+            <span
+              key={`${name}-${index}`}
+              className="hidden max-w-[180px] truncate rounded-full border border-border/60 bg-background/80 px-2.5 py-1 text-[11px] text-foreground/80 sm:inline-flex"
+            >
+              @{name}
+            </span>
+          ))}
+          {toolCalls.length > summaryNames.length && (
+            <span className="hidden rounded-full bg-muted px-2.5 py-1 text-[11px] text-muted-foreground sm:inline-flex">
+              +{toolCalls.length - summaryNames.length}
+            </span>
           )}
         </div>
         <button
           type="button"
           onClick={() => setExpanded((prev) => !prev)}
-          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+          className="inline-flex items-center gap-1 rounded-full border border-border/70 bg-background px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           aria-label={expanded ? '收起工具时间线' : '展开工具时间线'}
           aria-expanded={expanded}
         >
@@ -111,37 +144,49 @@ export const ToolCallTimeline: React.FC<ToolCallTimelineProps> = ({
       </div>
 
       {expanded && (
-        <div
-          className={cn(
-            'space-y-2 px-3 pb-3',
-            shouldClampTimeline && 'max-h-72 overflow-y-auto pr-1',
-          )}
-        >
-          {toolCalls.map((toolCall, index) => {
-            const status = getToolStatus(toolCall);
-            const dotClass = status === 'error'
-              ? 'bg-red-500'
-              : status === 'success'
-                ? 'bg-emerald-500'
-                : 'bg-amber-500';
+        <div className="border-t border-border/60 px-3 pb-3 pt-3">
+          <div className="mb-3 flex flex-wrap gap-2">
+            {toolCalls.map((toolCall, index) => {
+              const status = getToolStatus(toolCall);
+              const dotClass = status === 'error'
+                ? 'bg-red-500'
+                : status === 'success'
+                  ? 'bg-emerald-500'
+                  : 'bg-amber-500';
+              const active = index === activeToolIndex;
 
-            return (
-              <div key={toolCall.id || `tool-${index}`} className="flex gap-3">
-                <div className="relative flex flex-col items-center pt-1">
-                  <span className={`h-2.5 w-2.5 rounded-full ${dotClass}`} />
-                  {index < toolCalls.length - 1 && (
-                    <span className="mt-1 w-px flex-1 bg-border" />
+              return (
+                <button
+                  key={toolCall.id || `tool-${index}`}
+                  type="button"
+                  onClick={() => setActiveToolIndex(index)}
+                  className={cn(
+                    'inline-flex max-w-full items-center gap-2 rounded-full border px-3 py-1.5 text-xs transition-colors',
+                    active
+                      ? 'border-primary/30 bg-primary/10 text-primary shadow-sm'
+                      : 'border-border/70 bg-background text-muted-foreground hover:border-primary/20 hover:text-foreground',
                   )}
-                </div>
-                <div className="flex-1">
-                  <ToolCallRenderer
-                    toolCall={toolCall}
-                    toolResultById={toolResultById}
-                  />
-                </div>
-              </div>
-            );
-          })}
+                  aria-pressed={active}
+                >
+                  <span className={`h-2 w-2 rounded-full ${dotClass}`} />
+                  <span className="text-[11px] text-muted-foreground">#{index + 1}</span>
+                  <span className="max-w-[220px] truncate font-medium">
+                    @{toolCall.name || 'unknown_tool'}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          {activeTool && (
+            <div className="rounded-2xl border border-border/60 bg-muted/20 p-2">
+              <ToolCallRenderer
+                toolCall={activeTool}
+                toolResultById={toolResultById}
+                className="w-full"
+              />
+            </div>
+          )}
         </div>
       )}
     </div>

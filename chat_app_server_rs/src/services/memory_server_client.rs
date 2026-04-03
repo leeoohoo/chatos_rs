@@ -35,16 +35,18 @@ pub use self::model_config_ops::get_memory_model_config;
 pub use self::session_ops::{
     clear_summaries, compose_context, create_session, delete_message, delete_messages_by_session,
     delete_session, delete_summary, get_latest_turn_runtime_snapshot, get_message_by_id,
-    get_session_by_id, get_summary_job_config, get_turn_runtime_snapshot_by_turn, list_messages,
+    get_session_by_id, get_summary_job_config, get_task_execution_rollup_job_config,
+    get_task_execution_summary_job_config, get_turn_runtime_snapshot_by_turn, list_messages,
     list_sessions, list_summaries, sync_turn_runtime_snapshot, update_session, upsert_message,
-    upsert_summary_job_config,
+    upsert_summary_job_config, upsert_task_execution_rollup_job_config,
+    upsert_task_execution_summary_job_config,
 };
 pub use self::skill_ops::{get_memory_skill, get_memory_skill_plugin};
 #[allow(unused_imports)]
 pub use self::task_execution_ops::{
     compose_task_execution_context, delete_task_execution_messages, delete_task_execution_summary,
     list_task_execution_messages, list_task_execution_summaries, upsert_task_execution_message,
-    TaskExecutionScopeBinding,
+    upsert_task_result_brief, TaskExecutionScopeBinding,
 };
 
 pub async fn with_access_token_scope<T, Fut>(access_token: Option<String>, future: Fut) -> T

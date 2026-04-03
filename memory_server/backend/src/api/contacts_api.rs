@@ -5,6 +5,5 @@ pub(super) use super::contacts_context_api::{
 };
 pub(super) use super::contacts_crud_api::{
     create_contact, delete_contact, get_contact_builtin_mcp_grants, internal_list_contacts,
-    list_contacts,
-    update_contact_builtin_mcp_grants,
+    list_contacts, update_contact_builtin_mcp_grants,
 };

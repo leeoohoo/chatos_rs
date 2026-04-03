@@ -37,6 +37,8 @@ pub struct TaskPlanningSnapshot {
     #[serde(default)]
     pub contact_authorized_builtin_mcp_ids: Vec<String>,
     pub selected_model_config_id: Option<String>,
+    pub source_user_goal_summary: Option<String>,
+    pub source_constraints_summary: Option<String>,
     pub planned_at: Option<String>,
 }
 
@@ -202,6 +204,25 @@ pub struct TaskExecutionMessageView {
     pub summary_id: Option<String>,
     pub summarized_at: Option<String>,
     pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskResultBriefView {
+    pub id: String,
+    pub task_id: String,
+    pub user_id: String,
+    pub contact_agent_id: String,
+    pub project_id: String,
+    pub source_session_id: Option<String>,
+    pub source_turn_id: Option<String>,
+    pub task_title: String,
+    pub task_status: String,
+    pub result_summary: String,
+    pub result_format: Option<String>,
+    pub result_message_id: Option<String>,
+    pub finished_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

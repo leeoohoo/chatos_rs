@@ -87,10 +87,7 @@ pub async fn get_skill_by_id(
         .map_err(|e| e.to_string())
 }
 
-pub async fn get_skill_by_id_any(
-    db: &Db,
-    skill_id: &str,
-) -> Result<Option<MemorySkill>, String> {
+pub async fn get_skill_by_id_any(db: &Db, skill_id: &str) -> Result<Option<MemorySkill>, String> {
     skill_collection(db)
         .find_one(doc! { "id": skill_id })
         .await

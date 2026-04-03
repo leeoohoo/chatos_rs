@@ -1,7 +1,9 @@
 use serde_json::{Map, Value};
 
 use crate::services::task_manager::TaskDraft;
-use crate::services::task_service_client::{TaskContextAssetRefDto, TaskExecutionResultContractDto};
+use crate::services::task_service_client::{
+    TaskContextAssetRefDto, TaskExecutionResultContractDto,
+};
 
 pub(crate) fn parse_task_drafts(args: &Value) -> Result<Vec<TaskDraft>, String> {
     if let Some(items) = args.get("tasks").and_then(Value::as_array) {

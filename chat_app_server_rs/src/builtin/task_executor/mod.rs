@@ -7,7 +7,9 @@ use crate::builtin::task_planner::parsing::{parse_task_drafts, trimmed_non_empty
 use crate::core::async_bridge::block_on_result;
 use crate::core::tool_io::text_result;
 use crate::services::memory_server_client;
-use crate::services::task_manager::{create_tasks_for_turn, list_tasks_for_context, resolve_task_scope_context};
+use crate::services::task_manager::{
+    create_tasks_for_turn, list_tasks_for_context, resolve_task_scope_context,
+};
 use crate::services::task_service_client::{self, TaskRecordDto, UpdateTaskRequestDto};
 
 #[derive(Debug, Clone)]
@@ -41,8 +43,12 @@ impl TaskExecutorService {
         service.register_get_contact_builtin_mcp_grants(opts.current_task_id.as_str());
         service.register_list_contact_runtime_assets(opts.current_task_id.as_str());
         service.register_get_current_task(opts.current_task_id.as_str());
-        service.register_complete_current_task(opts.server_name.as_str(), opts.current_task_id.as_str());
-        service.register_fail_current_task(opts.server_name.as_str(), opts.current_task_id.as_str());
+        service.register_complete_current_task(
+            opts.server_name.as_str(),
+            opts.current_task_id.as_str(),
+        );
+        service
+            .register_fail_current_task(opts.server_name.as_str(), opts.current_task_id.as_str());
         Ok(service)
     }
 

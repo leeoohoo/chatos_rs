@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-import type { AuthUser, ContactTask, TaskExecutionMessage } from './types';
+import type { AuthUser, ContactTask, TaskExecutionMessage, TaskResultBrief } from './types';
 
 const tokenKey = 'contact_task_service_auth_token';
 
@@ -48,5 +48,10 @@ export const api = {
   async listTaskExecutionMessages(taskId: string): Promise<TaskExecutionMessage[]> {
     const { data } = await client.get(`/tasks/${encodeURIComponent(taskId)}/execution-messages`);
     return data.items ?? [];
+  },
+
+  async getTaskResultBrief(taskId: string): Promise<TaskResultBrief | null> {
+    const { data } = await client.get(`/tasks/${encodeURIComponent(taskId)}/result-brief`);
+    return data.item ?? null;
   },
 };

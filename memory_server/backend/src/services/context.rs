@@ -4,9 +4,11 @@ use crate::db::Db;
 use crate::models::{
     AgentRecall, ComposeContextMeta, ComposeContextRequest, ComposeContextResponse, SessionSummary,
     TaskExecutionComposeRequest, TaskExecutionComposeResponse, TaskExecutionSummary,
+    TaskResultBrief,
 };
 use crate::repositories::{
     memories, messages, sessions, summaries, task_execution_messages, task_execution_summaries,
+    task_result_briefs,
 };
 
 const DEFAULT_SUMMARY_LIMIT: usize = 3;
@@ -15,7 +17,23 @@ const TOP_SUMMARY_COUNT: usize = 2;
 const LEVEL0_SUMMARY_COUNT: usize = 2;
 const DEFAULT_AGENT_MEMORY_LATEST_COUNT: usize = 1;
 const DEFAULT_AGENT_MEMORY_TOP_LEVEL_COUNT: usize = 1;
+const DEFAULT_TASK_RESULT_BRIEF_COUNT: usize = 3;
 const AGENT_MEMORY_PICK_MODE_LATEST_PLUS_HIGHEST_LEVEL: &str = "latest_plus_highest_level";
+
+struct SummarySectionLabels {
+    rollup_title: &'static str,
+    level0_title: &'static str,
+}
+
+const CHAT_SUMMARY_LABELS: SummarySectionLabels = SummarySectionLabels {
+    rollup_title: "以下是历史会话高层总结：",
+    level0_title: "以下是历史会话总结：",
+};
+
+const TASK_EXECUTION_SUMMARY_LABELS: SummarySectionLabels = SummarySectionLabels {
+    rollup_title: "以下是历史任务执行高层总结：",
+    level0_title: "以下是历史任务执行总结：",
+};
 
 pub async fn compose_context(
     pool: &Db,
@@ -43,13 +61,28 @@ pub async fn compose_context(
     };
     let user_id = session.user_id.trim().to_string();
     let agent_id = agent_id_from_session_metadata(session.metadata.as_ref());
-    let (merged_summary, summary_count, used_levels, filtered_rollup_count) = compose_summary_section(
-        summary_records.as_slice(),
-        user_id.as_str(),
-        agent_id.as_deref(),
-        pool,
-    )
-    .await?;
+    let project_id = normalize_project_scope_id(session.project_id.as_deref());
+    let (summary_section, summary_count, used_levels, filtered_rollup_count) =
+        compose_summary_section(summary_records.as_slice(), &CHAT_SUMMARY_LABELS).await?;
+    let (agent_memory_section, agent_memory_count) = if let Some(agent_id) = agent_id.as_deref() {
+        compose_agent_memory_section_from_agent(pool, user_id.as_str(), agent_id).await?
+    } else {
+        (None, 0)
+    };
+    let (task_result_section, task_result_count) = if let Some(agent_id) = agent_id.as_deref() {
+        compose_task_result_brief_section(
+            pool,
+            user_id.as_str(),
+            agent_id,
+            project_id.as_str(),
+            DEFAULT_TASK_RESULT_BRIEF_COUNT as i64,
+        )
+        .await?
+    } else {
+        (None, 0)
+    };
+    let merged_summary =
+        merge_context_sections(&[agent_memory_section, task_result_section, summary_section]);
 
     let pending_limit = req.pending_limit.map(|v| v as i64).filter(|v| *v > 0);
     let messages = if include_raw {
@@ -61,7 +94,7 @@ pub async fn compose_context(
     Ok(ComposeContextResponse {
         session_id: req.session_id,
         merged_summary,
-        summary_count,
+        summary_count: summary_count + agent_memory_count + task_result_count,
         messages,
         meta: ComposeContextMeta {
             used_levels,
@@ -94,13 +127,26 @@ pub async fn compose_task_execution_context(
     )
     .await?;
 
-    let (merged_summary, summary_count, used_levels, filtered_rollup_count) = compose_summary_section(
-        summary_records.as_slice(),
-        req.user_id.as_str(),
-        Some(req.contact_agent_id.as_str()),
+    let (summary_section, summary_count, used_levels, filtered_rollup_count) =
+        compose_summary_section(summary_records.as_slice(), &TASK_EXECUTION_SUMMARY_LABELS).await?;
+    let (agent_memory_section, agent_memory_count) = compose_agent_memory_section_from_agent(
         pool,
+        req.user_id.as_str(),
+        req.contact_agent_id.as_str(),
     )
-    .await?;
+    .await
+    .unwrap_or((None, 0));
+    let (task_result_section, task_result_count) = compose_task_result_brief_section(
+        pool,
+        req.user_id.as_str(),
+        req.contact_agent_id.as_str(),
+        req.project_id.as_str(),
+        DEFAULT_TASK_RESULT_BRIEF_COUNT as i64,
+    )
+    .await
+    .unwrap_or((None, 0));
+    let merged_summary =
+        merge_context_sections(&[task_result_section, summary_section, agent_memory_section]);
 
     let pending_limit = req.pending_limit.map(|v| v as i64).filter(|v| *v > 0);
     let messages = if include_raw {
@@ -121,7 +167,7 @@ pub async fn compose_task_execution_context(
         contact_agent_id: req.contact_agent_id,
         project_id: req.project_id,
         merged_summary,
-        summary_count,
+        summary_count: summary_count + agent_memory_count + task_result_count,
         messages,
         meta: ComposeContextMeta {
             used_levels,
@@ -176,9 +222,7 @@ impl SummaryRecordLike for TaskExecutionSummary {
 
 async fn compose_summary_section<T>(
     summary_records: &[T],
-    user_id: &str,
-    agent_id: Option<&str>,
-    pool: &Db,
+    labels: &SummarySectionLabels,
 ) -> Result<(Option<String>, usize, Vec<i64>, usize), String>
 where
     T: SummaryRecordLike + Clone,
@@ -189,7 +233,11 @@ where
             .cmp(&a.level())
             .then_with(|| b.created_at().cmp(a.created_at()))
     });
-    let top_part: Vec<T> = by_level_desc.into_iter().take(TOP_SUMMARY_COUNT).collect();
+    let top_part: Vec<T> = by_level_desc
+        .into_iter()
+        .filter(|s| s.level() > 0)
+        .take(TOP_SUMMARY_COUNT)
+        .collect();
 
     let mut level0_records: Vec<T> = summary_records
         .iter()
@@ -210,32 +258,31 @@ where
         }
     }
 
-    let mut merge_order = selected.clone();
-    merge_order.sort_by(|a, b| a.created_at().cmp(b.created_at()));
-
     let mut summary_sections: Vec<String> = Vec::new();
-    if !merge_order.is_empty() {
-        let text = merge_order
+    let mut rollup_part: Vec<T> = selected.iter().filter(|s| s.level() > 0).cloned().collect();
+    rollup_part.sort_by(|a, b| a.created_at().cmp(b.created_at()));
+    if !rollup_part.is_empty() {
+        let text = rollup_part
             .iter()
             .map(|s| s.summary_text().to_string())
             .collect::<Vec<_>>()
             .join("\n\n---\n\n");
-        summary_sections.push(format!(
-            "以下是历史会话总结（按时间从旧到新）：\n\n{}",
-            text
-        ));
+        summary_sections.push(format!("{}\n\n{}", labels.rollup_title, text));
     }
 
-    let mut summary_count = selected.len();
-    if let Some(agent_id) = agent_id {
-        if let Ok((agent_memory_section, agent_memory_count)) =
-            compose_agent_memory_section_from_agent(pool, user_id, agent_id).await
-        {
-            if let Some(agent_memory_section) = agent_memory_section {
-                summary_sections.push(agent_memory_section);
-            }
-            summary_count += agent_memory_count;
-        }
+    let mut level0_part: Vec<T> = selected
+        .iter()
+        .filter(|s| s.level() == 0)
+        .cloned()
+        .collect();
+    level0_part.sort_by(|a, b| a.created_at().cmp(b.created_at()));
+    if !level0_part.is_empty() {
+        let text = level0_part
+            .iter()
+            .map(|s| s.summary_text().to_string())
+            .collect::<Vec<_>>()
+            .join("\n\n---\n\n");
+        summary_sections.push(format!("{}\n\n{}", labels.level0_title, text));
     }
 
     let merged_summary = if summary_sections.is_empty() {
@@ -247,7 +294,26 @@ where
     let used_levels_set: BTreeSet<i64> = selected.iter().map(|s| s.level()).collect();
     let used_levels = used_levels_set.into_iter().rev().collect::<Vec<_>>();
     let filtered_rollup_count = selected.iter().filter(|s| s.level() == 0).count();
-    Ok((merged_summary, summary_count, used_levels, filtered_rollup_count))
+    Ok((
+        merged_summary,
+        selected.len(),
+        used_levels,
+        filtered_rollup_count,
+    ))
+}
+
+fn merge_context_sections(sections: &[Option<String>]) -> Option<String> {
+    let merged = sections
+        .iter()
+        .filter_map(|item| item.as_ref())
+        .map(|item| item.trim().to_string())
+        .filter(|item| !item.is_empty())
+        .collect::<Vec<_>>();
+    if merged.is_empty() {
+        None
+    } else {
+        Some(merged.join("\n\n===\n\n"))
+    }
 }
 
 fn normalized_text(value: Option<&str>) -> Option<String> {
@@ -285,6 +351,67 @@ fn normalize_pick_mode(mode: &str) -> &str {
     } else {
         AGENT_MEMORY_PICK_MODE_LATEST_PLUS_HIGHEST_LEVEL
     }
+}
+
+fn normalize_project_scope_id(project_id: Option<&str>) -> String {
+    normalized_text(project_id).unwrap_or_else(|| "0".to_string())
+}
+
+async fn compose_task_result_brief_section(
+    pool: &Db,
+    user_id: &str,
+    contact_agent_id: &str,
+    project_id: &str,
+    limit: i64,
+) -> Result<(Option<String>, usize), String> {
+    if user_id.trim().is_empty()
+        || contact_agent_id.trim().is_empty()
+        || project_id.trim().is_empty()
+    {
+        return Ok((None, 0));
+    }
+
+    let items = task_result_briefs::list_task_result_briefs(
+        pool,
+        user_id.trim(),
+        contact_agent_id.trim(),
+        project_id.trim(),
+        limit,
+    )
+    .await?;
+    if items.is_empty() {
+        return Ok((None, 0));
+    }
+
+    let text = items
+        .iter()
+        .map(task_result_brief_to_block)
+        .collect::<Vec<_>>()
+        .join("\n\n---\n\n");
+    Ok((
+        Some(format!("以下是最近任务结果桥接摘要：\n\n{}", text)),
+        items.len(),
+    ))
+}
+
+fn task_result_brief_to_block(item: &TaskResultBrief) -> String {
+    let finished_at = item
+        .finished_at
+        .as_deref()
+        .unwrap_or(item.updated_at.as_str());
+    let mut header = format!(
+        "[status={}][finished_at={}][task_id={}] {}",
+        item.task_status, finished_at, item.task_id, item.task_title
+    );
+    if let Some(turn_id) = item
+        .source_turn_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        header.push_str(&format!(" [turn_id={}]", turn_id));
+    }
+    format!("{}\n{}", header, item.result_summary)
 }
 
 fn select_agent_memories(
@@ -335,7 +462,8 @@ async fn compose_agent_memory_section_from_agent(
         return Ok((None, 0));
     }
 
-    let recalls = memories::list_agent_recalls(pool, user_id.trim(), agent_id.trim(), 200, 0).await?;
+    let recalls =
+        memories::list_agent_recalls(pool, user_id.trim(), agent_id.trim(), 200, 0).await?;
     if recalls.is_empty() {
         return Ok((None, 0));
     }

@@ -48,6 +48,9 @@ const TaskCard = ({
     || !!task.projectRoot
     || !!task.remoteConnectionId
     || !!task.executionResultContract
+    || !!task.taskResultBrief
+    || !!task.planningSnapshot?.sourceUserGoalSummary
+    || !!task.planningSnapshot?.sourceConstraintsSummary
     || !!task.resultSummary
     || !!task.lastError;
 
@@ -156,6 +159,16 @@ const TaskCard = ({
               {task.planningSnapshot.selectedModelConfigId ? (
                 <div>{`模型配置: ${task.planningSnapshot.selectedModelConfigId}`}</div>
               ) : null}
+              {task.planningSnapshot.sourceUserGoalSummary ? (
+                <div className="break-all whitespace-pre-wrap">
+                  {`来源目标: ${task.planningSnapshot.sourceUserGoalSummary}`}
+                </div>
+              ) : null}
+              {task.planningSnapshot.sourceConstraintsSummary ? (
+                <div className="break-all whitespace-pre-wrap">
+                  {`来源约束: ${task.planningSnapshot.sourceConstraintsSummary}`}
+                </div>
+              ) : null}
               {task.planningSnapshot.contactAuthorizedBuiltinMcpIds.length > 0 ? (
                 <div className="break-all">
                   {`联系人授权: ${task.planningSnapshot.contactAuthorizedBuiltinMcpIds.join(', ')}`}
@@ -163,6 +176,27 @@ const TaskCard = ({
               ) : null}
               {task.planningSnapshot.plannedAt ? (
                 <div>{`规划时间: ${task.planningSnapshot.plannedAt}`}</div>
+              ) : null}
+            </div>
+          ) : null}
+          {task.taskResultBrief ? (
+            <div>
+              <div className="font-medium text-foreground/90">结果桥接摘要</div>
+              {task.taskResultBrief.taskStatus ? (
+                <div>{`桥接状态: ${task.taskResultBrief.taskStatus}`}</div>
+              ) : null}
+              <div className="break-all whitespace-pre-wrap">{task.taskResultBrief.resultSummary}</div>
+              {task.taskResultBrief.resultFormat ? (
+                <div>{`结果格式: ${task.taskResultBrief.resultFormat}`}</div>
+              ) : null}
+              {task.taskResultBrief.sourceSessionId ? (
+                <div className="break-all">{`来源会话: ${task.taskResultBrief.sourceSessionId}`}</div>
+              ) : null}
+              {task.taskResultBrief.sourceTurnId ? (
+                <div className="break-all">{`来源轮次: ${task.taskResultBrief.sourceTurnId}`}</div>
+              ) : null}
+              {task.taskResultBrief.finishedAt ? (
+                <div>{`桥接完成时间: ${task.taskResultBrief.finishedAt}`}</div>
               ) : null}
             </div>
           ) : null}

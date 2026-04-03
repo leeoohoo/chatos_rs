@@ -2,6 +2,10 @@ use serde::{Deserialize, Serialize};
 
 use super::{default_i64_0, default_i64_1};
 
+fn default_string_vec() -> Vec<String> {
+    Vec::new()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectMemory {
     pub id: String,
@@ -33,6 +37,13 @@ pub struct AgentRecall {
     pub rolled_up: i64,
     pub rollup_recall_key: Option<String>,
     pub rolled_up_at: Option<String>,
+    pub source_kind: Option<String>,
+    pub source_scope_kind: Option<String>,
+    pub contact_agent_id: Option<String>,
+    #[serde(default = "default_string_vec")]
+    pub project_ids: Vec<String>,
+    #[serde(default = "default_string_vec")]
+    pub task_ids: Vec<String>,
     pub confidence: Option<f64>,
     pub last_seen_at: Option<String>,
     pub updated_at: String,

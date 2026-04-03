@@ -417,11 +417,11 @@ pub(super) async fn get_contact_builtin_mcp_grants(
         Ok(v) => v,
         Err(err) => return err,
     };
-    let contact = match ensure_contact_manage_access(state.as_ref(), &auth, contact_id.as_str()).await
-    {
-        Ok(contact) => contact,
-        Err(err) => return err,
-    };
+    let contact =
+        match ensure_contact_manage_access(state.as_ref(), &auth, contact_id.as_str()).await {
+            Ok(contact) => contact,
+            Err(err) => return err,
+        };
 
     (
         StatusCode::OK,

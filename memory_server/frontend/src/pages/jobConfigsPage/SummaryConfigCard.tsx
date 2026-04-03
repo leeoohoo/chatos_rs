@@ -1,10 +1,12 @@
 import { Alert, Button, Card, Form, Input, InputNumber, Select, Space, Switch } from 'antd';
 
-import type { SummaryJobConfig } from '../../types';
+import type { SummaryJobConfig, TaskExecutionSummaryJobConfig } from '../../types';
 import { DEFAULT_SUMMARY_PROMPT_TEMPLATE } from './helpers';
 
+type SummaryConfigLike = SummaryJobConfig | TaskExecutionSummaryJobConfig;
+
 interface SummaryConfigCardProps {
-  config: SummaryJobConfig | null;
+  config: SummaryConfigLike | null;
   modelOptions: Array<{ label: string; value: string }>;
   title: string;
   enabledLabel: string;
@@ -16,12 +18,13 @@ interface SummaryConfigCardProps {
   tokenLimitLabel: string;
   targetTokensLabel: string;
   intervalLabel: string;
-  maxSessionsLabel: string;
+  maxCountLabel: string;
+  maxCountKey: 'max_sessions_per_tick' | 'max_scopes_per_tick';
   saveLabel: string;
   notConfiguredMessage: string;
   createConfigLabel: string;
-  onChange: (config: SummaryJobConfig) => void;
-  onSetNumber: (key: keyof SummaryJobConfig, value: number | null, min: number) => void;
+  onChange: (config: SummaryConfigLike) => void;
+  onSetNumber: (key: keyof SummaryConfigLike, value: number | null, min: number) => void;
   onSave: () => void;
   onCreate: () => void;
 }
@@ -39,7 +42,8 @@ export function SummaryConfigCard({
   tokenLimitLabel,
   targetTokensLabel,
   intervalLabel,
-  maxSessionsLabel,
+  maxCountLabel,
+  maxCountKey,
   saveLabel,
   notConfiguredMessage,
   createConfigLabel,
@@ -128,11 +132,11 @@ export function SummaryConfigCard({
               style={{ width: '100%' }}
             />
           </Form.Item>
-          <Form.Item label={maxSessionsLabel}>
+          <Form.Item label={maxCountLabel}>
             <InputNumber
               min={1}
-              value={config.max_sessions_per_tick}
-              onChange={(value) => onSetNumber('max_sessions_per_tick', value, 1)}
+              value={config[maxCountKey]}
+              onChange={(value) => onSetNumber(maxCountKey, value, 1)}
               style={{ width: '100%' }}
             />
           </Form.Item>

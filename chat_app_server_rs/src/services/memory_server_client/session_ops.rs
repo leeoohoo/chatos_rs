@@ -4,17 +4,19 @@ use crate::models::message::Message;
 use crate::models::session::Session;
 use crate::models::session_summary_v2::SessionSummaryV2;
 
+use super::current_access_token;
 use super::dto::{
     ComposeContextResponse, CreateSessionRequest, MemorySession, PatchSessionRequest,
     SummaryJobConfigDto, SyncMessageRequest, SyncTurnRuntimeSnapshotRequestDto,
-    TurnRuntimeSnapshotDto, TurnRuntimeSnapshotLookupResponseDto, UpsertSummaryJobConfigRequestDto,
+    TaskExecutionRollupJobConfigDto, TaskExecutionSummaryJobConfigDto, TurnRuntimeSnapshotDto,
+    TurnRuntimeSnapshotLookupResponseDto, UpsertSummaryJobConfigRequestDto,
+    UpsertTaskExecutionRollupJobConfigRequestDto, UpsertTaskExecutionSummaryJobConfigRequestDto,
 };
 use super::http::{
     build_url, client, context_timeout_duration, push_limit_offset_params, send_delete_result,
     send_json, send_json_without_service_token, send_list, send_optional_json, timeout_duration,
 };
 use super::mapping::map_memory_session;
-use super::current_access_token;
 
 pub async fn list_sessions(
     user_id: Option<&str>,
@@ -314,6 +316,46 @@ pub async fn upsert_summary_job_config(
 ) -> Result<SummaryJobConfigDto, String> {
     let req = client()
         .put(build_url("/configs/summary-job").as_str())
+        .timeout(timeout_duration())
+        .json(req_body);
+    send_json(req).await
+}
+
+pub async fn get_task_execution_summary_job_config(
+    user_id: &str,
+) -> Result<TaskExecutionSummaryJobConfigDto, String> {
+    let req = client()
+        .get(build_url("/configs/task-execution-summary-job").as_str())
+        .timeout(timeout_duration())
+        .query(&[("user_id", user_id)]);
+    send_json(req).await
+}
+
+pub async fn upsert_task_execution_summary_job_config(
+    req_body: &UpsertTaskExecutionSummaryJobConfigRequestDto,
+) -> Result<TaskExecutionSummaryJobConfigDto, String> {
+    let req = client()
+        .put(build_url("/configs/task-execution-summary-job").as_str())
+        .timeout(timeout_duration())
+        .json(req_body);
+    send_json(req).await
+}
+
+pub async fn get_task_execution_rollup_job_config(
+    user_id: &str,
+) -> Result<TaskExecutionRollupJobConfigDto, String> {
+    let req = client()
+        .get(build_url("/configs/task-execution-rollup-job").as_str())
+        .timeout(timeout_duration())
+        .query(&[("user_id", user_id)]);
+    send_json(req).await
+}
+
+pub async fn upsert_task_execution_rollup_job_config(
+    req_body: &UpsertTaskExecutionRollupJobConfigRequestDto,
+) -> Result<TaskExecutionRollupJobConfigDto, String> {
+    let req = client()
+        .put(build_url("/configs/task-execution-rollup-job").as_str())
         .timeout(timeout_duration())
         .json(req_body);
     send_json(req).await

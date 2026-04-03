@@ -42,6 +42,31 @@ export interface SessionSummary {
   updated_at?: string;
 }
 
+export interface TaskExecutionSummary {
+  id: string;
+  user_id: string;
+  contact_agent_id: string;
+  project_id: string;
+  scope_key: string;
+  source_digest?: string | null;
+  summary_text: string;
+  summary_model: string;
+  trigger_type: string;
+  source_start_message_id?: string | null;
+  source_end_message_id?: string | null;
+  source_message_count: number;
+  source_estimated_tokens: number;
+  status: string;
+  error_message?: string | null;
+  level: number;
+  rollup_summary_id?: string | null;
+  rolled_up_at?: string | null;
+  agent_memory_summarized?: number;
+  agent_memory_summarized_at?: string | null;
+  created_at: string;
+  updated_at?: string;
+}
+
 export interface AiModelConfig {
   id: string;
   user_id: string;
@@ -84,6 +109,32 @@ export interface RollupJobConfig {
   keep_raw_level0_count: number;
   max_level: number;
   max_sessions_per_tick: number;
+}
+
+export interface TaskExecutionSummaryJobConfig {
+  user_id: string;
+  enabled: number;
+  summary_model_config_id?: string | null;
+  summary_prompt?: string | null;
+  token_limit: number;
+  round_limit: number;
+  target_summary_tokens: number;
+  job_interval_seconds: number;
+  max_scopes_per_tick: number;
+}
+
+export interface TaskExecutionRollupJobConfig {
+  user_id: string;
+  enabled: number;
+  summary_model_config_id?: string | null;
+  summary_prompt?: string | null;
+  token_limit: number;
+  round_limit: number;
+  target_summary_tokens: number;
+  job_interval_seconds: number;
+  keep_raw_level0_count: number;
+  max_level: number;
+  max_scopes_per_tick: number;
 }
 
 export interface JobRun {

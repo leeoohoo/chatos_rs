@@ -21,7 +21,7 @@ import zhCN from 'antd/locale/zh_CN';
 import { useEffect, useMemo, useState } from 'react';
 
 import { api, authStore } from './api';
-import type { AuthUser, ContactTask, TaskExecutionMessage } from './types';
+import type { AuthUser, ContactTask, TaskExecutionMessage, TaskResultBrief } from './types';
 
 const { Header, Content } = Layout;
 const { Title, Text, Paragraph } = Typography;
@@ -71,6 +71,9 @@ function App() {
   const [executionMessagesByTaskId, setExecutionMessagesByTaskId] = useState<Record<string, TaskExecutionMessage[]>>({});
   const [executionLoadingByTaskId, setExecutionLoadingByTaskId] = useState<Record<string, boolean>>({});
   const [executionErrorByTaskId, setExecutionErrorByTaskId] = useState<Record<string, string | null>>({});
+  const [resultBriefByTaskId, setResultBriefByTaskId] = useState<Record<string, TaskResultBrief | null | undefined>>({});
+  const [resultBriefLoadingByTaskId, setResultBriefLoadingByTaskId] = useState<Record<string, boolean>>({});
+  const [resultBriefErrorByTaskId, setResultBriefErrorByTaskId] = useState<Record<string, string | null>>({});
   const [expandedTaskIds, setExpandedTaskIds] = useState<string[]>([]);
 
   useEffect(() => {
@@ -142,6 +145,9 @@ function App() {
     setExecutionMessagesByTaskId({});
     setExecutionLoadingByTaskId({});
     setExecutionErrorByTaskId({});
+    setResultBriefByTaskId({});
+    setResultBriefLoadingByTaskId({});
+    setResultBriefErrorByTaskId({});
   };
 
   const loadExecutionMessages = async (taskId: string, force = false) => {
@@ -166,12 +172,35 @@ function App() {
     }
   };
 
+  const loadTaskResultBrief = async (taskId: string, force = false) => {
+    if (!taskId) {
+      return;
+    }
+    if (!force && (resultBriefLoadingByTaskId[taskId] || Object.prototype.hasOwnProperty.call(resultBriefByTaskId, taskId))) {
+      return;
+    }
+    setResultBriefLoadingByTaskId((prev) => ({ ...prev, [taskId]: true }));
+    setResultBriefErrorByTaskId((prev) => ({ ...prev, [taskId]: null }));
+    try {
+      const item = await api.getTaskResultBrief(taskId);
+      setResultBriefByTaskId((prev) => ({ ...prev, [taskId]: item }));
+    } catch (err) {
+      setResultBriefErrorByTaskId((prev) => ({
+        ...prev,
+        [taskId]: (err as Error).message,
+      }));
+    } finally {
+      setResultBriefLoadingByTaskId((prev) => ({ ...prev, [taskId]: false }));
+    }
+  };
+
   useEffect(() => {
     if (!authUser || expandedTaskIds.length === 0) {
       return;
     }
     for (const taskId of expandedTaskIds) {
       void loadExecutionMessages(taskId, true);
+      void loadTaskResultBrief(taskId, true);
     }
   }, [tasks]);
 
@@ -189,6 +218,7 @@ function App() {
       void refresh();
       for (const taskId of runningExpandedTaskIds) {
         void loadExecutionMessages(taskId, true);
+        void loadTaskResultBrief(taskId, true);
       }
     }, 5000);
     return () => window.clearInterval(timer);
@@ -396,6 +426,7 @@ function App() {
                       ));
                       if (expanded) {
                         void loadExecutionMessages(record.id, true);
+                        void loadTaskResultBrief(record.id, true);
                       }
                     },
                     expandedRowRender: (record) => (
@@ -499,6 +530,22 @@ function App() {
                                   {new Date(record.planning_snapshot.planned_at).toLocaleString()}
                                 </Text>
                               )}
+                              {record.planning_snapshot.source_user_goal_summary && (
+                                <>
+                                  <Text type="secondary">来源用户目标摘要:</Text>
+                                  <Paragraph style={{ marginBottom: 0 }}>
+                                    {record.planning_snapshot.source_user_goal_summary}
+                                  </Paragraph>
+                                </>
+                              )}
+                              {record.planning_snapshot.source_constraints_summary && (
+                                <>
+                                  <Text type="secondary">来源约束摘要:</Text>
+                                  <Paragraph style={{ marginBottom: 0 }}>
+                                    {record.planning_snapshot.source_constraints_summary}
+                                  </Paragraph>
+                                </>
+                              )}
                               <Text type="secondary">当时联系人已授权的内置 MCP:</Text>
                               {(record.planning_snapshot.contact_authorized_builtin_mcp_ids?.length ?? 0) > 0 ? (
                                 <Space wrap>
@@ -521,6 +568,73 @@ function App() {
                             <Text strong>执行结果摘要</Text>
                             <Paragraph style={{ marginBottom: 0 }}>{record.result_summary}</Paragraph>
                           </>
+                        )}
+                        <Text strong>任务结果桥接摘要</Text>
+                        <Space>
+                          <Button
+                            size="small"
+                            icon={<ReloadOutlined />}
+                            loading={resultBriefLoadingByTaskId[record.id]}
+                            onClick={() => { void loadTaskResultBrief(record.id, true); }}
+                          >
+                            刷新结果桥接
+                          </Button>
+                        </Space>
+                        {resultBriefErrorByTaskId[record.id] && (
+                          <Alert
+                            type="error"
+                            showIcon
+                            message={resultBriefErrorByTaskId[record.id] || '加载任务结果桥接失败'}
+                          />
+                        )}
+                        {resultBriefLoadingByTaskId[record.id] && (
+                          <Space>
+                            <Spin size="small" />
+                            <Text type="secondary">任务结果桥接加载中...</Text>
+                          </Space>
+                        )}
+                        {!resultBriefLoadingByTaskId[record.id]
+                          && !resultBriefErrorByTaskId[record.id]
+                          && resultBriefByTaskId[record.id] === null && (
+                          <Text type="secondary">当前任务还没有生成结果桥接摘要，通常会在任务进入终态后出现。</Text>
+                        )}
+                        {resultBriefByTaskId[record.id] && (
+                          <Card size="small" bodyStyle={{ padding: 12 }} style={{ width: '100%' }}>
+                            <Space direction="vertical" size={6} style={{ width: '100%' }}>
+                              <Space wrap>
+                                <Tag color={resultBriefByTaskId[record.id]?.task_status === 'completed' ? 'green' : resultBriefByTaskId[record.id]?.task_status === 'failed' ? 'red' : 'default'}>
+                                  {resultBriefByTaskId[record.id]?.task_status}
+                                </Tag>
+                                {resultBriefByTaskId[record.id]?.result_format && (
+                                  <Tag>{resultBriefByTaskId[record.id]?.result_format}</Tag>
+                                )}
+                                {resultBriefByTaskId[record.id]?.finished_at && (
+                                  <Text type="secondary">
+                                    完成时间:
+                                    {' '}
+                                    {new Date(resultBriefByTaskId[record.id]!.finished_at as string).toLocaleString()}
+                                  </Text>
+                                )}
+                              </Space>
+                              <Paragraph style={{ whiteSpace: 'pre-wrap', marginBottom: 0 }}>
+                                {resultBriefByTaskId[record.id]?.result_summary}
+                              </Paragraph>
+                              {resultBriefByTaskId[record.id]?.result_message_id && (
+                                <Text type="secondary">
+                                  结果消息 ID:
+                                  {' '}
+                                  {resultBriefByTaskId[record.id]?.result_message_id}
+                                </Text>
+                              )}
+                              {resultBriefByTaskId[record.id]?.source_session_id && (
+                                <Text type="secondary">
+                                  来源会话:
+                                  {' '}
+                                  {resultBriefByTaskId[record.id]?.source_session_id}
+                                </Text>
+                              )}
+                            </Space>
+                          </Card>
                         )}
                         {record.last_error && (
                           <>

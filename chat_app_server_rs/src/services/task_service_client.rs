@@ -49,7 +49,28 @@ pub struct TaskPlanningSnapshotDto {
     #[serde(default)]
     pub contact_authorized_builtin_mcp_ids: Vec<String>,
     pub selected_model_config_id: Option<String>,
+    pub source_user_goal_summary: Option<String>,
+    pub source_constraints_summary: Option<String>,
     pub planned_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TaskResultBriefDto {
+    pub id: String,
+    pub task_id: String,
+    pub user_id: String,
+    pub contact_agent_id: String,
+    pub project_id: String,
+    pub source_session_id: Option<String>,
+    pub source_turn_id: Option<String>,
+    pub task_title: String,
+    pub task_status: String,
+    pub result_summary: String,
+    pub result_format: Option<String>,
+    pub result_message_id: Option<String>,
+    pub finished_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -130,6 +151,11 @@ async fn send_delete_result(req: RequestBuilder) -> Result<bool, String> {
 #[derive(Debug, Clone, Deserialize)]
 struct ListResponse<T> {
     items: Vec<T>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ItemResponse<T> {
+    item: Option<T>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -304,7 +330,10 @@ pub async fn list_tasks(
     } else {
         build_internal_url("/tasks")
     };
-    let req = client().get(path.as_str()).timeout(timeout_duration()).query(&params);
+    let req = client()
+        .get(path.as_str())
+        .timeout(timeout_duration())
+        .query(&params);
     let resp: ListResponse<TaskRecordDto> = send_json(req).await?;
     Ok(resp.items)
 }
@@ -315,10 +344,18 @@ pub async fn get_task(task_id: &str) -> Result<Option<TaskRecordDto>, String> {
     } else {
         build_internal_url(&format!("/tasks/{}", urlencoding::encode(task_id)))
     };
-    let req = client()
-        .get(path.as_str())
-        .timeout(timeout_duration());
+    let req = client().get(path.as_str()).timeout(timeout_duration());
     send_optional_json(req).await
+}
+
+pub async fn get_task_result_brief(task_id: &str) -> Result<Option<TaskResultBriefDto>, String> {
+    let path = build_url(&format!(
+        "/tasks/{}/result-brief",
+        urlencoding::encode(task_id)
+    ));
+    let req = client().get(path.as_str()).timeout(timeout_duration());
+    let resp: ItemResponse<TaskResultBriefDto> = send_json(req).await?;
+    Ok(resp.item)
 }
 
 pub async fn update_task(
@@ -337,9 +374,7 @@ pub async fn update_task_internal(
     req_body: &UpdateTaskRequestDto,
 ) -> Result<Option<TaskRecordDto>, String> {
     let req = client()
-        .patch(
-            build_internal_url(&format!("/tasks/{}", urlencoding::encode(task_id))).as_str(),
-        )
+        .patch(build_internal_url(&format!("/tasks/{}", urlencoding::encode(task_id))).as_str())
         .timeout(timeout_duration())
         .json(req_body);
     send_optional_json(req).await

@@ -1,15 +1,15 @@
 use crate::models::message::Message;
 
+use super::current_access_token;
 use super::dto::{
     SyncTaskExecutionMessageRequestDto, TaskExecutionComposeResponseDto, TaskExecutionMessageDto,
-    TaskExecutionSummaryDto,
+    TaskExecutionSummaryDto, TaskResultBriefDto, UpsertTaskResultBriefRequestDto,
 };
 use super::http::{
     build_url, client, context_timeout_duration, push_limit_offset_params, send_delete_result,
     send_json, send_json_without_service_token, send_list, send_list_without_service_token,
     timeout_duration,
 };
-use super::current_access_token;
 
 #[derive(Debug, Clone)]
 pub struct TaskExecutionScopeBinding {
@@ -212,4 +212,18 @@ pub async fn compose_task_execution_context(
             .map(map_task_execution_message)
             .collect(),
     ))
+}
+
+pub async fn upsert_task_result_brief(
+    req_body: &UpsertTaskResultBriefRequestDto,
+) -> Result<TaskResultBriefDto, String> {
+    let path = format!(
+        "/internal/task-result-briefs/by-task/{}/sync",
+        urlencoding::encode(req_body.task_id.as_str())
+    );
+    let req = client()
+        .put(build_url(path.as_str()).as_str())
+        .timeout(timeout_duration())
+        .json(req_body);
+    send_json_without_service_token(req).await
 }

@@ -22,7 +22,21 @@ export interface TaskWorkbarExecutionResultContract {
 export interface TaskWorkbarPlanningSnapshot {
   contactAuthorizedBuiltinMcpIds: string[];
   selectedModelConfigId?: string | null;
+  sourceUserGoalSummary?: string | null;
+  sourceConstraintsSummary?: string | null;
   plannedAt?: string | null;
+}
+
+export interface TaskWorkbarResultBrief {
+  taskId: string;
+  taskStatus?: string | null;
+  resultSummary: string;
+  resultFormat?: string | null;
+  resultMessageId?: string | null;
+  sourceSessionId?: string | null;
+  sourceTurnId?: string | null;
+  finishedAt?: string | null;
+  updatedAt?: string | null;
 }
 
 export interface TaskWorkbarItem {
@@ -41,6 +55,7 @@ export interface TaskWorkbarItem {
   remoteConnectionId?: string | null;
   executionResultContract?: TaskWorkbarExecutionResultContract | null;
   planningSnapshot?: TaskWorkbarPlanningSnapshot | null;
+  taskResultBrief?: TaskWorkbarResultBrief | null;
   resultSummary?: string | null;
   lastError?: string | null;
   confirmedAt?: string | null;

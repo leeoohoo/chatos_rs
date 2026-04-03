@@ -426,6 +426,34 @@ pub struct SummaryJobConfigDto {
     pub updated_at: String,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TaskExecutionSummaryJobConfigDto {
+    pub user_id: String,
+    pub enabled: i64,
+    pub summary_model_config_id: Option<String>,
+    pub token_limit: i64,
+    pub round_limit: i64,
+    pub target_summary_tokens: i64,
+    pub job_interval_seconds: i64,
+    pub max_scopes_per_tick: i64,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TaskExecutionRollupJobConfigDto {
+    pub user_id: String,
+    pub enabled: i64,
+    pub summary_model_config_id: Option<String>,
+    pub token_limit: i64,
+    pub round_limit: i64,
+    pub target_summary_tokens: i64,
+    pub job_interval_seconds: i64,
+    pub keep_raw_level0_count: i64,
+    pub max_level: i64,
+    pub max_scopes_per_tick: i64,
+    pub updated_at: String,
+}
+
 #[derive(Debug, Serialize)]
 pub(crate) struct CreateSessionRequest {
     pub user_id: String,
@@ -544,6 +572,10 @@ pub struct TaskExecutionSummaryDto {
     pub status: String,
     pub error_message: Option<String>,
     pub level: i64,
+    pub rollup_summary_id: Option<String>,
+    pub rolled_up_at: Option<String>,
+    pub agent_memory_summarized: i64,
+    pub agent_memory_summarized_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -559,6 +591,25 @@ pub struct TaskExecutionComposeResponseDto {
     pub meta: Value,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TaskResultBriefDto {
+    pub id: String,
+    pub task_id: String,
+    pub user_id: String,
+    pub contact_agent_id: String,
+    pub project_id: String,
+    pub source_session_id: Option<String>,
+    pub source_turn_id: Option<String>,
+    pub task_title: String,
+    pub task_status: String,
+    pub result_summary: String,
+    pub result_format: Option<String>,
+    pub result_message_id: Option<String>,
+    pub finished_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 #[derive(Debug, Serialize)]
 pub struct UpsertSummaryJobConfigRequestDto {
     pub user_id: String,
@@ -568,4 +619,46 @@ pub struct UpsertSummaryJobConfigRequestDto {
     pub round_limit: Option<i64>,
     pub target_summary_tokens: Option<i64>,
     pub job_interval_seconds: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UpsertTaskExecutionSummaryJobConfigRequestDto {
+    pub user_id: String,
+    pub enabled: Option<bool>,
+    pub summary_model_config_id: Option<Option<String>>,
+    pub token_limit: Option<i64>,
+    pub round_limit: Option<i64>,
+    pub target_summary_tokens: Option<i64>,
+    pub job_interval_seconds: Option<i64>,
+    pub max_scopes_per_tick: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UpsertTaskExecutionRollupJobConfigRequestDto {
+    pub user_id: String,
+    pub enabled: Option<bool>,
+    pub summary_model_config_id: Option<Option<String>>,
+    pub token_limit: Option<i64>,
+    pub round_limit: Option<i64>,
+    pub target_summary_tokens: Option<i64>,
+    pub job_interval_seconds: Option<i64>,
+    pub keep_raw_level0_count: Option<i64>,
+    pub max_level: Option<i64>,
+    pub max_scopes_per_tick: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UpsertTaskResultBriefRequestDto {
+    pub task_id: String,
+    pub user_id: String,
+    pub contact_agent_id: String,
+    pub project_id: String,
+    pub source_session_id: Option<String>,
+    pub source_turn_id: Option<String>,
+    pub task_title: String,
+    pub task_status: String,
+    pub result_summary: String,
+    pub result_format: Option<String>,
+    pub result_message_id: Option<String>,
+    pub finished_at: Option<String>,
 }

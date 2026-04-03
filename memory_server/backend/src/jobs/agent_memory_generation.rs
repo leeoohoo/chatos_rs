@@ -3,11 +3,13 @@ use tracing::{info, warn};
 use crate::ai::AiClient;
 use crate::db::Db;
 use crate::models::AiModelConfig;
-use crate::repositories::{jobs, memories, summaries};
+use crate::repositories::{jobs, memories, summaries, task_result_briefs};
 use crate::services::summarizer::{estimate_tokens_text, summarize_texts_with_split};
 
 use super::agent_memory_support::{
-    finish_failed_job_run, recall_to_rollup_block, select_rollup_batch, select_summary_batch,
+    agent_memory_source_digest_id, agent_memory_source_to_text, aggregate_project_ids_from_sources,
+    aggregate_task_ids_from_sources, finish_failed_job_run, recall_to_rollup_block,
+    resolve_source_kind, select_rollup_batch, select_source_batch, AgentMemorySourceItem,
 };
 use super::idempotency;
 
@@ -22,27 +24,27 @@ pub(crate) async fn generate_level0_recall_from_summaries(
     token_limit: i64,
     target_summary_tokens: i64,
 ) -> Result<(usize, usize), String> {
-    let candidates =
-        summaries::list_pending_agent_memory_summaries_by_agent(pool, user_id, agent_id).await?;
-    let selected = select_summary_batch(candidates.as_slice(), round_limit, token_limit);
+    let mut candidates =
+        summaries::list_pending_agent_memory_summaries_by_agent(pool, user_id, agent_id)
+            .await?
+            .into_iter()
+            .map(AgentMemorySourceItem::ChatSummary)
+            .collect::<Vec<_>>();
+    candidates.extend(
+        task_result_briefs::list_pending_task_result_briefs_by_agent(pool, user_id, agent_id)
+            .await?
+            .into_iter()
+            .map(AgentMemorySourceItem::TaskResultBrief),
+    );
+    candidates.sort_by(|a, b| source_sort_key(a).cmp(&source_sort_key(b)));
+
+    let selected = select_source_batch(candidates.as_slice(), round_limit, token_limit);
     let Some(selected) = selected else {
         return Ok((0, 0));
     };
 
-    let selected_ids: Vec<String> = selected.iter().map(|item| item.id.clone()).collect();
-    let selected_texts: Vec<String> = selected
-        .iter()
-        .map(|item| {
-            format!(
-                "[project_id={}][summary_id={}][created_at={}][trigger_type={}]\n{}",
-                item.project_id.clone().unwrap_or_else(|| "0".to_string()),
-                item.id,
-                item.created_at,
-                item.trigger_type,
-                item.summary_text
-            )
-        })
-        .collect();
+    let selected_ids: Vec<String> = selected.iter().map(agent_memory_source_digest_id).collect();
+    let selected_texts: Vec<String> = selected.iter().map(agent_memory_source_to_text).collect();
     let selected_tokens = selected_texts
         .iter()
         .map(|text| estimate_tokens_text(text.as_str()))
@@ -59,9 +61,7 @@ pub(crate) async fn generate_level0_recall_from_summaries(
     )
     .await?
     {
-        let marked =
-            summaries::mark_summaries_agent_memory_summarized(pool, selected_ids.as_slice())
-                .await?;
+        let marked = mark_agent_memory_sources_summarized(pool, selected.as_slice()).await?;
         if marked < selected_ids.len() {
             warn!(
                 "[MEMORY-AGENT-RECALL] partial l0 mark on reuse: user_id={} agent_id={} selected={} marked={} recall_id={}",
@@ -136,14 +136,18 @@ pub(crate) async fn generate_level0_recall_from_summaries(
             source_digest: Some(source_digest.clone()),
             recall_text,
             level: 0,
+            source_kind: resolve_source_kind(selected.as_slice()),
+            source_scope_kind: Some("agent".to_string()),
+            contact_agent_id: Some(agent_id.to_string()),
+            project_ids: aggregate_project_ids_from_sources(selected.as_slice()),
+            task_ids: aggregate_task_ids_from_sources(selected.as_slice()),
             confidence: None,
             last_seen_at: Some(crate::repositories::now_rfc3339()),
         },
     )
     .await?;
 
-    let marked =
-        summaries::mark_summaries_agent_memory_summarized(pool, selected_ids.as_slice()).await?;
+    let marked = mark_agent_memory_sources_summarized(pool, selected.as_slice()).await?;
     if marked < selected_ids.len() {
         warn!(
             "[MEMORY-AGENT-RECALL] partial l0 mark: user_id={} agent_id={} selected={} marked={}",
@@ -339,6 +343,11 @@ pub(crate) async fn generate_rollup_recall(
             source_digest: Some(source_digest.clone()),
             recall_text,
             level: target_level,
+            source_kind: Some("agent_recall_rollup".to_string()),
+            source_scope_kind: Some("agent".to_string()),
+            contact_agent_id: Some(agent_id.to_string()),
+            project_ids: aggregate_project_ids_from_recalls(selected.as_slice()),
+            task_ids: aggregate_task_ids_from_recalls(selected.as_slice()),
             confidence: None,
             last_seen_at: Some(crate::repositories::now_rfc3339()),
         },
@@ -384,4 +393,59 @@ pub(crate) async fn generate_rollup_recall(
     );
 
     Ok((1, marked))
+}
+
+fn source_sort_key(item: &AgentMemorySourceItem) -> (String, String) {
+    match item {
+        AgentMemorySourceItem::ChatSummary(item) => (item.created_at.clone(), item.id.clone()),
+        AgentMemorySourceItem::TaskResultBrief(item) => (
+            item.finished_at
+                .clone()
+                .unwrap_or_else(|| item.updated_at.clone()),
+            item.id.clone(),
+        ),
+    }
+}
+
+async fn mark_agent_memory_sources_summarized(
+    pool: &Db,
+    sources: &[AgentMemorySourceItem],
+) -> Result<usize, String> {
+    let mut summary_ids = Vec::new();
+    let mut brief_ids = Vec::new();
+    for item in sources {
+        match item {
+            AgentMemorySourceItem::ChatSummary(item) => summary_ids.push(item.id.clone()),
+            AgentMemorySourceItem::TaskResultBrief(item) => brief_ids.push(item.id.clone()),
+        }
+    }
+
+    let marked_summaries =
+        summaries::mark_summaries_agent_memory_summarized(pool, summary_ids.as_slice()).await?;
+    let marked_briefs = task_result_briefs::mark_task_result_briefs_agent_memory_summarized(
+        pool,
+        brief_ids.as_slice(),
+    )
+    .await?;
+    Ok(marked_summaries + marked_briefs)
+}
+
+fn aggregate_project_ids_from_recalls(selected: &[crate::models::AgentRecall]) -> Vec<String> {
+    let mut values = std::collections::BTreeSet::new();
+    for item in selected {
+        for project_id in &item.project_ids {
+            values.insert(project_id.clone());
+        }
+    }
+    values.into_iter().collect()
+}
+
+fn aggregate_task_ids_from_recalls(selected: &[crate::models::AgentRecall]) -> Vec<String> {
+    let mut values = std::collections::BTreeSet::new();
+    for item in selected {
+        for task_id in &item.task_ids {
+            values.insert(task_id.clone());
+        }
+    }
+    values.into_iter().collect()
 }

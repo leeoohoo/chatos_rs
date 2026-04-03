@@ -10,7 +10,7 @@ use super::job_support;
 use crate::ai::AiClient;
 use crate::db::Db;
 use crate::models::AiModelConfig;
-use crate::repositories::{configs, locks, memories, summaries};
+use crate::repositories::{configs, locks, memories, summaries, task_result_briefs};
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct AgentMemoryRunResult {
@@ -49,6 +49,12 @@ pub async fn run_once(
         max_agents_per_tick,
     )
     .await?;
+    let task_result_agents = task_result_briefs::list_agent_ids_with_pending_agent_memory_by_user(
+        pool,
+        user_id,
+        max_agents_per_tick,
+    )
+    .await?;
     let recall_agents = memories::list_agent_ids_with_pending_recall_rollup_by_user(
         pool,
         user_id,
@@ -59,7 +65,11 @@ pub async fn run_once(
 
     let mut seen = HashSet::new();
     let mut agent_ids = Vec::new();
-    for agent_id in summary_agents.into_iter().chain(recall_agents.into_iter()) {
+    for agent_id in summary_agents
+        .into_iter()
+        .chain(task_result_agents.into_iter())
+        .chain(recall_agents.into_iter())
+    {
         if seen.insert(agent_id.clone()) {
             agent_ids.push(agent_id);
             if agent_ids.len() >= max_agents_per_tick as usize {

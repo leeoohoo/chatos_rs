@@ -1,7 +1,7 @@
 use crate::core::chat_runtime::ChatRuntimeMetadata;
 use crate::services::contact_agent_model::resolve_effective_contact_agent_model_config_id;
 use crate::services::task_manager::normalizer::trimmed_non_empty;
-use crate::services::task_manager::types::TaskRecord;
+use crate::services::task_manager::types::{TaskRecord, TaskResultBrief};
 use crate::services::{memory_server_client, task_service_client};
 use tracing::warn;
 
@@ -15,9 +15,7 @@ pub struct TaskScopeContext {
     pub model_config_id: Option<String>,
 }
 
-pub async fn resolve_task_scope_context(
-    session_id: &str,
-) -> Result<TaskScopeContext, String> {
+pub async fn resolve_task_scope_context(session_id: &str) -> Result<TaskScopeContext, String> {
     let session_id =
         trimmed_non_empty(session_id).ok_or_else(|| "session_id is required".to_string())?;
     let session = memory_server_client::get_session_by_id(session_id)
@@ -55,7 +53,9 @@ pub async fn resolve_task_scope_context(
     } else if project_id != "0" {
         crate::repositories::projects::get_project_by_id(project_id.as_str())
             .await?
-            .and_then(|project| trimmed_non_empty(project.root_path.as_str()).map(ToOwned::to_owned))
+            .and_then(|project| {
+                trimmed_non_empty(project.root_path.as_str()).map(ToOwned::to_owned)
+            })
             .or_else(|| metadata.workspace_root.clone())
     } else {
         metadata.workspace_root.clone()
@@ -102,7 +102,26 @@ async fn resolve_contact_agent_id_from_contact_id(
     Ok(resolved)
 }
 
-pub(super) fn map_remote_task_to_record(task: task_service_client::TaskRecordDto) -> TaskRecord {
+pub(super) fn map_remote_result_brief(
+    brief: task_service_client::TaskResultBriefDto,
+) -> TaskResultBrief {
+    TaskResultBrief {
+        task_id: brief.task_id,
+        task_status: brief.task_status,
+        result_summary: brief.result_summary,
+        result_format: brief.result_format,
+        result_message_id: brief.result_message_id,
+        source_session_id: brief.source_session_id,
+        source_turn_id: brief.source_turn_id,
+        finished_at: brief.finished_at,
+        updated_at: brief.updated_at,
+    }
+}
+
+pub(super) fn map_remote_task_to_record(
+    task: task_service_client::TaskRecordDto,
+    task_result_brief: Option<TaskResultBrief>,
+) -> TaskRecord {
     TaskRecord {
         id: task.id,
         session_id: task.session_id.unwrap_or_default(),
@@ -126,6 +145,7 @@ pub(super) fn map_remote_task_to_record(task: task_service_client::TaskRecordDto
         finished_at: task.finished_at,
         created_at: task.created_at,
         updated_at: task.updated_at,
+        task_result_brief,
     }
 }
 

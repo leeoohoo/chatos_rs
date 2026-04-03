@@ -20,9 +20,7 @@ fn normalize_builtin_mcp_ids(ids: &[String]) -> Vec<String> {
     let mut out = Vec::new();
     for item in ids {
         let trimmed = item.trim();
-        if trimmed.is_empty()
-            || out.iter().any(|existing: &String| existing == trimmed)
-        {
+        if trimmed.is_empty() || out.iter().any(|existing: &String| existing == trimmed) {
             continue;
         }
         out.push(trimmed.to_string());
