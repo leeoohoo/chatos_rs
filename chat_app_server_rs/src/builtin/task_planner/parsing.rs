@@ -1,6 +1,6 @@
 use serde_json::{Map, Value};
 
-use crate::services::task_manager::TaskDraft;
+use crate::services::task_manager::{TaskDraft, TaskRequiredContextAssetDraft};
 use crate::services::task_service_client::{
     TaskContextAssetRefDto, TaskExecutionResultContractDto,
 };
@@ -81,6 +81,15 @@ fn task_draft_from_map(map: &Map<String, Value>) -> Result<TaskDraft, String> {
         status: "pending_confirm".to_string(),
         tags,
         due_at,
+        required_builtin_capabilities: string_array(
+            map.get("required_builtin_capabilities")
+                .or_else(|| map.get("requiredBuiltinCapabilities")),
+        )
+        .unwrap_or_default(),
+        required_context_assets: required_context_assets(
+            map.get("required_context_assets")
+                .or_else(|| map.get("requiredContextAssets")),
+        )?,
         planned_builtin_mcp_ids: string_array(map.get("planned_builtin_mcp_ids"))
             .or_else(|| string_array(map.get("plannedBuiltinMcpIds")))
             .unwrap_or_default(),
@@ -109,9 +118,45 @@ fn string_array(value: Option<&Value>) -> Option<Vec<String>> {
     Some(
         items
             .iter()
-            .filter_map(|item| item.as_str().map(|value| value.to_string()))
+            .filter_map(|item| item.as_str().map(|value| value.trim().to_string()))
+            .filter(|value| !value.is_empty())
             .collect(),
     )
+}
+
+fn required_context_assets(value: Option<&Value>) -> Result<Vec<TaskRequiredContextAssetDraft>, String> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    let Value::Array(items) = value else {
+        return Err("required_context_assets must be an array".to_string());
+    };
+
+    let mut out = Vec::new();
+    for item in items {
+        let map = item
+            .as_object()
+            .ok_or_else(|| "each required_context_assets item must be an object".to_string())?;
+        let asset_type = map
+            .get("asset_type")
+            .or_else(|| map.get("assetType"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| "required_context_assets.asset_type is required".to_string())?;
+        let asset_ref = map
+            .get("asset_ref")
+            .or_else(|| map.get("assetRef"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| "required_context_assets.asset_ref is required".to_string())?;
+        out.push(TaskRequiredContextAssetDraft {
+            asset_type: asset_type.to_string(),
+            asset_ref: asset_ref.to_string(),
+        });
+    }
+    Ok(out)
 }
 
 fn context_assets(value: Option<&Value>) -> Result<Vec<TaskContextAssetRefDto>, String> {

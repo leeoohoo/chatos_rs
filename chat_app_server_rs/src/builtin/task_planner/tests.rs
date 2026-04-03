@@ -39,6 +39,29 @@ fn parse_task_drafts_falls_back_to_single_task_when_tasks_array_is_empty() {
 }
 
 #[test]
+fn parse_task_drafts_supports_simplified_task_requirements() {
+    let args = json!({
+        "title": "排查任务创建失败",
+        "details": "优先复用当前联系人能力",
+        "required_builtin_capabilities": ["read", "terminal"],
+        "required_context_assets": [
+            { "asset_type": "skill", "asset_ref": "SK1" },
+            { "asset_type": "common", "asset_ref": "CMD_DEPLOY" }
+        ]
+    });
+
+    let drafts = parse_task_drafts(&args).expect("simplified task payload should parse");
+    assert_eq!(drafts.len(), 1);
+    assert_eq!(
+        drafts[0].required_builtin_capabilities,
+        vec!["read".to_string(), "terminal".to_string()]
+    );
+    assert_eq!(drafts[0].required_context_assets.len(), 2);
+    assert_eq!(drafts[0].required_context_assets[0].asset_type, "skill");
+    assert_eq!(drafts[0].required_context_assets[0].asset_ref, "SK1");
+}
+
+#[test]
 fn create_tasks_schema_is_strict_and_compatible() {
     let service = TaskPlannerService::new(TaskPlannerOptions {
         server_name: "task_planner".to_string(),
@@ -76,6 +99,24 @@ fn create_tasks_schema_is_strict_and_compatible() {
     assert!(
         !contains_schema_key(schema, "oneOf"),
         "create_tasks schema should not contain oneOf"
+    );
+    assert!(
+        !contains_schema_key(schema, "planned_builtin_mcp_ids"),
+        "create_tasks schema should not expose internal planned_builtin_mcp_ids"
+    );
+    assert!(
+        !contains_schema_key(schema, "planned_context_assets"),
+        "create_tasks schema should not expose internal planned_context_assets"
+    );
+
+    let execution_result_contract_schema = schema
+        .get("properties")
+        .and_then(Value::as_object)
+        .and_then(|props| props.get("execution_result_contract"))
+        .expect("execution_result_contract schema should exist");
+    assert_eq!(
+        execution_result_contract_schema.get("additionalProperties"),
+        Some(&Value::Bool(false))
     );
 }
 

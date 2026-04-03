@@ -140,6 +140,11 @@ export const useSessionListController = ({
     [contacts],
   );
 
+  const hasRunningTerminals = useMemo(
+    () => (terminals || []).some((terminal) => terminal?.status === 'running' || Boolean(terminal?.busy)),
+    [terminals],
+  );
+
   const contactScopeState = useContactScopeListState({
     contacts,
     sessions: sessions || [],
@@ -235,11 +240,20 @@ export const useSessionListController = ({
     if (isCollapsed) {
       return;
     }
-    const timer = setInterval(() => {
+    const shouldPoll = activePanel === 'terminal' || hasRunningTerminals;
+    if (!shouldPoll) {
+      return;
+    }
+
+    const intervalMs = activePanel === 'terminal' ? 2000 : 5000;
+    const timer = window.setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) {
+        return;
+      }
       void loadTerminals();
-    }, 2000);
-    return () => clearInterval(timer);
-  }, [isCollapsed, loadTerminals]);
+    }, intervalMs);
+    return () => window.clearInterval(timer);
+  }, [activePanel, hasRunningTerminals, isCollapsed, loadTerminals]);
 
   const projectRunState = useProjectRunState({
     apiClient,

@@ -554,41 +554,11 @@ pub struct SyncTaskExecutionMessageRequestDto {
     pub created_at: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct TaskExecutionSummaryDto {
-    pub id: String,
-    pub user_id: String,
-    pub contact_agent_id: String,
-    pub project_id: String,
-    pub scope_key: String,
-    pub source_digest: Option<String>,
-    pub summary_text: String,
-    pub summary_model: String,
-    pub trigger_type: String,
-    pub source_start_message_id: Option<String>,
-    pub source_end_message_id: Option<String>,
-    pub source_message_count: i64,
-    pub source_estimated_tokens: i64,
-    pub status: String,
-    pub error_message: Option<String>,
-    pub level: i64,
-    pub rollup_summary_id: Option<String>,
-    pub rolled_up_at: Option<String>,
-    pub agent_memory_summarized: i64,
-    pub agent_memory_summarized_at: Option<String>,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
 #[derive(Debug, Clone, Deserialize)]
 pub struct TaskExecutionComposeResponseDto {
-    pub user_id: String,
-    pub contact_agent_id: String,
-    pub project_id: String,
     pub merged_summary: Option<String>,
     pub summary_count: usize,
     pub messages: Vec<TaskExecutionMessageDto>,
-    pub meta: Value,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

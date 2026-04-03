@@ -3,12 +3,11 @@ use crate::models::message::Message;
 use super::current_access_token;
 use super::dto::{
     SyncTaskExecutionMessageRequestDto, TaskExecutionComposeResponseDto, TaskExecutionMessageDto,
-    TaskExecutionSummaryDto, TaskResultBriefDto, UpsertTaskResultBriefRequestDto,
+    TaskResultBriefDto, UpsertTaskResultBriefRequestDto,
 };
 use super::http::{
-    build_url, client, context_timeout_duration, push_limit_offset_params, send_delete_result,
-    send_json, send_json_without_service_token, send_list, send_list_without_service_token,
-    timeout_duration,
+    build_url, client, context_timeout_duration, push_limit_offset_params, send_json,
+    send_json_without_service_token, send_list, send_list_without_service_token, timeout_duration,
 };
 
 #[derive(Debug, Clone)]
@@ -112,66 +111,6 @@ pub async fn list_task_execution_messages(
         send_list(path, &params).await?
     };
     Ok(dtos.into_iter().map(map_task_execution_message).collect())
-}
-
-pub async fn delete_task_execution_messages(
-    user_id: &str,
-    contact_agent_id: &str,
-    project_id: &str,
-) -> Result<i64, String> {
-    let req = client()
-        .delete(build_url("/task-executions/messages").as_str())
-        .timeout(timeout_duration())
-        .query(&[
-            ("user_id", user_id),
-            ("contact_agent_id", contact_agent_id),
-            ("project_id", project_id),
-        ]);
-
-    let resp: serde_json::Value = send_json(req).await?;
-    Ok(resp.get("deleted").and_then(|v| v.as_i64()).unwrap_or(0))
-}
-
-pub async fn list_task_execution_summaries(
-    user_id: &str,
-    contact_agent_id: &str,
-    project_id: &str,
-    limit: Option<i64>,
-    offset: i64,
-) -> Result<Vec<TaskExecutionSummaryDto>, String> {
-    let mut params = vec![
-        ("user_id".to_string(), user_id.to_string()),
-        ("contact_agent_id".to_string(), contact_agent_id.to_string()),
-        ("project_id".to_string(), project_id.to_string()),
-    ];
-    push_limit_offset_params(&mut params, limit, offset);
-    send_list("/task-executions/summaries", &params).await
-}
-
-pub async fn delete_task_execution_summary(
-    user_id: &str,
-    contact_agent_id: &str,
-    project_id: &str,
-    summary_id: &str,
-) -> Result<bool, String> {
-    let req = client()
-        .delete(
-            build_url(
-                format!(
-                    "/task-executions/summaries/{}",
-                    urlencoding::encode(summary_id)
-                )
-                .as_str(),
-            )
-            .as_str(),
-        )
-        .timeout(timeout_duration())
-        .query(&[
-            ("user_id", user_id),
-            ("contact_agent_id", contact_agent_id),
-            ("project_id", project_id),
-        ]);
-    send_delete_result(req).await
 }
 
 pub async fn compose_task_execution_context(

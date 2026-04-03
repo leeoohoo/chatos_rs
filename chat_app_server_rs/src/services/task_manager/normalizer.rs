@@ -22,8 +22,39 @@ pub(super) fn normalize_task_draft(mut draft: TaskDraft) -> Result<TaskDraft, St
         .as_deref()
         .and_then(trimmed_non_empty)
         .map(|value| value.to_string());
+    draft.required_builtin_capabilities = normalize_unique_string_list(
+        draft
+            .required_builtin_capabilities
+            .into_iter()
+            .map(|value| value.trim().to_ascii_lowercase())
+            .collect(),
+    );
+    draft.required_context_assets = normalize_required_context_assets(draft.required_context_assets);
     draft.planned_builtin_mcp_ids = normalize_unique_string_list(draft.planned_builtin_mcp_ids);
     Ok(draft)
+}
+
+fn normalize_required_context_assets(
+    values: Vec<super::types::TaskRequiredContextAssetDraft>,
+) -> Vec<super::types::TaskRequiredContextAssetDraft> {
+    let mut out = Vec::new();
+    for value in values {
+        let asset_type = value.asset_type.trim().to_ascii_lowercase();
+        let asset_ref = value.asset_ref.trim().to_string();
+        if asset_type.is_empty() || asset_ref.is_empty() {
+            continue;
+        }
+        if out.iter().any(|existing: &super::types::TaskRequiredContextAssetDraft| {
+            existing.asset_type == asset_type && existing.asset_ref == asset_ref
+        }) {
+            continue;
+        }
+        out.push(super::types::TaskRequiredContextAssetDraft {
+            asset_type,
+            asset_ref,
+        });
+    }
+    out
 }
 
 pub(super) fn normalize_priority(value: &str) -> String {
@@ -63,13 +94,6 @@ pub(super) fn normalize_unique_string_list(values: Vec<String>) -> Vec<String> {
         out.push(trimmed.to_string());
     }
     out
-}
-
-pub(super) fn parse_tags_json(raw: &str) -> Vec<String> {
-    serde_json::from_str::<Vec<String>>(raw)
-        .ok()
-        .map(normalize_tags)
-        .unwrap_or_default()
 }
 
 pub(super) fn trimmed_non_empty(value: &str) -> Option<&str> {

@@ -43,15 +43,6 @@ pub struct TaskPlanningSnapshot {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AuthUser {
-    pub user_id: String,
-    pub password_hash: String,
-    pub role: String,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContactTask {
     pub id: String,
     pub user_id: String,

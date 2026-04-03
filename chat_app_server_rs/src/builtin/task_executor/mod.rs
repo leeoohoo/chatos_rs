@@ -146,9 +146,17 @@ impl TaskExecutorService {
 
     fn register_create_tasks(&mut self, current_task_id: &str) {
         let bound_task_id = current_task_id.trim().to_string();
+        let execution_result_contract_schema = json!({
+            "type": "object",
+            "properties": {
+                "result_required": { "type": "boolean" },
+                "preferred_format": { "type": "string" }
+            },
+            "additionalProperties": false
+        });
         self.register_tool(
             "create_tasks",
-            "Create follow-up tasks directly during task execution. New tasks still start in pending_confirm and must include planned_builtin_mcp_ids / planned_context_assets when execution will require them.",
+            "Create follow-up tasks directly during task execution. New tasks still start in pending_confirm. Only use the simplified fields exposed in this schema. Prefer required_builtin_capabilities and required_context_assets; the server will map them into internal task planning fields and auto-pass current task runtime when possible.",
             json!({
                 "type": "object",
                 "properties": {
@@ -162,9 +170,23 @@ impl TaskExecutorService {
                                 "priority": { "type": "string", "enum": ["high", "medium", "low"] },
                                 "tags": { "type": "array", "items": { "type": "string" } },
                                 "due_at": { "type": "string" },
-                                "planned_builtin_mcp_ids": { "type": "array", "items": { "type": "string" } },
-                                "planned_context_assets": { "type": "array", "items": { "type": "object" } },
-                                "execution_result_contract": { "type": "object" }
+                                "required_builtin_capabilities": {
+                                    "type": "array",
+                                    "items": { "type": "string", "enum": ["read", "write", "terminal", "remote"] }
+                                },
+                                "required_context_assets": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "asset_type": { "type": "string", "enum": ["skill", "plugin", "common"] },
+                                            "asset_ref": { "type": "string" }
+                                        },
+                                        "required": ["asset_type", "asset_ref"],
+                                        "additionalProperties": false
+                                    }
+                                },
+                                "execution_result_contract": execution_result_contract_schema
                             },
                             "required": ["title"],
                             "additionalProperties": false
@@ -173,9 +195,23 @@ impl TaskExecutorService {
                     "title": { "type": "string" },
                     "details": { "type": "string" },
                     "priority": { "type": "string", "enum": ["high", "medium", "low"] },
-                    "planned_builtin_mcp_ids": { "type": "array", "items": { "type": "string" } },
-                    "planned_context_assets": { "type": "array", "items": { "type": "object" } },
-                    "execution_result_contract": { "type": "object" }
+                    "required_builtin_capabilities": {
+                        "type": "array",
+                        "items": { "type": "string", "enum": ["read", "write", "terminal", "remote"] }
+                    },
+                    "required_context_assets": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "asset_type": { "type": "string", "enum": ["skill", "plugin", "common"] },
+                                "asset_ref": { "type": "string" }
+                            },
+                            "required": ["asset_type", "asset_ref"],
+                            "additionalProperties": false
+                        }
+                    },
+                    "execution_result_contract": execution_result_contract_schema
                 },
                 "additionalProperties": false
             }),

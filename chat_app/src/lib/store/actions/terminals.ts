@@ -1,6 +1,6 @@
 import type { Terminal } from '../../../types';
 import type ApiClient from '../../api/client';
-import { normalizeTerminal } from '../helpers/terminals';
+import { areTerminalListsEqual, areTerminalsEqual, normalizeTerminal } from '../helpers/terminals';
 
 interface Deps {
   set: any;
@@ -16,6 +16,25 @@ export function createTerminalActions({ set, get, client, getUserIdParam }: Deps
         const uid = getUserIdParam();
         const list = await client.listTerminals(uid);
         const formatted = Array.isArray(list) ? list.map(normalizeTerminal) : [];
+        const currentState = get();
+        const existingTerminals = Array.isArray(currentState.terminals) ? currentState.terminals : [];
+        const rememberedTerminalId = localStorage.getItem(`lastTerminalId_${uid}`);
+        const nextCurrentTerminalId = currentState.currentTerminalId
+          || (rememberedTerminalId
+            ? (formatted.find(t => t.id === rememberedTerminalId)?.id || null)
+            : null);
+        const nextCurrentTerminal = nextCurrentTerminalId
+          ? formatted.find(t => t.id === nextCurrentTerminalId) || null
+          : null;
+
+        if (
+          areTerminalListsEqual(existingTerminals, formatted)
+          && currentState.currentTerminalId === nextCurrentTerminalId
+          && areTerminalsEqual(currentState.currentTerminal, nextCurrentTerminal)
+        ) {
+          return formatted;
+        }
+
         set((state: any) => {
           state.terminals = formatted;
           if (!state.currentTerminalId) {

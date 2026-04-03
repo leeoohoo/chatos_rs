@@ -9,9 +9,10 @@ use tracing::warn;
 
 use crate::core::chat_context::{resolve_effective_user_id, resolve_system_prompt};
 use crate::core::chat_runtime::{
-    compose_contact_command_system_prompt, compose_contact_system_prompt, normalize_id,
-    parse_contact_command_invocation, parse_implicit_command_selections_from_tools_end,
-    resolve_project_runtime, ChatRuntimeMetadata,
+    compose_contact_command_system_prompt, compose_contact_system_prompt,
+    compose_contact_task_planning_prompt, normalize_id, parse_contact_command_invocation,
+    parse_implicit_command_selections_from_tools_end, resolve_project_runtime,
+    ChatRuntimeMetadata,
 };
 use crate::core::mcp_runtime::{
     contact_agent_command_reader_server, contact_agent_plugin_reader_server,
@@ -25,6 +26,9 @@ use crate::core::turn_runtime_snapshot::{
 use crate::services::ai_client_common::AiClientCallbacks;
 use crate::services::builtin_mcp::contact_chat_default_mcp_ids;
 use crate::services::memory_server_client::{self, TurnRuntimeSnapshotSelectedCommandDto};
+
+const CONTACT_CHAT_TASK_PLANNING_RULES: &str =
+    include_str!("../../config/prompts/contact_chat_task_planning.md");
 
 #[derive(Debug, Deserialize, Clone)]
 pub(crate) struct ChatStreamRequest {
@@ -201,10 +205,35 @@ pub(crate) async fn resolve_chat_stream_context(
     .await;
 
     let is_contact_chat_context = req.execution_context != Some(true) && contact_agent_id.is_some();
+    let contact_authorized_builtin_mcp_ids = if is_contact_chat_context {
+        resolve_contact_authorized_builtin_mcp_ids(
+            effective_user_id.as_deref(),
+            contact_agent_id.as_deref(),
+        )
+        .await
+    } else {
+        Vec::new()
+    };
+    let contact_task_planning_prompt = if is_contact_chat_context {
+        compose_contact_task_planning_prompt(
+            contact_runtime_context.as_ref(),
+            contact_authorized_builtin_mcp_ids.as_slice(),
+        )
+    } else {
+        None
+    };
+    let merged_task_planning_prompt = if is_contact_chat_context {
+        merge_prompt_sections(
+            Some(CONTACT_CHAT_TASK_PLANNING_RULES),
+            contact_task_planning_prompt.as_deref(),
+        )
+    } else {
+        None
+    };
     let contact_system_prompt = if is_contact_chat_context {
         merge_prompt_sections(
             contact_system_prompt.as_deref(),
-            Some(CONTACT_CHAT_TASK_PLANNING_RULES),
+            merged_task_planning_prompt.as_deref(),
         )
     } else {
         contact_system_prompt
@@ -441,7 +470,26 @@ fn seed_selected_commands(
         .unwrap_or_default()
 }
 
-const CONTACT_CHAT_TASK_PLANNING_RULES: &str = "当前处于联系人聊天/任务规划阶段，而不是后台任务执行阶段。你当前只能做三类事：1. 查看和理解上下文；2. 与用户交互确认；3. 规划并创建任务。你不能假装已经执行未来任务，也不能把写入、终端、远程等未来执行动作当场完成。如果未来任务需要这些能力，必须在创建任务时明确写入 planned_builtin_mcp_ids 和 planned_context_assets。";
+async fn resolve_contact_authorized_builtin_mcp_ids(
+    effective_user_id: Option<&str>,
+    contact_agent_id: Option<&str>,
+) -> Vec<String> {
+    let Some(contact_agent_id) = contact_agent_id.map(str::trim).filter(|value| !value.is_empty())
+    else {
+        return Vec::new();
+    };
+
+    let Ok(contacts) = memory_server_client::list_memory_contacts(effective_user_id, Some(500), 0).await
+    else {
+        return Vec::new();
+    };
+
+    contacts
+        .into_iter()
+        .find(|item| item.agent_id.trim() == contact_agent_id)
+        .map(|item| item.authorized_builtin_mcp_ids)
+        .unwrap_or_default()
+}
 
 fn merge_prompt_sections(base: Option<&str>, extra: Option<&str>) -> Option<String> {
     match (

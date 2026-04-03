@@ -12,6 +12,12 @@ pub const REVIEW_NOT_FOUND_ERR: &str = "review_not_found";
 pub const TASK_NOT_FOUND_ERR: &str = "task_not_found";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskRequiredContextAssetDraft {
+    pub asset_type: String,
+    pub asset_ref: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskDraft {
     pub title: String,
     #[serde(default)]
@@ -24,6 +30,10 @@ pub struct TaskDraft {
     pub tags: Vec<String>,
     #[serde(default)]
     pub due_at: Option<String>,
+    #[serde(default)]
+    pub required_builtin_capabilities: Vec<String>,
+    #[serde(default)]
+    pub required_context_assets: Vec<TaskRequiredContextAssetDraft>,
     #[serde(default)]
     pub planned_builtin_mcp_ids: Vec<String>,
     #[serde(default)]

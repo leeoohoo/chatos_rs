@@ -106,6 +106,7 @@ pub(super) fn strip_ansi(input: &str) -> String {
     ANSI_ESC_RE.replace_all(&without_csi, "").to_string()
 }
 
+#[cfg(test)]
 pub(super) fn is_prompt_line(line: &str) -> bool {
     let trimmed = line.trim();
     if trimmed.is_empty() {

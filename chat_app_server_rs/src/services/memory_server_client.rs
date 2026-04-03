@@ -42,11 +42,9 @@ pub use self::session_ops::{
     upsert_task_execution_summary_job_config,
 };
 pub use self::skill_ops::{get_memory_skill, get_memory_skill_plugin};
-#[allow(unused_imports)]
 pub use self::task_execution_ops::{
-    compose_task_execution_context, delete_task_execution_messages, delete_task_execution_summary,
-    list_task_execution_messages, list_task_execution_summaries, upsert_task_execution_message,
-    upsert_task_result_brief, TaskExecutionScopeBinding,
+    compose_task_execution_context, list_task_execution_messages,
+    upsert_task_execution_message, upsert_task_result_brief, TaskExecutionScopeBinding,
 };
 
 pub async fn with_access_token_scope<T, Fut>(access_token: Option<String>, future: Fut) -> T

@@ -586,10 +586,6 @@ async fn validate_task_execution_grants(
         return Ok(());
     };
 
-    if task.planned_builtin_mcp_ids.is_empty() {
-        return Err(format!("task {} missing planned_builtin_mcp_ids", task.id));
-    }
-
     let contacts =
         memory_server_client::list_memory_contacts(Some(scope.user_id.as_str()), Some(500), 0)
             .await?;

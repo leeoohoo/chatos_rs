@@ -1,4 +1,3 @@
-mod mapper;
 mod normalizer;
 mod review_hub;
 mod store;
@@ -15,9 +14,9 @@ pub use store::{
 };
 #[allow(unused_imports)]
 pub use types::{
-    TaskCreateReviewPayload, TaskDraft, TaskRecord, TaskReviewAction, TaskReviewDecision,
-    TaskUpdatePatch, REVIEW_NOT_FOUND_ERR, REVIEW_TIMEOUT_ERR, REVIEW_TIMEOUT_MS_DEFAULT,
-    TASK_NOT_FOUND_ERR,
+    TaskCreateReviewPayload, TaskDraft, TaskRecord, TaskRequiredContextAssetDraft,
+    TaskReviewAction, TaskReviewDecision, TaskUpdatePatch, REVIEW_NOT_FOUND_ERR,
+    REVIEW_TIMEOUT_ERR, REVIEW_TIMEOUT_MS_DEFAULT, TASK_NOT_FOUND_ERR,
 };
 
 #[cfg(test)]
@@ -25,7 +24,7 @@ mod tests {
     use super::normalizer::normalize_task_draft;
     use super::{
         create_task_review, submit_task_review_decision, wait_for_task_review_decision, TaskDraft,
-        TaskReviewAction, TaskUpdatePatch,
+        TaskRequiredContextAssetDraft, TaskReviewAction, TaskUpdatePatch,
     };
 
     #[test]
@@ -37,6 +36,11 @@ mod tests {
             status: "invalid".to_string(),
             tags: vec![" ui ".to_string(), "ui".to_string(), "".to_string()],
             due_at: Some("  ".to_string()),
+            required_builtin_capabilities: vec![" Read ".to_string(), "read".to_string()],
+            required_context_assets: vec![TaskRequiredContextAssetDraft {
+                asset_type: " Skill ".to_string(),
+                asset_ref: " SK1 ".to_string(),
+            }],
             planned_builtin_mcp_ids: vec![" builtin_code_maintainer_read ".to_string()],
             planned_context_assets: Vec::new(),
             execution_result_contract: None,
@@ -49,6 +53,13 @@ mod tests {
         assert_eq!(normalized.status, "pending_confirm");
         assert_eq!(normalized.tags, vec!["ui"]);
         assert_eq!(normalized.due_at, None);
+        assert_eq!(
+            normalized.required_builtin_capabilities,
+            vec!["read".to_string()]
+        );
+        assert_eq!(normalized.required_context_assets.len(), 1);
+        assert_eq!(normalized.required_context_assets[0].asset_type, "skill");
+        assert_eq!(normalized.required_context_assets[0].asset_ref, "SK1");
         assert_eq!(
             normalized.planned_builtin_mcp_ids,
             vec!["builtin_code_maintainer_read".to_string()]
@@ -84,6 +95,8 @@ mod tests {
             status: "pending_confirm".to_string(),
             tags: vec!["one".to_string()],
             due_at: None,
+            required_builtin_capabilities: Vec::new(),
+            required_context_assets: Vec::new(),
             planned_builtin_mcp_ids: Vec::new(),
             planned_context_assets: Vec::new(),
             execution_result_contract: None,
@@ -101,6 +114,8 @@ mod tests {
             status: "running".to_string(),
             tags: vec!["backend".to_string()],
             due_at: Some("2026-03-01T10:00:00Z".to_string()),
+            required_builtin_capabilities: Vec::new(),
+            required_context_assets: Vec::new(),
             planned_builtin_mcp_ids: Vec::new(),
             planned_context_assets: Vec::new(),
             execution_result_contract: None,
@@ -135,6 +150,8 @@ mod tests {
             status: "pending_confirm".to_string(),
             tags: Vec::new(),
             due_at: None,
+            required_builtin_capabilities: Vec::new(),
+            required_context_assets: Vec::new(),
             planned_builtin_mcp_ids: Vec::new(),
             planned_context_assets: Vec::new(),
             execution_result_contract: None,

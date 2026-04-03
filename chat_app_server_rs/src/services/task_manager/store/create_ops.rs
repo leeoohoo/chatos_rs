@@ -1,5 +1,11 @@
+use crate::services::builtin_mcp::{
+    CODE_MAINTAINER_READ_MCP_ID, CODE_MAINTAINER_WRITE_MCP_ID,
+    REMOTE_CONNECTION_CONTROLLER_MCP_ID, TERMINAL_CONTROLLER_MCP_ID, UI_PROMPTER_MCP_ID,
+};
 use crate::services::task_manager::normalizer::{normalize_task_drafts, trimmed_non_empty};
-use crate::services::task_manager::types::{TaskDraft, TaskRecord};
+use crate::services::task_manager::types::{
+    TaskDraft, TaskRecord, TaskRequiredContextAssetDraft,
+};
 use crate::services::task_service_client::{
     self, CreateTaskRequestDto, TaskContextAssetRefDto, TaskExecutionResultContractDto,
     TaskPlanningSnapshotDto,
@@ -25,13 +31,13 @@ fn planned_builtin_requires_remote_connection(id: &str) -> bool {
     matches!(id.trim(), "builtin_remote_connection_controller")
 }
 
-fn ensure_planned_builtin_mcp_ids_present(
-    planned_builtin_mcp_ids: &[String],
-) -> Result<(), String> {
-    if planned_builtin_mcp_ids.is_empty() {
-        Err("planned_builtin_mcp_ids is required and cannot be empty".to_string())
-    } else {
-        Ok(())
+fn builtin_mcp_id_for_capability(capability: &str) -> Option<&'static str> {
+    match capability.trim() {
+        "read" => Some(CODE_MAINTAINER_READ_MCP_ID),
+        "write" => Some(CODE_MAINTAINER_WRITE_MCP_ID),
+        "terminal" => Some(TERMINAL_CONTROLLER_MCP_ID),
+        "remote" => Some(REMOTE_CONNECTION_CONTROLLER_MCP_ID),
+        _ => None,
     }
 }
 
@@ -124,6 +130,45 @@ fn normalize_asset_type(asset_type: &str) -> Option<&'static str> {
     }
 }
 
+fn resolve_required_builtin_capabilities(
+    capabilities: &[String],
+    authorized_builtin_mcp_ids: &[String],
+) -> Result<Vec<String>, String> {
+    let mut out = Vec::new();
+    let mut unsupported = Vec::new();
+    let mut unauthorized = Vec::new();
+
+    for capability in capabilities {
+        let token = capability.trim();
+        let Some(mcp_id) = builtin_mcp_id_for_capability(token) else {
+            unsupported.push(token.to_string());
+            continue;
+        };
+        if !authorized_builtin_mcp_ids.iter().any(|item| item == mcp_id) {
+            unauthorized.push(format!("{token}->{mcp_id}"));
+            continue;
+        }
+        if !out.iter().any(|item| item == mcp_id) {
+            out.push(mcp_id.to_string());
+        }
+    }
+
+    if !unsupported.is_empty() {
+        return Err(format!(
+            "required_builtin_capabilities contains unsupported items: {}. allowed=read, write, terminal, remote",
+            unsupported.join(", ")
+        ));
+    }
+    if !unauthorized.is_empty() {
+        return Err(format!(
+            "required_builtin_capabilities contains unauthorized items: {}",
+            unauthorized.join(", ")
+        ));
+    }
+
+    Ok(out)
+}
+
 fn resolve_runtime_skill<'a>(
     runtime_context: &'a crate::services::memory_server_client::MemoryAgentRuntimeContextDto,
     asset: &TaskContextAssetRefDto,
@@ -138,6 +183,118 @@ fn resolve_runtime_skill<'a>(
                 && item.source_path.as_deref().map(str::trim).unwrap_or("") == source_path)
             || (!display_name.is_empty() && item.name.trim() == display_name)
     })
+}
+
+fn resolve_required_context_assets(
+    selections: &[TaskRequiredContextAssetDraft],
+    runtime_context: &crate::services::memory_server_client::MemoryAgentRuntimeContextDto,
+) -> Result<Vec<TaskContextAssetRefDto>, String> {
+    let mut out = Vec::new();
+
+    for selection in selections {
+        let Some(asset_type) = normalize_asset_type(selection.asset_type.as_str()) else {
+            return Err(format!(
+                "unsupported required_context_assets.asset_type: {}",
+                selection.asset_type
+            ));
+        };
+        let asset_ref = selection.asset_ref.trim();
+        if asset_ref.is_empty() {
+            continue;
+        }
+
+        let resolved = match asset_type {
+            "skill" => {
+                let skill = runtime_context
+                    .runtime_skills
+                    .iter()
+                    .enumerate()
+                    .find(|(index, item)| {
+                        asset_ref.eq_ignore_ascii_case(format!("SK{}", index + 1).as_str())
+                            || item.id.trim() == asset_ref
+                            || item
+                                .source_path
+                                .as_deref()
+                                .map(str::trim)
+                                .unwrap_or("")
+                                == asset_ref
+                            || item.name.trim() == asset_ref
+                    })
+                    .map(|(_, item)| item)
+                    .ok_or_else(|| {
+                        format!(
+                            "required_context_assets skill not found in current contact runtime: {}",
+                            asset_ref
+                        )
+                    })?;
+                TaskContextAssetRefDto {
+                    asset_type: "skill".to_string(),
+                    asset_id: skill.id.clone(),
+                    display_name: Some(skill.name.clone()),
+                    source_type: Some(skill.source_type.clone()),
+                    source_path: skill.source_path.clone(),
+                }
+            }
+            "plugin" => {
+                let plugin = runtime_context
+                    .runtime_plugins
+                    .iter()
+                    .enumerate()
+                    .find(|(index, item)| {
+                        asset_ref.eq_ignore_ascii_case(format!("PL{}", index + 1).as_str())
+                            || item.source.trim() == asset_ref
+                            || item.name.trim() == asset_ref
+                    })
+                    .map(|(_, item)| item)
+                    .ok_or_else(|| {
+                        format!(
+                            "required_context_assets plugin not found in current contact runtime: {}",
+                            asset_ref
+                        )
+                    })?;
+                TaskContextAssetRefDto {
+                    asset_type: "plugin".to_string(),
+                    asset_id: plugin.source.clone(),
+                    display_name: Some(plugin.name.clone()),
+                    source_type: Some("plugin".to_string()),
+                    source_path: None,
+                }
+            }
+            "common" => {
+                let command = runtime_context
+                    .runtime_commands
+                    .iter()
+                    .find(|item| {
+                        item.command_ref.trim() == asset_ref
+                            || item.source_path.trim() == asset_ref
+                            || item.name.trim() == asset_ref
+                    })
+                    .ok_or_else(|| {
+                        format!(
+                            "required_context_assets common not found in current contact runtime: {}",
+                            asset_ref
+                        )
+                    })?;
+                TaskContextAssetRefDto {
+                    asset_type: "common".to_string(),
+                    asset_id: command.command_ref.clone(),
+                    display_name: Some(command.name.clone()),
+                    source_type: Some("runtime_command".to_string()),
+                    source_path: Some(command.source_path.clone()),
+                }
+            }
+            _ => unreachable!(),
+        };
+
+        let duplicated = out.iter().any(|existing: &TaskContextAssetRefDto| {
+            existing.asset_type == resolved.asset_type && existing.asset_id == resolved.asset_id
+        });
+        if !duplicated {
+            out.push(resolved);
+        }
+    }
+
+    Ok(out)
 }
 
 async fn hydrate_context_assets(
@@ -276,18 +433,11 @@ async fn build_task_planning_snapshot(
     conversation_turn_id: &str,
     scope: &TaskScopeContext,
     contact_authorized_builtin_mcp_ids: &[String],
+    runtime_snapshot: Option<&crate::services::memory_server_client::TurnRuntimeSnapshotDto>,
 ) -> TaskPlanningSnapshotDto {
     let turn_messages = fetch_turn_messages(session_id, conversation_turn_id)
         .await
         .unwrap_or_default();
-    let runtime_snapshot =
-        crate::services::memory_server_client::get_turn_runtime_snapshot_by_turn(
-            session_id,
-            conversation_turn_id,
-        )
-        .await
-        .ok()
-        .and_then(|payload| payload.snapshot);
 
     TaskPlanningSnapshotDto {
         contact_authorized_builtin_mcp_ids: contact_authorized_builtin_mcp_ids.to_vec(),
@@ -296,10 +446,141 @@ async fn build_task_planning_snapshot(
         source_constraints_summary: build_source_constraints_summary(
             turn_messages.as_slice(),
             scope,
-            runtime_snapshot.as_ref(),
+            runtime_snapshot,
         ),
         planned_at: Some(crate::core::time::now_rfc3339()),
     }
+}
+
+fn infer_task_builtin_mcp_ids(
+    draft: &TaskDraft,
+    scope: &TaskScopeContext,
+    authorized_builtin_mcp_ids: &[String],
+    runtime_snapshot: Option<&crate::services::memory_server_client::TurnRuntimeSnapshotDto>,
+) -> Vec<String> {
+    let mut out = draft.planned_builtin_mcp_ids.clone();
+
+    let mut push_if_authorized = |mcp_id: &str| {
+        if !authorized_builtin_mcp_ids.iter().any(|item| item == mcp_id) {
+            return;
+        }
+        if !out.iter().any(|item| item == mcp_id) {
+            out.push(mcp_id.to_string());
+        }
+    };
+
+    if let Some(runtime) = runtime_snapshot.and_then(|snapshot| snapshot.runtime.as_ref()) {
+        for enabled_mcp_id in &runtime.enabled_mcp_ids {
+            let normalized = enabled_mcp_id.trim();
+            if normalized.is_empty() || normalized == UI_PROMPTER_MCP_ID {
+                continue;
+            }
+            push_if_authorized(normalized);
+        }
+    }
+
+    let joined = format!("{}\n{}", draft.title, draft.details);
+    let text = joined.trim().to_ascii_lowercase();
+    let has_project_root = scope
+        .project_root
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_some();
+    let has_remote_connection = scope
+        .remote_connection_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_some();
+
+    if has_project_root {
+        push_if_authorized(CODE_MAINTAINER_READ_MCP_ID);
+    }
+
+    let write_keywords = [
+        "输出", "生成", "编写", "撰写", "修改", "修复", "保存", "落地", "文档", "markdown", ".md",
+        "write", "update", "edit", "implement", "fix", "doc", "docs",
+    ];
+    if has_project_root
+        && write_keywords
+            .iter()
+            .any(|keyword| joined.contains(keyword) || text.contains(keyword))
+    {
+        push_if_authorized(CODE_MAINTAINER_WRITE_MCP_ID);
+    }
+
+    let terminal_keywords = [
+        "终端", "命令", "运行", "执行", "启动", "安装", "测试", "构建", "编译", "调试", "日志",
+        "shell", "command", "run ", "start ", "install", "test", "build", "compile", "debug",
+        "npm", "pnpm", "yarn", "cargo", "python", "pytest", "docker", "make ",
+    ];
+    if has_project_root
+        && terminal_keywords
+            .iter()
+            .any(|keyword| joined.contains(keyword) || text.contains(keyword))
+    {
+        push_if_authorized(TERMINAL_CONTROLLER_MCP_ID);
+    }
+
+    let remote_keywords = [
+        "远程", "服务器", "主机", "线上", "ssh", "remote", "server", "deploy",
+    ];
+    if has_remote_connection
+        && remote_keywords
+            .iter()
+            .any(|keyword| joined.contains(keyword) || text.contains(keyword))
+    {
+        push_if_authorized(REMOTE_CONNECTION_CONTROLLER_MCP_ID);
+    }
+
+    out
+}
+
+fn merge_runtime_selected_command_assets(
+    draft_assets: &[TaskContextAssetRefDto],
+    runtime_snapshot: Option<&crate::services::memory_server_client::TurnRuntimeSnapshotDto>,
+) -> Vec<TaskContextAssetRefDto> {
+    let mut out = draft_assets.to_vec();
+
+    let Some(runtime) = runtime_snapshot.and_then(|snapshot| snapshot.runtime.as_ref()) else {
+        return out;
+    };
+
+    for command in &runtime.selected_commands {
+        let asset_id = command
+            .command_ref
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| command.source_path.trim().to_string());
+        if asset_id.is_empty() {
+            continue;
+        }
+        let duplicated = out.iter().any(|existing| {
+            existing.asset_type == "common"
+                && (existing.asset_id == asset_id
+                    || existing
+                        .source_path
+                        .as_deref()
+                        .map(str::trim)
+                        .unwrap_or("")
+                        == command.source_path.trim())
+        });
+        if duplicated {
+            continue;
+        }
+        out.push(TaskContextAssetRefDto {
+            asset_type: "common".to_string(),
+            asset_id,
+            display_name: command.name.clone(),
+            source_type: Some("runtime_command".to_string()),
+            source_path: Some(command.source_path.clone()),
+        });
+    }
+
+    out
 }
 
 async fn fetch_turn_messages(
@@ -477,21 +758,59 @@ pub async fn create_tasks_for_turn(
             scope.contact_agent_id
         )
     })?;
+    let runtime_snapshot =
+        crate::services::memory_server_client::get_turn_runtime_snapshot_by_turn(
+            session_id.as_str(),
+            conversation_turn_id.as_str(),
+        )
+        .await
+        .ok()
+        .and_then(|payload| payload.snapshot);
     let planning_snapshot = build_task_planning_snapshot(
         session_id.as_str(),
         conversation_turn_id.as_str(),
         &scope,
         contact_authorized_builtin_mcp_ids.as_slice(),
+        runtime_snapshot.as_ref(),
     )
     .await;
     let mut out = Vec::with_capacity(draft_tasks.len());
     for mut draft in draft_tasks {
-        ensure_planned_builtin_mcp_ids_present(draft.planned_builtin_mcp_ids.as_slice())?;
+        let capability_builtin_mcp_ids = resolve_required_builtin_capabilities(
+            draft.required_builtin_capabilities.as_slice(),
+            contact_authorized_builtin_mcp_ids.as_slice(),
+        )?;
+        for mcp_id in capability_builtin_mcp_ids {
+            if !draft.planned_builtin_mcp_ids.iter().any(|item| item == &mcp_id) {
+                draft.planned_builtin_mcp_ids.push(mcp_id);
+            }
+        }
+        let required_context_assets = resolve_required_context_assets(
+            draft.required_context_assets.as_slice(),
+            &runtime_context,
+        )?;
+        for asset in required_context_assets {
+            if !draft.planned_context_assets.iter().any(|existing| {
+                existing.asset_type == asset.asset_type && existing.asset_id == asset.asset_id
+            }) {
+                draft.planned_context_assets.push(asset);
+            }
+        }
+        draft.planned_builtin_mcp_ids = infer_task_builtin_mcp_ids(
+            &draft,
+            &scope,
+            contact_authorized_builtin_mcp_ids.as_slice(),
+            runtime_snapshot.as_ref(),
+        );
         ensure_planned_builtin_mcp_ids_authorized(
             draft.planned_builtin_mcp_ids.as_slice(),
             contact_authorized_builtin_mcp_ids.as_slice(),
         )?;
         ensure_runtime_requirements(draft.planned_builtin_mcp_ids.as_slice(), &scope)?;
+        draft.planned_context_assets = merge_runtime_selected_command_assets(
+            draft.planned_context_assets.as_slice(),
+            runtime_snapshot.as_ref(),
+        );
         draft.planned_context_assets =
             hydrate_context_assets(draft.planned_context_assets.as_slice(), &runtime_context)
                 .await?;

@@ -274,7 +274,6 @@ pub struct TaskRecordDto {
 pub struct SchedulerDecisionDto {
     pub decision: String,
     pub task: Option<TaskRecordDto>,
-    pub scope_key: String,
 }
 
 pub async fn create_task(req_body: &CreateTaskRequestDto) -> Result<TaskRecordDto, String> {

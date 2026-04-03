@@ -1,7 +1,6 @@
 mod create_ops;
 mod read_ops;
 pub mod remote_support;
-mod row;
 mod write_ops;
 
 pub use self::create_ops::create_tasks_for_turn;
