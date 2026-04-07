@@ -90,3 +90,17 @@ export interface TaskResultBrief {
   created_at: string;
   updated_at: string;
 }
+
+export interface MemoryContactSummary {
+  id: string;
+  user_id: string;
+  agent_id: string;
+  agent_name_snapshot?: string | null;
+}
+
+export interface MemoryProjectSummary {
+  id: string;
+  user_id: string;
+  project_id: string;
+  name: string;
+}

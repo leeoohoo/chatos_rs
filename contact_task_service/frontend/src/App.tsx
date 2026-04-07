@@ -23,7 +23,14 @@ import zhCN from 'antd/locale/zh_CN';
 import { useEffect, useMemo, useState } from 'react';
 
 import { api, authStore } from './api';
-import type { AuthUser, ContactTask, TaskExecutionMessage, TaskResultBrief } from './types';
+import type {
+  AuthUser,
+  ContactTask,
+  MemoryContactSummary,
+  MemoryProjectSummary,
+  TaskExecutionMessage,
+  TaskResultBrief,
+} from './types';
 
 const { Header, Content } = Layout;
 const { Title, Text, Paragraph } = Typography;
@@ -128,6 +135,8 @@ function App() {
   const [expandedTaskIds, setExpandedTaskIds] = useState<string[]>([]);
   const [executionSectionExpandedByTaskId, setExecutionSectionExpandedByTaskId] = useState<Record<string, boolean>>({});
   const [executionPageByTaskId, setExecutionPageByTaskId] = useState<Record<string, number>>({});
+  const [contactNameByScopeKey, setContactNameByScopeKey] = useState<Record<string, string>>({});
+  const [projectNameByScopeKey, setProjectNameByScopeKey] = useState<Record<string, string>>({});
 
   useEffect(() => {
     const init = async () => {
@@ -176,6 +185,69 @@ function App() {
     }
   }, [authUser]);
 
+  useEffect(() => {
+    if (!authUser || tasks.length === 0) {
+      setContactNameByScopeKey({});
+      setProjectNameByScopeKey({});
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadScopeDisplayNames = async () => {
+      const userIds = Array.from(
+        new Set(
+          tasks
+            .map((task) => task.user_id?.trim())
+            .filter((value): value is string => Boolean(value)),
+        ),
+      );
+
+      const contactEntries = await Promise.all(
+        userIds.map(async (userId) => {
+          try {
+            const rows = await api.listMemoryContacts(userId);
+            return rows.map((item) => {
+              const scopeKey = `${item.user_id}:${item.agent_id}`;
+              const displayName = item.agent_name_snapshot?.trim() || item.agent_id;
+              return [scopeKey, displayName] as const;
+            });
+          } catch {
+            return [] as Array<readonly [string, string]>;
+          }
+        }),
+      );
+
+      const projectEntries = await Promise.all(
+        userIds.map(async (userId) => {
+          try {
+            const rows = await api.listMemoryProjects(userId);
+            return rows.map((item) => {
+              const scopeKey = `${item.user_id}:${item.project_id}`;
+              const displayName = item.name?.trim() || item.project_id;
+              return [scopeKey, displayName] as const;
+            });
+          } catch {
+            return [] as Array<readonly [string, string]>;
+          }
+        }),
+      );
+
+      if (cancelled) {
+        return;
+      }
+
+      setContactNameByScopeKey(Object.fromEntries(contactEntries.flat()));
+      setProjectNameByScopeKey(Object.fromEntries(projectEntries.flat()));
+    };
+
+    void loadScopeDisplayNames();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authUser, tasks]);
+
   const doLogin = async () => {
     setLoginLoading(true);
     setError(null);
@@ -203,7 +275,26 @@ function App() {
     setResultBriefErrorByTaskId({});
     setExecutionSectionExpandedByTaskId({});
     setExecutionPageByTaskId({});
+    setContactNameByScopeKey({});
+    setProjectNameByScopeKey({});
   };
+
+  const getContactDisplayName = useMemo(() => (
+    (record: ContactTask): string => {
+      const scopeKey = `${record.user_id}:${record.contact_agent_id}`;
+      return contactNameByScopeKey[scopeKey] || record.contact_agent_id || '-';
+    }
+  ), [contactNameByScopeKey]);
+
+  const getProjectDisplayName = useMemo(() => (
+    (record: ContactTask): string => {
+      if (record.project_id === '0') {
+        return '未指定项目';
+      }
+      const scopeKey = `${record.user_id}:${record.project_id}`;
+      return projectNameByScopeKey[scopeKey] || record.project_id || '-';
+    }
+  ), [projectNameByScopeKey]);
 
   const loadExecutionMessages = async (taskId: string, force = false) => {
     if (!taskId) {
@@ -297,8 +388,24 @@ function App() {
         key: 'scope',
         render: (_: unknown, record: ContactTask) => (
           <Space direction="vertical" size={2}>
-            <Text>{record.user_id}</Text>
-            <Text type="secondary">{record.contact_agent_id} / {record.project_id}</Text>
+            <Text>用户: {record.user_id}</Text>
+            <Text>
+              联系人:
+              {' '}
+              {getContactDisplayName(record)}
+            </Text>
+            <Text type="secondary">
+              项目:
+              {' '}
+              {getProjectDisplayName(record)}
+            </Text>
+            <Text type="secondary">
+              IDs:
+              {' '}
+              {record.contact_agent_id}
+              {' / '}
+              {record.project_id}
+            </Text>
           </Space>
         ),
       },
@@ -357,7 +464,7 @@ function App() {
         render: (value: string) => new Date(value).toLocaleString(),
       },
     ],
-    [],
+    [getContactDisplayName, getProjectDisplayName],
   );
 
   return (

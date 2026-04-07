@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 
 import type {
   SessionRuntimeGuidanceState,
   TaskReviewPanelState,
   UiPromptPanelState,
 } from '../../lib/store/types';
+import { readSessionImConversationId } from '../../lib/store/helpers/sessionRuntime';
 import type { RuntimeGuidanceWorkbarItem } from '../TaskWorkbar';
 import { pickFirstSessionPanel, pickSessionScopedState } from './helpers';
 import { usePanelActions } from './usePanelActions';
@@ -66,6 +67,7 @@ interface SessionWorkbarApiClient {
 
 interface SessionLike {
   id: string;
+  metadata?: unknown;
 }
 
 interface UseSessionWorkbarPanelsArgs {
@@ -110,6 +112,7 @@ export const useSessionWorkbarPanels = ({
   const normalizedSelectedTurnId = typeof selectedSessionActiveTurnId === 'string'
     ? selectedSessionActiveTurnId.trim()
     : '';
+  const latestImMessageRefreshKeyRef = useRef<string | null>(null);
 
   const activeTaskReviewPanel = useMemo(
     () => pickFirstSessionPanel<TaskReviewPanelState>(taskReviewPanelsBySession, sessionId),
@@ -147,6 +150,39 @@ export const useSessionWorkbarPanels = ({
   });
 
   const preferredTurnId = normalizedSelectedTurnId || activeConversationTurnId || null;
+  const isImSession = useMemo(
+    () => Boolean(readSessionImConversationId(session?.metadata)),
+    [session?.metadata],
+  );
+  const latestImMessageRefreshKey = useMemo(() => {
+    if (!enabled || !sessionId || !isImSession) {
+      return '';
+    }
+
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const message = messages[i];
+      if (message?.sessionId && message.sessionId !== sessionId) {
+        continue;
+      }
+      const messageId = typeof message?.id === 'string' ? message.id.trim() : '';
+      const updatedAt = message?.updatedAt instanceof Date
+        ? message.updatedAt.toISOString()
+        : '';
+      const createdAt = message?.createdAt instanceof Date
+        ? message.createdAt.toISOString()
+        : '';
+      const sender = typeof message?.role === 'string' ? message.role.trim() : '';
+      const turnId = typeof message?.metadata?.conversation_turn_id === 'string'
+        ? message.metadata.conversation_turn_id.trim()
+        : '';
+      const effectiveTime = updatedAt || createdAt;
+      if (messageId || effectiveTime || sender || turnId) {
+        return [messageId, effectiveTime, sender, turnId].join('|');
+      }
+    }
+
+    return '';
+  }, [enabled, isImSession, messages, sessionId]);
 
   useEffect(() => {
     if (!enabled || !sessionId) {
@@ -161,6 +197,38 @@ export const useSessionWorkbarPanels = ({
     loadHistoryWorkbarTasks,
     preferredTurnId,
     resetAllWorkbarState,
+    sessionId,
+  ]);
+
+  useEffect(() => {
+    if (!enabled || !sessionId || !isImSession) {
+      latestImMessageRefreshKeyRef.current = null;
+      return;
+    }
+
+    if (!latestImMessageRefreshKey) {
+      return;
+    }
+
+    if (latestImMessageRefreshKeyRef.current === null) {
+      latestImMessageRefreshKeyRef.current = latestImMessageRefreshKey;
+      return;
+    }
+
+    if (latestImMessageRefreshKeyRef.current === latestImMessageRefreshKey) {
+      return;
+    }
+
+    latestImMessageRefreshKeyRef.current = latestImMessageRefreshKey;
+    void loadCurrentTurnWorkbarTasks(sessionId, preferredTurnId);
+    void loadHistoryWorkbarTasks(sessionId, true);
+  }, [
+    enabled,
+    isImSession,
+    latestImMessageRefreshKey,
+    loadCurrentTurnWorkbarTasks,
+    loadHistoryWorkbarTasks,
+    preferredTurnId,
     sessionId,
   ]);
 
