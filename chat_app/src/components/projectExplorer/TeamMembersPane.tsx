@@ -22,12 +22,10 @@ import type {
   ContactItem,
   ProjectContactRow,
 } from './teamMembers/types';
-import TurnRuntimeContextDrawer from '../chatInterface/TurnRuntimeContextDrawer';
 import TeamMembersSidebar from './teamMembers/TeamMembersSidebar';
 import TeamMemberWorkspace from './teamMembers/TeamMemberWorkspace';
 import { useTeamMemberConversation } from './teamMembers/useTeamMemberConversation';
 import { useProjectMembersManager } from './teamMembers/useProjectMembersManager';
-import { useTeamMemberRuntimeContext } from './teamMembers/useTeamMemberRuntimeContext';
 
 interface TeamMembersPaneProps {
   project: Project;
@@ -346,23 +344,6 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
       await handleSelectContact(contactId);
     }
   }, [confirmAddMemberFromManager, handleSelectContact]);
-  const {
-    runtimeContextOpen,
-    setRuntimeContextOpen,
-    runtimeContextSessionId,
-    runtimeContextData,
-    runtimeContextLoading,
-    runtimeContextError,
-    openingRuntimeContextContactId,
-    handleOpenRuntimeContext,
-    handleRefreshRuntimeContext,
-  } = useTeamMemberRuntimeContext({
-    apiClient,
-    sessions: sessions || [],
-    normalizedProjectId,
-    ensureContactSession: ensureBackingSessionForProjectContact,
-    setSelectedContactId,
-  });
 
   const handleRuntimeGuidanceSend = useCallback(async (content: string) => {
     if (!selectedProjectSession) {
@@ -395,7 +376,6 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
   }, [selectRemoteConnection]);
 
   const handleRemoveMember = useCallback(async (contact: ContactItem) => {
-    const targetSessionId = projectContacts.find((item) => item.contact.id === contact.id)?.session?.id || null;
     const removed = await removeMemberFromManager(contact);
     if (!removed) {
       return;
@@ -405,14 +385,9 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
       setSummaryPaneSessionId(null);
       resetSummaryState();
     }
-    if (targetSessionId && runtimeContextSessionId === targetSessionId) {
-      setRuntimeContextOpen(false);
-    }
   }, [
-    projectContacts,
     removeMemberFromManager,
     resetSummaryState,
-    runtimeContextSessionId,
     selectedContactId,
   ]);
 
@@ -436,14 +411,11 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
         switchingContactId={switchingContactId}
         summaryPaneSessionId={summaryPaneSessionId}
         openingSummaryContactId={openingSummaryContactId}
-        runtimeContextSessionId={runtimeContextOpen ? runtimeContextSessionId : null}
-        openingRuntimeContextContactId={openingRuntimeContextContactId}
         removingContactId={removingContactId}
         sessionChatState={sessionChatState}
         onOpenAddMember={() => { void handleOpenAddMember(); }}
         onSelectContact={(contactId) => { void handleSelectContact(contactId); }}
         onOpenSummary={(contact) => { void handleOpenSummary(contact); }}
-        onOpenRuntimeContext={(contact) => { void handleOpenRuntimeContext(contact); }}
         onRemoveMember={(contact) => { void handleRemoveMember(contact); }}
       />
 
@@ -513,15 +485,6 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
         runtimeGuidanceAppliedCount={runtimeGuidanceAppliedCount}
         runtimeGuidanceLastAppliedAt={runtimeGuidanceLastAppliedAt}
         runtimeGuidanceItems={runtimeGuidanceItems}
-      />
-      <TurnRuntimeContextDrawer
-        open={runtimeContextOpen}
-        sessionId={runtimeContextSessionId}
-        loading={runtimeContextLoading}
-        error={runtimeContextError}
-        data={runtimeContextData}
-        onRefresh={handleRefreshRuntimeContext}
-        onClose={() => setRuntimeContextOpen(false)}
       />
       <ProjectContactPickerModal
         isOpen={memberPickerOpen}

@@ -22,13 +22,14 @@ import { useSessionListDeleteActions } from './useSessionListDeleteActions';
 import { useSessionListActions } from './useSessionListActions';
 import { useSessionListStoreState } from './useSessionListStoreState';
 import { useRemoteConnectionForm } from './useRemoteConnectionForm';
+import { useContactImRuntimeState } from './useContactImRuntimeState';
 import type { ContactItem } from './types';
+import type { ImConversationResponse } from '../../lib/api/client/types';
 
 interface SessionListControllerParams {
   store?: typeof useChatStore;
   activeSummarySessionId?: string | null;
   onOpenSessionSummary?: (sessionId: string) => void;
-  onOpenSessionRuntimeContext?: (sessionId: string) => void;
   isCollapsed: boolean;
 }
 
@@ -36,7 +37,6 @@ export const useSessionListController = ({
   store,
   activeSummarySessionId,
   onOpenSessionSummary,
-  onOpenSessionRuntimeContext,
   isCollapsed,
 }: SessionListControllerParams) => {
   let contextStoreHook: typeof useChatStore | null = null;
@@ -66,6 +66,8 @@ export const useSessionListController = ({
     updateSession,
     loadAgents,
     sessionChatState,
+    imConversations,
+    imConversationRuntimeByConversationId,
     taskReviewPanelsBySession = {},
     uiPromptPanelsBySession = {},
     projects,
@@ -148,6 +150,7 @@ export const useSessionListController = ({
   const contactScopeState = useContactScopeListState({
     contacts,
     sessions: sessions || [],
+    imConversations: (imConversations || []) as ImConversationResponse[],
     currentSession,
     activePanel,
     activeSummarySessionId,
@@ -178,7 +181,6 @@ export const useSessionListController = ({
     selectSession,
     setActivePanel,
     onOpenSessionSummary,
-    onOpenSessionRuntimeContext,
     loadContactsAction,
     loadTerminals,
     loadRemoteConnections,
@@ -255,6 +257,41 @@ export const useSessionListController = ({
     return () => window.clearInterval(timer);
   }, [activePanel, hasRunningTerminals, isCollapsed, loadTerminals]);
 
+  const { imRuntimeStateByRuntimeSessionId } = useContactImRuntimeState({
+    sessions: sessions || [],
+    displaySessions: contactScopeState.displayScopeSessions,
+    displayBackingSessionIdMap: contactScopeState.displayBackingSessionIdMap,
+    isCollapsed,
+    imConversationRuntimeByConversationId,
+  });
+
+  const displayScopeSessionsWithImState = useMemo(() => {
+    const merged = (contactScopeState.displayScopeSessions || []).map((session) => {
+      const imState = imRuntimeStateByRuntimeSessionId[session.id];
+      if (!imState?.lastMessageAt) {
+        return session;
+      }
+
+      const nextUpdatedAt = new Date(imState.lastMessageAt);
+      return Number.isNaN(nextUpdatedAt.getTime())
+        ? session
+        : {
+          ...session,
+          updatedAt: nextUpdatedAt,
+        };
+    });
+
+    return merged.sort((left, right) => {
+      const leftTime = new Date(left.updatedAt || left.createdAt || 0).getTime();
+      const rightTime = new Date(right.updatedAt || right.createdAt || 0).getTime();
+      return rightTime - leftTime;
+    });
+  }, [
+    contactScopeState.displayBackingSessionIdMap,
+    contactScopeState.displayScopeSessions,
+    imRuntimeStateByRuntimeSessionId,
+  ]);
+
   const projectRunState = useProjectRunState({
     apiClient,
     projects,
@@ -265,9 +302,7 @@ export const useSessionListController = ({
   });
 
   const openBuiltinMcpGrantsModal = async (displaySessionId: string) => {
-    const contactId = displaySessionId.startsWith('contact-placeholder:')
-      ? displaySessionId.replace('contact-placeholder:', '').trim()
-      : displaySessionId.trim();
+    const contactId = displaySessionId.trim();
     if (!contactId) {
       return;
     }
@@ -348,6 +383,8 @@ export const useSessionListController = ({
     apiClient,
     contactScopeCreator,
     contactScopeState,
+    displayScopeSessionsWithImState,
+    imRuntimeStateByRuntimeSessionId,
     contactSessionCreator: contactScopeCreator,
     contactSessionState: contactScopeState,
     currentProject,

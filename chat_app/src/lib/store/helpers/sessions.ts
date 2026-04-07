@@ -1,5 +1,9 @@
 import type { Session } from '../../../types';
 import type ApiClient from '../../api/client';
+import {
+  mergeSessionRuntimeIntoMetadata,
+  readSessionRuntimeFromMetadata,
+} from './sessionRuntime';
 
 export const normalizeSession = (raw: any): Session => {
   const status = typeof raw?.status === 'string'
@@ -20,52 +24,23 @@ export const normalizeSession = (raw: any): Session => {
   const metadataFromRaw = (raw?.metadata && typeof raw.metadata === 'object' && !Array.isArray(raw.metadata))
     ? raw.metadata
     : {};
+  const runtimeFromMetadata = readSessionRuntimeFromMetadata(metadataFromRaw);
   const selectedModelId = typeof raw?.selected_model_id === 'string'
     ? raw.selected_model_id.trim()
-    : (typeof metadataFromRaw?.chat_runtime?.selected_model_id === 'string'
-      ? metadataFromRaw.chat_runtime.selected_model_id.trim()
-      : '');
+    : (runtimeFromMetadata?.selectedModelId || '');
   const selectedAgentId = typeof raw?.selected_agent_id === 'string'
     ? raw.selected_agent_id.trim()
-    : (
-      typeof metadataFromRaw?.contact?.agent_id === 'string'
-        ? metadataFromRaw.contact.agent_id.trim()
-        : (typeof metadataFromRaw?.contact?.agentId === 'string'
-          ? metadataFromRaw.contact.agentId.trim()
-          : (typeof metadataFromRaw?.chat_runtime?.contact_agent_id === 'string'
-            ? metadataFromRaw.chat_runtime.contact_agent_id.trim()
-            : (typeof metadataFromRaw?.chat_runtime?.contactAgentId === 'string'
-              ? metadataFromRaw.chat_runtime.contactAgentId.trim()
-              : '')))
-    );
+    : (runtimeFromMetadata?.contactAgentId || '');
   let metadata = raw?.metadata ?? null;
   const hasSelection = selectedModelId.length > 0
     || selectedAgentId.length > 0
     || selectedProjectId.length > 0;
   if (hasSelection) {
-    const metadataObject = (metadata && typeof metadata === 'object' && !Array.isArray(metadata))
-      ? { ...metadata }
-      : {};
-    metadataObject.ui_chat_selection = {
-      selected_model_id: selectedModelId.length > 0 ? selectedModelId : null,
-      selected_agent_id: selectedAgentId.length > 0 ? selectedAgentId : null,
-    };
-    metadataObject.chat_runtime = {
-      ...(metadataObject.chat_runtime && typeof metadataObject.chat_runtime === 'object' && !Array.isArray(metadataObject.chat_runtime)
-        ? metadataObject.chat_runtime
-        : {}),
-      selected_model_id: selectedModelId.length > 0 ? selectedModelId : null,
-      contact_agent_id: selectedAgentId.length > 0 ? selectedAgentId : null,
-      project_id: selectedProjectId.length > 0 ? selectedProjectId : null,
-    };
-    metadataObject.contact = {
-      ...(metadataObject.contact && typeof metadataObject.contact === 'object' && !Array.isArray(metadataObject.contact)
-        ? metadataObject.contact
-        : {}),
-      type: 'memory_agent',
-      agent_id: selectedAgentId.length > 0 ? selectedAgentId : null,
-    };
-    metadata = metadataObject;
+    metadata = mergeSessionRuntimeIntoMetadata(metadata, {
+      selectedModelId: selectedModelId.length > 0 ? selectedModelId : null,
+      contactAgentId: selectedAgentId.length > 0 ? selectedAgentId : null,
+      projectId: selectedProjectId.length > 0 ? selectedProjectId : null,
+    });
   }
 
   return {

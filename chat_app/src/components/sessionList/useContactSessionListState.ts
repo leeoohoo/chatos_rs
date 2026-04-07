@@ -2,6 +2,7 @@ import { useCallback, useMemo } from 'react';
 
 import type { Session } from '../../types';
 import { mergeSessionRuntimeIntoMetadata } from '../../lib/store/helpers/sessionRuntime';
+import type { ImConversationResponse } from '../../lib/api/client/types';
 import {
   resolveContactAgentIdFromScopeRecord,
   resolveContactIdFromScopeRecord,
@@ -9,7 +10,6 @@ import {
 import { useContactScopeResolver } from '../../features/contactSession/useContactSessionResolver';
 
 export const CONTACT_CHAT_PROJECT_ID = '0';
-const CONTACT_PLACEHOLDER_PREFIX = 'contact-placeholder:';
 
 export interface SessionListContact {
   id: string;
@@ -48,6 +48,7 @@ interface ScopeResolverApiClient {
 interface UseContactSessionListStateOptions {
   contacts: SessionListContact[];
   sessions: Session[];
+  imConversations?: ImConversationResponse[];
   currentSession: Session | null | undefined;
   activePanel: string;
   activeSummarySessionId?: string | null;
@@ -73,6 +74,7 @@ interface UseContactSessionListStateResult {
 export const useContactScopeListState = ({
   contacts,
   sessions,
+  imConversations = [],
   currentSession,
   activePanel,
   activeSummarySessionId,
@@ -105,39 +107,81 @@ export const useContactScopeListState = ({
   const displayBackingSessionIdMap = useMemo<Record<string, string>>(() => {
     return buildDisplayBackingSessionIdMap(contacts || [], {
       projectId: CONTACT_CHAT_PROJECT_ID,
-      keyPrefix: CONTACT_PLACEHOLDER_PREFIX,
     });
   }, [buildDisplayBackingSessionIdMap, contacts]);
 
   const displayScopeSessions = useMemo<Session[]>(() => {
+    const conversationByContactId = new Map<string, ImConversationResponse>();
+    for (const conversation of imConversations || []) {
+      const contactId = typeof conversation?.contact_id === 'string'
+        ? conversation.contact_id.trim()
+        : '';
+      const projectId = typeof conversation?.project_id === 'string'
+        ? conversation.project_id.trim()
+        : '';
+      if (!contactId || (projectId || CONTACT_CHAT_PROJECT_ID) !== CONTACT_CHAT_PROJECT_ID) {
+        continue;
+      }
+      const previous = conversationByContactId.get(contactId);
+      const nextTime = new Date(
+        conversation?.last_message_at || conversation?.updated_at || conversation?.created_at || 0,
+      ).getTime();
+      const prevTime = new Date(
+        previous?.last_message_at || previous?.updated_at || previous?.created_at || 0,
+      ).getTime();
+      if (!previous || nextTime >= prevTime) {
+        conversationByContactId.set(contactId, conversation);
+      }
+    }
+
     return contacts.map((contact) => {
-      const placeholderId = `${CONTACT_PLACEHOLDER_PREFIX}${contact.id}`;
-      const runtimeSessionId = displayBackingSessionIdMap[placeholderId] || null;
+      const runtimeSessionId = displayBackingSessionIdMap[contact.id] || null;
       const runtimeSession = runtimeSessionId
         ? sessions.find((item: Session) => item.id === runtimeSessionId)
         : null;
+      const matchedConversation = conversationByContactId.get(contact.id) || null;
+      const nextMetadata = mergeSessionRuntimeIntoMetadata(runtimeSession?.metadata || null, {
+        contactAgentId: contact.agentId,
+        contactId: contact.id,
+        selectedModelId: null,
+        projectId: CONTACT_CHAT_PROJECT_ID,
+        projectRoot: null,
+        mcpEnabled: true,
+        enabledMcpIds: [],
+      }) as Record<string, unknown>;
+      const conversationId = typeof matchedConversation?.id === 'string'
+        ? matchedConversation.id.trim()
+        : '';
+      if (conversationId) {
+        nextMetadata.im = {
+          conversation_id: conversationId,
+          contact_id: contact.id,
+        };
+      }
+      const updatedAt = (() => {
+        const rawValue = matchedConversation?.last_message_at || matchedConversation?.updated_at;
+        if (!rawValue) {
+          return runtimeSession?.updatedAt || contact.updatedAt;
+        }
+        const parsed = new Date(rawValue);
+        return Number.isNaN(parsed.getTime())
+          ? (runtimeSession?.updatedAt || contact.updatedAt)
+          : parsed;
+      })();
       return {
-        id: placeholderId,
+        id: contact.id,
         title: contact.name,
         createdAt: contact.createdAt,
-        updatedAt: runtimeSession?.updatedAt || contact.updatedAt,
+        updatedAt,
         messageCount: 0,
         tokenUsage: 0,
         pinned: false,
         archived: false,
         status: 'active',
-        metadata: mergeSessionRuntimeIntoMetadata(null, {
-          contactAgentId: contact.agentId,
-          contactId: contact.id,
-          selectedModelId: null,
-          projectId: CONTACT_CHAT_PROJECT_ID,
-          projectRoot: null,
-          mcpEnabled: true,
-          enabledMcpIds: [],
-        }),
+        metadata: nextMetadata,
       } as Session;
     });
-  }, [contacts, displayBackingSessionIdMap, sessions]);
+  }, [contacts, displayBackingSessionIdMap, imConversations, sessions]);
 
   const currentDisplayScopeSessionId = useMemo(() => {
     if (activePanel !== 'chat') {
@@ -145,7 +189,7 @@ export const useContactScopeListState = ({
     }
     const currentContactId = resolveContactIdFromScopeRecord(currentSession);
     if (currentContactId) {
-      return `${CONTACT_PLACEHOLDER_PREFIX}${currentContactId}`;
+      return currentContactId;
     }
 
     const currentContactAgentId = resolveContactAgentIdFromScopeRecord(currentSession);
@@ -156,7 +200,7 @@ export const useContactScopeListState = ({
     if (!matched) {
       return null;
     }
-    return `${CONTACT_PLACEHOLDER_PREFIX}${matched.id}`;
+    return matched.id;
   }, [activePanel, contacts, currentSession]);
 
   const activeSummaryDisplayScopeSessionId = useMemo(() => {

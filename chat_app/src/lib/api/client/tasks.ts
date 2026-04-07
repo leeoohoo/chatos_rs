@@ -1,4 +1,11 @@
 import type {
+  ImActionRequestSubmitResponse,
+  ImConversationCreatePayload,
+  ImConversationActionRequestResponse,
+  ImConversationResponse,
+  ImConversationMessageCreatePayload,
+  ImConversationMessageResponse,
+  ImConversationRunResponse,
   TaskManagerTaskResponse,
   TaskManagerUpdatePayload,
   TaskReviewDecisionPayload,
@@ -120,6 +127,140 @@ export const submitTaskReviewDecision = (
     {
     method: 'POST',
     body: JSON.stringify(payload),
+    },
+  );
+};
+
+export const getImConversationActionRequests = async (
+  request: ApiRequestFn,
+  conversationId: string,
+): Promise<ImConversationActionRequestResponse[]> => {
+  if (!conversationId) {
+    return [];
+  }
+
+  const result = await request<
+    { action_requests?: ImConversationActionRequestResponse[] } | ImConversationActionRequestResponse[]
+  >(
+    `/im/conversations/${encodeURIComponent(conversationId)}/action-requests`,
+  );
+  if (Array.isArray(result)) {
+    return result;
+  }
+  return Array.isArray(result?.action_requests) ? result.action_requests : [];
+};
+
+export const getImConversations = async (
+  request: ApiRequestFn,
+): Promise<ImConversationResponse[]> => {
+  const result = await request<ImConversationResponse[]>('/im/conversations');
+  return Array.isArray(result) ? result : [];
+};
+
+export const getImWsMeta = async (
+  request: ApiRequestFn,
+): Promise<{ ws_url?: string | null }> => {
+  const result = await request<{ ws_url?: string | null }>('/im/ws-meta');
+  return result && typeof result === 'object' ? result : {};
+};
+
+export const createImConversation = (
+  request: ApiRequestFn,
+  payload: ImConversationCreatePayload,
+): Promise<ImConversationResponse> => (
+  request<ImConversationResponse>('/im/conversations', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+);
+
+export const markImConversationRead = (
+  request: ApiRequestFn,
+  conversationId: string,
+): Promise<ImConversationResponse> => {
+  if (!conversationId) {
+    throw new Error('conversationId is required');
+  }
+
+  return request<ImConversationResponse>(
+    `/im/conversations/${encodeURIComponent(conversationId)}/read`,
+    {
+      method: 'POST',
+      body: JSON.stringify({}),
+    },
+  );
+};
+
+export const getImConversationMessages = async (
+  request: ApiRequestFn,
+  conversationId: string,
+  options?: { limit?: number; order?: 'asc' | 'desc' },
+): Promise<ImConversationMessageResponse[]> => {
+  if (!conversationId) {
+    return [];
+  }
+
+  const params = new URLSearchParams();
+  if (typeof options?.limit === 'number') {
+    params.set('limit', String(options.limit));
+  }
+  if (options?.order) {
+    params.set('order', options.order);
+  }
+
+  const query = params.toString();
+  const result = await request<ImConversationMessageResponse[]>(
+    `/im/conversations/${encodeURIComponent(conversationId)}/messages${query ? `?${query}` : ''}`,
+  );
+  return Array.isArray(result) ? result : [];
+};
+
+export const createImConversationMessage = (
+  request: ApiRequestFn,
+  conversationId: string,
+  payload: ImConversationMessageCreatePayload,
+): Promise<ImConversationMessageResponse> => {
+  if (!conversationId) {
+    throw new Error('conversationId is required');
+  }
+
+  return request<ImConversationMessageResponse>(
+    `/im/conversations/${encodeURIComponent(conversationId)}/messages`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    },
+  );
+};
+
+export const getImConversationRuns = async (
+  request: ApiRequestFn,
+  conversationId: string,
+): Promise<ImConversationRunResponse[]> => {
+  if (!conversationId) {
+    return [];
+  }
+
+  const result = await request<ImConversationRunResponse[]>(
+    `/im/conversations/${encodeURIComponent(conversationId)}/runs`,
+  );
+  return Array.isArray(result) ? result : [];
+};
+
+export const submitImActionRequest = (
+  request: ApiRequestFn,
+  actionRequestId: string,
+  payload: unknown,
+): Promise<ImActionRequestSubmitResponse> => {
+  if (!actionRequestId) {
+    throw new Error('actionRequestId is required');
+  }
+
+  return request<ImActionRequestSubmitResponse>(
+    `/im/action-requests/${encodeURIComponent(actionRequestId)}/submit`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
     },
   );
 };

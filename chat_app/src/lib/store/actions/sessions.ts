@@ -21,14 +21,11 @@ import {
   deleteSessionMessagesCacheEntry,
   isSessionActive,
   matchContactProjectScopeSessionRecord,
-  normalizeContact,
   normalizeContactProjectScopeSessions,
   normalizeProjectScopeId,
   resolveSessionTimestamp,
-  splitSessionsByMappedContacts,
   writeSessionMessagesCache,
 } from './sessionsUtils';
-import type { MemoryContact } from './sessionsUtils';
 import { applySelectSessionState } from './sessionsSelectHelpers';
 
 interface Deps {
@@ -65,64 +62,15 @@ export function createSessionActions({
         const { userId, projectId } = getSessionParams();
 
         debugLog('🔍 loadSessions 调用 client.getSessions', { userId, projectId, customUserId, customProjectId, options });
-        const [rawContacts, rawSessions] = await Promise.all([
-          client.getContacts(userId, { limit: 2000, offset: 0 }).catch(() => []),
-          client.getSessions(
-            userId,
-            undefined,
-            { limit: options.limit, offset: options.offset },
-          ),
-        ]);
-        const contacts = (Array.isArray(rawContacts) ? rawContacts : [])
-          .map(normalizeContact)
-          .filter((item): item is MemoryContact => !!item)
-          .filter((item) => {
-            const status = typeof item.status === 'string' ? item.status.toLowerCase() : '';
-            return status === '' || status === 'active';
-          });
-
+        const rawSessions = await client.getSessions(
+          userId,
+          undefined,
+          { limit: options.limit, offset: options.offset },
+        );
         const sessions = Array.isArray(rawSessions)
           ? rawSessions.map(normalizeSession)
           : [];
-
-        const { matchedSessions: filteredByContacts, missingContacts } = splitSessionsByMappedContacts(
-          sessions,
-          contacts,
-        );
-
-        const backfilledSessions: Session[] = [];
-        for (const contact of missingContacts) {
-          const metadata = mergeSessionRuntimeIntoMetadata(null, {
-            contactAgentId: contact.agent_id,
-            contactId: contact.id,
-            selectedModelId: null,
-            projectId: '0',
-            projectRoot: null,
-            mcpEnabled: true,
-            enabledMcpIds: [],
-          });
-          try {
-            const created = await client.createSession({
-              id: generateId(),
-              title: contact.agent_name_snapshot || '联系人',
-              user_id: userId,
-              project_id: '0',
-              metadata,
-            });
-            backfilledSessions.push(normalizeSession(created));
-          } catch (error) {
-            debugLog('🔍 联系人补建会话失败，忽略', {
-              contactId: contact.id,
-              agentId: contact.agent_id,
-              error: error instanceof Error ? error.message : String(error),
-            });
-          }
-        }
-
-        const mergedByContact = [
-          ...filteredByContacts,
-          ...backfilledSessions,
-        ];
+        const mergedByContact = normalizeContactProjectScopeSessions(sessions);
         debugLog('🔍 loadSessions 返回结果:', mergedByContact);
 
         const existing = options.append ? (get().sessions || []) : [];
@@ -389,13 +337,13 @@ export function createSessionActions({
       const previousSessionId = beforeSelect.currentSessionId;
       const sameSessionState = beforeSelect.sessionChatState?.[sessionId];
       if (beforeSelect.currentSessionId === sessionId && sameSessionState?.isStreaming) {
-        // 同一会话流式过程中仍允许切回聊天面板，避免在项目/终端面板点击会话无响应
+        // 同一会话运行过程中仍允许切回聊天面板，避免在项目/终端面板点击会话无响应
         if (!options.keepActivePanel && beforeSelect.activePanel !== 'chat') {
           set((state: any) => {
             state.activePanel = 'chat';
           });
         }
-        debugLog('🔍 当前会话正在流式中，忽略重复切换请求:', sessionId);
+        debugLog('🔍 当前会话仍在运行中，忽略重复切换请求:', sessionId);
         return;
       }
 
@@ -406,17 +354,14 @@ export function createSessionActions({
         });
 
         const existingSession = (beforeSelect.sessions || []).find((item: Session) => item.id === sessionId) || null;
-        const [session, messages] = await Promise.all([
-          existingSession ? Promise.resolve(existingSession) : fetchSession(client, sessionId),
-          fetchSessionMessages(client, sessionId, { limit: 50, offset: 0 }),
-        ]);
+        const session = existingSession ? existingSession : await fetchSession(client, sessionId);
+        const messages = await fetchSessionMessages(client, sessionId, {
+          limit: 50,
+          offset: 0,
+          session,
+        });
         writeSessionMessagesCache(sessionId, messages);
         const sessionAiSelectionFromMetadata = readSessionAiSelectionFromMetadata(session?.metadata);
-        const stateSnapshot = get();
-        const snapshotChatState = stateSnapshot.sessionChatState?.[sessionId];
-        const localStreamingMessage = snapshotChatState?.streamingMessageId
-          ? stateSnapshot.messages.find((m: any) => m.id === snapshotChatState.streamingMessageId && m.sessionId === sessionId)
-          : null;
 
         set((state: any) => {
           applySelectSessionState({
@@ -425,7 +370,6 @@ export function createSessionActions({
             session,
             messages,
             previousSessionId,
-            localStreamingMessage,
             sessionAiSelectionFromMetadata,
             keepActivePanel: options.keepActivePanel,
           });

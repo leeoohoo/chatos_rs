@@ -4,7 +4,6 @@ import { configFacade, type ConfigFacade } from './client/facades/configFacade';
 import { runtimeFacade, type RuntimeFacade } from './client/facades/runtimeFacade';
 import { workspaceFacade, type WorkspaceFacade } from './client/facades/workspaceFacade';
 import { ApiRequestError } from './client/shared';
-import * as streamApi from './client/stream';
 import type {
   ConversationMessagePayload,
 } from './client/types';
@@ -114,15 +113,6 @@ class ApiClient {
       throw error;
     }
   }
-
-  getStreamApiContext(): streamApi.StreamApiContext {
-    return {
-      baseUrl: this.baseUrl,
-      accessToken: this.accessToken,
-      applyRefreshedAccessToken: (response: Response) => this.applyRefreshedAccessToken(response),
-    };
-  }
-
   getBinaryApiContext(): fsApi.BinaryApiContext {
     return {
       baseUrl: this.baseUrl,

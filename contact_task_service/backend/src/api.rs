@@ -61,8 +61,16 @@ pub fn router(state: SharedState) -> Router {
             get(get_task_result_brief),
         )
         .route(
+            "/api/task-service/v1/internal/tasks/:task_id/result-brief",
+            get(internal_get_task_result_brief),
+        )
+        .route(
             "/api/task-service/v1/tasks/:task_id/confirm",
             post(confirm_task),
+        )
+        .route(
+            "/api/task-service/v1/internal/tasks/:task_id/confirm",
+            post(internal_confirm_task),
         )
         .route("/api/task-service/v1/scheduler/next", post(scheduler_next))
         .route(
@@ -459,6 +467,72 @@ async fn get_task_result_brief(
     (StatusCode::OK, Json(json!({ "item": item })))
 }
 
+async fn internal_get_task_result_brief(
+    State(state): State<SharedState>,
+    Path(task_id): Path<String>,
+) -> (StatusCode, Json<Value>) {
+    let task = match repository::get_task(&state.db, task_id.as_str()).await {
+        Ok(Some(task)) => task,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "task not found"})),
+            )
+        }
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "load task failed", "detail": err})),
+            )
+        }
+    };
+
+    let resp = match MEMORY_HTTP
+        .get(build_memory_url(
+            &state,
+            format!("/internal/task-result-briefs/by-task/{}", task.id.as_str()).as_str(),
+        ))
+        .timeout(memory_timeout_duration(&state))
+        .send()
+        .await
+    {
+        Ok(resp) => resp,
+        Err(err) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({"error": "get task result brief failed", "detail": err.to_string()})),
+            )
+        }
+    };
+    if resp.status().as_u16() == 404 {
+        return (StatusCode::OK, Json(json!({ "item": Value::Null })));
+    }
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let detail = resp.text().await.unwrap_or_default();
+        return (
+            StatusCode::BAD_GATEWAY,
+            Json(
+                json!({"error": "get task result brief failed", "detail": format!("status={} body={}", status, detail)}),
+            ),
+        );
+    }
+
+    let item = match resp.json::<TaskResultBriefView>().await {
+        Ok(item) => item,
+        Err(err) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(
+                    json!({"error": "invalid task result brief response", "detail": err.to_string()}),
+                ),
+            )
+        }
+    };
+
+    (StatusCode::OK, Json(json!({ "item": item })))
+}
+
 fn task_execution_message_matches_task(item: &TaskExecutionMessageView, task_id: &str) -> bool {
     if item.task_id.as_deref() == Some(task_id) {
         return true;
@@ -610,6 +684,53 @@ async fn confirm_task(
             Json(json!({"error": "scope mismatch"})),
         );
     }
+    match repository::confirm_task(&state.db, task_id.as_str(), req.note).await {
+        Ok(Some(task)) => (StatusCode::OK, Json(json!(task))),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "task not found"})),
+        ),
+        Err(err) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "confirm task failed", "detail": err})),
+        ),
+    }
+}
+
+async fn internal_confirm_task(
+    State(state): State<SharedState>,
+    Path(task_id): Path<String>,
+    Json(req): Json<ConfirmTaskRequest>,
+) -> (StatusCode, Json<Value>) {
+    let existing = match repository::get_task(&state.db, task_id.as_str()).await {
+        Ok(Some(task)) => task,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "task not found"})),
+            )
+        }
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "load task failed", "detail": err})),
+            )
+        }
+    };
+    if let Some(scope_user_id) = req
+        .user_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        if existing.user_id != scope_user_id {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(json!({"error": "scope mismatch"})),
+            );
+        }
+    }
+
     match repository::confirm_task(&state.db, task_id.as_str(), req.note).await {
         Ok(Some(task)) => (StatusCode::OK, Json(json!(task))),
         Ok(None) => (

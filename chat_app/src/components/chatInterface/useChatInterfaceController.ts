@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type ApiClient from '../../lib/api/client';
-import type { TurnRuntimeSnapshotLookupResponse } from '../../lib/api/client/types';
-import type { UiPromptPanelState } from '../../lib/store/types';
+import { readSessionImConversationId } from '../../lib/store/helpers/sessionRuntime';
+import type { TaskReviewPanelState, UiPromptPanelState } from '../../lib/store/types';
 import type { Session } from '../../types';
-import { toUiPromptPanelFromRecord } from './helpers';
+import { useImConversationSync } from './useImConversationSync';
 
 interface UseChatInterfaceControllerParams {
   apiClient: ApiClient;
@@ -49,7 +49,12 @@ interface UseChatInterfaceControllerParams {
   hydrateUiPromptHistoryFromCache: (sessionId: string) => void;
   resetUiPromptHistoryState: () => void;
   cancelPendingUiPromptHistoryLoad: () => void;
+  taskReviewPanelsBySession: Record<string, TaskReviewPanelState[] | undefined>;
+  uiPromptPanelsBySession: Record<string, UiPromptPanelState[] | undefined>;
+  upsertTaskReviewPanel: (panel: TaskReviewPanelState) => void;
+  removeTaskReviewPanel: (reviewId: string, sessionId?: string) => void;
   upsertUiPromptPanel: (panel: UiPromptPanelState) => void;
+  removeUiPromptPanel: (promptId: string, sessionId?: string) => void;
   resetAllWorkbarState: () => void;
   resetHistoryWorkbarState: () => void;
   handleOpenWorkbarHistory: (
@@ -81,7 +86,12 @@ export const useChatInterfaceController = ({
   hydrateUiPromptHistoryFromCache,
   resetUiPromptHistoryState,
   cancelPendingUiPromptHistoryLoad,
+  taskReviewPanelsBySession,
+  uiPromptPanelsBySession,
+  upsertTaskReviewPanel,
+  removeTaskReviewPanel,
   upsertUiPromptPanel,
+  removeUiPromptPanel,
   resetAllWorkbarState,
   resetHistoryWorkbarState,
   handleOpenWorkbarHistory,
@@ -94,47 +104,58 @@ export const useChatInterfaceController = ({
   const [showUserSettings, setShowUserSettings] = useState(false);
   const [summaryPaneSessionId, setSummaryPaneSessionId] = useState<string | null>(null);
   const [uiPromptHistoryOpen, setUiPromptHistoryOpen] = useState(false);
-  const [runtimeContextOpen, setRuntimeContextOpen] = useState(false);
-  const [runtimeContextSessionId, setRuntimeContextSessionId] = useState<string | null>(null);
-  const [runtimeContextData, setRuntimeContextData] =
-    useState<TurnRuntimeSnapshotLookupResponse | null>(null);
-  const [runtimeContextLoading, setRuntimeContextLoading] = useState(false);
-  const [runtimeContextError, setRuntimeContextError] = useState<string | null>(null);
 
   const didInitRef = useRef(false);
   const lastHydratedChatSessionRef = useRef<string | null>(null);
 
   const currentSessionIdForUiPrompts = currentSession?.id || null;
+  const currentImConversationId = useMemo(
+    () => readSessionImConversationId(currentSession?.metadata),
+    [currentSession?.metadata],
+  );
+  const currentTaskReviewPanels = useMemo(
+    () => (
+      currentSessionIdForUiPrompts
+        ? (taskReviewPanelsBySession?.[currentSessionIdForUiPrompts] || [])
+        : []
+    ),
+    [currentSessionIdForUiPrompts, taskReviewPanelsBySession],
+  );
+  const currentUiPromptPanels = useMemo(
+    () => (
+      currentSessionIdForUiPrompts
+        ? (uiPromptPanelsBySession?.[currentSessionIdForUiPrompts] || [])
+        : []
+    ),
+    [currentSessionIdForUiPrompts, uiPromptPanelsBySession],
+  );
   const sessionSummaryPaneVisible = useMemo(
     () => Boolean(activePanel === 'chat' && currentSession && summaryPaneSessionId === currentSession.id),
     [activePanel, currentSession, summaryPaneSessionId],
   );
 
-  useEffect(() => {
-    if (!currentSessionIdForUiPrompts || activePanel !== 'chat') {
-      return;
-    }
+  const fallbackTurnId = useMemo(
+    () => (
+      activeConversationTurnId
+      || currentChatStateActiveTurnId
+      || ''
+    ).trim(),
+    [activeConversationTurnId, currentChatStateActiveTurnId],
+  );
 
-    let cancelled = false;
-    void apiClient
-      .getPendingUiPrompts(currentSessionIdForUiPrompts, { limit: 50 })
-      .then((records) => {
-        if (cancelled || !Array.isArray(records)) {
-          return;
-        }
-        records.forEach((record) => {
-          const panel = toUiPromptPanelFromRecord(record);
-          if (panel) {
-            upsertUiPromptPanel(panel);
-          }
-        });
-      })
-      .catch(() => {});
-
-    return () => {
-      cancelled = true;
-    };
-  }, [activePanel, apiClient, currentSessionIdForUiPrompts, upsertUiPromptPanel]);
+  useImConversationSync({
+    apiClient,
+    activePanel,
+    currentSessionId: currentSession?.id || null,
+    currentImConversationId,
+    fallbackTurnId,
+    taskReviewPanels: currentTaskReviewPanels,
+    uiPromptPanels: currentUiPromptPanels,
+    upsertTaskReviewPanel,
+    removeTaskReviewPanel,
+    upsertUiPromptPanel,
+    removeUiPromptPanel,
+  });
 
   useEffect(() => {
     if (didInitRef.current) {
@@ -285,40 +306,6 @@ export const useChatInterfaceController = ({
     void loadUiPromptHistory(sessionId);
   }, [loadUiPromptHistory]);
 
-  const loadLatestRuntimeContext = useCallback(async (sessionId: string) => {
-    if (!sessionId) {
-      return;
-    }
-    setRuntimeContextLoading(true);
-    setRuntimeContextError(null);
-    try {
-      const payload = await apiClient.getSessionLatestTurnRuntimeContext(sessionId);
-      setRuntimeContextData(payload);
-    } catch (error) {
-      console.error('Failed to load turn runtime context:', error);
-      setRuntimeContextError(error instanceof Error ? error.message : '加载上下文失败');
-    } finally {
-      setRuntimeContextLoading(false);
-    }
-  }, [apiClient]);
-
-  const handleOpenRuntimeContext = useCallback((sessionId: string) => {
-    if (!sessionId) {
-      return;
-    }
-    setRuntimeContextOpen(true);
-    setRuntimeContextSessionId(sessionId);
-    setRuntimeContextData(null);
-    void loadLatestRuntimeContext(sessionId);
-  }, [loadLatestRuntimeContext]);
-
-  const handleRefreshRuntimeContext = useCallback(() => {
-    if (!runtimeContextSessionId) {
-      return;
-    }
-    void loadLatestRuntimeContext(runtimeContextSessionId);
-  }, [loadLatestRuntimeContext, runtimeContextSessionId]);
-
   return {
     showMcpManager,
     setShowMcpManager,
@@ -337,12 +324,6 @@ export const useChatInterfaceController = ({
     sessionSummaryPaneVisible,
     uiPromptHistoryOpen,
     setUiPromptHistoryOpen,
-    runtimeContextOpen,
-    setRuntimeContextOpen,
-    runtimeContextSessionId,
-    runtimeContextData,
-    runtimeContextLoading,
-    runtimeContextError,
     handleMessageSend,
     handleComposerRemoteConnectionChange,
     handleRuntimeGuidanceSend,
@@ -352,7 +333,5 @@ export const useChatInterfaceController = ({
     handleCloseSummary,
     handleOpenHistory,
     handleOpenUiPromptHistory,
-    handleOpenRuntimeContext,
-    handleRefreshRuntimeContext,
   };
 };

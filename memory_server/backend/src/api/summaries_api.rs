@@ -54,6 +54,35 @@ pub(super) async fn list_summaries(
     }
 }
 
+pub(super) async fn internal_list_summaries(
+    State(state): State<SharedState>,
+    Path(session_id): Path<String>,
+    Query(q): Query<ListSummariesQuery>,
+) -> (StatusCode, Json<Value>) {
+    match summaries::list_summaries(
+        &state.pool,
+        session_id.as_str(),
+        q.level,
+        q.status.as_deref().and_then(|status| {
+            if status.eq_ignore_ascii_case("all") {
+                None
+            } else {
+                Some(status)
+            }
+        }),
+        q.limit.unwrap_or(100),
+        q.offset.unwrap_or(0),
+    )
+    .await
+    {
+        Ok(items) => (StatusCode::OK, Json(json!({"items": items}))),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "list summaries failed", "detail": err})),
+        ),
+    }
+}
+
 pub(super) async fn summary_levels(
     State(state): State<SharedState>,
     headers: HeaderMap,
@@ -160,6 +189,23 @@ pub(super) async fn delete_summary(
         return err;
     }
 
+    match summaries::delete_summary(&state.pool, session_id.as_str(), summary_id.as_str()).await {
+        Ok(true) => (StatusCode::OK, Json(json!({"success": true}))),
+        Ok(false) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "summary not found"})),
+        ),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "delete summary failed", "detail": err})),
+        ),
+    }
+}
+
+pub(super) async fn internal_delete_summary(
+    State(state): State<SharedState>,
+    Path((session_id, summary_id)): Path<(String, String)>,
+) -> (StatusCode, Json<Value>) {
     match summaries::delete_summary(&state.pool, session_id.as_str(), summary_id.as_str()).await {
         Ok(true) => (StatusCode::OK, Json(json!({"success": true}))),
         Ok(false) => (

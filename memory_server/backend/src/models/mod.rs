@@ -1,3 +1,5 @@
+use serde::{Deserialize, Deserializer};
+
 fn default_active() -> String {
     "active".to_string()
 }
@@ -28,6 +30,28 @@ fn default_true() -> bool {
 
 fn default_false() -> bool {
     false
+}
+
+fn deserialize_vec_or_default<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<Vec<T>>::deserialize(deserializer).map(|value| value.unwrap_or_default())
+}
+
+fn deserialize_bool_true<'de, D>(deserializer: D) -> Result<bool, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::<bool>::deserialize(deserializer).map(|value| value.unwrap_or(true))
+}
+
+fn deserialize_string_active<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::<String>::deserialize(deserializer).map(|value| value.unwrap_or_else(default_active))
 }
 
 mod agents;

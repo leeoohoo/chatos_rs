@@ -224,7 +224,7 @@ export const useTeamMemberConversation = ({
       return;
     }
     await clearSummaries(selectedProjectSession.id, {
-      confirmMessage: '确定清空当前会话的所有总结吗？',
+      confirmMessage: '确定清空当前聊天的所有摘要吗？',
     });
   }, [clearSummaries, selectedProjectSession?.id]);
 

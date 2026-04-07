@@ -1,5 +1,6 @@
 import type { Message, Session, ChatConfig, Theme, McpConfig, AiModelConfig, SystemContext, AgentConfig, Application, Project, Terminal, RemoteConnection } from '../../types';
 import type {
+  ImConversationResponse,
   SystemContextDraftEvaluateResponse,
   SystemContextDraftGenerateResponse,
   SystemContextDraftOptimizeResponse,
@@ -33,6 +34,8 @@ export interface TaskReviewPanelState {
   reviewId: string;
   sessionId: string;
   conversationTurnId: string;
+  actionRequestId?: string | null;
+  source?: 'legacy' | 'im';
   drafts: TaskReviewDraft[];
   timeoutMs?: number;
   submitting?: boolean;
@@ -75,6 +78,8 @@ export interface UiPromptPanelState {
   promptId: string;
   sessionId: string;
   conversationTurnId: string;
+  actionRequestId?: string | null;
+  source?: 'legacy' | 'im';
   toolCallId?: string | null;
   kind: UiPromptKind;
   title?: string;
@@ -144,6 +149,14 @@ export interface SessionRuntimeGuidanceState {
   items: RuntimeGuidanceItem[];
 }
 
+export interface ImConversationRuntimeState {
+  busy: boolean;
+  unreadCount: number;
+  latestRunStatus: string | null;
+  lastMessagePreview: string | null;
+  lastMessageAt: string | null;
+}
+
 export interface RuntimeGuidanceItem {
   guidanceId: string;
   turnId: string | null;
@@ -197,6 +210,8 @@ export interface ChatState {
   sessionStreamingMessageDrafts: Record<string, Message | null>;
   sessionTurnProcessState: Record<string, Record<string, { expanded: boolean; loaded: boolean; loading: boolean }>>;
   sessionTurnProcessCache: Record<string, Record<string, Message[]>>;
+  imConversations: ImConversationResponse[];
+  imConversationRuntimeByConversationId: Record<string, ImConversationRuntimeState>;
   taskReviewPanel: TaskReviewPanelState | null;
   taskReviewPanelsBySession: Record<string, TaskReviewPanelState[]>;
   uiPromptPanel: UiPromptPanelState | null;
@@ -299,7 +314,7 @@ export interface ChatActions {
   openRemoteSftp: (connectionId: string) => Promise<void>;
 
   // 消息操作
-  loadMessages: (sessionId: string) => Promise<void>;
+  loadMessages: (sessionId: string, options?: { silent?: boolean }) => Promise<void>;
   loadMoreMessages: (sessionId: string) => Promise<void>;
   toggleTurnProcess: (
     userMessageId: string,
@@ -324,10 +339,7 @@ export interface ChatActions {
   updateMessage: (messageId: string, updates: Partial<Message>) => Promise<void>;
   deleteMessage: (messageId: string) => Promise<void>;
 
-  // 流式消息处理
-  startStreaming: (messageId: string) => void;
-  updateStreamingMessage: (content: string) => void;
-  stopStreaming: () => void;
+  // 对话控制
   abortCurrentConversation: () => void;
   setTaskReviewPanel: (panel: TaskReviewPanelState | null) => void;
   upsertTaskReviewPanel: (panel: TaskReviewPanelState) => void;

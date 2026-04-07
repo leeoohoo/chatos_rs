@@ -13,55 +13,8 @@ interface Deps {
   abortSessionChat?: (sessionId: string) => Promise<boolean> | boolean;
 }
 
-export function createStreamingActions({ set, get, client, abortSessionChat }: Deps) {
+export function createConversationControlActions({ set, get, client, abortSessionChat }: Deps) {
   return {
-    startStreaming: (messageId: string) => {
-      set((state) => {
-        const sessionId = state.currentSessionId;
-        if (sessionId) {
-          const prev = state.sessionChatState[sessionId] || createDefaultSessionChatState();
-          state.sessionChatState[sessionId] = {
-            ...prev,
-            isStreaming: true,
-            isStopping: false,
-            streamingMessageId: messageId,
-          };
-        }
-        state.isStreaming = true;
-        state.streamingMessageId = messageId;
-      });
-    },
-
-    updateStreamingMessage: (content: string) => {
-      set((state) => {
-        if (state.streamingMessageId) {
-          const messageIndex = state.messages.findIndex((message) => message.id === state.streamingMessageId);
-          if (messageIndex !== -1) {
-            state.messages[messageIndex].content = content;
-          }
-        }
-      });
-    },
-
-    stopStreaming: () => {
-      set((state) => {
-        const sessionId = state.currentSessionId;
-        if (sessionId) {
-          const prev = state.sessionChatState[sessionId] || createDefaultSessionChatState();
-          state.sessionChatState[sessionId] = {
-            ...prev,
-            isLoading: false,
-            isStreaming: false,
-            isStopping: false,
-            streamingMessageId: null,
-            activeTurnId: null,
-          };
-        }
-        state.isStreaming = false;
-        state.streamingMessageId = null;
-      });
-    },
-
     abortCurrentConversation: async () => {
       const { currentSessionId } = get();
       if (!currentSessionId) {
@@ -72,7 +25,7 @@ export function createStreamingActions({ set, get, client, abortSessionChat }: D
         return;
       }
 
-      // 用户点击“停止”后保持会话在流式/加载态，直到后端 cancel 事件或流真正结束，
+      // 用户点击“停止”后保持会话在运行中，直到后端 cancel/done 事件真正落地，
       // 避免按钮过早恢复为“发送”导致并发发送。
       set((state) => {
         const sessionId = state.currentSessionId;
@@ -113,7 +66,7 @@ export function createStreamingActions({ set, get, client, abortSessionChat }: D
         debugLog('✅ 成功停止当前对话');
       } catch (error) {
         console.error('❌ 停止对话失败:', error);
-        // 停止请求失败时允许用户再次点击“停止”，但仍保持流式态，继续阻止新消息发送。
+        // 停止请求失败时允许用户再次点击“停止”，但仍保持运行态，继续阻止新消息发送。
         set((state) => {
           const sessionId = state.currentSessionId;
           if (!sessionId || sessionId !== currentSessionId) {

@@ -20,7 +20,7 @@ use crate::config::Config;
 use crate::core::auth::{
     access_token_from_headers, access_token_from_raw, AuthHeaderError, AuthUser,
 };
-use crate::services::memory_server_client;
+use crate::services::{im_service_client, memory_server_client};
 
 static START_TIME: Lazy<Instant> = Lazy::new(Instant::now);
 static REQUEST_ID_HEADER: HeaderName = HeaderName::from_static("x-request-id");
@@ -34,6 +34,7 @@ pub mod chat_v3;
 pub mod configs;
 pub mod contacts;
 pub mod fs;
+pub mod im;
 pub mod memory_agents;
 pub mod messages;
 pub mod notepad;
@@ -125,6 +126,7 @@ pub fn router() -> Router {
         .merge(chat_v3::router())
         .nest("/api/applications", applications::router())
         .merge(projects::router())
+        .merge(im::router())
         .merge(remote_connections::router())
         .merge(session_summary_job_config::router())
         .merge(task_execution_job_config::router())
@@ -210,9 +212,9 @@ async fn require_auth(
         }
         Err(err) => return Err(err.into_response()),
     };
-    let auth_user = match memory_server_client::auth_me(access_token.as_str()).await {
+    let auth_user = match im_service_client::auth_me(access_token.as_str()).await {
         Ok(me) => AuthUser {
-            user_id: me.user_id,
+            user_id: me.username,
             role: me.role,
         },
         Err(err) => {
@@ -230,8 +232,11 @@ async fn require_auth(
     };
 
     req.extensions_mut().insert(auth_user);
-    let response =
-        memory_server_client::with_access_token_scope(Some(access_token), next.run(req)).await;
+    let response = im_service_client::with_access_token_scope(
+        Some(access_token.clone()),
+        memory_server_client::with_access_token_scope(Some(access_token), next.run(req)),
+    )
+    .await;
     Ok(response)
 }
 

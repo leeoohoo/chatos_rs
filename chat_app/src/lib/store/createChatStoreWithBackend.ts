@@ -21,11 +21,20 @@ import { createTerminalActions } from './actions/terminals';
 import { createRemoteConnectionActions } from './actions/remoteConnections';
 import { createMessageActions } from './actions/messages';
 import { createRuntimeGuidanceActions } from './actions/runtimeGuidance';
-import { createStreamingActions } from './actions/streaming';
+import { createConversationControlActions } from './actions/conversationControl';
 import { createAgentActions } from './actions/agents';
 import { createSystemContextActions } from './actions/systemContexts';
 import { createUiActions } from './actions/ui';
-import { normalizeRawMessages } from './helpers/messageNormalization';
+import { handleStreamEvent } from './actions/sendMessage/streamEventHandler';
+import { finalizeStreamingSessionState } from './actions/sendMessage/sessionState';
+import { createStreamingMessageStateHelpers } from './actions/sendMessage/streamingState';
+import { rollbackFailedSendMessage } from './actions/sendMessage/failureState';
+import type { StreamingMessage } from './actions/sendMessage/types';
+import {
+  normalizeImConversationMessage,
+  normalizeRawMessages,
+} from './helpers/messageNormalization';
+import { readSessionImConversationId } from './helpers/sessionRuntime';
 import { applyTurnProcessCache } from './helpers/messages';
 import {
   ensureSessionTurnMaps,
@@ -33,12 +42,23 @@ import {
 } from './actions/messagesState';
 import { writeSessionMessagesCache } from './actions/sessionsUtils';
 import { debugLog } from '@/lib/utils';
+import {
+  toTaskReviewPanelFromImActionRequest,
+  toUiPromptPanelFromImActionRequest,
+} from '../../components/chatInterface/helpers';
+import type {
+  ImConversationActionRequestResponse,
+  ImConversationResponse,
+  ImConversationMessageResponse,
+  ImConversationRunResponse,
+} from '../api/client/types';
 import type {
   ChatActions,
   ChatState,
   ChatStoreGet,
   ChatStoreSet,
   ChatStoreConfig,
+  ImConversationRuntimeState,
   TaskReviewPanelState,
   UiPromptPanelState,
 } from './types';
@@ -62,9 +82,19 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
     let sessionEventsReconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let sessionEventsReconnectAttempts = 0;
     let sessionEventsManualClose = false;
-    let pendingSessionChatController: ReadableStreamDefaultController<Uint8Array> | null = null;
-    let pendingSessionChatSessionId: string | null = null;
-    const textEncoder = new TextEncoder();
+    let imEventsSocket: WebSocket | null = null;
+    let imEventsReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let imEventsReconnectAttempts = 0;
+    let imEventsManualClose = false;
+    let imEventsWsUrl: string | null = null;
+    let imEventsBootstrapPromise: Promise<void> | null = null;
+    type PendingSessionChatContext = {
+      tempAssistantMessage: StreamingMessage;
+      tempUserId: string | null;
+      conversationTurnId: string;
+      streamedTextRef: { value: string };
+    };
+    const pendingSessionChats = new Map<string, PendingSessionChatContext>();
     const sessionChatStreamEventTypes = new Set([
       'start',
       'chunk',
@@ -91,6 +121,17 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
     // 获取userId的统一函数
     const getUserIdParam = () => userId;
 
+    const normalizeId = (value: unknown): string => (
+      typeof value === 'string' ? value.trim() : ''
+    );
+
+    const isBusyRunStatus = (status: unknown): boolean => {
+      const normalizedStatus = normalizeId(status).toLowerCase();
+      return normalizedStatus === 'queued'
+        || normalizedStatus === 'pending'
+        || normalizedStatus === 'running';
+    };
+
     const clearSessionEventsReconnectTimer = () => {
       if (sessionEventsReconnectTimer) {
         clearTimeout(sessionEventsReconnectTimer);
@@ -98,39 +139,376 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
       }
     };
 
-    const clearPendingSessionChat = () => {
-      pendingSessionChatController = null;
-      pendingSessionChatSessionId = null;
-    };
-
-    const finalizePendingSessionChat = (error?: Error) => {
-      const controller = pendingSessionChatController;
-      if (!controller) {
-        clearPendingSessionChat();
+    const clearPendingSessionChat = (sessionId?: string | null) => {
+      const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+      if (normalizedSessionId) {
+        pendingSessionChats.delete(normalizedSessionId);
         return;
       }
-      clearPendingSessionChat();
-      try {
-        if (error) {
-          controller.error(error);
-        } else {
-          controller.close();
-        }
-      } catch {
-        // ignore stream finalization errors
+      pendingSessionChats.clear();
+    };
+
+    const failPendingSessionChat = (sessionId: string, error: Error) => {
+      const pendingChat = pendingSessionChats.get(sessionId);
+      if (!pendingChat || !storeSet) {
+        clearPendingSessionChat(sessionId);
+        return;
       }
+
+      rollbackFailedSendMessage({
+        set: storeSet,
+        currentSessionId: sessionId,
+        tempAssistantId: pendingChat.tempAssistantMessage.id,
+        tempAssistantMessage: pendingChat.tempAssistantMessage,
+        streamedTextRef: pendingChat.streamedTextRef,
+        error,
+      });
+      clearPendingSessionChat(sessionId);
     };
 
     const disconnectSessionEvents = () => {
       clearSessionEventsReconnectTimer();
       sessionEventsManualClose = true;
       sessionEventsReconnectAttempts = 0;
-      finalizePendingSessionChat(new Error('Session websocket disconnected'));
+      if (sessionEventsSessionId) {
+        failPendingSessionChat(
+          sessionEventsSessionId,
+          new Error('Session websocket disconnected'),
+        );
+      }
       if (sessionEventsSocket) {
         sessionEventsSocket.close();
         sessionEventsSocket = null;
       }
       sessionEventsSessionId = null;
+    };
+
+    const mergeSessionMessageState = (state: any, sessionId: string, normalizedMessage: any) => {
+      ensureSessionTurnMaps(state, sessionId);
+
+      const currentMessages = state.currentSessionId === sessionId
+        ? Array.isArray(state.messages) ? [...state.messages] : []
+        : [];
+      const existingIndex = currentMessages.findIndex((item: any) => item?.id === normalizedMessage.id);
+      if (existingIndex >= 0) {
+        currentMessages[existingIndex] = {
+          ...currentMessages[existingIndex],
+          ...normalizedMessage,
+        };
+      } else {
+        currentMessages.push(normalizedMessage);
+      }
+      currentMessages.sort((left: any, right: any) => (
+        new Date(left?.createdAt || 0).getTime() - new Date(right?.createdAt || 0).getTime()
+      ));
+
+      const mergedMessages = mergeMessagesWithStreamingDraft(state, sessionId, currentMessages);
+      state.messages = applyTurnProcessCache(
+        mergedMessages,
+        state.sessionTurnProcessCache?.[sessionId],
+        state.sessionTurnProcessState?.[sessionId],
+      );
+
+      const nextUpdatedAt = normalizedMessage.createdAt || new Date();
+      const sessionIndex = state.sessions.findIndex((item: any) => item?.id === sessionId);
+      if (sessionIndex >= 0) {
+        state.sessions[sessionIndex] = {
+          ...state.sessions[sessionIndex],
+          updatedAt: nextUpdatedAt,
+        };
+      }
+      if (state.currentSession?.id === sessionId) {
+        state.currentSession = {
+          ...(state.currentSession || {}),
+          updatedAt: nextUpdatedAt,
+        };
+      }
+    };
+
+    const upsertTaskReviewPanelState = (state: any, panel: TaskReviewPanelState) => {
+      if (!panel?.reviewId || !panel?.sessionId) {
+        return;
+      }
+      const sessionId = panel.sessionId;
+      const panels = Array.isArray(state.taskReviewPanelsBySession?.[sessionId])
+        ? state.taskReviewPanelsBySession[sessionId]
+        : [];
+      const index = panels.findIndex((item: any) => item.reviewId === panel.reviewId);
+      if (index >= 0) {
+        panels[index] = {
+          ...panels[index],
+          ...panel,
+        };
+      } else {
+        panels.push(panel);
+      }
+      state.taskReviewPanelsBySession[sessionId] = panels;
+      if (state.currentSessionId === sessionId) {
+        state.taskReviewPanel = panels[0] || panel;
+      }
+    };
+
+    const removeTaskReviewPanelState = (state: any, reviewId: string, sessionId?: string) => {
+      const normalizedReviewId = typeof reviewId === 'string' ? reviewId.trim() : '';
+      if (!normalizedReviewId) {
+        return;
+      }
+      const candidates = sessionId
+        ? [sessionId]
+        : Object.keys(state.taskReviewPanelsBySession || {});
+      for (const sid of candidates) {
+        const panels = state.taskReviewPanelsBySession?.[sid];
+        if (!Array.isArray(panels) || panels.length === 0) {
+          continue;
+        }
+        const nextPanels = panels.filter((item: any) => item.reviewId !== normalizedReviewId);
+        if (nextPanels.length > 0) {
+          state.taskReviewPanelsBySession[sid] = nextPanels;
+        } else {
+          delete state.taskReviewPanelsBySession[sid];
+        }
+        if (state.currentSessionId === sid) {
+          state.taskReviewPanel = nextPanels[0] || null;
+        }
+        break;
+      }
+    };
+
+    const upsertUiPromptPanelState = (state: any, panel: UiPromptPanelState) => {
+      if (!panel?.promptId || !panel?.sessionId) {
+        return;
+      }
+      const sessionId = panel.sessionId;
+      const panels = Array.isArray(state.uiPromptPanelsBySession?.[sessionId])
+        ? state.uiPromptPanelsBySession[sessionId]
+        : [];
+      const index = panels.findIndex((item: any) => item.promptId === panel.promptId);
+      if (index >= 0) {
+        panels[index] = {
+          ...panels[index],
+          ...panel,
+        };
+      } else {
+        panels.push(panel);
+      }
+      state.uiPromptPanelsBySession[sessionId] = panels;
+      if (state.currentSessionId === sessionId) {
+        state.uiPromptPanel = panels[0] || panel;
+      }
+    };
+
+    const removeUiPromptPanelState = (state: any, promptId: string, sessionId?: string) => {
+      const normalizedPromptId = typeof promptId === 'string' ? promptId.trim() : '';
+      if (!normalizedPromptId) {
+        return;
+      }
+      const candidates = sessionId
+        ? [sessionId]
+        : Object.keys(state.uiPromptPanelsBySession || {});
+      for (const sid of candidates) {
+        const panels = state.uiPromptPanelsBySession?.[sid];
+        if (!Array.isArray(panels) || panels.length === 0) {
+          continue;
+        }
+        const nextPanels = panels.filter((item: any) => item.promptId !== normalizedPromptId);
+        if (nextPanels.length > 0) {
+          state.uiPromptPanelsBySession[sid] = nextPanels;
+        } else {
+          delete state.uiPromptPanelsBySession[sid];
+        }
+        if (state.currentSessionId === sid) {
+          state.uiPromptPanel = nextPanels[0] || null;
+        }
+        break;
+      }
+    };
+
+    const resolveImFallbackTurnId = (
+      actionRequest: ImConversationActionRequestResponse,
+    ): string => {
+      const runId = normalizeId(actionRequest?.run_id);
+      if (runId) {
+        return `im-run-${runId}`;
+      }
+      const actionRequestId = normalizeId(actionRequest?.id);
+      return actionRequestId ? `im-action-${actionRequestId}` : '';
+    };
+
+    const upsertImConversationRuntimeState = (
+      state: any,
+      conversationId: string,
+      updates: Partial<ImConversationRuntimeState>,
+    ) => {
+      const normalizedConversationId = normalizeId(conversationId);
+      if (!normalizedConversationId) {
+        return;
+      }
+      const previous = state.imConversationRuntimeByConversationId?.[normalizedConversationId] || {
+        busy: false,
+        unreadCount: 0,
+        latestRunStatus: null,
+        lastMessagePreview: null,
+        lastMessageAt: null,
+      };
+      state.imConversationRuntimeByConversationId[normalizedConversationId] = {
+        ...previous,
+        ...updates,
+      };
+    };
+
+    const upsertImConversationListState = (
+      state: any,
+      conversation: Partial<ImConversationResponse> & { id?: string },
+    ) => {
+      const conversationId = normalizeId(conversation?.id);
+      if (!conversationId) {
+        return;
+      }
+      const currentList = Array.isArray(state.imConversations) ? state.imConversations : [];
+      const index = currentList.findIndex((item: any) => normalizeId(item?.id) === conversationId);
+      if (index >= 0) {
+        currentList[index] = {
+          ...currentList[index],
+          ...conversation,
+          id: conversationId,
+        };
+      } else {
+        currentList.unshift({
+          id: conversationId,
+          owner_user_id: '',
+          contact_id: '',
+          ...conversation,
+        });
+      }
+    };
+
+    const applyImConversationRuntimeState = (
+      state: any,
+      conversation: ImConversationResponse,
+    ) => {
+      const conversationId = normalizeId(conversation?.id);
+      if (!conversationId) {
+        return;
+      }
+
+      upsertImConversationRuntimeState(state, conversationId, {
+        unreadCount: Number(conversation?.unread_count || 0),
+        lastMessagePreview: typeof conversation?.last_message_preview === 'string'
+          ? conversation.last_message_preview
+          : null,
+        lastMessageAt: typeof conversation?.last_message_at === 'string'
+          ? conversation.last_message_at
+          : (typeof conversation?.updated_at === 'string' ? conversation.updated_at : null),
+      });
+    };
+
+    const applyImRunRuntimeState = (
+      state: any,
+      conversationId: string,
+      run: ImConversationRunResponse,
+    ) => {
+      const latestRunStatus = normalizeId(run?.status) || null;
+      upsertImConversationRuntimeState(state, conversationId, {
+        busy: isBusyRunStatus(latestRunStatus),
+        latestRunStatus,
+      });
+    };
+
+    const replaceImActionPanelsState = (
+      state: any,
+      sessionId: string,
+      actionRequests: ImConversationActionRequestResponse[],
+    ) => {
+      const nextTaskPanels = (Array.isArray(actionRequests) ? actionRequests : [])
+        .filter((item) => normalizeId(item?.status).toLowerCase() === 'pending')
+        .map((item) => toTaskReviewPanelFromImActionRequest(
+          item,
+          sessionId,
+          resolveImFallbackTurnId(item),
+        ))
+        .filter(Boolean) as TaskReviewPanelState[];
+      const nextUiPromptPanels = (Array.isArray(actionRequests) ? actionRequests : [])
+        .filter((item) => normalizeId(item?.status).toLowerCase() === 'pending')
+        .map((item) => toUiPromptPanelFromImActionRequest(
+          item,
+          sessionId,
+          resolveImFallbackTurnId(item),
+        ))
+        .filter(Boolean) as UiPromptPanelState[];
+
+      const preservedTaskPanels = Array.isArray(state.taskReviewPanelsBySession?.[sessionId])
+        ? state.taskReviewPanelsBySession[sessionId].filter((panel: any) => panel?.source !== 'im')
+        : [];
+      const preservedUiPromptPanels = Array.isArray(state.uiPromptPanelsBySession?.[sessionId])
+        ? state.uiPromptPanelsBySession[sessionId].filter((panel: any) => panel?.source !== 'im')
+        : [];
+
+      const mergedTaskPanels = [...preservedTaskPanels, ...nextTaskPanels];
+      const mergedUiPromptPanels = [...preservedUiPromptPanels, ...nextUiPromptPanels];
+
+      if (mergedTaskPanels.length > 0) {
+        state.taskReviewPanelsBySession[sessionId] = mergedTaskPanels;
+      } else {
+        delete state.taskReviewPanelsBySession[sessionId];
+      }
+      if (mergedUiPromptPanels.length > 0) {
+        state.uiPromptPanelsBySession[sessionId] = mergedUiPromptPanels;
+      } else {
+        delete state.uiPromptPanelsBySession[sessionId];
+      }
+
+      if (state.currentSessionId === sessionId) {
+        state.taskReviewPanel = mergedTaskPanels[0] || null;
+        state.uiPromptPanel = mergedUiPromptPanels[0] || null;
+      }
+    };
+
+    const resolveRuntimeSessionIdByConversationId = (conversationId: string): string | null => {
+      const normalizedConversationId = normalizeId(conversationId);
+      if (!normalizedConversationId || !storeGet) {
+        return null;
+      }
+      const state = storeGet();
+      const matched = (state.sessions || []).find((session: any) => (
+        readSessionImConversationId(session?.metadata) === normalizedConversationId
+      ));
+      return matched?.id || null;
+    };
+
+    const applyImActionRequestState = (
+      state: any,
+      sessionId: string,
+      actionRequest: ImConversationActionRequestResponse,
+    ) => {
+      const fallbackTurnId = resolveImFallbackTurnId(actionRequest);
+      const normalizedStatus = String(actionRequest?.status || '').trim().toLowerCase();
+      const isPending = normalizedStatus === 'pending';
+
+      const taskReviewPanel = toTaskReviewPanelFromImActionRequest(
+        actionRequest,
+        sessionId,
+        fallbackTurnId,
+      );
+      if (taskReviewPanel) {
+        if (isPending) {
+          upsertTaskReviewPanelState(state, taskReviewPanel);
+        } else {
+          removeTaskReviewPanelState(state, taskReviewPanel.reviewId, sessionId);
+        }
+      }
+
+      const uiPromptPanel = toUiPromptPanelFromImActionRequest(
+        actionRequest,
+        sessionId,
+        fallbackTurnId,
+      );
+      if (uiPromptPanel) {
+        if (isPending) {
+          upsertUiPromptPanelState(state, uiPromptPanel);
+        } else {
+          removeUiPromptPanelState(state, uiPromptPanel.promptId, sessionId);
+        }
+      }
     };
 
     const handleIncomingSessionEvent = (sessionId: string, payload: any) => {
@@ -140,17 +518,52 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
         return;
       }
       if (payload && sessionChatStreamEventTypes.has(String(payload.type || ''))) {
-        if (pendingSessionChatController && pendingSessionChatSessionId === sessionId) {
-          pendingSessionChatController.enqueue(
-            textEncoder.encode(`data: ${JSON.stringify(payload)}\n\n`),
-          );
-          if (sessionChatTerminalEventTypes.has(String(payload.type || ''))) {
-            finalizePendingSessionChat();
+        const pendingChat = pendingSessionChats.get(sessionId);
+        if (!pendingChat) {
+          return;
+        }
+        const helpers = createStreamingMessageStateHelpers({
+          set,
+          currentSessionId: sessionId,
+          tempAssistantMessage: pendingChat.tempAssistantMessage,
+          tempUserId: pendingChat.tempUserId,
+          conversationTurnId: pendingChat.conversationTurnId,
+          streamedTextRef: pendingChat.streamedTextRef,
+        });
+
+        try {
+          const eventResult = handleStreamEvent({
+            parsed: payload,
+            set,
+            currentSessionId: sessionId,
+            conversationTurnId: pendingChat.conversationTurnId,
+            tempAssistantMessageId: pendingChat.tempAssistantMessage.id,
+            streamedTextRef: pendingChat.streamedTextRef,
+            helpers,
+          });
+          if (eventResult.sawDone || sessionChatTerminalEventTypes.has(String(payload.type || ''))) {
+            set((state: any) => {
+              finalizeStreamingSessionState(state, {
+                sessionId,
+                assistantMessageId: pendingChat.tempAssistantMessage.id,
+                sawDone: eventResult.sawDone,
+              });
+            });
+            clearPendingSessionChat(sessionId);
           }
+        } catch (error) {
+          failPendingSessionChat(
+            sessionId,
+            error instanceof Error ? error : new Error(String(error)),
+          );
         }
         return;
       }
-      if (!payload || payload.type !== 'task_execution.notice' || !payload.message) {
+      if (!payload || typeof payload.type !== 'string') {
+        return;
+      }
+
+      if (payload.type !== 'task_execution.notice' || !payload.message) {
         return;
       }
 
@@ -160,45 +573,7 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
       }
 
       set((state: any) => {
-        ensureSessionTurnMaps(state, sessionId);
-
-        const currentMessages = state.currentSessionId === sessionId
-          ? Array.isArray(state.messages) ? [...state.messages] : []
-          : [];
-        const existingIndex = currentMessages.findIndex((item: any) => item?.id === normalizedMessage.id);
-        if (existingIndex >= 0) {
-          currentMessages[existingIndex] = {
-            ...currentMessages[existingIndex],
-            ...normalizedMessage,
-          };
-        } else {
-          currentMessages.push(normalizedMessage);
-        }
-        currentMessages.sort((left: any, right: any) => (
-          new Date(left?.createdAt || 0).getTime() - new Date(right?.createdAt || 0).getTime()
-        ));
-
-        const mergedMessages = mergeMessagesWithStreamingDraft(state, sessionId, currentMessages);
-        state.messages = applyTurnProcessCache(
-          mergedMessages,
-          state.sessionTurnProcessCache?.[sessionId],
-          state.sessionTurnProcessState?.[sessionId],
-        );
-
-        const nextUpdatedAt = normalizedMessage.createdAt || new Date();
-        const sessionIndex = state.sessions.findIndex((item: any) => item?.id === sessionId);
-        if (sessionIndex >= 0) {
-          state.sessions[sessionIndex] = {
-            ...state.sessions[sessionIndex],
-            updatedAt: nextUpdatedAt,
-          };
-        }
-        if (state.currentSession?.id === sessionId) {
-          state.currentSession = {
-            ...(state.currentSession || {}),
-            updatedAt: nextUpdatedAt,
-          };
-        }
+        mergeSessionMessageState(state, sessionId, normalizedMessage);
       });
 
       const state = get();
@@ -266,7 +641,7 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
       ws.addEventListener('error', handleError);
     });
 
-    const streamChatViaSessionWs = async (
+    const startSessionChatViaWs = async (
       sessionId: string,
       content: string,
       modelConfig: StreamChatModelConfigPayload,
@@ -274,70 +649,55 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
       attachments?: StreamChatAttachmentPayload[],
       reasoningEnabled?: boolean,
       options?: StreamChatOptions,
-    ): Promise<ReadableStream> => {
-      if (pendingSessionChatController) {
+      pendingContext?: PendingSessionChatContext,
+    ): Promise<void> => {
+      if (pendingSessionChats.has(sessionId)) {
         throw new Error('A chat stream is already active on the current session websocket');
       }
 
       const ws = await waitForSessionEventsOpen(sessionId);
-      return new ReadableStream<Uint8Array>({
-        start(controller) {
-          pendingSessionChatController = controller;
-          pendingSessionChatSessionId = sessionId;
-          try {
-            ws.send(JSON.stringify({
-              type: 'chat.send',
-              request: {
-                content,
-                user_id: streamUserId,
-                attachments: attachments || [],
-                reasoning_enabled: reasoningEnabled,
-                turn_id: options?.turnId,
-                contact_agent_id: options?.contactAgentId || undefined,
-                remote_connection_id: Object.prototype.hasOwnProperty.call(options || {}, 'remoteConnectionId')
-                  ? (options?.remoteConnectionId ?? null)
-                  : undefined,
-                project_id: options?.projectId || undefined,
-                project_root: options?.projectRoot || undefined,
-                mcp_enabled: options?.mcpEnabled,
-                enabled_mcp_ids: options?.enabledMcpIds || [],
-                ai_model_config: {
-                  provider: modelConfig.provider,
-                  model_name: modelConfig.model_name,
-                  temperature: modelConfig.temperature || 0.7,
-                  thinking_level: modelConfig.thinking_level,
-                  api_key: modelConfig.api_key,
-                  base_url: modelConfig.base_url,
-                  supports_images: modelConfig.supports_images === true,
-                  supports_reasoning: modelConfig.supports_reasoning === true,
-                  supports_responses: modelConfig.supports_responses === true,
-                },
-              },
-            }));
-          } catch (error) {
-            clearPendingSessionChat();
-            controller.error(error instanceof Error ? error : new Error(String(error)));
-          }
-        },
-        cancel() {
-          if (
-            pendingSessionChatSessionId === sessionId
-            && ws.readyState === WebSocket.OPEN
-          ) {
-            try {
-              ws.send(JSON.stringify({ type: 'chat.stop' }));
-            } catch {
-              // ignore stop failures during cancel
-            }
-          }
-          finalizePendingSessionChat();
-        },
-      });
+      if (pendingContext) {
+        pendingSessionChats.set(sessionId, pendingContext);
+      }
+      try {
+        ws.send(JSON.stringify({
+          type: 'chat.send',
+          request: {
+            content,
+            user_id: streamUserId,
+            attachments: attachments || [],
+            reasoning_enabled: reasoningEnabled,
+            turn_id: options?.turnId,
+            contact_agent_id: options?.contactAgentId || undefined,
+            remote_connection_id: Object.prototype.hasOwnProperty.call(options || {}, 'remoteConnectionId')
+              ? (options?.remoteConnectionId ?? null)
+              : undefined,
+            project_id: options?.projectId || undefined,
+            project_root: options?.projectRoot || undefined,
+            mcp_enabled: options?.mcpEnabled,
+            enabled_mcp_ids: options?.enabledMcpIds || [],
+            ai_model_config: {
+              provider: modelConfig.provider,
+              model_name: modelConfig.model_name,
+              temperature: modelConfig.temperature || 0.7,
+              thinking_level: modelConfig.thinking_level,
+              api_key: modelConfig.api_key,
+              base_url: modelConfig.base_url,
+              supports_images: modelConfig.supports_images === true,
+              supports_reasoning: modelConfig.supports_reasoning === true,
+              supports_responses: modelConfig.supports_responses === true,
+            },
+          },
+        }));
+      } catch (error) {
+        clearPendingSessionChat(sessionId);
+        throw error instanceof Error ? error : new Error(String(error));
+      }
     };
 
     const abortSessionChatViaWs = async (sessionId: string): Promise<boolean> => {
       if (
-        pendingSessionChatSessionId !== sessionId
+        !pendingSessionChats.has(sessionId)
         || !sessionEventsSocket
         || sessionEventsSessionId !== sessionId
         || sessionEventsSocket.readyState !== WebSocket.OPEN
@@ -402,8 +762,8 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
       };
       ws.onclose = () => {
         const shouldReconnect = !sessionEventsManualClose && storeGet?.().currentSessionId === sessionId;
-        if (pendingSessionChatSessionId === sessionId) {
-          finalizePendingSessionChat(new Error('Session websocket closed during chat stream'));
+        if (pendingSessionChats.has(sessionId)) {
+          failPendingSessionChat(sessionId, new Error('Session websocket closed during chat stream'));
         }
         sessionEventsSocket = null;
         if (shouldReconnect) {
@@ -412,10 +772,284 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
       };
     };
 
+    const clearImEventsReconnectTimer = () => {
+      if (imEventsReconnectTimer) {
+        clearTimeout(imEventsReconnectTimer);
+        imEventsReconnectTimer = null;
+      }
+    };
+
+    const buildImEventsSocketUrl = (rawWsUrl: string, accessToken?: string | null): string => {
+      const wsUrl = new URL(rawWsUrl, window.location.origin);
+      const token = normalizeId(accessToken);
+      if (token) {
+        wsUrl.searchParams.set('access_token', token);
+      }
+      return wsUrl.toString();
+    };
+
+    const bootstrapImConversationState = async (targetSessionId?: string | null): Promise<void> => {
+      if (!storeGet || !storeSet) {
+        return;
+      }
+      if (imEventsBootstrapPromise) {
+        await imEventsBootstrapPromise;
+        return;
+      }
+
+      imEventsBootstrapPromise = (async () => {
+        const state = storeGet?.();
+        if (!state) {
+          return;
+        }
+
+        const refs = (state.sessions || [])
+          .map((session: any) => ({
+            sessionId: normalizeId(session?.id),
+            conversationId: readSessionImConversationId(session?.metadata),
+          }))
+          .filter((item) => item.sessionId && item.conversationId)
+          .filter((item) => !targetSessionId || item.sessionId === targetSessionId) as Array<{
+            sessionId: string;
+            conversationId: string;
+          }>;
+
+        if (refs.length === 0) {
+          return;
+        }
+
+        const conversations = await client.getImConversations().catch(() => []);
+        const conversationMap = new Map(
+          (Array.isArray(conversations) ? conversations : [])
+            .map((conversation) => [normalizeId(conversation?.id), conversation] as const)
+            .filter(([conversationId]) => Boolean(conversationId)),
+        );
+
+        const runEntries = await Promise.all(refs.map(async (ref) => {
+          const runs = await client.getImConversationRuns(ref.conversationId).catch(() => []);
+          const latestRun = Array.isArray(runs) ? (runs[0] || null) : null;
+          return [ref.conversationId, latestRun] as const;
+        }));
+        const actionEntries = await Promise.all(refs.map(async (ref) => {
+          const actionRequests = await client
+            .getImConversationActionRequests(ref.conversationId)
+            .catch(() => []);
+          return [
+            ref.sessionId,
+            Array.isArray(actionRequests) ? actionRequests : [],
+          ] as const;
+        }));
+
+        const latestRunByConversationId = new Map(runEntries);
+        const actionRequestsBySessionId = new Map(actionEntries);
+
+        storeSet((draft: any) => {
+          refs.forEach((ref) => {
+            const conversation = conversationMap.get(ref.conversationId);
+            if (conversation) {
+              applyImConversationRuntimeState(draft, conversation);
+            }
+
+            const latestRun = latestRunByConversationId.get(ref.conversationId);
+            if (latestRun) {
+              applyImRunRuntimeState(draft, ref.conversationId, latestRun);
+            }
+
+            replaceImActionPanelsState(
+              draft,
+              ref.sessionId,
+              actionRequestsBySessionId.get(ref.sessionId) || [],
+            );
+          });
+        });
+      })().finally(() => {
+        imEventsBootstrapPromise = null;
+      });
+
+      await imEventsBootstrapPromise;
+    };
+
+    const handleIncomingImEvent = (payload: any) => {
+      const set = storeSet;
+      const get = storeGet;
+      if (!set || !get || !payload || typeof payload.type !== 'string') {
+        return;
+      }
+
+      if (payload.type === 'im.connected') {
+        return;
+      }
+
+      if (
+        (payload.type === 'im.conversation.created' || payload.type === 'im.conversation.updated')
+        && payload.conversation
+      ) {
+        set((state: any) => {
+          const conversation = payload.conversation as ImConversationResponse;
+          applyImConversationRuntimeState(state, conversation);
+          upsertImConversationListState(state, conversation);
+        });
+        return;
+      }
+
+      if (payload.type === 'im.message.created' && payload.message) {
+        const rawMessage = payload.message as ImConversationMessageResponse;
+        const conversationId = normalizeId(payload.conversation_id ?? rawMessage?.conversation_id);
+        const runtimeSessionId = resolveRuntimeSessionIdByConversationId(conversationId);
+        const normalizedMessage = runtimeSessionId
+          ? normalizeImConversationMessage(rawMessage, runtimeSessionId)
+          : null;
+
+        set((state: any) => {
+          const previousRuntime = state.imConversationRuntimeByConversationId?.[conversationId];
+          const nextUnreadCount = normalizeId(rawMessage?.sender_type).toLowerCase() === 'user'
+            ? Number(previousRuntime?.unreadCount || 0)
+            : Number(previousRuntime?.unreadCount || 0) + 1;
+          upsertImConversationRuntimeState(state, conversationId, {
+            lastMessagePreview: typeof rawMessage?.content === 'string' ? rawMessage.content : null,
+            lastMessageAt: typeof rawMessage?.updated_at === 'string'
+              ? rawMessage.updated_at
+              : (typeof rawMessage?.created_at === 'string' ? rawMessage.created_at : null),
+            unreadCount: nextUnreadCount,
+          });
+          upsertImConversationListState(state, {
+            id: conversationId,
+            last_message_preview: typeof rawMessage?.content === 'string' ? rawMessage.content : null,
+            last_message_at: typeof rawMessage?.updated_at === 'string'
+              ? rawMessage.updated_at
+              : (typeof rawMessage?.created_at === 'string' ? rawMessage.created_at : null),
+            unread_count: nextUnreadCount,
+          });
+          if (runtimeSessionId && normalizedMessage) {
+            mergeSessionMessageState(state, runtimeSessionId, normalizedMessage);
+          }
+        });
+
+        const currentState = get();
+        if (runtimeSessionId && currentState.currentSessionId === runtimeSessionId) {
+          writeSessionMessagesCache(runtimeSessionId, currentState.messages || []);
+          if (normalizeId(rawMessage?.sender_type).toLowerCase() !== 'user') {
+            void client.markImConversationRead(conversationId).catch(() => {});
+            set((state: any) => {
+              upsertImConversationRuntimeState(state, conversationId, {
+                unreadCount: 0,
+              });
+              upsertImConversationListState(state, {
+                id: conversationId,
+                unread_count: 0,
+              });
+            });
+          }
+        }
+        return;
+      }
+
+      if (
+        (payload.type === 'im.action_request.created' || payload.type === 'im.action_request.updated')
+        && payload.action_request
+      ) {
+        const actionRequest = payload.action_request as ImConversationActionRequestResponse;
+        const conversationId = normalizeId(payload.conversation_id ?? actionRequest?.conversation_id);
+        const runtimeSessionId = resolveRuntimeSessionIdByConversationId(conversationId);
+        if (!runtimeSessionId) {
+          return;
+        }
+        set((state: any) => {
+          applyImActionRequestState(state, runtimeSessionId, actionRequest);
+        });
+        return;
+      }
+
+      if (
+        (payload.type === 'im.run.created' || payload.type === 'im.run.updated')
+        && payload.run
+      ) {
+        const run = payload.run as ImConversationRunResponse;
+        const conversationId = normalizeId(payload.conversation_id ?? run?.conversation_id);
+        set((state: any) => {
+          applyImRunRuntimeState(state, conversationId, run);
+        });
+      }
+    };
+
+    const scheduleImEventsReconnect = () => {
+      clearImEventsReconnectTimer();
+      const delay = Math.min(1000 * 2 ** imEventsReconnectAttempts, 15000);
+      imEventsReconnectAttempts += 1;
+      imEventsReconnectTimer = setTimeout(() => {
+        void connectImEvents();
+      }, delay);
+    };
+
+    const connectImEvents = async (): Promise<void> => {
+      if (typeof window === 'undefined') {
+        return;
+      }
+      const accessToken = normalizeId(client.getAccessToken());
+      if (!accessToken) {
+        return;
+      }
+      if (
+        imEventsSocket
+        && (imEventsSocket.readyState === WebSocket.OPEN
+          || imEventsSocket.readyState === WebSocket.CONNECTING)
+      ) {
+        return;
+      }
+
+      clearImEventsReconnectTimer();
+      imEventsManualClose = false;
+
+      if (!imEventsWsUrl) {
+        const meta = await client.getImWsMeta().catch(
+          (): { ws_url?: string | null } => ({}),
+        );
+        const rawWsUrl = normalizeId(meta?.ws_url);
+        if (!rawWsUrl) {
+          return;
+        }
+        imEventsWsUrl = rawWsUrl;
+      }
+
+      if (imEventsSocket) {
+        imEventsSocket.close();
+        imEventsSocket = null;
+      }
+
+      const socketUrl = buildImEventsSocketUrl(imEventsWsUrl, accessToken);
+      const ws = new WebSocket(socketUrl);
+      imEventsSocket = ws;
+
+      ws.onopen = () => {
+        imEventsReconnectAttempts = 0;
+        debugLog('[Store] IM ws connected');
+        void bootstrapImConversationState();
+      };
+      ws.onmessage = (event) => {
+        try {
+          const parsed = JSON.parse(String(event.data || '{}'));
+          handleIncomingImEvent(parsed);
+        } catch (error) {
+          console.error('Failed to parse IM ws event:', error);
+        }
+      };
+      ws.onerror = () => {
+        debugLog('[Store] IM ws error');
+      };
+      ws.onclose = () => {
+        const shouldReconnect = !imEventsManualClose;
+        imEventsSocket = null;
+        if (shouldReconnect) {
+          scheduleImEventsReconnect();
+        }
+      };
+    };
+
     client.onAccessTokenRefresh(() => {
       if (sessionEventsSessionId) {
         connectSessionEvents(sessionEventsSessionId);
       }
+      void connectImEvents();
     });
     
     return createWithEqualityFn<ChatState & ChatActions>()(
@@ -455,6 +1089,8 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                     sessionStreamingMessageDrafts: {},
                     sessionTurnProcessState: {},
                     sessionTurnProcessCache: {},
+                    imConversations: [],
+                    imConversationRuntimeByConversationId: {},
                     taskReviewPanel: null,
                     taskReviewPanelsBySession: {},
                     uiPromptPanel: null,
@@ -480,7 +1116,7 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                     selectedApplicationId: null,
                     error: null,
 
-                    // 会话/项目/消息/流式/UI 操作（拆分到独立模块）
+                    // 会话/项目/消息/会话控制/UI 操作（拆分到独立模块）
                     ...createContactActions({ set, get, client, getUserIdParam }),
                     ...createSessionActions({
                       set,
@@ -489,7 +1125,11 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                       getSessionParams,
                       customUserId,
                       customProjectId,
-                      onSessionActivated: connectSessionEvents,
+                      onSessionActivated: (sessionId) => {
+                        connectSessionEvents(sessionId);
+                        void connectImEvents();
+                        void bootstrapImConversationState(sessionId);
+                      },
                     }),
                     ...createProjectActions({ set, get, client, getUserIdParam }),
                     ...createTerminalActions({ set, get, client, getUserIdParam }),
@@ -501,9 +1141,9 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                       get,
                       client,
                       getUserIdParam,
-                      streamChat: streamChatViaSessionWs,
+                      startSessionChat: startSessionChatViaWs,
                     }),
-                    ...createStreamingActions({
+                    ...createConversationControlActions({
                       set,
                       get,
                       client,

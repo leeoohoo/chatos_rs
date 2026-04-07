@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createStreamingActions } from './streaming';
+import { createConversationControlActions } from './conversationControl';
 import { createDefaultSessionChatState } from './sendMessage/sessionState';
 
-describe('createStreamingActions.abortCurrentConversation', () => {
+describe('createConversationControlActions.abortCurrentConversation', () => {
   const buildState = () => ({
     currentSessionId: 'session-1',
     selectedModelId: 'model-1',
@@ -33,7 +33,7 @@ describe('createStreamingActions.abortCurrentConversation', () => {
     const set = (updater: (draft: any) => void) => updater(state);
     const get = () => state as any;
 
-    const actions = createStreamingActions({
+    const actions = createConversationControlActions({
       set: set as any,
       get: get as any,
       client,
@@ -57,7 +57,7 @@ describe('createStreamingActions.abortCurrentConversation', () => {
     const set = (updater: (draft: any) => void) => updater(state);
     const get = () => state as any;
 
-    const actions = createStreamingActions({
+    const actions = createConversationControlActions({
       set: set as any,
       get: get as any,
       client,

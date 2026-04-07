@@ -14,13 +14,23 @@ type SessionChatStateMap = Record<
   }
 >;
 
+type ImRuntimeStateMap = Record<
+  string,
+  {
+    busy?: boolean;
+    unreadCount?: number;
+    latestRunStatus?: string | null;
+    lastMessagePreview?: string | null;
+  }
+>;
+
 interface SessionSectionProps {
   expanded: boolean;
   sessions: Session[];
   currentSessionId?: string | null;
   summarySessionId?: string | null;
-  runtimeContextSessionId?: string | null;
   displaySessionRuntimeIdMap?: Record<string, string>;
+  imRuntimeStateBySessionId?: ImRuntimeStateMap;
   sessionChatState?: SessionChatStateMap;
   taskReviewPanelsBySession?: Record<string, any[]>;
   uiPromptPanelsBySession?: Record<string, any[]>;
@@ -32,7 +42,6 @@ interface SessionSectionProps {
   onCreateSession: () => void;
   onSelectSession: (sessionId: string) => void;
   onOpenSummary: (sessionId: string) => void;
-  onOpenRuntimeContext: (sessionId: string) => void;
   onManageBuiltinMcpGrants: (sessionId: string) => void;
   onDeleteSession: (sessionId: string) => void;
   onLoadMore: () => void;
@@ -47,8 +56,8 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
   sessions,
   currentSessionId,
   summarySessionId,
-  runtimeContextSessionId,
   displaySessionRuntimeIdMap = {},
+  imRuntimeStateBySessionId = {},
   sessionChatState,
   taskReviewPanelsBySession = {},
   uiPromptPanelsBySession = {},
@@ -60,7 +69,6 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
   onCreateSession,
   onSelectSession,
   onOpenSummary,
-  onOpenRuntimeContext,
   onManageBuiltinMcpGrants,
   onDeleteSession,
   onLoadMore,
@@ -120,6 +128,15 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
                 const isArchivedSession = sessionStatus !== 'active';
                 const isArchivingSession = sessionStatus === 'archiving';
                 const runtimeSessionId = displaySessionRuntimeIdMap[session.id] || session.id;
+                const imRuntimeState = imRuntimeStateBySessionId?.[runtimeSessionId];
+                const unreadCount = Number(imRuntimeState?.unreadCount || 0);
+                const latestRunStatus = String(imRuntimeState?.latestRunStatus || '').trim().toLowerCase();
+                const busyText = latestRunStatus === 'queued' || latestRunStatus === 'pending'
+                  ? '处理中'
+                  : '执行中';
+                const previewText = typeof imRuntimeState?.lastMessagePreview === 'string'
+                  ? imRuntimeState.lastMessagePreview.trim()
+                  : '';
 
                 return (
                   <div
@@ -142,6 +159,11 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
                       <h3 className="text-sm font-medium text-foreground truncate">
                         {session.title}
                       </h3>
+                      {previewText ? (
+                        <p className="mt-1 text-xs text-muted-foreground truncate">
+                          {previewText}
+                        </p>
+                      ) : null}
                       <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
                         <span>{formatTimeAgo(session.updatedAt)}</span>
                         <span className="text-muted-foreground/60">·</span>
@@ -153,10 +175,20 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
                         ) : (
                           (() => {
                             const chatState = sessionChatState?.[runtimeSessionId];
-                            const isBusy = !!(chatState?.isLoading || chatState?.isStreaming);
-                            return <SessionBusyBadge busy={isBusy} />;
+                            const isBusy = typeof imRuntimeState?.busy === 'boolean'
+                              ? imRuntimeState.busy
+                              : !!(chatState?.isLoading || chatState?.isStreaming);
+                            return <SessionBusyBadge busy={isBusy} busyText={busyText} />;
                           })()
                         )}
+                        {!isArchivedSession && unreadCount > 0 ? (
+                          <span className="inline-flex items-center gap-1 text-emerald-600">
+                            <span className="inline-block min-w-[16px] px-1 h-4 rounded-full bg-emerald-100 text-[10px] leading-4 text-center">
+                              {unreadCount > 99 ? '99+' : unreadCount}
+                            </span>
+                            未读
+                          </span>
+                        ) : null}
                         {(() => {
                           if (isArchivedSession) {
                             return null;
@@ -199,24 +231,6 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
                         title={summarySessionId === session.id ? '关闭总结视图' : '打开总结视图'}
                       >
                         {summarySessionId === session.id ? '关闭总结' : '总结'}
-                      </button>
-                      <button
-                        type="button"
-                        className={cn(
-                          'px-1.5 py-0.5 text-[11px] rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent',
-                          runtimeContextSessionId === session.id && 'text-blue-600 border-blue-200',
-                        )}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (isArchivedSession) {
-                            return;
-                          }
-                          onOpenRuntimeContext(session.id);
-                        }}
-                        disabled={isArchivedSession}
-                        title="查看当前轮次上下文快照"
-                      >
-                        上下文
                       </button>
                       <div className="relative" data-action-menu-root="true">
                         <button

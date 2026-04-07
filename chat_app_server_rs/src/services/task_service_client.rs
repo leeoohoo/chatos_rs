@@ -348,7 +348,7 @@ pub async fn get_task(task_id: &str) -> Result<Option<TaskRecordDto>, String> {
 }
 
 pub async fn get_task_result_brief(task_id: &str) -> Result<Option<TaskResultBriefDto>, String> {
-    let path = build_url(&format!(
+    let path = build_internal_url(&format!(
         "/tasks/{}/result-brief",
         urlencoding::encode(task_id)
     ));
@@ -391,7 +391,10 @@ pub async fn confirm_task(
     req_body: &ConfirmTaskRequestDto,
 ) -> Result<Option<TaskRecordDto>, String> {
     let req = client()
-        .post(build_url(&format!("/tasks/{}/confirm", urlencoding::encode(task_id))).as_str())
+        .post(
+            build_internal_url(&format!("/tasks/{}/confirm", urlencoding::encode(task_id)))
+                .as_str(),
+        )
         .timeout(timeout_duration())
         .json(req_body);
     send_optional_json(req).await

@@ -131,6 +131,65 @@ export interface SessionMessageResponse {
   updated_at?: string;
 }
 
+export interface TurnRuntimeSnapshotSelectedCommandResponse {
+  command_ref?: string | null;
+  name?: string | null;
+  plugin_source: string;
+  source_path: string;
+  trigger?: string | null;
+  arguments?: string | null;
+}
+
+export interface TurnRuntimeSnapshotSystemMessageResponse {
+  id: string;
+  source: string;
+  content: string;
+}
+
+export interface TurnRuntimeSnapshotToolResponse {
+  name: string;
+  server_name: string;
+  server_type: string;
+  description?: string | null;
+}
+
+export interface TurnRuntimeSnapshotRuntimeResponse {
+  model?: string | null;
+  provider?: string | null;
+  contact_agent_id?: string | null;
+  remote_connection_id?: string | null;
+  project_id?: string | null;
+  project_root?: string | null;
+  workspace_root?: string | null;
+  mcp_enabled?: boolean | null;
+  enabled_mcp_ids?: string[];
+  selected_commands?: TurnRuntimeSnapshotSelectedCommandResponse[];
+}
+
+export interface TurnRuntimeSnapshotResponse {
+  id: string;
+  session_id: string;
+  user_id: string;
+  turn_id: string;
+  user_message_id?: string | null;
+  status: string;
+  snapshot_source: string;
+  snapshot_version: number;
+  captured_at: string;
+  updated_at: string;
+  system_messages?: TurnRuntimeSnapshotSystemMessageResponse[];
+  tools?: TurnRuntimeSnapshotToolResponse[];
+  runtime?: TurnRuntimeSnapshotRuntimeResponse | null;
+}
+
+export interface TurnRuntimeSnapshotLookupResponse {
+  session_id: string;
+  turn_id?: string | null;
+  status: string;
+  snapshot_source: string;
+  snapshot?: TurnRuntimeSnapshotResponse | null;
+}
+
 export interface ConversationMessageEnvelope {
   data: {
     message: SessionMessageResponse;
@@ -878,65 +937,6 @@ export interface RuntimeGuidanceSubmitResponse {
   code?: string;
 }
 
-export interface TurnRuntimeSnapshotSystemMessage {
-  id: string;
-  source: string;
-  content: string;
-}
-
-export interface TurnRuntimeSnapshotTool {
-  name: string;
-  server_name: string;
-  server_type: string;
-  description?: string | null;
-}
-
-export interface TurnRuntimeSnapshotSelectedCommand {
-  command_ref?: string | null;
-  name?: string | null;
-  plugin_source: string;
-  source_path: string;
-  trigger?: string | null;
-  arguments?: string | null;
-}
-
-export interface TurnRuntimeSnapshotRuntime {
-  model?: string | null;
-  provider?: string | null;
-  contact_agent_id?: string | null;
-  remote_connection_id?: string | null;
-  project_id?: string | null;
-  project_root?: string | null;
-  workspace_root?: string | null;
-  mcp_enabled?: boolean | null;
-  enabled_mcp_ids?: string[];
-  selected_commands?: TurnRuntimeSnapshotSelectedCommand[];
-}
-
-export interface TurnRuntimeSnapshot {
-  id: string;
-  session_id: string;
-  user_id: string;
-  turn_id: string;
-  user_message_id?: string | null;
-  status: string;
-  snapshot_source: string;
-  snapshot_version: number;
-  captured_at: string;
-  updated_at: string;
-  system_messages?: TurnRuntimeSnapshotSystemMessage[];
-  tools?: TurnRuntimeSnapshotTool[];
-  runtime?: TurnRuntimeSnapshotRuntime | null;
-}
-
-export interface TurnRuntimeSnapshotLookupResponse {
-  session_id: string;
-  turn_id?: string | null;
-  status: string;
-  snapshot_source: string;
-  snapshot?: TurnRuntimeSnapshot | null;
-}
-
 export interface TaskManagerUpdatePayload {
   title?: string;
   details?: string;
@@ -1011,6 +1011,91 @@ export interface TaskReviewDecisionPayload {
   action: 'confirm' | 'cancel';
   tasks?: TaskReviewTaskDraft[];
   reason?: string;
+}
+
+export interface ImConversationActionRequestResponse {
+  id: string;
+  conversation_id: string;
+  trigger_message_id?: string | null;
+  run_id?: string | null;
+  action_type?: string;
+  status?: string;
+  payload?: Record<string, unknown> | string | null;
+  submitted_payload?: Record<string, unknown> | string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface ImActionRequestSubmitResponse {
+  success?: boolean;
+  conversation_id?: string;
+  action_request?: ImConversationActionRequestResponse;
+  result?: unknown;
+}
+
+export interface ImConversationMessageResponse {
+  id: string;
+  conversation_id: string;
+  sender_type: string;
+  sender_id?: string | null;
+  message_type?: string | null;
+  content: string;
+  delivery_status?: string | null;
+  client_message_id?: string | null;
+  reply_to_message_id?: string | null;
+  metadata?: Record<string, unknown> | string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface ImConversationResponse {
+  id: string;
+  owner_user_id: string;
+  contact_id: string;
+  project_id?: string | null;
+  title?: string | null;
+  status?: string;
+  last_message_at?: string | null;
+  last_message_preview?: string | null;
+  unread_count?: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface ImConversationCreatePayload {
+  contact_id: string;
+  project_id?: string | null;
+  title?: string | null;
+}
+
+export interface ImConversationMessageCreatePayload {
+  sender_type: string;
+  sender_id?: string | null;
+  message_type?: string | null;
+  content: string;
+  delivery_status?: string | null;
+  client_message_id?: string | null;
+  reply_to_message_id?: string | null;
+  metadata?: Record<string, unknown> | null;
+}
+
+export interface ImConversationRunResponse {
+  id: string;
+  conversation_id: string;
+  source_message_id: string;
+  contact_id: string;
+  agent_id: string;
+  project_id?: string | null;
+  execution_session_id?: string | null;
+  execution_turn_id?: string | null;
+  execution_scope_key?: string | null;
+  status?: string;
+  final_message_id?: string | null;
+  error_message?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface UiPromptResponsePayload {

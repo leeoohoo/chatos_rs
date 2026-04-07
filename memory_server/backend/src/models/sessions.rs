@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::{default_active, default_i64_0};
+use super::{default_active, default_i64_0, deserialize_string_active, deserialize_vec_or_default};
 
 fn default_contact_authorized_builtin_mcp_ids() -> Vec<String> {
     Vec::new()
@@ -14,7 +14,7 @@ pub struct Session {
     pub project_id: Option<String>,
     pub title: Option<String>,
     pub metadata: Option<Value>,
-    #[serde(default = "default_active")]
+    #[serde(default = "default_active", deserialize_with = "deserialize_string_active")]
     pub status: String,
     pub created_at: String,
     pub updated_at: String,
@@ -42,9 +42,12 @@ pub struct Contact {
     pub user_id: String,
     pub agent_id: String,
     pub agent_name_snapshot: Option<String>,
-    #[serde(default = "default_contact_authorized_builtin_mcp_ids")]
+    #[serde(
+        default = "default_contact_authorized_builtin_mcp_ids",
+        deserialize_with = "deserialize_vec_or_default"
+    )]
     pub authorized_builtin_mcp_ids: Vec<String>,
-    #[serde(default = "default_active")]
+    #[serde(default = "default_active", deserialize_with = "deserialize_string_active")]
     pub status: String,
     pub created_at: String,
     pub updated_at: String,
@@ -58,7 +61,7 @@ pub struct MemoryProject {
     pub name: String,
     pub root_path: Option<String>,
     pub description: Option<String>,
-    #[serde(default = "default_active")]
+    #[serde(default = "default_active", deserialize_with = "deserialize_string_active")]
     pub status: String,
     #[serde(default = "default_i64_0")]
     pub is_virtual: i64,
@@ -78,7 +81,7 @@ pub struct MemoryProjectAgentLink {
     pub first_bound_at: String,
     pub last_bound_at: String,
     pub last_message_at: Option<String>,
-    #[serde(default = "default_active")]
+    #[serde(default = "default_active", deserialize_with = "deserialize_string_active")]
     pub status: String,
     pub created_at: String,
     pub updated_at: String,

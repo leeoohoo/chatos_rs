@@ -23,9 +23,7 @@ interface SessionListProps {
   store?: typeof useChatStore;
   onSelectSession?: (sessionId: string) => void;
   onOpenSessionSummary?: (sessionId: string) => void;
-  onOpenSessionRuntimeContext?: (sessionId: string) => void;
   activeSummarySessionId?: string | null;
-  activeRuntimeContextSessionId?: string | null;
 }
 
 export const SessionList: React.FC<SessionListProps> = (props) => {
@@ -36,16 +34,13 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
     store,
     onSelectSession,
     onOpenSessionSummary,
-    onOpenSessionRuntimeContext,
     activeSummarySessionId,
-    activeRuntimeContextSessionId,
   } = props;
   const isCollapsed = collapsed ?? !isOpen;
   const controller = useSessionListController({
     store,
     activeSummarySessionId,
     onOpenSessionSummary,
-    onOpenSessionRuntimeContext,
     isCollapsed,
   });
 
@@ -62,11 +57,11 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
         <div className="flex-1 flex flex-col overflow-hidden">
           <SessionSection
             expanded={controller.sectionExpansion.sessionsExpanded}
-            sessions={controller.contactScopeState.displayScopeSessions}
+            sessions={controller.displayScopeSessionsWithImState}
             currentSessionId={controller.contactScopeState.currentDisplayScopeSessionId}
             summarySessionId={controller.contactScopeState.activeSummaryDisplayScopeSessionId}
-            runtimeContextSessionId={activeRuntimeContextSessionId}
             displaySessionRuntimeIdMap={controller.contactScopeState.displayBackingSessionIdMap}
+            imRuntimeStateBySessionId={controller.imRuntimeStateByRuntimeSessionId}
             sessionChatState={controller.sessionChatState}
             taskReviewPanelsBySession={controller.taskReviewPanelsBySession}
             uiPromptPanelsBySession={controller.uiPromptPanelsBySession}
@@ -86,7 +81,6 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
               });
             }}
             onOpenSummary={controller.sessionListActions.handleOpenSummary}
-            onOpenRuntimeContext={controller.sessionListActions.handleOpenRuntimeContext}
             onManageBuiltinMcpGrants={(sessionId) => {
               void controller.openBuiltinMcpGrantsModal(sessionId);
             }}

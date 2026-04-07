@@ -13,7 +13,6 @@ interface SessionListActionsParams {
   selectSession: (sessionId: string) => Promise<any>;
   setActivePanel: (panel: any) => void;
   onOpenSessionSummary?: (sessionId: string) => void;
-  onOpenSessionRuntimeContext?: (sessionId: string) => void;
   loadContactsAction: () => Promise<any>;
   loadTerminals: () => Promise<any>;
   loadRemoteConnections: () => Promise<any>;
@@ -49,7 +48,6 @@ export const useSessionListActions = ({
   selectSession,
   setActivePanel,
   onOpenSessionSummary,
-  onOpenSessionRuntimeContext,
   loadContactsAction,
   loadTerminals,
   loadRemoteConnections,
@@ -75,12 +73,8 @@ export const useSessionListActions = ({
 }: SessionListActionsParams) => {
   const handleSelectSession = useCallback(async (sessionId: string): Promise<string | null> => {
     try {
-      if (sessionId.startsWith('contact-placeholder:')) {
-        const contactId = sessionId.replace('contact-placeholder:', '').trim();
-        const contact = contacts.find((item) => item.id === contactId);
-        if (!contact) {
-          return null;
-        }
+      const contact = contacts.find((item) => item.id === sessionId);
+      if (contact) {
         const ensuredSessionId = await ensureBackingSessionForContactScope(contact);
         if (!ensuredSessionId) {
           return null;
@@ -111,14 +105,6 @@ export const useSessionListActions = ({
       }
     });
   }, [handleSelectSession, onOpenSessionSummary]);
-
-  const handleOpenRuntimeContext = useCallback((sessionId: string) => {
-    void handleSelectSession(sessionId).then((selectedSessionId) => {
-      if (selectedSessionId) {
-        onOpenSessionRuntimeContext?.(selectedSessionId);
-      }
-    });
-  }, [handleSelectSession, onOpenSessionRuntimeContext]);
 
   const handleRefreshSessions = useCallback(async () => {
     setIsRefreshing(true);
@@ -236,7 +222,6 @@ export const useSessionListActions = ({
   return {
     handleSelectSession,
     handleOpenSummary,
-    handleOpenRuntimeContext,
     handleRefreshSessions,
     handleRefreshTerminals,
     handleRefreshRemote,

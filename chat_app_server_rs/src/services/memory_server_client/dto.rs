@@ -3,6 +3,7 @@ use serde_json::Value;
 
 use crate::models::message::Message;
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct MemoryAuthLoginResponse {
     pub token: String,
@@ -11,6 +12,7 @@ pub struct MemoryAuthLoginResponse {
     pub role: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct MemoryAuthMeResponse {
     #[serde(alias = "username")]

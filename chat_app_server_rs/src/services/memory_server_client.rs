@@ -1,6 +1,7 @@
 use std::future::Future;
 
 mod agent_ops;
+#[allow(dead_code)]
 mod auth;
 mod contact_ops;
 mod dto;
@@ -19,10 +20,15 @@ tokio::task_local! {
     static MEMORY_SERVER_ACCESS_TOKEN: Option<String>;
 }
 
+tokio::task_local! {
+    static MEMORY_SERVER_INTERNAL_SCOPE: bool;
+}
+
 pub use self::agent_ops::{
     ai_create_memory_agent, create_memory_agent, delete_memory_agent, get_memory_agent,
     get_memory_agent_runtime_context, list_memory_agents, update_memory_agent,
 };
+#[allow(unused_imports)]
 pub use self::auth::{auth_login, auth_me};
 pub use self::contact_ops::{
     create_memory_contact, delete_memory_contact, get_contact_builtin_mcp_grants,
@@ -56,6 +62,13 @@ where
         .await
 }
 
+pub async fn with_internal_scope<T, Fut>(future: Fut) -> T
+where
+    Fut: Future<Output = T>,
+{
+    MEMORY_SERVER_INTERNAL_SCOPE.scope(true, future).await
+}
+
 pub fn spawn_with_current_access_token<Fut>(future: Fut) -> tokio::task::JoinHandle<Fut::Output>
 where
     Fut: Future + Send + 'static,
@@ -71,6 +84,12 @@ pub(crate) fn current_access_token() -> Option<String> {
         .ok()
         .flatten()
         .and_then(|token| normalize_optional_token(Some(token)))
+}
+
+pub(crate) fn is_internal_scope() -> bool {
+    MEMORY_SERVER_INTERNAL_SCOPE
+        .try_with(|enabled| *enabled)
+        .unwrap_or(false)
 }
 
 fn normalize_optional_token(token: Option<String>) -> Option<String> {

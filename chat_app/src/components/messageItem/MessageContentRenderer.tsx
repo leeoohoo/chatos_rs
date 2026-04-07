@@ -15,6 +15,7 @@ interface MessageContentRendererProps {
   assistantToolCallsById?: ToolCallLookupMap;
   toolResultById?: Map<string, Message>;
   collapseAssistantProcessByDefault: boolean;
+  hideInternalProcess?: boolean;
   onApplyCode: (code: string, language: string) => void;
 }
 
@@ -28,6 +29,7 @@ export const MessageContentRenderer: React.FC<MessageContentRendererProps> = ({
   assistantToolCallsById,
   toolResultById,
   collapseAssistantProcessByDefault,
+  hideInternalProcess = false,
   onApplyCode,
 }) => {
   const hasContent = message.content && message.content.trim().length > 0;
@@ -41,6 +43,13 @@ export const MessageContentRenderer: React.FC<MessageContentRendererProps> = ({
       const segment = renderContentSegments[index];
 
       if (segment.type === 'tool_call') {
+        if (hideInternalProcess) {
+          while (index < renderContentSegments.length && renderContentSegments[index].type === 'tool_call') {
+            index += 1;
+          }
+          continue;
+        }
+
         const groupedToolCalls: ToolCall[] = [];
         const groupedToolCallIds = new Set<string>();
         let nextIndex = index;
@@ -111,6 +120,11 @@ export const MessageContentRenderer: React.FC<MessageContentRendererProps> = ({
       }
 
       if (segment.type === 'thinking') {
+        if (hideInternalProcess) {
+          index += 1;
+          continue;
+        }
+
         if (!collapseAssistantProcessByDefault) {
           nodes.push(
             <details
@@ -154,7 +168,7 @@ export const MessageContentRenderer: React.FC<MessageContentRendererProps> = ({
         </div>
       )}
 
-      {!collapseAssistantProcessByDefault && toolCalls.length > 0 && (
+      {!hideInternalProcess && !collapseAssistantProcessByDefault && toolCalls.length > 0 && (
         <div className="space-y-0.5">
           <ToolCallTimeline
             toolCalls={toolCalls}

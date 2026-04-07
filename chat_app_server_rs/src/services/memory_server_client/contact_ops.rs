@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use super::current_access_token;
+use super::is_internal_scope;
 use super::dto::{
     ContactBuiltinMcpGrantsDto, CreateMemoryContactRequestDto, CreateMemoryContactResponseDto,
     MemoryAgentRecallDto, MemoryContactDto, MemoryProjectAgentLinkDto, MemoryProjectContactDto,
@@ -9,7 +9,7 @@ use super::dto::{
 };
 use super::http::{
     build_url, client, push_limit_offset_params, send_delete_result, send_json, send_list,
-    send_list_without_service_token, send_optional_json, timeout_duration,
+    send_optional_json, timeout_duration,
 };
 
 pub async fn list_memory_contacts(
@@ -23,10 +23,10 @@ pub async fn list_memory_contacts(
     }
     push_limit_offset_params(&mut params, limit, offset);
 
-    if current_access_token().is_some() {
-        send_list("/contacts", &params).await
+    if is_internal_scope() {
+        send_list("/internal/contacts", &params).await
     } else {
-        send_list_without_service_token("/internal/contacts", &params).await
+        send_list("/contacts", &params).await
     }
 }
 

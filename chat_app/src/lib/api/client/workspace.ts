@@ -24,10 +24,10 @@ import type {
   RemoteSftpTransferStatusResponse,
   SessionMessageResponse,
   SessionResponse,
+  TurnRuntimeSnapshotLookupResponse,
   TerminalDispatchResponse,
   TerminalLogResponse,
   TerminalResponse,
-  TurnRuntimeSnapshotLookupResponse,
 } from './types';
 
 export type ApiRequestFn = <T>(endpoint: string, options?: RequestInit) => Promise<T>;
@@ -246,24 +246,24 @@ export const getSessionTurnProcessMessagesByTurn = (
   );
 };
 
-export const getSessionLatestTurnRuntimeContext = (
+export const getSessionTurnRuntimeContextLatest = (
   request: ApiRequestFn,
   sessionId: string,
-): Promise<TurnRuntimeSnapshotLookupResponse> => {
-  return request<TurnRuntimeSnapshotLookupResponse>(
+): Promise<TurnRuntimeSnapshotLookupResponse> => (
+  request<TurnRuntimeSnapshotLookupResponse>(
     `/sessions/${sessionId}/turns/latest/runtime-context`,
-  );
-};
+  )
+);
 
 export const getSessionTurnRuntimeContextByTurn = (
   request: ApiRequestFn,
   sessionId: string,
   turnId: string,
-): Promise<TurnRuntimeSnapshotLookupResponse> => {
-  return request<TurnRuntimeSnapshotLookupResponse>(
+): Promise<TurnRuntimeSnapshotLookupResponse> => (
+  request<TurnRuntimeSnapshotLookupResponse>(
     `/sessions/${sessionId}/turns/by-turn/${encodeURIComponent(turnId)}/runtime-context`,
-  );
-};
+  )
+);
 
 export const listProjects = (request: ApiRequestFn, userId?: string): Promise<ProjectResponse[]> => {
   const query = buildQuery({ user_id: userId });

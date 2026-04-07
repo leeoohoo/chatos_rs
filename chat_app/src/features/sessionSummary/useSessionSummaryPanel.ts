@@ -118,7 +118,7 @@ export const useSessionSummaryPanel = (
         });
       setSummaryItems(normalized);
     } catch (error) {
-      setSummaryError(error instanceof Error ? error.message : '加载会话总结失败');
+      setSummaryError(error instanceof Error ? error.message : '加载聊天摘要失败');
       setSummaryItems([]);
     } finally {
       setSummaryLoading(false);
@@ -162,7 +162,7 @@ export const useSessionSummaryPanel = (
     }
     const confirmed = options?.skipConfirm === true
       || typeof window === 'undefined'
-      || window.confirm(options?.confirmMessage || '确定清空当前会话的所有总结吗？');
+      || window.confirm(options?.confirmMessage || '确定清空当前聊天的所有摘要吗？');
     if (!confirmed) {
       return;
     }

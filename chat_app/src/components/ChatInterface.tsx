@@ -251,12 +251,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     sessionSummaryPaneVisible,
     uiPromptHistoryOpen,
     setUiPromptHistoryOpen,
-    runtimeContextOpen,
-    setRuntimeContextOpen,
-    runtimeContextSessionId,
-    runtimeContextData,
-    runtimeContextLoading,
-    runtimeContextError,
     handleMessageSend,
     handleComposerRemoteConnectionChange,
     handleRuntimeGuidanceSend,
@@ -266,8 +260,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     handleCloseSummary,
     handleOpenHistory,
     handleOpenUiPromptHistory,
-    handleOpenRuntimeContext,
-    handleRefreshRuntimeContext,
   } = useChatInterfaceController({
     apiClient,
     activePanel,
@@ -291,7 +283,12 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     hydrateUiPromptHistoryFromCache,
     resetUiPromptHistoryState,
     cancelPendingUiPromptHistoryLoad,
+    taskReviewPanelsBySession,
+    uiPromptPanelsBySession,
+    upsertTaskReviewPanel,
+    removeTaskReviewPanel,
     upsertUiPromptPanel,
+    removeUiPromptPanel,
     resetAllWorkbarState,
     resetHistoryWorkbarState,
     handleOpenWorkbarHistory,
@@ -300,9 +297,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const sessionListProps = {
     onSelectSession: () => undefined,
     onOpenSessionSummary: (_sessionId: string) => undefined,
-    onOpenSessionRuntimeContext: (_sessionId: string) => undefined,
     activeSummarySessionId: null,
-    activeRuntimeContextSessionId: null,
   };
 
   const conversationPaneProps = {
@@ -401,16 +396,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     formatCreatedAt: formatSummaryCreatedAt,
   };
 
-  const runtimeContextProps = {
-    open: runtimeContextOpen,
-    sessionId: runtimeContextSessionId,
-    loading: runtimeContextLoading,
-    error: runtimeContextError,
-    data: runtimeContextData,
-    onRefresh: handleRefreshRuntimeContext,
-    onClose: () => setRuntimeContextOpen(false),
-  };
-
   if (showSystemContextEditor) {
     return (
       <SystemContextEditor onClose={() => setShowSystemContextEditor(false)} />
@@ -442,22 +427,18 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         activePanel={activePanel}
         sidebarOpen={sidebarOpen}
         summaryPaneSessionId={summaryPaneSessionId}
-        runtimeContextOpen={runtimeContextOpen}
-        runtimeContextSessionId={runtimeContextSessionId}
         currentProject={currentProject}
         onToggleSidebar={toggleSidebar}
         onSelectSession={() => setSummaryPaneSessionId(null)}
         onToggleSessionSummary={(sessionId) => {
           setSummaryPaneSessionId((prev) => (prev === sessionId ? null : sessionId));
         }}
-        onOpenSessionRuntimeContext={handleOpenRuntimeContext}
         sessionListProps={sessionListProps}
         conversationPaneProps={conversationPaneProps}
       />
 
       <ChatInterfaceOverlays
         uiPromptHistoryProps={uiPromptHistoryProps}
-        runtimeContextProps={runtimeContextProps}
         showMcpManager={showMcpManager}
         setShowMcpManager={setShowMcpManager}
         showNotepadPanel={showNotepadPanel}

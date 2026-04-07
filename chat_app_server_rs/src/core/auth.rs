@@ -4,7 +4,7 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::services::memory_server_client;
+use crate::services::im_service_client;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthUser {
@@ -46,9 +46,9 @@ where
         }
         let access_token =
             access_token_from_headers(&parts.headers).map_err(AuthHeaderError::into_response)?;
-        match memory_server_client::auth_me(access_token.as_str()).await {
+        match im_service_client::auth_me(access_token.as_str()).await {
             Ok(me) => Ok(AuthUser {
-                user_id: me.user_id,
+                user_id: me.username,
                 role: me.role,
             }),
             Err(err) => {

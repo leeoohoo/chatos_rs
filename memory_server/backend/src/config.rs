@@ -8,6 +8,7 @@ pub struct AppConfig {
     pub mongodb_database: String,
     pub service_token: Option<String>,
     pub auth_secret: String,
+    pub trusted_im_auth_secret: Option<String>,
     pub auth_token_ttl_hours: i64,
     pub worker_enabled: bool,
     pub ai_request_timeout_secs: u64,
@@ -37,6 +38,9 @@ impl AppConfig {
 
         let auth_secret = env_text("MEMORY_SERVER_AUTH_SECRET")
             .unwrap_or_else(|| "memory_server_dev_change_me".to_string());
+        let trusted_im_auth_secret = env_text("MEMORY_SERVER_TRUSTED_IM_AUTH_SECRET")
+            .or_else(|| env_text("IM_SERVICE_AUTH_SECRET"))
+            .filter(|value| value != &auth_secret);
 
         let auth_token_ttl_hours = env::var("MEMORY_SERVER_AUTH_TOKEN_TTL_HOURS")
             .ok()
@@ -83,6 +87,7 @@ impl AppConfig {
             mongodb_database,
             service_token,
             auth_secret,
+            trusted_im_auth_secret,
             auth_token_ttl_hours,
             worker_enabled,
             ai_request_timeout_secs,

@@ -21,14 +21,27 @@ interface LoadingDeps {
 
 export function createMessageLoadingActions({ set, get, client }: LoadingDeps) {
   return {
-    loadMessages: async (sessionId: string) => {
+    loadMessages: async (
+      sessionId: string,
+      options: { silent?: boolean } = {},
+    ) => {
       try {
-        set((state) => {
-          state.isLoading = true;
-          state.error = null;
-        });
+        const session = get().currentSession?.id === sessionId
+          ? get().currentSession
+          : (get().sessions || []).find((item: any) => item?.id === sessionId) || null;
 
-        const messages = await fetchSessionMessages(client, sessionId, { limit: 50, offset: 0 });
+        if (!options.silent) {
+          set((state) => {
+            state.isLoading = true;
+            state.error = null;
+          });
+        }
+
+        const messages = await fetchSessionMessages(client, sessionId, {
+          limit: 50,
+          offset: 0,
+          session,
+        });
 
         set((state) => {
           ensureSessionTurnMaps(state, sessionId);
@@ -39,15 +52,19 @@ export function createMessageLoadingActions({ set, get, client }: LoadingDeps) {
             state.sessionTurnProcessCache?.[sessionId],
             state.sessionTurnProcessState?.[sessionId],
           );
-          state.isLoading = false;
+          if (!options.silent) {
+            state.isLoading = false;
+          }
           state.hasMoreMessages = messages.length >= 50;
         });
       } catch (error) {
         console.error('Failed to load messages:', error);
-        set((state) => {
-          state.error = error instanceof Error ? error.message : 'Failed to load messages';
-          state.isLoading = false;
-        });
+        if (!options.silent) {
+          set((state) => {
+            state.error = error instanceof Error ? error.message : 'Failed to load messages';
+            state.isLoading = false;
+          });
+        }
       }
     },
 
@@ -55,7 +72,14 @@ export function createMessageLoadingActions({ set, get, client }: LoadingDeps) {
       try {
         const current = get();
         const offset = countLoadedBaseMessages(current.messages);
-        const page = await fetchSessionMessages(client, sessionId, { limit: 50, offset });
+        const session = current.currentSession?.id === sessionId
+          ? current.currentSession
+          : (current.sessions || []).find((item: any) => item?.id === sessionId) || null;
+        const page = await fetchSessionMessages(client, sessionId, {
+          limit: 50,
+          offset,
+          session,
+        });
         set((state) => {
           ensureSessionTurnMaps(state, sessionId);
 

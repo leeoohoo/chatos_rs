@@ -4,7 +4,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::core::auth::AuthUser;
-use crate::services::memory_server_client;
+use crate::services::im_service_client;
 
 #[derive(Debug, Deserialize)]
 struct LoginRequest {
@@ -32,7 +32,7 @@ pub fn router() -> Router {
 }
 
 async fn register(Json(req): Json<RegisterRequest>) -> (StatusCode, Json<Value>) {
-    // 统一账号体系后，register 等价于 login（由 memory_server 决定是否自动创建普通用户）。
+    // 统一账号体系后，register 先沿用 login 语义，后续由 IM 服务接管真正注册流程。
     login_inner(req.username, req.email, req.password).await
 }
 
@@ -66,17 +66,22 @@ async fn login_inner(
         );
     };
 
-    match memory_server_client::auth_login(username.as_str(), password.as_str()).await {
+    match im_service_client::auth_login(username.as_str(), password.as_str()).await {
         Ok(resp) => (
             StatusCode::OK,
             Json(json!({
                 "access_token": resp.token,
                 "token_type": "Bearer",
                 "expires_in": crate::config::Config::get().auth_access_token_ttl_seconds,
-                "user": user_public_value(resp.user_id.as_str(), resp.role.as_str()),
+                "user": user_public_value(
+                    resp.username.as_str(),
+                    Some(resp.display_name.as_str()),
+                    resp.role.as_str(),
+                    resp.status.as_str(),
+                ),
             })),
         ),
-        Err(err) => map_memory_auth_error("登录失败", err),
+        Err(err) => map_im_auth_error("登录失败", err),
     }
 }
 
@@ -84,26 +89,31 @@ async fn me(auth: AuthUser) -> (StatusCode, Json<Value>) {
     (
         StatusCode::OK,
         Json(json!({
-            "user": user_public_value(auth.user_id.as_str(), auth.role.as_str())
+            "user": user_public_value(auth.user_id.as_str(), None, auth.role.as_str(), "active")
         })),
     )
 }
 
-fn user_public_value(user_id: &str, role: &str) -> Value {
+fn user_public_value(
+    user_id: &str,
+    display_name: Option<&str>,
+    role: &str,
+    status: &str,
+) -> Value {
     json!({
         "id": user_id,
         "username": user_id,
         "email": user_id,
-        "display_name": Value::Null,
+        "display_name": display_name,
         "role": role,
-        "status": "active",
+        "status": status,
         "last_login_at": Value::Null,
         "created_at": Value::Null,
         "updated_at": Value::Null,
     })
 }
 
-fn map_memory_auth_error(scene: &str, err: String) -> (StatusCode, Json<Value>) {
+fn map_im_auth_error(scene: &str, err: String) -> (StatusCode, Json<Value>) {
     if err.contains("status=401") {
         return (
             StatusCode::UNAUTHORIZED,

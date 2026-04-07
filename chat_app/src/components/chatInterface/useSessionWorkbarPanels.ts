@@ -49,6 +49,10 @@ interface SessionWorkbarApiClient {
       reason?: string;
     },
   ) => Promise<unknown>;
+  submitImActionRequest: (
+    actionRequestId: string,
+    payload: unknown,
+  ) => Promise<unknown>;
   submitUiPromptResponse: (
     promptId: string,
     payload: {

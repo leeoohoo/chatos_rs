@@ -12,10 +12,7 @@ import {
   buildStreamChatRuntimeOptions,
   resolveModelCapabilities,
 } from './sendMessage/requestPayload';
-import {
-  rollbackFailedSendMessage,
-  runStreamingAssistantTurn,
-} from './sendMessage/streamExecution';
+import { rollbackFailedSendMessage } from './sendMessage/failureState';
 import {
   resolveRuntimeConfig,
   resolveSelectedModelOrThrow,
@@ -28,8 +25,10 @@ import {
 } from './sendMessage/sessionState';
 import {
   mergeSessionRuntimeIntoMetadata,
+  readSessionImConversationId,
   readSessionRuntimeFromMetadata,
 } from '../helpers/sessionRuntime';
+import { normalizeImConversationMessage } from '../helpers/messageNormalization';
 import type {
   StreamChatAttachmentPayload,
   StreamChatModelConfigPayload,
@@ -48,13 +47,13 @@ export function createSendMessageHandler({
   get,
   client,
   getUserIdParam,
-  streamChat,
+  startSessionChat,
 }: {
   set: ChatStoreSet;
   get: ChatStoreGet;
   client: ApiClient;
   getUserIdParam: () => string;
-  streamChat: (
+  startSessionChat: (
     sessionId: string,
     content: string,
     modelConfig: StreamChatModelConfigPayload,
@@ -62,7 +61,13 @@ export function createSendMessageHandler({
     attachments?: StreamChatAttachmentPayload[],
     reasoningEnabled?: boolean,
     options?: StreamChatOptions,
-  ) => Promise<ReadableStream>;
+    pendingContext?: {
+      tempAssistantMessage: StreamingMessage;
+      tempUserId: string | null;
+      conversationTurnId: string;
+      streamedTextRef: { value: string };
+    }
+  ) => Promise<void>;
 }) {
   return async function sendMessage(
     content: string,
@@ -97,6 +102,15 @@ export function createSendMessageHandler({
     const sessionAiSelection = sessionAiSelectionBySession?.[currentSessionId];
     const effectiveSelectedModelId = sessionAiSelection?.selectedModelId ?? selectedModelId;
     const sessionRuntime = readSessionRuntimeFromMetadata(currentSession?.metadata);
+    const effectiveContactId = (
+      typeof runtimeOptions?.contactId === 'string'
+        ? runtimeOptions.contactId.trim()
+        : ''
+    ) || (
+      typeof sessionRuntime?.contactId === 'string'
+        ? sessionRuntime.contactId.trim()
+        : ''
+    ) || null;
     const fallbackContactAgentId = (
       typeof runtimeOptions?.contactAgentId === 'string'
         ? runtimeOptions.contactAgentId.trim()
@@ -144,6 +158,17 @@ export function createSendMessageHandler({
     });
     void client.updateSession(currentSessionId, { metadata: runtimeMetadata }).catch(() => {});
 
+    const {
+      supportsImages,
+      reasoningEnabled,
+    } = resolveModelCapabilities(selectedModel, chatConfig);
+    const { previewAttachments, apiAttachments } = await prepareAttachmentsForStreaming(
+      attachments,
+      supportsImages,
+    );
+
+    let imConversationId = readSessionImConversationId(runtimeMetadata);
+
     const conversationTurnId = createInternalId('turn');
     const streamedTextRef = { value: '' };
     let tempAssistantMessage: StreamingMessage = {
@@ -156,14 +181,100 @@ export function createSendMessageHandler({
       metadata: {},
     };
     try {
-      const {
-        supportsImages,
-        reasoningEnabled,
-      } = resolveModelCapabilities(selectedModel, chatConfig);
-      const { previewAttachments, apiAttachments } = await prepareAttachmentsForStreaming(
-        attachments,
-        supportsImages,
-      );
+      if (!imConversationId && effectiveContactId) {
+        const normalizedProjectId = effectiveProjectId || '0';
+        const existingConversation = (await client.getImConversations()).find((conversation) => {
+          const conversationContactId = typeof conversation?.contact_id === 'string'
+            ? conversation.contact_id.trim()
+            : '';
+          const conversationProjectId = typeof conversation?.project_id === 'string'
+            ? conversation.project_id.trim()
+            : '';
+          return conversationContactId === effectiveContactId
+            && (conversationProjectId || '0') === normalizedProjectId;
+        });
+
+        const ensuredConversation = existingConversation || await client.createImConversation({
+          contact_id: effectiveContactId,
+          project_id: normalizedProjectId,
+          title: currentSession?.title || null,
+        });
+        imConversationId = ensuredConversation.id;
+
+        const nextRuntimeMetadata = {
+          ...(runtimeMetadata as Record<string, unknown>),
+          im: {
+            conversation_id: ensuredConversation.id,
+            contact_id: ensuredConversation.contact_id,
+          },
+        };
+        set((state) => {
+          applySessionRuntimeMetadata(state, currentSessionId, nextRuntimeMetadata);
+        });
+        void client.updateSession(currentSessionId, { metadata: nextRuntimeMetadata }).catch(() => {});
+      }
+
+      if (imConversationId) {
+        set((state) => {
+          const prev = state.sessionChatState[currentSessionId] || createDefaultSessionChatState();
+          state.sessionChatState[currentSessionId] = {
+            ...prev,
+            isLoading: true,
+            isStreaming: false,
+            isStopping: false,
+            streamingMessageId: null,
+            activeTurnId: null,
+          };
+          if (state.currentSessionId === currentSessionId) {
+            state.isLoading = true;
+            state.isStreaming = false;
+            state.streamingMessageId = null;
+          }
+        });
+
+        const imMessage = await client.createImConversationMessage(imConversationId, {
+          sender_type: 'user',
+          message_type: 'text',
+          content,
+          delivery_status: 'sent',
+          client_message_id: conversationTurnId,
+          metadata: {
+            conversation_turn_id: conversationTurnId,
+            legacy_session_id: currentSessionId,
+            project_id: effectiveProjectId,
+            project_root: effectiveExecutionRoot,
+            remote_connection_id: effectiveRemoteConnectionId,
+            ...(previewAttachments.length > 0 ? { attachments: previewAttachments } : {}),
+            ...(apiAttachments.length > 0 ? { attachments_payload: apiAttachments } : {}),
+          },
+        });
+
+        set((state) => {
+          const normalizedMessage = normalizeImConversationMessage(imMessage, currentSessionId);
+          const existingIndex = state.messages.findIndex((message) => message.id === normalizedMessage.id);
+          if (existingIndex >= 0) {
+            state.messages[existingIndex] = normalizedMessage;
+          } else {
+            state.messages.push(normalizedMessage);
+          }
+
+          const prev = state.sessionChatState[currentSessionId] || createDefaultSessionChatState();
+          state.sessionChatState[currentSessionId] = {
+            ...prev,
+            isLoading: false,
+            isStreaming: false,
+            isStopping: false,
+            streamingMessageId: null,
+            activeTurnId: null,
+          };
+          if (state.currentSessionId === currentSessionId) {
+            state.isLoading = false;
+            state.isStreaming = false;
+            state.streamingMessageId = null;
+          }
+        });
+        return;
+      }
 
       // 创建用户消息（仅前端展示，不立即保存数据库）
       const userMessageTime = new Date();
@@ -227,9 +338,9 @@ export function createSendMessageHandler({
         enabledMcpIds: effectiveEnabledMcpIds,
       });
 
-      debugLog('🚀 开始调用后端流式聊天API:', chatRequest);
+      debugLog('🚀 开始通过 session websocket 发送聊天请求:', chatRequest);
 
-      const response = await streamChat(
+      await startSessionChat(
         currentSessionId,
         content,
         selectedModel,
@@ -245,32 +356,45 @@ export function createSendMessageHandler({
           mcpEnabled: effectiveMcpEnabled,
           enabledMcpIds: effectiveEnabledMcpIds,
         }),
+        {
+          tempAssistantMessage,
+          tempUserId,
+          conversationTurnId,
+          streamedTextRef
+        }
       );
 
-      if (!response) {
-        throw new Error('No response received');
-      }
-
-      await runStreamingAssistantTurn({
-        set,
-        currentSessionId,
-        tempAssistantMessage,
-        tempUserId,
-        conversationTurnId,
-        streamedTextRef,
-        response,
-      });
-
-      debugLog('✅ 消息发送完成');
+      debugLog('✅ 聊天请求已通过 websocket 发出，等待服务端事件');
     } catch (error) {
-      const readableError = rollbackFailedSendMessage({
-        set,
-        currentSessionId,
-        tempAssistantId,
-        tempAssistantMessage,
-        streamedTextRef,
-        error,
-      });
+      const readableError = imConversationId
+        ? (error instanceof Error ? error.message : '发送消息失败')
+        : rollbackFailedSendMessage({
+          set,
+          currentSessionId,
+          tempAssistantId,
+          tempAssistantMessage,
+          streamedTextRef,
+          error,
+        });
+      if (imConversationId) {
+        set((state) => {
+          const prev = state.sessionChatState[currentSessionId] || createDefaultSessionChatState();
+          state.sessionChatState[currentSessionId] = {
+            ...prev,
+            isLoading: false,
+            isStreaming: false,
+            isStopping: false,
+            streamingMessageId: null,
+            activeTurnId: null,
+          };
+          if (state.currentSessionId === currentSessionId) {
+            state.isLoading = false;
+            state.isStreaming = false;
+            state.streamingMessageId = null;
+            state.error = readableError;
+          }
+        });
+      }
       console.error('❌ 发送消息失败:', readableError, error);
 
       throw new Error(readableError);

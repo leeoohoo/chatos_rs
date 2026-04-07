@@ -1,6 +1,7 @@
 import type ApiClient from '../../api/client';
 import type { ContactRecord } from '../types';
 import { normalizeContact } from '../helpers/contacts';
+import type { ImConversationResponse } from '../../api/client/types';
 
 interface Deps {
   set: any;
@@ -24,14 +25,78 @@ export function createContactActions({ set, get, client, getUserIdParam }: Deps)
     loadContacts: async () => {
       try {
         const uid = getUserIdParam();
-        const list = await client.getContacts(uid, { limit: 2000, offset: 0 });
+        const [list, rawConversations] = await Promise.all([
+          client.getContacts(uid, { limit: 2000, offset: 0 }),
+          client.getImConversations().catch(() => [] as ImConversationResponse[]),
+        ]);
+        const conversations = Array.isArray(rawConversations) ? rawConversations : [];
+        const latestConversationByContactId = new Map<string, ImConversationResponse>();
+        for (const conversation of conversations) {
+          const contactId = typeof conversation?.contact_id === 'string'
+            ? conversation.contact_id.trim()
+            : '';
+          if (!contactId) {
+            continue;
+          }
+          const previous = latestConversationByContactId.get(contactId);
+          const nextTime = new Date(
+            conversation?.last_message_at || conversation?.updated_at || conversation?.created_at || 0,
+          ).getTime();
+          const prevTime = new Date(
+            previous?.last_message_at || previous?.updated_at || previous?.created_at || 0,
+          ).getTime();
+          if (!previous || nextTime >= prevTime) {
+            latestConversationByContactId.set(contactId, conversation);
+          }
+        }
         const normalized = (Array.isArray(list) ? list : [])
           .map(normalizeContact)
           .filter((item): item is ContactRecord => !!item)
           .filter((item) => item.status === '' || item.status === 'active')
+          .map((item) => {
+            const conversation = latestConversationByContactId.get(item.id);
+            const conversationTime = new Date(
+              conversation?.last_message_at || conversation?.updated_at || conversation?.created_at || 0,
+            );
+            if (Number.isNaN(conversationTime.getTime()) || conversationTime.getTime() <= 0) {
+              return item;
+            }
+            return conversationTime.getTime() > item.updatedAt.getTime()
+              ? { ...item, updatedAt: conversationTime }
+              : item;
+          })
           .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
         set((state: any) => {
           state.contacts = normalized;
+          state.imConversations = conversations;
+          if (!state.imConversationRuntimeByConversationId) {
+            state.imConversationRuntimeByConversationId = {};
+          }
+          for (const conversation of conversations) {
+            const conversationId = typeof conversation?.id === 'string'
+              ? conversation.id.trim()
+              : '';
+            if (!conversationId) {
+              continue;
+            }
+            const previous = state.imConversationRuntimeByConversationId[conversationId] || {
+              busy: false,
+              unreadCount: 0,
+              latestRunStatus: null,
+              lastMessagePreview: null,
+              lastMessageAt: null,
+            };
+            state.imConversationRuntimeByConversationId[conversationId] = {
+              ...previous,
+              unreadCount: Number(conversation?.unread_count || 0),
+              lastMessagePreview: typeof conversation?.last_message_preview === 'string'
+                ? conversation.last_message_preview
+                : null,
+              lastMessageAt: typeof conversation?.last_message_at === 'string'
+                ? conversation.last_message_at
+                : (typeof conversation?.updated_at === 'string' ? conversation.updated_at : null),
+            };
+          }
         });
         return normalized;
       } catch (error) {
@@ -79,6 +144,9 @@ export function createContactActions({ set, get, client, getUserIdParam }: Deps)
       await client.deleteContact(trimmed);
       set((state: any) => {
         state.contacts = (state.contacts || []).filter((item: ContactRecord) => item.id !== trimmed);
+        state.imConversations = (state.imConversations || []).filter(
+          (item: ImConversationResponse) => item?.contact_id !== trimmed,
+        );
       });
     },
 

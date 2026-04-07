@@ -29,3 +29,16 @@ pub(super) async fn compose_context(
         ),
     }
 }
+
+pub(super) async fn internal_compose_context(
+    State(state): State<SharedState>,
+    Json(req): Json<ComposeContextRequest>,
+) -> (StatusCode, Json<Value>) {
+    match context::compose_context(&state.pool, req).await {
+        Ok(ctx) => (StatusCode::OK, Json(json!(ctx))),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "compose context failed", "detail": err})),
+        ),
+    }
+}

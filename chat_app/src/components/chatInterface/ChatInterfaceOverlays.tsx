@@ -5,12 +5,10 @@ import ApplicationsPanel from '../ApplicationsPanel';
 import McpManager from '../McpManager';
 import NotepadPanel from '../NotepadPanel';
 import UserSettingsPanel from '../UserSettingsPanel';
-import TurnRuntimeContextDrawer from './TurnRuntimeContextDrawer';
 import UiPromptHistoryDrawer from './UiPromptHistoryDrawer';
 
 interface ChatInterfaceOverlaysProps {
   uiPromptHistoryProps: ComponentProps<typeof UiPromptHistoryDrawer>;
-  runtimeContextProps: ComponentProps<typeof TurnRuntimeContextDrawer>;
   showMcpManager: boolean;
   setShowMcpManager: (value: boolean) => void;
   showNotepadPanel: boolean;
@@ -25,7 +23,6 @@ interface ChatInterfaceOverlaysProps {
 
 export default function ChatInterfaceOverlays({
   uiPromptHistoryProps,
-  runtimeContextProps,
   showMcpManager,
   setShowMcpManager,
   showNotepadPanel,
@@ -40,7 +37,6 @@ export default function ChatInterfaceOverlays({
   return (
     <>
       <UiPromptHistoryDrawer {...uiPromptHistoryProps} />
-      <TurnRuntimeContextDrawer {...runtimeContextProps} />
 
       {showMcpManager && (
         <McpManager onClose={() => setShowMcpManager(false)} />

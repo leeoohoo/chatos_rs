@@ -133,7 +133,8 @@ export const useSessionListDeleteActions = ({
               }
             }
           }
-          if (!sessionId.startsWith('contact-placeholder:')) {
+          const isDisplayContactEntry = contacts.some((item) => item.id === sessionId);
+          if (!isDisplayContactEntry) {
             await deleteSession(sessionId);
           }
           if (resolvedContactId) {

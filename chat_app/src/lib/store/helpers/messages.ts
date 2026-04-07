@@ -5,9 +5,11 @@ import {
   getConversationTurnId,
   isMeaningfulReasoning,
   isNonEmptyString,
+  normalizeImConversationMessages,
   normalizeRawMessages,
   normalizeTurnId,
 } from './messageNormalization';
+import { readSessionImConversationId } from './sessionRuntime';
 
 const resolveUserProcessKey = (message: any): string => (
   getConversationTurnId(message)
@@ -284,10 +286,38 @@ const ensureCompactHistoryShape = (messages: Message[]): Message[] => {
 export const fetchSessionMessages = async (
   client: ApiClient,
   sessionId: string,
-  options: { limit?: number; offset?: number } = { limit: 50, offset: 0 },
+  options: {
+    limit?: number;
+    offset?: number;
+    session?: { metadata?: unknown } | null;
+  } = { limit: 50, offset: 0 },
 ): Promise<Message[]> => {
   const limit = options.limit ?? 50;
   const offset = options.offset ?? 0;
+  const imConversationId = readSessionImConversationId(options.session?.metadata);
+
+  if (imConversationId) {
+    const fetchLimit = Math.max(1, limit + offset);
+    const rawMessages = await client.getImConversationMessages(imConversationId, {
+      limit: fetchLimit,
+      order: 'desc',
+    });
+    const ascendingMessages = normalizeImConversationMessages(rawMessages, sessionId).reverse();
+    const olderCount = offset > 0
+      ? Math.max(0, ascendingMessages.length - offset)
+      : ascendingMessages.length;
+    const pagedMessages = offset > 0
+      ? ascendingMessages.slice(0, olderCount)
+      : ascendingMessages;
+
+    debugLog('[Store] Loaded IM session messages', {
+      sessionId,
+      imConversationId,
+      requested: { limit, offset, fetchLimit },
+      received: pagedMessages.length,
+    });
+    return pagedMessages;
+  }
 
   const rawMessages = await client.getSessionMessages(sessionId, {
     limit,

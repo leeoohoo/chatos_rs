@@ -1,6 +1,7 @@
 import React from 'react';
 import { MessageItem } from './MessageItem';
 import { LoadingSpinner } from './LoadingSpinner';
+import ImRuntimeContextDialog from './ImRuntimeContextDialog';
 // import { cn } from '../lib/utils';
 import type { MessageListProps } from '../types';
 import { useMessageListDerivedState } from './messageList/useMessageListDerivedState';
@@ -15,10 +16,15 @@ const MessageListComponent: React.FC<MessageListProps> = ({
   hasMore = false,
   onLoadMore,
   onToggleTurnProcess,
+  onInspectRuntimeContext,
   onMessageEdit,
   onMessageDelete,
   customRenderer,
 }) => {
+  const [runtimeContextTarget, setRuntimeContextTarget] = React.useState<{
+    sessionId: string;
+    turnId?: string | null;
+  } | null>(null);
   const {
     dedupedVisibleMessages,
     toolResultById,
@@ -109,6 +115,10 @@ const MessageListComponent: React.FC<MessageListProps> = ({
             onEdit={onMessageEdit}
             onDelete={onMessageDelete}
             onToggleTurnProcess={onToggleTurnProcess}
+            onInspectRuntimeContext={(payload) => {
+              setRuntimeContextTarget(payload);
+              onInspectRuntimeContext?.(payload);
+            }}
             derivedProcessStatsByUserId={derivedProcessStatsByUserId}
             toolResultById={toolResultById}
             assistantToolCallsById={assistantToolCallById}
@@ -132,6 +142,14 @@ const MessageListComponent: React.FC<MessageListProps> = ({
 
         <div ref={bottomRef} />
       </div>
+
+      <ImRuntimeContextDialog
+        key={runtimeContextTarget ? `${runtimeContextTarget.sessionId}::${runtimeContextTarget.turnId || ''}` : 'closed'}
+        open={Boolean(runtimeContextTarget?.sessionId)}
+        sessionId={runtimeContextTarget?.sessionId || ''}
+        turnId={runtimeContextTarget?.turnId || null}
+        onClose={() => setRuntimeContextTarget(null)}
+      />
 
       {!isAtBottom && (
         <button
@@ -161,6 +179,7 @@ const areMessageListPropsEqual = (prevProps: MessageListProps, nextProps: Messag
   && (prevProps.hasMore ?? false) === (nextProps.hasMore ?? false)
   && prevProps.onLoadMore === nextProps.onLoadMore
   && prevProps.onToggleTurnProcess === nextProps.onToggleTurnProcess
+  && prevProps.onInspectRuntimeContext === nextProps.onInspectRuntimeContext
   && prevProps.onMessageEdit === nextProps.onMessageEdit
   && prevProps.onMessageDelete === nextProps.onMessageDelete
   && prevProps.customRenderer === nextProps.customRenderer

@@ -1,5 +1,14 @@
 import type { AiModelConfig, Message } from '../../types';
-import type { UiPromptChoice, UiPromptPanelState } from '../../lib/store/types';
+import type { ImConversationActionRequestResponse } from '../../lib/api/client/types';
+import type {
+  TaskReviewPanelState,
+  UiPromptChoice,
+  UiPromptPanelState,
+} from '../../lib/store/types';
+import {
+  extractTaskReviewPanelFromToolStream,
+  extractUiPromptPanelFromToolStream,
+} from '../../lib/store/actions/sendMessage/toolPanels';
 import type { SessionSummaryWorkbarItem, TaskWorkbarItem } from '../TaskWorkbar';
 import type { UiPromptHistoryItem } from './types';
 
@@ -75,6 +84,8 @@ export const toUiPromptPanelFromRecord = (record: unknown): UiPromptPanelState |
     promptId,
     sessionId,
     conversationTurnId,
+    actionRequestId: null,
+    source: 'legacy',
     toolCallId: typeof source?.tool_call_id === 'string' ? source.tool_call_id : null,
     kind,
     title: typeof source?.title === 'string' ? source.title : '',
@@ -84,6 +95,85 @@ export const toUiPromptPanelFromRecord = (record: unknown): UiPromptPanelState |
     payload: { fields, choice },
     submitting: false,
     error: null,
+  };
+};
+
+const parseActionRequestPayload = (value: unknown): Record<string, unknown> | null => {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  if (typeof value !== 'string') {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch (_) {
+    return null;
+  }
+};
+
+export const toTaskReviewPanelFromImActionRequest = (
+  record: ImConversationActionRequestResponse,
+  fallbackSessionId: string,
+  fallbackTurnId: string,
+): TaskReviewPanelState | null => {
+  const payload = parseActionRequestPayload(record?.payload);
+  if (!payload) {
+    return null;
+  }
+
+  const panel = extractTaskReviewPanelFromToolStream(
+    {
+      content: JSON.stringify({
+        event: 'task_create_review_required',
+        data: payload,
+      }),
+    },
+    fallbackSessionId,
+    fallbackTurnId,
+  );
+  if (!panel) {
+    return null;
+  }
+
+  return {
+    ...panel,
+    actionRequestId: record.id,
+    source: 'im',
+  };
+};
+
+export const toUiPromptPanelFromImActionRequest = (
+  record: ImConversationActionRequestResponse,
+  fallbackSessionId: string,
+  fallbackTurnId: string,
+): UiPromptPanelState | null => {
+  const payload = parseActionRequestPayload(record?.payload);
+  if (!payload) {
+    return null;
+  }
+
+  const panel = extractUiPromptPanelFromToolStream(
+    {
+      content: JSON.stringify({
+        event: 'ui_prompt_required',
+        data: payload,
+      }),
+    },
+    fallbackSessionId,
+    fallbackTurnId,
+  );
+  if (!panel) {
+    return null;
+  }
+
+  return {
+    ...panel,
+    actionRequestId: record.id,
+    source: 'im',
   };
 };
 

@@ -4,7 +4,7 @@ use crate::models::message::Message;
 use crate::models::session::Session;
 use crate::models::session_summary_v2::SessionSummaryV2;
 
-use super::current_access_token;
+use super::is_internal_scope;
 use super::dto::{
     ComposeContextResponse, CreateSessionRequest, MemorySession, PatchSessionRequest,
     SummaryJobConfigDto, SyncMessageRequest, SyncTurnRuntimeSnapshotRequestDto,
@@ -14,7 +14,7 @@ use super::dto::{
 };
 use super::http::{
     build_url, client, context_timeout_duration, push_limit_offset_params, send_delete_result,
-    send_json, send_json_without_service_token, send_list, send_optional_json, timeout_duration,
+    send_json, send_list, send_optional_json, timeout_duration,
 };
 use super::mapping::map_memory_session;
 
@@ -39,7 +39,12 @@ pub async fn list_sessions(
         params.push(("status".to_string(), "active".to_string()));
     }
 
-    let memory_sessions: Vec<MemorySession> = send_list("/sessions", &params).await?;
+    let path = if is_internal_scope() {
+        "/internal/sessions"
+    } else {
+        "/sessions"
+    };
+    let memory_sessions: Vec<MemorySession> = send_list(path, &params).await?;
 
     let mut sessions: Vec<Session> = memory_sessions
         .into_iter()
@@ -59,8 +64,13 @@ pub async fn create_session(
     project_id: Option<String>,
     metadata: Option<Value>,
 ) -> Result<Session, String> {
+    let path = if is_internal_scope() {
+        "/internal/sessions"
+    } else {
+        "/sessions"
+    };
     let req = client()
-        .post(build_url("/sessions").as_str())
+        .post(build_url(path).as_str())
         .timeout(timeout_duration())
         .json(&CreateSessionRequest {
             user_id,
@@ -74,8 +84,13 @@ pub async fn create_session(
 }
 
 pub async fn get_session_by_id(session_id: &str) -> Result<Option<Session>, String> {
+    let path = if is_internal_scope() {
+        format!("/internal/sessions/{}", urlencoding::encode(session_id))
+    } else {
+        format!("/sessions/{}", urlencoding::encode(session_id))
+    };
     let req = client()
-        .get(build_url(&format!("/sessions/{}", urlencoding::encode(session_id))).as_str())
+        .get(build_url(path.as_str()).as_str())
         .timeout(timeout_duration());
 
     match send_optional_json::<MemorySession>(req).await? {
@@ -90,8 +105,13 @@ pub async fn update_session(
     status: Option<String>,
     metadata: Option<Value>,
 ) -> Result<Option<Session>, String> {
+    let path = if is_internal_scope() {
+        format!("/internal/sessions/{}", urlencoding::encode(session_id))
+    } else {
+        format!("/sessions/{}", urlencoding::encode(session_id))
+    };
     let req = client()
-        .patch(build_url(&format!("/sessions/{}", urlencoding::encode(session_id))).as_str())
+        .patch(build_url(path.as_str()).as_str())
         .timeout(timeout_duration())
         .json(&PatchSessionRequest {
             title,
@@ -114,7 +134,7 @@ pub async fn delete_session(session_id: &str) -> Result<bool, String> {
 }
 
 pub async fn upsert_message(message: &Message) -> Result<Message, String> {
-    let internal_mode = current_access_token().is_none();
+    let internal_mode = is_internal_scope();
     let path = if internal_mode {
         format!(
             "/internal/sessions/{}/messages/{}/sync",
@@ -144,11 +164,7 @@ pub async fn upsert_message(message: &Message) -> Result<Message, String> {
             created_at: Some(message.created_at.clone()),
         });
 
-    if internal_mode {
-        send_json_without_service_token(req).await
-    } else {
-        send_json(req).await
-    }
+    send_json(req).await
 }
 
 pub async fn sync_turn_runtime_snapshot(
@@ -156,11 +172,19 @@ pub async fn sync_turn_runtime_snapshot(
     turn_id: &str,
     payload: &SyncTurnRuntimeSnapshotRequestDto,
 ) -> Result<TurnRuntimeSnapshotDto, String> {
-    let path = format!(
-        "/sessions/{}/turn-runtime-snapshots/{}/sync",
-        urlencoding::encode(session_id),
-        urlencoding::encode(turn_id)
-    );
+    let path = if is_internal_scope() {
+        format!(
+            "/internal/sessions/{}/turn-runtime-snapshots/{}/sync",
+            urlencoding::encode(session_id),
+            urlencoding::encode(turn_id)
+        )
+    } else {
+        format!(
+            "/sessions/{}/turn-runtime-snapshots/{}/sync",
+            urlencoding::encode(session_id),
+            urlencoding::encode(turn_id)
+        )
+    };
 
     let req = client()
         .put(build_url(path.as_str()).as_str())
@@ -173,10 +197,17 @@ pub async fn sync_turn_runtime_snapshot(
 pub async fn get_latest_turn_runtime_snapshot(
     session_id: &str,
 ) -> Result<TurnRuntimeSnapshotLookupResponseDto, String> {
-    let path = format!(
-        "/sessions/{}/turn-runtime-snapshots/latest",
-        urlencoding::encode(session_id)
-    );
+    let path = if is_internal_scope() {
+        format!(
+            "/internal/sessions/{}/turn-runtime-snapshots/latest",
+            urlencoding::encode(session_id)
+        )
+    } else {
+        format!(
+            "/sessions/{}/turn-runtime-snapshots/latest",
+            urlencoding::encode(session_id)
+        )
+    };
     let req = client()
         .get(build_url(path.as_str()).as_str())
         .timeout(timeout_duration());
@@ -187,11 +218,19 @@ pub async fn get_turn_runtime_snapshot_by_turn(
     session_id: &str,
     turn_id: &str,
 ) -> Result<TurnRuntimeSnapshotLookupResponseDto, String> {
-    let path = format!(
-        "/sessions/{}/turn-runtime-snapshots/by-turn/{}",
-        urlencoding::encode(session_id),
-        urlencoding::encode(turn_id)
-    );
+    let path = if is_internal_scope() {
+        format!(
+            "/internal/sessions/{}/turn-runtime-snapshots/by-turn/{}",
+            urlencoding::encode(session_id),
+            urlencoding::encode(turn_id)
+        )
+    } else {
+        format!(
+            "/sessions/{}/turn-runtime-snapshots/by-turn/{}",
+            urlencoding::encode(session_id),
+            urlencoding::encode(turn_id)
+        )
+    };
     let req = client()
         .get(build_url(path.as_str()).as_str())
         .timeout(timeout_duration());
@@ -208,7 +247,11 @@ pub async fn list_messages(
     let mut params = vec![("order".to_string(), order.to_string())];
     push_limit_offset_params(&mut params, limit, offset);
 
-    let path = format!("/sessions/{}/messages", urlencoding::encode(session_id));
+    let path = if is_internal_scope() {
+        format!("/internal/sessions/{}/messages", urlencoding::encode(session_id))
+    } else {
+        format!("/sessions/{}/messages", urlencoding::encode(session_id))
+    };
     send_list(path.as_str(), &params).await
 }
 
@@ -251,20 +294,30 @@ pub async fn list_summaries(
     let mut params: Vec<(String, String)> = Vec::new();
     push_limit_offset_params(&mut params, limit, offset);
 
-    let path = format!("/sessions/{}/summaries", urlencoding::encode(session_id));
+    let path = if is_internal_scope() {
+        format!("/internal/sessions/{}/summaries", urlencoding::encode(session_id))
+    } else {
+        format!("/sessions/{}/summaries", urlencoding::encode(session_id))
+    };
     send_list(path.as_str(), &params).await
 }
 
 pub async fn delete_summary(session_id: &str, summary_id: &str) -> Result<bool, String> {
-    let req = client()
-        .delete(
-            build_url(&format!(
-                "/sessions/{}/summaries/{}",
-                urlencoding::encode(session_id),
-                urlencoding::encode(summary_id)
-            ))
-            .as_str(),
+    let path = if is_internal_scope() {
+        format!(
+            "/internal/sessions/{}/summaries/{}",
+            urlencoding::encode(session_id),
+            urlencoding::encode(summary_id)
         )
+    } else {
+        format!(
+            "/sessions/{}/summaries/{}",
+            urlencoding::encode(session_id),
+            urlencoding::encode(summary_id)
+        )
+    };
+    let req = client()
+        .delete(build_url(path.as_str()).as_str())
         .timeout(timeout_duration());
 
     send_delete_result(req).await
@@ -290,8 +343,13 @@ pub async fn compose_context(
     session_id: &str,
     memory_summary_limit: usize,
 ) -> Result<(Option<String>, usize, Vec<Message>), String> {
+    let path = if is_internal_scope() {
+        "/internal/context/compose"
+    } else {
+        "/context/compose"
+    };
     let req = client()
-        .post(build_url("/context/compose").as_str())
+        .post(build_url(path).as_str())
         .timeout(context_timeout_duration())
         .json(&serde_json::json!({
             "session_id": session_id,

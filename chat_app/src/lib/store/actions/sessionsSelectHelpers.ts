@@ -1,12 +1,9 @@
 import { applyTurnProcessCache } from '../helpers/messages';
 import { normalizeContactProjectScopeSessions } from './sessionsUtils';
 import {
-  buildDraftUserMessageForStreaming,
   cloneStreamingMessageDraft,
   ensureSessionTurnMaps,
   isSessionActive,
-  normalizeTurnId,
-  resolveUserByTurnId,
 } from './sessionsUtils';
 
 interface ApplySelectSessionStateArgs {
@@ -15,7 +12,6 @@ interface ApplySelectSessionStateArgs {
   session: any;
   messages: any[];
   previousSessionId: string | null;
-  localStreamingMessage: any;
   sessionAiSelectionFromMetadata: {
     selectedModelId?: string | null;
     selectedAgentId?: string | null;
@@ -29,7 +25,6 @@ export const applySelectSessionState = ({
   session,
   messages,
   previousSessionId,
-  localStreamingMessage,
   sessionAiSelectionFromMetadata,
   keepActivePanel,
 }: ApplySelectSessionStateArgs) => {
@@ -39,78 +34,8 @@ export const applySelectSessionState = ({
 
   if (chatState?.isStreaming && chatState.streamingMessageId) {
     const hasStreamingMessage = nextMessages.some((m: any) => m.id === chatState.streamingMessageId);
-    if (!hasStreamingMessage) {
-      let restoredStreamingMessage: any = null;
-      if (draftMessage && typeof draftMessage === 'object') {
-        restoredStreamingMessage = cloneStreamingMessageDraft(draftMessage);
-      } else if (localStreamingMessage && typeof localStreamingMessage === 'object') {
-        restoredStreamingMessage = cloneStreamingMessageDraft(localStreamingMessage);
-      }
-
-      const streamingDraftSource = restoredStreamingMessage || localStreamingMessage;
-      if (streamingDraftSource) {
-        const linkedUserMessageId = normalizeTurnId(
-          typeof streamingDraftSource.metadata?.historyFinalForUserMessageId === 'string'
-            ? streamingDraftSource.metadata.historyFinalForUserMessageId
-            : (
-              typeof streamingDraftSource.metadata?.historyDraftUserMessage?.id === 'string'
-                ? streamingDraftSource.metadata.historyDraftUserMessage.id
-                : ''
-            ),
-        );
-        const linkedTurnId = normalizeTurnId(
-          streamingDraftSource.metadata?.historyFinalForTurnId
-          || streamingDraftSource.metadata?.conversation_turn_id,
-        );
-        const linkedUserById = linkedUserMessageId
-          ? nextMessages.find((message: any) => message?.role === 'user' && message?.id === linkedUserMessageId)
-          : null;
-        const linkedUserByTurn = linkedUserById || !linkedTurnId
-          ? null
-          : resolveUserByTurnId(nextMessages, linkedTurnId);
-        const linkedUserMessage = linkedUserById || linkedUserByTurn;
-
-        if (linkedUserMessage && restoredStreamingMessage?.metadata) {
-          restoredStreamingMessage.metadata.historyFinalForUserMessageId = linkedUserMessage.id;
-          const resolvedTurnId = linkedTurnId || normalizeTurnId(
-            linkedUserMessage?.metadata?.conversation_turn_id || linkedUserMessage?.metadata?.historyProcess?.turnId,
-          );
-          if (resolvedTurnId) {
-            restoredStreamingMessage.metadata.historyFinalForTurnId = resolvedTurnId;
-          }
-          if (restoredStreamingMessage.metadata.historyDraftUserMessage) {
-            restoredStreamingMessage.metadata.historyDraftUserMessage.id = linkedUserMessage.id;
-          }
-        }
-
-        if ((linkedUserMessageId || linkedTurnId) && !linkedUserMessage) {
-          const draftUserMessage = buildDraftUserMessageForStreaming(
-            sessionId,
-            streamingDraftSource,
-            chatState.streamingMessageId,
-          );
-          if (draftUserMessage) {
-            nextMessages = [...nextMessages, draftUserMessage];
-          }
-        }
-      }
-
-      nextMessages = [
-        ...nextMessages,
-        restoredStreamingMessage || localStreamingMessage || {
-          id: chatState.streamingMessageId,
-          sessionId,
-          role: 'assistant',
-          content: '',
-          status: 'streaming',
-          createdAt: new Date(),
-          metadata: {
-            toolCalls: [],
-            contentSegments: [{ content: '', type: 'text' }],
-            currentSegmentIndex: 0,
-          },
-        },
-      ];
+    if (!hasStreamingMessage && draftMessage && typeof draftMessage === 'object') {
+      nextMessages = [...nextMessages, cloneStreamingMessageDraft(draftMessage)];
     }
   }
 

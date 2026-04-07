@@ -63,7 +63,7 @@ const TeamMemberSummaryView: React.FC<TeamMemberSummaryViewProps> = ({
       <div className="basis-[42%] min-h-[170px] bg-card/40 flex flex-col overflow-hidden border-b border-border">
         <div className="px-3 py-2 border-b border-border flex items-center justify-between gap-2">
           <div className="min-w-0">
-            <div className="text-sm font-medium truncate">会话总结</div>
+            <div className="text-sm font-medium truncate">聊天摘要</div>
             <div className="text-[11px] text-muted-foreground truncate">
               {contactName || sessionTitle || '当前联系人'}
             </div>
@@ -99,9 +99,9 @@ const TeamMemberSummaryView: React.FC<TeamMemberSummaryViewProps> = ({
             <div className="text-xs text-destructive">{summaryError}</div>
           ) : null}
           {summaryLoading ? (
-            <div className="text-xs text-muted-foreground">正在加载会话总结...</div>
+            <div className="text-xs text-muted-foreground">正在加载聊天摘要...</div>
           ) : summaryItems.length === 0 ? (
-            <div className="text-xs text-muted-foreground">当前会话暂无总结。</div>
+            <div className="text-xs text-muted-foreground">当前聊天还没有摘要。</div>
           ) : (
             summaryItems.map((item) => (
               <div key={item.id} className="rounded-md border border-border bg-background/80 p-2">

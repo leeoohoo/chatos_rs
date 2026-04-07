@@ -59,6 +59,10 @@ pub fn router(state: SharedState) -> Router {
             post(sessions_api::create_session).get(sessions_api::list_sessions),
         )
         .route(
+            "/api/memory/v1/internal/sessions",
+            post(sessions_api::internal_create_session).get(sessions_api::internal_list_sessions),
+        )
+        .route(
             "/api/memory/v1/sessions/:session_id/sync",
             put(sessions_api::sync_session),
         )
@@ -69,10 +73,18 @@ pub fn router(state: SharedState) -> Router {
                 .delete(sessions_api::delete_session),
         )
         .route(
+            "/api/memory/v1/internal/sessions/:session_id",
+            get(sessions_api::internal_get_session).patch(sessions_api::internal_update_session),
+        )
+        .route(
             "/api/memory/v1/sessions/:session_id/messages",
             post(messages_summaries_api::create_message)
                 .get(messages_summaries_api::list_messages)
                 .delete(messages_summaries_api::clear_session_messages),
+        )
+        .route(
+            "/api/memory/v1/internal/sessions/:session_id/messages",
+            get(messages_api::internal_list_messages),
         )
         .route(
             "/api/memory/v1/sessions/:session_id/messages/:message_id/sync",
@@ -91,12 +103,24 @@ pub fn router(state: SharedState) -> Router {
             put(turn_runtime_snapshots_api::sync_turn_runtime_snapshot),
         )
         .route(
+            "/api/memory/v1/internal/sessions/:session_id/turn-runtime-snapshots/:turn_id/sync",
+            put(turn_runtime_snapshots_api::internal_sync_turn_runtime_snapshot),
+        )
+        .route(
             "/api/memory/v1/sessions/:session_id/turn-runtime-snapshots/latest",
             get(turn_runtime_snapshots_api::get_latest_turn_runtime_snapshot),
         )
         .route(
+            "/api/memory/v1/internal/sessions/:session_id/turn-runtime-snapshots/latest",
+            get(turn_runtime_snapshots_api::internal_get_latest_turn_runtime_snapshot),
+        )
+        .route(
             "/api/memory/v1/sessions/:session_id/turn-runtime-snapshots/by-turn/:turn_id",
             get(turn_runtime_snapshots_api::get_turn_runtime_snapshot_by_turn),
+        )
+        .route(
+            "/api/memory/v1/internal/sessions/:session_id/turn-runtime-snapshots/by-turn/:turn_id",
+            get(turn_runtime_snapshots_api::internal_get_turn_runtime_snapshot_by_turn),
         )
         .route(
             "/api/memory/v1/contacts",
@@ -216,6 +240,10 @@ pub fn router(state: SharedState) -> Router {
             get(messages_summaries_api::list_summaries),
         )
         .route(
+            "/api/memory/v1/internal/sessions/:session_id/summaries",
+            get(summaries_api::internal_list_summaries),
+        )
+        .route(
             "/api/memory/v1/sessions/:session_id/summaries/levels",
             get(messages_summaries_api::summary_levels),
         )
@@ -226,6 +254,10 @@ pub fn router(state: SharedState) -> Router {
         .route(
             "/api/memory/v1/sessions/:session_id/summaries/:summary_id",
             delete(messages_summaries_api::delete_summary),
+        )
+        .route(
+            "/api/memory/v1/internal/sessions/:session_id/summaries/:summary_id",
+            delete(summaries_api::internal_delete_summary),
         )
         .route(
             "/api/memory/v1/configs/models",
@@ -295,6 +327,10 @@ pub fn router(state: SharedState) -> Router {
         .route(
             "/api/memory/v1/context/compose",
             post(context_api::compose_context),
+        )
+        .route(
+            "/api/memory/v1/internal/context/compose",
+            post(context_api::internal_compose_context),
         )
         .route(
             "/api/memory/v1/task-executions/messages",

@@ -1,4 +1,5 @@
 import type { Message } from '../../../types';
+import type { ImConversationMessageResponse } from '../../api/client/types';
 
 const parseMaybeJson = (value: any): any => {
   if (typeof value !== 'string') return value;
@@ -279,3 +280,79 @@ export const normalizeRawMessages = (rawMessages: any[], sessionId: string): Mes
     };
   });
 };
+
+const normalizeImRole = (senderType: unknown): Message['role'] => {
+  const normalized = String(senderType || '').trim().toLowerCase();
+  if (normalized === 'user') {
+    return 'user';
+  }
+  if (normalized === 'system') {
+    return 'system';
+  }
+  return 'assistant';
+};
+
+const normalizeImStatus = (deliveryStatus: unknown): Message['status'] => {
+  const normalized = String(deliveryStatus || '').trim().toLowerCase();
+  if (normalized === 'sending' || normalized === 'queued') {
+    return 'pending';
+  }
+  if (normalized === 'failed' || normalized === 'error') {
+    return 'error';
+  }
+  return 'completed';
+};
+
+const normalizeImMetadata = (value: unknown): Record<string, any> => {
+  const parsed = parseMessageMetadata(value);
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    return parsed as Record<string, any>;
+  }
+  return {};
+};
+
+export const normalizeImConversationMessage = (
+  rawMessage: ImConversationMessageResponse,
+  sessionId: string,
+): Message => {
+  const metadata = normalizeImMetadata(rawMessage?.metadata);
+  const createdAt = normalizeDate(rawMessage?.created_at);
+  const content = typeof rawMessage?.content === 'string'
+    ? rawMessage.content
+    : String(rawMessage?.content ?? '');
+  const attachments = normalizeAttachments(metadata, rawMessage.id, createdAt);
+
+  return {
+    id: rawMessage.id,
+    sessionId,
+    role: normalizeImRole(rawMessage?.sender_type),
+    content,
+    status: normalizeImStatus(rawMessage?.delivery_status),
+    createdAt,
+    updatedAt: normalizeDate(rawMessage?.updated_at ?? rawMessage?.created_at),
+    metadata: {
+      ...metadata,
+      ...(attachments ? { attachments } : {}),
+      contentSegments: content
+        ? [{ type: 'text', content }]
+        : [],
+      currentSegmentIndex: 0,
+      imMessage: {
+        id: rawMessage.id,
+        conversationId: rawMessage.conversation_id,
+        senderType: rawMessage.sender_type,
+        senderId: rawMessage.sender_id ?? null,
+        deliveryStatus: rawMessage.delivery_status ?? null,
+        clientMessageId: rawMessage.client_message_id ?? null,
+      },
+    },
+  };
+};
+
+export const normalizeImConversationMessages = (
+  rawMessages: ImConversationMessageResponse[],
+  sessionId: string,
+): Message[] => (
+  (Array.isArray(rawMessages) ? rawMessages : [])
+    .map((message) => normalizeImConversationMessage(message, sessionId))
+);

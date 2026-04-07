@@ -170,11 +170,11 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
         </div>
       ) : !selectedProjectSession ? (
         <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
-          正在准备会话...
+          正在准备聊天...
         </div>
       ) : !isSelectedSessionActive ? (
         <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
-          正在切换到 {selectedContact.name} 的会话...
+          正在切换到 {selectedContact.name} 的聊天...
         </div>
       ) : sessionSummaryPaneVisible ? (
         <TeamMemberSummaryView

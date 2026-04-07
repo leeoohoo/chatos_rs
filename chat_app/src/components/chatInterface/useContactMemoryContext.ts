@@ -185,7 +185,7 @@ export const useContactMemoryContext = ({
       setSessionMemorySummaries([]);
       setAgentRecalls([]);
       setMemoryLoadedKey(loadKey);
-      setMemoryError('当前会话未绑定联系人，无法加载记忆。');
+      setMemoryError('当前聊天未绑定联系人，无法加载记忆。');
       setMemoryLoading(false);
       return;
     }

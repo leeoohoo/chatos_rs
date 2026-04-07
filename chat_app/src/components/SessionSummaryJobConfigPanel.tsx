@@ -269,7 +269,7 @@ const SessionSummaryJobConfigPanel: React.FC<Props> = ({ onClose }) => {
       <div className="relative bg-card text-card-foreground w-full max-w-2xl rounded-xl shadow-2xl border border-border/60">
         <div className="flex items-center justify-between p-4 sm:p-5 border-b border-border/60">
           <div>
-            <h3 className="font-semibold leading-tight">会话总结任务配置</h3>
+            <h3 className="font-semibold leading-tight">聊天摘要任务配置</h3>
             <p className="text-xs text-muted-foreground mt-0.5">
               配置定时总结模型、长度阈值与消息条数阈值
             </p>

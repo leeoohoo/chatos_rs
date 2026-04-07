@@ -11,6 +11,9 @@ import {
 import type { DerivedProcessStats } from './messageItem/types';
 export type { DerivedProcessStats } from './messageItem/types';
 
+const normalizeText = (value: unknown): string => (
+  typeof value === 'string' ? value.trim() : ''
+);
 
 interface MessageItemProps {
   message: Message;
@@ -19,6 +22,7 @@ interface MessageItemProps {
   onEdit?: (messageId: string, content: string) => void;
   onDelete?: (messageId: string) => void;
   onToggleTurnProcess?: (userMessageId: string) => void;
+  onInspectRuntimeContext?: (payload: { sessionId: string; turnId?: string | null }) => void;
   renderContext?: 'chat' | 'process_drawer';
   derivedProcessStatsByUserId?: Map<string, DerivedProcessStats>;
   toolResultById?: Map<string, Message>;
@@ -40,6 +44,7 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
   onEdit,
   onDelete,
   onToggleTurnProcess,
+  onInspectRuntimeContext,
   renderContext = 'chat',
   derivedProcessStatsByUserId,
   toolResultById,
@@ -67,6 +72,7 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
   const isAssistant = message.role === 'assistant';
   const isSystem = message.role === 'system';
   const isTool = message.role === 'tool';
+  const isChatRender = renderContext === 'chat';
 
   const historyProcess = isUser ? (message.metadata?.historyProcess as any) : null;
 
@@ -83,7 +89,7 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
     derivedProcessStatsByUserId,
   ]);
 
-  const hasHistoryProcess = Boolean(
+  const hasHistoryProcess = !isChatRender && Boolean(
     historyProcess?.hasProcess
     || historyProcess?.loading
     || derivedProcessStats.hasProcess
@@ -130,6 +136,21 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
     && !isProcessAssistant
     && !linkedUserExpandedForFinalAssistant
     && renderContext !== 'process_drawer'
+  );
+  const imRunMetadata = useMemo(() => {
+    const raw = message.metadata?.im_run;
+    return raw && typeof raw === 'object' ? raw as Record<string, unknown> : null;
+  }, [message.metadata?.im_run]);
+  const runtimeContextSessionId = normalizeText(
+    imRunMetadata?.legacy_session_id ?? imRunMetadata?.execution_session_id,
+  );
+  const runtimeContextTurnId = normalizeText(
+    imRunMetadata?.legacy_turn_id ?? imRunMetadata?.execution_turn_id,
+  );
+  const canInspectRuntimeContext = Boolean(
+    isChatRender
+    && isAssistant
+    && runtimeContextSessionId,
   );
 
   // 隐藏tool角色的消息，因为它们应该作为工具调用的结果显示
@@ -183,20 +204,31 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
   return (
     <div
       className={cn(
-        'group relative rounded-lg transition-colors',
-        // 基础布局样式 - 所有消息都使用统一的左对齐布局
-        !isAssistant && 'flex gap-3 px-4 py-4',
-        // assistant消息使用简化布局（无头像无头部）
-        isAssistant && 'px-4 py-2',
-        // 角色特定样式 - 移除左右对齐差异，统一左对齐
-        isUser && 'bg-user-message',
-        isSystem && 'bg-muted border-l-4 border-primary',
-        isTool && 'bg-blue-50 dark:bg-blue-950/20 border-l-4 border-blue-500',
-        'hover:bg-opacity-80'
+        'group relative w-full transition-colors',
+        isChatRender && 'flex',
+        isChatRender && isUser && 'justify-end px-4 py-2',
+        isChatRender && isAssistant && 'justify-start px-4 py-2',
+        !isChatRender && !isAssistant && 'flex gap-3 px-4 py-4 rounded-lg',
+        !isChatRender && isAssistant && 'px-4 py-2',
+        !isChatRender && isUser && 'bg-user-message',
+        !isChatRender && isSystem && 'bg-muted border-l-4 border-primary',
+        !isChatRender && isTool && 'bg-blue-50 dark:bg-blue-950/20 border-l-4 border-blue-500',
+        !isChatRender && 'hover:bg-opacity-80',
       )}
     >
+      {isChatRender && isAssistant && (
+        <div className="flex-shrink-0">
+          <div className={cn(
+            'w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium',
+            'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-100'
+          )}>
+            A
+          </div>
+        </div>
+      )}
+
       {/* 头像 - assistant消息不显示头像 */}
-      {!isAssistant && (
+      {!isChatRender && !isAssistant && (
         <div className="flex-shrink-0">
           <div className={cn(
             'w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium',
@@ -210,9 +242,16 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
       )}
 
       {/* 消息内容 */}
-      <div className="flex-1 min-w-0">
+      <div
+        className={cn(
+          'min-w-0',
+          isChatRender
+            ? 'max-w-[82%]'
+            : 'flex-1',
+        )}
+      >
         {/* 消息头部 - assistant消息不显示头部 */}
-        {!isAssistant && (
+        {!isChatRender && !isAssistant && (
           <div className="flex items-center gap-2 mb-1">
             <span className="text-sm font-medium">
               {isUser ? 'You' : isTool ? 'Tool Result' : 'System'}
@@ -312,7 +351,15 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
             </div>
           </div>
         ) : (
-          <div className="space-y-3">
+          <div
+            className={cn(
+              'space-y-3',
+              isChatRender && 'rounded-2xl px-4 py-3 shadow-sm',
+              isChatRender && isUser && 'bg-sky-100 text-slate-900 dark:bg-sky-900/40 dark:text-slate-50',
+              isChatRender && isAssistant && 'bg-white border border-slate-200 text-slate-900 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-50',
+              isChatRender && isSystem && 'bg-muted',
+            )}
+          >
             <MessageContentRenderer
               message={message}
               isLast={isLast}
@@ -322,22 +369,51 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
               toolCallsById={toolCallsById}
               assistantToolCallsById={assistantToolCallsById}
               toolResultById={toolResultById}
-              collapseAssistantProcessByDefault={collapseAssistantProcessByDefault}
+              collapseAssistantProcessByDefault={isChatRender ? true : collapseAssistantProcessByDefault}
+              hideInternalProcess={isChatRender}
               onApplyCode={handleApplyCode}
             />
           </div>
         )}
 
         {/* Token使用信息 */}
-        {message.tokensUsed && (
+        {message.tokensUsed && !isChatRender && (
           <div className="mt-2 text-xs text-muted-foreground">
             Tokens used: {message.tokensUsed}
+          </div>
+        )}
+
+        {isChatRender && (
+          <div
+            className={cn(
+              'mt-1 px-1 text-[11px] text-muted-foreground',
+              isUser ? 'text-right' : 'text-left',
+            )}
+          >
+            <div className={cn('flex items-center gap-2', isUser ? 'justify-end' : 'justify-start')}>
+              <span>{formatTime(message.createdAt)}</span>
+              {canInspectRuntimeContext ? (
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onInspectRuntimeContext?.({
+                      sessionId: runtimeContextSessionId,
+                      turnId: runtimeContextTurnId || null,
+                    });
+                  }}
+                  className="rounded-full border border-slate-300 px-2 py-0.5 text-[11px] text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+                >
+                  查看本次模型上下文
+                </button>
+              ) : null}
+            </div>
           </div>
         )}
       </div>
 
       {/* 操作按钮 */}
-      {!isEditing && (
+      {!isEditing && !isChatRender && (
         <div className="absolute top-2 right-2 flex gap-1 bg-background border rounded-md shadow-sm opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-opacity">
           <button
             onClick={handleCopy}

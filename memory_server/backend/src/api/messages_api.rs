@@ -173,6 +173,26 @@ pub(super) async fn list_messages(
     }
 }
 
+pub(super) async fn internal_list_messages(
+    State(state): State<SharedState>,
+    Path(session_id): Path<String>,
+    Query(q): Query<ListMessagesQuery>,
+) -> (StatusCode, Json<Value>) {
+    let asc = !matches!(q.order.as_deref(), Some("desc"));
+    let limit = q.limit.unwrap_or(100);
+    let offset = q.offset.unwrap_or(0);
+
+    match messages::list_messages_by_session(&state.pool, session_id.as_str(), limit, offset, asc)
+        .await
+    {
+        Ok(items) => (StatusCode::OK, Json(json!({"items": items}))),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "list messages failed", "detail": err})),
+        ),
+    }
+}
+
 pub(super) async fn clear_session_messages(
     State(state): State<SharedState>,
     headers: HeaderMap,

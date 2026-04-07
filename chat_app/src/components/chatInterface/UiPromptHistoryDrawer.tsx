@@ -66,7 +66,7 @@ const UiPromptHistoryDrawer: React.FC<UiPromptHistoryDrawerProps> = ({
             <div>
               <div className="text-sm font-semibold text-foreground">交互确认记录</div>
               <div className="text-xs text-muted-foreground">
-                当前会话：{items.length}
+                当前聊天：{items.length}
               </div>
             </div>
             <div className="flex items-center gap-2">

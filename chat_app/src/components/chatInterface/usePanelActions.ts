@@ -38,6 +38,10 @@ interface PanelActionsApiClient {
     promptId: string,
     payload: UiPromptResponsePayload,
   ) => Promise<unknown>;
+  submitImActionRequest: (
+    actionRequestId: string,
+    payload: unknown,
+  ) => Promise<unknown>;
 }
 
 interface UsePanelActionsArgs {
@@ -53,6 +57,8 @@ interface UsePanelActionsArgs {
   loadWorkbarSummaries: (sessionId: string, force?: boolean) => Promise<void>;
   loadUiPromptHistory: (sessionId: string, force?: boolean) => Promise<void>;
 }
+
+type TaskReviewSubmitPayload = Parameters<PanelActionsApiClient['submitTaskReviewDecision']>[1];
 
 export function usePanelActions({
   activeTaskReviewPanel,
@@ -81,7 +87,7 @@ export function usePanelActions({
     upsertTaskReviewPanel(pendingPanel);
 
     try {
-      await apiClient.submitTaskReviewDecision(activeTaskReviewPanel.reviewId, {
+      const payload: TaskReviewSubmitPayload = {
         action: 'confirm',
         tasks: drafts.map((draft) => ({
           title: draft.title,
@@ -105,7 +111,12 @@ export function usePanelActions({
             }
             : undefined,
         })),
-      });
+      };
+      if (activeTaskReviewPanel.actionRequestId) {
+        await apiClient.submitImActionRequest(activeTaskReviewPanel.actionRequestId, payload);
+      } else {
+        await apiClient.submitTaskReviewDecision(activeTaskReviewPanel.reviewId, payload);
+      }
       removeTaskReviewPanel(activeTaskReviewPanel.reviewId, activeTaskReviewPanel.sessionId);
       await Promise.all([
         loadCurrentTurnWorkbarTasks(activeTaskReviewPanel.sessionId, activeTaskReviewPanel.conversationTurnId),
@@ -143,10 +154,15 @@ export function usePanelActions({
     upsertTaskReviewPanel(pendingPanel);
 
     try {
-      await apiClient.submitTaskReviewDecision(activeTaskReviewPanel.reviewId, {
+      const payload: TaskReviewSubmitPayload = {
         action: 'cancel',
         reason: 'user_cancelled',
-      });
+      };
+      if (activeTaskReviewPanel.actionRequestId) {
+        await apiClient.submitImActionRequest(activeTaskReviewPanel.actionRequestId, payload);
+      } else {
+        await apiClient.submitTaskReviewDecision(activeTaskReviewPanel.reviewId, payload);
+      }
       removeTaskReviewPanel(activeTaskReviewPanel.reviewId, activeTaskReviewPanel.sessionId);
       await Promise.all([
         loadCurrentTurnWorkbarTasks(activeTaskReviewPanel.sessionId, activeTaskReviewPanel.conversationTurnId),
@@ -184,7 +200,11 @@ export function usePanelActions({
     upsertUiPromptPanel(pendingPanel);
 
     try {
-      await apiClient.submitUiPromptResponse(activeUiPromptPanel.promptId, payload);
+      if (activeUiPromptPanel.actionRequestId) {
+        await apiClient.submitImActionRequest(activeUiPromptPanel.actionRequestId, payload);
+      } else {
+        await apiClient.submitUiPromptResponse(activeUiPromptPanel.promptId, payload);
+      }
       removeUiPromptPanel(activeUiPromptPanel.promptId, activeUiPromptPanel.sessionId);
       await loadUiPromptHistory(activeUiPromptPanel.sessionId, true);
     } catch (error) {
@@ -216,10 +236,15 @@ export function usePanelActions({
     upsertUiPromptPanel(pendingPanel);
 
     try {
-      await apiClient.submitUiPromptResponse(activeUiPromptPanel.promptId, {
+      const payload: UiPromptResponsePayload = {
         status: 'canceled',
         reason: 'user_cancelled',
-      });
+      };
+      if (activeUiPromptPanel.actionRequestId) {
+        await apiClient.submitImActionRequest(activeUiPromptPanel.actionRequestId, payload);
+      } else {
+        await apiClient.submitUiPromptResponse(activeUiPromptPanel.promptId, payload);
+      }
       removeUiPromptPanel(activeUiPromptPanel.promptId, activeUiPromptPanel.sessionId);
       await loadUiPromptHistory(activeUiPromptPanel.sessionId, true);
     } catch (error) {

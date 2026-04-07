@@ -62,7 +62,7 @@ async fn dispatch_tick() {
         if ACTIVE_SCOPE_JOBS.insert(scope.scope_key.clone()) {
             tokio::spawn(async move {
                 let scope_key = scope.scope_key.clone();
-                let result = process_scope(scope).await;
+                let result = memory_server_client::with_internal_scope(process_scope(scope)).await;
                 if let Err(err) = result {
                     warn!("[TASK-RUNNER] scope processing failed: {}", err);
                 }

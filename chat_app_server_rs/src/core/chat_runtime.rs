@@ -34,6 +34,7 @@ pub struct ParsedImplicitCommandSelection {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChatRuntimeMetadata {
+    pub selected_model_id: Option<String>,
     pub contact_agent_id: Option<String>,
     pub contact_id: Option<String>,
     pub project_id: Option<String>,
@@ -130,6 +131,15 @@ fn metadata_string_list_aliases(metadata: Option<&Value>, paths: &[&[&str]]) -> 
 impl ChatRuntimeMetadata {
     pub fn from_metadata(metadata: Option<&Value>) -> Self {
         Self {
+            selected_model_id: metadata_string_aliases(
+                metadata,
+                &[
+                    &["chat_runtime", "selected_model_id"],
+                    &["chat_runtime", "selectedModelId"],
+                    &["ui_chat_selection", "selected_model_id"],
+                    &["ui_chat_selection", "selectedModelId"],
+                ],
+            ),
             contact_agent_id: metadata_string_aliases(
                 metadata,
                 &[
@@ -198,6 +208,11 @@ impl ChatRuntimeMetadata {
             ),
         }
     }
+}
+
+pub fn selection_from_metadata(metadata: Option<&Value>) -> (Option<String>, Option<String>) {
+    let runtime = ChatRuntimeMetadata::from_metadata(metadata);
+    (runtime.selected_model_id, runtime.contact_agent_id)
 }
 
 pub fn project_id_from_metadata(metadata: Option<&Value>) -> Option<String> {
@@ -938,6 +953,9 @@ mod tests {
                 "agentId": " agent_1 ",
                 "contact_id": " contact_1 "
             },
+            "ui_chat_selection": {
+                "selectedModelId": " model_1 "
+            },
             "chat_runtime": {
                 "projectId": " project_1 ",
                 "project_root": " /tmp/workspace ",
@@ -949,6 +967,7 @@ mod tests {
         });
 
         let runtime = ChatRuntimeMetadata::from_metadata(Some(&metadata));
+        assert_eq!(runtime.selected_model_id.as_deref(), Some("model_1"));
         assert_eq!(runtime.contact_agent_id.as_deref(), Some("agent_1"));
         assert_eq!(runtime.contact_id.as_deref(), Some("contact_1"));
         assert_eq!(runtime.project_id.as_deref(), Some("project_1"));

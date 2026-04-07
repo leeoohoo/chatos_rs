@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::{default_false, default_i64_0, default_true};
+use super::{default_false, default_i64_0, default_true, deserialize_bool_true, deserialize_vec_or_default};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryAgentSkill {
@@ -19,17 +19,17 @@ pub struct MemoryAgent {
     pub category: Option<String>,
     pub model_config_id: Option<String>,
     pub role_definition: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_vec_or_default")]
     pub plugin_sources: Vec<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_vec_or_default")]
     pub skills: Vec<MemoryAgentSkill>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_vec_or_default")]
     pub skill_ids: Vec<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_vec_or_default")]
     pub default_skill_ids: Vec<String>,
     pub mcp_policy: Option<Value>,
     pub project_policy: Option<Value>,
-    #[serde(default = "default_true")]
+    #[serde(default = "default_true", deserialize_with = "deserialize_bool_true")]
     pub enabled: bool,
     pub created_at: String,
     pub updated_at: String,
@@ -109,15 +109,15 @@ pub struct MemoryAgentRuntimeContext {
     pub category: Option<String>,
     pub model_config_id: Option<String>,
     pub role_definition: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_vec_or_default")]
     pub plugin_sources: Vec<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_vec_or_default")]
     pub runtime_plugins: Vec<MemoryAgentRuntimePluginSummary>,
     pub skills: Vec<MemoryAgentSkill>,
     pub skill_ids: Vec<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_vec_or_default")]
     pub runtime_skills: Vec<MemoryAgentRuntimeSkillSummary>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_vec_or_default")]
     pub runtime_commands: Vec<MemoryAgentRuntimeCommandSummary>,
     pub mcp_policy: Option<Value>,
     pub project_policy: Option<Value>,
@@ -162,7 +162,7 @@ pub struct MemorySkillPlugin {
     pub cache_path: Option<String>,
     #[serde(default)]
     pub content: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_vec_or_default")]
     pub commands: Vec<MemorySkillPluginCommand>,
     #[serde(default = "default_i64_0")]
     pub command_count: i64,

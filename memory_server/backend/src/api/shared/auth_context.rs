@@ -56,17 +56,26 @@ pub(crate) fn resolve_identity(
         ));
     };
 
-    let parsed =
-        parse_auth_token(token.as_str(), state.config.auth_secret.as_str()).ok_or_else(|| {
-            (
-                StatusCode::UNAUTHORIZED,
-                Json(json!({"error": "unauthorized"})),
-            )
-        })?;
+    let parsed = parse_trusted_auth_token(token.as_str(), state).ok_or_else(|| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"error": "unauthorized"})),
+        )
+    })?;
 
     Ok(AuthIdentity {
         user_id: parsed.0,
         role: parsed.1,
+    })
+}
+
+fn parse_trusted_auth_token(token: &str, state: &AppState) -> Option<(String, String, i64)> {
+    parse_auth_token(token, state.config.auth_secret.as_str()).or_else(|| {
+        state
+            .config
+            .trusted_im_auth_secret
+            .as_deref()
+            .and_then(|secret| parse_auth_token(token, secret))
     })
 }
 

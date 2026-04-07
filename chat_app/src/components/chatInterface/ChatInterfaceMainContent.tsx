@@ -12,13 +12,10 @@ interface ChatInterfaceMainContentProps {
   activePanel: string;
   sidebarOpen: boolean;
   summaryPaneSessionId: string | null;
-  runtimeContextOpen: boolean;
-  runtimeContextSessionId: string | null;
   currentProject: Project | null;
   onToggleSidebar: () => void;
   onSelectSession: () => void;
   onToggleSessionSummary: (sessionId: string) => void;
-  onOpenSessionRuntimeContext: (sessionId: string) => void;
   sessionListProps: ComponentProps<typeof SessionList>;
   conversationPaneProps: ComponentProps<typeof ChatConversationPane>;
 }
@@ -27,13 +24,10 @@ export default function ChatInterfaceMainContent({
   activePanel,
   sidebarOpen,
   summaryPaneSessionId,
-  runtimeContextOpen,
-  runtimeContextSessionId,
   currentProject,
   onToggleSidebar,
   onSelectSession,
   onToggleSessionSummary,
-  onOpenSessionRuntimeContext,
   sessionListProps,
   conversationPaneProps,
 }: ChatInterfaceMainContentProps) {
@@ -45,9 +39,7 @@ export default function ChatInterfaceMainContent({
         onToggleCollapse={onToggleSidebar}
         onSelectSession={onSelectSession}
         onOpenSessionSummary={onToggleSessionSummary}
-        onOpenSessionRuntimeContext={onOpenSessionRuntimeContext}
         activeSummarySessionId={summaryPaneSessionId}
-        activeRuntimeContextSessionId={runtimeContextOpen ? runtimeContextSessionId : null}
       />
 
       <div className="flex-1 min-h-0 flex flex-col overflow-hidden">

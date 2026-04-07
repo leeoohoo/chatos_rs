@@ -145,6 +145,12 @@ export const readSessionRuntimeFromMetadata = (
   };
 };
 
+export const readSessionImConversationId = (metadata: unknown): string | null => {
+  const meta = parseSessionMetadata(metadata);
+  const im = asMetadataRecord(meta.im);
+  return normalizeId(im.conversation_id ?? im.conversationId);
+};
+
 export const mergeSessionRuntimeIntoMetadata = (
   metadata: unknown,
   runtime: Partial<SessionRuntimeMetadata>,

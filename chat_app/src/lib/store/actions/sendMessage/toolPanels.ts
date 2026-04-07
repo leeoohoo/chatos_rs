@@ -260,6 +260,8 @@ export const extractTaskReviewPanelFromToolStream = (
     reviewId,
     sessionId,
     conversationTurnId,
+    actionRequestId: null,
+    source: 'legacy',
     drafts,
     timeoutMs: typeof payload.timeout_ms === 'number' ? payload.timeout_ms : undefined,
     submitting: false,
@@ -311,6 +313,8 @@ export const extractUiPromptPanelFromToolStream = (
     promptId,
     sessionId,
     conversationTurnId,
+    actionRequestId: null,
+    source: 'legacy',
     toolCallId: typeof source.tool_call_id === 'string'
       ? source.tool_call_id
       : (typeof source.toolCallId === 'string' ? source.toolCallId : null),

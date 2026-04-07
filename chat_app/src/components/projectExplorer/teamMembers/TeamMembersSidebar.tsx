@@ -18,14 +18,11 @@ interface TeamMembersSidebarProps {
   switchingContactId: string | null;
   summaryPaneSessionId: string | null;
   openingSummaryContactId: string | null;
-  runtimeContextSessionId: string | null;
-  openingRuntimeContextContactId: string | null;
   removingContactId: string | null;
   sessionChatState?: SessionChatStateMap;
   onOpenAddMember: () => void;
   onSelectContact: (contactId: string) => void;
   onOpenSummary: (contact: ContactItem) => void;
-  onOpenRuntimeContext: (contact: ContactItem) => void;
   onRemoveMember: (contact: ContactItem) => void;
 }
 
@@ -39,14 +36,11 @@ const TeamMembersSidebar: React.FC<TeamMembersSidebarProps> = ({
   switchingContactId,
   summaryPaneSessionId,
   openingSummaryContactId,
-  runtimeContextSessionId,
-  openingRuntimeContextContactId,
   removingContactId,
   sessionChatState,
   onOpenAddMember,
   onSelectContact,
   onOpenSummary,
-  onOpenRuntimeContext,
   onRemoveMember,
 }) => {
   return (
@@ -125,22 +119,6 @@ const TeamMembersSidebar: React.FC<TeamMembersSidebarProps> = ({
                     </button>
                     <button
                       type="button"
-                      className={cn(
-                        'px-1.5 py-0.5 text-[11px] rounded border border-border text-muted-foreground hover:text-foreground hover:bg-accent',
-                        runtimeContextSessionId && session?.id === runtimeContextSessionId && 'text-blue-600 border-blue-200',
-                      )}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onOpenRuntimeContext(contact);
-                      }}
-                      disabled={openingRuntimeContextContactId === contact.id}
-                    >
-                      {openingRuntimeContextContactId === contact.id
-                        ? '加载中'
-                        : (runtimeContextSessionId && session?.id === runtimeContextSessionId ? '关闭上下文' : '上下文')}
-                    </button>
-                    <button
-                      type="button"
                       className="px-1.5 py-0.5 text-[11px] rounded border border-border text-muted-foreground hover:text-destructive hover:border-destructive"
                       onClick={(event) => {
                         event.stopPropagation();
@@ -157,7 +135,7 @@ const TeamMembersSidebar: React.FC<TeamMembersSidebarProps> = ({
                     '切换中...'
                   ) : (
                     <span className="inline-flex items-center gap-2">
-                      <span>{`会话: ${session?.title || '未创建'}`}</span>
+                      <span>{session?.title || '聊天未创建'}</span>
                       {session?.id ? (
                         <SessionBusyBadge busy={isBusy} />
                       ) : null}

@@ -32,11 +32,11 @@ import type {
   SessionResponse,
   SessionUpdatePayload,
   SessionUpsertPayload,
+  TurnRuntimeSnapshotLookupResponse,
   SftpTransferStartPayload,
   TerminalDispatchResponse,
   TerminalLogResponse,
   TerminalResponse,
-  TurnRuntimeSnapshotLookupResponse,
 } from '../types';
 import type ApiClient from '../../client';
 
@@ -71,7 +71,7 @@ export interface WorkspaceFacade {
   ): Promise<SessionMessageResponse[]>;
   getSessionTurnProcessMessages(sessionId: string, userMessageId: string): Promise<SessionMessageResponse[]>;
   getSessionTurnProcessMessagesByTurn(sessionId: string, turnId: string): Promise<SessionMessageResponse[]>;
-  getSessionLatestTurnRuntimeContext(sessionId: string): Promise<TurnRuntimeSnapshotLookupResponse>;
+  getSessionTurnRuntimeContextLatest(sessionId: string): Promise<TurnRuntimeSnapshotLookupResponse>;
   getSessionTurnRuntimeContextByTurn(
     sessionId: string,
     turnId: string,
@@ -211,8 +211,8 @@ export const workspaceFacade: WorkspaceFacade & ThisType<ApiClient> = {
   async getSessionTurnProcessMessagesByTurn(sessionId, turnId) {
     return workspaceApi.getSessionTurnProcessMessagesByTurn(this.getRequestFn(), sessionId, turnId);
   },
-  async getSessionLatestTurnRuntimeContext(sessionId) {
-    return workspaceApi.getSessionLatestTurnRuntimeContext(this.getRequestFn(), sessionId);
+  async getSessionTurnRuntimeContextLatest(sessionId) {
+    return workspaceApi.getSessionTurnRuntimeContextLatest(this.getRequestFn(), sessionId);
   },
   async getSessionTurnRuntimeContextByTurn(sessionId, turnId) {
     return workspaceApi.getSessionTurnRuntimeContextByTurn(this.getRequestFn(), sessionId, turnId);

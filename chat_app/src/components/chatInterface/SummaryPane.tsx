@@ -101,7 +101,7 @@ const SummaryPane: React.FC<SummaryPaneProps> = ({
         level: summary.level,
         time,
         timeTs: Math.max(toTimestamp(summary.updatedAt), toTimestamp(summary.createdAt)),
-        sourceLabel: `会话总结 L${summary.level}`,
+        sourceLabel: `聊天摘要 L${summary.level}`,
       };
     }),
     ...agentRecalls.map((recall) => ({

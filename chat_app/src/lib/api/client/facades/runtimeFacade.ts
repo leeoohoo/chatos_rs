@@ -5,6 +5,13 @@ import * as summaryApi from '../summary';
 import * as tasksApi from '../tasks';
 import type {
   AuthResponse,
+  ImActionRequestSubmitResponse,
+  ImConversationActionRequestResponse,
+  ImConversationCreatePayload,
+  ImConversationResponse,
+  ImConversationMessageCreatePayload,
+  ImConversationMessageResponse,
+  ImConversationRunResponse,
   MeResponse,
   NotepadCreatePayload,
   NotepadDeleteNoteResponse,
@@ -24,9 +31,6 @@ import type {
   SessionSummaryJobConfigPayload,
   SessionSummaryJobConfigResponse,
   StopChatResponse,
-  StreamChatAttachmentPayload,
-  StreamChatModelConfigPayload,
-  StreamChatOptions,
   TaskExecutionRollupJobConfigPayload,
   TaskExecutionRollupJobConfigResponse,
   TaskExecutionSummaryJobConfigPayload,
@@ -41,15 +45,6 @@ import type {
 import type ApiClient from '../../client';
 
 export interface RuntimeFacade {
-  streamChat(
-    sessionId: string,
-    content: string,
-    modelConfig: StreamChatModelConfigPayload,
-    userId?: string,
-    attachments?: StreamChatAttachmentPayload[],
-    reasoningEnabled?: boolean,
-    options?: StreamChatOptions,
-  ): Promise<ReadableStream>;
   submitRuntimeGuidance(payload: RuntimeGuidanceSubmitPayload): Promise<RuntimeGuidanceSubmitResponse>;
   getTaskManagerTasks(
     sessionId: string,
@@ -66,6 +61,32 @@ export interface RuntimeFacade {
     reviewId: string,
     payload: TaskReviewDecisionPayload,
   ): Promise<{ success?: boolean; status?: string }>;
+  getImConversationActionRequests(
+    conversationId: string,
+  ): Promise<ImConversationActionRequestResponse[]>;
+  getImConversations(): Promise<ImConversationResponse[]>;
+  getImWsMeta(): Promise<{ ws_url?: string | null }>;
+  createImConversation(
+    payload: ImConversationCreatePayload,
+  ): Promise<ImConversationResponse>;
+  markImConversationRead(
+    conversationId: string,
+  ): Promise<ImConversationResponse>;
+  getImConversationMessages(
+    conversationId: string,
+    options?: { limit?: number; order?: 'asc' | 'desc' },
+  ): Promise<ImConversationMessageResponse[]>;
+  createImConversationMessage(
+    conversationId: string,
+    payload: ImConversationMessageCreatePayload,
+  ): Promise<ImConversationMessageResponse>;
+  getImConversationRuns(
+    conversationId: string,
+  ): Promise<ImConversationRunResponse[]>;
+  submitImActionRequest(
+    actionRequestId: string,
+    payload: unknown,
+  ): Promise<ImActionRequestSubmitResponse>;
   getPendingUiPrompts(sessionId: string, options?: { limit?: number }): Promise<UiPromptItemResponse[]>;
   getUiPromptHistory(
     sessionId: string,
@@ -111,18 +132,6 @@ export interface RuntimeFacade {
 }
 
 export const runtimeFacade: RuntimeFacade & ThisType<ApiClient> = {
-  async streamChat(sessionId, content, modelConfig, userId, attachments, reasoningEnabled, options) {
-    return streamApi.streamChat(
-      this.getStreamApiContext(),
-      sessionId,
-      content,
-      modelConfig,
-      userId,
-      attachments,
-      reasoningEnabled,
-      options,
-    );
-  },
   async submitRuntimeGuidance(payload) {
     return streamApi.submitRuntimeGuidance(this.getRequestFn(), payload);
   },
@@ -140,6 +149,33 @@ export const runtimeFacade: RuntimeFacade & ThisType<ApiClient> = {
   },
   async submitTaskReviewDecision(reviewId, payload) {
     return tasksApi.submitTaskReviewDecision(this.getRequestFn(), reviewId, payload);
+  },
+  async getImConversationActionRequests(conversationId) {
+    return tasksApi.getImConversationActionRequests(this.getRequestFn(), conversationId);
+  },
+  async getImConversations() {
+    return tasksApi.getImConversations(this.getRequestFn());
+  },
+  async getImWsMeta() {
+    return tasksApi.getImWsMeta(this.getRequestFn());
+  },
+  async createImConversation(payload) {
+    return tasksApi.createImConversation(this.getRequestFn(), payload);
+  },
+  async markImConversationRead(conversationId) {
+    return tasksApi.markImConversationRead(this.getRequestFn(), conversationId);
+  },
+  async getImConversationMessages(conversationId, options) {
+    return tasksApi.getImConversationMessages(this.getRequestFn(), conversationId, options);
+  },
+  async createImConversationMessage(conversationId, payload) {
+    return tasksApi.createImConversationMessage(this.getRequestFn(), conversationId, payload);
+  },
+  async getImConversationRuns(conversationId) {
+    return tasksApi.getImConversationRuns(this.getRequestFn(), conversationId);
+  },
+  async submitImActionRequest(actionRequestId, payload) {
+    return tasksApi.submitImActionRequest(this.getRequestFn(), actionRequestId, payload);
   },
   async getPendingUiPrompts(sessionId, options) {
     return tasksApi.getPendingUiPrompts(this.getRequestFn(), sessionId, options);

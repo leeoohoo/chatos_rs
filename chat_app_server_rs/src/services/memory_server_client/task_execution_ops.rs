@@ -1,13 +1,13 @@
 use crate::models::message::Message;
 
-use super::current_access_token;
+use super::is_internal_scope;
 use super::dto::{
     SyncTaskExecutionMessageRequestDto, TaskExecutionComposeResponseDto, TaskExecutionMessageDto,
     TaskResultBriefDto, UpsertTaskResultBriefRequestDto,
 };
 use super::http::{
     build_url, client, context_timeout_duration, push_limit_offset_params, send_json,
-    send_json_without_service_token, send_list, send_list_without_service_token, timeout_duration,
+    send_list, timeout_duration,
 };
 
 #[derive(Debug, Clone)]
@@ -43,7 +43,7 @@ pub async fn upsert_task_execution_message(
     scope: &TaskExecutionScopeBinding,
     message: &Message,
 ) -> Result<Message, String> {
-    let internal_mode = current_access_token().is_none();
+    let internal_mode = is_internal_scope();
     let path = if internal_mode {
         format!(
             "/internal/task-executions/messages/{}/sync",
@@ -75,11 +75,7 @@ pub async fn upsert_task_execution_message(
             created_at: Some(message.created_at.clone()),
         });
 
-    let dto: TaskExecutionMessageDto = if internal_mode {
-        send_json_without_service_token(req).await?
-    } else {
-        send_json(req).await?
-    };
+    let dto: TaskExecutionMessageDto = send_json(req).await?;
     Ok(map_task_execution_message(dto))
 }
 
@@ -91,7 +87,7 @@ pub async fn list_task_execution_messages(
     offset: i64,
     asc: bool,
 ) -> Result<Vec<Message>, String> {
-    let internal_mode = current_access_token().is_none();
+    let internal_mode = is_internal_scope();
     let order = if asc { "asc" } else { "desc" };
     let mut params = vec![
         ("user_id".to_string(), user_id.to_string()),
@@ -105,11 +101,7 @@ pub async fn list_task_execution_messages(
     } else {
         "/task-executions/messages"
     };
-    let dtos: Vec<TaskExecutionMessageDto> = if internal_mode {
-        send_list_without_service_token(path, &params).await?
-    } else {
-        send_list(path, &params).await?
-    };
+    let dtos: Vec<TaskExecutionMessageDto> = send_list(path, &params).await?;
     Ok(dtos.into_iter().map(map_task_execution_message).collect())
 }
 
@@ -119,7 +111,7 @@ pub async fn compose_task_execution_context(
     project_id: &str,
     memory_summary_limit: usize,
 ) -> Result<(Option<String>, usize, Vec<Message>), String> {
-    let internal_mode = current_access_token().is_none();
+    let internal_mode = is_internal_scope();
     let req = client()
         .post(
             build_url(if internal_mode {
@@ -138,11 +130,7 @@ pub async fn compose_task_execution_context(
             "include_raw_messages": true
         }));
 
-    let resp: TaskExecutionComposeResponseDto = if internal_mode {
-        send_json_without_service_token(req).await?
-    } else {
-        send_json(req).await?
-    };
+    let resp: TaskExecutionComposeResponseDto = send_json(req).await?;
     Ok((
         resp.merged_summary,
         resp.summary_count,
@@ -164,5 +152,5 @@ pub async fn upsert_task_result_brief(
         .put(build_url(path.as_str()).as_str())
         .timeout(timeout_duration())
         .json(req_body);
-    send_json_without_service_token(req).await
+    send_json(req).await
 }
