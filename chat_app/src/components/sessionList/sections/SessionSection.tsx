@@ -21,6 +21,8 @@ type ImRuntimeStateMap = Record<
     unreadCount?: number;
     latestRunStatus?: string | null;
     lastMessagePreview?: string | null;
+    busySource?: 'idle' | 'im_run' | 'task_execution';
+    taskBusyStatus?: 'pending_execute' | 'running' | null;
   }
 >;
 
@@ -131,9 +133,12 @@ export const SessionSection: React.FC<SessionSectionProps> = ({
                 const imRuntimeState = imRuntimeStateBySessionId?.[runtimeSessionId];
                 const unreadCount = Number(imRuntimeState?.unreadCount || 0);
                 const latestRunStatus = String(imRuntimeState?.latestRunStatus || '').trim().toLowerCase();
-                const busyText = latestRunStatus === 'queued' || latestRunStatus === 'pending'
-                  ? '处理中'
-                  : '执行中';
+                const taskBusyStatus = String(imRuntimeState?.taskBusyStatus || '').trim().toLowerCase();
+                const busyText = imRuntimeState?.busySource === 'task_execution'
+                  ? (taskBusyStatus === 'pending_execute' ? '待执行' : '任务执行中')
+                  : (latestRunStatus === 'queued' || latestRunStatus === 'pending'
+                    ? '处理中'
+                    : '执行中');
                 const previewText = typeof imRuntimeState?.lastMessagePreview === 'string'
                   ? imRuntimeState.lastMessagePreview.trim()
                   : '';

@@ -258,6 +258,7 @@ export const useSessionListController = ({
   }, [activePanel, hasRunningTerminals, isCollapsed, loadTerminals]);
 
   const { imRuntimeStateByRuntimeSessionId } = useContactImRuntimeState({
+    apiClient,
     sessions: sessions || [],
     displaySessions: contactScopeState.displayScopeSessions,
     displayBackingSessionIdMap: contactScopeState.displayBackingSessionIdMap,

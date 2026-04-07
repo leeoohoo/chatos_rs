@@ -11,6 +11,54 @@ import {
 } from './messageNormalization';
 import { readSessionImConversationId } from './sessionRuntime';
 
+const parseMaybeJsonObject = (value: unknown): Record<string, any> => {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, any>;
+  }
+  if (typeof value !== 'string') {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, any>
+      : {};
+  } catch {
+    return {};
+  }
+};
+
+const isTaskNoticeRawMessage = (message: any): boolean => {
+  const messageMode = typeof message?.message_mode === 'string'
+    ? message.message_mode.trim().toLowerCase()
+    : typeof message?.messageMode === 'string'
+      ? message.messageMode.trim().toLowerCase()
+      : '';
+  if (messageMode === 'task_notice') {
+    return true;
+  }
+
+  const metadata = parseMaybeJsonObject(message?.metadata);
+  const metadataType = typeof metadata?.type === 'string'
+    ? metadata.type.trim().toLowerCase()
+    : '';
+  return metadataType === 'task_execution_notice';
+};
+
+const mergeAndSortMessages = (messages: Message[]): Message[] => {
+  const deduped = new Map<string, Message>();
+  messages.forEach((message) => {
+    if (!message?.id) {
+      return;
+    }
+    deduped.set(message.id, message);
+  });
+
+  return Array.from(deduped.values()).sort((left, right) => (
+    new Date(left.createdAt || 0).getTime() - new Date(right.createdAt || 0).getTime()
+  ));
+};
+
 const resolveUserProcessKey = (message: any): string => (
   getConversationTurnId(message)
   || normalizeTurnId(message?.metadata?.historyProcess?.turnId)
@@ -298,22 +346,38 @@ export const fetchSessionMessages = async (
 
   if (imConversationId) {
     const fetchLimit = Math.max(1, limit + offset);
-    const rawMessages = await client.getImConversationMessages(imConversationId, {
-      limit: fetchLimit,
-      order: 'desc',
-    });
-    const ascendingMessages = normalizeImConversationMessages(rawMessages, sessionId).reverse();
+    const [rawImMessages, rawSessionMessages] = await Promise.all([
+      client.getImConversationMessages(imConversationId, {
+        limit: fetchLimit,
+        order: 'desc',
+      }),
+      client.getSessionMessages(sessionId, {
+        limit: fetchLimit,
+        offset: 0,
+        compact: false,
+      }).catch(() => []),
+    ]);
+    const ascendingImMessages = normalizeImConversationMessages(rawImMessages, sessionId).reverse();
+    const taskNoticeMessages = normalizeRawMessages(
+      (Array.isArray(rawSessionMessages) ? rawSessionMessages : []).filter(isTaskNoticeRawMessage),
+      sessionId,
+    );
+    const mergedMessages = mergeAndSortMessages([
+      ...ascendingImMessages,
+      ...taskNoticeMessages,
+    ]);
     const olderCount = offset > 0
-      ? Math.max(0, ascendingMessages.length - offset)
-      : ascendingMessages.length;
+      ? Math.max(0, mergedMessages.length - offset)
+      : mergedMessages.length;
     const pagedMessages = offset > 0
-      ? ascendingMessages.slice(0, olderCount)
-      : ascendingMessages;
+      ? mergedMessages.slice(0, olderCount)
+      : mergedMessages;
 
     debugLog('[Store] Loaded IM session messages', {
       sessionId,
       imConversationId,
       requested: { limit, offset, fetchLimit },
+      taskNoticeCount: taskNoticeMessages.length,
       received: pagedMessages.length,
     });
     return pagedMessages;
