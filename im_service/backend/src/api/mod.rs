@@ -11,6 +11,7 @@ mod action_requests_api;
 mod contacts_api;
 mod conversations_api;
 mod event_publish;
+mod internal_events_api;
 mod messages_api;
 mod runs_api;
 mod shared;
@@ -82,6 +83,10 @@ pub fn router(state: SharedState) -> Router {
         .route(
             "/api/im/v1/internal/runs/:run_id",
             patch(runs_api::update_run),
+        )
+        .route(
+            "/api/im/v1/internal/events",
+            post(internal_events_api::publish_event),
         )
         .with_state(state)
 }

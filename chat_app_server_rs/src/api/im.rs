@@ -1,25 +1,34 @@
+use chrono::{DateTime, Utc};
 use axum::extract::{Path, Query};
 use axum::http::StatusCode;
 use axum::{routing::get, Json, Router};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use tracing::warn;
+use tracing::{info, warn};
 
 use crate::core::auth::AuthUser;
 use crate::config::Config;
 use crate::services::im_service_client::{
-    self, CreateConversationMessageRequestDto, CreateConversationRequestDto,
-    CreateConversationRunRequestDto, CreateImContactRequestDto, UpdateConversationActionRequestDto,
-    UpdateConversationRequestDto,
+    self, ConversationMessageDto, CreateConversationMessageRequestDto,
+    CreateConversationRequestDto, CreateConversationRunRequestDto, CreateImContactRequestDto,
+    ImContactDto, ImConversationDto, UpdateConversationActionRequestDto, UpdateConversationRequestDto,
+    UpdateConversationRunRequestDto,
 };
 use crate::services::im_orchestrator;
 use crate::services::memory_server_client;
-use crate::services::task_manager::{submit_task_review_decision, TaskDraft, TaskReviewAction};
+use crate::services::task_manager::{
+    create_tasks_for_turn, submit_task_review_decision, TaskCreateReviewPayload, TaskDraft,
+    TaskReviewAction, REVIEW_NOT_FOUND_ERR,
+};
+use crate::services::runtime_guidance_manager::{runtime_guidance_manager, EnqueueGuidanceError};
 use crate::services::ui_prompt_manager::{
     get_ui_prompt_payload, get_ui_prompt_record_by_id, parse_response_submission,
     redact_response_for_store, submit_ui_prompt_response, update_ui_prompt_response,
     UiPromptPayload, UiPromptStatus, UI_PROMPT_NOT_FOUND_ERR, UI_PROMPT_TIMEOUT_MS_DEFAULT,
 };
+use crate::utils::abort_registry;
+
+const ACTIVE_IM_RUN_STALE_SECS: i64 = 120;
 
 pub fn router() -> Router {
     Router::new()
@@ -193,7 +202,7 @@ async fn create_conversation_message(
     match im_service_client::create_conversation_message(conversation_id.as_str(), &req).await {
         Ok(item) => {
             if is_user_message {
-                enqueue_conversation_run(conversation_id.as_str(), &item).await;
+                dispatch_contact_scope_input(conversation_id.as_str(), &item).await;
             }
             (StatusCode::CREATED, Json(json!(item)))
         }
@@ -371,6 +380,256 @@ async fn enqueue_conversation_run(
     }
 }
 
+async fn dispatch_contact_scope_input(
+    conversation_id: &str,
+    message: &ConversationMessageDto,
+) {
+    info!(
+        "[IM-ORCH] dispatch input begin: conversation_id={} message_id={} sender_type={}",
+        conversation_id, message.id, message.sender_type
+    );
+    let conversation = match im_service_client::get_conversation(conversation_id).await {
+        Ok(item) => item,
+        Err(err) => {
+            warn!(
+                "[IM-ORCH] load conversation failed when dispatch input: conversation_id={} message_id={} error={}",
+                conversation_id, message.id, err
+            );
+            enqueue_conversation_run(conversation_id, message).await;
+            return;
+        }
+    };
+    let contact = match resolve_execution_contact(
+        conversation.owner_user_id.as_str(),
+        conversation.contact_id.as_str(),
+    )
+    .await
+    {
+        Ok(item) => item,
+        Err(err) => {
+            warn!(
+                "[IM-ORCH] resolve execution contact failed when dispatch input: conversation_id={} message_id={} error={}",
+                conversation_id, message.id, err
+            );
+            enqueue_conversation_run(conversation_id, message).await;
+            return;
+        }
+    };
+
+    match try_enqueue_runtime_guidance_for_scope(&conversation, &contact, message).await {
+        Ok(true) => {}
+        Ok(false) => {
+            info!(
+                "[IM-ORCH] no active runtime found, creating new run: conversation_id={} message_id={}",
+                conversation_id, message.id
+            );
+            enqueue_conversation_run(conversation_id, message).await
+        }
+        Err(err) => {
+            warn!(
+                "[IM-ORCH] dispatch input failed, fallback to new run: conversation_id={} message_id={} error={}",
+                conversation_id, message.id, err
+            );
+            enqueue_conversation_run(conversation_id, message).await;
+        }
+    }
+}
+
+async fn try_enqueue_runtime_guidance_for_scope(
+    conversation: &ImConversationDto,
+    contact: &ImContactDto,
+    message: &ConversationMessageDto,
+) -> Result<bool, String> {
+    if try_enqueue_im_run_guidance(conversation, contact, message).await? {
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+async fn try_enqueue_im_run_guidance(
+    conversation: &ImConversationDto,
+    contact: &ImContactDto,
+    message: &ConversationMessageDto,
+) -> Result<bool, String> {
+    let runs = im_service_client::list_runs(conversation.id.as_str()).await?;
+    let active_run = runs.into_iter().find(|run| {
+        let status = run.status.trim().to_ascii_lowercase();
+        status == "running" || status == "queued"
+    });
+    let Some(run) = active_run else {
+        return Ok(false);
+    };
+    if retire_stale_im_run_if_needed(conversation, &run).await? {
+        return Ok(false);
+    }
+    let execution_session_id = run
+        .execution_session_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let execution_turn_id = run
+        .execution_turn_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    if execution_session_id.is_none() || execution_turn_id.is_none() {
+        info!(
+            "[IM-ORCH] queued run not ready yet, hold message for startup merge: conversation_id={} message_id={} run_id={}",
+            conversation.id, message.id, run.id
+        );
+        create_guidance_ack_message(
+            conversation,
+            contact,
+            message,
+            "收到，我会把这条补充和上一条一起合并处理。",
+            json!({
+                "type": "runtime_guidance_ack",
+                "guidance_target": "im_run_starting",
+                "run_id": run.id,
+                "status": run.status,
+            }),
+        )
+        .await?;
+        return Ok(true);
+    }
+
+    let guidance = match runtime_guidance_manager().enqueue_guidance(
+        execution_session_id.unwrap_or_default(),
+        execution_turn_id.unwrap_or_default(),
+        message.content.as_str(),
+    ) {
+        Ok(item) => item,
+        Err(EnqueueGuidanceError::TurnNotRunning) => return Ok(false),
+    };
+
+    info!(
+        "[IM-ORCH] routed user message as im runtime guidance: conversation_id={} message_id={} run_id={} guidance_id={}",
+        conversation.id, message.id, run.id, guidance.guidance_id
+    );
+    create_guidance_ack_message(
+        conversation,
+        contact,
+        message,
+        "收到，我会把这条补充合并进当前处理中内容。",
+        json!({
+            "type": "runtime_guidance_ack",
+            "guidance_target": "im_run",
+            "guidance_id": guidance.guidance_id,
+            "run_id": run.id,
+        }),
+    )
+    .await?;
+    Ok(true)
+}
+
+async fn retire_stale_im_run_if_needed(
+    conversation: &ImConversationDto,
+    run: &im_service_client::ConversationRunDto,
+) -> Result<bool, String> {
+    let Some(age_secs) = active_run_age_secs(run) else {
+        return Ok(false);
+    };
+    if age_secs < ACTIVE_IM_RUN_STALE_SECS {
+        return Ok(false);
+    }
+
+    warn!(
+        "[IM-ORCH] retire stale active run before accepting new message: conversation_id={} run_id={} status={} age_secs={}",
+        conversation.id, run.id, run.status, age_secs
+    );
+
+    if let Some(session_id) = run
+        .execution_session_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let _ = abort_registry::abort(session_id);
+    }
+
+    im_service_client::update_run_internal(
+        run.id.as_str(),
+        &UpdateConversationRunRequestDto {
+            status: Some("failed".to_string()),
+            error_message: Some(format!(
+                "stale_active_run_timeout:{}s",
+                age_secs
+            )),
+            execution_session_id: run.execution_session_id.clone(),
+            execution_turn_id: run.execution_turn_id.clone(),
+            execution_scope_key: run.execution_scope_key.clone(),
+            started_at: run.started_at.clone(),
+            finished_at: Some(crate::core::time::now_rfc3339()),
+            ..UpdateConversationRunRequestDto::default()
+        },
+    )
+    .await?;
+
+    Ok(true)
+}
+
+fn active_run_age_secs(run: &im_service_client::ConversationRunDto) -> Option<i64> {
+    let started_at = run
+        .started_at
+        .as_deref()
+        .or(Some(run.created_at.as_str()))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let parsed = DateTime::parse_from_rfc3339(started_at).ok()?;
+    let now = Utc::now();
+    Some((now - parsed.with_timezone(&Utc)).num_seconds().max(0))
+}
+
+async fn create_guidance_ack_message(
+    conversation: &ImConversationDto,
+    contact: &ImContactDto,
+    source_message: &ConversationMessageDto,
+    content: &str,
+    metadata: Value,
+) -> Result<ConversationMessageDto, String> {
+    let mut metadata = metadata;
+    if let Some(object) = metadata.as_object_mut() {
+        object.insert(
+            "reply_context".to_string(),
+            json!({
+                "message_id": source_message.id,
+                "sender_type": source_message.sender_type,
+                "preview": truncate_preview(source_message.content.as_str()),
+            }),
+        );
+    }
+    im_service_client::create_conversation_message_internal(
+        conversation.id.as_str(),
+        &CreateConversationMessageRequestDto {
+            sender_type: "contact".to_string(),
+            sender_id: Some(contact.id.clone()),
+            message_type: Some("text".to_string()),
+            content: content.to_string(),
+            delivery_status: Some("sent".to_string()),
+            client_message_id: None,
+            reply_to_message_id: Some(source_message.id.clone()),
+            metadata: Some(metadata),
+        },
+    )
+    .await
+}
+
+fn truncate_preview(value: &str) -> String {
+    const MAX_CHARS: usize = 120;
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    let preview: String = trimmed.chars().take(MAX_CHARS).collect();
+    if trimmed.chars().count() > MAX_CHARS {
+        format!("{}...", preview)
+    } else {
+        preview
+    }
+}
+
 async fn resolve_execution_contact(
     owner_user_id: &str,
     conversation_contact_id: &str,
@@ -449,6 +708,9 @@ async fn submit_task_review_action(
     payload: Value,
     raw: Value,
 ) -> Result<(String, Value, Value), String> {
+    let payload = parse_action_request_payload(payload)?;
+    let review_payload = serde_json::from_value::<TaskCreateReviewPayload>(payload.clone())
+        .map_err(|err| format!("invalid task review action_request payload: {}", err))?;
     let review_id = payload
         .get("review_id")
         .and_then(Value::as_str)
@@ -464,7 +726,28 @@ async fn submit_task_review_action(
         }
     }
 
-    let result = submit_task_review_decision(review_id, req.action, req.tasks.clone(), req.reason.clone()).await?;
+    let result = match submit_task_review_decision(
+        review_id,
+        req.action,
+        req.tasks.clone(),
+        req.reason.clone(),
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(err)
+            if err == REVIEW_NOT_FOUND_ERR || err == "review_listener_closed" =>
+        {
+            warn!(
+                review_id = review_id,
+                action = req.action.as_str(),
+                error = %err,
+                "task review hub entry missing; fallback to persisted IM action request payload"
+            );
+            resolve_task_review_from_persisted_payload(&review_payload, &req).await?
+        }
+        Err(err) => return Err(err),
+    };
     let stored_submission = json!({
         "action": req.action.as_str(),
         "tasks": req.tasks,
@@ -485,10 +768,38 @@ async fn submit_task_review_action(
     ))
 }
 
+async fn resolve_task_review_from_persisted_payload(
+    review_payload: &TaskCreateReviewPayload,
+    req: &SubmitTaskReviewRequest,
+) -> Result<TaskCreateReviewPayload, String> {
+    match req.action {
+        TaskReviewAction::Confirm => {
+            let tasks = req
+                .tasks
+                .clone()
+                .unwrap_or_else(|| review_payload.draft_tasks.clone());
+            let empty = tasks.is_empty();
+            if empty {
+                return Err("tasks is required for confirm action".to_string());
+            }
+            let _ = create_tasks_for_turn(
+                review_payload.session_id.as_str(),
+                review_payload.conversation_turn_id.as_str(),
+                tasks,
+            )
+            .await?;
+        }
+        TaskReviewAction::Cancel => {}
+    }
+
+    Ok(review_payload.clone())
+}
+
 async fn submit_ui_prompt_action(
     payload: Value,
     raw: Value,
 ) -> Result<(String, Value, Value), String> {
+    let payload = parse_action_request_payload(payload)?;
     let prompt_id = payload
         .get("prompt_id")
         .and_then(Value::as_str)
@@ -524,6 +835,15 @@ async fn submit_ui_prompt_action(
             "status": submission.status,
         }),
     ))
+}
+
+fn parse_action_request_payload(payload: Value) -> Result<Value, String> {
+    match payload {
+        Value::Object(_) => Ok(payload),
+        Value::String(raw) => serde_json::from_str::<Value>(raw.as_str())
+            .map_err(|err| format!("invalid stored action_request payload: {}", err)),
+        _ => Err("invalid action_request payload".to_string()),
+    }
 }
 
 async fn load_ui_prompt_payload(prompt_id: &str) -> Result<UiPromptPayload, String> {

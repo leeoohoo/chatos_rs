@@ -75,6 +75,17 @@ export interface ContactBuiltinMcpGrantsResponse {
   authorized_builtin_mcp_ids?: string[];
 }
 
+export interface TaskCapabilityResponse {
+  token: string;
+  builtin_mcp_id: string;
+  display_name: string;
+  description: string;
+  contact_authorizable: boolean;
+  planning_visible: boolean;
+  default_when_available?: boolean;
+  runtime_requirements?: string[];
+}
+
 export interface ContactProjectMemoryResponse {
   id: string;
   user_id?: string;
@@ -941,7 +952,7 @@ export interface TaskManagerUpdatePayload {
   title?: string;
   details?: string;
   priority?: 'high' | 'medium' | 'low';
-  status?: 'pending_confirm' | 'pending_execute' | 'running' | 'completed' | 'failed' | 'cancelled';
+  status?: 'pending_confirm' | 'pending_execute' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled';
   tags?: string[];
   due_at?: string | null;
 }
@@ -951,7 +962,7 @@ export interface TaskManagerTaskResponse {
   title?: string;
   details?: string | null;
   priority?: 'high' | 'medium' | 'low' | null;
-  status?: 'pending_confirm' | 'pending_execute' | 'running' | 'completed' | 'failed' | 'cancelled' | null;
+  status?: 'pending_confirm' | 'pending_execute' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled' | null;
   tags?: string[];
   due_at?: string | null;
   created_at?: string;
@@ -1001,7 +1012,7 @@ export interface TaskReviewTaskDraft {
   title?: string;
   details?: string;
   priority?: 'high' | 'medium' | 'low';
-  status?: 'pending_confirm' | 'pending_execute' | 'running' | 'completed' | 'failed' | 'cancelled';
+  status?: 'pending_confirm' | 'pending_execute' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled';
   tags?: string[];
   due_at?: string | null;
   [key: string]: unknown;

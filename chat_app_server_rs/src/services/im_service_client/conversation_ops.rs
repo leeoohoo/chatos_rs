@@ -1,8 +1,8 @@
 use super::dto::{
     ConversationActionRequestDto, ConversationMessageDto, ConversationRunDto,
-    CreateConversationActionRequestDto,
-    CreateConversationMessageRequestDto, CreateConversationRequestDto,
-    CreateConversationRunRequestDto, ImConversationDto, UpdateConversationRequestDto,
+    CreateConversationActionRequestDto, CreateConversationMessageRequestDto,
+    CreateConversationRequestDto, CreateConversationRunRequestDto, ImConversationDto,
+    PublishConversationEventRequestDto, UpdateConversationRequestDto,
     UpdateConversationActionRequestDto, UpdateConversationRunRequestDto,
 };
 use super::http::{
@@ -166,6 +166,16 @@ pub async fn update_run_internal(
         .patch(
             build_url(&format!("/internal/runs/{}", urlencoding::encode(run_id))).as_str(),
         )
+        .timeout(timeout_duration())
+        .json(req_body);
+    send_json_with_service_token(req).await
+}
+
+pub async fn publish_internal_event(
+    req_body: &PublishConversationEventRequestDto,
+) -> Result<serde_json::Value, String> {
+    let req = client()
+        .post(build_url("/internal/events").as_str())
         .timeout(timeout_duration())
         .json(req_body);
     send_json_with_service_token(req).await

@@ -177,3 +177,12 @@ pub struct UpdateConversationRunRequestDto {
     pub started_at: Option<String>,
     pub finished_at: Option<String>,
 }
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PublishConversationEventRequestDto {
+    pub owner_user_id: String,
+    pub event_type: String,
+    pub conversation_id: String,
+    pub field_name: String,
+    pub payload: Value,
+}

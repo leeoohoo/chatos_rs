@@ -6,6 +6,7 @@ import { CreateContactModal } from './CreateContactModal';
 import { CreateProjectModal, CreateTerminalModal } from './CreateResourceModals';
 import { DirPickerDialog, KeyFilePickerDialog } from './Pickers';
 import { RemoteConnectionModal } from './RemoteConnectionModal';
+import type { TaskCapabilityResponse } from '../../lib/api/client/types';
 
 interface SessionListDialogsProps {
   createContactModalOpen: boolean;
@@ -20,6 +21,7 @@ interface SessionListDialogsProps {
 
   builtinMcpGrantsModalOpen: boolean;
   builtinMcpGrantsContactName: string;
+  builtinMcpGrantOptions: TaskCapabilityResponse[];
   builtinMcpGrantsSelectedIds: string[];
   builtinMcpGrantsLoading: boolean;
   builtinMcpGrantsSaving: boolean;
@@ -136,6 +138,7 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
   handleCreateContactSession,
   builtinMcpGrantsModalOpen,
   builtinMcpGrantsContactName,
+  builtinMcpGrantOptions,
   builtinMcpGrantsSelectedIds,
   builtinMcpGrantsLoading,
   builtinMcpGrantsSaving,
@@ -237,6 +240,7 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
     <ContactBuiltinMcpGrantsModal
       isOpen={builtinMcpGrantsModalOpen}
       contactName={builtinMcpGrantsContactName}
+      options={builtinMcpGrantOptions}
       selectedIds={builtinMcpGrantsSelectedIds}
       loading={builtinMcpGrantsLoading}
       saving={builtinMcpGrantsSaving}

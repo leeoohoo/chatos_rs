@@ -349,6 +349,7 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
         latestRunStatus: null,
         lastMessagePreview: null,
         lastMessageAt: null,
+        taskExecutionStatus: null,
       };
       state.imConversationRuntimeByConversationId[normalizedConversationId] = {
         ...previous,
@@ -968,6 +969,17 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
         const conversationId = normalizeId(payload.conversation_id ?? run?.conversation_id);
         set((state: any) => {
           applyImRunRuntimeState(state, conversationId, run);
+        });
+        return;
+      }
+
+      if (payload.type === 'im.task_execution.updated' && payload.task_execution) {
+        const conversationId = normalizeId(payload.conversation_id);
+        const taskStatus = normalizeId(payload.task_execution?.status).toLowerCase();
+        set((state: any) => {
+          upsertImConversationRuntimeState(state, conversationId, {
+            taskExecutionStatus: taskStatus || null,
+          });
         });
       }
     };

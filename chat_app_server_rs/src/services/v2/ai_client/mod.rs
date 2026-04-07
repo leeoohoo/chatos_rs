@@ -453,18 +453,13 @@ fn drain_runtime_guidance_messages(
 
 fn build_runtime_guidance_message(guidance_item: &RuntimeGuidanceItem) -> Value {
     json!({
-        "role": "system",
+        "role": "user",
         "content": format_runtime_guidance_instruction(guidance_item),
     })
 }
 
 fn format_runtime_guidance_instruction(guidance_item: &RuntimeGuidanceItem) -> String {
-    format!(
-        "[Runtime Guidance]\n- guidance_id: {}\n- time: {}\n- source: user guidance during running turn\n- instruction: {}\n- rule: treat this as high-priority preference unless conflicts with safety",
-        guidance_item.guidance_id,
-        guidance_item.created_at,
-        guidance_item.content
-    )
+    guidance_item.content.trim().to_string()
 }
 
 impl AiClientSettings for AiClient {

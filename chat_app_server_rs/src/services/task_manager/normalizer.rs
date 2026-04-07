@@ -70,6 +70,7 @@ pub(super) fn normalize_status(value: &str) -> String {
         "pending_confirm" => "pending_confirm".to_string(),
         "pending_execute" => "pending_execute".to_string(),
         "running" => "running".to_string(),
+        "paused" => "paused".to_string(),
         "completed" => "completed".to_string(),
         "failed" => "failed".to_string(),
         "cancelled" => "cancelled".to_string(),

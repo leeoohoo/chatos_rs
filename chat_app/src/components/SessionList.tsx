@@ -181,6 +181,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
         handleCreateContactSession={controller.contactScopeCreator.handleCreateContactSession}
         builtinMcpGrantsModalOpen={controller.builtinMcpGrantsModalOpen}
         builtinMcpGrantsContactName={controller.builtinMcpGrantsContactName}
+        builtinMcpGrantOptions={controller.builtinMcpGrantOptions}
         builtinMcpGrantsSelectedIds={controller.builtinMcpGrantsSelectedIds}
         builtinMcpGrantsLoading={controller.builtinMcpGrantsLoading}
         builtinMcpGrantsSaving={controller.builtinMcpGrantsSaving}

@@ -19,6 +19,7 @@ import type {
   McpConfigResourceResponse,
   McpConfigResponse,
   McpConfigUpdatePayload,
+  TaskCapabilityResponse,
   MemoryAgentsQueryOptions,
   MemoryAgentResponse,
   MemoryAgentRuntimeContextResponse,
@@ -35,6 +36,7 @@ import type {
 import type ApiClient from '../../client';
 
 export interface ConfigFacade {
+  getTaskCapabilities(): Promise<TaskCapabilityResponse[]>;
   getMcpConfigs(userId?: string): Promise<McpConfigResponse[]>;
   createMcpConfig(data: McpConfigCreatePayload): Promise<McpConfigResponse>;
   updateMcpConfig(id: string, data: McpConfigUpdatePayload): Promise<McpConfigResponse>;
@@ -80,6 +82,9 @@ export interface ConfigFacade {
 }
 
 export const configFacade: ConfigFacade & ThisType<ApiClient> = {
+  async getTaskCapabilities() {
+    return configsApi.getTaskCapabilities(this.getRequestFn());
+  },
   async getMcpConfigs(userId) {
     return configsApi.getMcpConfigs(this.getRequestFn(), userId);
   },

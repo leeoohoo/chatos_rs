@@ -6,11 +6,14 @@ use serde_json::{json, Value};
 use crate::builtin::task_planner::parsing::{parse_task_drafts, trimmed_non_empty};
 use crate::core::async_bridge::block_on_result;
 use crate::core::tool_io::text_result;
+use crate::services::im_task_runtime_bridge::publish_task_runtime_update_best_effort;
 use crate::services::memory_server_client;
 use crate::services::task_manager::{
     create_tasks_for_turn, list_tasks_for_context, resolve_task_scope_context,
 };
-use crate::services::task_service_client::{self, TaskRecordDto, UpdateTaskRequestDto};
+use crate::services::task_service_client::{
+    self, AckPauseTaskRequestDto, AckStopTaskRequestDto, TaskRecordDto, UpdateTaskRequestDto,
+};
 
 #[derive(Debug, Clone)]
 pub struct TaskExecutorOptions {
@@ -49,6 +52,8 @@ impl TaskExecutorService {
         );
         service
             .register_fail_current_task(opts.server_name.as_str(), opts.current_task_id.as_str());
+        service.register_ack_pause_request(opts.current_task_id.as_str());
+        service.register_ack_stop_request(opts.current_task_id.as_str());
         Ok(service)
     }
 
@@ -172,7 +177,7 @@ impl TaskExecutorService {
                                 "due_at": { "type": "string" },
                                 "required_builtin_capabilities": {
                                     "type": "array",
-                                    "items": { "type": "string", "enum": ["read", "write", "terminal", "remote"] }
+                                    "items": { "type": "string", "enum": ["read", "write", "terminal", "remote", "notepad", "ui_prompter"] }
                                 },
                                 "required_context_assets": {
                                     "type": "array",
@@ -197,7 +202,7 @@ impl TaskExecutorService {
                     "priority": { "type": "string", "enum": ["high", "medium", "low"] },
                     "required_builtin_capabilities": {
                         "type": "array",
-                        "items": { "type": "string", "enum": ["read", "write", "terminal", "remote"] }
+                        "items": { "type": "string", "enum": ["read", "write", "terminal", "remote", "notepad", "ui_prompter"] }
                     },
                     "required_context_assets": {
                         "type": "array",
@@ -257,15 +262,13 @@ impl TaskExecutorService {
             }),
             Arc::new(move |_args| {
                 let scope = load_scope_for_current_task(bound_task_id.as_str())?;
-                let contacts = block_on_result(memory_server_client::list_memory_contacts(
+                let contact = block_on_result(memory_server_client::resolve_memory_contact(
                     Some(scope.user_id.as_str()),
-                    Some(500),
-                    0,
+                    scope.contact_id.as_deref(),
+                    Some(scope.contact_agent_id.as_str()),
                 ))?;
-                let contact = contacts
-                    .into_iter()
-                    .find(|item| item.agent_id == scope.contact_agent_id);
                 Ok(text_result(json!({
+                    "contact_id": scope.contact_id,
                     "contact_agent_id": scope.contact_agent_id,
                     "authorized_builtin_mcp_ids": contact
                         .map(|item| item.authorized_builtin_mcp_ids)
@@ -380,6 +383,10 @@ impl TaskExecutorService {
                     },
                 ))?
                 .ok_or_else(|| "task not found".to_string())?;
+                let _ = block_on_result(async {
+                    publish_task_runtime_update_best_effort(&task).await;
+                    Ok::<(), String>(())
+                });
                 Ok(text_result(json!({
                     "task": task,
                     "result": result,
@@ -417,6 +424,93 @@ impl TaskExecutorService {
                     },
                 ))?
                 .ok_or_else(|| "task not found".to_string())?;
+                let _ = block_on_result(async {
+                    publish_task_runtime_update_best_effort(&task).await;
+                    Ok::<(), String>(())
+                });
+                Ok(text_result(json!({
+                    "task": task,
+                    "result": result,
+                })))
+            }),
+        );
+    }
+
+    fn register_ack_pause_request(&mut self, current_task_id: &str) {
+        let bound_task_id = current_task_id.trim().to_string();
+        self.register_tool(
+            "ack_pause_request",
+            "Acknowledge that the current running task should pause now. Use this at a safe stopping point and include a checkpoint summary so the task can continue later.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "checkpoint_summary": { "type": "string" },
+                    "checkpoint_message_id": { "type": "string" }
+                },
+                "required": ["checkpoint_summary"],
+                "additionalProperties": false
+            }),
+            Arc::new(move |args| {
+                let checkpoint_summary = required_string(&args, "checkpoint_summary")?;
+                let checkpoint_message_id = args
+                    .get("checkpoint_message_id")
+                    .and_then(Value::as_str)
+                    .and_then(trimmed_non_empty)
+                    .map(|value| value.to_string());
+                let task = block_on_result(task_service_client::ack_pause_task(
+                    bound_task_id.as_str(),
+                    &AckPauseTaskRequestDto {
+                        checkpoint_summary: Some(checkpoint_summary.clone()),
+                        checkpoint_message_id,
+                    },
+                ))?
+                .ok_or_else(|| "task not found".to_string())?;
+                let _ = block_on_result(async {
+                    publish_task_runtime_update_best_effort(&task).await;
+                    Ok::<(), String>(())
+                });
+                Ok(text_result(json!({
+                    "task": task,
+                    "checkpoint_summary": checkpoint_summary,
+                })))
+            }),
+        );
+    }
+
+    fn register_ack_stop_request(&mut self, current_task_id: &str) {
+        let bound_task_id = current_task_id.trim().to_string();
+        self.register_tool(
+            "ack_stop_request",
+            "Acknowledge that the current running task should stop now. Use this at a safe stopping point and return the partial result or stop reason.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "result": { "type": "string" },
+                    "last_error": { "type": "string" }
+                },
+                "required": ["result"],
+                "additionalProperties": false
+            }),
+            Arc::new(move |args| {
+                let result = required_string(&args, "result")?;
+                let last_error = args
+                    .get("last_error")
+                    .and_then(Value::as_str)
+                    .and_then(trimmed_non_empty)
+                    .map(|value| value.to_string());
+                let task = block_on_result(task_service_client::ack_stop_task(
+                    bound_task_id.as_str(),
+                    &AckStopTaskRequestDto {
+                        result_summary: Some(result.clone()),
+                        result_message_id: None,
+                        last_error,
+                    },
+                ))?
+                .ok_or_else(|| "task not found".to_string())?;
+                let _ = block_on_result(async {
+                    publish_task_runtime_update_best_effort(&task).await;
+                    Ok::<(), String>(())
+                });
                 Ok(text_result(json!({
                     "task": task,
                     "result": result,

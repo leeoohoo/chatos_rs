@@ -34,7 +34,7 @@ pub use self::contact_ops::{
     create_memory_contact, delete_memory_contact, get_contact_builtin_mcp_grants,
     list_contact_agent_recalls, list_contact_project_memories,
     list_contact_project_memories_by_contact, list_contact_projects, list_memory_contacts,
-    list_project_contacts, sync_memory_project, sync_project_agent_link,
+    list_project_contacts, resolve_memory_contact, sync_memory_project, sync_project_agent_link,
     update_contact_builtin_mcp_grants,
 };
 pub use self::model_config_ops::get_memory_model_config;

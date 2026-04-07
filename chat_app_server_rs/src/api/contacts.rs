@@ -6,6 +6,7 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
+use tracing::info;
 
 use crate::core::auth::AuthUser;
 use crate::core::user_scope::resolve_user_id;
@@ -138,7 +139,14 @@ async fn get_contact_builtin_mcp_grants(
     Path(contact_id): Path<String>,
 ) -> (StatusCode, Json<Value>) {
     match memory_server_client::get_contact_builtin_mcp_grants(contact_id.as_str()).await {
-        Ok(Some(result)) => (StatusCode::OK, Json(json!(result))),
+        Ok(Some(result)) => {
+            info!(
+                "contact builtin MCP grants loaded: contact_id={} grants={}",
+                result.contact_id,
+                result.authorized_builtin_mcp_ids.join(", ")
+            );
+            (StatusCode::OK, Json(json!(result)))
+        }
         Ok(None) => (
             StatusCode::NOT_FOUND,
             Json(json!({"error": "contact not found"})),
@@ -163,7 +171,14 @@ async fn update_contact_builtin_mcp_grants(
     )
     .await
     {
-        Ok(result) => (StatusCode::OK, Json(json!(result))),
+        Ok(result) => {
+            info!(
+                "contact builtin MCP grants updated: contact_id={} grants={}",
+                result.contact_id,
+                result.authorized_builtin_mcp_ids.join(", ")
+            );
+            (StatusCode::OK, Json(json!(result)))
+        }
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": "update contact builtin mcp grants failed", "detail": err})),

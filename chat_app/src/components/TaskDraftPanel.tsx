@@ -190,6 +190,7 @@ export const TaskDraftPanel: React.FC<TaskDraftPanelProps> = ({ panel, onConfirm
                   <option value="pending_confirm">pending_confirm</option>
                   <option value="pending_execute">pending_execute</option>
                   <option value="running">running</option>
+                  <option value="paused">paused</option>
                   <option value="completed">completed</option>
                   <option value="failed">failed</option>
                   <option value="cancelled">cancelled</option>

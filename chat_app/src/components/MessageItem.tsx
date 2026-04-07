@@ -152,6 +152,25 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
     && isAssistant
     && runtimeContextSessionId,
   );
+  const replyContext = useMemo(() => {
+    const raw = message.metadata?.reply_context;
+    if (!raw || typeof raw !== 'object') {
+      return null;
+    }
+
+    const preview = normalizeText((raw as any).preview);
+    const senderType = normalizeText((raw as any).sender_type);
+    const messageId = normalizeText((raw as any).message_id);
+    if (!preview && !messageId) {
+      return null;
+    }
+
+    return {
+      preview: preview || '引用消息',
+      senderType,
+      messageId,
+    };
+  }, [message.metadata?.reply_context]);
 
   // 隐藏tool角色的消息，因为它们应该作为工具调用的结果显示
   if (isTool) {
@@ -360,6 +379,23 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
               isChatRender && isSystem && 'bg-muted',
             )}
           >
+            {replyContext ? (
+              <div
+                className={cn(
+                  'rounded-xl border px-3 py-2 text-xs',
+                  isChatRender && isUser
+                    ? 'border-sky-300/80 bg-sky-50/80 text-sky-900 dark:border-sky-700 dark:bg-sky-950/30 dark:text-sky-100'
+                    : 'border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300',
+                )}
+              >
+                <div className="mb-1 font-medium">
+                  {replyContext.senderType === 'user' ? '回复你的消息' : '引用消息'}
+                </div>
+                <div className="whitespace-pre-wrap break-words">
+                  {replyContext.preview}
+                </div>
+              </div>
+            ) : null}
             <MessageContentRenderer
               message={message}
               isLast={isLast}

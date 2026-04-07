@@ -5,7 +5,7 @@ use axum::http::StatusCode;
 use axum::Json;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use tracing::warn;
+use tracing::{info, warn};
 
 use crate::core::chat_context::{resolve_effective_user_id, resolve_system_prompt};
 use crate::core::chat_runtime::{
@@ -208,7 +208,9 @@ pub(crate) async fn resolve_chat_stream_context(
     let contact_authorized_builtin_mcp_ids = if is_contact_chat_context {
         resolve_contact_authorized_builtin_mcp_ids(
             effective_user_id.as_deref(),
+            runtime_metadata.contact_id.as_deref(),
             contact_agent_id.as_deref(),
+            session_id,
         )
         .await
     } else {
@@ -472,23 +474,46 @@ fn seed_selected_commands(
 
 async fn resolve_contact_authorized_builtin_mcp_ids(
     effective_user_id: Option<&str>,
+    contact_id: Option<&str>,
     contact_agent_id: Option<&str>,
+    session_id: &str,
 ) -> Vec<String> {
-    let Some(contact_agent_id) = contact_agent_id.map(str::trim).filter(|value| !value.is_empty())
+    let has_contact_id = contact_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_some();
+    let has_contact_agent_id = contact_agent_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_some();
+    if !has_contact_id && !has_contact_agent_id {
+        return Vec::new();
+    }
+
+    let Ok(contact) = memory_server_client::resolve_memory_contact(
+        effective_user_id,
+        contact_id,
+        contact_agent_id,
+    )
+    .await
     else {
         return Vec::new();
     };
 
-    let Ok(contacts) = memory_server_client::list_memory_contacts(effective_user_id, Some(500), 0).await
-    else {
-        return Vec::new();
-    };
+    let grants = contact
+        .as_ref()
+        .map(|item| item.authorized_builtin_mcp_ids.clone())
+        .unwrap_or_default();
 
-    contacts
-        .into_iter()
-        .find(|item| item.agent_id.trim() == contact_agent_id)
-        .map(|item| item.authorized_builtin_mcp_ids)
-        .unwrap_or_default()
+    info!(
+        "resolved contact builtin MCP grants for chat context: session_id={} contact_id={} contact_agent_id={} grants={}",
+        session_id,
+        contact_id.unwrap_or_default(),
+        contact_agent_id.unwrap_or_default(),
+        grants.join(", ")
+    );
+
+    grants
 }
 
 fn merge_prompt_sections(base: Option<&str>, extra: Option<&str>) -> Option<String> {

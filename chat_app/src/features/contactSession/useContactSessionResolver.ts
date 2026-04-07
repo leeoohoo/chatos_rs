@@ -127,6 +127,16 @@ export const useContactScopeResolver = ({
     return matched || null;
   }, [sessions]);
 
+  const currentBackingSession = useCallback((): Session | null => {
+    const currentSessionId = typeof currentSession?.id === 'string'
+      ? currentSession.id.trim()
+      : '';
+    if (!currentSessionId) {
+      return null;
+    }
+    return findSessionInStoreById(currentSessionId);
+  }, [currentSession?.id, findSessionInStoreById]);
+
   const isSessionIdStillMatched = useCallback((
     sessionId: string,
     contact: ContactScopeEntity,
@@ -229,16 +239,17 @@ export const useContactScopeResolver = ({
     const currentContactId = resolveContactIdFromScopeRecord(currentSession);
     const currentContactAgentId = resolveContactAgentIdFromScopeRecord(currentSession);
     const currentSessionProjectId = resolveProjectScopeIdFromRecord(currentSession);
+    const resolvedCurrentBackingSession = currentBackingSession();
     if (
-      currentSession?.id
+      resolvedCurrentBackingSession?.id
       && (
         (currentContactId && currentContactId === contact.id)
         || (currentContactAgentId && currentContactAgentId === contact.agentId)
       )
       && currentSessionProjectId === normalizedProjectId
     ) {
-      sessionCacheRef.current[cacheKey] = currentSession.id;
-      return currentSession.id;
+      sessionCacheRef.current[cacheKey] = resolvedCurrentBackingSession.id;
+      return resolvedCurrentBackingSession.id;
     }
 
     const cachedSessionId = sessionCacheRef.current[cacheKey];
@@ -257,6 +268,7 @@ export const useContactScopeResolver = ({
     }
     return null;
   }, [
+    currentBackingSession,
     currentSession,
     findExistingSessionIdInStore,
     isSessionIdStillMatched,

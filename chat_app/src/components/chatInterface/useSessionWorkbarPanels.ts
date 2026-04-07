@@ -30,7 +30,7 @@ interface SessionWorkbarApiClient {
       title?: string;
       details?: string;
       priority?: 'high' | 'medium' | 'low';
-      status?: 'pending_confirm' | 'pending_execute' | 'running' | 'completed' | 'failed' | 'cancelled';
+      status?: 'pending_confirm' | 'pending_execute' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled';
       due_at?: string | null;
     },
   ) => Promise<unknown>;
@@ -42,7 +42,7 @@ interface SessionWorkbarApiClient {
         title: string;
         details: string;
         priority: 'high' | 'medium' | 'low';
-        status: 'pending_confirm' | 'pending_execute' | 'running' | 'completed' | 'failed' | 'cancelled';
+        status: 'pending_confirm' | 'pending_execute' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled';
         tags: string[];
         due_at?: string | null;
       }>;

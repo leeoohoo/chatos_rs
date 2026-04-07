@@ -2,6 +2,7 @@ export type TaskWorkbarStatus =
   | 'pending_confirm'
   | 'pending_execute'
   | 'running'
+  | 'paused'
   | 'completed'
   | 'failed'
   | 'cancelled';

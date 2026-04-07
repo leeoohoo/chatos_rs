@@ -4,6 +4,7 @@ use serde_json::{json, Value};
 use tokio::time::sleep;
 use tracing::{info, warn};
 
+use crate::core::mcp_tools::ToolResult;
 use crate::services::ai_common::{
     build_aborted_tool_results, build_tool_stream_callback, completion_failed_error,
 };
@@ -26,6 +27,8 @@ use super::tool_plan::{
     build_tool_call_execution_plan, build_tool_call_items, expand_tool_results_with_aliases,
 };
 use super::{AiClient, AiClientCallbacks};
+
+const IM_PLANNING_MUTATION_REPLY_PROMPT: &str = "本轮任务规划或任务调整已经完成。不要再调用任何工具，不要继续轮询任务状态，也不要重复查询授权或运行时资产。请立即用简短自然语言向用户总结本轮结果，并结束当前回复。";
 
 impl AiClient {
     pub(super) async fn process_with_tools(
@@ -60,6 +63,7 @@ impl AiClient {
         let include_tool_items = !tools.is_empty();
         let persist_tool_messages = purpose != "agent_builder";
         let mut input = input;
+        let mut tools = tools;
         let mut previous_response_id = previous_response_id;
         let mut use_prev_id = use_prev_id;
         let mut can_use_prev_id = can_use_prev_id;
@@ -488,6 +492,27 @@ impl AiClient {
             pending_tool_outputs = Some(tool_outputs.clone());
             pending_tool_calls = Some(tool_call_items.clone());
 
+            if should_force_finish_im_planning_turn(
+                turn_id.as_deref(),
+                purpose,
+                expanded_tool_results.as_slice(),
+            ) {
+                warn!(
+                    "[AI_V3] force IM planning turn to finish after successful mutation: session_id={}, turn_id={}",
+                    session_id.as_deref().unwrap_or("n/a"),
+                    turn_id.as_deref().unwrap_or("n/a")
+                );
+                runtime_guidance_items.push(build_im_planning_mutation_reply_input_item(
+                    force_text_content,
+                ));
+                tools.clear();
+                previous_response_id = None;
+                use_prev_id = false;
+                can_use_prev_id = false;
+                iteration += 1;
+                continue;
+            }
+
             let assistant_item = if !ai_response.content.is_empty() {
                 Some(to_message_item(
                     "assistant",
@@ -569,19 +594,22 @@ fn build_runtime_guidance_input_item(
     force_text_content: bool,
 ) -> Value {
     to_message_item(
-        "system",
+        "user",
         &Value::String(format_runtime_guidance_instruction(guidance_item)),
         force_text_content,
     )
 }
 
-fn format_runtime_guidance_instruction(guidance_item: &RuntimeGuidanceItem) -> String {
-    format!(
-        "[Runtime Guidance]\n- guidance_id: {}\n- time: {}\n- source: user guidance during running turn\n- instruction: {}\n- rule: treat this as high-priority preference unless conflicts with safety",
-        guidance_item.guidance_id,
-        guidance_item.created_at,
-        guidance_item.content
+fn build_im_planning_mutation_reply_input_item(force_text_content: bool) -> Value {
+    to_message_item(
+        "user",
+        &Value::String(IM_PLANNING_MUTATION_REPLY_PROMPT.to_string()),
+        force_text_content,
     )
+}
+
+fn format_runtime_guidance_instruction(guidance_item: &RuntimeGuidanceItem) -> String {
+    guidance_item.content.trim().to_string()
 }
 
 fn prepend_input_items(input: &Value, prefixed_items: &[Value], force_text_content: bool) -> Value {
@@ -602,4 +630,104 @@ fn is_non_terminal_finish_reason(finish_reason: Option<&str>) -> bool {
         normalized.as_deref(),
         Some("in_progress") | Some("queued") | Some("pending") | Some("incomplete")
     )
+}
+
+fn should_force_finish_im_planning_turn(
+    turn_id: Option<&str>,
+    purpose: &str,
+    tool_results: &[ToolResult],
+) -> bool {
+    if purpose != "chat" {
+        return false;
+    }
+    if !turn_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.starts_with("im-run-"))
+        .unwrap_or(false)
+    {
+        return false;
+    }
+
+    tool_results
+        .iter()
+        .any(is_successful_im_planning_mutation_result)
+}
+
+fn is_successful_im_planning_mutation_result(result: &ToolResult) -> bool {
+    if !result.success || result.is_error || result.is_stream {
+        return false;
+    }
+
+    let payload = serde_json::from_str::<Value>(result.content.as_str()).ok();
+    match result.name.as_str() {
+        "create_tasks" => payload
+            .as_ref()
+            .and_then(|value| value.get("confirmed").and_then(Value::as_bool))
+            == Some(true),
+        "confirm_task" => payload
+            .as_ref()
+            .and_then(|value| value.get("task_id").and_then(Value::as_str))
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .is_some(),
+        "request_pause_running_task" | "request_stop_running_task" => payload
+            .as_ref()
+            .and_then(|value| value.get("requested").and_then(Value::as_bool))
+            == Some(true),
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        is_successful_im_planning_mutation_result, should_force_finish_im_planning_turn,
+    };
+    use crate::core::mcp_tools::ToolResult;
+
+    fn tool_result(name: &str, content: &str) -> ToolResult {
+        ToolResult {
+            tool_call_id: "call_1".to_string(),
+            name: name.to_string(),
+            success: true,
+            is_error: false,
+            is_stream: false,
+            conversation_turn_id: Some("im-run-test".to_string()),
+            content: content.to_string(),
+        }
+    }
+
+    #[test]
+    fn detects_successful_create_tasks_as_planning_mutation() {
+        let result = tool_result(
+            "create_tasks",
+            r#"{"confirmed":true,"cancelled":false,"created_count":1}"#,
+        );
+        assert!(is_successful_im_planning_mutation_result(&result));
+        assert!(should_force_finish_im_planning_turn(
+            Some("im-run-123"),
+            "chat",
+            &[result]
+        ));
+    }
+
+    #[test]
+    fn ignores_cancelled_create_tasks_for_forced_finish() {
+        let result = tool_result(
+            "create_tasks",
+            r#"{"confirmed":false,"cancelled":true,"reason":"user_cancelled"}"#,
+        );
+        assert!(!is_successful_im_planning_mutation_result(&result));
+    }
+
+    #[test]
+    fn ignores_non_im_turns_even_when_mutation_succeeds() {
+        let result = tool_result("confirm_task", r#"{"task_id":"task_1","status":"pending_execute"}"#);
+        assert!(!should_force_finish_im_planning_turn(
+            Some("task-exec-123"),
+            "chat",
+            &[result]
+        ));
+    }
 }

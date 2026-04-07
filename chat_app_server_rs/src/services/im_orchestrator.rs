@@ -65,6 +65,7 @@ async fn process_run(
                     &run,
                     &conversation,
                     &contact,
+                    &source_message,
                     None,
                     Some(turn_id.as_str()),
                     Some(execution_scope_key.as_str()),
@@ -90,6 +91,7 @@ async fn process_run(
                 &run,
                 &conversation,
                 &contact,
+                &source_message,
                 None,
                 Some(turn_id.as_str()),
                 Some(execution_scope_key.as_str()),
@@ -122,6 +124,7 @@ async fn process_run(
                 &run,
                 &conversation,
                 &contact,
+                &source_message,
                 Some(session.id.as_str()),
                 Some(turn_id.as_str()),
                 Some(execution_scope_key.as_str()),
@@ -137,9 +140,23 @@ async fn process_run(
         .and_then(Value::as_bool)
         == Some(true);
     let source_attachments = extract_source_message_attachments(source_message.metadata.as_ref());
+    let startup_followups =
+        collect_startup_followup_messages(conversation.id.as_str(), source_message.id.as_str())
+            .await
+            .unwrap_or_default();
+    let request_content = build_startup_request_content(&source_message, &startup_followups);
+    if !startup_followups.is_empty() {
+        warn!(
+            "[IM-ORCH] merged startup follow-up messages into same run: conversation_id={} run_id={} source_message_id={} followup_count={}",
+            conversation.id,
+            run.id,
+            source_message.id,
+            startup_followups.len()
+        );
+    }
     let req = ChatStreamRequest {
         session_id: Some(session.id.clone()),
-        content: Some(source_message.content.clone()),
+        content: Some(request_content),
         ai_model_config: Some(model_config),
         user_id: Some(conversation.owner_user_id.clone()),
         attachments: source_attachments,
@@ -184,6 +201,7 @@ async fn process_run(
             conversation.id.as_str(),
             contact.id.as_str(),
             failure_text.as_str(),
+            &source_message,
             Some(session.id.as_str()),
             Some(json!({
                 "im_run": {
@@ -224,6 +242,7 @@ async fn process_run(
         conversation.id.as_str(),
         contact.id.as_str(),
         reply_text.as_str(),
+        &source_message,
         Some(session.id.as_str()),
         Some(json!({
             "im_run": {
@@ -260,6 +279,7 @@ async fn mark_run_failed(
     run: &ConversationRunDto,
     conversation: &ImConversationDto,
     contact: &ImContactDto,
+    source_message: &ConversationMessageDto,
     legacy_session_id: Option<&str>,
     legacy_turn_id: Option<&str>,
     execution_scope_key: Option<&str>,
@@ -270,6 +290,7 @@ async fn mark_run_failed(
         conversation.id.as_str(),
         contact.id.as_str(),
         format!("处理失败：{}", err).as_str(),
+        source_message,
         legacy_session_id,
         Some(json!({
             "im_run": {
@@ -303,9 +324,11 @@ async fn create_im_contact_message(
     conversation_id: &str,
     contact_id: &str,
     content: &str,
+    source_message: &ConversationMessageDto,
     _legacy_session_id: Option<&str>,
     metadata: Option<Value>,
 ) -> Result<ConversationMessageDto, String> {
+    let metadata = append_reply_context(metadata, source_message);
     let message = im_service_client::create_conversation_message(
         conversation_id,
         &CreateConversationMessageRequestDto {
@@ -315,8 +338,8 @@ async fn create_im_contact_message(
             content: content.to_string(),
             delivery_status: Some("sent".to_string()),
             client_message_id: None,
-            reply_to_message_id: None,
-            metadata: metadata.clone(),
+            reply_to_message_id: Some(source_message.id.clone()),
+            metadata: Some(metadata.clone()),
         },
     )
     .await;
@@ -333,8 +356,8 @@ async fn create_im_contact_message(
                     content: content.to_string(),
                     delivery_status: Some("sent".to_string()),
                     client_message_id: None,
-                    reply_to_message_id: None,
-                    metadata,
+                    reply_to_message_id: Some(source_message.id.clone()),
+                    metadata: Some(metadata),
                 },
             )
             .await?
@@ -569,6 +592,94 @@ fn normalize_project_scope(value: Option<&str>) -> String {
         .filter(|value| !value.is_empty())
         .unwrap_or("0")
         .to_string()
+}
+
+fn append_reply_context(metadata: Option<Value>, source_message: &ConversationMessageDto) -> Value {
+    let mut metadata = metadata.unwrap_or_else(|| json!({}));
+    if !metadata.is_object() {
+        metadata = json!({});
+    }
+
+    if let Some(object) = metadata.as_object_mut() {
+        object.insert(
+            "reply_context".to_string(),
+            json!({
+                "message_id": source_message.id,
+                "sender_type": source_message.sender_type,
+                "preview": truncate_preview(source_message.content.as_str()),
+            }),
+        );
+    }
+
+    metadata
+}
+
+fn truncate_preview(value: &str) -> String {
+    const MAX_CHARS: usize = 120;
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    let preview: String = trimmed.chars().take(MAX_CHARS).collect();
+    if trimmed.chars().count() > MAX_CHARS {
+        format!("{}...", preview)
+    } else {
+        preview
+    }
+}
+
+async fn collect_startup_followup_messages(
+    conversation_id: &str,
+    source_message_id: &str,
+) -> Result<Vec<ConversationMessageDto>, String> {
+    let messages = im_service_client::list_conversation_messages(
+        conversation_id,
+        Some(200),
+        Some("asc"),
+    )
+    .await?;
+
+    let mut seen_source = false;
+    let mut followups = Vec::new();
+    for message in messages {
+        if !seen_source {
+            if message.id == source_message_id {
+                seen_source = true;
+            }
+            continue;
+        }
+
+        if !message.sender_type.trim().eq_ignore_ascii_case("user") {
+            continue;
+        }
+        if message.content.trim().is_empty() {
+            continue;
+        }
+        followups.push(message);
+    }
+
+    Ok(followups)
+}
+
+fn build_startup_request_content(
+    source_message: &ConversationMessageDto,
+    followups: &[ConversationMessageDto],
+) -> String {
+    if followups.is_empty() {
+        return source_message.content.clone();
+    }
+
+    let mut sections = vec![
+        "下面是用户在同一轮处理中连续发来的消息，请按时间顺序合并理解，并给出一次统一回复。不要拆成多段分别回答。".to_string(),
+        format!("1. {}", source_message.content.trim()),
+    ];
+
+    for (index, message) in followups.iter().enumerate() {
+        sections.push(format!("{}. {}", index + 2, message.content.trim()));
+    }
+
+    sections.join("\n")
 }
 
 fn extract_source_message_attachments(metadata: Option<&Value>) -> Option<Vec<Value>> {

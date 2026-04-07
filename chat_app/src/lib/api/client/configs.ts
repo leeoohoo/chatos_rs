@@ -8,6 +8,7 @@ import type {
   ApplicationResponse,
   McpConfigResponse,
   McpConfigUpdatePayload,
+  TaskCapabilityResponse,
   SystemContextCreatePayload,
   SystemContextDraftEvaluatePayload,
   SystemContextDraftEvaluateResponse,
@@ -25,6 +26,9 @@ export const getMcpConfigs = (request: ApiRequestFn, userId?: string): Promise<M
   debugLog('🔍 getMcpConfigs API调用:', { userId, query });
   return request<McpConfigResponse[]>(`/mcp-configs${query}`);
 };
+
+export const getTaskCapabilities = (request: ApiRequestFn): Promise<TaskCapabilityResponse[]> =>
+  request<TaskCapabilityResponse[]>('/task-capabilities');
 
 export const createMcpConfig = (
   request: ApiRequestFn,

@@ -311,6 +311,27 @@ const normalizeImMetadata = (value: unknown): Record<string, any> => {
   return {};
 };
 
+const normalizeReplyContext = (
+  metadata: Record<string, any>,
+  rawMessage: ImConversationMessageResponse,
+): Record<string, any> | undefined => {
+  const rawContext = metadata?.reply_context;
+  if (rawContext && typeof rawContext === 'object' && !Array.isArray(rawContext)) {
+    return rawContext as Record<string, any>;
+  }
+
+  const replyToMessageId = typeof rawMessage?.reply_to_message_id === 'string'
+    ? rawMessage.reply_to_message_id.trim()
+    : '';
+  if (!replyToMessageId) {
+    return undefined;
+  }
+
+  return {
+    message_id: replyToMessageId,
+  };
+};
+
 export const normalizeImConversationMessage = (
   rawMessage: ImConversationMessageResponse,
   sessionId: string,
@@ -321,6 +342,10 @@ export const normalizeImConversationMessage = (
     ? rawMessage.content
     : String(rawMessage?.content ?? '');
   const attachments = normalizeAttachments(metadata, rawMessage.id, createdAt);
+  const replyContext = normalizeReplyContext(metadata, rawMessage);
+  const replyToMessageId = typeof rawMessage?.reply_to_message_id === 'string'
+    ? rawMessage.reply_to_message_id.trim()
+    : '';
 
   return {
     id: rawMessage.id,
@@ -344,7 +369,10 @@ export const normalizeImConversationMessage = (
         senderId: rawMessage.sender_id ?? null,
         deliveryStatus: rawMessage.delivery_status ?? null,
         clientMessageId: rawMessage.client_message_id ?? null,
+        replyToMessageId: replyToMessageId || null,
       },
+      ...(replyToMessageId ? { replyToMessageId } : {}),
+      ...(replyContext ? { reply_context: replyContext } : {}),
     },
   };
 };

@@ -18,8 +18,10 @@ use crate::services::builtin_mcp::{BuiltinMcpKind, TASK_EXECUTOR_SERVER_NAME};
 use crate::services::contact_agent_model::{
     normalize_optional_model_id, resolve_effective_contact_agent_model_config_id,
 };
+use crate::services::im_task_runtime_bridge::publish_task_runtime_update_best_effort;
 use crate::services::mcp_loader::McpBuiltinServer;
 use crate::services::memory_server_client::{self, TaskExecutionScopeBinding};
+use crate::services::runtime_guidance_manager::runtime_guidance_manager;
 use crate::services::session_event_hub::session_event_hub;
 use crate::services::task_service_client::{
     self, AckAllDoneRequestDto, SchedulerRequestDto, TaskExecutionScopeDto, TaskRecordDto,
@@ -88,6 +90,7 @@ async fn process_scope(scope: TaskExecutionScopeDto) -> Result<(), String> {
             execute_task(scope, task).await
         }
         "all_done" => handle_all_done(scope).await,
+        "await_resume" => Ok(()),
         "pass" => Ok(()),
         other => Err(format!(
             "scope {} returned unsupported decision {}",
@@ -103,22 +106,45 @@ async fn execute_task(scope: TaskExecutionScopeDto, task: TaskRecordDto) -> Resu
         task.id,
         task.session_id.as_deref().unwrap_or("")
     );
+    publish_task_runtime_update_best_effort(&task).await;
 
     let mut task_runtime = match build_task_runtime(scope.clone(), Some(&task)).await {
         Ok(runtime) => runtime,
         Err(err) => return fail_task(scope, task, err.as_str()).await,
     };
+    let chat_options = task_runtime.chat_options(task.id.as_str(), Some(&task));
+    let runtime_turn_id = chat_options
+        .turn_id
+        .clone()
+        .unwrap_or_else(|| format!("task-exec-{}", task.id));
+    runtime_guidance_manager().register_active_turn(
+        task_runtime.runtime_session_key.as_str(),
+        runtime_turn_id.as_str(),
+    );
     let result = task_runtime
         .ai_server
         .chat(
             task_runtime.runtime_session_key.as_str(),
             task.content.as_str(),
-            task_runtime.chat_options(task.id.as_str(), Some(&task)),
+            chat_options,
         )
         .await;
+    runtime_guidance_manager().close_turn(
+        task_runtime.runtime_session_key.as_str(),
+        runtime_turn_id.as_str(),
+    );
 
     match result {
         Ok(payload) => {
+            if let Some(latest_task) = task_service_client::get_task(task.id.as_str()).await? {
+                if latest_task.status != "running" {
+                    info!(
+                        "[TASK-RUNNER] skip auto-complete because task already transitioned: scope={} task_id={} status={}",
+                        scope.scope_key, task.id, latest_task.status
+                    );
+                    return Ok(());
+                }
+            }
             let final_text = payload
                 .get("content")
                 .and_then(|v| v.as_str())
@@ -184,6 +210,7 @@ async fn execute_task(scope: TaskExecutionScopeDto, task: TaskRecordDto) -> Resu
                 }
             };
             if let Some(updated_task) = updated_task.as_ref() {
+                publish_task_runtime_update_best_effort(updated_task).await;
                 if let Err(err) = sync_task_result_brief(
                     &scope,
                     updated_task,
@@ -211,6 +238,15 @@ async fn execute_task(scope: TaskExecutionScopeDto, task: TaskRecordDto) -> Resu
             Ok(())
         }
         Err(err) => {
+            if let Some(latest_task) = task_service_client::get_task(task.id.as_str()).await? {
+                if latest_task.status != "running" {
+                    info!(
+                        "[TASK-RUNNER] skip auto-fail because task already transitioned: scope={} task_id={} status={}",
+                        scope.scope_key, task.id, latest_task.status
+                    );
+                    return Ok(());
+                }
+            }
             if let Err(notice_err) = save_task_notice_message(
                 task.session_id.as_deref(),
                 "task_execution_notice",
@@ -248,6 +284,7 @@ async fn execute_task(scope: TaskExecutionScopeDto, task: TaskRecordDto) -> Resu
                 }
             };
             if let Some(updated_task) = updated_task.as_ref() {
+                publish_task_runtime_update_best_effort(updated_task).await;
                 if let Err(bridge_err) =
                     sync_task_result_brief(&scope, updated_task, "failed", err.as_str(), None).await
                 {
@@ -275,6 +312,15 @@ async fn fail_task(
     task: TaskRecordDto,
     err: &str,
 ) -> Result<(), String> {
+    if let Some(latest_task) = task_service_client::get_task(task.id.as_str()).await? {
+        if latest_task.status != "running" {
+            info!(
+                "[TASK-RUNNER] skip setup-failure write because task already transitioned: scope={} task_id={} status={}",
+                scope.scope_key, task.id, latest_task.status
+            );
+            return Ok(());
+        }
+    }
     if let Err(notice_err) = save_task_notice_message(
         task.session_id.as_deref(),
         "task_execution_notice",
@@ -312,6 +358,7 @@ async fn fail_task(
         }
     };
     if let Some(updated_task) = updated_task.as_ref() {
+        publish_task_runtime_update_best_effort(updated_task).await;
         if let Err(bridge_err) =
             sync_task_result_brief(&scope, updated_task, "failed", err, None).await
         {
@@ -352,14 +399,28 @@ async fn handle_all_done(scope: TaskExecutionScopeDto) -> Result<(), String> {
 
     let mut task_runtime = build_task_runtime(scope.clone(), None).await?;
     let summary_prompt = "当前这个联系人的后台任务都已经执行完成。请基于已有任务执行记录，给用户一段简短、自然的结语：说明任务已全部完成，并概括最终结果；不要输出过程推理，不要编造未完成事项。";
+    let chat_options = task_runtime.chat_options("all_done", None);
+    let runtime_turn_id = chat_options
+        .turn_id
+        .clone()
+        .unwrap_or_else(|| "task-exec-all_done".to_string());
+    runtime_guidance_manager().register_active_turn(
+        task_runtime.runtime_session_key.as_str(),
+        runtime_turn_id.as_str(),
+    );
     let result = task_runtime
         .ai_server
         .chat(
             task_runtime.runtime_session_key.as_str(),
             summary_prompt,
-            task_runtime.chat_options("all_done", None),
+            chat_options,
         )
-        .await?;
+        .await;
+    runtime_guidance_manager().close_turn(
+        task_runtime.runtime_session_key.as_str(),
+        runtime_turn_id.as_str(),
+    );
+    let result = result?;
     let final_text = result
         .get("content")
         .and_then(|v| v.as_str())
@@ -586,14 +647,23 @@ async fn validate_task_execution_grants(
         return Ok(());
     };
 
-    let contacts =
-        memory_server_client::list_memory_contacts(Some(scope.user_id.as_str()), Some(500), 0)
-            .await?;
-    let authorized_builtin_mcp_ids = contacts
-        .into_iter()
-        .find(|contact| contact.agent_id.trim() == scope.contact_agent_id.trim())
+    let contact_id = resolve_task_execution_contact_id(&scope, Some(task)).await;
+    let authorized_builtin_mcp_ids = memory_server_client::resolve_memory_contact(
+        Some(scope.user_id.as_str()),
+        contact_id.as_deref(),
+        Some(scope.contact_agent_id.as_str()),
+    )
+    .await?
         .map(|contact| contact.authorized_builtin_mcp_ids)
         .unwrap_or_default();
+
+    info!(
+        "[TASK-RUNNER] resolved contact builtin MCP grants for execution: scope_key={} contact_id={} contact_agent_id={} grants={}",
+        scope.scope_key,
+        contact_id.as_deref().unwrap_or_default(),
+        scope.contact_agent_id,
+        authorized_builtin_mcp_ids.join(", ")
+    );
 
     let unauthorized = task
         .planned_builtin_mcp_ids
@@ -616,6 +686,33 @@ async fn validate_task_execution_grants(
             unauthorized.join(", ")
         ))
     }
+}
+
+async fn resolve_task_execution_contact_id(
+    scope: &TaskExecutionScopeDto,
+    task: Option<&TaskRecordDto>,
+) -> Option<String> {
+    let candidate_session_id = task
+        .and_then(|item| item.session_id.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string())
+        .or_else(|| {
+            scope.latest_session_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| value.to_string())
+        })?;
+
+    memory_server_client::get_session_by_id(candidate_session_id.as_str())
+        .await
+        .ok()
+        .flatten()
+        .and_then(|session| {
+            crate::core::chat_runtime::ChatRuntimeMetadata::from_metadata(session.metadata.as_ref())
+                .contact_id
+        })
 }
 
 fn build_task_execution_prefixed_input_items(
@@ -690,6 +787,11 @@ fn build_task_execution_prefixed_input_items(
                 lines.push(format!("结果格式偏好={}", format));
             }
         }
+        lines.push("如果执行过程中收到新的 Runtime Guidance，绝不能忽略。".to_string());
+        lines.push("这些 Runtime Guidance 只是新的用户输入，不代表程序已经替你改写了当前任务。你必须自行判断是否需要重排。".to_string());
+        lines.push("先判断新增要求是否只是当前任务的补充约束、输出格式或边界修正；如果是，直接纳入当前任务继续执行。".to_string());
+        lines.push("如果新增要求已经超出当前任务边界，必须使用 create_tasks 创建后续任务；必要时在安全点调用 ack_pause_request 暂停当前任务，再交由后续任务处理。".to_string());
+        lines.push("如果新增要求使当前任务目标本身发生变化，请优先以最新用户要求为准；必要时暂停或停止当前任务，并重新拆分任务，而不是机械地把要求视为原任务附注。".to_string());
         lines.push("执行完成后，应输出明确结果；如失败，也必须说明失败结果。".to_string());
         items.push(system_input_item(lines.join("\n").as_str()));
     }

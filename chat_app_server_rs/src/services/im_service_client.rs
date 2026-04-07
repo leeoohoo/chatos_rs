@@ -19,7 +19,8 @@ pub use self::conversation_ops::{
     create_conversation_message_internal,
     create_run_internal, get_action_request_internal, get_conversation, list_action_requests,
     list_conversation_messages, list_conversations, list_runs, mark_conversation_read,
-    update_action_request_internal, update_conversation, update_run_internal,
+    publish_internal_event, update_action_request_internal, update_conversation,
+    update_run_internal,
 };
 
 pub async fn with_access_token_scope<T, Fut>(access_token: Option<String>, future: Fut) -> T

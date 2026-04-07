@@ -1,45 +1,23 @@
-use crate::services::builtin_mcp::{
-    CODE_MAINTAINER_READ_MCP_ID, CODE_MAINTAINER_WRITE_MCP_ID,
-    REMOTE_CONNECTION_CONTROLLER_MCP_ID, TERMINAL_CONTROLLER_MCP_ID, UI_PROMPTER_MCP_ID,
-};
+use crate::services::builtin_mcp::UI_PROMPTER_MCP_ID;
 use crate::services::task_manager::normalizer::{normalize_task_drafts, trimmed_non_empty};
 use crate::services::task_manager::types::{
     TaskDraft, TaskRecord, TaskRequiredContextAssetDraft,
+};
+use crate::services::task_capability_registry::{
+    capability_runtime_requirements_satisfied, find_task_capability_by_mcp_id,
+    find_task_capability_by_token, infer_capability_mcp_ids_from_text,
+    infer_default_capability_mcp_ids, planning_task_capability_tokens,
 };
 use crate::services::task_service_client::{
     self, CreateTaskRequestDto, TaskContextAssetRefDto, TaskExecutionResultContractDto,
     TaskPlanningSnapshotDto,
 };
-use tracing::warn;
+use tracing::{info, warn};
 
 use super::remote_support::{
     map_remote_result_brief, map_remote_task_to_record, resolve_task_scope_context,
     TaskScopeContext,
 };
-
-fn planned_builtin_requires_project_root(id: &str) -> bool {
-    matches!(
-        id.trim(),
-        "builtin_code_maintainer_read"
-            | "builtin_code_maintainer_write"
-            | "builtin_code_maintainer"
-            | "builtin_terminal_controller"
-    )
-}
-
-fn planned_builtin_requires_remote_connection(id: &str) -> bool {
-    matches!(id.trim(), "builtin_remote_connection_controller")
-}
-
-fn builtin_mcp_id_for_capability(capability: &str) -> Option<&'static str> {
-    match capability.trim() {
-        "read" => Some(CODE_MAINTAINER_READ_MCP_ID),
-        "write" => Some(CODE_MAINTAINER_WRITE_MCP_ID),
-        "terminal" => Some(TERMINAL_CONTROLLER_MCP_ID),
-        "remote" => Some(REMOTE_CONNECTION_CONTROLLER_MCP_ID),
-        _ => None,
-    }
-}
 
 fn ensure_planned_builtin_mcp_ids_authorized(
     planned_builtin_mcp_ids: &[String],
@@ -70,55 +48,80 @@ fn ensure_runtime_requirements(
     planned_builtin_mcp_ids: &[String],
     scope: &TaskScopeContext,
 ) -> Result<(), String> {
-    if planned_builtin_mcp_ids
-        .iter()
-        .any(|item| planned_builtin_requires_project_root(item))
-        && scope
-            .project_root
-            .as_deref()
-            .map(str::trim)
-            .unwrap_or("")
-            .is_empty()
-    {
-        return Err(
-            "当前任务计划使用查看/读写/终端能力，但当前会话没有可用的 project_root".to_string(),
-        );
-    }
-
-    if planned_builtin_mcp_ids
-        .iter()
-        .any(|item| planned_builtin_requires_remote_connection(item))
-        && scope
-            .remote_connection_id
-            .as_deref()
-            .map(str::trim)
-            .unwrap_or("")
-            .is_empty()
-    {
-        return Err(
-            "当前任务计划使用远程连接能力，但当前会话没有选中的 remote_connection_id".to_string(),
-        );
+    let has_project_root = scope
+        .project_root
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_some();
+    let has_remote_connection = scope
+        .remote_connection_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_some();
+    for planned_builtin_mcp_id in planned_builtin_mcp_ids {
+        let Some(capability) = find_task_capability_by_mcp_id(planned_builtin_mcp_id.as_str())
+        else {
+            continue;
+        };
+        if capability_runtime_requirements_satisfied(
+            capability,
+            has_project_root,
+            has_remote_connection,
+        ) {
+            continue;
+        }
+        if capability
+            .runtime_requirements
+            .iter()
+            .any(|item| item.trim() == "project_root")
+            && !has_project_root
+        {
+            return Err(format!(
+                "当前任务计划使用 {} 能力，但当前会话没有可用的 project_root",
+                capability.display_name
+            ));
+        }
+        if capability
+            .runtime_requirements
+            .iter()
+            .any(|item| item.trim() == "remote_connection_id")
+            && !has_remote_connection
+        {
+            return Err(format!(
+                "当前任务计划使用 {} 能力，但当前会话没有选中的 remote_connection_id",
+                capability.display_name
+            ));
+        }
     }
 
     Ok(())
 }
 
 async fn resolve_contact_builtin_mcp_grants(scope: &TaskScopeContext) -> Vec<String> {
-    let Ok(contacts) = crate::services::memory_server_client::list_memory_contacts(
+    let Ok(contact) = crate::services::memory_server_client::resolve_memory_contact(
         Some(scope.user_id.as_str()),
-        Some(500),
-        0,
+        scope.contact_id.as_deref(),
+        Some(scope.contact_agent_id.as_str()),
     )
     .await
     else {
         return Vec::new();
     };
 
-    contacts
-        .into_iter()
-        .find(|contact| contact.agent_id == scope.contact_agent_id)
+    let grants = contact
         .map(|contact| contact.authorized_builtin_mcp_ids)
-        .unwrap_or_default()
+        .unwrap_or_default();
+
+    info!(
+        "resolved contact builtin MCP grants for task creation: contact_id={} contact_agent_id={} grants={}",
+        scope.contact_id.as_deref().unwrap_or_default(),
+        scope.contact_agent_id,
+        grants.join(", ")
+    );
+
+    grants
 }
 
 fn normalize_asset_type(asset_type: &str) -> Option<&'static str> {
@@ -140,10 +143,11 @@ fn resolve_required_builtin_capabilities(
 
     for capability in capabilities {
         let token = capability.trim();
-        let Some(mcp_id) = builtin_mcp_id_for_capability(token) else {
+        let Some(definition) = find_task_capability_by_token(token) else {
             unsupported.push(token.to_string());
             continue;
         };
+        let mcp_id = definition.builtin_mcp_id.as_str();
         if !authorized_builtin_mcp_ids.iter().any(|item| item == mcp_id) {
             unauthorized.push(format!("{token}->{mcp_id}"));
             continue;
@@ -155,8 +159,9 @@ fn resolve_required_builtin_capabilities(
 
     if !unsupported.is_empty() {
         return Err(format!(
-            "required_builtin_capabilities contains unsupported items: {}. allowed=read, write, terminal, remote",
-            unsupported.join(", ")
+            "required_builtin_capabilities contains unsupported items: {}. allowed={}",
+            unsupported.join(", "),
+            planning_task_capability_tokens().join(", ")
         ));
     }
     if !unauthorized.is_empty() {
@@ -480,7 +485,6 @@ fn infer_task_builtin_mcp_ids(
     }
 
     let joined = format!("{}\n{}", draft.title, draft.details);
-    let text = joined.trim().to_ascii_lowercase();
     let has_project_root = scope
         .project_root
         .as_deref()
@@ -494,44 +498,21 @@ fn infer_task_builtin_mcp_ids(
         .filter(|value| !value.is_empty())
         .is_some();
 
-    if has_project_root {
-        push_if_authorized(CODE_MAINTAINER_READ_MCP_ID);
+    for builtin_mcp_id in infer_default_capability_mcp_ids(
+        authorized_builtin_mcp_ids,
+        has_project_root,
+        has_remote_connection,
+    ) {
+        push_if_authorized(builtin_mcp_id.as_str());
     }
 
-    let write_keywords = [
-        "输出", "生成", "编写", "撰写", "修改", "修复", "保存", "落地", "文档", "markdown", ".md",
-        "write", "update", "edit", "implement", "fix", "doc", "docs",
-    ];
-    if has_project_root
-        && write_keywords
-            .iter()
-            .any(|keyword| joined.contains(keyword) || text.contains(keyword))
-    {
-        push_if_authorized(CODE_MAINTAINER_WRITE_MCP_ID);
-    }
-
-    let terminal_keywords = [
-        "终端", "命令", "运行", "执行", "启动", "安装", "测试", "构建", "编译", "调试", "日志",
-        "shell", "command", "run ", "start ", "install", "test", "build", "compile", "debug",
-        "npm", "pnpm", "yarn", "cargo", "python", "pytest", "docker", "make ",
-    ];
-    if has_project_root
-        && terminal_keywords
-            .iter()
-            .any(|keyword| joined.contains(keyword) || text.contains(keyword))
-    {
-        push_if_authorized(TERMINAL_CONTROLLER_MCP_ID);
-    }
-
-    let remote_keywords = [
-        "远程", "服务器", "主机", "线上", "ssh", "remote", "server", "deploy",
-    ];
-    if has_remote_connection
-        && remote_keywords
-            .iter()
-            .any(|keyword| joined.contains(keyword) || text.contains(keyword))
-    {
-        push_if_authorized(REMOTE_CONNECTION_CONTROLLER_MCP_ID);
+    for builtin_mcp_id in infer_capability_mcp_ids_from_text(
+        joined.as_str(),
+        authorized_builtin_mcp_ids,
+        has_project_root,
+        has_remote_connection,
+    ) {
+        push_if_authorized(builtin_mcp_id.as_str());
     }
 
     out
@@ -801,6 +782,12 @@ pub async fn create_tasks_for_turn(
             &scope,
             contact_authorized_builtin_mcp_ids.as_slice(),
             runtime_snapshot.as_ref(),
+        );
+        info!(
+            "resolved task draft builtin MCP ids: title={} required_builtin_capabilities={} planned_builtin_mcp_ids={}",
+            draft.title,
+            draft.required_builtin_capabilities.join(", "),
+            draft.planned_builtin_mcp_ids.join(", ")
         );
         ensure_planned_builtin_mcp_ids_authorized(
             draft.planned_builtin_mcp_ids.as_slice(),

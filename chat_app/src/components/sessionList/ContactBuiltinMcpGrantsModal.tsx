@@ -1,53 +1,10 @@
 import React from 'react';
-
-export const CONTACT_TASK_AUTHORIZABLE_BUILTIN_MCP_OPTIONS = [
-  {
-    id: 'builtin_code_maintainer_read',
-    label: '查看',
-    description: '允许未来任务执行只读查看与代码理解。',
-  },
-  {
-    id: 'builtin_code_maintainer_write',
-    label: '读写',
-    description: '允许未来任务执行写文件与代码修改。',
-  },
-  {
-    id: 'builtin_terminal_controller',
-    label: '终端',
-    description: '允许未来任务执行终端命令。',
-  },
-  {
-    id: 'builtin_remote_connection_controller',
-    label: '远程连接',
-    description: '允许未来任务使用远程连接能力。',
-  },
-  {
-    id: 'builtin_notepad',
-    label: 'Notepad',
-    description: '允许未来任务使用记事本能力。',
-  },
-  {
-    id: 'builtin_agent_builder',
-    label: 'Agent Builder',
-    description: '允许未来任务使用智能体构建能力。',
-  },
-  {
-    id: 'builtin_ui_prompter',
-    label: 'UI Prompter',
-    description: '允许未来任务请求用户补充输入或确认信息。',
-  },
-] as const;
-
-export const CONTACT_TASK_AUTHORIZABLE_BUILTIN_MCP_IDS = CONTACT_TASK_AUTHORIZABLE_BUILTIN_MCP_OPTIONS
-  .map((item) => item.id);
-
-export const CONTACT_TASK_AUTHORIZABLE_BUILTIN_MCP_ID_SET = new Set<string>(
-  CONTACT_TASK_AUTHORIZABLE_BUILTIN_MCP_IDS,
-);
+import type { TaskCapabilityResponse } from '../../lib/api/client/types';
 
 interface ContactBuiltinMcpGrantsModalProps {
   isOpen: boolean;
   contactName: string;
+  options: TaskCapabilityResponse[];
   selectedIds: string[];
   loading: boolean;
   saving: boolean;
@@ -60,6 +17,7 @@ interface ContactBuiltinMcpGrantsModalProps {
 export const ContactBuiltinMcpGrantsModal: React.FC<ContactBuiltinMcpGrantsModalProps> = ({
   isOpen,
   contactName,
+  options,
   selectedIds,
   loading,
   saving,
@@ -88,12 +46,16 @@ export const ContactBuiltinMcpGrantsModal: React.FC<ContactBuiltinMcpGrantsModal
         <div className="max-h-[60vh] overflow-y-auto px-5 py-4 space-y-3">
           {loading ? (
             <div className="text-sm text-muted-foreground">加载中...</div>
+          ) : options.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-border px-3 py-6 text-sm text-muted-foreground">
+              当前没有可授权的内置 MCP 能力。
+            </div>
           ) : (
-            CONTACT_TASK_AUTHORIZABLE_BUILTIN_MCP_OPTIONS.map((item) => {
-              const checked = selectedIds.includes(item.id);
+            options.map((item) => {
+              const checked = selectedIds.includes(item.builtin_mcp_id);
               return (
                 <label
-                  key={item.id}
+                  key={item.builtin_mcp_id}
                   className="flex items-start gap-3 rounded-lg border border-border px-3 py-3 hover:bg-accent/40"
                 >
                   <input
@@ -101,14 +63,17 @@ export const ContactBuiltinMcpGrantsModal: React.FC<ContactBuiltinMcpGrantsModal
                     className="mt-1"
                     checked={checked}
                     disabled={saving}
-                    onChange={() => onToggle(item.id)}
+                    onChange={() => onToggle(item.builtin_mcp_id)}
                   />
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium text-foreground">{item.label}</span>
+                      <span className="text-sm font-medium text-foreground">{item.display_name}</span>
+                      <span className="rounded-full bg-accent px-2 py-0.5 text-[11px] text-muted-foreground">
+                        {item.token}
+                      </span>
                     </div>
                     <div className="mt-1 text-xs text-muted-foreground">{item.description}</div>
-                    <div className="mt-1 text-[11px] text-muted-foreground/80">{item.id}</div>
+                    <div className="mt-1 text-[11px] text-muted-foreground/80">{item.builtin_mcp_id}</div>
                   </div>
                 </label>
               );

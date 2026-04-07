@@ -3,11 +3,11 @@ use crate::services::contact_agent_model::resolve_effective_contact_agent_model_
 use crate::services::task_manager::normalizer::trimmed_non_empty;
 use crate::services::task_manager::types::{TaskRecord, TaskResultBrief};
 use crate::services::{memory_server_client, task_service_client};
-use tracing::warn;
 
 #[derive(Debug, Clone)]
 pub struct TaskScopeContext {
     pub user_id: String,
+    pub contact_id: Option<String>,
     pub contact_agent_id: String,
     pub project_id: String,
     pub project_root: Option<String>,
@@ -22,6 +22,7 @@ pub async fn resolve_task_scope_context(session_id: &str) -> Result<TaskScopeCon
         .await?
         .ok_or_else(|| "session not found".to_string())?;
     let metadata = ChatRuntimeMetadata::from_metadata(session.metadata.as_ref());
+    let contact_id = metadata.contact_id.clone();
     let user_id = session
         .user_id
         .as_deref()
@@ -35,9 +36,8 @@ pub async fn resolve_task_scope_context(session_id: &str) -> Result<TaskScopeCon
         .map(ToOwned::to_owned)
         .or(metadata.contact_agent_id)
         .or(resolve_contact_agent_id_from_contact_id(
-            session_id,
             user_id.as_str(),
-            metadata.contact_id.as_deref(),
+            contact_id.as_deref(),
         )
         .await?)
         .ok_or_else(|| "contact_agent_id is required for task operations".to_string())?;
@@ -66,6 +66,7 @@ pub async fn resolve_task_scope_context(session_id: &str) -> Result<TaskScopeCon
 
     Ok(TaskScopeContext {
         user_id,
+        contact_id,
         contact_agent_id,
         project_id,
         project_root,
@@ -75,7 +76,6 @@ pub async fn resolve_task_scope_context(session_id: &str) -> Result<TaskScopeCon
 }
 
 async fn resolve_contact_agent_id_from_contact_id(
-    session_id: &str,
     user_id: &str,
     contact_id: Option<&str>,
 ) -> Result<Option<String>, String> {
@@ -83,23 +83,13 @@ async fn resolve_contact_agent_id_from_contact_id(
         return Ok(None);
     };
 
-    let contacts = memory_server_client::list_memory_contacts(Some(user_id), Some(500), 0).await?;
-    let resolved = contacts
-        .into_iter()
-        .find(|contact| contact.id == contact_id)
-        .map(|contact| contact.agent_id)
-        .and_then(|value| trimmed_non_empty(value.as_str()).map(ToOwned::to_owned));
-
-    if let Some(contact_agent_id) = resolved.as_ref() {
-        warn!(
-            "resolved contact_agent_id from contact_id: session_id={} contact_id={} contact_agent_id={}",
-            session_id,
-            contact_id,
-            contact_agent_id
-        );
-    }
-
-    Ok(resolved)
+    Ok(
+        memory_server_client::resolve_memory_contact(Some(user_id), Some(contact_id), None)
+            .await?
+            .and_then(|contact| {
+                trimmed_non_empty(contact.agent_id.as_str()).map(ToOwned::to_owned)
+            }),
+    )
 }
 
 pub(super) fn map_remote_result_brief(
@@ -162,6 +152,7 @@ pub(super) fn normalize_remote_status(value: &str) -> String {
         "pending_confirm" => "pending_confirm".to_string(),
         "pending_execute" => "pending_execute".to_string(),
         "running" => "running".to_string(),
+        "paused" => "paused".to_string(),
         "completed" => "completed".to_string(),
         "failed" => "failed".to_string(),
         "cancelled" => "cancelled".to_string(),
@@ -174,6 +165,7 @@ pub(super) fn map_legacy_status_to_remote(value: Option<String>) -> Option<Strin
         "pending_confirm" => "pending_confirm".to_string(),
         "pending_execute" => "pending_execute".to_string(),
         "running" => "running".to_string(),
+        "paused" => "paused".to_string(),
         "completed" => "completed".to_string(),
         "failed" => "failed".to_string(),
         "cancelled" => "cancelled".to_string(),

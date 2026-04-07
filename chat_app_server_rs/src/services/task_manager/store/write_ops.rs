@@ -68,18 +68,7 @@ pub async fn update_task_by_id(
             content: patch.details,
             priority: patch.priority,
             status: map_legacy_status_to_remote(patch.status),
-            confirm_note: None,
-            execution_note: None,
-            project_root: None,
-            remote_connection_id: None,
-            planned_builtin_mcp_ids: None,
-            planned_context_assets: None,
-            execution_result_contract: None,
-            planning_snapshot: None,
-            model_config_id: None,
-            result_summary: None,
-            result_message_id: None,
-            last_error: None,
+            ..UpdateTaskRequestDto::default()
         },
     )
     .await?

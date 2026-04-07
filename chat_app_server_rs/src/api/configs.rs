@@ -17,6 +17,7 @@ use crate::services::builtin_mcp::{
     builtin_display_name, is_builtin_mcp_id, is_internal_only_builtin_mcp_id,
     list_builtin_mcp_configs,
 };
+use crate::services::task_capability_registry::list_task_capabilities;
 
 mod ai_model;
 mod mcp_resource;
@@ -90,6 +91,26 @@ pub fn router() -> Router {
             "/api/ai-model-configs/:config_id",
             put(ai_model::update_ai_model_config).delete(ai_model::delete_ai_model_config),
         )
+        .route("/api/task-capabilities", get(list_task_capabilities_handler))
+}
+
+async fn list_task_capabilities_handler(_auth: AuthUser) -> (StatusCode, Json<Value>) {
+    let items = list_task_capabilities()
+        .iter()
+        .map(|item| {
+            json!({
+                "token": item.token,
+                "builtin_mcp_id": item.builtin_mcp_id,
+                "display_name": item.display_name,
+                "description": item.description,
+                "contact_authorizable": item.contact_authorizable,
+                "planning_visible": item.planning_visible,
+                "default_when_available": item.default_when_available,
+                "runtime_requirements": item.runtime_requirements,
+            })
+        })
+        .collect::<Vec<_>>();
+    (StatusCode::OK, Json(Value::Array(items)))
 }
 
 async fn list_mcp_configs(

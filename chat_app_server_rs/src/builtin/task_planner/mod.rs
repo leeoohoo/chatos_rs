@@ -17,9 +17,13 @@ use crate::core::tool_io::text_result;
 use crate::services::contact_agent_model::{
     normalize_optional_model_id, resolve_effective_contact_agent_model_config_id,
 };
+use crate::services::im_task_runtime_bridge::publish_task_runtime_update_best_effort;
 use crate::services::memory_server_client;
 use crate::services::task_manager::{list_tasks_for_context, resolve_task_scope_context};
-use crate::services::task_service_client::{self, ConfirmTaskRequestDto, UpdateTaskRequestDto};
+use crate::services::task_service_client::{
+    self, ConfirmTaskRequestDto, PauseTaskRequestDto, ResumeTaskRequestDto, StopTaskRequestDto,
+    UpdateTaskRequestDto,
+};
 
 use self::context::ToolContext;
 use self::parsing::trimmed_non_empty;
@@ -61,6 +65,9 @@ impl TaskPlannerService {
         service.register_list_tasks();
         service.register_create_tasks(add_timeout, server_name.as_str());
         service.register_confirm_task();
+        service.register_request_pause_running_task();
+        service.register_request_stop_running_task();
+        service.register_resume_task();
         service.register_get_contact_builtin_mcp_grants();
         service.register_list_contact_runtime_assets();
         Ok(service)
@@ -178,6 +185,8 @@ impl TaskPlannerService {
     }
 
     fn register_create_tasks(&mut self, add_timeout: u64, server_name: &str) {
+        let capability_tokens =
+            crate::services::task_capability_registry::planning_task_capability_tokens();
         let execution_result_contract_schema = json!({
             "type": "object",
             "properties": {
@@ -206,7 +215,7 @@ impl TaskPlannerService {
                                 "due_at": { "type": "string" },
                                 "required_builtin_capabilities": {
                                     "type": "array",
-                                    "items": { "type": "string", "enum": ["read", "write", "terminal", "remote"] }
+                                    "items": { "type": "string", "enum": capability_tokens.clone() }
                                 },
                                 "required_context_assets": {
                                     "type": "array",
@@ -231,7 +240,7 @@ impl TaskPlannerService {
                     "priority": { "type": "string", "enum": ["high", "medium", "low"] },
                     "required_builtin_capabilities": {
                         "type": "array",
-                        "items": { "type": "string", "enum": ["read", "write", "terminal", "remote"] }
+                        "items": { "type": "string", "enum": capability_tokens }
                     },
                     "required_context_assets": {
                         "type": "array",
@@ -264,16 +273,14 @@ impl TaskPlannerService {
             }),
             Arc::new(move |_args, ctx| {
                 let scope = block_on_result(resolve_task_scope_context(ctx.session_id))?;
-                let contacts = block_on_result(memory_server_client::list_memory_contacts(
+                let contact = block_on_result(memory_server_client::resolve_memory_contact(
                     Some(scope.user_id.as_str()),
-                    Some(500),
-                    0,
+                    scope.contact_id.as_deref(),
+                    Some(scope.contact_agent_id.as_str()),
                 ))?;
-                let contact = contacts
-                    .into_iter()
-                    .find(|item| item.agent_id == scope.contact_agent_id);
                 Ok(text_result(json!({
                     "session_id": ctx.session_id,
+                    "contact_id": scope.contact_id,
                     "contact_agent_id": scope.contact_agent_id,
                     "authorized_builtin_mcp_ids": contact
                         .map(|item| item.authorized_builtin_mcp_ids)
@@ -346,6 +353,10 @@ impl TaskPlannerService {
                     },
                 ))?
                 .ok_or_else(|| format!("task not found: {}", task_id))?;
+                let _ = block_on_result(async {
+                    publish_task_runtime_update_best_effort(&task).await;
+                    Ok::<(), String>(())
+                });
 
                 Ok(text_result(json!({
                     "task_id": task.id,
@@ -408,6 +419,163 @@ impl TaskPlannerService {
                         "plugin_source": item.plugin_source,
                         "argument_hint": item.argument_hint,
                     })).collect::<Vec<_>>(),
+                })))
+            }),
+        );
+    }
+
+    fn register_request_pause_running_task(&mut self) {
+        self.register_tool(
+            "request_pause_running_task",
+            "Request the currently running task in this contact scope to pause at the next safe point. Use this when the task should continue later, not be cancelled.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "reason": { "type": "string" }
+                },
+                "additionalProperties": false
+            }),
+            Arc::new(move |args, ctx| {
+                let reason = args
+                    .get("reason")
+                    .and_then(Value::as_str)
+                    .and_then(trimmed_non_empty)
+                    .map(|value| value.to_string());
+                let scope = block_on_result(resolve_task_scope_context(ctx.session_id))?;
+                let running_tasks = block_on_result(task_service_client::list_tasks(
+                    Some(scope.user_id.as_str()),
+                    Some(scope.contact_agent_id.as_str()),
+                    Some(scope.project_id.as_str()),
+                    None,
+                    None,
+                    Some("running"),
+                    Some(10),
+                    0,
+                ))?;
+                let task = running_tasks
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| "no running task found in the current contact scope".to_string())?;
+                let updated = block_on_result(task_service_client::request_pause_task(
+                    task.id.as_str(),
+                    &PauseTaskRequestDto {
+                        user_id: Some(scope.user_id.clone()),
+                        reason: reason.clone(),
+                    },
+                ))?
+                .ok_or_else(|| "task not found".to_string())?;
+                Ok(text_result(json!({
+                    "requested": true,
+                    "task_id": updated.id,
+                    "status": updated.status,
+                    "reason": reason,
+                })))
+            }),
+        );
+    }
+
+    fn register_request_stop_running_task(&mut self) {
+        self.register_tool(
+            "request_stop_running_task",
+            "Request the currently running task in this contact scope to stop at the next safe point. Use this when the current task should no longer continue.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "reason": { "type": "string" }
+                },
+                "additionalProperties": false
+            }),
+            Arc::new(move |args, ctx| {
+                let reason = args
+                    .get("reason")
+                    .and_then(Value::as_str)
+                    .and_then(trimmed_non_empty)
+                    .map(|value| value.to_string());
+                let scope = block_on_result(resolve_task_scope_context(ctx.session_id))?;
+                let running_tasks = block_on_result(task_service_client::list_tasks(
+                    Some(scope.user_id.as_str()),
+                    Some(scope.contact_agent_id.as_str()),
+                    Some(scope.project_id.as_str()),
+                    None,
+                    None,
+                    Some("running"),
+                    Some(10),
+                    0,
+                ))?;
+                let task = running_tasks
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| "no running task found in the current contact scope".to_string())?;
+                let updated = block_on_result(task_service_client::request_stop_task(
+                    task.id.as_str(),
+                    &StopTaskRequestDto {
+                        user_id: Some(scope.user_id.clone()),
+                        reason: reason.clone(),
+                    },
+                ))?
+                .ok_or_else(|| "task not found".to_string())?;
+                Ok(text_result(json!({
+                    "requested": true,
+                    "task_id": updated.id,
+                    "status": updated.status,
+                    "reason": reason,
+                })))
+            }),
+        );
+    }
+
+    fn register_resume_task(&mut self) {
+        self.register_tool(
+            "resume_task",
+            "Resume a paused task in the current contact scope so it can return to pending_execute and be scheduled again.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "task_id": { "type": "string" },
+                    "note": { "type": "string" }
+                },
+                "required": ["task_id"],
+                "additionalProperties": false
+            }),
+            Arc::new(move |args, ctx| {
+                let task_id = args
+                    .get("task_id")
+                    .and_then(Value::as_str)
+                    .and_then(trimmed_non_empty)
+                    .ok_or_else(|| "task_id is required".to_string())?;
+                let note = args
+                    .get("note")
+                    .and_then(Value::as_str)
+                    .and_then(trimmed_non_empty)
+                    .map(|value| value.to_string());
+                let scope = block_on_result(resolve_task_scope_context(ctx.session_id))?;
+                let existing = block_on_result(task_service_client::get_task(task_id))?
+                    .ok_or_else(|| format!("task not found: {}", task_id))?;
+                if existing.user_id != scope.user_id
+                    || existing.contact_agent_id != scope.contact_agent_id
+                    || existing.project_id != scope.project_id
+                {
+                    return Err(format!(
+                        "task {} is not in the current contact scope",
+                        task_id
+                    ));
+                }
+                let task = block_on_result(task_service_client::resume_task(
+                    task_id,
+                    &ResumeTaskRequestDto {
+                        user_id: Some(scope.user_id.clone()),
+                        note,
+                    },
+                ))?
+                .ok_or_else(|| format!("task not found: {}", task_id))?;
+                let _ = block_on_result(async {
+                    publish_task_runtime_update_best_effort(&task).await;
+                    Ok::<(), String>(())
+                });
+                Ok(text_result(json!({
+                    "task_id": task.id,
+                    "status": task.status,
+                    "task": task,
                 })))
             }),
         );

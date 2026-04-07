@@ -11,8 +11,9 @@ use serde_json::{json, Value};
 
 use crate::auth::{login_via_memory, require_auth, resolve_scope_user_id, AuthIdentity};
 use crate::models::{
-    AckAllDoneRequest, ConfirmTaskRequest, CreateTaskRequest, LoginRequest, SchedulerRequest,
-    TaskExecutionMessageView, TaskResultBriefView, UpdateTaskRequest,
+    AckAllDoneRequest, AckPauseTaskRequest, AckStopTaskRequest, ConfirmTaskRequest,
+    CreateTaskRequest, LoginRequest, PauseTaskRequest, ResumeTaskRequest, SchedulerRequest,
+    StopTaskRequest, TaskExecutionMessageView, TaskResultBriefView, UpdateTaskRequest,
 };
 use crate::{repository, AppState};
 
@@ -71,6 +72,38 @@ pub fn router(state: SharedState) -> Router {
         .route(
             "/api/task-service/v1/internal/tasks/:task_id/confirm",
             post(internal_confirm_task),
+        )
+        .route(
+            "/api/task-service/v1/tasks/:task_id/request-pause",
+            post(request_pause_task),
+        )
+        .route(
+            "/api/task-service/v1/internal/tasks/:task_id/request-pause",
+            post(internal_request_pause_task),
+        )
+        .route(
+            "/api/task-service/v1/tasks/:task_id/request-stop",
+            post(request_stop_task),
+        )
+        .route(
+            "/api/task-service/v1/internal/tasks/:task_id/request-stop",
+            post(internal_request_stop_task),
+        )
+        .route(
+            "/api/task-service/v1/tasks/:task_id/resume",
+            post(resume_task),
+        )
+        .route(
+            "/api/task-service/v1/internal/tasks/:task_id/resume",
+            post(internal_resume_task),
+        )
+        .route(
+            "/api/task-service/v1/internal/tasks/:task_id/ack-pause",
+            post(internal_ack_pause_task),
+        )
+        .route(
+            "/api/task-service/v1/internal/tasks/:task_id/ack-stop",
+            post(internal_ack_stop_task),
         )
         .route("/api/task-service/v1/scheduler/next", post(scheduler_next))
         .route(
@@ -740,6 +773,324 @@ async fn internal_confirm_task(
         Err(err) => (
             StatusCode::BAD_REQUEST,
             Json(json!({"error": "confirm task failed", "detail": err})),
+        ),
+    }
+}
+
+async fn request_pause_task(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Path(task_id): Path<String>,
+    Json(req): Json<PauseTaskRequest>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match require_auth(&headers, &state.config).await {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    let existing = match repository::get_task(&state.db, task_id.as_str()).await {
+        Ok(Some(task)) => task,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "task not found"})),
+            )
+        }
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "load task failed", "detail": err})),
+            )
+        }
+    };
+    let scope_user_id = resolve_scope_user_id(&auth, req.user_id.clone());
+    if !auth.is_admin() && existing.user_id != auth.user_id {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"})));
+    }
+    if existing.user_id != scope_user_id {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({"error": "scope mismatch"})),
+        );
+    }
+    match repository::request_pause_task(&state.db, task_id.as_str(), req).await {
+        Ok(Some(task)) => (StatusCode::OK, Json(json!(task))),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "task not found"})),
+        ),
+        Err(err) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "request pause task failed", "detail": err})),
+        ),
+    }
+}
+
+async fn internal_request_pause_task(
+    State(state): State<SharedState>,
+    Path(task_id): Path<String>,
+    Json(req): Json<PauseTaskRequest>,
+) -> (StatusCode, Json<Value>) {
+    let existing = match repository::get_task(&state.db, task_id.as_str()).await {
+        Ok(Some(task)) => task,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "task not found"})),
+            )
+        }
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "load task failed", "detail": err})),
+            )
+        }
+    };
+    if let Some(scope_user_id) = req
+        .user_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        if existing.user_id != scope_user_id {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(json!({"error": "scope mismatch"})),
+            );
+        }
+    }
+    match repository::request_pause_task(&state.db, task_id.as_str(), req).await {
+        Ok(Some(task)) => (StatusCode::OK, Json(json!(task))),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "task not found"})),
+        ),
+        Err(err) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "request pause task failed", "detail": err})),
+        ),
+    }
+}
+
+async fn request_stop_task(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Path(task_id): Path<String>,
+    Json(req): Json<StopTaskRequest>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match require_auth(&headers, &state.config).await {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    let existing = match repository::get_task(&state.db, task_id.as_str()).await {
+        Ok(Some(task)) => task,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "task not found"})),
+            )
+        }
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "load task failed", "detail": err})),
+            )
+        }
+    };
+    let scope_user_id = resolve_scope_user_id(&auth, req.user_id.clone());
+    if !auth.is_admin() && existing.user_id != auth.user_id {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"})));
+    }
+    if existing.user_id != scope_user_id {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({"error": "scope mismatch"})),
+        );
+    }
+    match repository::request_stop_task(&state.db, task_id.as_str(), req).await {
+        Ok(Some(task)) => (StatusCode::OK, Json(json!(task))),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "task not found"})),
+        ),
+        Err(err) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "request stop task failed", "detail": err})),
+        ),
+    }
+}
+
+async fn internal_request_stop_task(
+    State(state): State<SharedState>,
+    Path(task_id): Path<String>,
+    Json(req): Json<StopTaskRequest>,
+) -> (StatusCode, Json<Value>) {
+    let existing = match repository::get_task(&state.db, task_id.as_str()).await {
+        Ok(Some(task)) => task,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "task not found"})),
+            )
+        }
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "load task failed", "detail": err})),
+            )
+        }
+    };
+    if let Some(scope_user_id) = req
+        .user_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        if existing.user_id != scope_user_id {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(json!({"error": "scope mismatch"})),
+            );
+        }
+    }
+    match repository::request_stop_task(&state.db, task_id.as_str(), req).await {
+        Ok(Some(task)) => (StatusCode::OK, Json(json!(task))),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "task not found"})),
+        ),
+        Err(err) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "request stop task failed", "detail": err})),
+        ),
+    }
+}
+
+async fn resume_task(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Path(task_id): Path<String>,
+    Json(req): Json<ResumeTaskRequest>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match require_auth(&headers, &state.config).await {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    let existing = match repository::get_task(&state.db, task_id.as_str()).await {
+        Ok(Some(task)) => task,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "task not found"})),
+            )
+        }
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "load task failed", "detail": err})),
+            )
+        }
+    };
+    let scope_user_id = resolve_scope_user_id(&auth, req.user_id.clone());
+    if !auth.is_admin() && existing.user_id != auth.user_id {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"})));
+    }
+    if existing.user_id != scope_user_id {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({"error": "scope mismatch"})),
+        );
+    }
+    match repository::resume_task(&state.db, task_id.as_str(), req).await {
+        Ok(Some(task)) => (StatusCode::OK, Json(json!(task))),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "task not found"})),
+        ),
+        Err(err) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "resume task failed", "detail": err})),
+        ),
+    }
+}
+
+async fn internal_resume_task(
+    State(state): State<SharedState>,
+    Path(task_id): Path<String>,
+    Json(req): Json<ResumeTaskRequest>,
+) -> (StatusCode, Json<Value>) {
+    let existing = match repository::get_task(&state.db, task_id.as_str()).await {
+        Ok(Some(task)) => task,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "task not found"})),
+            )
+        }
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "load task failed", "detail": err})),
+            )
+        }
+    };
+    if let Some(scope_user_id) = req
+        .user_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        if existing.user_id != scope_user_id {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(json!({"error": "scope mismatch"})),
+            );
+        }
+    }
+    match repository::resume_task(&state.db, task_id.as_str(), req).await {
+        Ok(Some(task)) => (StatusCode::OK, Json(json!(task))),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "task not found"})),
+        ),
+        Err(err) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "resume task failed", "detail": err})),
+        ),
+    }
+}
+
+async fn internal_ack_pause_task(
+    State(state): State<SharedState>,
+    Path(task_id): Path<String>,
+    Json(req): Json<AckPauseTaskRequest>,
+) -> (StatusCode, Json<Value>) {
+    match repository::ack_pause_task(&state.db, task_id.as_str(), req).await {
+        Ok(Some(task)) => (StatusCode::OK, Json(json!(task))),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "task not found"})),
+        ),
+        Err(err) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "ack pause task failed", "detail": err})),
+        ),
+    }
+}
+
+async fn internal_ack_stop_task(
+    State(state): State<SharedState>,
+    Path(task_id): Path<String>,
+    Json(req): Json<AckStopTaskRequest>,
+) -> (StatusCode, Json<Value>) {
+    match repository::ack_stop_task(&state.db, task_id.as_str(), req).await {
+        Ok(Some(task)) => (StatusCode::OK, Json(json!(task))),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "task not found"})),
+        ),
+        Err(err) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "ack stop task failed", "detail": err})),
         ),
     }
 }

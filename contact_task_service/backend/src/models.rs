@@ -12,6 +12,10 @@ fn default_priority_rank() -> i32 {
     20
 }
 
+fn default_queue_position() -> i64 {
+    0
+}
+
 fn default_true() -> bool {
     true
 }
@@ -61,6 +65,8 @@ pub struct ContactTask {
     pub priority: String,
     #[serde(default = "default_priority_rank")]
     pub priority_rank: i32,
+    #[serde(default = "default_queue_position")]
+    pub queue_position: i64,
     #[serde(default = "default_pending_confirm")]
     pub status: String,
     pub confirm_note: Option<String>,
@@ -76,6 +82,11 @@ pub struct ContactTask {
     pub updated_at: String,
     pub confirmed_at: Option<String>,
     pub started_at: Option<String>,
+    pub paused_at: Option<String>,
+    pub pause_reason: Option<String>,
+    pub last_checkpoint_summary: Option<String>,
+    pub last_checkpoint_message_id: Option<String>,
+    pub resume_note: Option<String>,
     pub finished_at: Option<String>,
     pub last_error: Option<String>,
     pub result_summary: Option<String>,
@@ -89,6 +100,10 @@ pub struct ContactTaskScopeRuntime {
     pub contact_agent_id: String,
     pub project_id: String,
     pub running_task_id: Option<String>,
+    pub control_request: Option<String>,
+    pub control_requested_at: Option<String>,
+    pub control_reason: Option<String>,
+    pub resume_target_task_id: Option<String>,
     pub last_all_done_ack_at: Option<String>,
     pub updated_at: String,
 }
@@ -138,6 +153,11 @@ pub struct UpdateTaskRequest {
     pub execution_result_contract: Option<TaskExecutionResultContract>,
     pub planning_snapshot: Option<TaskPlanningSnapshot>,
     pub model_config_id: Option<Option<String>>,
+    pub queue_position: Option<i64>,
+    pub pause_reason: Option<Option<String>>,
+    pub last_checkpoint_summary: Option<Option<String>>,
+    pub last_checkpoint_message_id: Option<Option<String>>,
+    pub resume_note: Option<Option<String>>,
     pub result_summary: Option<Option<String>>,
     pub result_message_id: Option<Option<String>>,
     pub last_error: Option<Option<String>>,
@@ -147,6 +167,37 @@ pub struct UpdateTaskRequest {
 pub struct ConfirmTaskRequest {
     pub user_id: Option<String>,
     pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PauseTaskRequest {
+    pub user_id: Option<String>,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StopTaskRequest {
+    pub user_id: Option<String>,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResumeTaskRequest {
+    pub user_id: Option<String>,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AckPauseTaskRequest {
+    pub checkpoint_summary: Option<String>,
+    pub checkpoint_message_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AckStopTaskRequest {
+    pub result_summary: Option<String>,
+    pub result_message_id: Option<String>,
+    pub last_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

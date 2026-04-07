@@ -32,7 +32,7 @@ const normalizeDisplaySessionRefs = (
   displaySessions: SessionLike[],
   sessions: SessionLike[],
   displayBackingSessionIdMap?: Record<string, string>,
-): Array<{ displaySessionId: string; runtimeSessionId: string; conversationId: string }> => {
+): Array<{ displaySessionId: string; runtimeSessionId: string | null; conversationId: string }> => {
   return (displaySessions || [])
     .map((displaySession) => {
       const displaySessionId = typeof displaySession?.id === 'string'
@@ -47,19 +47,18 @@ const normalizeDisplaySessionRefs = (
       const runtimeSession = runtimeSessionId
         ? sessions.find((session) => session.id === runtimeSessionId) || null
         : null;
-      const effectiveRuntimeSessionId = runtimeSessionId || displaySessionId;
       const conversationId = readSessionImConversationId(displaySession?.metadata)
         || readSessionImConversationId(runtimeSession?.metadata);
-      if (!conversationId || !effectiveRuntimeSessionId) {
+      if (!conversationId) {
         return null;
       }
       return {
         displaySessionId,
-        runtimeSessionId: effectiveRuntimeSessionId,
+        runtimeSessionId: runtimeSessionId || null,
         conversationId,
       };
     })
-    .filter(Boolean) as Array<{ displaySessionId: string; runtimeSessionId: string; conversationId: string }>;
+    .filter(Boolean) as Array<{ displaySessionId: string; runtimeSessionId: string | null; conversationId: string }>;
 };
 
 export const useContactImRuntimeState = ({
@@ -74,14 +73,14 @@ export const useContactImRuntimeState = ({
     () => normalizeDisplaySessionRefs(displaySessions, sessions, displayBackingSessionIdMap),
     [displayBackingSessionIdMap, displaySessions, sessions],
   );
-  const [taskRuntimeByDisplaySessionId, setTaskRuntimeByDisplaySessionId] = useState<
+  const [bootstrapTaskRuntimeByDisplaySessionId, setBootstrapTaskRuntimeByDisplaySessionId] = useState<
     Record<string, ContactTaskRuntimeState>
   >({});
   const pollSeqRef = useRef(0);
 
   useEffect(() => {
     if (isCollapsed || contactRuntimeSessionRefs.length === 0) {
-      setTaskRuntimeByDisplaySessionId({});
+      setBootstrapTaskRuntimeByDisplaySessionId({});
       return;
     }
 
@@ -93,6 +92,15 @@ export const useContactImRuntimeState = ({
 
       const entries = await Promise.all(
         contactRuntimeSessionRefs.map(async (ref) => {
+          if (!ref.runtimeSessionId) {
+            return [
+              ref.displaySessionId,
+              {
+                busy: false,
+                status: null,
+              } satisfies ContactTaskRuntimeState,
+            ] as const;
+          }
           try {
             const tasks = await apiClient.getTaskManagerTasks(ref.runtimeSessionId, {
               includeDone: false,
@@ -132,20 +140,13 @@ export const useContactImRuntimeState = ({
         return;
       }
 
-      setTaskRuntimeByDisplaySessionId(Object.fromEntries(entries));
+      setBootstrapTaskRuntimeByDisplaySessionId(Object.fromEntries(entries));
     };
 
     void loadTaskRuntime();
-    const timer = window.setInterval(() => {
-      if (typeof document !== 'undefined' && document.hidden) {
-        return;
-      }
-      void loadTaskRuntime();
-    }, 5000);
 
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
     };
   }, [apiClient, contactRuntimeSessionRefs, isCollapsed]);
 
@@ -162,11 +163,20 @@ export const useContactImRuntimeState = ({
           latestRunStatus: null,
           lastMessagePreview: null,
           lastMessageAt: null,
+          taskExecutionStatus: null,
         };
-        const taskRuntimeState = taskRuntimeByDisplaySessionId[ref.displaySessionId] || {
-          busy: false,
-          status: null,
-        };
+        const runtimeTaskStatus = typeof imRuntimeState.taskExecutionStatus === 'string'
+          ? imRuntimeState.taskExecutionStatus.trim().toLowerCase()
+          : '';
+        const taskRuntimeState = runtimeTaskStatus === 'pending_execute' || runtimeTaskStatus === 'running'
+          ? {
+              busy: true,
+              status: runtimeTaskStatus as ContactTaskRuntimeState['status'],
+            } satisfies ContactTaskRuntimeState
+          : (bootstrapTaskRuntimeByDisplaySessionId[ref.displaySessionId] || {
+              busy: false,
+              status: null,
+            });
         const busySource = imRuntimeState.busy
           ? 'im_run'
           : (taskRuntimeState.busy ? 'task_execution' : 'idle');
@@ -185,7 +195,7 @@ export const useContactImRuntimeState = ({
     contactRuntimeSessionRefs,
     imConversationRuntimeByConversationId,
     isCollapsed,
-    taskRuntimeByDisplaySessionId,
+    bootstrapTaskRuntimeByDisplaySessionId,
   ]);
 
   return {

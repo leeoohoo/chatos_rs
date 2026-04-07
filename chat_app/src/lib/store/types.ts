@@ -13,7 +13,7 @@ export interface TaskReviewDraft {
   title: string;
   details: string;
   priority: 'high' | 'medium' | 'low';
-  status: 'pending_confirm' | 'pending_execute' | 'running' | 'completed' | 'failed' | 'cancelled';
+  status: 'pending_confirm' | 'pending_execute' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled';
   tags: string[];
   dueAt?: string | null;
   plannedBuiltinMcpIds?: string[];
@@ -155,6 +155,7 @@ export interface ImConversationRuntimeState {
   latestRunStatus: string | null;
   lastMessagePreview: string | null;
   lastMessageAt: string | null;
+  taskExecutionStatus?: string | null;
 }
 
 export interface RuntimeGuidanceItem {

@@ -30,6 +30,38 @@ pub async fn list_memory_contacts(
     }
 }
 
+pub async fn resolve_memory_contact(
+    user_id: Option<&str>,
+    contact_id: Option<&str>,
+    contact_agent_id: Option<&str>,
+) -> Result<Option<MemoryContactDto>, String> {
+    let contacts = list_memory_contacts(user_id, Some(500), 0).await?;
+
+    if let Some(normalized_contact_id) = contact_id.map(str::trim).filter(|value| !value.is_empty())
+    {
+        if let Some(contact) = contacts
+            .iter()
+            .find(|item| item.id.trim() == normalized_contact_id)
+        {
+            return Ok(Some(contact.clone()));
+        }
+    }
+
+    if let Some(normalized_contact_agent_id) = contact_agent_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        if let Some(contact) = contacts
+            .iter()
+            .find(|item| item.agent_id.trim() == normalized_contact_agent_id)
+        {
+            return Ok(Some(contact.clone()));
+        }
+    }
+
+    Ok(None)
+}
+
 pub async fn create_memory_contact(
     payload: &CreateMemoryContactRequestDto,
 ) -> Result<CreateMemoryContactResponseDto, String> {

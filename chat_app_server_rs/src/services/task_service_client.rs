@@ -208,6 +208,11 @@ pub struct UpdateTaskRequestDto {
     pub execution_result_contract: Option<TaskExecutionResultContractDto>,
     pub planning_snapshot: Option<TaskPlanningSnapshotDto>,
     pub model_config_id: Option<Option<String>>,
+    pub queue_position: Option<i64>,
+    pub pause_reason: Option<Option<String>>,
+    pub last_checkpoint_summary: Option<Option<String>>,
+    pub last_checkpoint_message_id: Option<Option<String>>,
+    pub resume_note: Option<Option<String>>,
     pub result_summary: Option<Option<String>>,
     pub result_message_id: Option<Option<String>>,
     pub last_error: Option<Option<String>>,
@@ -217,6 +222,37 @@ pub struct UpdateTaskRequestDto {
 pub struct ConfirmTaskRequestDto {
     pub user_id: Option<String>,
     pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PauseTaskRequestDto {
+    pub user_id: Option<String>,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct StopTaskRequestDto {
+    pub user_id: Option<String>,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ResumeTaskRequestDto {
+    pub user_id: Option<String>,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AckPauseTaskRequestDto {
+    pub checkpoint_summary: Option<String>,
+    pub checkpoint_message_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AckStopTaskRequestDto {
+    pub result_summary: Option<String>,
+    pub result_message_id: Option<String>,
+    pub last_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -264,6 +300,11 @@ pub struct TaskRecordDto {
     pub updated_at: String,
     pub confirmed_at: Option<String>,
     pub started_at: Option<String>,
+    pub paused_at: Option<String>,
+    pub pause_reason: Option<String>,
+    pub last_checkpoint_summary: Option<String>,
+    pub last_checkpoint_message_id: Option<String>,
+    pub resume_note: Option<String>,
     pub finished_at: Option<String>,
     pub last_error: Option<String>,
     pub result_summary: Option<String>,
@@ -408,6 +449,84 @@ pub async fn scheduler_next(
         .timeout(timeout_duration())
         .json(req_body);
     send_json(req).await
+}
+
+pub async fn request_pause_task(
+    task_id: &str,
+    req_body: &PauseTaskRequestDto,
+) -> Result<Option<TaskRecordDto>, String> {
+    let req = client()
+        .post(
+            build_internal_url(&format!(
+                "/tasks/{}/request-pause",
+                urlencoding::encode(task_id)
+            ))
+            .as_str(),
+        )
+        .timeout(timeout_duration())
+        .json(req_body);
+    send_optional_json(req).await
+}
+
+pub async fn request_stop_task(
+    task_id: &str,
+    req_body: &StopTaskRequestDto,
+) -> Result<Option<TaskRecordDto>, String> {
+    let req = client()
+        .post(
+            build_internal_url(&format!(
+                "/tasks/{}/request-stop",
+                urlencoding::encode(task_id)
+            ))
+            .as_str(),
+        )
+        .timeout(timeout_duration())
+        .json(req_body);
+    send_optional_json(req).await
+}
+
+pub async fn resume_task(
+    task_id: &str,
+    req_body: &ResumeTaskRequestDto,
+) -> Result<Option<TaskRecordDto>, String> {
+    let req = client()
+        .post(
+            build_internal_url(&format!("/tasks/{}/resume", urlencoding::encode(task_id))).as_str(),
+        )
+        .timeout(timeout_duration())
+        .json(req_body);
+    send_optional_json(req).await
+}
+
+pub async fn ack_pause_task(
+    task_id: &str,
+    req_body: &AckPauseTaskRequestDto,
+) -> Result<Option<TaskRecordDto>, String> {
+    let req = client()
+        .post(
+            build_internal_url(&format!(
+                "/tasks/{}/ack-pause",
+                urlencoding::encode(task_id)
+            ))
+            .as_str(),
+        )
+        .timeout(timeout_duration())
+        .json(req_body);
+    send_optional_json(req).await
+}
+
+pub async fn ack_stop_task(
+    task_id: &str,
+    req_body: &AckStopTaskRequestDto,
+) -> Result<Option<TaskRecordDto>, String> {
+    let req = client()
+        .post(
+            build_internal_url(&format!("/tasks/{}/ack-stop", urlencoding::encode(task_id)))
+                .as_str(),
+        )
+        .timeout(timeout_duration())
+        .json(req_body);
+    send_optional_json(req).await
 }
 
 pub async fn list_scheduler_scopes(

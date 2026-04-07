@@ -425,6 +425,7 @@ export const normalizeWorkbarTask = (raw: unknown): TaskWorkbarItem => {
     statusRaw === 'pending_confirm'
     || statusRaw === 'pending_execute'
     || statusRaw === 'running'
+    || statusRaw === 'paused'
     || statusRaw === 'completed'
     || statusRaw === 'failed'
     || statusRaw === 'cancelled'

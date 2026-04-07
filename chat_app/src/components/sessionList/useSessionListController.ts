@@ -10,9 +10,6 @@ import {
 import {
   useContactScopeListState,
 } from './useContactSessionListState';
-import {
-  CONTACT_TASK_AUTHORIZABLE_BUILTIN_MCP_ID_SET,
-} from './ContactBuiltinMcpGrantsModal';
 import { useInlineActionMenus } from './useInlineActionMenus';
 import { useSectionExpansion } from './useSectionExpansion';
 import { useSessionListBootstrap } from './useSessionListBootstrap';
@@ -24,7 +21,10 @@ import { useSessionListStoreState } from './useSessionListStoreState';
 import { useRemoteConnectionForm } from './useRemoteConnectionForm';
 import { useContactImRuntimeState } from './useContactImRuntimeState';
 import type { ContactItem } from './types';
-import type { ImConversationResponse } from '../../lib/api/client/types';
+import type {
+  ImConversationResponse,
+  TaskCapabilityResponse,
+} from '../../lib/api/client/types';
 
 interface SessionListControllerParams {
   store?: typeof useChatStore;
@@ -103,6 +103,7 @@ export const useSessionListController = ({
   const [builtinMcpGrantsLoading, setBuiltinMcpGrantsLoading] = useState(false);
   const [builtinMcpGrantsSaving, setBuiltinMcpGrantsSaving] = useState(false);
   const [builtinMcpGrantsError, setBuiltinMcpGrantsError] = useState<string | null>(null);
+  const [builtinMcpGrantOptions, setBuiltinMcpGrantOptions] = useState<TaskCapabilityResponse[]>([]);
 
   const [projectModalOpen, setProjectModalOpen] = useState(false);
   const [projectRoot, setProjectRoot] = useState('');
@@ -145,6 +146,10 @@ export const useSessionListController = ({
   const hasRunningTerminals = useMemo(
     () => (terminals || []).some((terminal) => terminal?.status === 'running' || Boolean(terminal?.busy)),
     [terminals],
+  );
+  const builtinMcpGrantIdSet = useMemo(
+    () => new Set(builtinMcpGrantOptions.map((item) => item.builtin_mcp_id)),
+    [builtinMcpGrantOptions],
   );
 
   const contactScopeState = useContactScopeListState({
@@ -311,18 +316,21 @@ export const useSessionListController = ({
     setBuiltinMcpGrantsModalOpen(true);
     setBuiltinMcpGrantsContactId(contactId);
     setBuiltinMcpGrantsContactName(matchedContact?.name || '联系人');
-    setBuiltinMcpGrantsSelectedIds(
-      (matchedContact?.authorizedBuiltinMcpIds || [])
-        .filter((item) => CONTACT_TASK_AUTHORIZABLE_BUILTIN_MCP_ID_SET.has(item)),
-    );
+    setBuiltinMcpGrantsSelectedIds([]);
     setBuiltinMcpGrantsError(null);
     setBuiltinMcpGrantsLoading(true);
     try {
+      const taskCapabilities = await apiClient.getTaskCapabilities();
+      const contactAuthorizableOptions = (taskCapabilities || [])
+        .filter((item) => item.contact_authorizable);
+      const allowedIdSet = new Set(contactAuthorizableOptions.map((item) => item.builtin_mcp_id));
+      setBuiltinMcpGrantOptions(contactAuthorizableOptions);
+
       const result = await apiClient.getContactBuiltinMcpGrants(contactId);
       setBuiltinMcpGrantsSelectedIds(
         Array.isArray(result?.authorized_builtin_mcp_ids)
           ? result.authorized_builtin_mcp_ids.filter((item: string) =>
-            CONTACT_TASK_AUTHORIZABLE_BUILTIN_MCP_ID_SET.has(item))
+            allowedIdSet.has(item))
           : [],
       );
     } catch (error) {
@@ -340,12 +348,13 @@ export const useSessionListController = ({
     setBuiltinMcpGrantsContactId(null);
     setBuiltinMcpGrantsContactName('');
     setBuiltinMcpGrantsSelectedIds([]);
+    setBuiltinMcpGrantOptions([]);
     setBuiltinMcpGrantsLoading(false);
     setBuiltinMcpGrantsError(null);
   };
 
   const toggleBuiltinMcpGrant = (mcpId: string) => {
-    if (!mcpId || !CONTACT_TASK_AUTHORIZABLE_BUILTIN_MCP_ID_SET.has(mcpId)) {
+    if (!mcpId || !builtinMcpGrantIdSet.has(mcpId)) {
       return;
     }
     setBuiltinMcpGrantsSelectedIds((current) => (
@@ -361,7 +370,7 @@ export const useSessionListController = ({
     }
     const nextIds = Array.from(new Set(
       builtinMcpGrantsSelectedIds.filter((item) =>
-        CONTACT_TASK_AUTHORIZABLE_BUILTIN_MCP_ID_SET.has(item)),
+        builtinMcpGrantIdSet.has(item)),
     ));
     setBuiltinMcpGrantsSaving(true);
     setBuiltinMcpGrantsError(null);
@@ -400,6 +409,7 @@ export const useSessionListController = ({
     builtinMcpGrantsError,
     builtinMcpGrantsLoading,
     builtinMcpGrantsModalOpen,
+    builtinMcpGrantOptions,
     builtinMcpGrantsSaving,
     builtinMcpGrantsSelectedIds,
     closeBuiltinMcpGrantsModal,

@@ -85,6 +85,7 @@ export function createContactActions({ set, get, client, getUserIdParam }: Deps)
               latestRunStatus: null,
               lastMessagePreview: null,
               lastMessageAt: null,
+              taskExecutionStatus: null,
             };
             state.imConversationRuntimeByConversationId[conversationId] = {
               ...previous,

@@ -2,13 +2,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::repositories::projects;
-use crate::services::builtin_mcp::{
-    CODE_MAINTAINER_READ_MCP_ID, CODE_MAINTAINER_WRITE_MCP_ID,
-    REMOTE_CONNECTION_CONTROLLER_MCP_ID, TERMINAL_CONTROLLER_MCP_ID,
-};
 use crate::services::memory_server_client::{
     MemoryAgentRuntimeCommandSummaryDto, MemoryAgentRuntimeContextDto,
 };
+use crate::services::task_capability_registry::find_task_capability_by_mcp_id;
 
 pub const CONTACT_COMMAND_READER_TOOL_NAME: &str = "memory_command_reader_get_command_detail";
 
@@ -460,16 +457,6 @@ pub fn compose_contact_system_prompt(
     Some(lines.join("\n").trim().to_string())
 }
 
-fn task_capability_prompt_entry(mcp_id: &str) -> Option<(&'static str, &'static str)> {
-    match mcp_id {
-        CODE_MAINTAINER_READ_MCP_ID => Some(("read", "查看/读取项目内容")),
-        CODE_MAINTAINER_WRITE_MCP_ID => Some(("write", "写入/修改项目内容")),
-        TERMINAL_CONTROLLER_MCP_ID => Some(("terminal", "执行终端命令、构建、测试、查看日志")),
-        REMOTE_CONNECTION_CONTROLLER_MCP_ID => Some(("remote", "访问当前选中的远程连接")),
-        _ => None,
-    }
-}
-
 pub fn compose_contact_task_planning_prompt(
     runtime_context: Option<&MemoryAgentRuntimeContextDto>,
     authorized_builtin_mcp_ids: &[String],
@@ -481,30 +468,31 @@ pub fn compose_contact_task_planning_prompt(
 
     let capability_entries = authorized_builtin_mcp_ids
         .iter()
-        .filter_map(|item| task_capability_prompt_entry(item.as_str()).map(|entry| (item, entry)))
+        .filter_map(|item| find_task_capability_by_mcp_id(item.as_str()))
+        .filter(|item| item.planning_visible)
         .collect::<Vec<_>>();
     let allowed_capabilities = capability_entries
         .iter()
-        .map(|(_, (capability, _))| capability.to_string())
+        .map(|item| item.token.clone())
         .collect::<Vec<_>>();
     let authorized_builtin_mcp_tools = capability_entries
         .iter()
-        .map(|(_, (capability, description))| {
+        .map(|item| {
             json!({
-                "fill_value": capability,
-                "description": description,
+                "fill_value": item.token,
+                "description": item.description,
             })
         })
         .collect::<Vec<_>>();
     if !capability_entries.is_empty() {
         lines.push(String::new());
         lines.push("创建任务时 `required_builtin_capabilities` 可选值如下，只能填这些 token：".to_string());
-        for (index, (_, (capability, description))) in capability_entries.iter().enumerate() {
+        for (index, item) in capability_entries.iter().enumerate() {
             lines.push(format!(
                 "{}. {} | {}",
                 index + 1,
-                capability,
-                description
+                item.token,
+                item.description
             ));
         }
     } else {
@@ -515,6 +503,7 @@ pub fn compose_contact_task_planning_prompt(
     lines.push("下面是当前联系人授权内、可用于任务规划的 MCP 选项列表；创建任务时只能从 `fill_value` 里选来填写 `required_builtin_capabilities`：".to_string());
     if let Ok(serialized) = serde_json::to_string_pretty(&json!({
         "authorized_builtin_mcp_tools_allowed": authorized_builtin_mcp_tools,
+        "required_builtin_capabilities_allowed": allowed_capabilities,
     })) {
         lines.push("```json".to_string());
         lines.extend(serialized.lines().map(ToOwned::to_owned));
