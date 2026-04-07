@@ -136,9 +136,16 @@ export const api = {
     return data;
   },
 
-  async listMessages(sessionId: string): Promise<Message[]> {
+  async listMessages(
+    sessionId: string,
+    params?: { limit?: number; offset?: number; order?: 'asc' | 'desc' },
+  ): Promise<Message[]> {
     const { data } = await client.get(`/sessions/${sessionId}/messages`, {
-      params: { limit: 200, offset: 0, order: 'asc' },
+      params: {
+        limit: params?.limit ?? 200,
+        offset: params?.offset ?? 0,
+        order: params?.order ?? 'asc',
+      },
     });
     return data.items ?? [];
   },

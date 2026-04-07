@@ -21,7 +21,15 @@ export interface Message {
   session_id: string;
   role: string;
   content: string;
+  message_mode?: string | null;
+  message_source?: string | null;
+  tool_calls?: unknown;
+  tool_call_id?: string | null;
+  reasoning?: string | null;
+  metadata?: unknown;
   summary_status: string;
+  summary_id?: string | null;
+  summarized_at?: string | null;
   created_at: string;
 }
 

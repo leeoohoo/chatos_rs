@@ -19,6 +19,8 @@ import type {
   AgentSkillPreviewState,
 } from './types';
 
+const CONVERSATION_MESSAGES_PAGE_SIZE = 20;
+
 interface UseAgentsPageInspectorsOptions {
   scopeUserId: string;
   t: AgentPageTranslate;
@@ -30,7 +32,7 @@ export interface AgentsPageInspectorsResult {
   conversationState: AgentConversationPanelState;
   openConversationDrawer: (agent: MemoryAgent) => Promise<void>;
   closeConversationDrawer: () => void;
-  loadConversationMessages: (sessionId: string) => Promise<void>;
+  loadConversationMessages: (sessionId: string, page?: number) => Promise<void>;
   pluginPreviewState: AgentPluginPreviewState;
   openPluginPreview: (pluginSource: string) => Promise<void>;
   closePluginPreview: () => void;
@@ -62,6 +64,8 @@ export function useAgentsPageInspectors({
   const [conversationSessionId, setConversationSessionId] = useState<string | null>(null);
   const [conversationMessages, setConversationMessages] = useState<Message[]>([]);
   const [conversationMessagesLoading, setConversationMessagesLoading] = useState(false);
+  const [conversationMessagesPage, setConversationMessagesPage] = useState(1);
+  const [conversationMessagesHasMore, setConversationMessagesHasMore] = useState(false);
   const [conversationProjectNames, setConversationProjectNames] = useState<Record<string, string>>({});
 
   const groupedConversationSessions = useMemo(
@@ -183,22 +187,35 @@ export function useAgentsPageInspectors({
     setSkillPreview(null);
   };
 
-  const loadConversationMessages = useCallback(async (sessionId: string) => {
+  const loadConversationMessages = useCallback(async (sessionId: string, page = 1) => {
     const normalizedSessionId = sessionId.trim();
     if (!normalizedSessionId) {
       setConversationMessages([]);
       setConversationSessionId(null);
+      setConversationMessagesPage(1);
+      setConversationMessagesHasMore(false);
       return;
     }
     setConversationMessagesLoading(true);
     try {
-      const rows = await api.listMessages(normalizedSessionId);
-      setConversationMessages(rows);
+      const limit = CONVERSATION_MESSAGES_PAGE_SIZE + 1;
+      const offset = Math.max(0, (page - 1) * CONVERSATION_MESSAGES_PAGE_SIZE);
+      const rows = await api.listMessages(normalizedSessionId, {
+        limit,
+        offset,
+        order: 'asc',
+      });
+      const hasMore = rows.length > CONVERSATION_MESSAGES_PAGE_SIZE;
+      setConversationMessages(rows.slice(0, CONVERSATION_MESSAGES_PAGE_SIZE));
+      setConversationMessagesHasMore(hasMore);
+      setConversationMessagesPage(page);
       setConversationSessionId(normalizedSessionId);
     } catch (err) {
       onError((err as Error).message);
       setConversationMessages([]);
       setConversationSessionId(normalizedSessionId);
+      setConversationMessagesPage(page);
+      setConversationMessagesHasMore(false);
     } finally {
       setConversationMessagesLoading(false);
     }
@@ -210,6 +227,8 @@ export function useAgentsPageInspectors({
     setConversationLoading(true);
     setConversationMessages([]);
     setConversationSessionId(null);
+    setConversationMessagesPage(1);
+    setConversationMessagesHasMore(false);
     setConversationProjectNames({});
     try {
       const [rows, projects] = await Promise.all([
@@ -239,13 +258,15 @@ export function useAgentsPageInspectors({
       setConversationSessions(rows);
       const firstSession = rows[0];
       if (firstSession?.id) {
-        await loadConversationMessages(firstSession.id);
+        await loadConversationMessages(firstSession.id, 1);
       }
     } catch (err) {
       onError((err as Error).message);
       setConversationSessions([]);
       setConversationMessages([]);
       setConversationSessionId(null);
+      setConversationMessagesPage(1);
+      setConversationMessagesHasMore(false);
     } finally {
       setConversationLoading(false);
     }
@@ -258,6 +279,8 @@ export function useAgentsPageInspectors({
     setConversationProjectNames({});
     setConversationSessionId(null);
     setConversationMessages([]);
+    setConversationMessagesPage(1);
+    setConversationMessagesHasMore(false);
   };
 
   const conversationState: AgentConversationPanelState = {
@@ -268,6 +291,9 @@ export function useAgentsPageInspectors({
     sessionId: conversationSessionId,
     messages: conversationMessages,
     messagesLoading: conversationMessagesLoading,
+    messagesPage: conversationMessagesPage,
+    messagesPageSize: CONVERSATION_MESSAGES_PAGE_SIZE,
+    messagesHasMore: conversationMessagesHasMore,
     projectNames: conversationProjectNames,
     groupedSessions: groupedConversationSessions,
   };

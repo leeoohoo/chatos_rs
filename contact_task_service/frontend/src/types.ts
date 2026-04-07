@@ -63,9 +63,13 @@ export interface TaskExecutionMessage {
   content: string;
   message_mode?: string | null;
   message_source?: string | null;
+  tool_calls?: unknown;
   tool_call_id?: string | null;
   reasoning?: string | null;
-  metadata?: Record<string, unknown> | null;
+  metadata?: unknown;
+  summary_status?: string | null;
+  summary_id?: string | null;
+  summarized_at?: string | null;
   created_at: string;
 }
 

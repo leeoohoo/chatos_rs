@@ -46,6 +46,9 @@ export interface AgentConversationPanelState {
   sessionId: string | null;
   messages: Message[];
   messagesLoading: boolean;
+  messagesPage: number;
+  messagesPageSize: number;
+  messagesHasMore: boolean;
   projectNames: Record<string, string>;
   groupedSessions: AgentConversationGroup[];
 }
