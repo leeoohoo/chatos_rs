@@ -33,6 +33,6 @@ __pycache__/
 *.sln
 *.sw?
 
-/chat_app_server_rs/docs
-/chat_app_server_rs/docs/*
+/agent_orchestrator/docs
+/agent_orchestrator/docs/*
 /docs/
