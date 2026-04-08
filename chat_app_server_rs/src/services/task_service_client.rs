@@ -55,6 +55,31 @@ pub struct TaskPlanningSnapshotDto {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TaskHandoffPayloadDto {
+    pub task_id: String,
+    pub task_plan_id: Option<String>,
+    pub handoff_kind: String,
+    pub summary: String,
+    pub result_summary: Option<String>,
+    #[serde(default)]
+    pub key_changes: Vec<String>,
+    #[serde(default)]
+    pub changed_files: Vec<String>,
+    #[serde(default)]
+    pub executed_commands: Vec<String>,
+    #[serde(default)]
+    pub verification_suggestions: Vec<String>,
+    #[serde(default)]
+    pub open_risks: Vec<String>,
+    #[serde(default)]
+    pub artifact_refs: Vec<String>,
+    #[serde(default)]
+    pub checkpoint_message_ids: Vec<String>,
+    pub result_brief_id: Option<String>,
+    pub generated_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TaskResultBriefDto {
     pub id: String,
     pub task_id: String,
@@ -174,6 +199,15 @@ pub struct CreateTaskRequestDto {
     pub user_id: Option<String>,
     pub contact_agent_id: String,
     pub project_id: String,
+    pub task_plan_id: Option<String>,
+    pub task_ref: Option<String>,
+    pub task_kind: Option<String>,
+    #[serde(default)]
+    pub depends_on_task_ids: Vec<String>,
+    #[serde(default)]
+    pub verification_of_task_ids: Vec<String>,
+    #[serde(default)]
+    pub acceptance_criteria: Vec<String>,
     pub project_root: Option<String>,
     pub remote_connection_id: Option<String>,
     pub session_id: Option<String>,
@@ -199,6 +233,12 @@ pub struct UpdateTaskRequestDto {
     pub content: Option<String>,
     pub priority: Option<String>,
     pub status: Option<String>,
+    pub task_ref: Option<Option<String>>,
+    pub task_kind: Option<Option<String>>,
+    pub depends_on_task_ids: Option<Vec<String>>,
+    pub verification_of_task_ids: Option<Vec<String>>,
+    pub acceptance_criteria: Option<Vec<String>>,
+    pub blocked_reason: Option<Option<String>>,
     pub confirm_note: Option<String>,
     pub execution_note: Option<String>,
     pub project_root: Option<Option<String>>,
@@ -207,6 +247,7 @@ pub struct UpdateTaskRequestDto {
     pub planned_context_assets: Option<Vec<TaskContextAssetRefDto>>,
     pub execution_result_contract: Option<TaskExecutionResultContractDto>,
     pub planning_snapshot: Option<TaskPlanningSnapshotDto>,
+    pub handoff_payload: Option<Option<TaskHandoffPayloadDto>>,
     pub model_config_id: Option<Option<String>>,
     pub queue_position: Option<i64>,
     pub pause_reason: Option<Option<String>>,
@@ -277,6 +318,16 @@ pub struct TaskRecordDto {
     pub contact_agent_id: String,
     pub project_id: String,
     pub scope_key: String,
+    pub task_plan_id: Option<String>,
+    pub task_ref: Option<String>,
+    pub task_kind: Option<String>,
+    #[serde(default)]
+    pub depends_on_task_ids: Vec<String>,
+    #[serde(default)]
+    pub verification_of_task_ids: Vec<String>,
+    #[serde(default)]
+    pub acceptance_criteria: Vec<String>,
+    pub blocked_reason: Option<String>,
     pub project_root: Option<String>,
     pub remote_connection_id: Option<String>,
     pub session_id: Option<String>,
@@ -295,6 +346,7 @@ pub struct TaskRecordDto {
     pub planned_context_assets: Vec<TaskContextAssetRefDto>,
     pub execution_result_contract: Option<TaskExecutionResultContractDto>,
     pub planning_snapshot: Option<TaskPlanningSnapshotDto>,
+    pub handoff_payload: Option<TaskHandoffPayloadDto>,
     pub created_by: Option<String>,
     pub created_at: String,
     pub updated_at: String,

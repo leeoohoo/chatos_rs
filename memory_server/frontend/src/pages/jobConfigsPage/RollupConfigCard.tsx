@@ -1,7 +1,6 @@
 import { Alert, Button, Card, Form, Input, InputNumber, Select, Space, Switch } from 'antd';
 
 import type { RollupJobConfig, TaskExecutionRollupJobConfig } from '../../types';
-import { DEFAULT_SUMMARY_PROMPT_TEMPLATE } from './helpers';
 
 type RollupConfigLike = RollupJobConfig | TaskExecutionRollupJobConfig;
 
@@ -14,6 +13,7 @@ interface RollupConfigCardProps {
   summaryPromptLabel: string;
   summaryPromptHint: string;
   resetSummaryPromptLabel: string;
+  defaultSummaryPrompt: string;
   roundLimitLabel: string;
   tokenLimitLabel: string;
   targetTokensLabel: string;
@@ -42,6 +42,7 @@ export function RollupConfigCard({
   summaryPromptLabel,
   summaryPromptHint,
   resetSummaryPromptLabel,
+  defaultSummaryPrompt,
   roundLimitLabel,
   tokenLimitLabel,
   targetTokensLabel,
@@ -106,7 +107,7 @@ export function RollupConfigCard({
                 onClick={() =>
                   onChange({
                     ...config,
-                    summary_prompt: DEFAULT_SUMMARY_PROMPT_TEMPLATE,
+                    summary_prompt: defaultSummaryPrompt,
                   })
                 }
               >

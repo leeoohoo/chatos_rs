@@ -1,3 +1,5 @@
+use std::collections::{HashMap, HashSet};
+
 use crate::services::builtin_mcp::UI_PROMPTER_MCP_ID;
 use crate::services::task_manager::normalizer::{normalize_task_drafts, trimmed_non_empty};
 use crate::services::task_manager::types::{
@@ -13,6 +15,7 @@ use crate::services::task_service_client::{
     TaskPlanningSnapshotDto,
 };
 use tracing::{info, warn};
+use uuid::Uuid;
 
 use super::remote_support::{
     map_remote_result_brief, map_remote_task_to_record, resolve_task_scope_context,
@@ -711,6 +714,83 @@ fn limit_text(input: &str, max_chars: usize) -> String {
     format!("{}...", truncated)
 }
 
+fn validate_task_graph_drafts(draft_tasks: &[TaskDraft]) -> Result<(), String> {
+    let mut known_refs = HashSet::new();
+
+    for draft in draft_tasks {
+        if let Some(task_ref) = draft
+            .task_ref
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            if !known_refs.insert(task_ref.to_string()) {
+                return Err(format!("duplicate task_ref detected: {}", task_ref));
+            }
+        }
+    }
+
+    for draft in draft_tasks {
+        let current_ref = draft
+            .task_ref
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        for dependency_ref in &draft.depends_on_refs {
+            if !known_refs.contains(dependency_ref.as_str()) {
+                return Err(format!(
+                    "depends_on_refs references unknown task_ref: {}",
+                    dependency_ref
+                ));
+            }
+            if current_ref == Some(dependency_ref.as_str()) {
+                return Err(format!("task_ref cannot depend on itself: {}", dependency_ref));
+            }
+        }
+        for verification_ref in &draft.verification_of_refs {
+            if !known_refs.contains(verification_ref.as_str()) {
+                return Err(format!(
+                    "verification_of_refs references unknown task_ref: {}",
+                    verification_ref
+                ));
+            }
+        }
+    }
+
+    for draft in draft_tasks {
+        if draft.task_kind.as_deref() != Some("implementation") {
+            continue;
+        }
+        let Some(task_ref) = draft
+            .task_ref
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            return Err(format!(
+                "implementation task '{}' must provide task_ref",
+                draft.title
+            ));
+        };
+        let has_verification = draft_tasks.iter().any(|candidate| {
+            candidate.task_kind.as_deref() == Some("verification")
+                && (candidate.depends_on_refs.iter().any(|item| item == task_ref)
+                    || candidate
+                        .verification_of_refs
+                        .iter()
+                        .any(|item| item == task_ref))
+        });
+        if !has_verification {
+            return Err(format!(
+                "implementation task '{}' must have a verification task that references task_ref={}",
+                draft.title, task_ref
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 pub async fn create_tasks_for_turn(
     session_id: &str,
     conversation_turn_id: &str,
@@ -726,6 +806,7 @@ pub async fn create_tasks_for_turn(
     if draft_tasks.is_empty() {
         return Ok(Vec::new());
     }
+    validate_task_graph_drafts(draft_tasks.as_slice())?;
 
     let scope = resolve_task_scope_context(session_id.as_str()).await?;
     let contact_authorized_builtin_mcp_ids = resolve_contact_builtin_mcp_grants(&scope).await;
@@ -755,7 +836,8 @@ pub async fn create_tasks_for_turn(
         runtime_snapshot.as_ref(),
     )
     .await;
-    let mut out = Vec::with_capacity(draft_tasks.len());
+    let task_plan_id = format!("plan_{}", Uuid::new_v4().simple());
+    let mut created_pairs = Vec::with_capacity(draft_tasks.len());
     for mut draft in draft_tasks {
         let capability_builtin_mcp_ids = resolve_required_builtin_capabilities(
             draft.required_builtin_capabilities.as_slice(),
@@ -805,6 +887,12 @@ pub async fn create_tasks_for_turn(
             user_id: Some(scope.user_id.clone()),
             contact_agent_id: scope.contact_agent_id.clone(),
             project_id: scope.project_id.clone(),
+            task_plan_id: Some(task_plan_id.clone()),
+            task_ref: draft.task_ref.clone(),
+            task_kind: draft.task_kind.clone(),
+            depends_on_task_ids: Vec::new(),
+            verification_of_task_ids: Vec::new(),
+            acceptance_criteria: draft.acceptance_criteria.clone(),
             project_root: scope.project_root.clone(),
             remote_connection_id: scope.remote_connection_id.clone(),
             session_id: Some(session_id.clone()),
@@ -831,18 +919,53 @@ pub async fn create_tasks_for_turn(
             planning_snapshot: Some(planning_snapshot.clone()),
         })
         .await?;
+        created_pairs.push((draft, created));
+    }
+
+    let mut ref_to_task_id = HashMap::new();
+    for (draft, created) in &created_pairs {
+        if let Some(task_ref) = draft.task_ref.as_deref() {
+            ref_to_task_id.insert(task_ref.to_string(), created.id.clone());
+        }
+    }
+
+    let mut out = Vec::with_capacity(created_pairs.len());
+    for (draft, created) in created_pairs {
+        let depends_on_task_ids = draft
+            .depends_on_refs
+            .iter()
+            .filter_map(|item| ref_to_task_id.get(item).cloned())
+            .collect::<Vec<_>>();
+        let verification_of_task_ids = draft
+            .verification_of_refs
+            .iter()
+            .filter_map(|item| ref_to_task_id.get(item).cloned())
+            .collect::<Vec<_>>();
+        let created = if !depends_on_task_ids.is_empty() || !verification_of_task_ids.is_empty() {
+            task_service_client::update_task_internal(
+                created.id.as_str(),
+                &task_service_client::UpdateTaskRequestDto {
+                    depends_on_task_ids: Some(depends_on_task_ids),
+                    verification_of_task_ids: Some(verification_of_task_ids),
+                    ..task_service_client::UpdateTaskRequestDto::default()
+                },
+            )
+            .await?
+            .ok_or_else(|| format!("task not found after create: {}", created.id))?
+        } else {
+            created
+        };
         let task_id = created.id.clone();
-        let task_result_brief =
-            match task_service_client::get_task_result_brief(task_id.as_str()).await {
-                Ok(item) => item.map(map_remote_result_brief),
-                Err(err) => {
-                    warn!(
-                        "load task result brief failed after task create: task_id={} detail={}",
-                        task_id, err
-                    );
-                    None
-                }
-            };
+        let task_result_brief = match task_service_client::get_task_result_brief(task_id.as_str()).await {
+            Ok(item) => item.map(map_remote_result_brief),
+            Err(err) => {
+                warn!(
+                    "load task result brief failed after task create: task_id={} detail={}",
+                    task_id, err
+                );
+                None
+            }
+        };
         out.push(map_remote_task_to_record(created, task_result_brief));
     }
 

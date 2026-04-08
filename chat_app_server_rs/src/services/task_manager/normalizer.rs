@@ -14,6 +14,19 @@ pub(super) fn normalize_task_draft(mut draft: TaskDraft) -> Result<TaskDraft, St
         return Err("task title is required".to_string());
     }
     draft.details = draft.details.trim().to_string();
+    draft.task_ref = draft
+        .task_ref
+        .as_deref()
+        .and_then(trimmed_non_empty)
+        .map(|value| value.to_string());
+    draft.task_kind = draft
+        .task_kind
+        .as_deref()
+        .and_then(trimmed_non_empty)
+        .map(normalize_task_kind);
+    draft.depends_on_refs = normalize_unique_string_list(draft.depends_on_refs);
+    draft.verification_of_refs = normalize_unique_string_list(draft.verification_of_refs);
+    draft.acceptance_criteria = normalize_unique_string_list(draft.acceptance_criteria);
     draft.priority = normalize_priority(draft.priority.as_str());
     draft.status = normalize_status(draft.status.as_str());
     draft.tags = normalize_tags(draft.tags);
@@ -71,10 +84,25 @@ pub(super) fn normalize_status(value: &str) -> String {
         "pending_execute" => "pending_execute".to_string(),
         "running" => "running".to_string(),
         "paused" => "paused".to_string(),
+        "blocked" => "blocked".to_string(),
         "completed" => "completed".to_string(),
         "failed" => "failed".to_string(),
         "cancelled" => "cancelled".to_string(),
+        "skipped" => "skipped".to_string(),
         _ => "pending_confirm".to_string(),
+    }
+}
+
+pub(super) fn normalize_task_kind(value: &str) -> String {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "analysis" => "analysis".to_string(),
+        "implementation" => "implementation".to_string(),
+        "verification" => "verification".to_string(),
+        "documentation" => "documentation".to_string(),
+        "delivery" => "delivery".to_string(),
+        "migration" => "migration".to_string(),
+        "research" => "research".to_string(),
+        _ => "general".to_string(),
     }
 }
 

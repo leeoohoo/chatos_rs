@@ -1,7 +1,6 @@
 import { Alert, Button, Card, Form, Input, InputNumber, Select, Space, Switch } from 'antd';
 
 import type { AgentMemoryJobConfig } from '../../types';
-import { DEFAULT_SUMMARY_PROMPT_TEMPLATE } from './helpers';
 
 interface AgentMemoryConfigCardProps {
   config: AgentMemoryJobConfig | null;
@@ -12,6 +11,7 @@ interface AgentMemoryConfigCardProps {
   summaryPromptLabel: string;
   summaryPromptHint: string;
   resetSummaryPromptLabel: string;
+  defaultSummaryPrompt: string;
   roundLimitLabel: string;
   tokenLimitLabel: string;
   targetTokensLabel: string;
@@ -42,6 +42,7 @@ export function AgentMemoryConfigCard({
   summaryPromptLabel,
   summaryPromptHint,
   resetSummaryPromptLabel,
+  defaultSummaryPrompt,
   roundLimitLabel,
   tokenLimitLabel,
   targetTokensLabel,
@@ -99,7 +100,7 @@ export function AgentMemoryConfigCard({
                 onClick={() =>
                   onChange({
                     ...config,
-                    summary_prompt: DEFAULT_SUMMARY_PROMPT_TEMPLATE,
+                    summary_prompt: defaultSummaryPrompt,
                   })
                 }
               >

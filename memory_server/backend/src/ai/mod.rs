@@ -4,7 +4,7 @@ use reqwest::Client;
 use serde_json::{json, Value};
 
 use crate::config::AppConfig;
-use crate::models::{AiModelConfig, DEFAULT_SUMMARY_PROMPT_TEMPLATE};
+use crate::models::{AiModelConfig, default_summary_prompt_template};
 
 #[derive(Clone)]
 pub struct AiClient {
@@ -473,7 +473,7 @@ fn build_summary_system_prompt(
     let template = summary_prompt
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .unwrap_or(DEFAULT_SUMMARY_PROMPT_TEMPLATE);
+        .unwrap_or(default_summary_prompt_template());
 
     let target_tokens_str = target_tokens.to_string();
     template

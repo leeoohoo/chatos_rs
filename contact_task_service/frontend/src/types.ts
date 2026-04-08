@@ -24,19 +24,47 @@ export interface TaskPlanningSnapshot {
   planned_at?: string | null;
 }
 
+export interface TaskHandoffPayload {
+  task_id: string;
+  task_plan_id?: string | null;
+  handoff_kind: string;
+  summary: string;
+  result_summary?: string | null;
+  key_changes: string[];
+  changed_files: string[];
+  executed_commands: string[];
+  verification_suggestions: string[];
+  open_risks: string[];
+  artifact_refs: string[];
+  checkpoint_message_ids: string[];
+  result_brief_id?: string | null;
+  generated_at: string;
+}
+
 export interface ContactTask {
   id: string;
   user_id: string;
   contact_agent_id: string;
   project_id: string;
+  scope_key?: string;
+  task_plan_id?: string | null;
+  task_ref?: string | null;
+  task_kind?: string | null;
+  depends_on_task_ids: string[];
+  verification_of_task_ids: string[];
+  acceptance_criteria: string[];
+  blocked_reason?: string | null;
   project_root?: string | null;
   remote_connection_id?: string | null;
   session_id?: string | null;
+  conversation_turn_id?: string | null;
   source_message_id?: string | null;
   model_config_id?: string | null;
   title: string;
   content: string;
   priority: string;
+  priority_rank?: number;
+  queue_position?: number;
   status: string;
   confirm_note?: string | null;
   execution_note?: string | null;
@@ -44,15 +72,48 @@ export interface ContactTask {
   planned_context_assets: TaskContextAssetRef[];
   execution_result_contract?: TaskExecutionResultContract | null;
   planning_snapshot?: TaskPlanningSnapshot | null;
+  handoff_payload?: TaskHandoffPayload | null;
   created_by?: string | null;
   created_at: string;
   updated_at: string;
   confirmed_at?: string | null;
   started_at?: string | null;
+  paused_at?: string | null;
+  pause_reason?: string | null;
+  last_checkpoint_summary?: string | null;
+  last_checkpoint_message_id?: string | null;
+  resume_note?: string | null;
   finished_at?: string | null;
   last_error?: string | null;
   result_summary?: string | null;
   result_message_id?: string | null;
+}
+
+export interface TaskPlanView {
+  plan_id: string;
+  user_id: string;
+  contact_agent_id: string;
+  project_id: string;
+  title: string;
+  task_count: number;
+  blocked_task_count: number;
+  latest_updated_at: string;
+  active_task_id?: string | null;
+  status_counts: Record<string, number>;
+  tasks: ContactTask[];
+}
+
+export interface TaskPlanOperationResult {
+  kind: string;
+  task_id: string;
+  affected_task_ids: string[];
+  affected_count: number;
+  replacement_task_id?: string | null;
+}
+
+export interface UpdateTaskPlanResponse {
+  item: TaskPlanView;
+  operation_results: TaskPlanOperationResult[];
 }
 
 export interface TaskExecutionMessage {

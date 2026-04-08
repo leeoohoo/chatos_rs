@@ -10,7 +10,7 @@ use super::remote_support::{
 fn is_terminal_task_status(status: &str) -> bool {
     matches!(
         status.trim().to_ascii_lowercase().as_str(),
-        "completed" | "failed" | "cancelled"
+        "completed" | "failed" | "cancelled" | "skipped"
     )
 }
 

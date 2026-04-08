@@ -6,6 +6,13 @@ import { AgentMemoryConfigCard } from './jobConfigsPage/AgentMemoryConfigCard';
 import { RollupConfigCard } from './jobConfigsPage/RollupConfigCard';
 import { SummaryConfigCard } from './jobConfigsPage/SummaryConfigCard';
 import { UserSelectorCard } from './jobConfigsPage/UserSelectorCard';
+import {
+  DEFAULT_AGENT_MEMORY_PROMPT_TEMPLATE,
+  DEFAULT_ROLLUP_PROMPT_TEMPLATE,
+  DEFAULT_SUMMARY_PROMPT_TEMPLATE,
+  DEFAULT_TASK_EXECUTION_ROLLUP_PROMPT_TEMPLATE,
+  DEFAULT_TASK_EXECUTION_SUMMARY_PROMPT_TEMPLATE,
+} from './jobConfigsPage/helpers';
 import { useJobConfigsPageData } from './jobConfigsPage/useJobConfigsPageData';
 
 interface JobConfigsPageProps {
@@ -102,6 +109,7 @@ export function JobConfigsPage({
           summaryPromptLabel={t('jobConfigs.summaryPrompt')}
           summaryPromptHint={t('jobConfigs.summaryPromptHint')}
           resetSummaryPromptLabel={t('jobConfigs.resetSummaryPrompt')}
+          defaultSummaryPrompt={DEFAULT_SUMMARY_PROMPT_TEMPLATE}
           roundLimitLabel={t('jobConfigs.roundLimit')}
           tokenLimitLabel={t('jobConfigs.tokenLimit')}
           targetTokensLabel={t('jobConfigs.targetTokens')}
@@ -134,6 +142,7 @@ export function JobConfigsPage({
           summaryPromptLabel={t('jobConfigs.summaryPrompt')}
           summaryPromptHint={t('jobConfigs.summaryPromptHint')}
           resetSummaryPromptLabel={t('jobConfigs.resetSummaryPrompt')}
+          defaultSummaryPrompt={DEFAULT_ROLLUP_PROMPT_TEMPLATE}
           roundLimitLabel={t('jobConfigs.roundLimit')}
           tokenLimitLabel={t('jobConfigs.tokenLimit')}
           targetTokensLabel={t('jobConfigs.targetTokens')}
@@ -170,6 +179,7 @@ export function JobConfigsPage({
           summaryPromptLabel={t('jobConfigs.summaryPrompt')}
           summaryPromptHint={t('jobConfigs.summaryPromptHint')}
           resetSummaryPromptLabel={t('jobConfigs.resetSummaryPrompt')}
+          defaultSummaryPrompt={DEFAULT_TASK_EXECUTION_SUMMARY_PROMPT_TEMPLATE}
           roundLimitLabel={t('jobConfigs.roundLimit')}
           tokenLimitLabel={t('jobConfigs.tokenLimit')}
           targetTokensLabel={t('jobConfigs.targetTokens')}
@@ -208,6 +218,7 @@ export function JobConfigsPage({
           summaryPromptLabel={t('jobConfigs.summaryPrompt')}
           summaryPromptHint={t('jobConfigs.summaryPromptHint')}
           resetSummaryPromptLabel={t('jobConfigs.resetSummaryPrompt')}
+          defaultSummaryPrompt={DEFAULT_TASK_EXECUTION_ROLLUP_PROMPT_TEMPLATE}
           roundLimitLabel={t('jobConfigs.roundLimit')}
           tokenLimitLabel={t('jobConfigs.tokenLimit')}
           targetTokensLabel={t('jobConfigs.targetTokens')}
@@ -250,6 +261,7 @@ export function JobConfigsPage({
           summaryPromptLabel={t('jobConfigs.summaryPrompt')}
           summaryPromptHint={t('jobConfigs.summaryPromptHint')}
           resetSummaryPromptLabel={t('jobConfigs.resetSummaryPrompt')}
+          defaultSummaryPrompt={DEFAULT_AGENT_MEMORY_PROMPT_TEMPLATE}
           roundLimitLabel={t('jobConfigs.roundLimit')}
           tokenLimitLabel={t('jobConfigs.tokenLimit')}
           targetTokensLabel={t('jobConfigs.targetTokens')}

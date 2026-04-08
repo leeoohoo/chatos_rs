@@ -77,6 +77,23 @@ fn task_draft_from_map(map: &Map<String, Value>) -> Result<TaskDraft, String> {
     Ok(TaskDraft {
         title,
         details,
+        task_ref: optional_string(map, "task_ref").or_else(|| optional_string(map, "taskRef")),
+        task_kind: optional_string(map, "task_kind").or_else(|| optional_string(map, "taskKind")),
+        depends_on_refs: string_array(
+            map.get("depends_on_refs")
+                .or_else(|| map.get("dependsOnRefs")),
+        )
+        .unwrap_or_default(),
+        verification_of_refs: string_array(
+            map.get("verification_of_refs")
+                .or_else(|| map.get("verificationOfRefs")),
+        )
+        .unwrap_or_default(),
+        acceptance_criteria: string_array(
+            map.get("acceptance_criteria")
+                .or_else(|| map.get("acceptanceCriteria")),
+        )
+        .unwrap_or_default(),
         priority,
         status: "pending_confirm".to_string(),
         tags,

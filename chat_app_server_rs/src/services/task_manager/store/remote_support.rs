@@ -1,7 +1,7 @@
 use crate::core::chat_runtime::ChatRuntimeMetadata;
 use crate::services::contact_agent_model::resolve_effective_contact_agent_model_config_id;
 use crate::services::task_manager::normalizer::trimmed_non_empty;
-use crate::services::task_manager::types::{TaskRecord, TaskResultBrief};
+use crate::services::task_manager::types::{TaskHandoffPayload, TaskRecord, TaskResultBrief};
 use crate::services::{memory_server_client, task_service_client};
 
 #[derive(Debug, Clone)]
@@ -108,12 +108,40 @@ pub(super) fn map_remote_result_brief(
     }
 }
 
+pub(super) fn map_remote_handoff_payload(
+    handoff: task_service_client::TaskHandoffPayloadDto,
+) -> TaskHandoffPayload {
+    TaskHandoffPayload {
+        task_id: handoff.task_id,
+        task_plan_id: handoff.task_plan_id,
+        handoff_kind: handoff.handoff_kind,
+        summary: handoff.summary,
+        result_summary: handoff.result_summary,
+        key_changes: handoff.key_changes,
+        changed_files: handoff.changed_files,
+        executed_commands: handoff.executed_commands,
+        verification_suggestions: handoff.verification_suggestions,
+        open_risks: handoff.open_risks,
+        artifact_refs: handoff.artifact_refs,
+        checkpoint_message_ids: handoff.checkpoint_message_ids,
+        result_brief_id: handoff.result_brief_id,
+        generated_at: handoff.generated_at,
+    }
+}
+
 pub(super) fn map_remote_task_to_record(
     task: task_service_client::TaskRecordDto,
     task_result_brief: Option<TaskResultBrief>,
 ) -> TaskRecord {
     TaskRecord {
         id: task.id,
+        task_plan_id: task.task_plan_id,
+        task_ref: task.task_ref,
+        task_kind: task.task_kind,
+        depends_on_task_ids: task.depends_on_task_ids,
+        verification_of_task_ids: task.verification_of_task_ids,
+        acceptance_criteria: task.acceptance_criteria,
+        blocked_reason: task.blocked_reason,
         session_id: task.session_id.unwrap_or_default(),
         conversation_turn_id: task.conversation_turn_id.unwrap_or_default(),
         project_root: task.project_root,
@@ -136,6 +164,7 @@ pub(super) fn map_remote_task_to_record(
         created_at: task.created_at,
         updated_at: task.updated_at,
         task_result_brief,
+        handoff_payload: task.handoff_payload.map(map_remote_handoff_payload),
     }
 }
 
@@ -153,9 +182,11 @@ pub(super) fn normalize_remote_status(value: &str) -> String {
         "pending_execute" => "pending_execute".to_string(),
         "running" => "running".to_string(),
         "paused" => "paused".to_string(),
+        "blocked" => "blocked".to_string(),
         "completed" => "completed".to_string(),
         "failed" => "failed".to_string(),
         "cancelled" => "cancelled".to_string(),
+        "skipped" => "skipped".to_string(),
         _ => "pending_confirm".to_string(),
     }
 }
@@ -166,9 +197,11 @@ pub(super) fn map_legacy_status_to_remote(value: Option<String>) -> Option<Strin
         "pending_execute" => "pending_execute".to_string(),
         "running" => "running".to_string(),
         "paused" => "paused".to_string(),
+        "blocked" => "blocked".to_string(),
         "completed" => "completed".to_string(),
         "failed" => "failed".to_string(),
         "cancelled" => "cancelled".to_string(),
+        "skipped" => "skipped".to_string(),
         _ => "pending_confirm".to_string(),
     })
 }

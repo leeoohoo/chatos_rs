@@ -42,8 +42,19 @@ const TaskCard = ({
   const actionClass = compact
     ? 'rounded border border-border bg-background px-1.5 py-0.5 text-[10px] text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50'
     : 'rounded border border-border bg-background px-2 py-0.5 text-[11px] text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50';
-  const isTerminal = task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled';
+  const isTerminal = task.status === 'completed'
+    || task.status === 'failed'
+    || task.status === 'cancelled'
+    || task.status === 'skipped';
   const hasExecutionManifest = (task.plannedBuiltinMcpIds?.length || 0) > 0
+    || !!task.taskPlanId
+    || !!task.taskRef
+    || !!task.taskKind
+    || (task.dependsOnTaskIds?.length || 0) > 0
+    || (task.verificationOfTaskIds?.length || 0) > 0
+    || (task.acceptanceCriteria?.length || 0) > 0
+    || !!task.blockedReason
+    || !!task.handoffPayload?.summary
     || (task.plannedContextAssets?.length || 0) > 0
     || !!task.projectRoot
     || !!task.remoteConnectionId
@@ -66,9 +77,16 @@ const TaskCard = ({
       {task.details ? <div className={detailsClass}>{task.details}</div> : null}
 
       <div className={metaClass}>
+        {task.taskPlanId ? (
+          <div className="truncate" title={task.taskPlanId}>
+            计划 {task.taskPlanId}
+          </div>
+        ) : null}
         <div>
           <span className={priorityStyles[task.priority]}>优先级 {priorityText[task.priority]}</span>
         </div>
+        {task.taskKind ? <div>{`类型 ${task.taskKind}`}</div> : null}
+        {task.taskRef ? <div className="truncate" title={task.taskRef}>{`引用 ${task.taskRef}`}</div> : null}
         <div className="truncate" title={task.conversationTurnId}>
           轮次 {task.conversationTurnId}
         </div>
@@ -114,6 +132,33 @@ const TaskCard = ({
 
       {expanded ? (
         <div className={compact ? 'mt-1 space-y-1 text-[10px] text-muted-foreground' : 'mt-2 space-y-1.5 text-[11px] text-muted-foreground'}>
+          {task.taskPlanId ? (
+            <div>
+              <div className="font-medium text-foreground/90">任务计划</div>
+              <div className="break-all">{task.taskPlanId}</div>
+            </div>
+          ) : null}
+          {task.taskRef || task.taskKind ? (
+            <div>
+              <div className="font-medium text-foreground/90">任务图谱</div>
+              {task.taskRef ? <div>{`task_ref: ${task.taskRef}`}</div> : null}
+              {task.taskKind ? <div>{`task_kind: ${task.taskKind}`}</div> : null}
+              {task.dependsOnTaskIds && task.dependsOnTaskIds.length > 0 ? (
+                <div className="break-all">{`依赖任务: ${task.dependsOnTaskIds.join(', ')}`}</div>
+              ) : null}
+              {task.verificationOfTaskIds && task.verificationOfTaskIds.length > 0 ? (
+                <div className="break-all">{`验证对象: ${task.verificationOfTaskIds.join(', ')}`}</div>
+              ) : null}
+              {task.acceptanceCriteria && task.acceptanceCriteria.length > 0 ? (
+                <div className="break-all whitespace-pre-wrap">
+                  {`验收标准: ${task.acceptanceCriteria.join('\n')}`}
+                </div>
+              ) : null}
+              {task.blockedReason ? (
+                <div className="break-all text-orange-700 dark:text-orange-200">{`阻塞原因: ${task.blockedReason}`}</div>
+              ) : null}
+            </div>
+          ) : null}
           {task.plannedBuiltinMcpIds && task.plannedBuiltinMcpIds.length > 0 ? (
             <div>
               <div className="font-medium text-foreground/90">内置 MCP</div>
@@ -197,6 +242,52 @@ const TaskCard = ({
               ) : null}
               {task.taskResultBrief.finishedAt ? (
                 <div>{`桥接完成时间: ${task.taskResultBrief.finishedAt}`}</div>
+              ) : null}
+            </div>
+          ) : null}
+          {task.handoffPayload ? (
+            <div>
+              <div className="font-medium text-foreground/90">任务交接</div>
+              {task.handoffPayload.handoffKind ? (
+                <div>{`类型: ${task.handoffPayload.handoffKind}`}</div>
+              ) : null}
+              <div className="break-all whitespace-pre-wrap">{task.handoffPayload.summary}</div>
+              {task.handoffPayload.resultSummary ? (
+                <div className="break-all whitespace-pre-wrap">
+                  {`结果摘要: ${task.handoffPayload.resultSummary}`}
+                </div>
+              ) : null}
+              {task.handoffPayload.keyChanges && task.handoffPayload.keyChanges.length > 0 ? (
+                <div className="space-y-1">
+                  <div className="font-medium text-foreground/90">关键变化</div>
+                  {task.handoffPayload.keyChanges.map((item, index) => (
+                    <div key={`${task.id}-handoff-change-${index}`} className="break-all">{`- ${item}`}</div>
+                  ))}
+                </div>
+              ) : null}
+              {task.handoffPayload.verificationSuggestions && task.handoffPayload.verificationSuggestions.length > 0 ? (
+                <div className="space-y-1">
+                  <div className="font-medium text-foreground/90">验证建议</div>
+                  {task.handoffPayload.verificationSuggestions.map((item, index) => (
+                    <div key={`${task.id}-handoff-verify-${index}`} className="break-all">{`- ${item}`}</div>
+                  ))}
+                </div>
+              ) : null}
+              {task.handoffPayload.openRisks && task.handoffPayload.openRisks.length > 0 ? (
+                <div className="space-y-1">
+                  <div className="font-medium text-rose-600 dark:text-rose-300">遗留风险</div>
+                  {task.handoffPayload.openRisks.map((item, index) => (
+                    <div key={`${task.id}-handoff-risk-${index}`} className="break-all text-rose-700 dark:text-rose-200">{`- ${item}`}</div>
+                  ))}
+                </div>
+              ) : null}
+              {task.handoffPayload.artifactRefs && task.handoffPayload.artifactRefs.length > 0 ? (
+                <div className="break-all">
+                  {`关联引用: ${task.handoffPayload.artifactRefs.join(', ')}`}
+                </div>
+              ) : null}
+              {task.handoffPayload.generatedAt ? (
+                <div>{`生成时间: ${task.handoffPayload.generatedAt}`}</div>
               ) : null}
             </div>
           ) : null}

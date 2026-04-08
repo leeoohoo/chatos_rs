@@ -2,7 +2,7 @@ use mongodb::bson::doc;
 
 use crate::db::Db;
 use crate::models::{
-    AgentMemoryJobConfig, UpsertAgentMemoryJobConfigRequest, DEFAULT_SUMMARY_PROMPT_TEMPLATE,
+    AgentMemoryJobConfig, UpsertAgentMemoryJobConfigRequest, default_agent_memory_prompt_template,
 };
 
 use super::super::super::{auth::ADMIN_USER_ID, now_rfc3339};
@@ -13,7 +13,7 @@ fn default_agent_memory_job_config(user_id: &str) -> AgentMemoryJobConfig {
         user_id: user_id.to_string(),
         enabled: 1,
         summary_model_config_id: None,
-        summary_prompt: Some(DEFAULT_SUMMARY_PROMPT_TEMPLATE.to_string()),
+        summary_prompt: Some(default_agent_memory_prompt_template().to_string()),
         token_limit: 6000,
         round_limit: 20,
         target_summary_tokens: 700,
@@ -111,7 +111,7 @@ pub async fn upsert_agent_memory_job_config(
         current.max_agents_per_tick = v.max(1);
     }
     if current.summary_prompt.is_none() {
-        current.summary_prompt = Some(DEFAULT_SUMMARY_PROMPT_TEMPLATE.to_string());
+        current.summary_prompt = Some(default_agent_memory_prompt_template().to_string());
     }
 
     current.updated_at = now_rfc3339();

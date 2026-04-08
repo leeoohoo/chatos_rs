@@ -19,7 +19,11 @@
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.4.1",
+    "baseline-browser-mapping": "^2.10.16",
+    "browserslist": "^4.28.2",
+    "caniuse-lite": "^1.0.30001786",
     "typescript": "^5.8.2",
+    "update-browserslist-db": "^1.2.3",
     "vite": "^5.4.14"
   }
 }

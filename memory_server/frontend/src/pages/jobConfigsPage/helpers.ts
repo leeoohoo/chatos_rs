@@ -5,9 +5,23 @@ import type {
   TaskExecutionRollupJobConfig,
   TaskExecutionSummaryJobConfig,
 } from '../../types';
+import summaryPromptDefaults from '../../../../shared/summary_prompt_defaults.json';
 
-export const DEFAULT_SUMMARY_PROMPT_TEMPLATE =
-  '你是 Memory Server 的总结引擎。请输出结构化简洁总结，重点保留事实、决策、风险、待办。目标长度约 {{target_tokens}} tokens。';
+type SummaryPromptDefaults = {
+  summary: string;
+  rollup: string;
+  task_execution_summary: string;
+  task_execution_rollup: string;
+  agent_memory: string;
+};
+
+const DEFAULTS = summaryPromptDefaults as SummaryPromptDefaults;
+
+export const DEFAULT_SUMMARY_PROMPT_TEMPLATE = DEFAULTS.summary;
+export const DEFAULT_ROLLUP_PROMPT_TEMPLATE = DEFAULTS.rollup;
+export const DEFAULT_TASK_EXECUTION_SUMMARY_PROMPT_TEMPLATE = DEFAULTS.task_execution_summary;
+export const DEFAULT_TASK_EXECUTION_ROLLUP_PROMPT_TEMPLATE = DEFAULTS.task_execution_rollup;
+export const DEFAULT_AGENT_MEMORY_PROMPT_TEMPLATE = DEFAULTS.agent_memory;
 
 export const createSummaryConfig = (uid: string): SummaryJobConfig => ({
   user_id: uid,
@@ -25,7 +39,7 @@ export const createRollupConfig = (uid: string): RollupJobConfig => ({
   user_id: uid,
   enabled: 1,
   summary_model_config_id: null,
-  summary_prompt: DEFAULT_SUMMARY_PROMPT_TEMPLATE,
+  summary_prompt: DEFAULT_ROLLUP_PROMPT_TEMPLATE,
   token_limit: 6000,
   round_limit: 50,
   target_summary_tokens: 700,
@@ -39,7 +53,7 @@ export const createAgentMemoryConfig = (uid: string): AgentMemoryJobConfig => ({
   user_id: uid,
   enabled: 1,
   summary_model_config_id: null,
-  summary_prompt: DEFAULT_SUMMARY_PROMPT_TEMPLATE,
+  summary_prompt: DEFAULT_AGENT_MEMORY_PROMPT_TEMPLATE,
   token_limit: 6000,
   round_limit: 20,
   target_summary_tokens: 700,
@@ -55,7 +69,7 @@ export const createTaskExecutionSummaryConfig = (
   user_id: uid,
   enabled: 1,
   summary_model_config_id: null,
-  summary_prompt: DEFAULT_SUMMARY_PROMPT_TEMPLATE,
+  summary_prompt: DEFAULT_TASK_EXECUTION_SUMMARY_PROMPT_TEMPLATE,
   token_limit: 6000,
   round_limit: 8,
   target_summary_tokens: 700,
@@ -69,7 +83,7 @@ export const createTaskExecutionRollupConfig = (
   user_id: uid,
   enabled: 1,
   summary_model_config_id: null,
-  summary_prompt: DEFAULT_SUMMARY_PROMPT_TEMPLATE,
+  summary_prompt: DEFAULT_TASK_EXECUTION_ROLLUP_PROMPT_TEMPLATE,
   token_limit: 6000,
   round_limit: 50,
   target_summary_tokens: 700,

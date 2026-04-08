@@ -130,6 +130,20 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
     return fallbackSource.filter((task) => task.conversationTurnId.trim() === latestTurnId);
   }, [currentTurnId, sortedHistoryTasks, sortedTasks]);
 
+  const currentTurnTaskPlans = useMemo(() => {
+    const grouped = new Map<string, TaskWorkbarItem[]>();
+    for (const task of currentTurnTasks) {
+      const planId = (task.taskPlanId || task.id || 'ungrouped').trim();
+      const existing = grouped.get(planId) || [];
+      existing.push(task);
+      grouped.set(planId, existing);
+    }
+    return Array.from(grouped.entries()).map(([planId, items]) => ({
+      planId,
+      items,
+    }));
+  }, [currentTurnTasks]);
+
   const handleOpenHistory = (filter: HistoryFilter = 'all') => {
     setHistoryFilter(filter);
     setHistoryOpen(true);
@@ -233,17 +247,26 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
             ) : null}
 
             {currentTurnTasks.length > 0 ? (
-              <div className="flex gap-1.5 overflow-x-auto pb-1">
-                {currentTurnTasks.map((task) => (
-                  <TaskCard
-                    key={task.id}
-                    task={task}
-                    compact
-                    onCompleteTask={onCompleteTask}
-                    onDeleteTask={onDeleteTask}
-                    onEditTask={onEditTask}
-                    isMutating={actionLoadingTaskId === task.id}
-                  />
+              <div className="space-y-2">
+                {currentTurnTaskPlans.map((plan) => (
+                  <div key={plan.planId} className="space-y-1">
+                    <div className="rounded-md border border-border bg-background px-2 py-1 text-[11px] font-medium text-foreground">
+                      {`计划 ${plan.planId} · ${plan.items.length} 个任务`}
+                    </div>
+                    <div className="flex gap-1.5 overflow-x-auto pb-1">
+                      {plan.items.map((task) => (
+                        <TaskCard
+                          key={task.id}
+                          task={task}
+                          compact
+                          onCompleteTask={onCompleteTask}
+                          onDeleteTask={onDeleteTask}
+                          onEditTask={onEditTask}
+                          isMutating={actionLoadingTaskId === task.id}
+                        />
+                      ))}
+                    </div>
+                  </div>
                 ))}
               </div>
             ) : null}

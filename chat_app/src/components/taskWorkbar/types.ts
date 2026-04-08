@@ -3,9 +3,11 @@ export type TaskWorkbarStatus =
   | 'pending_execute'
   | 'running'
   | 'paused'
+  | 'blocked'
   | 'completed'
   | 'failed'
-  | 'cancelled';
+  | 'cancelled'
+  | 'skipped';
 
 export interface TaskWorkbarContextAsset {
   assetType: string;
@@ -40,6 +42,23 @@ export interface TaskWorkbarResultBrief {
   updatedAt?: string | null;
 }
 
+export interface TaskWorkbarHandoffPayload {
+  taskId: string;
+  taskPlanId?: string | null;
+  handoffKind?: string | null;
+  summary: string;
+  resultSummary?: string | null;
+  keyChanges?: string[];
+  changedFiles?: string[];
+  executedCommands?: string[];
+  verificationSuggestions?: string[];
+  openRisks?: string[];
+  artifactRefs?: string[];
+  checkpointMessageIds?: string[];
+  resultBriefId?: string | null;
+  generatedAt?: string | null;
+}
+
 export interface TaskWorkbarItem {
   id: string;
   title: string;
@@ -50,6 +69,13 @@ export interface TaskWorkbarItem {
   createdAt: string;
   dueAt?: string | null;
   tags: string[];
+  taskPlanId?: string | null;
+  taskRef?: string | null;
+  taskKind?: string | null;
+  dependsOnTaskIds?: string[];
+  verificationOfTaskIds?: string[];
+  acceptanceCriteria?: string[];
+  blockedReason?: string | null;
   plannedBuiltinMcpIds?: string[];
   plannedContextAssets?: TaskWorkbarContextAsset[];
   projectRoot?: string | null;
@@ -57,6 +83,7 @@ export interface TaskWorkbarItem {
   executionResultContract?: TaskWorkbarExecutionResultContract | null;
   planningSnapshot?: TaskWorkbarPlanningSnapshot | null;
   taskResultBrief?: TaskWorkbarResultBrief | null;
+  handoffPayload?: TaskWorkbarHandoffPayload | null;
   resultSummary?: string | null;
   lastError?: string | null;
   confirmedAt?: string | null;

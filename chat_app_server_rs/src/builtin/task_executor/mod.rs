@@ -170,6 +170,23 @@ impl TaskExecutorService {
                         "items": {
                             "type": "object",
                             "properties": {
+                                "task_ref": { "type": "string" },
+                                "task_kind": {
+                                    "type": "string",
+                                    "enum": ["analysis", "implementation", "verification", "documentation", "delivery", "migration", "research"]
+                                },
+                                "depends_on_refs": {
+                                    "type": "array",
+                                    "items": { "type": "string" }
+                                },
+                                "verification_of_refs": {
+                                    "type": "array",
+                                    "items": { "type": "string" }
+                                },
+                                "acceptance_criteria": {
+                                    "type": "array",
+                                    "items": { "type": "string" }
+                                },
                                 "title": { "type": "string" },
                                 "details": { "type": "string" },
                                 "priority": { "type": "string", "enum": ["high", "medium", "low"] },
@@ -196,6 +213,23 @@ impl TaskExecutorService {
                             "required": ["title"],
                             "additionalProperties": false
                         }
+                    },
+                    "task_ref": { "type": "string" },
+                    "task_kind": {
+                        "type": "string",
+                        "enum": ["analysis", "implementation", "verification", "documentation", "delivery", "migration", "research"]
+                    },
+                    "depends_on_refs": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                    },
+                    "verification_of_refs": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                    },
+                    "acceptance_criteria": {
+                        "type": "array",
+                        "items": { "type": "string" }
                     },
                     "title": { "type": "string" },
                     "details": { "type": "string" },

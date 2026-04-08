@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef } from 'react';
 
 import type {
   SessionRuntimeGuidanceState,
+  TaskReviewDraft,
   TaskReviewPanelState,
   UiPromptPanelState,
 } from '../../lib/store/types';
@@ -31,7 +32,7 @@ interface SessionWorkbarApiClient {
       title?: string;
       details?: string;
       priority?: 'high' | 'medium' | 'low';
-      status?: 'pending_confirm' | 'pending_execute' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled';
+      status?: 'pending_confirm' | 'pending_execute' | 'running' | 'paused' | 'blocked' | 'completed' | 'failed' | 'cancelled' | 'skipped';
       due_at?: string | null;
     },
   ) => Promise<unknown>;
@@ -43,9 +44,26 @@ interface SessionWorkbarApiClient {
         title: string;
         details: string;
         priority: 'high' | 'medium' | 'low';
-        status: 'pending_confirm' | 'pending_execute' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled';
+        status: TaskReviewDraft['status'];
         tags: string[];
         due_at?: string | null;
+        task_ref?: string | null;
+        task_kind?: string | null;
+        depends_on_refs?: string[];
+        verification_of_refs?: string[];
+        acceptance_criteria?: string[];
+        planned_builtin_mcp_ids?: string[];
+        planned_context_assets?: Array<{
+          asset_type: string;
+          asset_id: string;
+          display_name?: string | null;
+          source_type?: string | null;
+          source_path?: string | null;
+        }>;
+        execution_result_contract?: {
+          result_required: boolean;
+          preferred_format?: string | null;
+        } | null;
       }>;
       reason?: string;
     },

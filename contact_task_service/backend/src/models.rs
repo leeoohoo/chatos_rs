@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 fn default_pending_confirm() -> String {
@@ -47,12 +49,47 @@ pub struct TaskPlanningSnapshot {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskHandoffPayload {
+    pub task_id: String,
+    pub task_plan_id: Option<String>,
+    pub handoff_kind: String,
+    pub summary: String,
+    pub result_summary: Option<String>,
+    #[serde(default)]
+    pub key_changes: Vec<String>,
+    #[serde(default)]
+    pub changed_files: Vec<String>,
+    #[serde(default)]
+    pub executed_commands: Vec<String>,
+    #[serde(default)]
+    pub verification_suggestions: Vec<String>,
+    #[serde(default)]
+    pub open_risks: Vec<String>,
+    #[serde(default)]
+    pub artifact_refs: Vec<String>,
+    #[serde(default)]
+    pub checkpoint_message_ids: Vec<String>,
+    pub result_brief_id: Option<String>,
+    pub generated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContactTask {
     pub id: String,
     pub user_id: String,
     pub contact_agent_id: String,
     pub project_id: String,
     pub scope_key: String,
+    pub task_plan_id: Option<String>,
+    pub task_ref: Option<String>,
+    pub task_kind: Option<String>,
+    #[serde(default)]
+    pub depends_on_task_ids: Vec<String>,
+    #[serde(default)]
+    pub verification_of_task_ids: Vec<String>,
+    #[serde(default)]
+    pub acceptance_criteria: Vec<String>,
+    pub blocked_reason: Option<String>,
     pub project_root: Option<String>,
     pub remote_connection_id: Option<String>,
     pub session_id: Option<String>,
@@ -77,6 +114,7 @@ pub struct ContactTask {
     pub planned_context_assets: Vec<TaskContextAssetRef>,
     pub execution_result_contract: Option<TaskExecutionResultContract>,
     pub planning_snapshot: Option<TaskPlanningSnapshot>,
+    pub handoff_payload: Option<TaskHandoffPayload>,
     pub created_by: Option<String>,
     pub created_at: String,
     pub updated_at: String,
@@ -119,6 +157,15 @@ pub struct CreateTaskRequest {
     pub user_id: Option<String>,
     pub contact_agent_id: String,
     pub project_id: String,
+    pub task_plan_id: Option<String>,
+    pub task_ref: Option<String>,
+    pub task_kind: Option<String>,
+    #[serde(default)]
+    pub depends_on_task_ids: Vec<String>,
+    #[serde(default)]
+    pub verification_of_task_ids: Vec<String>,
+    #[serde(default)]
+    pub acceptance_criteria: Vec<String>,
     pub project_root: Option<String>,
     pub remote_connection_id: Option<String>,
     pub session_id: Option<String>,
@@ -136,6 +183,7 @@ pub struct CreateTaskRequest {
     pub planned_context_assets: Vec<TaskContextAssetRef>,
     pub execution_result_contract: Option<TaskExecutionResultContract>,
     pub planning_snapshot: Option<TaskPlanningSnapshot>,
+    pub handoff_payload: Option<TaskHandoffPayload>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -144,6 +192,12 @@ pub struct UpdateTaskRequest {
     pub content: Option<String>,
     pub priority: Option<String>,
     pub status: Option<String>,
+    pub task_ref: Option<Option<String>>,
+    pub task_kind: Option<Option<String>>,
+    pub depends_on_task_ids: Option<Vec<String>>,
+    pub verification_of_task_ids: Option<Vec<String>>,
+    pub acceptance_criteria: Option<Vec<String>>,
+    pub blocked_reason: Option<Option<String>>,
     pub confirm_note: Option<String>,
     pub execution_note: Option<String>,
     pub project_root: Option<Option<String>>,
@@ -152,6 +206,7 @@ pub struct UpdateTaskRequest {
     pub planned_context_assets: Option<Vec<TaskContextAssetRef>>,
     pub execution_result_contract: Option<TaskExecutionResultContract>,
     pub planning_snapshot: Option<TaskPlanningSnapshot>,
+    pub handoff_payload: Option<Option<TaskHandoffPayload>>,
     pub model_config_id: Option<Option<String>>,
     pub queue_position: Option<i64>,
     pub pause_reason: Option<Option<String>>,
@@ -161,6 +216,66 @@ pub struct UpdateTaskRequest {
     pub result_summary: Option<Option<String>>,
     pub result_message_id: Option<Option<String>>,
     pub last_error: Option<Option<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskPlanNodePatch {
+    pub task_id: String,
+    pub status: Option<String>,
+    pub queue_position: Option<i64>,
+    pub depends_on_task_ids: Option<Vec<String>>,
+    pub verification_of_task_ids: Option<Vec<String>>,
+    pub blocked_reason: Option<Option<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskPlanOperation {
+    pub kind: String,
+    pub task_id: String,
+    pub replacement_task_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateTaskPlanRequest {
+    #[serde(default)]
+    pub ordered_task_ids: Vec<String>,
+    #[serde(default)]
+    pub operations: Vec<TaskPlanOperation>,
+    #[serde(default)]
+    pub updates: Vec<TaskPlanNodePatch>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskPlanOperationResult {
+    pub kind: String,
+    pub task_id: String,
+    #[serde(default)]
+    pub affected_task_ids: Vec<String>,
+    pub affected_count: i64,
+    pub replacement_task_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskPlanView {
+    pub plan_id: String,
+    pub user_id: String,
+    pub contact_agent_id: String,
+    pub project_id: String,
+    pub title: String,
+    pub task_count: i64,
+    pub blocked_task_count: i64,
+    pub latest_updated_at: String,
+    pub active_task_id: Option<String>,
+    pub status_counts: BTreeMap<String, i64>,
+    #[serde(default)]
+    pub tasks: Vec<ContactTask>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateTaskPlanResponse {
+    pub item: TaskPlanView,
+    #[serde(default)]
+    pub operation_results: Vec<TaskPlanOperationResult>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

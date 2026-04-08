@@ -30,9 +30,12 @@ const normalizeTaskStatus = (value: unknown): TaskReviewDraft['status'] => {
   const normalized = String(value ?? '').trim().toLowerCase();
   if (normalized === 'pending_execute') return 'pending_execute';
   if (normalized === 'running') return 'running';
+  if (normalized === 'paused') return 'paused';
+  if (normalized === 'blocked') return 'blocked';
   if (normalized === 'completed') return 'completed';
   if (normalized === 'failed') return 'failed';
   if (normalized === 'cancelled') return 'cancelled';
+  if (normalized === 'skipped') return 'skipped';
   return 'pending_confirm';
 };
 
@@ -130,6 +133,21 @@ const toTaskReviewDraft = (raw: unknown, index: number): TaskReviewDraft => {
     status: normalizeTaskStatus(source.status),
     tags: parseTaskTags(source.tags),
     dueAt: dueAt || null,
+    taskRef: typeof (source.task_ref ?? source.taskRef) === 'string'
+      ? String(source.task_ref ?? source.taskRef).trim()
+      : null,
+    taskKind: typeof (source.task_kind ?? source.taskKind) === 'string'
+      ? String(source.task_kind ?? source.taskKind).trim()
+      : null,
+    dependsOnRefs: parseStringArray(
+      source.depends_on_refs ?? source.dependsOnRefs,
+    ),
+    verificationOfRefs: parseStringArray(
+      source.verification_of_refs ?? source.verificationOfRefs,
+    ),
+    acceptanceCriteria: parseStringArray(
+      source.acceptance_criteria ?? source.acceptanceCriteria,
+    ),
     plannedBuiltinMcpIds: parseStringArray(
       source.planned_builtin_mcp_ids ?? source.plannedBuiltinMcpIds,
     ),

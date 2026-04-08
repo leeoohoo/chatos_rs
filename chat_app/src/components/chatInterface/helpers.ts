@@ -426,9 +426,11 @@ export const normalizeWorkbarTask = (raw: unknown): TaskWorkbarItem => {
     || statusRaw === 'pending_execute'
     || statusRaw === 'running'
     || statusRaw === 'paused'
+    || statusRaw === 'blocked'
     || statusRaw === 'completed'
     || statusRaw === 'failed'
     || statusRaw === 'cancelled'
+    || statusRaw === 'skipped'
       ? statusRaw
       : 'pending_confirm';
 
@@ -471,6 +473,16 @@ export const normalizeWorkbarTask = (raw: unknown): TaskWorkbarItem => {
   const executionResultContractRecord = asRecord(record.execution_result_contract ?? record.executionResultContract);
   const planningSnapshotRecord = asRecord(record.planning_snapshot ?? record.planningSnapshot);
   const taskResultBriefRecord = asRecord(record.task_result_brief ?? record.taskResultBrief);
+  const handoffPayloadRecord = asRecord(record.handoff_payload ?? record.handoffPayload);
+  const dependsOnTaskIdsRaw = Array.isArray(record.depends_on_task_ids ?? record.dependsOnTaskIds)
+    ? (record.depends_on_task_ids ?? record.dependsOnTaskIds) as unknown[]
+    : [];
+  const verificationOfTaskIdsRaw = Array.isArray(record.verification_of_task_ids ?? record.verificationOfTaskIds)
+    ? (record.verification_of_task_ids ?? record.verificationOfTaskIds) as unknown[]
+    : [];
+  const acceptanceCriteriaRaw = Array.isArray(record.acceptance_criteria ?? record.acceptanceCriteria)
+    ? (record.acceptance_criteria ?? record.acceptanceCriteria) as unknown[]
+    : [];
 
   return {
     id: String(record.id || '').trim(),
@@ -486,6 +498,27 @@ export const normalizeWorkbarTask = (raw: unknown): TaskWorkbarItem => {
           .map((tag) => String(tag).trim())
           .filter((tag: string) => tag.length > 0)
       : [],
+    taskPlanId: typeof (record.task_plan_id ?? record.taskPlanId) === 'string'
+      ? String(record.task_plan_id ?? record.taskPlanId).trim() || null
+      : null,
+    taskRef: typeof (record.task_ref ?? record.taskRef) === 'string'
+      ? String(record.task_ref ?? record.taskRef).trim() || null
+      : null,
+    taskKind: typeof (record.task_kind ?? record.taskKind) === 'string'
+      ? String(record.task_kind ?? record.taskKind).trim() || null
+      : null,
+    dependsOnTaskIds: dependsOnTaskIdsRaw
+          .map((item) => String(item).trim())
+          .filter((item: string) => item.length > 0),
+    verificationOfTaskIds: verificationOfTaskIdsRaw
+          .map((item) => String(item).trim())
+          .filter((item: string) => item.length > 0),
+    acceptanceCriteria: acceptanceCriteriaRaw
+          .map((item) => String(item).trim())
+          .filter((item: string) => item.length > 0),
+    blockedReason: typeof (record.blocked_reason ?? record.blockedReason) === 'string'
+      ? String(record.blocked_reason ?? record.blockedReason).trim() || null
+      : null,
     projectRoot: projectRoot.length > 0 ? projectRoot : null,
     remoteConnectionId: remoteConnectionId.length > 0 ? remoteConnectionId : null,
     plannedBuiltinMcpIds,
@@ -543,6 +576,48 @@ export const normalizeWorkbarTask = (raw: unknown): TaskWorkbarItem => {
           : null,
         updatedAt: typeof (taskResultBriefRecord.updated_at ?? taskResultBriefRecord.updatedAt) === 'string'
           ? String(taskResultBriefRecord.updated_at ?? taskResultBriefRecord.updatedAt)
+          : null,
+      }
+      : null,
+    handoffPayload: Object.keys(handoffPayloadRecord).length > 0
+      ? {
+        taskId: String(handoffPayloadRecord.task_id ?? handoffPayloadRecord.taskId ?? '').trim(),
+        taskPlanId: typeof (handoffPayloadRecord.task_plan_id ?? handoffPayloadRecord.taskPlanId) === 'string'
+          ? String(handoffPayloadRecord.task_plan_id ?? handoffPayloadRecord.taskPlanId).trim() || null
+          : null,
+        handoffKind: typeof (handoffPayloadRecord.handoff_kind ?? handoffPayloadRecord.handoffKind) === 'string'
+          ? String(handoffPayloadRecord.handoff_kind ?? handoffPayloadRecord.handoffKind).trim() || null
+          : null,
+        summary: String(handoffPayloadRecord.summary ?? '').trim(),
+        resultSummary: typeof (handoffPayloadRecord.result_summary ?? handoffPayloadRecord.resultSummary) === 'string'
+          ? String(handoffPayloadRecord.result_summary ?? handoffPayloadRecord.resultSummary).trim() || null
+          : null,
+        keyChanges: Array.isArray(handoffPayloadRecord.key_changes)
+          ? handoffPayloadRecord.key_changes.map((item) => String(item).trim()).filter((item: string) => item.length > 0)
+          : [],
+        changedFiles: Array.isArray(handoffPayloadRecord.changed_files)
+          ? handoffPayloadRecord.changed_files.map((item) => String(item).trim()).filter((item: string) => item.length > 0)
+          : [],
+        executedCommands: Array.isArray(handoffPayloadRecord.executed_commands)
+          ? handoffPayloadRecord.executed_commands.map((item) => String(item).trim()).filter((item: string) => item.length > 0)
+          : [],
+        verificationSuggestions: Array.isArray(handoffPayloadRecord.verification_suggestions)
+          ? handoffPayloadRecord.verification_suggestions.map((item) => String(item).trim()).filter((item: string) => item.length > 0)
+          : [],
+        openRisks: Array.isArray(handoffPayloadRecord.open_risks)
+          ? handoffPayloadRecord.open_risks.map((item) => String(item).trim()).filter((item: string) => item.length > 0)
+          : [],
+        artifactRefs: Array.isArray(handoffPayloadRecord.artifact_refs)
+          ? handoffPayloadRecord.artifact_refs.map((item) => String(item).trim()).filter((item: string) => item.length > 0)
+          : [],
+        checkpointMessageIds: Array.isArray(handoffPayloadRecord.checkpoint_message_ids)
+          ? handoffPayloadRecord.checkpoint_message_ids.map((item) => String(item).trim()).filter((item: string) => item.length > 0)
+          : [],
+        resultBriefId: typeof (handoffPayloadRecord.result_brief_id ?? handoffPayloadRecord.resultBriefId) === 'string'
+          ? String(handoffPayloadRecord.result_brief_id ?? handoffPayloadRecord.resultBriefId).trim() || null
+          : null,
+        generatedAt: typeof (handoffPayloadRecord.generated_at ?? handoffPayloadRecord.generatedAt) === 'string'
+          ? String(handoffPayloadRecord.generated_at ?? handoffPayloadRecord.generatedAt).trim() || null
           : null,
       }
       : null,

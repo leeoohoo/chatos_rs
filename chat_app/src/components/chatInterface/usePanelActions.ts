@@ -18,6 +18,11 @@ interface PanelActionsApiClient {
         status: TaskReviewDraft['status'];
         tags: string[];
         due_at?: string | null;
+        task_ref?: string | null;
+        task_kind?: string | null;
+        depends_on_refs?: string[];
+        verification_of_refs?: string[];
+        acceptance_criteria?: string[];
         planned_builtin_mcp_ids?: string[];
         planned_context_assets?: Array<{
           asset_type: string;
@@ -96,6 +101,11 @@ export function usePanelActions({
           status: draft.status,
           tags: draft.tags,
           due_at: draft.dueAt || undefined,
+          task_ref: draft.taskRef || undefined,
+          task_kind: draft.taskKind || undefined,
+          depends_on_refs: draft.dependsOnRefs || [],
+          verification_of_refs: draft.verificationOfRefs || [],
+          acceptance_criteria: draft.acceptanceCriteria || [],
           planned_builtin_mcp_ids: draft.plannedBuiltinMcpIds || [],
           planned_context_assets: (draft.plannedContextAssets || []).map((asset) => ({
             asset_type: asset.assetType,

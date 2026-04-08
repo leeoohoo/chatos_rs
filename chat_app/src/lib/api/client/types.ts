@@ -952,7 +952,7 @@ export interface TaskManagerUpdatePayload {
   title?: string;
   details?: string;
   priority?: 'high' | 'medium' | 'low';
-  status?: 'pending_confirm' | 'pending_execute' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled';
+  status?: 'pending_confirm' | 'pending_execute' | 'running' | 'paused' | 'blocked' | 'completed' | 'failed' | 'cancelled' | 'skipped';
   tags?: string[];
   due_at?: string | null;
 }
@@ -962,12 +962,19 @@ export interface TaskManagerTaskResponse {
   title?: string;
   details?: string | null;
   priority?: 'high' | 'medium' | 'low' | null;
-  status?: 'pending_confirm' | 'pending_execute' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled' | null;
+  status?: 'pending_confirm' | 'pending_execute' | 'running' | 'paused' | 'blocked' | 'completed' | 'failed' | 'cancelled' | 'skipped' | null;
   tags?: string[];
   due_at?: string | null;
   created_at?: string;
   updated_at?: string;
   conversation_turn_id?: string | null;
+  task_plan_id?: string | null;
+  task_ref?: string | null;
+  task_kind?: string | null;
+  depends_on_task_ids?: string[];
+  verification_of_task_ids?: string[];
+  acceptance_criteria?: string[];
+  blocked_reason?: string | null;
   project_root?: string | null;
   remote_connection_id?: string | null;
   planned_builtin_mcp_ids?: string[];
@@ -1000,6 +1007,22 @@ export interface TaskManagerTaskResponse {
     finished_at?: string | null;
     updated_at?: string | null;
   } | null;
+  handoff_payload?: {
+    task_id?: string;
+    task_plan_id?: string | null;
+    handoff_kind?: string | null;
+    summary?: string | null;
+    result_summary?: string | null;
+    key_changes?: string[];
+    changed_files?: string[];
+    executed_commands?: string[];
+    verification_suggestions?: string[];
+    open_risks?: string[];
+    artifact_refs?: string[];
+    checkpoint_message_ids?: string[];
+    result_brief_id?: string | null;
+    generated_at?: string | null;
+  } | null;
   result_summary?: string | null;
   last_error?: string | null;
   confirmed_at?: string | null;
@@ -1012,9 +1035,14 @@ export interface TaskReviewTaskDraft {
   title?: string;
   details?: string;
   priority?: 'high' | 'medium' | 'low';
-  status?: 'pending_confirm' | 'pending_execute' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled';
+  status?: 'pending_confirm' | 'pending_execute' | 'running' | 'paused' | 'blocked' | 'completed' | 'failed' | 'cancelled' | 'skipped';
   tags?: string[];
   due_at?: string | null;
+  task_ref?: string | null;
+  task_kind?: string | null;
+  depends_on_refs?: string[];
+  verification_of_refs?: string[];
+  acceptance_criteria?: string[];
   [key: string]: unknown;
 }
 

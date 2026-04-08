@@ -62,6 +62,37 @@ fn parse_task_drafts_supports_simplified_task_requirements() {
 }
 
 #[test]
+fn parse_task_drafts_supports_task_graph_fields() {
+    let args = json!({
+        "tasks": [
+            {
+                "task_ref": "impl_api",
+                "task_kind": "implementation",
+                "title": "实现接口",
+                "depends_on_refs": [],
+                "acceptance_criteria": ["接口可用"]
+            },
+            {
+                "task_ref": "verify_api",
+                "task_kind": "verification",
+                "title": "验证接口",
+                "depends_on_refs": ["impl_api"],
+                "verification_of_refs": ["impl_api"],
+                "acceptance_criteria": ["输出验证结果"]
+            }
+        ]
+    });
+
+    let drafts = parse_task_drafts(&args).expect("task graph payload should parse");
+    assert_eq!(drafts.len(), 2);
+    assert_eq!(drafts[0].task_ref.as_deref(), Some("impl_api"));
+    assert_eq!(drafts[0].task_kind.as_deref(), Some("implementation"));
+    assert_eq!(drafts[1].depends_on_refs, vec!["impl_api".to_string()]);
+    assert_eq!(drafts[1].verification_of_refs, vec!["impl_api".to_string()]);
+    assert_eq!(drafts[1].acceptance_criteria, vec!["输出验证结果".to_string()]);
+}
+
+#[test]
 fn create_tasks_schema_is_strict_and_compatible() {
     let service = TaskPlannerService::new(TaskPlannerOptions {
         server_name: "task_planner".to_string(),
@@ -107,6 +138,18 @@ fn create_tasks_schema_is_strict_and_compatible() {
     assert!(
         !contains_schema_key(schema, "planned_context_assets"),
         "create_tasks schema should not expose internal planned_context_assets"
+    );
+    assert!(
+        contains_schema_key(schema, "task_ref"),
+        "create_tasks schema should expose task_ref for graph planning"
+    );
+    assert!(
+        contains_schema_key(schema, "depends_on_refs"),
+        "create_tasks schema should expose depends_on_refs for graph planning"
+    );
+    assert!(
+        contains_schema_key(schema, "verification_of_refs"),
+        "create_tasks schema should expose verification_of_refs for graph planning"
     );
 
     let execution_result_contract_schema = schema

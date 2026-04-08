@@ -40,6 +40,20 @@ const TaskHistoryDrawer = ({
     return null;
   }
 
+  const groupedVisibleTasks = visibleHistoryTasks.reduce<Array<{ planId: string; tasks: TaskWorkbarItem[] }>>(
+    (acc, task) => {
+      const planId = (task.taskPlanId || task.id || 'ungrouped').trim();
+      const last = acc[acc.length - 1];
+      if (last && last.planId === planId) {
+        last.tasks.push(task);
+        return acc;
+      }
+      acc.push({ planId, tasks: [task] });
+      return acc;
+    },
+    [],
+  );
+
   return (
     <div className="fixed inset-0 z-50">
       <button
@@ -121,16 +135,23 @@ const TaskHistoryDrawer = ({
             ) : null}
 
             {visibleHistoryTasks.length > 0 ? (
-              <div className="space-y-2">
-                {visibleHistoryTasks.map((task) => (
-                  <TaskCard
-                    key={task.id}
-                    task={task}
-                    onCompleteTask={onCompleteTask}
-                    onDeleteTask={onDeleteTask}
-                    onEditTask={onEditTask}
-                    isMutating={actionLoadingTaskId === task.id}
-                  />
+              <div className="space-y-3">
+                {groupedVisibleTasks.map((group) => (
+                  <div key={group.planId} className="space-y-2">
+                    <div className="sticky top-0 z-10 rounded-md border border-border bg-background/95 px-2 py-1 text-[11px] font-medium text-foreground backdrop-blur">
+                      {`计划 ${group.planId} · ${group.tasks.length} 个任务`}
+                    </div>
+                    {group.tasks.map((task) => (
+                      <TaskCard
+                        key={task.id}
+                        task={task}
+                        onCompleteTask={onCompleteTask}
+                        onDeleteTask={onDeleteTask}
+                        onEditTask={onEditTask}
+                        isMutating={actionLoadingTaskId === task.id}
+                      />
+                    ))}
+                  </div>
                 ))}
               </div>
             ) : null}

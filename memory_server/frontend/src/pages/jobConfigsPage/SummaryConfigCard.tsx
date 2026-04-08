@@ -1,7 +1,6 @@
 import { Alert, Button, Card, Form, Input, InputNumber, Select, Space, Switch } from 'antd';
 
 import type { SummaryJobConfig, TaskExecutionSummaryJobConfig } from '../../types';
-import { DEFAULT_SUMMARY_PROMPT_TEMPLATE } from './helpers';
 
 type SummaryConfigLike = SummaryJobConfig | TaskExecutionSummaryJobConfig;
 
@@ -14,6 +13,7 @@ interface SummaryConfigCardProps {
   summaryPromptLabel: string;
   summaryPromptHint: string;
   resetSummaryPromptLabel: string;
+  defaultSummaryPrompt: string;
   roundLimitLabel: string;
   tokenLimitLabel: string;
   targetTokensLabel: string;
@@ -38,6 +38,7 @@ export function SummaryConfigCard({
   summaryPromptLabel,
   summaryPromptHint,
   resetSummaryPromptLabel,
+  defaultSummaryPrompt,
   roundLimitLabel,
   tokenLimitLabel,
   targetTokensLabel,
@@ -92,7 +93,7 @@ export function SummaryConfigCard({
                 onClick={() =>
                   onChange({
                     ...config,
-                    summary_prompt: DEFAULT_SUMMARY_PROMPT_TEMPLATE,
+                    summary_prompt: defaultSummaryPrompt,
                   })
                 }
               >

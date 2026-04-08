@@ -88,7 +88,7 @@ export function useWorkbarMutations({
       return;
     }
     const nextStatusRaw = window.prompt(
-      'Status (pending_confirm/pending_execute/running/completed/failed/cancelled)',
+      'Status (pending_confirm/pending_execute/running/paused/blocked/completed/failed/cancelled/skipped)',
       task.status,
     );
     if (nextStatusRaw === null) {
@@ -104,9 +104,12 @@ export function useWorkbarMutations({
       'pending_confirm',
       'pending_execute',
       'running',
+      'paused',
+      'blocked',
       'completed',
       'failed',
       'cancelled',
+      'skipped',
     ];
     const nextPriority = nextPriorityRaw.trim().toLowerCase() as TaskWorkbarItem['priority'];
     const nextStatus = nextStatusRaw.trim().toLowerCase() as TaskWorkbarItem['status'];
@@ -116,7 +119,7 @@ export function useWorkbarMutations({
       return;
     }
     if (!allowedStatus.includes(nextStatus)) {
-      setWorkbarError('Status must be pending_confirm / pending_execute / running / completed / failed / cancelled');
+      setWorkbarError('Status must be pending_confirm / pending_execute / running / paused / blocked / completed / failed / cancelled / skipped');
       return;
     }
 

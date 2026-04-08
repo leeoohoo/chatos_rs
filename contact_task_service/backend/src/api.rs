@@ -13,7 +13,8 @@ use crate::auth::{login_via_memory, require_auth, resolve_scope_user_id, AuthIde
 use crate::models::{
     AckAllDoneRequest, AckPauseTaskRequest, AckStopTaskRequest, ConfirmTaskRequest,
     CreateTaskRequest, LoginRequest, PauseTaskRequest, ResumeTaskRequest, SchedulerRequest,
-    StopTaskRequest, TaskExecutionMessageView, TaskResultBriefView, UpdateTaskRequest,
+    StopTaskRequest, TaskExecutionMessageView, TaskResultBriefView, UpdateTaskPlanRequest,
+    UpdateTaskRequest,
 };
 use crate::{repository, AppState};
 
@@ -41,9 +42,22 @@ pub fn router(state: SharedState) -> Router {
             "/api/task-service/v1/tasks",
             post(create_task).get(list_tasks),
         )
+        .route("/api/task-service/v1/task-plans", get(list_task_plans))
+        .route(
+            "/api/task-service/v1/task-plans/:plan_id",
+            get(get_task_plan).patch(update_task_plan),
+        )
         .route(
             "/api/task-service/v1/internal/tasks",
             post(internal_create_task).get(internal_list_tasks),
+        )
+        .route(
+            "/api/task-service/v1/internal/task-plans",
+            get(internal_list_task_plans),
+        )
+        .route(
+            "/api/task-service/v1/internal/task-plans/:plan_id",
+            get(internal_get_task_plan).patch(internal_update_task_plan),
         )
         .route(
             "/api/task-service/v1/tasks/:task_id",
@@ -243,6 +257,36 @@ async fn list_tasks(
     }
 }
 
+async fn list_task_plans(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Query(q): Query<ListTasksQuery>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match require_auth(&headers, &state.config).await {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    match repository::list_task_plans(
+        &state.db,
+        visible_user_ids(&auth, q.user_id).as_slice(),
+        q.contact_agent_id.as_deref(),
+        q.project_id.as_deref(),
+        q.session_id.as_deref(),
+        q.conversation_turn_id.as_deref(),
+        q.status.as_deref(),
+        q.limit.unwrap_or(100),
+        q.offset.unwrap_or(0),
+    )
+    .await
+    {
+        Ok(items) => (StatusCode::OK, Json(json!({"items": items}))),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "list task plans failed", "detail": err})),
+        ),
+    }
+}
+
 async fn internal_create_task(
     State(state): State<SharedState>,
     Json(req): Json<CreateTaskRequest>,
@@ -274,6 +318,31 @@ async fn internal_create_task(
     }
 }
 
+async fn internal_list_task_plans(
+    State(state): State<SharedState>,
+    Query(q): Query<ListTasksQuery>,
+) -> (StatusCode, Json<Value>) {
+    match repository::list_task_plans(
+        &state.db,
+        internal_visible_user_ids(q.user_id).as_slice(),
+        q.contact_agent_id.as_deref(),
+        q.project_id.as_deref(),
+        q.session_id.as_deref(),
+        q.conversation_turn_id.as_deref(),
+        q.status.as_deref(),
+        q.limit.unwrap_or(100),
+        q.offset.unwrap_or(0),
+    )
+    .await
+    {
+        Ok(items) => (StatusCode::OK, Json(json!({"items": items}))),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "list task plans failed", "detail": err})),
+        ),
+    }
+}
+
 async fn internal_list_tasks(
     State(state): State<SharedState>,
     Query(q): Query<ListTasksQuery>,
@@ -295,6 +364,51 @@ async fn internal_list_tasks(
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": "list tasks failed", "detail": err})),
+        ),
+    }
+}
+
+async fn get_task_plan(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Path(plan_id): Path<String>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match require_auth(&headers, &state.config).await {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    match repository::get_task_plan(
+        &state.db,
+        plan_id.as_str(),
+        visible_user_ids(&auth, None).as_slice(),
+    )
+    .await
+    {
+        Ok(Some(plan)) => (StatusCode::OK, Json(json!({ "item": plan }))),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "task plan not found"})),
+        ),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "get task plan failed", "detail": err})),
+        ),
+    }
+}
+
+async fn internal_get_task_plan(
+    State(state): State<SharedState>,
+    Path(plan_id): Path<String>,
+) -> (StatusCode, Json<Value>) {
+    match repository::get_task_plan(&state.db, plan_id.as_str(), &[]).await {
+        Ok(Some(plan)) => (StatusCode::OK, Json(json!({ "item": plan }))),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "task plan not found"})),
+        ),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "get task plan failed", "detail": err})),
         ),
     }
 }
@@ -637,6 +751,84 @@ async fn internal_update_task(
         Err(err) => (
             StatusCode::BAD_REQUEST,
             Json(json!({"error": "update task failed", "detail": err})),
+        ),
+    }
+}
+
+async fn update_task_plan(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Path(plan_id): Path<String>,
+    Json(req): Json<UpdateTaskPlanRequest>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match require_auth(&headers, &state.config).await {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    let existing = match repository::get_task_plan(
+        &state.db,
+        plan_id.as_str(),
+        visible_user_ids(&auth, None).as_slice(),
+    )
+    .await
+    {
+        Ok(Some(plan)) => plan,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "task plan not found"})),
+            )
+        }
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "load task plan failed", "detail": err})),
+            )
+        }
+    };
+    if !auth.is_admin() && existing.user_id != auth.user_id {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"})));
+    }
+
+    match repository::update_task_plan(&state.db, plan_id.as_str(), req).await {
+        Ok(Some(resp)) => (
+            StatusCode::OK,
+            Json(json!({
+                "item": resp.item,
+                "operation_results": resp.operation_results,
+            })),
+        ),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "task plan not found"})),
+        ),
+        Err(err) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "update task plan failed", "detail": err})),
+        ),
+    }
+}
+
+async fn internal_update_task_plan(
+    State(state): State<SharedState>,
+    Path(plan_id): Path<String>,
+    Json(req): Json<UpdateTaskPlanRequest>,
+) -> (StatusCode, Json<Value>) {
+    match repository::update_task_plan(&state.db, plan_id.as_str(), req).await {
+        Ok(Some(resp)) => (
+            StatusCode::OK,
+            Json(json!({
+                "item": resp.item,
+                "operation_results": resp.operation_results,
+            })),
+        ),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "task plan not found"})),
+        ),
+        Err(err) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "update task plan failed", "detail": err})),
         ),
     }
 }

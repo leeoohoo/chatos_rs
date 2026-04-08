@@ -1,10 +1,45 @@
+use std::sync::OnceLock;
+
 use serde::{Deserialize, Serialize};
 
 use super::{default_agent_memory_max_level, default_i64_1, default_keep_raw_level0_count};
 
-pub const DEFAULT_SUMMARY_PROMPT_TEMPLATE: &str = "你是 Memory Server 的总结引擎。请输出结构化简洁总结，重点保留事实、决策、风险、待办。目标长度约 {{target_tokens}} tokens。";
-pub const DEFAULT_TASK_EXECUTION_SUMMARY_PROMPT_TEMPLATE: &str = "你是后台任务执行记录的总结引擎。请保留任务目标、关键操作、关键输出、失败原因、阻塞点、后续接手所需状态，忽略低价值噪音。目标长度约 {{target_tokens}} tokens。";
-pub const DEFAULT_TASK_EXECUTION_ROLLUP_PROMPT_TEMPLATE: &str = "你是后台任务执行历史的高层总结引擎。请抽取阶段性进展、稳定结论、反复失败模式、待继续事项和后续建议，避免重复细节。目标长度约 {{target_tokens}} tokens。";
+#[derive(Debug, Clone, Deserialize)]
+struct SummaryPromptDefaults {
+    summary: String,
+    rollup: String,
+    task_execution_summary: String,
+    task_execution_rollup: String,
+    agent_memory: String,
+}
+
+fn summary_prompt_defaults() -> &'static SummaryPromptDefaults {
+    static DEFAULTS: OnceLock<SummaryPromptDefaults> = OnceLock::new();
+    DEFAULTS.get_or_init(|| {
+        serde_json::from_str(include_str!("../../../shared/summary_prompt_defaults.json"))
+            .expect("invalid summary prompt defaults config")
+    })
+}
+
+pub fn default_summary_prompt_template() -> &'static str {
+    summary_prompt_defaults().summary.as_str()
+}
+
+pub fn default_summary_rollup_prompt_template() -> &'static str {
+    summary_prompt_defaults().rollup.as_str()
+}
+
+pub fn default_task_execution_summary_prompt_template() -> &'static str {
+    summary_prompt_defaults().task_execution_summary.as_str()
+}
+
+pub fn default_task_execution_rollup_prompt_template() -> &'static str {
+    summary_prompt_defaults().task_execution_rollup.as_str()
+}
+
+pub fn default_agent_memory_prompt_template() -> &'static str {
+    summary_prompt_defaults().agent_memory.as_str()
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SummaryJobConfig {

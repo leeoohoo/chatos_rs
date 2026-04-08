@@ -24,8 +24,8 @@ use crate::services::memory_server_client::{self, TaskExecutionScopeBinding};
 use crate::services::runtime_guidance_manager::runtime_guidance_manager;
 use crate::services::session_event_hub::session_event_hub;
 use crate::services::task_service_client::{
-    self, AckAllDoneRequestDto, SchedulerRequestDto, TaskExecutionScopeDto, TaskRecordDto,
-    UpdateTaskRequestDto,
+    self, AckAllDoneRequestDto, SchedulerRequestDto, TaskExecutionScopeDto, TaskHandoffPayloadDto,
+    TaskRecordDto, UpdateTaskRequestDto,
 };
 use crate::services::user_settings::{apply_settings_to_ai_client, get_effective_user_settings};
 use crate::services::v3::ai_server::{AiServer, ChatOptions};
@@ -211,7 +211,7 @@ async fn execute_task(scope: TaskExecutionScopeDto, task: TaskRecordDto) -> Resu
             };
             if let Some(updated_task) = updated_task.as_ref() {
                 publish_task_runtime_update_best_effort(updated_task).await;
-                if let Err(err) = sync_task_result_brief(
+                let result_brief = match sync_task_result_brief(
                     &scope,
                     updated_task,
                     "completed",
@@ -220,8 +220,29 @@ async fn execute_task(scope: TaskExecutionScopeDto, task: TaskRecordDto) -> Resu
                 )
                 .await
                 {
+                    Ok(item) => item,
+                    Err(err) => {
+                        warn!(
+                            "[TASK-RUNNER] sync completion brief failed: scope={} task_id={} error={}",
+                            scope.scope_key, task.id, err
+                        );
+                        None
+                    }
+                };
+                if let Err(err) = persist_task_handoff(
+                    &scope,
+                    updated_task,
+                    "completed",
+                    result_summary.as_str(),
+                    saved_notice.as_ref().map(|item| item.id.as_str()),
+                    result_brief.as_ref(),
+                    None,
+                    None,
+                )
+                .await
+                {
                     warn!(
-                        "[TASK-RUNNER] sync completion brief failed: scope={} task_id={} error={}",
+                        "[TASK-RUNNER] persist completion handoff failed: scope={} task_id={} error={}",
                         scope.scope_key, task.id, err
                     );
                 }
@@ -285,11 +306,33 @@ async fn execute_task(scope: TaskExecutionScopeDto, task: TaskRecordDto) -> Resu
             };
             if let Some(updated_task) = updated_task.as_ref() {
                 publish_task_runtime_update_best_effort(updated_task).await;
-                if let Err(bridge_err) =
-                    sync_task_result_brief(&scope, updated_task, "failed", err.as_str(), None).await
+                let result_brief =
+                    match sync_task_result_brief(&scope, updated_task, "failed", err.as_str(), None)
+                        .await
+                    {
+                        Ok(item) => item,
+                        Err(bridge_err) => {
+                            warn!(
+                                "[TASK-RUNNER] sync failure brief failed: scope={} task_id={} error={}",
+                                scope.scope_key, task.id, bridge_err
+                            );
+                            None
+                        }
+                    };
+                if let Err(bridge_err) = persist_task_handoff(
+                    &scope,
+                    updated_task,
+                    "failed",
+                    err.as_str(),
+                    None,
+                    result_brief.as_ref(),
+                    Some(err.as_str()),
+                    None,
+                )
+                .await
                 {
                     warn!(
-                        "[TASK-RUNNER] sync failure brief failed: scope={} task_id={} error={}",
+                        "[TASK-RUNNER] persist failure handoff failed: scope={} task_id={} error={}",
                         scope.scope_key, task.id, bridge_err
                     );
                 }
@@ -359,11 +402,32 @@ async fn fail_task(
     };
     if let Some(updated_task) = updated_task.as_ref() {
         publish_task_runtime_update_best_effort(updated_task).await;
-        if let Err(bridge_err) =
-            sync_task_result_brief(&scope, updated_task, "failed", err, None).await
+        let result_brief = match sync_task_result_brief(&scope, updated_task, "failed", err, None)
+            .await
+        {
+            Ok(item) => item,
+            Err(bridge_err) => {
+                warn!(
+                    "[TASK-RUNNER] sync setup-failure brief failed: scope={} task_id={} error={}",
+                    scope.scope_key, task.id, bridge_err
+                );
+                None
+            }
+        };
+        if let Err(bridge_err) = persist_task_handoff(
+            &scope,
+            updated_task,
+            "failed",
+            err,
+            None,
+            result_brief.as_ref(),
+            Some(err),
+            None,
+        )
+        .await
         {
             warn!(
-                "[TASK-RUNNER] sync setup-failure brief failed: scope={} task_id={} error={}",
+                "[TASK-RUNNER] persist setup-failure handoff failed: scope={} task_id={} error={}",
                 scope.scope_key, task.id, bridge_err
             );
         }
@@ -579,6 +643,7 @@ async fn build_task_runtime(
 
     let execution_asset_context =
         build_task_execution_asset_context(scope.contact_agent_id.as_str(), task).await?;
+    let dependency_handoff_context = build_task_dependency_handoff_context(task).await?;
 
     let (http_servers, stdio_servers, mut builtin_servers) =
         runtime_context.mcp_server_bundle.clone();
@@ -628,10 +693,11 @@ async fn build_task_runtime(
         ai_server,
         model_runtime,
         runtime_context: crate::api::chat_stream_common::ResolvedChatStreamContext {
-            contact_system_prompt: merge_execution_prompts(
-                runtime_context.contact_system_prompt.as_deref(),
-                execution_asset_context.as_deref(),
-            ),
+            contact_system_prompt: join_optional_sections(&[
+                runtime_context.contact_system_prompt.clone(),
+                execution_asset_context,
+                dependency_handoff_context,
+            ]),
             ..runtime_context
         },
         runtime_session_key: format!("task-exec-scope:{}", scope.scope_key),
@@ -743,6 +809,48 @@ fn build_task_execution_prefixed_input_items(
             format!("任务标题={}", task.title),
             format!("任务状态={}", task.status),
         ];
+        if let Some(task_plan_id) = task
+            .task_plan_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            lines.push(format!("task_plan_id={}", task_plan_id));
+        }
+        if let Some(task_ref) = task
+            .task_ref
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            lines.push(format!("task_ref={}", task_ref));
+        }
+        if let Some(task_kind) = task
+            .task_kind
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            lines.push(format!("task_kind={}", task_kind));
+        }
+        if !task.depends_on_task_ids.is_empty() {
+            lines.push(format!(
+                "直接前置任务={}",
+                task.depends_on_task_ids.join(", ")
+            ));
+        }
+        if !task.verification_of_task_ids.is_empty() {
+            lines.push(format!(
+                "本任务验证的目标任务={}",
+                task.verification_of_task_ids.join(", ")
+            ));
+        }
+        if !task.acceptance_criteria.is_empty() {
+            lines.push("验收标准:".to_string());
+            for (index, criterion) in task.acceptance_criteria.iter().enumerate() {
+                lines.push(format!("{}. {}", index + 1, criterion));
+            }
+        }
         if let Some(snapshot) = task.planning_snapshot.as_ref() {
             if let Some(source_goal) = snapshot
                 .source_user_goal_summary
@@ -811,15 +919,18 @@ fn system_input_item(text: &str) -> Value {
     })
 }
 
-fn merge_execution_prompts(base: Option<&str>, extra: Option<&str>) -> Option<String> {
-    match (
-        base.map(str::trim).filter(|value| !value.is_empty()),
-        extra.map(str::trim).filter(|value| !value.is_empty()),
-    ) {
-        (Some(base), Some(extra)) => Some(format!("{}\n\n{}", base, extra)),
-        (Some(base), None) => Some(base.to_string()),
-        (None, Some(extra)) => Some(extra.to_string()),
-        (None, None) => None,
+fn join_optional_sections(sections: &[Option<String>]) -> Option<String> {
+    let merged = sections
+        .iter()
+        .filter_map(|item| item.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string())
+        .collect::<Vec<_>>();
+    if merged.is_empty() {
+        None
+    } else {
+        Some(merged.join("\n\n"))
     }
 }
 
@@ -905,6 +1016,122 @@ async fn build_task_execution_asset_context(
     } else {
         Ok(Some(format!(
             "以下是本次任务明确选中的技能 / 插件 / commons 全文，请严格基于这些内容执行：\n\n{}",
+            sections.join("\n\n---\n\n")
+        )))
+    }
+}
+
+async fn build_task_dependency_handoff_context(
+    task: Option<&TaskRecordDto>,
+) -> Result<Option<String>, String> {
+    let Some(task) = task else {
+        return Ok(None);
+    };
+
+    let mut related_task_ids = Vec::new();
+    for task_id in task.depends_on_task_ids.iter().chain(task.verification_of_task_ids.iter()) {
+        let normalized = task_id.trim();
+        if normalized.is_empty() || related_task_ids.iter().any(|item: &String| item == normalized) {
+            continue;
+        }
+        related_task_ids.push(normalized.to_string());
+    }
+
+    if related_task_ids.is_empty() {
+        return Ok(None);
+    }
+
+    let mut sections = Vec::new();
+    for related_task_id in related_task_ids {
+        let Some(related_task) = task_service_client::get_task(related_task_id.as_str()).await?
+        else {
+            continue;
+        };
+
+        let mut lines = vec![format!(
+            "[前置任务] {} ({})",
+            related_task.title, related_task.id
+        )];
+        if let Some(task_ref) = related_task
+            .task_ref
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            lines.push(format!("task_ref={}", task_ref));
+        }
+        if let Some(task_kind) = related_task
+            .task_kind
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            lines.push(format!("task_kind={}", task_kind));
+        }
+        lines.push(format!("status={}", related_task.status));
+
+        if let Some(handoff) = related_task.handoff_payload.as_ref() {
+            lines.push("handoff 摘要:".to_string());
+            lines.push(handoff.summary.trim().to_string());
+            if let Some(result_summary) = handoff
+                .result_summary
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                lines.push("result_summary:".to_string());
+                lines.push(result_summary.to_string());
+            }
+            if !handoff.key_changes.is_empty() {
+                lines.push("关键变化:".to_string());
+                for item in &handoff.key_changes {
+                    lines.push(format!("- {}", item));
+                }
+            }
+            if !handoff.verification_suggestions.is_empty() {
+                lines.push("验证建议:".to_string());
+                for item in &handoff.verification_suggestions {
+                    lines.push(format!("- {}", item));
+                }
+            }
+            if !handoff.open_risks.is_empty() {
+                lines.push("遗留风险:".to_string());
+                for item in &handoff.open_risks {
+                    lines.push(format!("- {}", item));
+                }
+            }
+            if !handoff.artifact_refs.is_empty() {
+                lines.push("关联引用:".to_string());
+                for item in &handoff.artifact_refs {
+                    lines.push(format!("- {}", item));
+                }
+            }
+        } else if let Some(result_summary) = related_task
+            .result_summary
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            lines.push("result_summary:".to_string());
+            lines.push(result_summary.to_string());
+        } else if let Some(checkpoint_summary) = related_task
+            .last_checkpoint_summary
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            lines.push("checkpoint_summary:".to_string());
+            lines.push(checkpoint_summary.to_string());
+        }
+
+        sections.push(lines.join("\n"));
+    }
+
+    if sections.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(format!(
+            "以下是当前任务直接前置节点的结构化交接信息，请优先复用这些成果，不要重复做同样的探索：\n\n{}",
             sections.join("\n\n---\n\n")
         )))
     }
@@ -1005,19 +1232,138 @@ async fn save_task_notice_message(
     Ok(Some(saved))
 }
 
+async fn persist_task_handoff(
+    scope: &TaskExecutionScopeDto,
+    task: &TaskRecordDto,
+    handoff_kind: &str,
+    summary: &str,
+    result_message_id: Option<&str>,
+    result_brief: Option<&memory_server_client::TaskResultBriefDto>,
+    last_error: Option<&str>,
+    checkpoint_message_id: Option<&str>,
+) -> Result<(), String> {
+    let summary = compact_result_summary(summary);
+    if summary.trim().is_empty() {
+        return Ok(());
+    }
+
+    let task_kind = task
+        .task_kind
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("task");
+    let mut key_changes = Vec::new();
+    if handoff_kind == "completed" {
+        key_changes.push(format!("{} 已完成：{}", task_kind, task.title));
+    } else if handoff_kind == "failed" {
+        key_changes.push(format!("{} 执行失败：{}", task_kind, task.title));
+    } else if handoff_kind == "checkpoint" {
+        key_changes.push(format!("{} 已暂停：{}", task_kind, task.title));
+    }
+
+    let verification_suggestions = if !task.acceptance_criteria.is_empty() {
+        task.acceptance_criteria.clone()
+    } else if handoff_kind == "completed" && task_kind == "implementation" {
+        vec!["请针对本次实现补充验证结论。".to_string()]
+    } else {
+        Vec::new()
+    };
+
+    let mut open_risks = Vec::new();
+    if let Some(error) = last_error
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        open_risks.push(error.to_string());
+    }
+    if let Some(pause_reason) = task
+        .pause_reason
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        open_risks.push(format!("暂停原因：{}", pause_reason));
+    }
+
+    let mut artifact_refs = Vec::new();
+    if let Some(session_id) = task
+        .session_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        artifact_refs.push(format!("session:{}", session_id));
+    }
+    if let Some(turn_id) = task
+        .conversation_turn_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        artifact_refs.push(format!("turn:{}", turn_id));
+    }
+    if let Some(message_id) = result_message_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        artifact_refs.push(format!("result_message:{}", message_id));
+    }
+
+    let checkpoint_message_ids = checkpoint_message_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| vec![value.to_string()])
+        .unwrap_or_default();
+
+    task_service_client::update_task_internal(
+        task.id.as_str(),
+        &UpdateTaskRequestDto {
+            handoff_payload: Some(Some(TaskHandoffPayloadDto {
+                task_id: task.id.clone(),
+                task_plan_id: task.task_plan_id.clone(),
+                handoff_kind: handoff_kind.trim().to_string(),
+                summary,
+                result_summary: task.result_summary.clone(),
+                key_changes,
+                changed_files: Vec::new(),
+                executed_commands: Vec::new(),
+                verification_suggestions,
+                open_risks,
+                artifact_refs,
+                checkpoint_message_ids,
+                result_brief_id: result_brief.map(|item| item.id.clone()),
+                generated_at: crate::core::time::now_rfc3339(),
+            })),
+            ..UpdateTaskRequestDto::default()
+        },
+    )
+    .await?;
+
+    if let Some(updated_task) = task_service_client::get_task(task.id.as_str()).await? {
+        publish_task_runtime_update_best_effort(&updated_task).await;
+    } else {
+        warn!(
+            "[TASK-RUNNER] handoff persisted but refreshed task missing: scope={} task_id={}",
+            scope.scope_key, task.id
+        );
+    }
+    Ok(())
+}
+
 async fn sync_task_result_brief(
     scope: &TaskExecutionScopeDto,
     task: &TaskRecordDto,
     task_status: &str,
     result_summary: &str,
     result_message_id: Option<&str>,
-) -> Result<(), String> {
+) -> Result<Option<memory_server_client::TaskResultBriefDto>, String> {
     let result_summary = result_summary.trim();
     if result_summary.is_empty() {
-        return Ok(());
+        return Ok(None);
     }
 
-    memory_server_client::upsert_task_result_brief(
+    let item = memory_server_client::upsert_task_result_brief(
         &memory_server_client::UpsertTaskResultBriefRequestDto {
             task_id: task.id.clone(),
             user_id: scope.user_id.clone(),
@@ -1040,7 +1386,7 @@ async fn sync_task_result_brief(
         },
     )
     .await?;
-    Ok(())
+    Ok(Some(item))
 }
 
 fn compact_result_summary(text: &str) -> String {

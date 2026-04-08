@@ -2,7 +2,7 @@ use mongodb::bson::doc;
 
 use crate::db::Db;
 use crate::models::{
-    SummaryJobConfig, UpsertSummaryJobConfigRequest, DEFAULT_SUMMARY_PROMPT_TEMPLATE,
+    SummaryJobConfig, UpsertSummaryJobConfigRequest, default_summary_prompt_template,
 };
 
 use super::super::super::{auth::ADMIN_USER_ID, now_rfc3339};
@@ -13,7 +13,7 @@ fn default_summary_job_config(user_id: &str) -> SummaryJobConfig {
         user_id: user_id.to_string(),
         enabled: 1,
         summary_model_config_id: None,
-        summary_prompt: Some(DEFAULT_SUMMARY_PROMPT_TEMPLATE.to_string()),
+        summary_prompt: Some(default_summary_prompt_template().to_string()),
         token_limit: 6000,
         round_limit: 8,
         target_summary_tokens: 700,
@@ -101,7 +101,7 @@ pub async fn upsert_summary_job_config(
         current.max_sessions_per_tick = v.max(1);
     }
     if current.summary_prompt.is_none() {
-        current.summary_prompt = Some(DEFAULT_SUMMARY_PROMPT_TEMPLATE.to_string());
+        current.summary_prompt = Some(default_summary_prompt_template().to_string());
     }
 
     current.updated_at = now_rfc3339();

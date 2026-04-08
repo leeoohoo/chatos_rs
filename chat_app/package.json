@@ -26,6 +26,8 @@
     "@radix-ui/react-tabs": "^1.0.4",
     "@radix-ui/react-tooltip": "^1.0.7",
     "@tailwindcss/typography": "^0.5.16",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "axios": "^1.6.0",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.0.0",
@@ -47,8 +49,6 @@
     "remark-math": "^6.0.0",
     "tailwind-merge": "^2.0.0",
     "uuid": "^9.0.0",
-    "@xterm/xterm": "^6.0.0",
-    "@xterm/addon-fit": "^0.11.0",
     "zustand": "^4.5.0"
   },
   "devDependencies": {
@@ -69,6 +69,9 @@
     "@typescript-eslint/parser": "^6.0.0",
     "@vitejs/plugin-react": "^4.0.0",
     "autoprefixer": "^10.4.0",
+    "baseline-browser-mapping": "^2.10.16",
+    "browserslist": "^4.28.2",
+    "caniuse-lite": "^1.0.30001786",
     "eslint": "^8.45.0",
     "eslint-plugin-react-hooks": "^4.6.0",
     "eslint-plugin-react-refresh": "^0.4.0",
@@ -76,13 +79,14 @@
     "postcss": "^8.4.0",
     "rollup": "^4.0.0",
     "rollup-plugin-dts": "^6.0.0",
+    "storybook": "^8.6.14",
     "tailwindcss": "^3.4.0",
     "typescript": "^5.0.0",
+    "update-browserslist-db": "^1.2.3",
     "vite": "^5.0.0",
     "vite-plugin-dts": "^4.5.4",
     "vite-plugin-lib-inject-css": "^2.2.2",
-    "vitest": "^1.0.0",
-    "storybook": "^8.6.14"
+    "vitest": "^1.0.0"
   },
   "peerDependencies": {
     "react": ">=18.0.0",

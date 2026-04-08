@@ -5,9 +5,11 @@ export const statusStyles: Record<TaskWorkbarItem['status'], string> = {
   pending_execute: 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-100',
   running: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-200',
   paused: 'bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-200',
+  blocked: 'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-200',
   completed: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-200',
   failed: 'bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-200',
   cancelled: 'bg-slate-300 text-slate-700 dark:bg-slate-800 dark:text-slate-200',
+  skipped: 'bg-neutral-200 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-200',
 };
 
 export const priorityStyles: Record<TaskWorkbarItem['priority'], string> = {
@@ -21,9 +23,11 @@ export const statusText: Record<TaskWorkbarItem['status'], string> = {
   pending_execute: '待执行',
   running: '执行中',
   paused: '已暂停',
+  blocked: '阻塞中',
   completed: '已完成',
   failed: '执行失败',
   cancelled: '已取消',
+  skipped: '已跳过',
 };
 
 export const priorityText: Record<TaskWorkbarItem['priority'], string> = {

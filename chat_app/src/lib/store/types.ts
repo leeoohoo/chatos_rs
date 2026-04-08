@@ -13,9 +13,14 @@ export interface TaskReviewDraft {
   title: string;
   details: string;
   priority: 'high' | 'medium' | 'low';
-  status: 'pending_confirm' | 'pending_execute' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled';
+  status: 'pending_confirm' | 'pending_execute' | 'running' | 'paused' | 'blocked' | 'completed' | 'failed' | 'cancelled' | 'skipped';
   tags: string[];
   dueAt?: string | null;
+  taskRef?: string | null;
+  taskKind?: string | null;
+  dependsOnRefs?: string[];
+  verificationOfRefs?: string[];
+  acceptanceCriteria?: string[];
   plannedBuiltinMcpIds?: string[];
   plannedContextAssets?: Array<{
     assetType: string;

@@ -28,7 +28,11 @@ use super::tool_plan::{
 };
 use super::{AiClient, AiClientCallbacks};
 
-const IM_PLANNING_MUTATION_REPLY_PROMPT: &str = "本轮任务规划或任务调整已经完成。不要再调用任何工具，不要继续轮询任务状态，也不要重复查询授权或运行时资产。请立即用简短自然语言向用户总结本轮结果，并结束当前回复。";
+const IM_PLANNING_MUTATION_REPLY_PROMPT_PREFIX: &str = "本轮任务规划或任务调整已经完成。不要再调用任何工具，不要继续轮询任务状态，也不要重复查询授权或运行时资产。";
+const IM_PLANNING_MUTATION_REPLY_PROMPT_SUFFIX: &str =
+    "请立即用简短自然语言向用户总结本轮结果，并结束当前回复。";
+const IM_PLANNING_FINALIZE_FALLBACK_REPLY: &str =
+    "本轮任务规划或任务调整已经处理完毕，后续将按新的任务状态异步推进。";
 
 impl AiClient {
     pub(super) async fn process_with_tools(
@@ -72,6 +76,8 @@ impl AiClient {
         let mut iteration = iteration;
         let mut pending_tool_outputs: Option<Vec<Value>> = None;
         let mut pending_tool_calls: Option<Vec<Value>> = None;
+        let mut im_planning_finalize_only = false;
+        let mut im_planning_finalize_fallback: Option<String> = None;
         let mut no_system_messages =
             base_url_disallows_system_messages(self.ai_request_handler.base_url())
                 || session_id
@@ -402,9 +408,48 @@ impl AiClient {
                     iteration += 1;
                     continue;
                 }
+                if im_planning_finalize_only {
+                    let final_content = if has_content {
+                        ai_response.content.clone()
+                    } else {
+                        im_planning_finalize_fallback
+                            .clone()
+                            .unwrap_or_else(|| IM_PLANNING_FINALIZE_FALLBACK_REPLY.to_string())
+                    };
+                    return Ok(json!({
+                        "success": true,
+                        "content": final_content,
+                        "reasoning": ai_response.reasoning,
+                        "tool_calls": Value::Null,
+                        "finish_reason": ai_response.finish_reason,
+                        "iteration": iteration
+                    }));
+                }
                 return Ok(json!({
                     "success": true,
                     "content": ai_response.content,
+                    "reasoning": ai_response.reasoning,
+                    "tool_calls": Value::Null,
+                    "finish_reason": ai_response.finish_reason,
+                    "iteration": iteration
+                }));
+            }
+            if im_planning_finalize_only {
+                warn!(
+                    "[AI_V3] ignore tool calls during IM planning finalize-only mode: session_id={}, turn_id={}",
+                    session_id.as_deref().unwrap_or("n/a"),
+                    turn_id.as_deref().unwrap_or("n/a")
+                );
+                let final_content = if ai_response.content.trim().is_empty() {
+                    im_planning_finalize_fallback
+                        .clone()
+                        .unwrap_or_else(|| IM_PLANNING_FINALIZE_FALLBACK_REPLY.to_string())
+                } else {
+                    ai_response.content.clone()
+                };
+                return Ok(json!({
+                    "success": true,
+                    "content": final_content,
                     "reasoning": ai_response.reasoning,
                     "tool_calls": Value::Null,
                     "finish_reason": ai_response.finish_reason,
@@ -492,7 +537,7 @@ impl AiClient {
             pending_tool_outputs = Some(tool_outputs.clone());
             pending_tool_calls = Some(tool_call_items.clone());
 
-            if should_force_finish_im_planning_turn(
+            if let Some((reply_prompt, fallback_reply)) = build_im_planning_finalize_reply(
                 turn_id.as_deref(),
                 purpose,
                 expanded_tool_results.as_slice(),
@@ -503,8 +548,11 @@ impl AiClient {
                     turn_id.as_deref().unwrap_or("n/a")
                 );
                 runtime_guidance_items.push(build_im_planning_mutation_reply_input_item(
+                    reply_prompt.as_str(),
                     force_text_content,
                 ));
+                im_planning_finalize_only = true;
+                im_planning_finalize_fallback = Some(fallback_reply);
                 tools.clear();
                 previous_response_id = None;
                 use_prev_id = false;
@@ -600,10 +648,13 @@ fn build_runtime_guidance_input_item(
     )
 }
 
-fn build_im_planning_mutation_reply_input_item(force_text_content: bool) -> Value {
+fn build_im_planning_mutation_reply_input_item(
+    prompt: &str,
+    force_text_content: bool,
+) -> Value {
     to_message_item(
         "user",
-        &Value::String(IM_PLANNING_MUTATION_REPLY_PROMPT.to_string()),
+        &Value::String(prompt.to_string()),
         force_text_content,
     )
 }
@@ -632,13 +683,13 @@ fn is_non_terminal_finish_reason(finish_reason: Option<&str>) -> bool {
     )
 }
 
-fn should_force_finish_im_planning_turn(
+fn build_im_planning_finalize_reply(
     turn_id: Option<&str>,
     purpose: &str,
     tool_results: &[ToolResult],
-) -> bool {
+) -> Option<(String, String)> {
     if purpose != "chat" {
-        return false;
+        return None;
     }
     if !turn_id
         .map(str::trim)
@@ -646,43 +697,102 @@ fn should_force_finish_im_planning_turn(
         .map(|value| value.starts_with("im-run-"))
         .unwrap_or(false)
     {
-        return false;
+        return None;
     }
 
-    tool_results
+    let summaries: Vec<String> = tool_results
         .iter()
-        .any(is_successful_im_planning_mutation_result)
+        .filter_map(im_planning_mutation_summary)
+        .collect();
+    if summaries.is_empty() {
+        return None;
+    }
+
+    let summary_text = summaries.join("；");
+    Some((
+        format!(
+            "{} 已处理的任务变更：{}。{}",
+            IM_PLANNING_MUTATION_REPLY_PROMPT_PREFIX,
+            summary_text,
+            IM_PLANNING_MUTATION_REPLY_PROMPT_SUFFIX
+        ),
+        format!("{} {}", summary_text, IM_PLANNING_FINALIZE_FALLBACK_REPLY),
+    ))
 }
 
 fn is_successful_im_planning_mutation_result(result: &ToolResult) -> bool {
+    im_planning_mutation_summary(result).is_some()
+}
+
+fn im_planning_mutation_summary(result: &ToolResult) -> Option<String> {
     if !result.success || result.is_error || result.is_stream {
-        return false;
+        return None;
     }
 
     let payload = serde_json::from_str::<Value>(result.content.as_str()).ok();
     match result.name.as_str() {
-        "create_tasks" => payload
-            .as_ref()
-            .and_then(|value| value.get("confirmed").and_then(Value::as_bool))
-            == Some(true),
+        "create_tasks" => {
+            let confirmed = payload
+                .as_ref()
+                .and_then(|value| value.get("confirmed").and_then(Value::as_bool))
+                == Some(true);
+            let cancelled = payload
+                .as_ref()
+                .and_then(|value| value.get("cancelled").and_then(Value::as_bool))
+                == Some(true);
+            let created_count = payload
+                .as_ref()
+                .and_then(|value| value.get("created_count").and_then(Value::as_u64))
+                .unwrap_or(0);
+            if confirmed {
+                let task_count = created_count.max(1);
+                Some(format!("已创建 {} 个待确认任务", task_count))
+            } else if cancelled {
+                let reason = payload
+                    .as_ref()
+                    .and_then(|value| value.get("reason").and_then(Value::as_str))
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or("user_cancelled");
+                Some(match reason {
+                    "review_timeout" => "任务创建确认已超时结束".to_string(),
+                    _ => "任务创建已取消".to_string(),
+                })
+            } else {
+                None
+            }
+        }
         "confirm_task" => payload
             .as_ref()
             .and_then(|value| value.get("task_id").and_then(Value::as_str))
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .is_some(),
+            .map(|task_id| format!("已确认任务 {}", task_id)),
         "request_pause_running_task" | "request_stop_running_task" => payload
             .as_ref()
             .and_then(|value| value.get("requested").and_then(Value::as_bool))
-            == Some(true),
-        _ => false,
+            .filter(|requested| *requested)
+            .map(|_| {
+                if result.name == "request_pause_running_task" {
+                    "已提交暂停当前任务的请求".to_string()
+                } else {
+                    "已提交停止当前任务的请求".to_string()
+                }
+            }),
+        "resume_task" => payload
+            .as_ref()
+            .and_then(|value| value.get("task_id").and_then(Value::as_str))
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|task_id| format!("已恢复任务 {}", task_id)),
+        _ => None,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        is_successful_im_planning_mutation_result, should_force_finish_im_planning_turn,
+        build_im_planning_finalize_reply, is_successful_im_planning_mutation_result,
     };
     use crate::core::mcp_tools::ToolResult;
 
@@ -705,29 +815,49 @@ mod tests {
             r#"{"confirmed":true,"cancelled":false,"created_count":1}"#,
         );
         assert!(is_successful_im_planning_mutation_result(&result));
-        assert!(should_force_finish_im_planning_turn(
+        assert!(build_im_planning_finalize_reply(
             Some("im-run-123"),
             "chat",
             &[result]
-        ));
+        )
+        .is_some());
     }
 
     #[test]
-    fn ignores_cancelled_create_tasks_for_forced_finish() {
+    fn cancelled_create_tasks_also_finish_current_im_turn() {
         let result = tool_result(
             "create_tasks",
             r#"{"confirmed":false,"cancelled":true,"reason":"user_cancelled"}"#,
         );
-        assert!(!is_successful_im_planning_mutation_result(&result));
+        assert!(is_successful_im_planning_mutation_result(&result));
+        assert!(build_im_planning_finalize_reply(
+            Some("im-run-123"),
+            "chat",
+            &[result]
+        )
+        .is_some());
     }
 
     #[test]
     fn ignores_non_im_turns_even_when_mutation_succeeds() {
         let result = tool_result("confirm_task", r#"{"task_id":"task_1","status":"pending_execute"}"#);
-        assert!(!should_force_finish_im_planning_turn(
+        assert!(build_im_planning_finalize_reply(
             Some("task-exec-123"),
             "chat",
             &[result]
-        ));
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn resume_task_is_treated_as_planning_mutation() {
+        let result = tool_result("resume_task", r#"{"task_id":"task_2","status":"pending_execute"}"#);
+        assert!(is_successful_im_planning_mutation_result(&result));
+        assert!(build_im_planning_finalize_reply(
+            Some("im-run-123"),
+            "chat",
+            &[result]
+        )
+        .is_some());
     }
 }

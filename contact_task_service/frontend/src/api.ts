@@ -6,7 +6,10 @@ import type {
   MemoryContactSummary,
   MemoryProjectSummary,
   TaskExecutionMessage,
+  TaskPlanOperationResult,
+  TaskPlanView,
   TaskResultBrief,
+  UpdateTaskPlanResponse,
 } from './types';
 
 const tokenKey = 'contact_task_service_auth_token';
@@ -58,6 +61,50 @@ export const api = {
   }): Promise<ContactTask[]> {
     const { data } = await client.get('/tasks', { params });
     return data.items ?? [];
+  },
+
+  async listTaskPlans(params?: {
+    user_id?: string;
+    contact_agent_id?: string;
+    project_id?: string;
+    status?: string;
+  }): Promise<TaskPlanView[]> {
+    const { data } = await client.get('/task-plans', { params });
+    return data.items ?? [];
+  },
+
+  async getTaskPlan(planId: string): Promise<TaskPlanView | null> {
+    const { data } = await client.get(`/task-plans/${encodeURIComponent(planId)}`);
+    return data.item ?? null;
+  },
+
+  async updateTaskPlan(
+    planId: string,
+    payload: {
+      ordered_task_ids?: string[];
+      operations?: Array<{
+        kind: 'skip_with_descendants' | 'rewire_direct_dependents';
+        task_id: string;
+        replacement_task_id?: string | null;
+      }>;
+      updates?: Array<{
+        task_id: string;
+        status?: string;
+        queue_position?: number;
+        depends_on_task_ids?: string[];
+        verification_of_task_ids?: string[];
+        blocked_reason?: string | null;
+      }>;
+    },
+  ): Promise<UpdateTaskPlanResponse | null> {
+    const { data } = await client.patch(`/task-plans/${encodeURIComponent(planId)}`, payload);
+    if (!data.item) {
+      return null;
+    }
+    return {
+      item: data.item as TaskPlanView,
+      operation_results: (data.operation_results ?? []) as TaskPlanOperationResult[],
+    };
   },
 
   async listTaskExecutionMessages(taskId: string): Promise<TaskExecutionMessage[]> {

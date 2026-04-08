@@ -79,8 +79,9 @@ pub use self::job_configs::{
     TaskExecutionRollupJobConfig, TaskExecutionSummaryJobConfig, UpsertAgentMemoryJobConfigRequest,
     UpsertSummaryJobConfigRequest, UpsertSummaryRollupJobConfigRequest,
     UpsertTaskExecutionRollupJobConfigRequest, UpsertTaskExecutionSummaryJobConfigRequest,
-    DEFAULT_SUMMARY_PROMPT_TEMPLATE, DEFAULT_TASK_EXECUTION_ROLLUP_PROMPT_TEMPLATE,
-    DEFAULT_TASK_EXECUTION_SUMMARY_PROMPT_TEMPLATE,
+    default_agent_memory_prompt_template, default_summary_prompt_template,
+    default_summary_rollup_prompt_template, default_task_execution_rollup_prompt_template,
+    default_task_execution_summary_prompt_template,
 };
 pub use self::memories::{AgentRecall, ProjectMemory};
 pub use self::messages::{BatchCreateMessagesRequest, CreateMessageRequest, Message};
