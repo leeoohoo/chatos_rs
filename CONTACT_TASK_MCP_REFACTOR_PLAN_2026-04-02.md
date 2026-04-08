@@ -4,11 +4,11 @@
 
 ## 1. 目标
 
-这次改造的目标不是小修小补，而是把 `chatos` 联系人对话阶段、任务创建阶段、任务执行阶段三套职责彻底拆清楚，并让“任务平台”成为唯一任务真相源。
+这次改造的目标不是小修小补，而是把 `agent_orchestrator` 联系人对话阶段、任务创建阶段、任务执行阶段三套职责彻底拆清楚，并让“任务平台”成为唯一任务真相源。
 
 最终要达到的产品行为：
 
-1. 在 `chatos` 和联系人对话时，默认只允许 3 个内置 MCP 生效：
+1. 在 `agent_orchestrator` 和联系人对话时，默认只允许 3 个内置 MCP 生效：
    - `查看`：即 `builtin_code_maintainer_read`
    - `任务`：新的“任务规划 MCP”，用于查看任务、创建任务、查看联系人已授权能力
    - `ui_prompter`
@@ -30,9 +30,9 @@
 
 当前前端把 `mcp_enabled`、`enabled_mcp_ids` 放在 session runtime metadata 里：
 
-- `chat_app/src/lib/store/helpers/sessionRuntime.ts`
-- `chat_app/src/lib/store/actions/sendMessage/requestPayload.ts`
-- `chat_app/src/features/contactSession/useContactSessionResolver.ts`
+- `agent_workspace/src/lib/store/helpers/sessionRuntime.ts`
+- `agent_workspace/src/lib/store/actions/sendMessage/requestPayload.ts`
+- `agent_workspace/src/features/contactSession/useContactSessionResolver.ts`
 
 这会导致：
 
@@ -44,7 +44,7 @@
 
 当前 `builtin_task_manager` 在：
 
-- `chat_app_server_rs/src/builtin/task_manager/mod.rs`
+- `agent_orchestrator/src/builtin/task_manager/mod.rs`
 
 里面同时包含：
 
@@ -60,7 +60,7 @@
 
 当前任务执行器在：
 
-- `chat_app_server_rs/src/services/task_execution_runner.rs`
+- `agent_orchestrator/src/services/task_execution_runner.rs`
 
 会构造一个 `ChatStreamRequest`，再调用：
 
@@ -85,8 +85,8 @@
 
 当前已有完整内容读取能力：
 
-- 技能全文：`chat_app_server_rs/src/builtin/memory_skill_reader/mod.rs`
-- 命令全文：`chat_app_server_rs/src/builtin/memory_command_reader/mod.rs`
+- 技能全文：`agent_orchestrator/src/builtin/memory_skill_reader/mod.rs`
+- 命令全文：`agent_orchestrator/src/builtin/memory_command_reader/mod.rs`
 - 运行时技能/插件/命令摘要：`memory_server/backend/src/repositories/agents_runtime.rs`
 
 说明基础能力已经有了，但现在任务创建并不会把这些“真正需要的内容”固化到任务元数据里，执行器也不会按任务所选资产注入全文。
@@ -199,10 +199,10 @@
 
 当前涉及位置：
 
-- `chat_app/src/components/inputArea/pickerWidgets/InputAreaMcpPicker.tsx`
-- `chat_app/src/lib/store/helpers/sessionRuntime.ts`
-- `chat_app/src/lib/store/actions/sendMessage/requestPayload.ts`
-- `chat_app_server_rs/src/api/chat_stream_common.rs`
+- `agent_workspace/src/components/inputArea/pickerWidgets/InputAreaMcpPicker.tsx`
+- `agent_workspace/src/lib/store/helpers/sessionRuntime.ts`
+- `agent_workspace/src/lib/store/actions/sendMessage/requestPayload.ts`
+- `agent_orchestrator/src/api/chat_stream_common.rs`
 
 ## 4.3 联系人级 MCP 授权是“执行能力白名单”，不是聊天激活列表
 
@@ -381,9 +381,9 @@ pub resolved_context_snapshot: Option<TaskResolvedContextSnapshot>
 
 改造：
 
-- `chat_app_server_rs/src/api/chat_stream_common.rs`
-- `chat_app_server_rs/src/core/mcp_runtime.rs`
-- `chat_app_server_rs/src/services/mcp_loader.rs`
+- `agent_orchestrator/src/api/chat_stream_common.rs`
+- `agent_orchestrator/src/core/mcp_runtime.rs`
+- `agent_orchestrator/src/services/mcp_loader.rs`
 
 目标行为：
 
@@ -406,8 +406,8 @@ pub resolved_context_snapshot: Option<TaskResolvedContextSnapshot>
 建议新增目录：
 
 ```text
-chat_app_server_rs/src/builtin/task_planner/
-chat_app_server_rs/src/builtin/task_executor/
+agent_orchestrator/src/builtin/task_planner/
+agent_orchestrator/src/builtin/task_executor/
 ```
 
 并删除旧 `task_manager` 兼容逻辑，不再继续扩展它。
@@ -429,7 +429,7 @@ chat_app_server_rs/src/builtin/task_executor/
 
 重点改造：
 
-- `chat_app_server_rs/src/services/task_execution_runner.rs`
+- `agent_orchestrator/src/services/task_execution_runner.rs`
 
 改造后执行流程：
 
@@ -564,7 +564,7 @@ chat_app_server_rs/src/builtin/task_executor/
 
 目前联系人列表渲染位置在：
 
-- `chat_app/src/components/sessionList/sections/SessionSection.tsx`
+- `agent_workspace/src/components/sessionList/sections/SessionSection.tsx`
 
 点击后弹出联系人授权弹窗，展示所有内置 MCP，仅内置，不展示外部 MCP。
 
@@ -586,7 +586,7 @@ chat_app_server_rs/src/builtin/task_executor/
 
 当前：
 
-- `chat_app/src/components/inputArea/pickerWidgets/InputAreaMcpPicker.tsx`
+- `agent_workspace/src/components/inputArea/pickerWidgets/InputAreaMcpPicker.tsx`
 
 建议对联系人聊天模式：
 
@@ -719,19 +719,19 @@ chat_app_server_rs/src/builtin/task_executor/
 
 ### Chat App Server
 
-- `chat_app_server_rs/src/builtin/task_planner/`
-- `chat_app_server_rs/src/builtin/task_executor/`
-- `chat_app_server_rs/src/api/chat_stream_common.rs`
-- `chat_app_server_rs/src/services/task_execution_runner.rs`
-- `chat_app_server_rs/src/services/task_service_client.rs`
-- `chat_app_server_rs/src/services/builtin_mcp.rs`
-- `chat_app_server_rs/src/core/mcp_runtime.rs`
-- `chat_app_server_rs/src/services/mcp_loader.rs`
+- `agent_orchestrator/src/builtin/task_planner/`
+- `agent_orchestrator/src/builtin/task_executor/`
+- `agent_orchestrator/src/api/chat_stream_common.rs`
+- `agent_orchestrator/src/services/task_execution_runner.rs`
+- `agent_orchestrator/src/services/task_service_client.rs`
+- `agent_orchestrator/src/services/builtin_mcp.rs`
+- `agent_orchestrator/src/core/mcp_runtime.rs`
+- `agent_orchestrator/src/services/mcp_loader.rs`
 
 ### Chat App Frontend
 
-- `chat_app/src/components/sessionList/sections/SessionSection.tsx`
-- `chat_app/src/components/inputArea/pickerWidgets/InputAreaMcpPicker.tsx`
+- `agent_workspace/src/components/sessionList/sections/SessionSection.tsx`
+- `agent_workspace/src/components/inputArea/pickerWidgets/InputAreaMcpPicker.tsx`
 - 联系人授权弹窗新组件
 - 任务详情展示组件
 

@@ -1003,7 +1003,7 @@ function App() {
                   <div>
                     <Title level={3} style={{ margin: 0 }}>Contact Task Service</Title>
                     <Text type="secondary">
-                      任务域看板，AI 执行仍由 chatos 负责。
+                      任务域看板，AI 执行仍由 agent_orchestrator 负责。
                     </Text>
                   </div>
                   <Space>

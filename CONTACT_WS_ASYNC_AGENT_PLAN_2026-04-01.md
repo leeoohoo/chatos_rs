@@ -20,18 +20,18 @@
 
 前端当前是标准的“发一个请求，拿一个流，再结束”模式：
 
-- 前端发送消息入口在 `chat_app/src/lib/store/actions/sendMessage.ts`
-- 前端流式请求封装在 `chat_app/src/lib/api/client/stream.ts`
-- 前端按 `SSE` 文本块解析事件在 `chat_app/src/lib/store/actions/sendMessage/sse.ts`
-- 前端把流事件写回消息草稿在 `chat_app/src/lib/store/actions/sendMessage/streamEventHandler.ts`
+- 前端发送消息入口在 `agent_workspace/src/lib/store/actions/sendMessage.ts`
+- 前端流式请求封装在 `agent_workspace/src/lib/api/client/stream.ts`
+- 前端按 `SSE` 文本块解析事件在 `agent_workspace/src/lib/store/actions/sendMessage/sse.ts`
+- 前端把流事件写回消息草稿在 `agent_workspace/src/lib/store/actions/sendMessage/streamEventHandler.ts`
 
 后端当前聊天主链路也是围绕 `SSE` 设计的：
 
-- `chat_app_server_rs/src/api/chat_v3.rs`
-- `chat_app_server_rs/src/api/chat_v2.rs`
-- `chat_app_server_rs/src/utils/sse.rs`
-- `chat_app_server_rs/src/core/chat_stream/events.rs`
-- `chat_app_server_rs/src/utils/events.rs`
+- `agent_orchestrator/src/api/chat_v3.rs`
+- `agent_orchestrator/src/api/chat_v2.rs`
+- `agent_orchestrator/src/utils/sse.rs`
+- `agent_orchestrator/src/core/chat_stream/events.rs`
+- `agent_orchestrator/src/utils/events.rs`
 
 `agent_v3/chat/stream` 现在的语义是：
 
@@ -44,7 +44,7 @@
 
 ### 2.2 当前前端存在的硬限制
 
-`chat_app/src/lib/store/actions/sendMessage.ts` 里有这段逻辑：
+`agent_workspace/src/lib/store/actions/sendMessage.ts` 里有这段逻辑：
 
 - 当前 session 如果 `isLoading / isStreaming / isStopping`，直接拒绝再次发送
 
@@ -56,8 +56,8 @@
 
 终端链路已经是成熟的 `WS` 模式：
 
-- `chat_app_server_rs/src/api/terminals/ws_handlers.rs`
-- `chat_app/src/components/terminal/useTerminalSocketLifecycle.ts`
+- `agent_orchestrator/src/api/terminals/ws_handlers.rs`
+- `agent_workspace/src/components/terminal/useTerminalSocketLifecycle.ts`
 
 这说明：
 
@@ -87,9 +87,9 @@
 
 联系人上下文、联系人命令、联系人技能加载已经在用：
 
-- `chat_app_server_rs/src/api/chat_stream_common.rs`
-- `chat_app_server_rs/src/core/chat_runtime.rs`
-- `chat_app_server_rs/src/core/mcp_runtime.rs`
+- `agent_orchestrator/src/api/chat_stream_common.rs`
+- `agent_orchestrator/src/core/chat_runtime.rs`
+- `agent_orchestrator/src/core/mcp_runtime.rs`
 
 也就是说，联系人身份、命令、技能、插件这些“智能体人格和工具边界”已经有了。
 
@@ -381,46 +381,46 @@
 
 建议新增：
 
-- `chat_app_server_rs/src/api/chat_ws.rs`
-- `chat_app_server_rs/src/services/contact_runtime_hub.rs`
-- `chat_app_server_rs/src/services/contact_runtime_actor.rs`
-- `chat_app_server_rs/src/services/contact_job_scheduler.rs`
-- `chat_app_server_rs/src/services/contact_job_store.rs`
+- `agent_orchestrator/src/api/chat_ws.rs`
+- `agent_orchestrator/src/services/contact_runtime_hub.rs`
+- `agent_orchestrator/src/services/contact_runtime_actor.rs`
+- `agent_orchestrator/src/services/contact_job_scheduler.rs`
+- `agent_orchestrator/src/services/contact_job_store.rs`
 
 如果想更贴近现有目录结构，也可以放到：
 
-- `chat_app_server_rs/src/services/chat_runtime_ws/...`
+- `agent_orchestrator/src/services/chat_runtime_ws/...`
 
 ## 5.2 后端需要改造的现有模块
 
-- `chat_app_server_rs/src/api/mod.rs`
+- `agent_orchestrator/src/api/mod.rs`
   - 注册新 `WS` 路由
-- `chat_app_server_rs/src/api/chat_v3.rs`
+- `agent_orchestrator/src/api/chat_v3.rs`
   - 逐步降级为兼容接口或内部复用逻辑
-- `chat_app_server_rs/src/services/v3/ai_server.rs`
+- `agent_orchestrator/src/services/v3/ai_server.rs`
   - 拆出“同步回复”和“后台 job 执行”都可复用的入口
-- `chat_app_server_rs/src/services/v3/message_manager.rs`
+- `agent_orchestrator/src/services/v3/message_manager.rs`
   - 增加异步 job 结果落库辅助
-- `chat_app_server_rs/src/utils/events.rs`
+- `agent_orchestrator/src/utils/events.rs`
   - 扩展 `WS` 事件类型常量
-- `chat_app_server_rs/src/services/ui_prompt_manager/*`
+- `agent_orchestrator/src/services/ui_prompt_manager/*`
   - 支持调度器直接发起 prompt
 
 ## 5.3 前端需要改造的现有模块
 
-- `chat_app/src/lib/api/client/stream.ts`
+- `agent_workspace/src/lib/api/client/stream.ts`
   - 逐步迁移为 `chatSocket.ts`
-- `chat_app/src/lib/store/actions/sendMessage.ts`
+- `agent_workspace/src/lib/store/actions/sendMessage.ts`
   - 改为通过 socket 发消息，不再等待 `ReadableStream`
-- `chat_app/src/lib/store/actions/sendMessage/streamExecution.ts`
+- `agent_workspace/src/lib/store/actions/sendMessage/streamExecution.ts`
   - 大概率会退场或被大幅收缩
-- `chat_app/src/lib/store/actions/sendMessage/sse.ts`
+- `agent_workspace/src/lib/store/actions/sendMessage/sse.ts`
   - 可废弃
-- `chat_app/src/lib/store/actions/sendMessage/streamEventHandler.ts`
+- `agent_workspace/src/lib/store/actions/sendMessage/streamEventHandler.ts`
   - 保留事件归并逻辑，但输入源改成 WS frame
-- `chat_app/src/lib/store/types.ts`
+- `agent_workspace/src/lib/store/types.ts`
   - 新增 socket、agent runtime、job queue 状态
-- `chat_app/src/components/chat/SessionBusyBadge.tsx`
+- `agent_workspace/src/components/chat/SessionBusyBadge.tsx`
   - 从“是否正在流式输出”改为“联系人运行状态”
 
 ## 6. 分阶段实施建议

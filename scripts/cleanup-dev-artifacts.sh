@@ -15,11 +15,11 @@ for arg in "$@"; do
 Usage: scripts/cleanup-dev-artifacts.sh [--dry-run]
 
 Cleanup common local development artifacts:
-- chat_app/dist
-- chat_app_server_rs/target
+- agent_workspace/dist
+- agent_orchestrator/target
 - target-shared
 - memory_server/backend/target
-- chat_app_server_rs logs and sqlite wal/shm files
+- agent_orchestrator logs and sqlite wal/shm files
 - memory_server/backend sqlite wal/shm files
 - memory_server/frontend/dist
 - openai-codex-gateway sqlite wal/shm files
@@ -65,15 +65,19 @@ remove_glob() {
   fi
 }
 
-remove_path "$ROOT_DIR/chat_app/dist"
+remove_path "$ROOT_DIR/agent_workspace/dist"
 remove_path "$ROOT_DIR/memory_server/frontend/dist"
-remove_path "$ROOT_DIR/chat_app_server_rs/target"
+remove_path "$ROOT_DIR/agent_orchestrator/target"
 remove_path "$ROOT_DIR/memory_server/backend/target"
 remove_path "$ROOT_DIR/target-shared"
-remove_glob "$ROOT_DIR/chat_app_server_rs/logs/server.log*"
-remove_glob "$ROOT_DIR/chat_app_server_rs/logs/error.log*"
-remove_path "$ROOT_DIR/chat_app_server_rs/data/chat_app.db-wal"
-remove_path "$ROOT_DIR/chat_app_server_rs/data/chat_app.db-shm"
+remove_glob "$ROOT_DIR/agent_orchestrator/logs/server.log*"
+remove_glob "$ROOT_DIR/agent_orchestrator/logs/error.log*"
+remove_glob "$ROOT_DIR/agent_orchestrator/data/*.db-wal"
+remove_glob "$ROOT_DIR/agent_orchestrator/data/*.db-shm"
+remove_glob "$ROOT_DIR/.local/*/data/*.db-wal"
+remove_glob "$ROOT_DIR/.local/*/data/*.db-shm"
+remove_path "$ROOT_DIR/.local/agent_orchestrator/data/agent_orchestrator.db-wal"
+remove_path "$ROOT_DIR/.local/agent_orchestrator/data/agent_orchestrator.db-shm"
 remove_path "$ROOT_DIR/memory_server/backend/data/memory_server.db-wal"
 remove_path "$ROOT_DIR/memory_server/backend/data/memory_server.db-shm"
 remove_path "$ROOT_DIR/openai-codex-gateway/gateway_state.sqlite3-wal"
@@ -83,7 +87,7 @@ while IFS= read -r path; do
   remove_path "$path"
 done < <(
   find "$ROOT_DIR" \
-    \( -path "$ROOT_DIR/.git" -o -path "$ROOT_DIR/chat_app/node_modules" -o -path "$ROOT_DIR/chat_app_server_rs/target" -o -path "$ROOT_DIR/memory_server/backend/target" -o -path "$ROOT_DIR/memory_server/frontend/node_modules" -o -path "$ROOT_DIR/target-shared" \) -prune \
+    \( -path "$ROOT_DIR/.git" -o -path "$ROOT_DIR/agent_workspace/node_modules" -o -path "$ROOT_DIR/agent_orchestrator/target" -o -path "$ROOT_DIR/memory_server/backend/target" -o -path "$ROOT_DIR/memory_server/frontend/node_modules" -o -path "$ROOT_DIR/target-shared" \) -prune \
     -o \( -name .DS_Store -o -name __pycache__ -o -name '*.pyc' -o -name '*.pyo' \) -print
 )
 

@@ -12,31 +12,31 @@
 ### 2.1 文件预览链路
 
 1. 前端预览入口：
-- `chat_app/src/components/projectExplorer/PreviewPane.tsx`
+- `agent_workspace/src/components/projectExplorer/PreviewPane.tsx`
 - 文本文件使用 `highlight.js` 渲染；图片二进制做 data-url 预览；其它二进制只显示“下载”。
 
 2. 前端语言映射：
-- `chat_app/src/components/projectExplorer/utils.ts` 中 `EXT_LANGUAGE_MAP` + `getHighlightLanguage`。
+- `agent_workspace/src/components/projectExplorer/utils.ts` 中 `EXT_LANGUAGE_MAP` + `getHighlightLanguage`。
 
 3. 后端读文件与“文本/二进制”判定：
-- `chat_app_server_rs/src/api/fs/query_handlers.rs` 的 `/api/fs/read`
-- `chat_app_server_rs/src/api/fs/read_mode.rs` 的 `should_render_text`
+- `agent_orchestrator/src/api/fs/query_handlers.rs` 的 `/api/fs/read`
+- `agent_orchestrator/src/api/fs/read_mode.rs` 的 `should_render_text`
 
 ### 2.2 终端能力链路
 
 1. 终端 CRUD + WS：
-- `chat_app_server_rs/src/api/terminals.rs`
-- `chat_app_server_rs/src/api/terminals/crud_handlers.rs`
-- `chat_app_server_rs/src/api/terminals/ws_handlers.rs`
+- `agent_orchestrator/src/api/terminals.rs`
+- `agent_orchestrator/src/api/terminals/crud_handlers.rs`
+- `agent_orchestrator/src/api/terminals/ws_handlers.rs`
 
 2. 终端 busy 状态来源：
-- `chat_app_server_rs/src/services/terminal_manager/session.rs`
-- `chat_app_server_rs/src/api/terminals/support.rs`（`attach_busy`）
+- `agent_orchestrator/src/services/terminal_manager/session.rs`
+- `agent_orchestrator/src/api/terminals/support.rs`（`attach_busy`）
 
 3. 前端终端状态与操作：
-- `chat_app/src/lib/store/actions/terminals.ts`
-- `chat_app/src/components/TerminalView.tsx`
-- `chat_app/src/components/terminal/useTerminal*`
+- `agent_workspace/src/lib/store/actions/terminals.ts`
+- `agent_workspace/src/components/TerminalView.tsx`
+- `agent_workspace/src/components/terminal/useTerminal*`
 
 ## 3. 当前缺口（差什么）
 
@@ -65,7 +65,7 @@
 
 目标：只要文件是“高概率文本”，就返回 `is_binary=false` 给前端。
 
-改造点：`chat_app_server_rs/src/api/fs/read_mode.rs`
+改造点：`agent_orchestrator/src/api/fs/read_mode.rs`
 
 策略建议：
 1. 保留现有白名单命中逻辑（快速路径）。
@@ -79,7 +79,7 @@
 
 ### B. 前端高亮映射补齐（体验）
 
-改造点：`chat_app/src/components/projectExplorer/utils.ts`
+改造点：`agent_workspace/src/components/projectExplorer/utils.ts`
 
 1. 扩展常见后缀映射（只做高亮，不影响是否显示）：
 - `mts/cts`、`tsx` 已有则保留；补 `vue` 生态与脚本类边缘后缀。
@@ -90,7 +90,7 @@
 
 ### A. 交互设计
 
-改造点：`chat_app/src/components/projectExplorer/PreviewPane.tsx`
+改造点：`agent_workspace/src/components/projectExplorer/PreviewPane.tsx`
 
 1. 在预览头部新增“运行”区域：
 - 主按钮：`运行`。
@@ -101,7 +101,7 @@
 
 ### B. 命令模板来源（可扩展）
 
-新增前端模块建议：`chat_app/src/components/projectExplorer/runProfiles.ts`
+新增前端模块建议：`agent_workspace/src/components/projectExplorer/runProfiles.ts`
 
 按“当前目录”探测：
 1. Node/Web：存在 `package.json` 时解析 scripts，给出 `npm run <script>` 候选。
@@ -132,8 +132,8 @@
 ### D. 前端调用层
 
 改造点：
-1. `chat_app/src/lib/api/client/workspace.ts`：新增 `dispatchTerminalCommand`。
-2. `chat_app/src/lib/api/client.ts`：暴露 `dispatchTerminalCommand` 方法。
+1. `agent_workspace/src/lib/api/client/workspace.ts`：新增 `dispatchTerminalCommand`。
+2. `agent_workspace/src/lib/api/client.ts`：暴露 `dispatchTerminalCommand` 方法。
 3. `ProjectExplorer` 层把“当前目录 + 命令”传给新 API。
 
 ## 5. 关键规则定义
@@ -156,27 +156,27 @@
 ### 后端
 
 1. 文本判定：
-- `chat_app_server_rs/src/api/fs/read_mode.rs`
+- `agent_orchestrator/src/api/fs/read_mode.rs`
 
 2. 终端派发 API：
-- `chat_app_server_rs/src/api/terminals.rs`（新增 route）
-- `chat_app_server_rs/src/api/terminals/contracts.rs`（新增请求/响应结构）
-- `chat_app_server_rs/src/api/terminals/crud_handlers.rs` 或新增 `dispatch_handlers.rs`
-- 可能补充：`chat_app_server_rs/src/repositories/terminals.rs`（如需更高效查询）
+- `agent_orchestrator/src/api/terminals.rs`（新增 route）
+- `agent_orchestrator/src/api/terminals/contracts.rs`（新增请求/响应结构）
+- `agent_orchestrator/src/api/terminals/crud_handlers.rs` 或新增 `dispatch_handlers.rs`
+- 可能补充：`agent_orchestrator/src/repositories/terminals.rs`（如需更高效查询）
 
 ### 前端
 
 1. 预览与运行 UI：
-- `chat_app/src/components/projectExplorer/PreviewPane.tsx`
-- `chat_app/src/components/ProjectExplorer.tsx`
-- 新增：`chat_app/src/components/projectExplorer/runProfiles.ts`
+- `agent_workspace/src/components/projectExplorer/PreviewPane.tsx`
+- `agent_workspace/src/components/ProjectExplorer.tsx`
+- 新增：`agent_workspace/src/components/projectExplorer/runProfiles.ts`
 
 2. API 客户端：
-- `chat_app/src/lib/api/client/workspace.ts`
-- `chat_app/src/lib/api/client.ts`
+- `agent_workspace/src/lib/api/client/workspace.ts`
+- `agent_workspace/src/lib/api/client.ts`
 
 3. 高亮映射补充：
-- `chat_app/src/components/projectExplorer/utils.ts`
+- `agent_workspace/src/components/projectExplorer/utils.ts`
 
 ## 7. 分阶段实施建议
 

@@ -1207,8 +1207,8 @@ stateDiagram-v2
 ```mermaid
 sequenceDiagram
     participant U as User
-    participant FE as chat_app
-    participant BE as chat_app_server_rs
+    participant FE as agent_workspace
+    participant BE as agent_orchestrator
     participant SG as Scope Guidance Coordinator
     participant RG as Runtime Guidance Manager
     participant TS as contact_task_service

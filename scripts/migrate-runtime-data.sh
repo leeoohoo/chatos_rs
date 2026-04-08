@@ -32,9 +32,27 @@ move_runtime_file() {
   done
 }
 
-move_runtime_file \
-  "$ROOT_DIR/chat_app_server_rs/data/chat_app.db" \
-  "$ROOT_DIR/.local/chat_app_server/data/chat_app.db"
+move_agent_orchestrator_runtime_db() {
+  local target="$ROOT_DIR/.local/agent_orchestrator/data/agent_orchestrator.db"
+  local candidate
+
+  while IFS= read -r candidate; do
+    [[ -n "$candidate" ]] || continue
+    [[ "$candidate" == "$target" ]] && continue
+    if [[ "$candidate" == "$ROOT_DIR/agent_orchestrator/data/"* ]]; then
+      move_runtime_file "$candidate" "$target"
+      return
+    fi
+    local service_root
+    service_root="$(dirname "$(dirname "$candidate")")"
+    if [[ -d "$service_root/logs" ]]; then
+      move_runtime_file "$candidate" "$target"
+      return
+    fi
+  done < <(compgen -G "$ROOT_DIR/.local/*/data/*.db" || true; compgen -G "$ROOT_DIR/agent_orchestrator/data/*.db" || true)
+}
+
+move_agent_orchestrator_runtime_db
 
 move_runtime_file \
   "$ROOT_DIR/openai-codex-gateway/gateway_state.sqlite3" \

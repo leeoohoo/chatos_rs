@@ -32,9 +32,9 @@
 
 关键位置：
 
-- [execution_loop.rs](/Users/lilei/project/my_project/chatos_rs/chat_app_server_rs/src/services/v3/ai_client/execution_loop.rs#L31)
-- [execution_loop.rs](/Users/lilei/project/my_project/chatos_rs/chat_app_server_rs/src/services/v3/ai_client/execution_loop.rs#L495)
-- [execution_loop.rs](/Users/lilei/project/my_project/chatos_rs/chat_app_server_rs/src/services/v3/ai_client/execution_loop.rs#L635)
+- [execution_loop.rs](./agent_orchestrator/src/services/v3/ai_client/execution_loop.rs#L31)
+- [execution_loop.rs](./agent_orchestrator/src/services/v3/ai_client/execution_loop.rs#L495)
+- [execution_loop.rs](./agent_orchestrator/src/services/v3/ai_client/execution_loop.rs#L635)
 
 现在已经有：
 
@@ -60,7 +60,7 @@
 
 在：
 
-- [execution_loop.rs](/Users/lilei/project/my_project/chatos_rs/chat_app_server_rs/src/services/v3/ai_client/execution_loop.rs#L654)
+- [execution_loop.rs](./agent_orchestrator/src/services/v3/ai_client/execution_loop.rs#L654)
 
 当前只把这些情况视为成功变更：
 
@@ -104,7 +104,7 @@
 
 IM run 主流程在：
 
-- [im_orchestrator.rs](/Users/lilei/project/my_project/chatos_rs/chat_app_server_rs/src/services/im_orchestrator.rs#L42)
+- [im_orchestrator.rs](./agent_orchestrator/src/services/im_orchestrator.rs#L42)
 
 当前流程是：
 
@@ -134,7 +134,7 @@ IM run 主流程在：
 
 这部分在：
 
-- [im_task_runtime_bridge.rs](/Users/lilei/project/my_project/chatos_rs/chat_app_server_rs/src/services/im_task_runtime_bridge.rs#L1)
+- [im_task_runtime_bridge.rs](./agent_orchestrator/src/services/im_task_runtime_bridge.rs#L1)
 
 说明：
 
@@ -446,7 +446,7 @@ enum PlanningTurnTermination {
 
 改动位置：
 
-- [im_orchestrator.rs](/Users/lilei/project/my_project/chatos_rs/chat_app_server_rs/src/services/im_orchestrator.rs)
+- [im_orchestrator.rs](./agent_orchestrator/src/services/im_orchestrator.rs)
 
 建议把 run 的结束语义改成：
 
@@ -479,7 +479,7 @@ enum PlanningTurnTermination {
 
 后续任务完成、失败、暂停、恢复等，都应该通过：
 
-- [im_task_runtime_bridge.rs](/Users/lilei/project/my_project/chatos_rs/chat_app_server_rs/src/services/im_task_runtime_bridge.rs)
+- [im_task_runtime_bridge.rs](./agent_orchestrator/src/services/im_task_runtime_bridge.rs)
 
 或其扩展链路发给 IM。
 
@@ -500,7 +500,7 @@ enum PlanningTurnTermination {
 
 改动：
 
-1. 修改 [execution_loop.rs](/Users/lilei/project/my_project/chatos_rs/chat_app_server_rs/src/services/v3/ai_client/execution_loop.rs)
+1. 修改 [execution_loop.rs](./agent_orchestrator/src/services/v3/ai_client/execution_loop.rs)
 2. 保留“清空工具后再总结一次”的思路，但升级成程序硬控的 `finalize_only`
 3. 限制这轮只能输出自然语言，不能再进工具循环
 4. 如果这轮失败，程序模板兜底并结束 loop
@@ -544,20 +544,20 @@ enum PlanningTurnTermination {
 
 ### 核心执行收口
 
-1. [execution_loop.rs](/Users/lilei/project/my_project/chatos_rs/chat_app_server_rs/src/services/v3/ai_client/execution_loop.rs)
+1. [execution_loop.rs](./agent_orchestrator/src/services/v3/ai_client/execution_loop.rs)
 
 ### IM 主流程
 
-1. [im_orchestrator.rs](/Users/lilei/project/my_project/chatos_rs/chat_app_server_rs/src/services/im_orchestrator.rs)
+1. [im_orchestrator.rs](./agent_orchestrator/src/services/im_orchestrator.rs)
 
 ### 任务规划工具返回规范
 
-1. [review_flow.rs](/Users/lilei/project/my_project/chatos_rs/chat_app_server_rs/src/builtin/task_planner/review_flow.rs)
-2. [task_planner/mod.rs](/Users/lilei/project/my_project/chatos_rs/chat_app_server_rs/src/builtin/task_planner/mod.rs)
+1. [review_flow.rs](./agent_orchestrator/src/builtin/task_planner/review_flow.rs)
+2. [task_planner/mod.rs](./agent_orchestrator/src/builtin/task_planner/mod.rs)
 
 ### 异步任务通知链路
 
-1. [im_task_runtime_bridge.rs](/Users/lilei/project/my_project/chatos_rs/chat_app_server_rs/src/services/im_task_runtime_bridge.rs)
+1. [im_task_runtime_bridge.rs](./agent_orchestrator/src/services/im_task_runtime_bridge.rs)
 
 ---
 

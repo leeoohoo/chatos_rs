@@ -8,13 +8,13 @@
    - 原始消息：`memory_server/backend/src/repositories/messages/*`
    - 总结表：`summaries`
    - 上下文拼装：`memory_server/backend/src/services/context.rs::compose_context`
-   - 调用入口：`chat_app_server_rs/src/services/memory_server_client/session_ops.rs::compose_context`
+   - 调用入口：`agent_orchestrator/src/services/memory_server_client/session_ops.rs::compose_context`
 
 2. 任务执行历史
    - 原始消息：`task_execution_messages`
    - 总结表：`task_execution_summaries`
    - 上下文拼装：`memory_server/backend/src/services/context.rs::compose_task_execution_context`
-   - 调用入口：`chat_app_server_rs/src/services/memory_server_client/task_execution_ops.rs::compose_task_execution_context`
+   - 调用入口：`agent_orchestrator/src/services/memory_server_client/task_execution_ops.rs::compose_task_execution_context`
 
 ### 1.2 当前任务执行总结存在的几个关键问题
 
@@ -37,7 +37,7 @@
    - 这本身没问题，但意味着“上下文组织”不能只按单任务思维来做
 
 4. 联系人聊天和任务执行之间现在只有一个很弱的桥
-   - `chat_app_server_rs/src/services/task_execution_runner.rs::save_task_notice_message`
+   - `agent_orchestrator/src/services/task_execution_runner.rs::save_task_notice_message`
    - 任务结束时会往源会话写一条 `task_notice`
    - 这更像 UI 通知，不适合作为稳定的长期上下文桥梁
 
@@ -209,7 +209,7 @@
    - `GET /api/memory/v1/configs/task-execution-summary-job`
    - `PUT /api/memory/v1/configs/task-execution-summary-job`
 
-2. chat_app_server_rs
+2. agent_orchestrator
    - 新增与 `session_summary_job_config` 平行的一套路由
    - 例如：
      - `/api/task-execution-summary-job-config`

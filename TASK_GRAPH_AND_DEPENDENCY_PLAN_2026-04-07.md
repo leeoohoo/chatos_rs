@@ -32,7 +32,7 @@
 
 位置：
 
-- [models.rs](/Users/lilei/project/my_project/chatos_rs/contact_task_service/backend/src/models.rs)
+- [models.rs](./contact_task_service/backend/src/models.rs)
 
 当前只有：
 
@@ -57,7 +57,7 @@
 
 位置：
 
-- [repository.rs](/Users/lilei/project/my_project/chatos_rs/contact_task_service/backend/src/repository.rs#L476)
+- [repository.rs](./contact_task_service/backend/src/repository.rs#L476)
 
 当前 `scheduler_next(...)` 的逻辑本质是：
 
@@ -75,8 +75,8 @@
 
 位置：
 
-- [task_planner/mod.rs](/Users/lilei/project/my_project/chatos_rs/chat_app_server_rs/src/builtin/task_planner/mod.rs#L168)
-- [review_flow.rs](/Users/lilei/project/my_project/chatos_rs/chat_app_server_rs/src/builtin/task_planner/review_flow.rs#L11)
+- [task_planner/mod.rs](./agent_orchestrator/src/builtin/task_planner/mod.rs#L168)
+- [review_flow.rs](./agent_orchestrator/src/builtin/task_planner/review_flow.rs#L11)
 
 现在 `create_tasks` 的确支持一次传多个 task draft，但这些 task 之间仍然是：
 
@@ -626,10 +626,10 @@ Workbar 不应该只把它们当成一串独立平铺任务。
 
 改：
 
-1. `chat_app_server_rs/src/builtin/task_planner/mod.rs`
-2. `chat_app_server_rs/src/builtin/task_planner/parsing.rs`
-3. `chat_app_server_rs/src/builtin/task_planner/review_flow.rs`
-4. `chat_app_server_rs/src/services/task_manager/*`
+1. `agent_orchestrator/src/builtin/task_planner/mod.rs`
+2. `agent_orchestrator/src/builtin/task_planner/parsing.rs`
+3. `agent_orchestrator/src/builtin/task_planner/review_flow.rs`
+4. `agent_orchestrator/src/services/task_manager/*`
 
 ### 第 3 步：改确认逻辑
 

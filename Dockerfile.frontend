@@ -2,18 +2,18 @@
 
 FROM node:20-alpine AS builder
 
-WORKDIR /workspace/chat_app
+WORKDIR /workspace/agent_workspace
 
-COPY chat_app/package.json chat_app/package-lock.json ./
+COPY agent_workspace/package.json agent_workspace/package-lock.json ./
 RUN npm ci
 
-COPY chat_app/ ./
+COPY agent_workspace/ ./
 RUN npm run build
 
 FROM nginx:1.27-alpine AS runtime
 
 COPY docker/nginx/default.conf /etc/nginx/conf.d/default.conf
-COPY --from=builder /workspace/chat_app/dist /usr/share/nginx/html
+COPY --from=builder /workspace/agent_workspace/dist /usr/share/nginx/html
 
 EXPOSE 80
 

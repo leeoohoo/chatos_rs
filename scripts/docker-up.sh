@@ -18,12 +18,12 @@ else
   exit 1
 fi
 
-ENV_FILE="$ROOT_DIR/chat_app_server_rs/.env"
-ENV_EXAMPLE="$ROOT_DIR/chat_app_server_rs/.env.example"
+ENV_FILE="$ROOT_DIR/agent_orchestrator/.env"
+ENV_EXAMPLE="$ROOT_DIR/agent_orchestrator/.env.example"
 
 if [[ ! -f "$ENV_FILE" ]]; then
   cp "$ENV_EXAMPLE" "$ENV_FILE"
-  echo "[INFO] 已创建 chat_app_server_rs/.env（可选配置，默认可直接启动）。"
+  echo "[INFO] 已创建 agent_orchestrator/.env（可选配置，默认可直接启动）。"
 fi
 
 "${COMPOSE_CMD[@]}" --env-file "$ENV_FILE" up -d --build

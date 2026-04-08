@@ -34,7 +34,7 @@ pub(super) struct UpdateBuiltinMcpGrantsPayload {
     authorized_builtin_mcp_ids: Vec<String>,
 }
 
-const CLONE_META_KEY: &str = "__chatos_clone_meta";
+const CLONE_META_KEY: &str = "__agent_workspace_clone_meta";
 
 fn with_clone_meta_project_policy(
     project_policy: Option<Value>,

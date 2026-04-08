@@ -6,8 +6,8 @@ services:
       target: ${BACKEND_DOCKER_TARGET:-runtime}
       args:
         BACKEND_EXTRA_APT_PACKAGES: ${BACKEND_EXTRA_APT_PACKAGES:-}
-    image: chatos/backend:latest
-    container_name: chatos-backend
+    image: agent_orchestrator/backend:latest
+    container_name: agent-orchestrator-backend
     restart: unless-stopped
     environment:
       NODE_ENV: ${NODE_ENV:-production}
@@ -21,10 +21,10 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-*}
       NOTEPAD_DATA_DIR: ${NOTEPAD_DATA_DIR:-/app/data/notepad}
     volumes:
-      - ./chat_app_server_rs/config:/app/config:ro
+      - ./agent_orchestrator/config:/app/config:ro
       # Use named volumes to isolate Docker runtime data from local dev environment.
-      - chatos_backend_data:/app/data
-      - chatos_backend_logs:/app/logs
+      - agent_orchestrator_backend_data:/app/data
+      - agent_orchestrator_backend_logs:/app/logs
       # Optional: map a host folder into container for file browsing/editing features.
       # Example: HOST_MOUNT_DIR=/Users/lilei/workspace
       - ${HOST_MOUNT_DIR:-.}:/workspace:rw
@@ -36,8 +36,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.frontend
-    image: chatos/frontend:latest
-    container_name: chatos-frontend
+    image: agent_workspace/frontend:latest
+    container_name: agent-workspace-frontend
     restart: unless-stopped
     depends_on:
       - backend
@@ -45,5 +45,5 @@ services:
       - "8080:80"
 
 volumes:
-  chatos_backend_data:
-  chatos_backend_logs:
+  agent_orchestrator_backend_data:
+  agent_orchestrator_backend_logs:

@@ -19,6 +19,8 @@ use super::{
     now_rfc3339,
 };
 
+const CLONE_META_KEY: &str = "__agent_workspace_clone_meta";
+
 fn collection(db: &Db) -> mongodb::Collection<MemoryAgent> {
     db.collection::<MemoryAgent>("memory_agents")
 }
@@ -120,17 +122,40 @@ pub async fn get_user_clone_by_source_agent_id(
     user_id: &str,
     source_agent_id: &str,
 ) -> Result<Option<MemoryAgent>, String> {
-    let item = collection(db)
-        .find_one(doc! {
-            "user_id": user_id,
-            "project_policy.__chatos_clone_meta.source_agent_id": source_agent_id,
-        })
+    let items = collection(db)
+        .find(doc! { "user_id": user_id })
         .await
         .map_err(|e| e.to_string())?;
-    match item {
-        Some(agent) => Ok(Some(hydrate_agent_for_read(db, agent).await?)),
-        None => Ok(None),
+    let items = items
+        .try_collect::<Vec<MemoryAgent>>()
+        .await
+        .map_err(|e| e.to_string())?;
+    for agent in items {
+        if project_policy_matches_clone_source(agent.project_policy.as_ref(), source_agent_id) {
+            return Ok(Some(hydrate_agent_for_read(db, agent).await?));
+        }
     }
+    Ok(None)
+}
+
+fn project_policy_matches_clone_source(
+    project_policy: Option<&serde_json::Value>,
+    source_agent_id: &str,
+) -> bool {
+    let Some(policy) = project_policy.and_then(|value| value.as_object()) else {
+        return false;
+    };
+    policy.iter().any(|(key, value)| {
+        if key != CLONE_META_KEY && !key.ends_with("_clone_meta") {
+            return false;
+        }
+        value
+            .get("source_agent_id")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .map(|value| value == source_agent_id)
+            .unwrap_or(false)
+    })
 }
 
 pub async fn update_agent(

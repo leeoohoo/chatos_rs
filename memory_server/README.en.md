@@ -1,7 +1,7 @@
 # memory_server
 
 ## Positioning
-`memory_server` is the memory domain of Chatos RS.
+`memory_server` is the memory domain of agent stack.
 It manages long-horizon context through summary generation, rollups, memory retrieval, and operational tools.
 
 ## What It Solves

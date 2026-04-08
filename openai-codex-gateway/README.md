@@ -22,7 +22,7 @@ export CODEX_GATEWAY_SDK_MODE=installed
 如果你确实需要手动安装 SDK，再执行：
 
 ```bash
-cd chat_app_server_rs/docs/codex/sdk/python
+cd agent_orchestrator/docs/codex/sdk/python
 python -m pip install -e .
 ```
 

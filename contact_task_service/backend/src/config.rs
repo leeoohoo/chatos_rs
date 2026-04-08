@@ -21,7 +21,7 @@ fn read_service_token() -> Option<String> {
             if node_env.eq_ignore_ascii_case("production") {
                 None
             } else {
-                Some("chatos-dev-service-token".to_string())
+                Some("agent-orchestrator-dev-service-token".to_string())
             }
         })
 }

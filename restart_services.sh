@@ -5,8 +5,8 @@ set -euo pipefail
 
 SCRIPT_PATH="${CHATOS_RS_SCRIPT_PATH:-${BASH_SOURCE[0]}}"
 ROOT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
-MAIN_BACKEND_DIR="$ROOT_DIR/chat_app_server_rs"
-MAIN_FRONTEND_DIR="$ROOT_DIR/chat_app"
+MAIN_BACKEND_DIR="$ROOT_DIR/agent_orchestrator"
+MAIN_FRONTEND_DIR="$ROOT_DIR/agent_workspace"
 MAIN_BACKEND_ENV_FILE="$MAIN_BACKEND_DIR/.env"
 MEMORY_ROOT_DIR="$ROOT_DIR/memory_server"
 MEMORY_BACKEND_DIR="$MEMORY_ROOT_DIR/backend"
@@ -198,7 +198,7 @@ prepare() {
 
 start_main_backend() {
   echo "[INFO] 启动原项目 backend..."
-  nohup bash -lc "cd \"$MAIN_BACKEND_DIR\" && if [[ -f \"$MAIN_BACKEND_ENV_FILE\" ]]; then set -a; source \"$MAIN_BACKEND_ENV_FILE\"; set +a; fi; export TASK_SERVICE_BASE_URL=\"\${TASK_SERVICE_BASE_URL:-http://127.0.0.1:8096/api/task-service/v1}\"; export TASK_SERVICE_SERVICE_TOKEN=\"\${TASK_SERVICE_SERVICE_TOKEN:-\${CONTACT_TASK_SERVICE_SERVICE_TOKEN:-\${MEMORY_SERVER_SERVICE_TOKEN:-}}}\"; export IM_SERVICE_BASE_URL=\"\${IM_SERVICE_BASE_URL:-http://127.0.0.1:$IM_BACKEND_PORT/api/im/v1}\"; export IM_SERVICE_SERVICE_TOKEN=\"\${IM_SERVICE_SERVICE_TOKEN:-\${MEMORY_SERVER_SERVICE_TOKEN:-}}\"; cargo run --bin chat_app_server_rs" >"$MAIN_BACKEND_LOG_FILE" 2>&1 &
+  nohup bash -lc "cd \"$MAIN_BACKEND_DIR\" && if [[ -f \"$MAIN_BACKEND_ENV_FILE\" ]]; then set -a; source \"$MAIN_BACKEND_ENV_FILE\"; set +a; fi; export TASK_SERVICE_BASE_URL=\"\${TASK_SERVICE_BASE_URL:-http://127.0.0.1:8096/api/task-service/v1}\"; export TASK_SERVICE_SERVICE_TOKEN=\"\${TASK_SERVICE_SERVICE_TOKEN:-\${CONTACT_TASK_SERVICE_SERVICE_TOKEN:-\${MEMORY_SERVER_SERVICE_TOKEN:-}}}\"; export IM_SERVICE_BASE_URL=\"\${IM_SERVICE_BASE_URL:-http://127.0.0.1:$IM_BACKEND_PORT/api/im/v1}\"; export IM_SERVICE_SERVICE_TOKEN=\"\${IM_SERVICE_SERVICE_TOKEN:-\${MEMORY_SERVER_SERVICE_TOKEN:-}}\"; cargo run --bin agent_orchestrator" >"$MAIN_BACKEND_LOG_FILE" 2>&1 &
   echo $! >"$MAIN_BACKEND_PID_FILE"
 }
 

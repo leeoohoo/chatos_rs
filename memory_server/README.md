@@ -66,8 +66,8 @@ cd ..
 ```
 
 This script manages all 4 services together:
-1. main backend (`chat_app_server_rs`)
-2. main frontend (`chat_app`)
+1. main backend (`agent_orchestrator`)
+2. main frontend (`agent_workspace`)
 3. memory backend (`memory_server`)
 4. memory frontend
 

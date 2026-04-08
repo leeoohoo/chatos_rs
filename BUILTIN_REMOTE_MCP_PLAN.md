@@ -11,20 +11,20 @@
 当前项目已经具备两条完整链路：
 
 1. 内置 MCP 链路
-- `chat_app_server_rs/src/services/builtin_mcp.rs`
-- `chat_app_server_rs/src/services/mcp_loader.rs`
-- `chat_app_server_rs/src/core/mcp_tools/builtin.rs`
-- `chat_app_server_rs/src/services/v2/mcp_tool_execute.rs`
-- `chat_app_server_rs/src/services/v3/mcp_tool_execute.rs`
-- `chat_app_server_rs/src/api/chat_v2.rs`
-- `chat_app_server_rs/src/api/chat_v3.rs`
+- `agent_orchestrator/src/services/builtin_mcp.rs`
+- `agent_orchestrator/src/services/mcp_loader.rs`
+- `agent_orchestrator/src/core/mcp_tools/builtin.rs`
+- `agent_orchestrator/src/services/v2/mcp_tool_execute.rs`
+- `agent_orchestrator/src/services/v3/mcp_tool_execute.rs`
+- `agent_orchestrator/src/api/chat_v2.rs`
+- `agent_orchestrator/src/api/chat_v3.rs`
 
 2. 远程连接链路
-- 连接增删改查：`chat_app_server_rs/src/api/remote_connections/handlers.rs`
-- SSH 执行：`chat_app_server_rs/src/api/remote_connections/connectivity.rs`
-- 远程终端会话：`chat_app_server_rs/src/api/remote_connections/remote_terminal.rs`
-- SFTP 能力：`chat_app_server_rs/src/api/remote_connections/remote_sftp/*`
-- 连接归属校验：`chat_app_server_rs/src/core/remote_connection_access.rs`
+- 连接增删改查：`agent_orchestrator/src/api/remote_connections/handlers.rs`
+- SSH 执行：`agent_orchestrator/src/api/remote_connections/connectivity.rs`
+- 远程终端会话：`agent_orchestrator/src/api/remote_connections/remote_terminal.rs`
+- SFTP 能力：`agent_orchestrator/src/api/remote_connections/remote_sftp/*`
+- 连接归属校验：`agent_orchestrator/src/core/remote_connection_access.rs`
 
 结论：核心能力已具备，只需要把远程能力接入内置 MCP 注册与执行体系。
 
@@ -32,7 +32,7 @@
 
 ## 3.1 新增一个内置 MCP 类型
 
-在 `chat_app_server_rs/src/services/builtin_mcp.rs` 增加：
+在 `agent_orchestrator/src/services/builtin_mcp.rs` 增加：
 
 1. MCP ID：`builtin_remote_connection_controller`
 2. 命令：`builtin:remote_connection_controller`
@@ -48,14 +48,14 @@
 
 新增目录：
 
-1. `chat_app_server_rs/src/builtin/remote_connection_controller/mod.rs`
-2. `chat_app_server_rs/src/builtin/remote_connection_controller/actions.rs`
-3. `chat_app_server_rs/src/builtin/remote_connection_controller/context.rs`
+1. `agent_orchestrator/src/builtin/remote_connection_controller/mod.rs`
+2. `agent_orchestrator/src/builtin/remote_connection_controller/actions.rs`
+3. `agent_orchestrator/src/builtin/remote_connection_controller/context.rs`
 
 并注册到：
 
-1. `chat_app_server_rs/src/builtin/mod.rs`
-2. `chat_app_server_rs/src/core/mcp_tools/builtin.rs`
+1. `agent_orchestrator/src/builtin/mod.rs`
+2. `agent_orchestrator/src/core/mcp_tools/builtin.rs`
 
 ## 3.3 工具集合（V1）
 
@@ -136,46 +136,46 @@ V1 之后可扩展：
 ## 5. 后端改动清单（按文件）
 
 1. 内置 MCP 注册
-- `chat_app_server_rs/src/services/builtin_mcp.rs`
+- `agent_orchestrator/src/services/builtin_mcp.rs`
 
 2. builtin 模块导出
-- `chat_app_server_rs/src/builtin/mod.rs`
+- `agent_orchestrator/src/builtin/mod.rs`
 
 3. builtin 工具工厂
-- `chat_app_server_rs/src/core/mcp_tools/builtin.rs`
+- `agent_orchestrator/src/core/mcp_tools/builtin.rs`
 
 4. 新增远程 builtin 实现
-- `chat_app_server_rs/src/builtin/remote_connection_controller/mod.rs`
-- `chat_app_server_rs/src/builtin/remote_connection_controller/actions.rs`
-- `chat_app_server_rs/src/builtin/remote_connection_controller/context.rs`
+- `agent_orchestrator/src/builtin/remote_connection_controller/mod.rs`
+- `agent_orchestrator/src/builtin/remote_connection_controller/actions.rs`
+- `agent_orchestrator/src/builtin/remote_connection_controller/context.rs`
 
 5. 推荐抽公共层（避免直接依赖 API 私有方法）
-- 从 `chat_app_server_rs/src/api/remote_connections/*` 抽出通用 SSH/SFTP 逻辑到 `services` 层
+- 从 `agent_orchestrator/src/api/remote_connections/*` 抽出通用 SSH/SFTP 逻辑到 `services` 层
 - API 继续做薄封装
 
 6. 会话运行时字段（可选但推荐）
-- `chat_app_server_rs/src/api/chat_v2.rs`
-- `chat_app_server_rs/src/api/chat_v3.rs`
-- `chat_app_server_rs/src/core/chat_runtime.rs`
+- `agent_orchestrator/src/api/chat_v2.rs`
+- `agent_orchestrator/src/api/chat_v3.rs`
+- `agent_orchestrator/src/core/chat_runtime.rs`
 
 ## 6. 前端联动（推荐）
 
 为了让 AI 默认使用你当前选中的远程连接，建议增加运行时字段：
 
 1. 新增 `remoteConnectionId` 到运行时类型
-- `chat_app/src/lib/store/types.ts`
-- `chat_app/src/lib/store/actions/sendMessage/runtime.ts`
-- `chat_app/src/lib/store/actions/sendMessage/requestPayload.ts`
+- `agent_workspace/src/lib/store/types.ts`
+- `agent_workspace/src/lib/store/actions/sendMessage/runtime.ts`
+- `agent_workspace/src/lib/store/actions/sendMessage/requestPayload.ts`
 
 2. 流式请求增加 `remote_connection_id`
-- `chat_app/src/lib/api/client/stream.ts`
+- `agent_workspace/src/lib/api/client/stream.ts`
 
 3. 从当前 UI 选中的远程连接写入发送参数
-- `chat_app/src/components/InputArea.tsx`
-- `chat_app/src/components/chatInterface/ChatComposerPanel.tsx`
+- `agent_workspace/src/components/InputArea.tsx`
+- `agent_workspace/src/components/chatInterface/ChatComposerPanel.tsx`
 
 4. 持久化到 session metadata
-- `chat_app/src/lib/store/helpers/sessionRuntime.ts`
+- `agent_workspace/src/lib/store/helpers/sessionRuntime.ts`
 
 如果你希望先最小上线，前端这部分可以后做，MVP 阶段 AI 也能通过 `list_connections` 先选连接再执行命令。
 

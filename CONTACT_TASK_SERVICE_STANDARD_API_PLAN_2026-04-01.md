@@ -22,7 +22,7 @@
 - 聊天消息落库
 - WebSocket 推送
 
-### `chatos` 后端
+### `agent_orchestrator` 后端
 
 继续负责：
 
@@ -48,35 +48,35 @@
 
 ### 2.1 用户发消息创建任务
 
-1. 用户消息进入 `chatos`
-2. `chatos` 写普通聊天历史
-3. `chatos` 调 AI
+1. 用户消息进入 `agent_orchestrator`
+2. `agent_orchestrator` 写普通聊天历史
+3. `agent_orchestrator` 调 AI
 4. AI 通过内置 `task MCP` 调 `task service`
 5. `task service` 创建任务，初始状态：
    - `pending_confirm`
 6. AI 返回面向用户的回复
-7. `chatos` 把回复写普通聊天历史并返回前端
+7. `agent_orchestrator` 把回复写普通聊天历史并返回前端
 
 ### 2.2 用户确认执行
 
 1. 用户再次确认
-2. `chatos` 调 AI
+2. `agent_orchestrator` 调 AI
 3. AI 通过 `task MCP` 调 `task service`
 4. 任务从：
    - `pending_confirm`
    - 进入 `pending_execute`
 5. AI 返回确认类回复
-6. `chatos` 写普通聊天历史并返回前端
+6. `agent_orchestrator` 写普通聊天历史并返回前端
 
 ### 2.3 定时任务执行
 
-1. `chatos` 后端定时任务运行
+1. `agent_orchestrator` 后端定时任务运行
 2. 对每个 `(user_id, contact_agent_id, project_id)` 执行槽向 `task service` 请求一个调度结论
 3. `task service` 返回三种之一：
    - `task`
    - `pass`
    - `all_done`
-4. `chatos` 根据结论执行：
+4. `agent_orchestrator` 根据结论执行：
    - `task`: 执行该任务
    - `pass`: 本轮什么都不做
    - `all_done`: 请求一次 AI 生成结词，写入普通聊天历史并推送给前端
@@ -110,7 +110,7 @@
 
 - `user_id / contact_agent_id / project_id`
   - 不能让模型自由填写
-  - 必须由 `chatos` 后端从当前上下文注入
+  - 必须由 `agent_orchestrator` 后端从当前上下文注入
 
 ## 5. 智能体必须绑定模型
 
@@ -122,9 +122,9 @@
 
 涉及：
 
-- [memory_server/backend/src/models/agents.rs](/Users/lilei/project/my_project/chatos_rs/memory_server/backend/src/models/agents.rs)
-- [memory_server/backend/src/api/agents_api.rs](/Users/lilei/project/my_project/chatos_rs/memory_server/backend/src/api/agents_api.rs)
-- [memory_server/frontend/src/pages/AgentsPage.tsx](/Users/lilei/project/my_project/chatos_rs/memory_server/frontend/src/pages/AgentsPage.tsx)
+- [memory_server/backend/src/models/agents.rs](./memory_server/backend/src/models/agents.rs)
+- [memory_server/backend/src/api/agents_api.rs](./memory_server/backend/src/api/agents_api.rs)
+- [memory_server/frontend/src/pages/AgentsPage.tsx](./memory_server/frontend/src/pages/AgentsPage.tsx)
 
 规则建议固定：
 
@@ -351,9 +351,9 @@
 
 相关可复用位置：
 
-- [chat_app_server_rs/src/services/message_manager_common.rs](/Users/lilei/project/my_project/chatos_rs/chat_app_server_rs/src/services/message_manager_common.rs)
-- [chat_app_server_rs/src/services/summary/engine.rs](/Users/lilei/project/my_project/chatos_rs/chat_app_server_rs/src/services/summary/engine.rs)
-- [memory_server/backend/src/services/context.rs](/Users/lilei/project/my_project/chatos_rs/memory_server/backend/src/services/context.rs)
+- [agent_orchestrator/src/services/message_manager_common.rs](./agent_orchestrator/src/services/message_manager_common.rs)
+- [agent_orchestrator/src/services/summary/engine.rs](./agent_orchestrator/src/services/summary/engine.rs)
+- [memory_server/backend/src/services/context.rs](./memory_server/backend/src/services/context.rs)
 
 ## 10.5 给用户看的结果消息怎么处理
 
@@ -420,7 +420,7 @@
 }
 ```
 
-由 `chatos` 后端自动注入：
+由 `agent_orchestrator` 后端自动注入：
 
 ```json
 {
@@ -477,7 +477,7 @@
 
 - `failed -> pending_execute`
 
-## 11.2 给 chatos 定时执行器用的接口
+## 11.2 给 agent_orchestrator 定时执行器用的接口
 
 ### 获取调度结论
 
@@ -579,11 +579,11 @@
 
 入口：
 
-- [chat_app_server_rs/src/builtin/task_manager/mod.rs](/Users/lilei/project/my_project/chatos_rs/chat_app_server_rs/src/builtin/task_manager/mod.rs)
+- [agent_orchestrator/src/builtin/task_manager/mod.rs](./agent_orchestrator/src/builtin/task_manager/mod.rs)
 
 建议新增：
 
-- `chat_app_server_rs/src/services/contact_task_client.rs`
+- `agent_orchestrator/src/services/contact_task_client.rs`
 
 `task MCP` 的职责应固定为：
 
@@ -604,22 +604,22 @@
 - `contact_agent_id`
 - `project_id`
 
-## 13. 定时执行器为什么必须在 chatos 后端
+## 13. 定时执行器为什么必须在 agent_orchestrator 后端
 
 因为这样：
 
-1. 不需要 task service 反向通知 `chatos`
+1. 不需要 task service 反向通知 `agent_orchestrator`
 2. 不需要跨服务回推 `WS`
 3. 不需要跨服务处理聊天历史
 4. 最大化复用现有 AI 执行链路
 
-## 14. chatos 内部公共模块
+## 14. agent_orchestrator 内部公共模块
 
-现在 AI 执行已经明确放在 `chatos` 后端，所以公共逻辑不需要独立成跨服务包，抽到 `chatos` 内部即可。
+现在 AI 执行已经明确放在 `agent_orchestrator` 后端，所以公共逻辑不需要独立成跨服务包，抽到 `agent_orchestrator` 内部即可。
 
 建议抽一个内部公共模块，例如：
 
-- `chat_app_server_rs/src/services/contact_runtime_common/`
+- `agent_orchestrator/src/services/contact_runtime_common/`
 
 抽这些内容：
 
@@ -627,7 +627,7 @@
 
 参考：
 
-- [chat_app_server_rs/src/api/chat_stream_common.rs](/Users/lilei/project/my_project/chatos_rs/chat_app_server_rs/src/api/chat_stream_common.rs)
+- [agent_orchestrator/src/api/chat_stream_common.rs](./agent_orchestrator/src/api/chat_stream_common.rs)
 
 ### B. 单轮联系人执行入口
 
@@ -770,28 +770,28 @@
 
 重点改造：
 
-- [chat_app_server_rs/src/builtin/task_manager/mod.rs](/Users/lilei/project/my_project/chatos_rs/chat_app_server_rs/src/builtin/task_manager/mod.rs)
+- [agent_orchestrator/src/builtin/task_manager/mod.rs](./agent_orchestrator/src/builtin/task_manager/mod.rs)
   - 改为使用 `contact_task_client`
-- [chat_app_server_rs/src/api/task_manager.rs](/Users/lilei/project/my_project/chatos_rs/chat_app_server_rs/src/api/task_manager.rs)
+- [agent_orchestrator/src/api/task_manager.rs](./agent_orchestrator/src/api/task_manager.rs)
   - 可逐步代理到新服务
-- [chat_app_server_rs/src/services/v3/ai_server.rs](/Users/lilei/project/my_project/chatos_rs/chat_app_server_rs/src/services/v3/ai_server.rs)
+- [agent_orchestrator/src/services/v3/ai_server.rs](./agent_orchestrator/src/services/v3/ai_server.rs)
   - 抽公共执行入口
-- [chat_app_server_rs/src/api/chat_stream_common.rs](/Users/lilei/project/my_project/chatos_rs/chat_app_server_rs/src/api/chat_stream_common.rs)
+- [agent_orchestrator/src/api/chat_stream_common.rs](./agent_orchestrator/src/api/chat_stream_common.rs)
   - 抽公共上下文构建逻辑
 - `memory_server`
   - 新增任务执行历史表、总结表和对应接口
-- [memory_server/backend/src/models/agents.rs](/Users/lilei/project/my_project/chatos_rs/memory_server/backend/src/models/agents.rs)
+- [memory_server/backend/src/models/agents.rs](./memory_server/backend/src/models/agents.rs)
   - 智能体增加 `model_config_id`
-- [memory_server/backend/src/api/agents_api.rs](/Users/lilei/project/my_project/chatos_rs/memory_server/backend/src/api/agents_api.rs)
+- [memory_server/backend/src/api/agents_api.rs](./memory_server/backend/src/api/agents_api.rs)
   - 智能体创建/更新支持模型字段
-- [memory_server/frontend/src/pages/AgentsPage.tsx](/Users/lilei/project/my_project/chatos_rs/memory_server/frontend/src/pages/AgentsPage.tsx)
+- [memory_server/frontend/src/pages/AgentsPage.tsx](./memory_server/frontend/src/pages/AgentsPage.tsx)
   - 智能体管理增加模型列和模型选择
 
 ## 19. memory_server 需要新增的表和接口
 
 这部分是这次方案能不能真正复用现有聊天链路的关键。
 
-因为当前 `chatos` 的上下文拼装不是简单查消息表，而是依赖：
+因为当前 `agent_orchestrator` 的上下文拼装不是简单查消息表，而是依赖：
 
 - 历史消息
 - summary
@@ -902,7 +902,7 @@
 
 语义应尽量和现有：
 
-- [context_api.rs](/Users/lilei/project/my_project/chatos_rs/memory_server/backend/src/api/context_api.rs)
+- [context_api.rs](./memory_server/backend/src/api/context_api.rs)
 
 一致，只是数据源改成 task execution scope。
 
@@ -932,13 +932,13 @@
 - token 控制
 - 和当前聊天一致的上下文行为
 
-## 20. chatos 内部公共模块建议
+## 20. agent_orchestrator 内部公共模块建议
 
-因为 AI 执行已经回到 `chatos` 后端，所以公共能力应该抽在 `chat_app_server_rs` 内部。
+因为 AI 执行已经回到 `agent_orchestrator` 后端，所以公共能力应该抽在 `agent_orchestrator` 内部。
 
 建议新模块：
 
-- `chat_app_server_rs/src/services/contact_runtime_common/`
+- `agent_orchestrator/src/services/contact_runtime_common/`
 
 ## 20.1 建议的模块拆分
 
@@ -993,7 +993,7 @@
 
 | 维度 | 普通聊天 | 任务执行 |
 |---|---|---|
-| 入口来源 | 用户前端消息 | `chatos` 定时任务 |
+| 入口来源 | 用户前端消息 | `agent_orchestrator` 定时任务 |
 | 作用域主键 | `session_id` | `task_execution_session_id` |
 | 逻辑归属 | 用户会话 | `(user_id, contact_agent_id, project_id)` 执行槽 |
 | 消息表 | 普通聊天消息表 | `task_execution_messages` |
@@ -1030,7 +1030,7 @@
 1. task execution scope 的 message store
 2. task execution scope 的 summary
 3. task execution scope 的 compose_context
-4. 抽 `chatos` 内部公共 runtime 模块
+4. 抽 `agent_orchestrator` 内部公共 runtime 模块
 
 ### 22.3 如果这四件事不做完整，任务执行链路会和用户聊天链路行为分叉
 
@@ -1048,7 +1048,7 @@
 最终应固定成：
 
 1. `task service` 只是任务域服务，不执行 AI
-2. `chatos` 后端才是任务执行器
+2. `agent_orchestrator` 后端才是任务执行器
 3. 任务创建默认：
    - `pending_confirm`
 4. 任务确认后进入：
@@ -1060,9 +1060,9 @@
 6. `pass`
    - 什么都不做，等下次扫描
 7. `task`
-   - `chatos` 按 `(user_id, contact_agent_id, project_id)` 串行执行
+   - `agent_orchestrator` 按 `(user_id, contact_agent_id, project_id)` 串行执行
 8. `all_done`
-   - `chatos` 请求一次 AI 生成结词并推给用户
+   - `agent_orchestrator` 请求一次 AI 生成结词并推给用户
 9. `all_done` 必须是一次性事件
 10. 智能体必须新增：
    - `model_config_id`

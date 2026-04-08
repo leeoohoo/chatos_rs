@@ -18,9 +18,23 @@ pub fn resolve_skill_state_root(user_id: &str) -> PathBuf {
     let home = std::env::var("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("."));
-    home.join(".chatos")
+    let current = home
+        .join(".agent_workspace")
         .join("memory_skill_center")
-        .join(user_segment)
+        .join(&user_segment);
+    if current.exists() {
+        return current;
+    }
+    let Ok(entries) = std::fs::read_dir(&home) else {
+        return current;
+    };
+    for entry in entries.flatten() {
+        let candidate = entry.path().join("memory_skill_center").join(&user_segment);
+        if candidate.is_dir() {
+            return candidate;
+        }
+    }
+    current
 }
 
 pub async fn ensure_dir_async(path: PathBuf) -> Result<(), String> {

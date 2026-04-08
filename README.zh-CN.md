@@ -1,7 +1,7 @@
-# Chatos RS
+# agent stack
 
 ## 项目定位
-`Chatos RS` 是一个面向开发与工程协作场景的 AI 平台。  
+`agent stack` 是一个面向开发与工程协作场景的 AI 平台。  
 它把对话交互、工具调用、长期记忆、以及 OpenAI 兼容接入统一到一套系统中，目标是让 AI 能稳定地“持续工作”，而不是只做一次性聊天。
 
 ## 这个项目解决什么问题
@@ -11,7 +11,7 @@
 - 工具链路分散，接入和维护成本高
 - 外部系统接入协议不统一
 
-`Chatos RS` 的设计就是为了解决这些问题：  
+`agent stack` 的设计就是为了解决这些问题：  
 通过“主对话服务 + 记忆服务 + 网关层”实现持续上下文、成本控制和可集成性。
 
 ## 核心优势
@@ -31,8 +31,8 @@
 - 提供 OpenAI 兼容接口，已有客户端和 SDK 可低成本接入。
 
 ## 架构分层
-- `chat_app/`：主前端交互层
-- `chat_app_server_rs/`：主后端编排层（会话、消息、工具、流式响应）
+- `agent_workspace/`：主前端交互层
+- `agent_orchestrator/`：主后端编排层（会话、消息、工具、流式响应）
 - `memory_server/`：记忆域（总结、再总结、记忆检索、管理台）
 - `openai-codex-gateway/`：OpenAI 兼容网关层
 
@@ -61,10 +61,10 @@
 - 本地目录 `docs/plans/`（该目录已配置不上传 git）
 
 ## 子项目文档
-- [chat_app English](./chat_app/README.en.md)
-- [chat_app 中文](./chat_app/README.zh-CN.md)
-- [chat_app_server_rs English](./chat_app_server_rs/README.en.md)
-- [chat_app_server_rs 中文](./chat_app_server_rs/README.zh-CN.md)
+- [agent_workspace English](./agent_workspace/README.en.md)
+- [agent_workspace 中文](./agent_workspace/README.zh-CN.md)
+- [agent_orchestrator English](./agent_orchestrator/README.en.md)
+- [agent_orchestrator 中文](./agent_orchestrator/README.zh-CN.md)
 - [memory_server English](./memory_server/README.en.md)
 - [memory_server 中文](./memory_server/README.zh-CN.md)
 - [openai-codex-gateway English](./openai-codex-gateway/README.en.md)

@@ -30,32 +30,32 @@ need_cmd systemctl
 need_cmd nginx
 
 SOURCE_ROOT="${SOURCE_ROOT:-$(pwd)}"
-APP_ROOT="${APP_ROOT:-/opt/chatos}"
-SERVICE_NAME="${SERVICE_NAME:-chatos-backend}"
-SERVICE_USER="${SERVICE_USER:-chatos}"
-SERVICE_GROUP="${SERVICE_GROUP:-chatos}"
+APP_ROOT="${APP_ROOT:-/opt/agent_orchestrator}"
+SERVICE_NAME="${SERVICE_NAME:-agent-orchestrator-backend}"
+SERVICE_USER="${SERVICE_USER:-agent-orchestrator}"
+SERVICE_GROUP="${SERVICE_GROUP:-agent-orchestrator}"
 BACKEND_PORT="${BACKEND_PORT:-13001}"
 SERVER_NAME="${SERVER_NAME:-_}"
 
-BACKEND_BIN_SRC="${BACKEND_BIN_SRC:-$SOURCE_ROOT/chat_app_server_rs/target/release/chat_app_server_rs}"
-BACKEND_CONFIG_SRC="${BACKEND_CONFIG_SRC:-$SOURCE_ROOT/chat_app_server_rs/config}"
-FRONTEND_DIST_SRC="${FRONTEND_DIST_SRC:-$SOURCE_ROOT/chat_app/dist}"
-SERVICE_TEMPLATE="${SERVICE_TEMPLATE:-$SOURCE_ROOT/deploy/linux/systemd/chatos-backend.service.tpl}"
-NGINX_TEMPLATE="${NGINX_TEMPLATE:-$SOURCE_ROOT/deploy/linux/nginx/chatos.conf.tpl}"
-ENV_TEMPLATE="${ENV_TEMPLATE:-$SOURCE_ROOT/deploy/linux/chatos-backend.env.example}"
+BACKEND_BIN_SRC="${BACKEND_BIN_SRC:-$SOURCE_ROOT/agent_orchestrator/target/release/agent_orchestrator}"
+BACKEND_CONFIG_SRC="${BACKEND_CONFIG_SRC:-$SOURCE_ROOT/agent_orchestrator/config}"
+FRONTEND_DIST_SRC="${FRONTEND_DIST_SRC:-$SOURCE_ROOT/agent_workspace/dist}"
+SERVICE_TEMPLATE="${SERVICE_TEMPLATE:-$SOURCE_ROOT/deploy/linux/systemd/agent-orchestrator-backend.service.tpl}"
+NGINX_TEMPLATE="${NGINX_TEMPLATE:-$SOURCE_ROOT/deploy/linux/nginx/agent-orchestrator.conf.tpl}"
+ENV_TEMPLATE="${ENV_TEMPLATE:-$SOURCE_ROOT/deploy/linux/agent-orchestrator-backend.env.example}"
 
 BACKEND_DIR="$APP_ROOT/backend"
 FRONTEND_DIR="$APP_ROOT/frontend"
-BACKEND_BIN_DEST="$BACKEND_DIR/chat_app_server_rs"
-ENV_DIR="/etc/chatos"
-ENV_FILE="$ENV_DIR/chatos-backend.env"
+BACKEND_BIN_DEST="$BACKEND_DIR/agent_orchestrator"
+ENV_DIR="/etc/agent_orchestrator"
+ENV_FILE="$ENV_DIR/agent-orchestrator-backend.env"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
-NGINX_SITE="/etc/nginx/sites-available/chatos.conf"
-NGINX_LINK="/etc/nginx/sites-enabled/chatos.conf"
+NGINX_SITE="/etc/nginx/sites-available/agent-orchestrator.conf"
+NGINX_LINK="/etc/nginx/sites-enabled/agent-orchestrator.conf"
 
 if [[ ! -f "$BACKEND_BIN_SRC" ]]; then
   echo "[ERROR] 后端二进制不存在: $BACKEND_BIN_SRC"
-  echo "        先在源码目录执行: cargo build --release --manifest-path chat_app_server_rs/Cargo.toml"
+  echo "        先在源码目录执行: cargo build --release --manifest-path agent_orchestrator/Cargo.toml"
   exit 1
 fi
 
@@ -66,7 +66,7 @@ fi
 
 if [[ ! -d "$FRONTEND_DIST_SRC" ]]; then
   echo "[ERROR] 前端构建目录不存在: $FRONTEND_DIST_SRC"
-  echo "        先在源码目录执行: npm --prefix chat_app ci && npm --prefix chat_app run build"
+  echo "        先在源码目录执行: npm --prefix agent_workspace ci && npm --prefix agent_workspace run build"
   exit 1
 fi
 

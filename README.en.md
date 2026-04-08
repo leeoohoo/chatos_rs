@@ -1,7 +1,7 @@
-# Chatos RS
+# agent stack
 
 ## Positioning
-`Chatos RS` is an AI platform for engineering and collaborative workflows.  
+`agent stack` is an AI platform for engineering and collaborative workflows.  
 It combines conversational interaction, tool execution, long-term memory, and OpenAI-compatible access in one system so AI can run as a reliable ongoing worker, not only a one-shot chatbot.
 
 ## What Problems It Solves
@@ -11,7 +11,7 @@ Typical issues in engineering-grade chat AI systems:
 - Tool integration is fragmented and expensive to maintain.
 - External integrations are difficult when protocol expectations differ.
 
-`Chatos RS` addresses these with a layered architecture:
+`agent stack` addresses these with a layered architecture:
 main chat service + memory service + compatibility gateway.
 
 ## Core Advantages
@@ -31,8 +31,8 @@ main chat service + memory service + compatibility gateway.
 - Exposes OpenAI-compatible APIs so existing clients and SDKs can integrate with low migration effort.
 
 ## Architecture Layers
-- `chat_app/`: frontend interaction layer
-- `chat_app_server_rs/`: main orchestration backend (sessions, messages, tools, streaming)
+- `agent_workspace/`: frontend interaction layer
+- `agent_orchestrator/`: main orchestration backend (sessions, messages, tools, streaming)
 - `memory_server/`: memory domain (summaries, rollups, memory retrieval, admin console)
 - `openai-codex-gateway/`: OpenAI-compatible gateway layer
 
@@ -61,10 +61,10 @@ Historical plans/assessments/contracts are centralized at:
 - local `docs/plans/` directory (intentionally excluded from git)
 
 ## Per-Project READMEs
-- [chat_app English](./chat_app/README.en.md)
-- [chat_app 中文](./chat_app/README.zh-CN.md)
-- [chat_app_server_rs English](./chat_app_server_rs/README.en.md)
-- [chat_app_server_rs 中文](./chat_app_server_rs/README.zh-CN.md)
+- [agent_workspace English](./agent_workspace/README.en.md)
+- [agent_workspace 中文](./agent_workspace/README.zh-CN.md)
+- [agent_orchestrator English](./agent_orchestrator/README.en.md)
+- [agent_orchestrator 中文](./agent_orchestrator/README.zh-CN.md)
 - [memory_server English](./memory_server/README.en.md)
 - [memory_server 中文](./memory_server/README.zh-CN.md)
 - [openai-codex-gateway English](./openai-codex-gateway/README.en.md)

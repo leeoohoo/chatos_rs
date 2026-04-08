@@ -18,14 +18,14 @@
 ## 2. 当前代码现实（重新核对后）
 
 1. 项目右键菜单目前只有：新建目录/新建文件/下载/删除。
-- 文件：`chat_app/src/components/projectExplorer/Overlays.tsx`
+- 文件：`agent_workspace/src/components/projectExplorer/Overlays.tsx`
 
 2. 终端系统已有 `busy` 与“空闲终端复用”能力。
-- API：`chat_app_server_rs/src/api/terminals/*`
-- 运行时：`chat_app_server_rs/src/services/terminal_manager/*`
+- API：`agent_orchestrator/src/api/terminals/*`
+- 运行时：`agent_orchestrator/src/services/terminal_manager/*`
 
 3. 后端其实已有一套“空闲复用否则创建”的实现（在 builtin terminal_controller）。
-- `chat_app_server_rs/src/builtin/terminal_controller/actions.rs`
+- `agent_orchestrator/src/builtin/terminal_controller/actions.rs`
 
 4. 目前没有“项目启动目标检测/存储/状态”模型与 API。
 
@@ -135,7 +135,7 @@
 
 ## 5.1 新增模块
 
-1. `chat_app_server_rs/src/services/project_run/mod.rs`
+1. `agent_orchestrator/src/services/project_run/mod.rs`
 2. `.../detector.rs`（扫描与规则）
 3. `.../executor.rs`（运行分发）
 4. `.../env_check.rs`（环境检查）
@@ -150,7 +150,7 @@
 3. `ensure_running` + `write_input(command + "\\n")`
 
 复用来源：
-- `chat_app_server_rs/src/builtin/terminal_controller/actions.rs`
+- `agent_orchestrator/src/builtin/terminal_controller/actions.rs`
 
 让两处共用：
 1. 项目运行 API
@@ -203,7 +203,7 @@
 
 ## 6.1 项目列表中的播放按钮（你最关心）
 
-改动：`chat_app/src/components/sessionList/sections/ProjectSection.tsx`
+改动：`agent_workspace/src/components/sessionList/sections/ProjectSection.tsx`
 
 1. 每个项目卡片右侧新增播放按钮。
 2. 按 `run_status` 渲染：
@@ -214,8 +214,8 @@
 ## 6.2 项目目录页顶部运行入口
 
 改动：
-1. `chat_app/src/components/projectExplorer/TreePane.tsx`
-2. `chat_app/src/components/projectExplorer/PreviewPane.tsx`
+1. `agent_workspace/src/components/projectExplorer/TreePane.tsx`
+2. `agent_workspace/src/components/projectExplorer/PreviewPane.tsx`
 
 功能：
 1. 显示默认目标
@@ -225,9 +225,9 @@
 ## 6.3 文件右键 Run
 
 改动：
-1. `chat_app/src/components/projectExplorer/Overlays.tsx`
-2. `chat_app/src/components/projectExplorer/ProjectExplorerFilesWorkspace.tsx`
-3. `chat_app/src/components/ProjectExplorer.tsx`
+1. `agent_workspace/src/components/projectExplorer/Overlays.tsx`
+2. `agent_workspace/src/components/projectExplorer/ProjectExplorerFilesWorkspace.tsx`
+3. `agent_workspace/src/components/ProjectExplorer.tsx`
 
 新增菜单项：
 1. `运行文件`（按扩展名条件显示）
@@ -276,7 +276,7 @@
 
 ## 阶段 D（增强）
 
-1. 自定义任务文件 `.chatos/tasks.json`
+1. 自定义任务文件 `.agent_workspace/tasks.json`
 2. 解析器增强（可选，不阻塞主链路）
 
 ---

@@ -34,11 +34,11 @@
 
 从代码上看，当前普通聊天消息会进入：
 
-- [`messages`](/Users/lilei/project/my_project/chatos_rs/memory_server/backend/src/models/messages.rs)
+- [`messages`](./memory_server/backend/src/models/messages.rs)
 
 任务执行过程会进入：
 
-- [`task_execution_messages`](/Users/lilei/project/my_project/chatos_rs/memory_server/backend/src/models/task_execution.rs)
+- [`task_execution_messages`](./memory_server/backend/src/models/task_execution.rs)
 
 而普通 `messages` 又会直接参与：
 
@@ -48,9 +48,9 @@
 
 相关入口：
 
-- [`memory_server/backend/src/services/context.rs`](/Users/lilei/project/my_project/chatos_rs/memory_server/backend/src/services/context.rs)
-- [`memory_server/backend/src/jobs/summary_generation.rs`](/Users/lilei/project/my_project/chatos_rs/memory_server/backend/src/jobs/summary_generation.rs)
-- [`chat_app_server_rs/src/services/message_manager_common.rs`](/Users/lilei/project/my_project/chatos_rs/chat_app_server_rs/src/services/message_manager_common.rs)
+- [`memory_server/backend/src/services/context.rs`](./memory_server/backend/src/services/context.rs)
+- [`memory_server/backend/src/jobs/summary_generation.rs`](./memory_server/backend/src/jobs/summary_generation.rs)
+- [`agent_orchestrator/src/services/message_manager_common.rs`](./agent_orchestrator/src/services/message_manager_common.rs)
 
 这说明如果继续把 IM 消息和执行消息混着建模，后面问题会越来越多：
 
@@ -92,13 +92,13 @@
 
 这层主要仍由下面这些部分组成：
 
-- `chat_app_server_rs`
+- `agent_orchestrator`
 - `memory_server`
 - `contact_task_service`
 
 ### 3.3 桥接编排层
 
-可以继续由 `chat_app_server_rs` 先承担，后续再独立：
+可以继续由 `agent_orchestrator` 先承担，后续再独立：
 
 - 接收 IM 发来的用户消息
 - 找到对应联系人执行上下文
@@ -456,8 +456,8 @@
 
 继续保留：
 
-- [`messages`](/Users/lilei/project/my_project/chatos_rs/memory_server/backend/src/models/messages.rs)
-- [`task_execution_messages`](/Users/lilei/project/my_project/chatos_rs/memory_server/backend/src/models/task_execution.rs)
+- [`messages`](./memory_server/backend/src/models/messages.rs)
+- [`task_execution_messages`](./memory_server/backend/src/models/task_execution.rs)
 - `session_summaries_v2`
 - `task_execution_summaries`
 - `task_result_briefs`
@@ -572,7 +572,7 @@ sequenceDiagram
 
 当前 memory 里的：
 
-- [`Contact`](/Users/lilei/project/my_project/chatos_rs/memory_server/backend/src/models/sessions.rs)
+- [`Contact`](./memory_server/backend/src/models/sessions.rs)
 
 更像是“用户的联系人关系”。
 
@@ -657,7 +657,7 @@ sequenceDiagram
 
 ## 第二阶段：编排层桥接
 
-在 `chat_app_server_rs` 里先新增 IM 编排能力：
+在 `agent_orchestrator` 里先新增 IM 编排能力：
 
 - 用户消息进入 IM
 - 启动执行 run

@@ -1,0 +1,350 @@
+#![allow(dead_code)]
+use once_cell::sync::OnceCell;
+
+#[derive(Debug, Clone)]
+pub struct Config {
+    pub openai_api_key: String,
+    pub openai_base_url: String,
+    pub port: u16,
+    pub node_env: String,
+    pub host: String,
+    pub log_level: String,
+    pub log_max_files: String,
+    pub log_max_size: String,
+    pub cors_origins: Vec<String>,
+    pub summary_enabled: bool,
+    pub summary_message_limit: i64,
+    pub summary_max_context_tokens: i64,
+    pub summary_keep_last_n: i64,
+    pub summary_target_tokens: i64,
+    pub summary_merge_target_tokens: i64,
+    pub summary_temperature: f64,
+    pub summary_cooldown_seconds: i64,
+    pub dynamic_summary_enabled: bool,
+    pub summary_bisect_enabled: bool,
+    pub summary_bisect_max_depth: i64,
+    pub summary_bisect_min_messages: i64,
+    pub summary_retry_on_context_overflow: bool,
+    pub auth_jwt_secret: String,
+    pub auth_access_token_ttl_seconds: i64,
+    pub im_service_base_url: String,
+    pub im_service_service_token: String,
+    pub im_service_request_timeout_ms: i64,
+    pub memory_server_base_url: String,
+    pub memory_server_service_token: String,
+    pub memory_server_context_timeout_ms: i64,
+    pub memory_server_request_timeout_ms: i64,
+    pub task_service_base_url: String,
+    pub task_service_service_token: String,
+    pub task_service_request_timeout_ms: i64,
+    pub task_scheduler_enabled: bool,
+    pub task_scheduler_interval_secs: i64,
+    pub task_scheduler_scope_limit: i64,
+}
+
+static CONFIG: OnceCell<Config> = OnceCell::new();
+
+fn read_task_service_token(node_env: &str) -> String {
+    std::env::var("TASK_SERVICE_SERVICE_TOKEN")
+        .or_else(|_| std::env::var("CONTACT_TASK_SERVICE_SERVICE_TOKEN"))
+        .or_else(|_| std::env::var("MEMORY_SERVER_SERVICE_TOKEN"))
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| {
+            if node_env.eq_ignore_ascii_case("production") {
+                String::new()
+            } else {
+                "agent-orchestrator-dev-service-token".to_string()
+            }
+        })
+}
+
+impl Config {
+    pub fn init_global() -> Result<&'static Config, String> {
+        let cfg = Config::from_env()?;
+        CONFIG
+            .set(cfg)
+            .map_err(|_| "Config already initialized".to_string())?;
+        Ok(CONFIG.get().expect("config"))
+    }
+
+    pub fn get() -> &'static Config {
+        CONFIG.get().expect("Config not initialized")
+    }
+
+    fn from_env() -> Result<Config, String> {
+        let read_int = |key: &str, def: i64| -> i64 {
+            match std::env::var(key) {
+                Ok(v) => v.parse::<i64>().unwrap_or(def),
+                Err(_) => def,
+            }
+        };
+        let read_num = |key: &str, def: f64| -> f64 {
+            match std::env::var(key) {
+                Ok(v) => v.parse::<f64>().unwrap_or(def),
+                Err(_) => def,
+            }
+        };
+
+        let openai_api_key = std::env::var("OPENAI_API_KEY").unwrap_or_default();
+        let openai_base_url = std::env::var("OPENAI_BASE_URL")
+            .unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
+
+        let port = std::env::var("PORT")
+            .ok()
+            .and_then(|v| v.parse::<u16>().ok())
+            .unwrap_or(3001);
+        let node_env = std::env::var("NODE_ENV").unwrap_or_else(|_| "development".to_string());
+        let host = std::env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
+
+        let log_level = std::env::var("LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
+        let log_max_files = std::env::var("LOG_MAX_FILES").unwrap_or_else(|_| "7d".to_string());
+        let log_max_size = std::env::var("LOG_MAX_SIZE").unwrap_or_else(|_| "10m".to_string());
+
+        let cors_origins = match std::env::var("CORS_ORIGINS") {
+            Ok(v) => v
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect(),
+            Err(_) => vec!["*".to_string()],
+        };
+
+        let summary_enabled = std::env::var("SUMMARY_ENABLED")
+            .unwrap_or_else(|_| "true".to_string())
+            .to_lowercase()
+            != "false";
+        let summary_message_limit = read_int("SUMMARY_MESSAGE_LIMIT", 40);
+        let summary_max_context_tokens = read_int("SUMMARY_MAX_CONTEXT_TOKENS", 6000);
+        let summary_keep_last_n = read_int("SUMMARY_KEEP_LAST_N", 6);
+        let summary_target_tokens = read_int("SUMMARY_TARGET_TOKENS", 700);
+        let summary_merge_target_tokens =
+            read_int("SUMMARY_MERGE_TARGET_TOKENS", summary_target_tokens);
+        let summary_temperature = read_num("SUMMARY_TEMPERATURE", 0.2);
+        let summary_cooldown_seconds = read_int("SUMMARY_COOLDOWN_SECONDS", 60);
+        let dynamic_summary_enabled = std::env::var("DYNAMIC_SUMMARY_ENABLED")
+            .unwrap_or_else(|_| "true".to_string())
+            .to_lowercase()
+            != "false";
+        let summary_bisect_enabled = std::env::var("SUMMARY_BISECT_ENABLED")
+            .unwrap_or_else(|_| "true".to_string())
+            .to_lowercase()
+            != "false";
+        let summary_bisect_max_depth = read_int("SUMMARY_BISECT_MAX_DEPTH", 6);
+        let summary_bisect_min_messages = read_int("SUMMARY_BISECT_MIN_MESSAGES", 4);
+        let summary_retry_on_context_overflow = std::env::var("SUMMARY_RETRY_ON_CONTEXT_OVERFLOW")
+            .unwrap_or_else(|_| "true".to_string())
+            .to_lowercase()
+            != "false";
+        let auth_jwt_secret = std::env::var("AUTH_JWT_SECRET")
+            .unwrap_or_else(|_| "dev-only-change-me-please".to_string());
+        let auth_access_token_ttl_seconds =
+            read_int("AUTH_ACCESS_TOKEN_TTL_SECONDS", 43_200).max(60);
+        let im_service_base_url = std::env::var("IM_SERVICE_BASE_URL")
+            .unwrap_or_else(|_| "http://127.0.0.1:7090/api/im/v1".to_string());
+        let im_service_service_token = std::env::var("IM_SERVICE_SERVICE_TOKEN")
+            .or_else(|_| std::env::var("MEMORY_SERVER_SERVICE_TOKEN"))
+            .unwrap_or_default();
+        let im_service_request_timeout_ms =
+            read_int("IM_SERVICE_REQUEST_TIMEOUT_MS", 5000).max(300);
+        let memory_server_base_url = std::env::var("MEMORY_SERVER_BASE_URL")
+            .unwrap_or_else(|_| "http://127.0.0.1:7080/api/memory/v1".to_string());
+        let memory_server_service_token =
+            std::env::var("MEMORY_SERVER_SERVICE_TOKEN").unwrap_or_default();
+        let memory_server_context_timeout_ms =
+            read_int("MEMORY_SERVER_CONTEXT_TIMEOUT_MS", 3000).max(300);
+        let memory_server_request_timeout_ms =
+            read_int("MEMORY_SERVER_REQUEST_TIMEOUT_MS", 5000).max(300);
+        let task_service_base_url = std::env::var("TASK_SERVICE_BASE_URL")
+            .unwrap_or_else(|_| "http://127.0.0.1:8096/api/task-service/v1".to_string());
+        let task_service_service_token = read_task_service_token(node_env.as_str());
+        let task_service_request_timeout_ms =
+            read_int("TASK_SERVICE_REQUEST_TIMEOUT_MS", 5000).max(300);
+        let task_scheduler_enabled = std::env::var("TASK_SCHEDULER_ENABLED")
+            .unwrap_or_else(|_| "true".to_string())
+            .to_lowercase()
+            != "false";
+        let task_scheduler_interval_secs = read_int("TASK_SCHEDULER_INTERVAL_SECS", 5).max(1);
+        let task_scheduler_scope_limit = read_int("TASK_SCHEDULER_SCOPE_LIMIT", 500).max(1);
+
+        Ok(Config {
+            openai_api_key,
+            openai_base_url,
+            port,
+            node_env,
+            host,
+            log_level,
+            log_max_files,
+            log_max_size,
+            cors_origins,
+            summary_enabled,
+            summary_message_limit,
+            summary_max_context_tokens,
+            summary_keep_last_n,
+            summary_target_tokens,
+            summary_merge_target_tokens,
+            summary_temperature,
+            summary_cooldown_seconds,
+            dynamic_summary_enabled,
+            summary_bisect_enabled,
+            summary_bisect_max_depth,
+            summary_bisect_min_messages,
+            summary_retry_on_context_overflow,
+            auth_jwt_secret,
+            auth_access_token_ttl_seconds,
+            im_service_base_url,
+            im_service_service_token,
+            im_service_request_timeout_ms,
+            memory_server_base_url,
+            memory_server_service_token,
+            memory_server_context_timeout_ms,
+            memory_server_request_timeout_ms,
+            task_service_base_url,
+            task_service_service_token,
+            task_service_request_timeout_ms,
+            task_scheduler_enabled,
+            task_scheduler_interval_secs,
+            task_scheduler_scope_limit,
+        })
+    }
+
+    pub fn print(&self) {
+        println!("当前配置:");
+        println!("  - NODE_ENV: {}", self.node_env);
+        println!("  - PORT: {}", self.port);
+        println!("  - HOST: {}", self.host);
+        println!("  - OPENAI_BASE_URL: {}", self.openai_base_url);
+        println!(
+            "  - OPENAI_API_KEY: {}",
+            if self.openai_api_key.is_empty() {
+                "未设置"
+            } else {
+                "已设置"
+            }
+        );
+        println!("  - LOG_LEVEL: {}", self.log_level);
+        println!("  - 摘要配置:");
+        println!("    • SUMMARY_ENABLED: {}", self.summary_enabled);
+        println!(
+            "    • DYNAMIC_SUMMARY_ENABLED: {}",
+            self.dynamic_summary_enabled
+        );
+        println!(
+            "    • SUMMARY_MESSAGE_LIMIT: {}",
+            self.summary_message_limit
+        );
+        println!(
+            "    • SUMMARY_MAX_CONTEXT_TOKENS: {}",
+            self.summary_max_context_tokens
+        );
+        println!("    • SUMMARY_KEEP_LAST_N: {}", self.summary_keep_last_n);
+        println!(
+            "    • SUMMARY_TARGET_TOKENS: {}",
+            self.summary_target_tokens
+        );
+        println!(
+            "    • SUMMARY_MERGE_TARGET_TOKENS: {}",
+            self.summary_merge_target_tokens
+        );
+        println!("    • SUMMARY_TEMPERATURE: {}", self.summary_temperature);
+        println!(
+            "    • SUMMARY_COOLDOWN_SECONDS: {}",
+            self.summary_cooldown_seconds
+        );
+        println!(
+            "    • SUMMARY_BISECT_ENABLED: {}",
+            self.summary_bisect_enabled
+        );
+        println!(
+            "    • SUMMARY_BISECT_MAX_DEPTH: {}",
+            self.summary_bisect_max_depth
+        );
+        println!(
+            "    • SUMMARY_BISECT_MIN_MESSAGES: {}",
+            self.summary_bisect_min_messages
+        );
+        println!(
+            "    • SUMMARY_RETRY_ON_CONTEXT_OVERFLOW: {}",
+            self.summary_retry_on_context_overflow
+        );
+        println!("  - 认证配置:");
+        println!(
+            "    • AUTH_JWT_SECRET: {}",
+            if self.auth_jwt_secret.is_empty() {
+                "未设置"
+            } else {
+                "已设置"
+            }
+        );
+        println!(
+            "    • AUTH_ACCESS_TOKEN_TTL_SECONDS: {}",
+            self.auth_access_token_ttl_seconds
+        );
+        println!("  - IM Service 配置:");
+        println!("    • IM_SERVICE_BASE_URL: {}", self.im_service_base_url);
+        println!(
+            "    • IM_SERVICE_SERVICE_TOKEN: {}",
+            if self.im_service_service_token.is_empty() {
+                "未设置"
+            } else {
+                "已设置"
+            }
+        );
+        println!(
+            "    • IM_SERVICE_REQUEST_TIMEOUT_MS: {}",
+            self.im_service_request_timeout_ms
+        );
+        println!("  - Memory Server 上下文配置:");
+        println!(
+            "    • MEMORY_SERVER_BASE_URL: {}",
+            self.memory_server_base_url
+        );
+        println!(
+            "    • MEMORY_SERVER_SERVICE_TOKEN: {}",
+            if self.memory_server_service_token.is_empty() {
+                "未设置"
+            } else {
+                "已设置"
+            }
+        );
+        println!(
+            "    • MEMORY_SERVER_CONTEXT_TIMEOUT_MS: {}",
+            self.memory_server_context_timeout_ms
+        );
+        println!(
+            "    • MEMORY_SERVER_REQUEST_TIMEOUT_MS: {}",
+            self.memory_server_request_timeout_ms
+        );
+        println!("  - 任务调度配置:");
+        println!(
+            "    • TASK_SCHEDULER_ENABLED: {}",
+            self.task_scheduler_enabled
+        );
+        println!(
+            "    • TASK_SCHEDULER_INTERVAL_SECS: {}",
+            self.task_scheduler_interval_secs
+        );
+        println!(
+            "    • TASK_SCHEDULER_SCOPE_LIMIT: {}",
+            self.task_scheduler_scope_limit
+        );
+        println!("  - Task Service 配置:");
+        println!(
+            "    • TASK_SERVICE_BASE_URL: {}",
+            self.task_service_base_url
+        );
+        println!(
+            "    • TASK_SERVICE_SERVICE_TOKEN: {}",
+            if self.task_service_service_token.is_empty() {
+                "未设置"
+            } else {
+                "已设置"
+            }
+        );
+        println!(
+            "    • TASK_SERVICE_REQUEST_TIMEOUT_MS: {}",
+            self.task_service_request_timeout_ms
+        );
+    }
+}

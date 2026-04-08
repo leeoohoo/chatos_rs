@@ -1,7 +1,7 @@
 # memory_server
 
 ## 项目定位
-`memory_server` 是 Chatos RS 的记忆域服务。
+`memory_server` 是 agent stack 的记忆域服务。
 它负责通过总结、再总结、记忆检索和运维能力来管理长期上下文。
 
 ## 这个子项目解决什么问题

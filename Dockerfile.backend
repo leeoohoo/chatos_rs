@@ -2,15 +2,15 @@
 
 FROM rust:1.93-bookworm AS builder
 
-WORKDIR /workspace/chat_app_server_rs
+WORKDIR /workspace/agent_orchestrator
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends pkg-config libssl-dev clang \
     && rm -rf /var/lib/apt/lists/*
 
-COPY chat_app_server_rs/Cargo.toml chat_app_server_rs/Cargo.lock ./
-COPY chat_app_server_rs/src ./src
-COPY chat_app_server_rs/config ./config
+COPY agent_orchestrator/Cargo.toml agent_orchestrator/Cargo.lock ./
+COPY agent_orchestrator/src ./src
+COPY agent_orchestrator/config ./config
 
 RUN cargo build --release
 
@@ -22,8 +22,8 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates libsqlite3-0 libssl3 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /workspace/chat_app_server_rs/target/release/chat_app_server_rs /app/chat_app_server_rs
-COPY chat_app_server_rs/config /app/config
+COPY --from=builder /workspace/agent_orchestrator/target/release/agent_orchestrator /app/agent_orchestrator
+COPY agent_orchestrator/config /app/config
 
 RUN mkdir -p /app/data /app/logs
 
@@ -33,7 +33,7 @@ ENV NODE_ENV=production \
     OPENAI_BASE_URL=https://api.openai.com/v1
 
 EXPOSE 3001
-CMD ["/app/chat_app_server_rs"]
+CMD ["/app/agent_orchestrator"]
 
 FROM runtime-base AS runtime
 

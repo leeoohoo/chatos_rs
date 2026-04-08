@@ -42,7 +42,7 @@ def resolve_bundled_sdk_candidates() -> list[Path]:
 def resolve_local_sdk_candidates() -> list[Path]:
     return [
         REPO_ROOT / "sdk" / "python" / "src",
-        REPO_ROOT / "chat_app_server_rs" / "docs" / "codex" / "sdk" / "python" / "src",
+        REPO_ROOT / "agent_orchestrator" / "docs" / "codex" / "sdk" / "python" / "src",
     ]
 
 

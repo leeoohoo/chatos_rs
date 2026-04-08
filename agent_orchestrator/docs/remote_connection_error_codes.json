@@ -1,0 +1,42 @@
+{
+  "remote_connection_codes": [
+    "invalid_argument",
+    "user_scope_forbidden",
+    "remote_connection_not_found",
+    "remote_connection_forbidden",
+    "remote_connection_access_internal",
+    "remote_connection_create_failed",
+    "remote_connection_update_failed",
+    "remote_connection_fetch_failed",
+    "remote_connection_delete_failed",
+    "host_key_mismatch",
+    "host_key_untrusted",
+    "host_key_verification_failed",
+    "auth_failed",
+    "dns_resolve_failed",
+    "network_timeout",
+    "network_unreachable",
+    "connectivity_test_failed",
+    "terminal_init_failed",
+    "terminal_input_failed",
+    "terminal_resize_failed",
+    "invalid_ws_message",
+    "remote_terminal_error"
+  ],
+  "remote_sftp_codes": [
+    "bad_request",
+    "invalid_argument",
+    "invalid_path",
+    "invalid_directory_name",
+    "transfer_not_found",
+    "transfer_not_active",
+    "transfer_cancelled",
+    "timeout",
+    "local_io_error",
+    "remote_auth_failed",
+    "remote_path_not_found",
+    "remote_permission_denied",
+    "remote_network_disconnected",
+    "remote_error"
+  ]
+}

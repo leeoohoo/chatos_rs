@@ -28,7 +28,7 @@
 2. **检测与执行分离**：`detect` 只给候选；`run` 才执行。
 3. **终端调度统一**：同目录空闲复用，否则创建。
 4. **环境显式检查**：运行前告诉用户缺什么（例如 `java` 未安装）。
-5. **可覆盖策略**：项目内 `.chatos/tasks.json` > 自动检测。
+5. **可覆盖策略**：项目内 `.agent_workspace/tasks.json` > 自动检测。
 6. **共享执行内核**：API 与 AI 工具复用同一 terminal dispatcher。
 
 ---
@@ -38,15 +38,15 @@
 你现在已经有可复用基础：
 
 1. 终端状态与 busy：
-- `chat_app_server_rs/src/api/terminals/*`
-- `chat_app_server_rs/src/services/terminal_manager/*`
+- `agent_orchestrator/src/api/terminals/*`
+- `agent_orchestrator/src/services/terminal_manager/*`
 
 2. 空闲终端复用逻辑（已存在）：
-- `chat_app_server_rs/src/builtin/terminal_controller/actions.rs`
+- `agent_orchestrator/src/builtin/terminal_controller/actions.rs`
 - `find_idle_terminal` + `manager.create` + `ensure_running` + `write_input`
 
 3. 项目上下文解析：
-- `chat_app_server_rs/src/builtin/terminal_controller/context.rs`
+- `agent_orchestrator/src/builtin/terminal_controller/context.rs`
 
 结论：最优路径不是新造一套，而是把 `terminal_controller` 的调度逻辑抽成共享服务。
 
@@ -81,7 +81,7 @@
 
 ## 5.1 项目任务文件
 
-路径：`<project_root>/.chatos/tasks.json`
+路径：`<project_root>/.agent_workspace/tasks.json`
 
 示例：
 ```json
@@ -140,7 +140,7 @@
 
 出参：
 1. `detected_tasks`: 自动检测候选
-2. `custom_tasks`: `.chatos/tasks.json` 中任务
+2. `custom_tasks`: `.agent_workspace/tasks.json` 中任务
 3. `recommended`: 推荐任务 id 列表
 4. `hints`: 识别依据（命中 `package.json` / `pom.xml` 等）
 
@@ -177,11 +177,11 @@
 ## 7.1 新增服务模块
 
 建议新增：
-1. `chat_app_server_rs/src/services/project_run/mod.rs`
+1. `agent_orchestrator/src/services/project_run/mod.rs`
 2. `.../detector.rs`（检测任务）
 3. `.../executor.rs`（终端调度执行）
 4. `.../env_check.rs`（环境检查）
-5. `.../task_file.rs`（读写 `.chatos/tasks.json`）
+5. `.../task_file.rs`（读写 `.agent_workspace/tasks.json`）
 6. `.../types.rs`（请求/响应结构）
 
 ## 7.2 抽取共享终端调度内核
@@ -202,10 +202,10 @@
 ## 7.3 路由与控制器
 
 新增 API 文件：
-1. `chat_app_server_rs/src/api/project_run.rs`
+1. `agent_orchestrator/src/api/project_run.rs`
 
 并在：
-1. `chat_app_server_rs/src/api/mod.rs`
+1. `agent_orchestrator/src/api/mod.rs`
 中注册 `merge(project_run::router())`
 
 ---
@@ -215,13 +215,13 @@
 ## 8.1 API client
 
 改动：
-1. `chat_app/src/lib/api/client/workspace.ts`（新增 `detectProjectRunTasks` / `executeProjectRunTask` / `checkProjectRunEnv`）
-2. `chat_app/src/lib/api/client.ts` 暴露方法
+1. `agent_workspace/src/lib/api/client/workspace.ts`（新增 `detectProjectRunTasks` / `executeProjectRunTask` / `checkProjectRunEnv`）
+2. `agent_workspace/src/lib/api/client.ts` 暴露方法
 
 ## 8.2 项目预览 UI
 
 改动：
-1. `chat_app/src/components/projectExplorer/PreviewPane.tsx`
+1. `agent_workspace/src/components/projectExplorer/PreviewPane.tsx`
 
 新增：
 1. 运行按钮
@@ -232,8 +232,8 @@
 ## 8.3 运行配置辅助
 
 新增：
-1. `chat_app/src/components/projectExplorer/runProfiles.ts`
-2. `chat_app/src/components/projectExplorer/useProjectRun.ts`
+1. `agent_workspace/src/components/projectExplorer/runProfiles.ts`
+2. `agent_workspace/src/components/projectExplorer/useProjectRun.ts`
 
 ---
 
@@ -315,7 +315,7 @@
 
 1. `check-env`
 2. Go/Rust/.NET/PHP/Ruby 适配
-3. `.chatos/tasks.json` 自定义任务
+3. `.agent_workspace/tasks.json` 自定义任务
 
 ## 里程碑 C（V3，智能化）
 
