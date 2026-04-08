@@ -8,8 +8,8 @@ use uuid::Uuid;
 use crate::db::Db;
 use crate::models::{
     scope_key, AckPauseTaskRequest, AckStopTaskRequest, ContactTask, ContactTaskScopeRuntime,
-    CreateTaskRequest, PauseTaskRequest, ResumeTaskRequest, SchedulerDecision, StopTaskRequest,
-    TaskExecutionResultContract, TaskExecutionScopeView, TaskHandoffPayload,
+    CreateTaskRequest, PauseTaskRequest, ResumeTaskRequest, RetryTaskRequest,
+    SchedulerDecision, StopTaskRequest, TaskExecutionResultContract, TaskExecutionScopeView, TaskHandoffPayload,
     TaskPlanOperationResult, TaskPlanView, UpdateTaskPlanRequest, UpdateTaskPlanResponse,
     UpdateTaskRequest,
 };
@@ -1674,6 +1674,104 @@ pub async fn resume_task(
     )
     .await?;
     Ok(updated)
+}
+
+pub async fn retry_task(
+    db: &Db,
+    task_id: &str,
+    req: RetryTaskRequest,
+) -> Result<Option<ContactTask>, String> {
+    let Some(task) = get_task(db, task_id).await? else {
+        return Ok(None);
+    };
+    if !matches!(task.status.as_str(), "failed" | "cancelled" | "skipped") {
+        return Err("only failed, cancelled, or skipped tasks can be retried".to_string());
+    }
+    if task
+        .model_config_id
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or("")
+        .is_empty()
+    {
+        return Err("当前联系人未配置执行模型，无法重新进入待执行状态".to_string());
+    }
+
+    let now = chrono::Utc::now().to_rfc3339();
+    let queue_position = if task.queue_position > 0 {
+        task.queue_position
+    } else {
+        next_queue_position(
+            db,
+            task.user_id.as_str(),
+            task.contact_agent_id.as_str(),
+            task.project_id.as_str(),
+        )
+        .await?
+    };
+    let next_status = if task.depends_on_task_ids.is_empty() {
+        "pending_execute".to_string()
+    } else {
+        "blocked".to_string()
+    };
+
+    let updated = ContactTask {
+        id: task.id.clone(),
+        user_id: task.user_id.clone(),
+        contact_agent_id: task.contact_agent_id.clone(),
+        project_id: task.project_id.clone(),
+        scope_key: task.scope_key.clone(),
+        task_plan_id: task.task_plan_id.clone(),
+        task_ref: task.task_ref.clone(),
+        task_kind: task.task_kind.clone(),
+        depends_on_task_ids: task.depends_on_task_ids.clone(),
+        verification_of_task_ids: task.verification_of_task_ids.clone(),
+        acceptance_criteria: task.acceptance_criteria.clone(),
+        blocked_reason: if task.depends_on_task_ids.is_empty() {
+            None
+        } else {
+            Some("waiting_for_dependencies".to_string())
+        },
+        project_root: task.project_root.clone(),
+        remote_connection_id: task.remote_connection_id.clone(),
+        session_id: task.session_id.clone(),
+        conversation_turn_id: task.conversation_turn_id.clone(),
+        source_message_id: task.source_message_id.clone(),
+        model_config_id: task.model_config_id.clone(),
+        title: task.title.clone(),
+        content: task.content.clone(),
+        priority: task.priority.clone(),
+        priority_rank: task.priority_rank,
+        queue_position,
+        status: next_status,
+        confirm_note: task.confirm_note.clone(),
+        execution_note: task.execution_note.clone(),
+        planned_builtin_mcp_ids: task.planned_builtin_mcp_ids.clone(),
+        planned_context_assets: task.planned_context_assets.clone(),
+        execution_result_contract: task.execution_result_contract.clone(),
+        planning_snapshot: task.planning_snapshot.clone(),
+        handoff_payload: None,
+        created_by: task.created_by.clone(),
+        created_at: task.created_at.clone(),
+        updated_at: now.clone(),
+        confirmed_at: task.confirmed_at.clone().or_else(|| Some(now.clone())),
+        started_at: None,
+        paused_at: None,
+        pause_reason: None,
+        last_checkpoint_summary: None,
+        last_checkpoint_message_id: None,
+        resume_note: normalize_optional_text(req.note),
+        finished_at: None,
+        last_error: None,
+        result_summary: None,
+        result_message_id: None,
+    };
+
+    tasks(db)
+        .replace_one(doc! {"id": task_id}, updated.clone())
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(Some(updated))
 }
 
 async fn upsert_scope_runtime(

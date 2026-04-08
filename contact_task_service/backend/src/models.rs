@@ -303,6 +303,12 @@ pub struct ResumeTaskRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RetryTaskRequest {
+    pub user_id: Option<String>,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AckPauseTaskRequest {
     pub checkpoint_summary: Option<String>,
     pub checkpoint_message_id: Option<String>,

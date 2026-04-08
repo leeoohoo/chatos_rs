@@ -10,6 +10,7 @@ interface UseChatInterfaceControllerParams {
   apiClient: ApiClient;
   activePanel: string;
   currentSession: Session | null;
+  currentRuntimeSessionId: string | null;
   currentChatStateActiveTurnId: string | null | undefined;
   activeConversationTurnId: string | null | undefined;
   currentRemoteConnectionId: string | null;
@@ -67,6 +68,7 @@ export const useChatInterfaceController = ({
   apiClient,
   activePanel,
   currentSession,
+  currentRuntimeSessionId,
   currentChatStateActiveTurnId,
   activeConversationTurnId,
   currentRemoteConnectionId,
@@ -108,7 +110,7 @@ export const useChatInterfaceController = ({
   const didInitRef = useRef(false);
   const lastHydratedChatSessionRef = useRef<string | null>(null);
 
-  const currentSessionIdForUiPrompts = currentSession?.id || null;
+  const currentSessionIdForUiPrompts = currentRuntimeSessionId;
   const currentImConversationId = useMemo(
     () => readSessionImConversationId(currentSession?.metadata),
     [currentSession?.metadata],
@@ -130,8 +132,12 @@ export const useChatInterfaceController = ({
     [currentSessionIdForUiPrompts, uiPromptPanelsBySession],
   );
   const sessionSummaryPaneVisible = useMemo(
-    () => Boolean(activePanel === 'chat' && currentSession && summaryPaneSessionId === currentSession.id),
-    [activePanel, currentSession, summaryPaneSessionId],
+    () => Boolean(
+      activePanel === 'chat'
+      && currentRuntimeSessionId
+      && summaryPaneSessionId === currentRuntimeSessionId
+    ),
+    [activePanel, currentRuntimeSessionId, summaryPaneSessionId],
   );
 
   const fallbackTurnId = useMemo(
@@ -146,7 +152,7 @@ export const useChatInterfaceController = ({
   useImConversationSync({
     apiClient,
     activePanel,
-    currentSessionId: currentSession?.id || null,
+    currentSessionId: currentRuntimeSessionId,
     currentImConversationId,
     fallbackTurnId,
     taskReviewPanels: currentTaskReviewPanels,
@@ -169,7 +175,7 @@ export const useChatInterfaceController = ({
   }, [loadProjects, loadAiModelConfigs, loadAgents]);
 
   useEffect(() => {
-    if (!currentSession || activePanel !== 'chat') {
+    if (!currentSession || !currentRuntimeSessionId || activePanel !== 'chat') {
       cancelPendingMemoryLoad();
       cancelPendingUiPromptHistoryLoad();
       lastHydratedChatSessionRef.current = null;
@@ -180,27 +186,28 @@ export const useChatInterfaceController = ({
       return;
     }
 
-    const sessionChanged = lastHydratedChatSessionRef.current !== currentSession.id;
+    const sessionChanged = lastHydratedChatSessionRef.current !== currentRuntimeSessionId;
     if (sessionChanged) {
-      lastHydratedChatSessionRef.current = currentSession.id;
+      lastHydratedChatSessionRef.current = currentRuntimeSessionId;
       cancelPendingMemoryLoad();
       cancelPendingUiPromptHistoryLoad();
       resetHistoryWorkbarState();
       resetMemoryState();
-      hydrateUiPromptHistoryFromCache(currentSession.id);
+      hydrateUiPromptHistoryFromCache(currentRuntimeSessionId);
     }
 
     if (sessionSummaryPaneVisible) {
-      void loadContactMemoryContext(currentSession.id);
+      void loadContactMemoryContext(currentRuntimeSessionId);
     }
     if (uiPromptHistoryOpen) {
-      void loadUiPromptHistory(currentSession.id);
+      void loadUiPromptHistory(currentRuntimeSessionId);
     }
   }, [
     activePanel,
     cancelPendingMemoryLoad,
     cancelPendingUiPromptHistoryLoad,
     currentSession,
+    currentRuntimeSessionId,
     hydrateUiPromptHistoryFromCache,
     loadContactMemoryContext,
     loadUiPromptHistory,
@@ -251,7 +258,7 @@ export const useChatInterfaceController = ({
   }, [selectRemoteConnection]);
 
   const handleRuntimeGuidanceSend = useCallback(async (content: string) => {
-    const sessionId = currentSession?.id;
+    const sessionId = currentRuntimeSessionId;
     const projectId = currentSession?.projectId || currentSession?.project_id || null;
     const turnId = (
       currentChatStateActiveTurnId
@@ -269,15 +276,16 @@ export const useChatInterfaceController = ({
   }, [
     activeConversationTurnId,
     currentChatStateActiveTurnId,
+    currentRuntimeSessionId,
     currentSession,
     submitRuntimeGuidance,
   ]);
 
   const handleLoadMore = useCallback(() => {
-    if (currentSession) {
-      void loadMoreMessages(currentSession.id);
+    if (currentRuntimeSessionId) {
+      void loadMoreMessages(currentRuntimeSessionId);
     }
-  }, [currentSession, loadMoreMessages]);
+  }, [currentRuntimeSessionId, loadMoreMessages]);
 
   const handleToggleTurnProcess = useCallback((userMessageId: string) => {
     if (!userMessageId) {

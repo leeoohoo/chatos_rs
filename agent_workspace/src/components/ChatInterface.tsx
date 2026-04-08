@@ -22,6 +22,7 @@ import { useSessionRuntimeSettings } from '../features/sessionRuntime/useSession
 import { useContactMemoryContext } from './chatInterface/useContactMemoryContext';
 import { useUiPromptHistory } from './chatInterface/useUiPromptHistory';
 import { useContactProjectScope } from './chatInterface/useContactProjectScope';
+import { resolveRuntimeSessionId } from '../lib/store/helpers/sessionRuntime';
 
 export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   className,
@@ -138,6 +139,14 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const chatIsLoading = currentChatState?.isLoading ?? false;
   const chatIsStreaming = currentChatState?.isStreaming ?? false;
   const chatIsStopping = currentChatState?.isStopping ?? false;
+  const runtimeSessionIdForChat = useMemo(
+    () => resolveRuntimeSessionId({
+      sessionId: currentSession?.id || null,
+      metadata: currentSession?.metadata,
+      messages: messages as any[],
+    }),
+    [currentSession?.id, currentSession?.metadata, messages],
+  );
 
   const {
     workspaceRoot: composerWorkspaceRoot,
@@ -172,12 +181,12 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     cancelPendingMemoryLoad,
   } = useContactMemoryContext({
     apiClient,
-    currentSessionId: currentSession?.id || null,
+    currentSessionId: runtimeSessionIdForChat,
     currentContactId,
     currentProjectIdForMemory,
   });
 
-  const currentSessionIdForUiPrompts = currentSession?.id || null;
+  const currentSessionIdForUiPrompts = runtimeSessionIdForChat;
   const {
     uiPromptHistoryItems,
     uiPromptHistoryLoading,
@@ -207,6 +216,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     handleWorkbarEditTask,
     handleWorkbarPauseTask,
     handleWorkbarResumeTask,
+    handleWorkbarRetryTask,
     mergedCurrentTurnTasks,
     resetAllWorkbarState,
     resetHistoryWorkbarState,
@@ -267,6 +277,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     apiClient,
     activePanel,
     currentSession,
+    currentRuntimeSessionId: runtimeSessionIdForChat,
     currentChatStateActiveTurnId: currentChatState?.activeTurnId,
     activeConversationTurnId,
     currentRemoteConnectionId: currentRemoteConnection?.id || null,
@@ -305,6 +316,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
   const conversationPaneProps = {
     currentSession,
+    currentSessionRuntimeId: runtimeSessionIdForChat,
     sessionSummaryPaneVisible,
     currentContactName,
     currentProjectNameForMemory,
@@ -345,6 +357,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     },
     onResumeTask: (task: any) => {
       void handleWorkbarResumeTask(task);
+    },
+    onRetryTask: (task: any) => {
+      void handleWorkbarRetryTask(task);
     },
     onCompleteTask: (task: any) => {
       void handleWorkbarCompleteTask(task);
@@ -399,10 +414,10 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     error: uiPromptHistoryError,
     refreshDisabled: !currentSession || uiPromptHistoryLoading,
     onRefresh: () => {
-      if (!currentSession) {
+      if (!runtimeSessionIdForChat) {
         return;
       }
-      void loadUiPromptHistory(currentSession.id, true);
+      void loadUiPromptHistory(runtimeSessionIdForChat, true);
     },
     onClose: () => setUiPromptHistoryOpen(false),
     formatCreatedAt: formatSummaryCreatedAt,

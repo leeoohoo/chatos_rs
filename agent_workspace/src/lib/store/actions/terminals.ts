@@ -1,5 +1,6 @@
 import type { Terminal } from '../../../types';
 import type ApiClient from '../../api/client';
+import { ApiRequestError } from '../../api/client/shared';
 import { areTerminalListsEqual, areTerminalsEqual, normalizeTerminal } from '../helpers/terminals';
 
 interface Deps {
@@ -19,10 +20,18 @@ export function createTerminalActions({ set, get, client, getUserIdParam }: Deps
         const currentState = get();
         const existingTerminals = Array.isArray(currentState.terminals) ? currentState.terminals : [];
         const rememberedTerminalId = localStorage.getItem(`lastTerminalId_${uid}`);
-        const nextCurrentTerminalId = currentState.currentTerminalId
-          || (rememberedTerminalId
-            ? (formatted.find(t => t.id === rememberedTerminalId)?.id || null)
-            : null);
+        const currentTerminalId = typeof currentState.currentTerminalId === 'string'
+          ? currentState.currentTerminalId.trim()
+          : '';
+        const nextCurrentTerminalId = (
+          currentTerminalId && formatted.some((terminal) => terminal.id === currentTerminalId)
+            ? currentTerminalId
+            : ''
+        ) || (
+          rememberedTerminalId
+            ? (formatted.find((terminal) => terminal.id === rememberedTerminalId)?.id || '')
+            : ''
+        ) || null;
         const nextCurrentTerminal = nextCurrentTerminalId
           ? formatted.find(t => t.id === nextCurrentTerminalId) || null
           : null;
@@ -37,20 +46,10 @@ export function createTerminalActions({ set, get, client, getUserIdParam }: Deps
 
         set((state: any) => {
           state.terminals = formatted;
-          if (!state.currentTerminalId) {
-            const lastId = localStorage.getItem(`lastTerminalId_${uid}`);
-            if (lastId) {
-              const matched = formatted.find(t => t.id === lastId);
-              if (matched) {
-                state.currentTerminalId = matched.id;
-                state.currentTerminal = matched;
-              }
-            }
-          } else {
-            const matched = formatted.find(t => t.id === state.currentTerminalId);
-            if (matched) {
-              state.currentTerminal = matched;
-            }
+          state.currentTerminalId = nextCurrentTerminalId;
+          state.currentTerminal = nextCurrentTerminal;
+          if (!nextCurrentTerminalId) {
+            localStorage.removeItem(`lastTerminalId_${uid}`);
           }
         });
         return formatted;
@@ -118,6 +117,22 @@ export function createTerminalActions({ set, get, client, getUserIdParam }: Deps
         });
         localStorage.setItem(`lastTerminalId_${uid}`, terminalId);
       } catch (error) {
+        const uid = getUserIdParam();
+        if (error instanceof ApiRequestError && error.status === 404) {
+          localStorage.removeItem(`lastTerminalId_${uid}`);
+          const refreshed = await get().loadTerminals();
+          const fallback = Array.isArray(refreshed) && refreshed.length > 0
+            ? refreshed[0]
+            : null;
+          set((state: any) => {
+            state.currentTerminalId = fallback?.id || null;
+            state.currentTerminal = fallback || null;
+            if (fallback) {
+              state.activePanel = 'terminal';
+            }
+          });
+          return;
+        }
         console.error('Failed to select terminal:', error);
         set((state: any) => {
           state.error = error instanceof Error ? error.message : 'Failed to select terminal';

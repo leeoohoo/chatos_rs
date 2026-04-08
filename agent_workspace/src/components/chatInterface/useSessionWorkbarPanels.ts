@@ -6,7 +6,7 @@ import type {
   TaskReviewPanelState,
   UiPromptPanelState,
 } from '../../lib/store/types';
-import { readSessionImConversationId } from '../../lib/store/helpers/sessionRuntime';
+import { readSessionImConversationId, resolveRuntimeSessionId } from '../../lib/store/helpers/sessionRuntime';
 import type { RuntimeGuidanceWorkbarItem } from '../TaskWorkbar';
 import { pickFirstSessionPanel, pickSessionScopedState } from './helpers';
 import { usePanelActions } from './usePanelActions';
@@ -47,6 +47,11 @@ interface SessionWorkbarApiClient {
     payload?: { reason?: string },
   ) => Promise<unknown>;
   resumeTaskManagerTask: (
+    sessionId: string,
+    taskId: string,
+    payload?: { note?: string },
+  ) => Promise<unknown>;
+  retryTaskManagerTask: (
     sessionId: string,
     taskId: string,
     payload?: { note?: string },
@@ -142,6 +147,17 @@ export const useSessionWorkbarPanels = ({
   loadUiPromptHistory,
 }: UseSessionWorkbarPanelsArgs) => {
   const sessionId = session?.id || null;
+  const isImSession = useMemo(
+    () => Boolean(readSessionImConversationId(session?.metadata)),
+    [session?.metadata],
+  );
+  const runtimeSessionIdForWorkbar = useMemo(() => {
+    return resolveRuntimeSessionId({
+      sessionId,
+      metadata: session?.metadata,
+      messages,
+    });
+  }, [messages, session?.metadata, sessionId]);
   const normalizedSelectedTurnId = typeof selectedSessionActiveTurnId === 'string'
     ? selectedSessionActiveTurnId.trim()
     : '';
@@ -178,23 +194,23 @@ export const useSessionWorkbarPanels = ({
     resetHistoryWorkbarState,
   } = useWorkbarState({
     apiClient,
-    currentSession: enabled ? session : null,
+    currentSession: (enabled && runtimeSessionIdForWorkbar)
+      ? {
+        id: runtimeSessionIdForWorkbar,
+      }
+      : null,
     messages,
   });
 
   const preferredTurnId = normalizedSelectedTurnId || activeConversationTurnId || null;
-  const isImSession = useMemo(
-    () => Boolean(readSessionImConversationId(session?.metadata)),
-    [session?.metadata],
-  );
   const latestImMessageRefreshKey = useMemo(() => {
-    if (!enabled || !sessionId || !isImSession) {
+    if (!enabled || !runtimeSessionIdForWorkbar || !isImSession) {
       return '';
     }
 
     for (let i = messages.length - 1; i >= 0; i -= 1) {
       const message = messages[i];
-      if (message?.sessionId && message.sessionId !== sessionId) {
+      if (message?.sessionId && message.sessionId !== runtimeSessionIdForWorkbar) {
         continue;
       }
       const messageId = typeof message?.id === 'string' ? message.id.trim() : '';
@@ -215,26 +231,26 @@ export const useSessionWorkbarPanels = ({
     }
 
     return '';
-  }, [enabled, isImSession, messages, sessionId]);
+  }, [enabled, isImSession, messages, runtimeSessionIdForWorkbar]);
 
   useEffect(() => {
-    if (!enabled || !sessionId) {
+    if (!enabled || !runtimeSessionIdForWorkbar) {
       resetAllWorkbarState();
       return;
     }
-    void loadCurrentTurnWorkbarTasks(sessionId, preferredTurnId);
-    void loadHistoryWorkbarTasks(sessionId);
+    void loadCurrentTurnWorkbarTasks(runtimeSessionIdForWorkbar, preferredTurnId);
+    void loadHistoryWorkbarTasks(runtimeSessionIdForWorkbar);
   }, [
     enabled,
     loadCurrentTurnWorkbarTasks,
     loadHistoryWorkbarTasks,
     preferredTurnId,
     resetAllWorkbarState,
-    sessionId,
+    runtimeSessionIdForWorkbar,
   ]);
 
   useEffect(() => {
-    if (!enabled || !sessionId || !isImSession) {
+    if (!enabled || !runtimeSessionIdForWorkbar || !isImSession) {
       latestImMessageRefreshKeyRef.current = null;
       return;
     }
@@ -253,8 +269,8 @@ export const useSessionWorkbarPanels = ({
     }
 
     latestImMessageRefreshKeyRef.current = latestImMessageRefreshKey;
-    void loadCurrentTurnWorkbarTasks(sessionId, preferredTurnId);
-    void loadHistoryWorkbarTasks(sessionId, true);
+    void loadCurrentTurnWorkbarTasks(runtimeSessionIdForWorkbar, preferredTurnId);
+    void loadHistoryWorkbarTasks(runtimeSessionIdForWorkbar, true);
   }, [
     enabled,
     isImSession,
@@ -262,7 +278,7 @@ export const useSessionWorkbarPanels = ({
     loadCurrentTurnWorkbarTasks,
     loadHistoryWorkbarTasks,
     preferredTurnId,
-    sessionId,
+    runtimeSessionIdForWorkbar,
   ]);
 
   const {
@@ -273,9 +289,10 @@ export const useSessionWorkbarPanels = ({
     handleWorkbarEditTask,
     handleWorkbarPauseTask,
     handleWorkbarResumeTask,
+    handleWorkbarRetryTask,
   } = useWorkbarMutations({
     apiClient,
-    currentSessionId: enabled ? (sessionId ?? null) : null,
+    currentSessionId: enabled ? (runtimeSessionIdForWorkbar ?? null) : null,
     refreshWorkbarTasks,
     setWorkbarError,
   });
@@ -350,6 +367,7 @@ export const useSessionWorkbarPanels = ({
     handleWorkbarEditTask,
     handleWorkbarPauseTask,
     handleWorkbarResumeTask,
+    handleWorkbarRetryTask,
     mergedCurrentTurnTasks,
     resetAllWorkbarState,
     resetHistoryWorkbarState,

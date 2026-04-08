@@ -180,6 +180,30 @@ export const resumeTaskManagerTask = (
   ).then(unwrapTaskMutationResponse);
 };
 
+export const retryTaskManagerTask = (
+  request: ApiRequestFn,
+  sessionId: string,
+  taskId: string,
+  payload?: { note?: string }
+): Promise<TaskManagerTaskResponse> => {
+  if (!sessionId) {
+    throw new Error('sessionId is required');
+  }
+  if (!taskId) {
+    throw new Error('taskId is required');
+  }
+
+  const params = new URLSearchParams();
+  params.set('session_id', sessionId);
+  return request<TaskMutationEnvelope>(
+    '/task-manager/tasks/' + encodeURIComponent(taskId) + '/retry?' + params.toString(),
+    {
+      method: 'POST',
+      body: JSON.stringify(payload || {}),
+    },
+  ).then(unwrapTaskMutationResponse);
+};
+
 export const deleteTaskManagerTask = (
   request: ApiRequestFn,
   sessionId: string,

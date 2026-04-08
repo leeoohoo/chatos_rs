@@ -30,7 +30,7 @@ fi
 
 BACKEND_HOST_PORT="$(grep -E '^BACKEND_HOST_PORT=' "$ENV_FILE" | tail -n1 | cut -d'=' -f2- | tr -d '[:space:]')"
 if [[ -z "$BACKEND_HOST_PORT" ]]; then
-  BACKEND_HOST_PORT=3001
+  BACKEND_HOST_PORT=3997
 fi
 
 echo

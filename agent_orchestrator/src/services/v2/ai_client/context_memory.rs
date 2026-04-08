@@ -29,7 +29,7 @@ impl AiClient {
                 .as_ref()
                 .and_then(|m| m.get("type"))
                 .and_then(|v| v.as_str())
-                .map(|kind| kind == "session_summary" || kind == "task_execution_notice")
+                .map(|kind| kind == "session_summary")
                 .unwrap_or(false)
             {
                 continue;

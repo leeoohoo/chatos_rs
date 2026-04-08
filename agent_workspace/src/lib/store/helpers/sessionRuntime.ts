@@ -151,6 +151,46 @@ export const readSessionImConversationId = (metadata: unknown): string | null =>
   return normalizeId(im.conversation_id ?? im.conversationId);
 };
 
+interface RuntimeSessionIdResolveOptions {
+  sessionId: string | null | undefined;
+  metadata?: unknown;
+  messages?: Array<{ sessionId?: string | null | undefined }>;
+}
+
+export const resolveRuntimeSessionId = ({
+  sessionId,
+  metadata,
+  messages = [],
+}: RuntimeSessionIdResolveOptions): string | null => {
+  const normalizedSessionId = normalizeId(sessionId);
+  if (!normalizedSessionId) {
+    return null;
+  }
+
+  if (!readSessionImConversationId(metadata)) {
+    return normalizedSessionId;
+  }
+
+  let latestMessageSessionId: string | null = null;
+  const messageSessionIds = new Set<string>();
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const messageSessionId = normalizeId(messages[i]?.sessionId);
+    if (!messageSessionId) {
+      continue;
+    }
+    if (!latestMessageSessionId) {
+      latestMessageSessionId = messageSessionId;
+    }
+    messageSessionIds.add(messageSessionId);
+  }
+
+  if (messageSessionIds.size === 0 || messageSessionIds.has(normalizedSessionId)) {
+    return normalizedSessionId;
+  }
+
+  return latestMessageSessionId || normalizedSessionId;
+};
+
 export const mergeSessionRuntimeIntoMetadata = (
   metadata: unknown,
   runtime: Partial<SessionRuntimeMetadata>,

@@ -14,6 +14,7 @@ interface TaskCardProps {
   onConfirmTask?: (task: TaskWorkbarItem) => void;
   onPauseTask?: (task: TaskWorkbarItem) => void;
   onResumeTask?: (task: TaskWorkbarItem) => void;
+  onRetryTask?: (task: TaskWorkbarItem) => void;
   onCompleteTask?: (task: TaskWorkbarItem) => void;
   onDeleteTask?: (task: TaskWorkbarItem) => void;
   onEditTask?: (task: TaskWorkbarItem) => void;
@@ -37,6 +38,7 @@ const TaskCard = ({
   onConfirmTask,
   onPauseTask,
   onResumeTask,
+  onRetryTask,
   onCompleteTask,
   onDeleteTask,
   onEditTask,
@@ -55,6 +57,7 @@ const TaskCard = ({
   const isPendingConfirm = task.status === 'pending_confirm';
   const isRunning = task.status === 'running';
   const isPaused = task.status === 'paused';
+  const isFailed = task.status === 'failed';
   const hasExecutionManifest = (task.plannedBuiltinMcpIds?.length || 0) > 0
     || !!task.taskPlanId
     || !!task.taskRef
@@ -154,7 +157,7 @@ const TaskCard = ({
         </div>
       ) : null}
 
-      {(onConfirmTask || onPauseTask || onResumeTask || onCompleteTask || onEditTask || onDeleteTask || hasExecutionManifest) ? (
+      {(onConfirmTask || onPauseTask || onResumeTask || onRetryTask || onCompleteTask || onEditTask || onDeleteTask || hasExecutionManifest) ? (
         <div className="mt-3 flex flex-wrap items-center gap-2">
           {onConfirmTask && isPendingConfirm ? (
             <button type="button" className={primaryActionClass} onClick={() => onConfirmTask(task)} disabled={isMutating}>
@@ -169,6 +172,11 @@ const TaskCard = ({
           {onResumeTask && isPaused ? (
             <button type="button" className={actionClass} onClick={() => onResumeTask(task)} disabled={isMutating}>
               开始
+            </button>
+          ) : null}
+          {onRetryTask && isFailed ? (
+            <button type="button" className={actionClass} onClick={() => onRetryTask(task)} disabled={isMutating}>
+              重试
             </button>
           ) : null}
           {onCompleteTask && !isTerminal ? (

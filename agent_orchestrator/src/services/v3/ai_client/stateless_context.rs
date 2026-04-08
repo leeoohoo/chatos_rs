@@ -235,5 +235,5 @@ fn is_context_filtered_message(message: &crate::models::message::Message) -> boo
     let Some(kind) = metadata.get("type").and_then(|v| v.as_str()) else {
         return false;
     };
-    kind == "session_summary" || kind == "task_execution_notice"
+    kind == "session_summary"
 }

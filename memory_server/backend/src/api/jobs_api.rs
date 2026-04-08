@@ -131,6 +131,39 @@ pub(super) async fn run_task_execution_summary_once(
     }
 }
 
+#[derive(Debug, Deserialize)]
+pub(super) struct InternalRunTaskExecutionScopeJobRequest {
+    user_id: String,
+    contact_agent_id: String,
+    project_id: String,
+}
+
+pub(super) async fn internal_run_task_execution_summary_once(
+    State(state): State<SharedState>,
+    Json(req): Json<InternalRunTaskExecutionScopeJobRequest>,
+) -> (StatusCode, Json<Value>) {
+    let ai = match build_ai_client(&state) {
+        Ok(client) => client,
+        Err(err) => return err,
+    };
+
+    match jobs::task_execution_summary::run_once_for_scope(
+        &state.pool,
+        &ai,
+        req.user_id.as_str(),
+        req.contact_agent_id.as_str(),
+        req.project_id.as_str(),
+    )
+    .await
+    {
+        Ok(data) => (StatusCode::OK, Json(json!({"ok": true, "data": data}))),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"ok": false, "error": err})),
+        ),
+    }
+}
+
 pub(super) async fn run_task_execution_rollup_once(
     State(state): State<SharedState>,
     headers: HeaderMap,

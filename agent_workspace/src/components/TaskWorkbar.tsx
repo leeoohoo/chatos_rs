@@ -35,6 +35,7 @@ interface TaskWorkbarProps {
   onConfirmTask?: (task: TaskWorkbarItem) => void;
   onPauseTask?: (task: TaskWorkbarItem) => void;
   onResumeTask?: (task: TaskWorkbarItem) => void;
+  onRetryTask?: (task: TaskWorkbarItem) => void;
   onCompleteTask?: (task: TaskWorkbarItem) => void;
   onDeleteTask?: (task: TaskWorkbarItem) => void;
   onEditTask?: (task: TaskWorkbarItem) => void;
@@ -61,6 +62,7 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
   onConfirmTask,
   onPauseTask,
   onResumeTask,
+  onRetryTask,
   onCompleteTask,
   onDeleteTask,
   onEditTask,
@@ -327,6 +329,7 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
                           onConfirmTask={onConfirmTask}
                           onPauseTask={onPauseTask}
                           onResumeTask={onResumeTask}
+                          onRetryTask={onRetryTask}
                           onCompleteTask={onCompleteTask}
                           onDeleteTask={onDeleteTask}
                           onEditTask={onEditTask}
@@ -358,6 +361,7 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
         onConfirmTask={onConfirmTask}
         onPauseTask={onPauseTask}
         onResumeTask={onResumeTask}
+        onRetryTask={onRetryTask}
         onCompleteTask={onCompleteTask}
         onDeleteTask={onDeleteTask}
         onEditTask={onEditTask}

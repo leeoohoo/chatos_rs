@@ -1,6 +1,13 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
+const orchestratorPort =
+  process.env.AGENT_ORCHESTRATOR_PORT
+  || process.env.CHATOS_RS_BACKEND_PORT
+  || '3997';
+const orchestratorHost = process.env.AGENT_ORCHESTRATOR_HOST || '127.0.0.1';
+const orchestratorTarget = `http://${orchestratorHost}:${orchestratorPort}`;
+
 function manualChunks(id: string): string | undefined {
   if (!id.includes('node_modules/')) {
     return undefined;
@@ -105,14 +112,34 @@ export default defineConfig({
     },
   },
   server: {
-    host: '0.0.0.0',
+    host: '127.0.0.1',
     port: 8088,
     open: true,
     proxy: {
       '/api': {
-        target: 'http://localhost:3001',
+        // Keep frontend proxy bound to the orchestrator runtime port to avoid cross-project port collisions.
+        target: orchestratorTarget,
         changeOrigin: true,
         ws: true,
+        proxyTimeout: 10000,
+        timeout: 10000,
+        configure: (proxy, options) => {
+          proxy.on('error', (err, req, res) => {
+            console.error(
+              `[vite-proxy] ${req.method || 'UNKNOWN'} ${req.url || ''} -> ${String(options.target)} failed: ${err.message}`
+            );
+            const serverRes = res as any;
+            if (!serverRes.headersSent) {
+              serverRes.writeHead(502, { 'Content-Type': 'application/json' });
+            }
+            serverRes.end(
+              JSON.stringify({
+                error: 'Upstream backend unavailable',
+                detail: `Vite proxy failed to reach agent_orchestrator on ${orchestratorTarget}`,
+              })
+            );
+          });
+        },
       },
     },
   },

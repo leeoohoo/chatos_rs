@@ -319,6 +319,10 @@ pub fn router(state: SharedState) -> Router {
             post(jobs_api::run_task_execution_summary_once),
         )
         .route(
+            "/api/memory/v1/internal/jobs/task-execution-summary/run-once",
+            post(jobs_api::internal_run_task_execution_summary_once),
+        )
+        .route(
             "/api/memory/v1/jobs/task-execution-rollup/run-once",
             post(jobs_api::run_task_execution_rollup_once),
         )

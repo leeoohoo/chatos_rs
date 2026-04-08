@@ -11,9 +11,9 @@ use crate::core::auth::AuthUser;
 use crate::core::session_access::{ensure_owned_session, map_session_access_error_with_success};
 use crate::services::task_manager::{
     complete_task_by_id, confirm_task_by_id, delete_task_by_id, get_task_review_payload,
-    list_tasks_for_context, pause_task_by_id, resume_task_by_id, submit_task_review_decision,
-    update_task_by_id, TaskDraft, TaskReviewAction, TaskUpdatePatch, REVIEW_NOT_FOUND_ERR,
-    TASK_NOT_FOUND_ERR,
+    list_tasks_for_context, pause_task_by_id, resume_task_by_id, retry_task_by_id,
+    submit_task_review_decision, update_task_by_id, TaskDraft, TaskReviewAction,
+    TaskUpdatePatch, REVIEW_NOT_FOUND_ERR, TASK_NOT_FOUND_ERR,
 };
 
 #[derive(Debug, Deserialize)]
@@ -64,6 +64,11 @@ struct ResumeTaskRequest {
     note: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct RetryTaskRequest {
+    note: Option<String>,
+}
+
 pub fn router() -> Router {
     Router::new()
         .route(
@@ -85,6 +90,7 @@ pub fn router() -> Router {
         )
         .route("/api/task-manager/tasks/:task_id/pause", post(pause_task))
         .route("/api/task-manager/tasks/:task_id/resume", post(resume_task))
+        .route("/api/task-manager/tasks/:task_id/retry", post(retry_task))
 }
 
 async fn list_tasks(
@@ -372,6 +378,47 @@ async fn resume_task(
     }
 
     match resume_task_by_id(scope.session_id.as_str(), task_id.as_str(), req.note).await {
+        Ok(task) => (
+            StatusCode::OK,
+            Json(json!({
+                "success": true,
+                "task": task,
+            })),
+        ),
+        Err(err) if err == TASK_NOT_FOUND_ERR => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "success": false, "error": err })),
+        ),
+        Err(err) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "success": false, "error": err })),
+        ),
+    }
+}
+
+async fn retry_task(
+    auth: AuthUser,
+    Path(task_id): Path<String>,
+    Query(scope): Query<SessionScopeQuery>,
+    Json(req): Json<RetryTaskRequest>,
+) -> (StatusCode, Json<Value>) {
+    if scope.session_id.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "success": false, "error": "session_id is required" })),
+        );
+    }
+    if task_id.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "success": false, "error": "task_id is required" })),
+        );
+    }
+    if let Err(err) = ensure_owned_session(scope.session_id.as_str(), &auth).await {
+        return map_session_access_error_with_success(err);
+    }
+
+    match retry_task_by_id(scope.session_id.as_str(), task_id.as_str(), req.note).await {
         Ok(task) => (
             StatusCode::OK,
             Json(json!({

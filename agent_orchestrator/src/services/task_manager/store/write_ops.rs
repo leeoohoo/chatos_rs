@@ -2,7 +2,7 @@ use crate::services::task_manager::normalizer::trimmed_non_empty;
 use crate::services::task_manager::types::{TaskRecord, TaskUpdatePatch, TASK_NOT_FOUND_ERR};
 use crate::services::task_service_client::{
     self, ConfirmTaskRequestDto, PauseTaskRequestDto, ResumeTaskRequestDto,
-    UpdateTaskRequestDto,
+    RetryTaskRequestDto, UpdateTaskRequestDto,
 };
 use tracing::warn;
 
@@ -148,6 +148,28 @@ pub async fn resume_task_by_id(
     let updated = task_service_client::resume_task(
         task_id,
         &ResumeTaskRequestDto {
+            user_id: Some(scope.user_id),
+            note: note
+                .as_deref()
+                .and_then(trimmed_non_empty)
+                .map(|value| value.to_string()),
+        },
+    )
+    .await?
+    .ok_or_else(|| TASK_NOT_FOUND_ERR.to_string())?;
+    Ok(enrich_remote_task(updated).await)
+}
+
+pub async fn retry_task_by_id(
+    session_id: &str,
+    task_id: &str,
+    note: Option<String>,
+) -> Result<TaskRecord, String> {
+    let _existing = load_session_scoped_remote_task(session_id, task_id).await?;
+    let scope = resolve_task_scope_context(session_id).await?;
+    let updated = task_service_client::retry_task(
+        task_id,
+        &RetryTaskRequestDto {
             user_id: Some(scope.user_id),
             note: note
                 .as_deref()

@@ -17,6 +17,11 @@ interface WorkbarMutationApiClient {
     taskId: string,
     payload?: { note?: string }
   ) => Promise<unknown>;
+  retryTaskManagerTask: (
+    sessionId: string,
+    taskId: string,
+    payload?: { note?: string }
+  ) => Promise<unknown>;
   completeTaskManagerTask: (sessionId: string, taskId: string) => Promise<unknown>;
   deleteTaskManagerTask: (sessionId: string, taskId: string) => Promise<unknown>;
   updateTaskManagerTask: (
@@ -109,6 +114,15 @@ export function useWorkbarMutations({
     }
     await withWorkbarTaskMutation(task.id, async () => {
       await apiClient.resumeTaskManagerTask(currentSessionId, task.id);
+    });
+  }, [apiClient, currentSessionId, withWorkbarTaskMutation]);
+
+  const handleWorkbarRetryTask = useCallback(async (task: TaskWorkbarItem) => {
+    if (!currentSessionId) {
+      return;
+    }
+    await withWorkbarTaskMutation(task.id, async () => {
+      await apiClient.retryTaskManagerTask(currentSessionId, task.id);
     });
   }, [apiClient, currentSessionId, withWorkbarTaskMutation]);
 
@@ -212,5 +226,6 @@ export function useWorkbarMutations({
     handleWorkbarEditTask,
     handleWorkbarPauseTask,
     handleWorkbarResumeTask,
+    handleWorkbarRetryTask,
   };
 }

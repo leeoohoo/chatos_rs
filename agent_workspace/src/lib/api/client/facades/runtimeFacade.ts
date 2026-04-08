@@ -70,6 +70,11 @@ export interface RuntimeFacade {
     taskId: string,
     payload?: { note?: string },
   ): Promise<TaskManagerTaskResponse>;
+  retryTaskManagerTask(
+    sessionId: string,
+    taskId: string,
+    payload?: { note?: string },
+  ): Promise<TaskManagerTaskResponse>;
   completeTaskManagerTask(sessionId: string, taskId: string): Promise<TaskManagerTaskResponse>;
   deleteTaskManagerTask(sessionId: string, taskId: string): Promise<{ success?: boolean }>;
   submitTaskReviewDecision(
@@ -164,6 +169,9 @@ export const runtimeFacade: RuntimeFacade & ThisType<ApiClient> = {
   },
   async resumeTaskManagerTask(sessionId, taskId, payload) {
     return tasksApi.resumeTaskManagerTask(this.getRequestFn(), sessionId, taskId, payload);
+  },
+  async retryTaskManagerTask(sessionId, taskId, payload) {
+    return tasksApi.retryTaskManagerTask(this.getRequestFn(), sessionId, taskId, payload);
   },
   async completeTaskManagerTask(sessionId, taskId) {
     return tasksApi.completeTaskManagerTask(this.getRequestFn(), sessionId, taskId);

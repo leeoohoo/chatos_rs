@@ -111,6 +111,7 @@ pub async fn run_once(
                 round_limit,
                 token_limit,
                 target_summary_tokens,
+                false,
             )
             .await;
             (scope, result)
@@ -146,6 +147,67 @@ pub async fn run_once(
     Ok(out)
 }
 
+pub async fn run_once_for_scope(
+    pool: &Db,
+    ai: &AiClient,
+    user_id: &str,
+    contact_agent_id: &str,
+    project_id: &str,
+) -> Result<TaskExecutionSummaryRunResult, String> {
+    let config = configs::get_effective_task_execution_summary_job_config(pool, user_id).await?;
+    if config.enabled != 1 {
+        return Ok(TaskExecutionSummaryRunResult {
+            processed_scopes: 0,
+            summarized_scopes: 0,
+            generated_summaries: 0,
+            marked_messages: 0,
+            failed_scopes: 0,
+        });
+    }
+
+    let model_cfg = summary_support::resolve_model_config(
+        pool,
+        user_id,
+        config.summary_model_config_id.as_deref(),
+    )
+    .await?;
+    let model_name = model_cfg
+        .as_ref()
+        .map(|m| m.model.clone())
+        .unwrap_or_else(|| "local-fallback".to_string());
+
+    let scope = TaskExecutionScope {
+        user_id: user_id.to_string(),
+        contact_agent_id: contact_agent_id.to_string(),
+        project_id: project_id.to_string(),
+        scope_key: task_execution_messages::build_scope_key(user_id, contact_agent_id, project_id),
+    };
+
+    match process_scope(
+        pool,
+        ai,
+        &scope,
+        model_name.as_str(),
+        model_cfg.as_ref(),
+        config.summary_prompt.as_deref(),
+        config.round_limit,
+        config.token_limit,
+        config.target_summary_tokens,
+        true,
+    )
+    .await
+    {
+        Ok((generated, marked)) => Ok(TaskExecutionSummaryRunResult {
+            processed_scopes: 1,
+            summarized_scopes: usize::from(generated > 0),
+            generated_summaries: generated,
+            marked_messages: marked,
+            failed_scopes: 0,
+        }),
+        Err(err) => Err(err),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn process_scope(
     pool: &Db,
@@ -157,6 +219,7 @@ async fn process_scope(
     round_limit: i64,
     token_limit: i64,
     target_summary_tokens: i64,
+    force: bool,
 ) -> Result<(usize, usize), String> {
     let lease_seconds = job_support::resolve_lock_lease_seconds();
     let lock_key = format!("task_exec_summary_l0:{}", scope.scope_key);
@@ -176,6 +239,7 @@ async fn process_scope(
         round_limit,
         token_limit,
         target_summary_tokens,
+        force,
         &lock_handle,
         lease_seconds,
     )
@@ -196,6 +260,7 @@ async fn process_scope_locked(
     round_limit: i64,
     token_limit: i64,
     target_summary_tokens: i64,
+    force: bool,
     lock_handle: &locks::JobLockHandle,
     lease_seconds: i64,
 ) -> Result<(usize, usize), String> {
@@ -212,7 +277,18 @@ async fn process_scope_locked(
     }
 
     let mut pending_all_for_trigger: Option<Vec<crate::models::TaskExecutionMessage>> = None;
-    let trigger = if pending_head.len() as i64 >= round_limit.max(1) {
+    let trigger = if force {
+        let all_pending = task_execution_messages::list_pending_messages(
+            pool,
+            scope.user_id.as_str(),
+            scope.contact_agent_id.as_str(),
+            scope.project_id.as_str(),
+            None,
+        )
+        .await?;
+        pending_all_for_trigger = Some(all_pending);
+        "forced_overflow".to_string()
+    } else if pending_head.len() as i64 >= round_limit.max(1) {
         "message_count_limit".to_string()
     } else {
         let all_pending = task_execution_messages::list_pending_messages(

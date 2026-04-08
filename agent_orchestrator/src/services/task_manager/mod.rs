@@ -10,7 +10,8 @@ pub use review_hub::{
 pub use store::remote_support::{resolve_task_scope_context, TaskScopeContext};
 pub use store::{
     complete_task_by_id, confirm_task_by_id, create_tasks_for_turn, delete_task_by_id,
-    list_tasks_for_context, pause_task_by_id, resume_task_by_id, update_task_by_id,
+    list_tasks_for_context, pause_task_by_id, resume_task_by_id, retry_task_by_id,
+    update_task_by_id,
 };
 #[allow(unused_imports)]
 pub use types::{

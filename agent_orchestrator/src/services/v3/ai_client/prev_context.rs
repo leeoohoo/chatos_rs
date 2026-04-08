@@ -32,16 +32,6 @@ pub(super) fn model_supports_prev_response_id(supports_responses: bool) -> bool 
     supports_responses
 }
 
-pub(super) fn allow_prev_response_reuse(
-    disable_prev_response_reuse: bool,
-    session_allows_prev_response_reuse: bool,
-    supports_responses: bool,
-) -> bool {
-    !disable_prev_response_reuse
-        && session_allows_prev_response_reuse
-        && model_supports_prev_response_id(supports_responses)
-}
-
 pub(super) fn is_unsupported_previous_response_id_error(err: &str) -> bool {
     let message = err.to_lowercase();
     message.contains("previous_response_id")
@@ -151,13 +141,12 @@ pub(super) fn reduce_history_limit(limit: i64) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::{
-        allow_prev_response_reuse, base_url_disallows_system_messages,
-        is_context_length_exceeded_error, is_request_body_too_large_error,
-        is_response_parse_error, is_system_messages_not_allowed_error,
-        is_transient_network_error, is_transient_transport_or_parse_error,
-        model_supports_prev_response_id, reduce_history_limit,
-        should_disable_prev_id_for_prefixed_input_items, should_prefer_stateless_context,
-        should_use_prev_id_for_next_turn,
+        base_url_disallows_system_messages, is_context_length_exceeded_error,
+        is_request_body_too_large_error, is_response_parse_error,
+        is_system_messages_not_allowed_error, is_transient_network_error,
+        is_transient_transport_or_parse_error, model_supports_prev_response_id,
+        reduce_history_limit, should_disable_prev_id_for_prefixed_input_items,
+        should_prefer_stateless_context, should_use_prev_id_for_next_turn,
     };
 
     #[test]
@@ -192,10 +181,9 @@ mod tests {
     }
 
     #[test]
-    fn explicit_disable_blocks_prev_id_reuse_for_im_sessions() {
-        assert!(!allow_prev_response_reuse(true, true, true));
-        assert!(allow_prev_response_reuse(false, true, true));
-        assert!(!allow_prev_response_reuse(false, false, true));
+    fn model_support_is_required_for_prev_id_followups() {
+        assert!(model_supports_prev_response_id(true));
+        assert!(!model_supports_prev_response_id(false));
     }
 
     #[test]

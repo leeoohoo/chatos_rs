@@ -167,6 +167,27 @@ pub async fn upsert_message(message: &Message) -> Result<Message, String> {
     send_json(req).await
 }
 
+pub async fn run_task_execution_summary_once_for_scope(
+    user_id: &str,
+    contact_agent_id: &str,
+    project_id: &str,
+) -> Result<Value, String> {
+    let path = if is_internal_scope() {
+        "/internal/jobs/task-execution-summary/run-once"
+    } else {
+        "/jobs/task-execution-summary/run-once"
+    };
+    let req = client()
+        .post(build_url(path).as_str())
+        .timeout(timeout_duration())
+        .json(&serde_json::json!({
+            "user_id": user_id,
+            "contact_agent_id": contact_agent_id,
+            "project_id": project_id,
+        }));
+    send_json(req).await
+}
+
 pub async fn sync_turn_runtime_snapshot(
     session_id: &str,
     turn_id: &str,

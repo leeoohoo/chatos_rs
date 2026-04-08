@@ -43,8 +43,8 @@ pub use self::session_ops::{
     delete_session, delete_summary, get_latest_turn_runtime_snapshot, get_message_by_id,
     get_session_by_id, get_summary_job_config, get_task_execution_rollup_job_config,
     get_task_execution_summary_job_config, get_turn_runtime_snapshot_by_turn, list_messages,
-    list_sessions, list_summaries, sync_turn_runtime_snapshot, update_session, upsert_message,
-    upsert_summary_job_config, upsert_task_execution_rollup_job_config,
+    list_sessions, list_summaries, run_task_execution_summary_once_for_scope,
+    sync_turn_runtime_snapshot, update_session, upsert_message, upsert_summary_job_config, upsert_task_execution_rollup_job_config,
     upsert_task_execution_summary_job_config,
 };
 pub use self::skill_ops::{get_memory_skill, get_memory_skill_plugin};

@@ -1,6 +1,7 @@
 import { createWithEqualityFn } from 'zustand/traditional';
 import { persist } from 'zustand/middleware';
 import { apiClient } from '@/lib/api/client';
+import { ApiRequestError } from '@/lib/api/client/shared';
 
 export interface AuthUser {
   id: string;
@@ -97,14 +98,25 @@ export const useAuthStore = createWithEqualityFn<AuthState>()(
             }
             set({ user, initialized: true, loading: false, error: null });
           } catch (error) {
-            apiClient.setAccessToken(null);
-            set({
-              accessToken: null,
-              user: null,
+            const unauthorized = error instanceof ApiRequestError
+              && (error.status === 401 || error.status === 403);
+            if (unauthorized) {
+              apiClient.setAccessToken(null);
+              set({
+                accessToken: null,
+                user: null,
+                initialized: true,
+                loading: false,
+                error: null,
+              });
+              return;
+            }
+            set((state) => ({
+              user: state.user,
               initialized: true,
               loading: false,
-              error: null,
-            });
+              error: extractErrorMessage(error),
+            }));
           }
         },
 

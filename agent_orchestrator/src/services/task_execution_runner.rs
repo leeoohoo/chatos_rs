@@ -18,7 +18,9 @@ use crate::services::builtin_mcp::{BuiltinMcpKind, TASK_EXECUTOR_SERVER_NAME};
 use crate::services::contact_agent_model::{
     normalize_optional_model_id, resolve_effective_contact_agent_model_config_id,
 };
-use crate::services::im_task_runtime_bridge::publish_task_runtime_update_best_effort;
+use crate::services::im_task_runtime_bridge::{
+    publish_task_notice_message_best_effort, publish_task_runtime_update_best_effort,
+};
 use crate::services::mcp_loader::McpBuiltinServer;
 use crate::services::memory_server_client::{self, TaskExecutionScopeBinding};
 use crate::services::runtime_guidance_manager::runtime_guidance_manager;
@@ -133,6 +135,69 @@ async fn execute_task(scope: TaskExecutionScopeDto, task: TaskRecordDto) -> Resu
         task_runtime.runtime_session_key.as_str(),
         runtime_turn_id.as_str(),
     );
+
+    let result = match result {
+        Err(err) if is_task_context_overflow_error(err.as_str()) => {
+            warn!(
+                "[TASK-RUNNER] context overflow detected, forcing task execution summary before retry: scope={} task_id={} error={}",
+                scope.scope_key, task.id, err
+            );
+            match memory_server_client::run_task_execution_summary_once_for_scope(
+                scope.user_id.as_str(),
+                scope.contact_agent_id.as_str(),
+                scope.project_id.as_str(),
+            )
+            .await
+            {
+                Ok(_) => {
+                    let mut retry_runtime = match build_task_runtime(scope.clone(), Some(&task)).await
+                    {
+                        Ok(runtime) => runtime,
+                        Err(rebuild_err) => {
+                            return fail_task(
+                                scope,
+                                task,
+                                format!(
+                                    "{}; rebuild after forced summary failed: {}",
+                                    err, rebuild_err
+                                )
+                                .as_str(),
+                            )
+                            .await;
+                        }
+                    };
+                    let retry_chat_options =
+                        retry_runtime.chat_options(format!("{}-retry-overflow", task.id).as_str(), Some(&task));
+                    let retry_turn_id = retry_chat_options
+                        .turn_id
+                        .clone()
+                        .unwrap_or_else(|| format!("task-exec-{}-retry-overflow", task.id));
+                    runtime_guidance_manager().register_active_turn(
+                        retry_runtime.runtime_session_key.as_str(),
+                        retry_turn_id.as_str(),
+                    );
+                    let retry_result = retry_runtime
+                        .ai_server
+                        .chat(
+                            retry_runtime.runtime_session_key.as_str(),
+                            task.content.as_str(),
+                            retry_chat_options,
+                        )
+                        .await;
+                    runtime_guidance_manager().close_turn(
+                        retry_runtime.runtime_session_key.as_str(),
+                        retry_turn_id.as_str(),
+                    );
+                    retry_result
+                }
+                Err(summary_err) => Err(format!(
+                    "{}; force task execution summary failed: {}",
+                    err, summary_err
+                )),
+            }
+        }
+        other => other,
+    };
 
     match result {
         Ok(payload) => {
@@ -350,6 +415,13 @@ async fn execute_task(scope: TaskExecutionScopeDto, task: TaskRecordDto) -> Resu
     }
 }
 
+fn is_task_context_overflow_error(err: &str) -> bool {
+    let normalized = err.to_ascii_lowercase();
+    normalized.contains("context_length_exceeded")
+        || normalized.contains("out of room in the model's context window")
+        || (normalized.contains("context window") && normalized.contains("exceed"))
+}
+
 async fn fail_task(
     scope: TaskExecutionScopeDto,
     task: TaskRecordDto,
@@ -557,7 +629,7 @@ impl PreparedTaskRuntime {
             use_codex_gateway_mcp_passthrough: Some(
                 self.model_runtime.use_codex_gateway_mcp_passthrough,
             ),
-            disable_prev_response_reuse: None,
+            disable_prev_response_reuse: Some(true),
         }
     }
 }
@@ -1200,7 +1272,6 @@ async fn save_task_notice_message(
         reasoning: None,
         metadata: Some(json!({
             "type": notice_type,
-            "hidden_from_model": true,
             "task_execution": {
                 "event": event,
                 "scope_key": scope.scope_key,
@@ -1214,6 +1285,14 @@ async fn save_task_notice_message(
         created_at: crate::core::time::now_rfc3339(),
     };
     let saved = memory_server_client::upsert_message(&message).await?;
+    publish_task_notice_message_best_effort(
+        session_id.as_str(),
+        event,
+        saved.content.as_str(),
+        task,
+        Some(saved.id.as_str()),
+    )
+    .await;
     let payload = json!({
         "type": "task_execution.notice",
         "timestamp": crate::core::time::now_rfc3339(),

@@ -29,6 +29,7 @@ interface ChatComposerPanelProps {
   onConfirmTask: (task: TaskWorkbarItem) => void;
   onPauseTask: (task: TaskWorkbarItem) => void;
   onResumeTask: (task: TaskWorkbarItem) => void;
+  onRetryTask: (task: TaskWorkbarItem) => void;
   onCompleteTask: (task: TaskWorkbarItem) => void;
   onDeleteTask: (task: TaskWorkbarItem) => void;
   onEditTask: (task: TaskWorkbarItem) => void;
@@ -103,6 +104,7 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
   onConfirmTask,
   onPauseTask,
   onResumeTask,
+  onRetryTask,
   onCompleteTask,
   onDeleteTask,
   onEditTask,
@@ -169,6 +171,7 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
       onConfirmTask={onConfirmTask}
       onPauseTask={onPauseTask}
       onResumeTask={onResumeTask}
+      onRetryTask={onRetryTask}
       onCompleteTask={onCompleteTask}
       onDeleteTask={onDeleteTask}
       onEditTask={onEditTask}

@@ -17,6 +17,7 @@ type ChatComposerPanelProps = ComponentProps<typeof ChatComposerPanel>;
 
 interface ChatConversationPaneProps {
   currentSession: Session | null;
+  currentSessionRuntimeId: string | null;
   sessionSummaryPaneVisible: boolean;
   currentContactName: string;
   currentProjectNameForMemory: string;
@@ -52,6 +53,7 @@ interface ChatConversationPaneProps {
   onConfirmTask: ChatComposerPanelProps['onConfirmTask'];
   onPauseTask: ChatComposerPanelProps['onPauseTask'];
   onResumeTask: ChatComposerPanelProps['onResumeTask'];
+  onRetryTask: ChatComposerPanelProps['onRetryTask'];
   onCompleteTask: ChatComposerPanelProps['onCompleteTask'];
   onDeleteTask: ChatComposerPanelProps['onDeleteTask'];
   onEditTask: ChatComposerPanelProps['onEditTask'];
@@ -101,6 +103,7 @@ interface ChatConversationPaneProps {
 
 interface ChatMessagesPaneProps {
   currentSession: Session | null;
+  currentSessionRuntimeId: string | null;
   sessionSummaryPaneVisible: boolean;
   currentContactName: string;
   currentProjectNameForMemory: string;
@@ -124,6 +127,7 @@ interface ChatMessagesPaneProps {
 
 const ChatMessagesPane: React.FC<ChatMessagesPaneProps> = React.memo(({
   currentSession,
+  currentSessionRuntimeId,
   sessionSummaryPaneVisible,
   currentContactName,
   currentProjectNameForMemory,
@@ -165,10 +169,12 @@ const ChatMessagesPane: React.FC<ChatMessagesPaneProps> = React.memo(({
     );
   }
 
+  const effectiveSessionId = currentSessionRuntimeId || currentSession.id;
+
   if (sessionSummaryPaneVisible) {
     return (
       <SummaryPane
-        sessionId={currentSession.id}
+        sessionId={effectiveSessionId}
         sessionTitle={currentSession.title}
         contactName={currentContactName}
         projectName={currentProjectNameForMemory}
@@ -185,7 +191,7 @@ const ChatMessagesPane: React.FC<ChatMessagesPaneProps> = React.memo(({
         agentRecalls={agentRecalls}
         memoryLoading={memoryLoading}
         memoryError={memoryError}
-        onRefresh={() => onRefreshMemory(currentSession.id)}
+        onRefresh={() => onRefreshMemory(effectiveSessionId)}
         onClose={onCloseSummary}
       />
     );
@@ -193,8 +199,8 @@ const ChatMessagesPane: React.FC<ChatMessagesPaneProps> = React.memo(({
 
   return (
     <MessageList
-      key={`messages-${currentSession?.id || 'none'}-chat`}
-      sessionId={currentSession?.id}
+      key={`messages-${effectiveSessionId || 'none'}-chat`}
+      sessionId={effectiveSessionId}
       messages={messages}
       isLoading={chatIsLoading}
       isStreaming={chatIsStreaming}
@@ -211,6 +217,7 @@ ChatMessagesPane.displayName = 'ChatMessagesPane';
 
 const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
   currentSession,
+  currentSessionRuntimeId,
   sessionSummaryPaneVisible,
   currentContactName,
   currentProjectNameForMemory,
@@ -246,6 +253,7 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
   onConfirmTask,
   onPauseTask,
   onResumeTask,
+  onRetryTask,
   onCompleteTask,
   onDeleteTask,
   onEditTask,
@@ -293,6 +301,7 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
         <div className="flex-1 overflow-hidden">
           <ChatMessagesPane
           currentSession={currentSession}
+          currentSessionRuntimeId={currentSessionRuntimeId}
           sessionSummaryPaneVisible={sessionSummaryPaneVisible}
           currentContactName={currentContactName}
           currentProjectNameForMemory={currentProjectNameForMemory}
@@ -317,7 +326,7 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
 
         {currentSession && (
           <ChatComposerPanel
-          sessionId={currentSession.id}
+          sessionId={currentSessionRuntimeId || currentSession.id}
           mergedCurrentTurnTasks={mergedCurrentTurnTasks}
           workbarHistoryTasks={workbarHistoryTasks}
           activeConversationTurnId={activeConversationTurnId}
@@ -334,6 +343,7 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
           onConfirmTask={onConfirmTask}
           onPauseTask={onPauseTask}
           onResumeTask={onResumeTask}
+          onRetryTask={onRetryTask}
           onCompleteTask={onCompleteTask}
           onDeleteTask={onDeleteTask}
           onEditTask={onEditTask}

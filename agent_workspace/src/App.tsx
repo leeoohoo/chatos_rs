@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { ChatInterface } from './components/ChatInterface';
 import { AuthPanel } from './components/AuthPanel';
 import { useTheme } from './hooks/useTheme';
@@ -14,6 +14,7 @@ interface AppProps {
 function App({ projectId }: AppProps = {}) {
   const { actualTheme } = useTheme();
   const { user, initialized, bootstrap } = useAuthStore();
+  const [hydrated, setHydrated] = useState(() => useAuthStore.persist.hasHydrated());
 
   // 确保主题正确应用
   useEffect(() => {
@@ -22,10 +23,21 @@ function App({ projectId }: AppProps = {}) {
   }, [actualTheme]);
 
   useEffect(() => {
-    bootstrap();
-  }, [bootstrap]);
+    const unsubscribe = useAuthStore.persist.onFinishHydration(() => {
+      setHydrated(true);
+    });
+    setHydrated(useAuthStore.persist.hasHydrated());
+    return unsubscribe;
+  }, []);
 
-  if (!initialized) {
+  useEffect(() => {
+    if (!hydrated || initialized) {
+      return;
+    }
+    void bootstrap();
+  }, [bootstrap, hydrated, initialized]);
+
+  if (!hydrated || !initialized) {
     return (
       <div className="min-h-screen flex items-center justify-center text-gray-500">
         正在初始化...

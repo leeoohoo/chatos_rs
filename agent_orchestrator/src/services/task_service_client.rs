@@ -284,6 +284,12 @@ pub struct ResumeTaskRequestDto {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct RetryTaskRequestDto {
+    pub user_id: Option<String>,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct AckPauseTaskRequestDto {
     pub checkpoint_summary: Option<String>,
     pub checkpoint_message_id: Option<String>,
@@ -544,6 +550,19 @@ pub async fn resume_task(
     let req = client()
         .post(
             build_internal_url(&format!("/tasks/{}/resume", urlencoding::encode(task_id))).as_str(),
+        )
+        .timeout(timeout_duration())
+        .json(req_body);
+    send_optional_json(req).await
+}
+
+pub async fn retry_task(
+    task_id: &str,
+    req_body: &RetryTaskRequestDto,
+) -> Result<Option<TaskRecordDto>, String> {
+    let req = client()
+        .post(
+            build_internal_url(&format!("/tasks/{}/retry", urlencoding::encode(task_id))).as_str(),
         )
         .timeout(timeout_duration())
         .json(req_body);
