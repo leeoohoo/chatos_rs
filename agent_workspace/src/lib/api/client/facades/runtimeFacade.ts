@@ -55,6 +55,21 @@ export interface RuntimeFacade {
     taskId: string,
     payload: TaskManagerUpdatePayload,
   ): Promise<TaskManagerTaskResponse>;
+  confirmTaskManagerTask(
+    sessionId: string,
+    taskId: string,
+    payload?: { note?: string },
+  ): Promise<TaskManagerTaskResponse>;
+  pauseTaskManagerTask(
+    sessionId: string,
+    taskId: string,
+    payload?: { reason?: string },
+  ): Promise<TaskManagerTaskResponse>;
+  resumeTaskManagerTask(
+    sessionId: string,
+    taskId: string,
+    payload?: { note?: string },
+  ): Promise<TaskManagerTaskResponse>;
   completeTaskManagerTask(sessionId: string, taskId: string): Promise<TaskManagerTaskResponse>;
   deleteTaskManagerTask(sessionId: string, taskId: string): Promise<{ success?: boolean }>;
   submitTaskReviewDecision(
@@ -140,6 +155,15 @@ export const runtimeFacade: RuntimeFacade & ThisType<ApiClient> = {
   },
   async updateTaskManagerTask(sessionId, taskId, payload) {
     return tasksApi.updateTaskManagerTask(this.getRequestFn(), sessionId, taskId, payload);
+  },
+  async confirmTaskManagerTask(sessionId, taskId, payload) {
+    return tasksApi.confirmTaskManagerTask(this.getRequestFn(), sessionId, taskId, payload);
+  },
+  async pauseTaskManagerTask(sessionId, taskId, payload) {
+    return tasksApi.pauseTaskManagerTask(this.getRequestFn(), sessionId, taskId, payload);
+  },
+  async resumeTaskManagerTask(sessionId, taskId, payload) {
+    return tasksApi.resumeTaskManagerTask(this.getRequestFn(), sessionId, taskId, payload);
   },
   async completeTaskManagerTask(sessionId, taskId) {
     return tasksApi.completeTaskManagerTask(this.getRequestFn(), sessionId, taskId);

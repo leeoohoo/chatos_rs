@@ -1,243 +1,80 @@
-# @leeoohoo/agent-workspace
+# Agent Workspace
 
-React AI Chat Component and Node server. Bilingual README (中文/English).
+Agent Workspace is the primary user-facing frontend of Agent Stack.
 
-—
+It provides an IM-style collaboration interface where users can talk to AI contacts, review task proposals, receive asynchronous task results, inspect runtime context, and operate the system through a workspace-oriented experience instead of a raw model console.
 
-一个功能完整的 React AI 聊天组件库，配套 Node 后端服务，支持会话管理、MCP 工具集成与持久化存储。
+Agent Workspace 是 Agent Stack 面向用户的主前端工作空间。
 
-## 功能 Features
+它提供一种偏 IM 的协作体验：用户可以像和联系人聊天一样与 AI 交互，查看任务确认卡片，接收后台任务回传结果，并在统一界面中完成上下文查看、任务交互和系统操作。
 
-- 开箱即用 Standalone chat UI, drop-in usage
-- 会话管理 Sessions CRUD, multi-session switching
-- AI 模型配置 AI model configs (OpenAI-compatible)
-- MCP 集成 Model Context Protocol tool calls (HTTP/STDIO)
-- 数据持久化 SQLite by default (MongoDB optional in server)
-- 主题切换 Light/Dark/Auto, responsive UI
-- 类型安全 Full TypeScript types
+## What This Module Does
 
-## 代码结构 Repository Structure
+- Provides the main contact-chat and workspace UI
+- Presents task review, confirmation, status, and execution history
+- Connects to backend services through HTTP and WebSocket channels
+- Surfaces runtime context and system responses in a user-friendly way
+- Acts as the main operational entry point for Agent Stack
 
-- 根目录 Root: React 组件库 React component library (Vite + TS)
-- server/chat_app_node_server: Node API 服务 Node API server (Express/WebSocket, MCP, SQLite/MongoDB)
-- examples/complete-example: 集成示例 Example app (web/Electron)
+## Why It Exists
 
-## 快速开始 Quick Start
+Most AI UIs are optimized for direct streaming output, but real work often needs a different interaction model:
+- users need message-oriented collaboration, not raw tool traces
+- long-running tasks should continue in the background
+- results should return asynchronously after execution completes
+- task planning and confirmation should be visible and operable
+- multiple services should feel like one coherent product
 
-1) 作为依赖使用 Use as a dependency
+Agent Workspace exists to provide that product layer.
 
-```bash
-npm install @leeoohoo/agent-workspace
-# or
-yarn add @leeoohoo/agent-workspace
-# or
-pnpm add @leeoohoo/agent-workspace
-```
+## Key Experience Goals
 
-最简用法 Minimal usage
+- IM-first interaction: the interface feels like talking to a capable teammate
+- Operational visibility: users can see task status, review payloads, and important context
+- Async-friendly UX: background work is decoupled from immediate message rendering
+- Multi-surface coordination: chat, task management, memory-related views, and workspace actions live in one place
 
-```tsx
-import StandaloneChatInterface from '@leeoohoo/agent-workspace';
-import '@leeoohoo/agent-workspace/styles';
+## Tech Stack
 
-export default function App() {
-  return <StandaloneChatInterface className="h-screen" />;
-}
-```
+- React 18
+- TypeScript
+- Vite
+- Zustand
 
-2) 本仓库本地开发 Run locally (this repo)
+## Local Development
 
-- 启动后端 Start the API server
+Run in this directory:
 
 ```bash
-cd server/chat_app_node_server
 npm install
-cp .env.example .env   # 设置 OPENAI_API_KEY 等 set your OPENAI_API_KEY
-npm start              # http://localhost:3001
+npm run dev
 ```
 
-- 启动前端 Start the frontend demo
+## Build
 
 ```bash
-cd /path/to/agent_workspace
-npm install
-npm run dev            # http://localhost:5173 (proxy /api → 3001)
+npm run build
 ```
 
-生产环境可通过组件传入 `apiBaseUrl` 或 `port` 覆盖后端地址。
-In production, pass `apiBaseUrl` or `port` to the component to point at your server.
+## Common Scripts
 
-```tsx
-<StandaloneChatInterface apiBaseUrl="https://your.domain/api" />
-// or
-<StandaloneChatInterface port={3001} />
-```
+- `npm run dev`
+- `npm run build`
+- `npm run preview`
+- `npm run type-check`
+- `npm run test`
+- `npm run lint`
 
-## 使用 Usage
+## Integrated Startup
 
-推荐 Recommended: 独立组件 Standalone component
-
-```tsx
-import StandaloneChatInterface from '@leeoohoo/agent-workspace';
-import '@leeoohoo/agent-workspace/styles';
-
-<StandaloneChatInterface
-  className="h-full"
-  userId="user_123"
-  projectId="proj_456"
-  showMcpManager
-  showAiModelManager
-  showSystemContextEditor
-  showAgentManager
-/>
-```
-
-可选：类方式 API Optional: class-style API
-
-```tsx
-import { AiChat } from '@leeoohoo/agent-workspace';
-
-const aiChat = new AiChat(
-  'user_123',
-  'proj_456',
-  '/api',           // configUrl (API base)
-  'h-full',         // className
-  true, true, true, // showMcpManager, showAiModelManager, showSystemContextEditor
-  true              // showAgentManager
-);
-
-export default function App() {
-  return aiChat.render();
-}
-```
-
-常用导出 Common exports
-
-- 组件 Components: `StandaloneChatInterface`, `ChatInterface`, `MessageList`, `InputArea`, `SessionList`, `ThemeToggle`, `McpManager`, `AiModelManager`, `SystemContextEditor`
-- Hooks: `useTheme`, `useChatStore`
-- 工具 Utils/API: `lib/api`, `lib/services`, `lib/utils`
-- 类型 Types: 从 `@leeoohoo/agent-workspace` 导入类型 Import types from the package
-
-## 环境与配置 Env & Config
-
-前端 Frontend
-
-- 开发环境 dev: Vite 代理将 `/api` 指向 `http://localhost:3001`
-- 生产 prod: 通过 `apiBaseUrl`/`port` 或自行配置反向代理 Configure `apiBaseUrl`/`port` or reverse proxy
-
-后端 Server (`server/chat_app_node_server`)
-
-- `.env`
-
-```env
-OPENAI_API_KEY=your_api_key
-OPENAI_BASE_URL=https://api.openai.com/v1
-PORT=3001
-NODE_ENV=development
-```
-
-- 数据库 Database: 默认 SQLite，配置见 `server/chat_app_node_server/config/database.json`；可切换 MongoDB
-
-## API 概览 API Overview
-
-- Sessions: `/api/sessions` CRUD, messages: `/api/sessions/:id/messages`
-- Agents: `/api/agents` CRUD, stream: `/api/agents/chat/stream`
-- MCP: `/api/mcp-configs` CRUD, resource reading
-- AI Model Configs: `/api/ai-model-configs` CRUD
-- System Contexts: `/api/system-contexts` CRUD, active context
-- Session realtime channel: `/api/sessions/:session_id/ws` (WebSocket, carries chat stream + task notices)
-- Legacy streaming chat endpoints kept for compatibility: `/api/agent_v2/chat/stream`, `/api/agent_v3/chat/stream`
-
-详细见 See details: `server/chat_app_node_server/README.md`
-
-## 示例 Examples
-
-- `examples/complete-example`: 完整示例（含 Electron） Complete sample (with Electron)
+From the repository root:
 
 ```bash
-cd examples/complete-example
-npm install
-npm run dev:full   # 前端 + 后端 Frontend + Server
+./restart_services.sh restart
 ```
 
-## 开发脚本 Scripts (root)
+## More Docs
 
-- `npm run dev` Vite 本地预览 Local dev
-- `npm run build:lib` 构建库 Build library bundle
-- `npm run test`/`test:ui` 单测 Vitest
-- `npm run lint`/`lint:fix` ESLint
-- `npm run storybook` 组件调试 Storybook
-
-## 许可证 License
-
-MIT
-
-—
-
-如需更细的接入与排障，参见 Also see: `USAGE.md`, `INTEGRATION_EXAMPLE.md`, `MODULE_CONTROL.md`。
-
-## 样式定制
-
-组件使用Tailwind CSS构建，你可以通过以下方式定制样式：
-
-1. **覆盖CSS变量**
-
-```css
-:root {
-  --chat-primary-color: #your-color;
-  --chat-background-color: #your-background;
-}
-```
-
-2. **使用自定义CSS类**
-
-```tsx
-<ChatInterface className="my-custom-chat" />
-```
-
-3. **主题定制**
-
-```css
-.dark {
-  --chat-background: #1a1a1a;
-  --chat-text: #ffffff;
-}
-
-.light {
-  --chat-background: #ffffff;
-  --chat-text: #000000;
-}
-```
-
-## 类型定义
-
-包含完整的TypeScript类型定义：
-
-```tsx
-import type {
-  Message,
-  Session,
-  Attachment,
-  ToolCall,
-  ChatConfig,
-  AiModelConfig,
-  McpConfig,
-  Theme,
-  ChatInterfaceProps,
-  MessageListProps,
-  InputAreaProps,
-  SessionListProps,
-} from '@leeoohoo/agent-workspace';
-```
-
-## 许可证
-
-MIT
-
-## 贡献
-
-欢迎提交Issue和Pull Request！
-
-## 支持
-
-如果你觉得这个项目有用，请给它一个⭐️！
+- [中文说明](./README.zh-CN.md)
+- [English README](./README.en.md)
+- [Usage Notes](./USAGE.md)

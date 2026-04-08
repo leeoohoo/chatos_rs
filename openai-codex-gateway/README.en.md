@@ -1,77 +1,54 @@
-# openai-codex-gateway
+# OpenAI Codex Gateway
 
-## Positioning
-`openai-codex-gateway` provides an OpenAI-compatible HTTP gateway for Codex app-server integration.
-It lets existing OpenAI-style clients connect to this stack with minimal changes.
+## Overview
 
-## What It Solves
-When integrating custom AI backends, teams often face:
-- client lock-in to one protocol shape,
-- expensive migrations for SDKs/tools,
-- incompatibility between upstream and internal service interfaces.
+OpenAI Codex Gateway is the protocol compatibility layer of Agent Stack.
 
-This gateway normalizes API access so compatibility is preserved while backend implementations stay flexible.
+It exposes OpenAI-style HTTP APIs while forwarding requests into the internal Codex/App Server runtime, making it easier for existing SDKs and clients to integrate without large migration effort.
 
-## Core Advantages
-1. OpenAI-compatible interface
-- Exposes familiar endpoints for model listing and response generation.
+## What It Is Responsible For
 
-2. Lower migration effort
-- Reuses existing clients and toolchains built for OpenAI APIs.
+- OpenAI-compatible HTTP surface
+- request translation into internal runtime calls
+- streaming and non-streaming response handling
+- request-level MCP/tool compatibility bridging
 
-3. Deployment flexibility
-- Supports bundled SDK mode and installed SDK mode.
+## Why It Matters
 
-4. Clean system boundary
-- Keeps protocol adaptation concerns out of core business services.
+This gateway keeps compatibility concerns out of the core orchestration layer.
+
+That allows the system to:
+- integrate with existing clients faster
+- preserve familiar SDK usage patterns
+- isolate protocol translation from core business logic
+- evolve the internal stack without breaking every caller
 
 ## Main Endpoints
+
 - `GET /healthz`
 - `GET /v1/models`
 - `POST /v1/responses`
 
-## Model Selection
-- Clients can pass `model` in each `POST /v1/responses` request.
-- The gateway forwards that model to codex app-server.
-- If `model` is omitted, codex default model is used.
-
-## Python Dependencies
-Install dependencies:
+## Install Dependencies
 
 ```bash
 python -m pip install -r requirements.txt
 ```
 
-## Run
-From this directory:
+## Start
+
+In this directory:
 
 ```bash
 python server.py --host 127.0.0.1 --port 8089
 ```
 
-## Quick Background Run (Recommended)
+## Background Control
 
 ```bash
 ./gateway_ctl.sh start
-```
-
-Common commands:
-
-```bash
 ./gateway_ctl.sh status
 ./gateway_ctl.sh tail
 ./gateway_ctl.sh restart
 ./gateway_ctl.sh stop
-```
-
-Default log and PID paths:
-- `logs/codex_gateway.log`
-- `logs/codex_gateway.pid`
-
-## Notes
-- The gateway prefers bundled SDK code under `vendor/` by default.
-- You can force installed SDK mode via:
-
-```bash
-export CODEX_GATEWAY_SDK_MODE=installed
 ```

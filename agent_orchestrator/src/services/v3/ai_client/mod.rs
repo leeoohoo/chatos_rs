@@ -42,6 +42,7 @@ pub struct ProcessOptions {
     pub prefixed_input_items: Option<Vec<Value>>,
     pub request_cwd: Option<String>,
     pub use_codex_gateway_mcp_passthrough: Option<bool>,
+    pub disable_prev_response_reuse: Option<bool>,
     pub callbacks: Option<AiClientCallbacks>,
 }
 

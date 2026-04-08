@@ -1,61 +1,59 @@
-# memory_server
+# Memory Server
 
-## Positioning
-`memory_server` is the memory domain of agent stack.
-It manages long-horizon context through summary generation, rollups, memory retrieval, and operational tools.
+## Overview
 
-## What It Solves
-Without a dedicated memory layer, AI systems often face:
-- exploding token cost from raw history replay,
-- weak cross-session continuity,
-- duplicated or conflicting summaries in scheduled jobs,
-- low visibility into memory quality and operations.
+Memory Server is the long-term memory domain service of Agent Stack.
 
-`memory_server` addresses this with structured memory pipelines, scheduled consolidation, and admin capabilities.
+It stores message history, summaries, rollups, and memory artifacts, and provides the data pipeline that turns raw history into reusable context for future orchestration.
 
-## Core Advantages
-1. Layered memory lifecycle
-- Supports session summaries, rollups, and recall-oriented memory extraction.
+## What It Is Responsible For
 
-2. Better cost/quality balance
-- Reduces prompt bloat while preserving key decisions, facts, and TODOs.
+- session and message persistence
+- layered summary generation and rollups
+- memory-oriented retrieval and context composition
+- admin-facing operational visibility over memory quality and jobs
 
-3. Job safety and consistency
-- Designed for scheduled pipelines with lock/idempotency patterns to reduce duplicate processing.
+## Why It Matters
 
-4. Operational tooling included
-- Ships with an admin frontend for memory inspection and maintenance.
+Persistent agent systems need more than chat logs.
+
+This service exists so the platform can:
+- keep context continuity across time
+- control prompt cost as history expands
+- preserve key decisions and facts instead of replaying everything
+- operate memory strategy as a dedicated domain
 
 ## Structure
-- `backend/`: Rust memory service
+
+- `backend/`: Rust service
 - `frontend/`: React admin console
+- `shared/`: shared contracts and assets
 
 ## Backend Quick Start
+
 ```bash
 cd backend
 cp .env.example .env
 cargo run --bin memory_server
 ```
 
-Default backend URL:
+Default backend address:
 - `http://localhost:7080`
 
-Common Mongo envs:
-- `MEMORY_SERVER_MONGODB_URI`
-- `MEMORY_SERVER_MONGODB_DATABASE`
-
 ## Frontend Quick Start
+
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
 
-Default frontend URL:
+Default frontend address:
 - `http://localhost:5176`
 
-## Full-Stack Startup
-From repository root:
+## Integrated Startup
+
+From the repository root:
 
 ```bash
 ./restart_services.sh restart

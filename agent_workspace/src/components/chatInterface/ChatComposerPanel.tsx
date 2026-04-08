@@ -26,6 +26,9 @@ interface ChatComposerPanelProps {
   onOpenUiPromptHistory?: (sessionId: string) => void;
   uiPromptHistoryCount?: number;
   uiPromptHistoryLoading?: boolean;
+  onConfirmTask: (task: TaskWorkbarItem) => void;
+  onPauseTask: (task: TaskWorkbarItem) => void;
+  onResumeTask: (task: TaskWorkbarItem) => void;
   onCompleteTask: (task: TaskWorkbarItem) => void;
   onDeleteTask: (task: TaskWorkbarItem) => void;
   onEditTask: (task: TaskWorkbarItem) => void;
@@ -97,6 +100,9 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
   onOpenUiPromptHistory,
   uiPromptHistoryCount,
   uiPromptHistoryLoading,
+  onConfirmTask,
+  onPauseTask,
+  onResumeTask,
   onCompleteTask,
   onDeleteTask,
   onEditTask,
@@ -160,6 +166,9 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
       runtimeGuidanceAppliedCount={runtimeGuidanceAppliedCount}
       runtimeGuidanceLastAppliedAt={runtimeGuidanceLastAppliedAt}
       runtimeGuidanceItems={runtimeGuidanceItems}
+      onConfirmTask={onConfirmTask}
+      onPauseTask={onPauseTask}
+      onResumeTask={onResumeTask}
       onCompleteTask={onCompleteTask}
       onDeleteTask={onDeleteTask}
       onEditTask={onEditTask}

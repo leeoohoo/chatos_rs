@@ -143,12 +143,13 @@ impl AiServer {
                     conversation_turn_id: turn_id.clone(),
                     message_mode: options.message_mode.clone(),
                     message_source: options.message_source.clone(),
-                    prefixed_input_items: options.prefixed_input_items.clone(),
-                    request_cwd: options.request_cwd.clone(),
-                    use_codex_gateway_mcp_passthrough: options.use_codex_gateway_mcp_passthrough,
-                    callbacks: Some(if use_tools {
-                        callbacks
-                    } else {
+                prefixed_input_items: options.prefixed_input_items.clone(),
+                request_cwd: options.request_cwd.clone(),
+                use_codex_gateway_mcp_passthrough: options.use_codex_gateway_mcp_passthrough,
+                disable_prev_response_reuse: options.disable_prev_response_reuse,
+                callbacks: Some(if use_tools {
+                    callbacks
+                } else {
                         callbacks.without_tool_callbacks()
                     }),
                 },
@@ -179,4 +180,5 @@ pub struct ChatOptions {
     pub prefixed_input_items: Option<Vec<Value>>,
     pub request_cwd: Option<String>,
     pub use_codex_gateway_mcp_passthrough: Option<bool>,
+    pub disable_prev_response_reuse: Option<bool>,
 }

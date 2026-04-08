@@ -9,8 +9,8 @@ pub use review_hub::{
 };
 pub use store::remote_support::{resolve_task_scope_context, TaskScopeContext};
 pub use store::{
-    complete_task_by_id, create_tasks_for_turn, delete_task_by_id, list_tasks_for_context,
-    update_task_by_id,
+    complete_task_by_id, confirm_task_by_id, create_tasks_for_turn, delete_task_by_id,
+    list_tasks_for_context, pause_task_by_id, resume_task_by_id, update_task_by_id,
 };
 #[allow(unused_imports)]
 pub use types::{
@@ -22,9 +22,10 @@ pub use types::{
 #[cfg(test)]
 mod tests {
     use super::normalizer::normalize_task_draft;
+    use super::store::prepare_task_drafts_for_creation;
     use super::{
-        create_task_review, submit_task_review_decision, wait_for_task_review_decision, TaskDraft,
-        TaskRequiredContextAssetDraft, TaskReviewAction, TaskUpdatePatch,
+        create_task_review, submit_task_review_decision, wait_for_task_review_decision,
+        TaskDraft, TaskRequiredContextAssetDraft, TaskReviewAction, TaskUpdatePatch,
     };
 
     #[test]
@@ -91,6 +92,106 @@ mod tests {
         assert_eq!(normalized.due_at, Some(None));
     }
 
+    #[test]
+    fn prepare_task_drafts_auto_adds_verification_for_implementation() {
+        let drafts = vec![TaskDraft {
+            title: "实现报表接口".to_string(),
+            details: "完成后端接口与查询".to_string(),
+            task_ref: None,
+            task_kind: Some("implementation".to_string()),
+            depends_on_refs: Vec::new(),
+            verification_of_refs: Vec::new(),
+            acceptance_criteria: vec!["接口可返回报表数据".to_string()],
+            priority: "high".to_string(),
+            status: "pending_confirm".to_string(),
+            tags: vec!["backend".to_string()],
+            due_at: None,
+            required_builtin_capabilities: vec!["read".to_string(), "terminal".to_string()],
+            required_context_assets: vec![TaskRequiredContextAssetDraft {
+                asset_type: "skill".to_string(),
+                asset_ref: "SK1".to_string(),
+            }],
+            planned_builtin_mcp_ids: Vec::new(),
+            planned_context_assets: Vec::new(),
+            execution_result_contract: None,
+        }];
+
+        let prepared = prepare_task_drafts_for_creation(drafts).expect("prepare should succeed");
+        assert_eq!(prepared.len(), 2);
+        assert_eq!(prepared[0].task_kind.as_deref(), Some("implementation"));
+        assert!(prepared[0].task_ref.is_some());
+        assert!(
+            prepared[0]
+                .required_builtin_capabilities
+                .iter()
+                .any(|item| item == "write")
+        );
+
+        let verification = prepared
+            .iter()
+            .find(|draft| draft.task_kind.as_deref() == Some("verification"))
+            .expect("verification task should be auto generated");
+        let implementation_ref = prepared[0]
+            .task_ref
+            .as_deref()
+            .expect("implementation ref should be generated");
+        assert!(
+            verification
+                .depends_on_refs
+                .iter()
+                .any(|item| item == implementation_ref)
+        );
+        assert!(
+            verification
+                .verification_of_refs
+                .iter()
+                .any(|item| item == implementation_ref)
+        );
+        assert!(
+            verification
+                .required_builtin_capabilities
+                .iter()
+                .any(|item| item == "read")
+        );
+        assert!(
+            verification
+                .required_builtin_capabilities
+                .iter()
+                .any(|item| item == "terminal")
+        );
+        assert_eq!(verification.required_context_assets.len(), 1);
+    }
+
+    #[test]
+    fn implementation_task_without_write_gets_auto_completed() {
+        let drafts = vec![TaskDraft {
+            title: "实现 Admin 报表页面".to_string(),
+            details: "新增页面和路由并接入接口".to_string(),
+            task_ref: Some("impl_admin_report".to_string()),
+            task_kind: Some("implementation".to_string()),
+            depends_on_refs: Vec::new(),
+            verification_of_refs: Vec::new(),
+            acceptance_criteria: Vec::new(),
+            priority: "high".to_string(),
+            status: "pending_confirm".to_string(),
+            tags: vec!["frontend".to_string()],
+            due_at: None,
+            required_builtin_capabilities: vec!["read".to_string()],
+            required_context_assets: Vec::new(),
+            planned_builtin_mcp_ids: Vec::new(),
+            planned_context_assets: Vec::new(),
+            execution_result_contract: None,
+        }];
+
+        let prepared = prepare_task_drafts_for_creation(drafts).expect("prepare should succeed");
+        assert!(
+            prepared[0]
+                .required_builtin_capabilities
+                .iter()
+                .any(|item| item == "write")
+        );
+    }
+
     #[tokio::test]
     async fn review_confirm_flow_returns_updated_tasks() {
         let draft = TaskDraft {
@@ -154,6 +255,74 @@ mod tests {
         assert_eq!(decision.tasks[0].title, "Updated task");
         assert_eq!(decision.tasks[0].priority, "high");
         assert_eq!(decision.tasks[0].status, "running");
+    }
+
+    #[tokio::test]
+    async fn review_confirm_flow_prepares_updated_implementation_tasks() {
+        let draft = TaskDraft {
+            title: "Initial task".to_string(),
+            details: "detail".to_string(),
+            task_ref: None,
+            task_kind: None,
+            depends_on_refs: Vec::new(),
+            verification_of_refs: Vec::new(),
+            acceptance_criteria: Vec::new(),
+            priority: "medium".to_string(),
+            status: "pending_confirm".to_string(),
+            tags: vec!["one".to_string()],
+            due_at: None,
+            required_builtin_capabilities: Vec::new(),
+            required_context_assets: Vec::new(),
+            planned_builtin_mcp_ids: Vec::new(),
+            planned_context_assets: Vec::new(),
+            execution_result_contract: None,
+        };
+
+        let (payload, receiver) =
+            create_task_review("session_test", "turn_prepare", vec![draft], 30_000)
+                .await
+                .expect("create review should succeed");
+
+        let updated_tasks = vec![TaskDraft {
+            title: "实现报表接口".to_string(),
+            details: "updated".to_string(),
+            task_ref: None,
+            task_kind: Some("implementation".to_string()),
+            depends_on_refs: Vec::new(),
+            verification_of_refs: Vec::new(),
+            acceptance_criteria: Vec::new(),
+            priority: "high".to_string(),
+            status: "running".to_string(),
+            tags: vec!["backend".to_string()],
+            due_at: None,
+            required_builtin_capabilities: vec!["terminal".to_string()],
+            required_context_assets: Vec::new(),
+            planned_builtin_mcp_ids: Vec::new(),
+            planned_context_assets: Vec::new(),
+            execution_result_contract: None,
+        }];
+
+        submit_task_review_decision(
+            payload.review_id.as_str(),
+            TaskReviewAction::Confirm,
+            Some(updated_tasks),
+            None,
+        )
+        .await
+        .expect("submit decision should succeed");
+
+        let decision = wait_for_task_review_decision(payload.review_id.as_str(), receiver, 5_000)
+            .await
+            .expect("wait decision should succeed");
+
+        assert_eq!(decision.action, TaskReviewAction::Confirm);
+        assert_eq!(decision.tasks.len(), 2);
+        assert!(
+            decision
+                .tasks
+                .iter()
+                .any(|task| task.task_kind.as_deref() == Some("verification"))
+        );
     }
 
     #[tokio::test]

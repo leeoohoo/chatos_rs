@@ -300,9 +300,12 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
     handleTaskReviewConfirm,
     handleUiPromptCancel,
     handleUiPromptSubmit,
+    handleWorkbarConfirmTask,
     handleWorkbarCompleteTask,
     handleWorkbarDeleteTask,
     handleWorkbarEditTask,
+    handleWorkbarPauseTask,
+    handleWorkbarResumeTask,
     mergedCurrentTurnTasks,
     runtimeGuidanceAppliedCount,
     runtimeGuidanceItems,
@@ -472,6 +475,9 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
         workbarActionLoadingTaskId={workbarActionLoadingTaskId}
         onRefreshWorkbarTasks={handleRefreshWorkbar}
         onOpenWorkbarHistory={handleOpenTeamWorkbarHistory}
+        onConfirmTask={(task) => { void handleWorkbarConfirmTask(task); }}
+        onPauseTask={(task) => { void handleWorkbarPauseTask(task); }}
+        onResumeTask={(task) => { void handleWorkbarResumeTask(task); }}
         onCompleteTask={(task) => { void handleWorkbarCompleteTask(task); }}
         onDeleteTask={(task) => { void handleWorkbarDeleteTask(task); }}
         onEditTask={(task) => { void handleWorkbarEditTask(task); }}

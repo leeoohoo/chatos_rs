@@ -1,54 +1,60 @@
-# agent_orchestrator (Main Backend)
+# Agent Orchestrator
 
-## Positioning
-`agent_orchestrator` is the primary orchestration backend of the agent stack.
-It handles sessions, messages, tool routing, and model streaming so the frontend can deliver a reliable engineering workflow.
+## Overview
 
-## What It Solves
-Common backend pain points in AI systems:
-- mixing business logic, model calls, and tool logic in one fragile flow,
-- unstable multi-turn context orchestration,
-- hard-to-debug runtime behavior when tool/model execution interleaves.
+Agent Orchestrator is the core backend orchestration service of Agent Stack.
 
-This service centralizes orchestration and protocol handling so the system stays predictable under complex multi-step tasks.
+It coordinates conversation flow, context construction, model invocation, builtin tools, task planning, task execution, and cross-service runtime integration.
 
-## Core Advantages
-1. Orchestration-first design
-- Separates chat flow control from memory domain and gateway concerns.
+## What This Service Is Responsible For
 
-2. Real-time interaction support
-- Built to support streaming model responses and interactive tool pipelines.
+- handling workspace-originated chat requests
+- assembling runtime context from messages, summaries, memory, and authorized assets
+- routing builtin MCP and tool calls
+- driving task review, confirmation, creation, and execution coordination
+- connecting the workspace, memory, IM, and task platform into one operating flow
 
-3. Production-friendly Rust stack
-- Axum + Tokio architecture targets performance and operational stability.
+## Why It Matters
 
-4. Easy full-stack integration
-- Works directly with the memory service and frontend in local all-in-one startup.
+This is the service that turns separate capabilities into one working system.
+
+Its role is to prevent:
+- prompt logic from being mixed with transport concerns
+- tool execution from becoming uncontrolled
+- task lifecycle from being hidden inside chat turns
+- service boundaries from leaking into user experience
 
 ## Tech Stack
-- Rust (Axum + Tokio)
-- SQLx (SQLite)
+
+- Rust
+- Axum
+- Tokio
+- SQLx with SQLite
 - MongoDB client support
 
-## Run (Development)
-From this directory:
+## Local Development
+
+In this directory:
 
 ```bash
 cargo run --bin agent_orchestrator
 ```
 
 ## Build
+
 ```bash
 cargo build --release
 ```
 
 ## Basic Checks
+
 ```bash
 cargo check
 ```
 
-## Full-Stack Startup
-From repository root:
+## Integrated Startup
+
+From the repository root:
 
 ```bash
 ./restart_services.sh restart

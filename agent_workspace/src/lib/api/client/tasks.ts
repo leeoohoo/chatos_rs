@@ -14,6 +14,23 @@ import type {
 } from './types';
 import type { ApiRequestFn } from './workspace';
 
+type TaskMutationEnvelope = TaskManagerTaskResponse | { success?: boolean; task?: TaskManagerTaskResponse };
+
+const unwrapTaskMutationResponse = (result: TaskMutationEnvelope): TaskManagerTaskResponse => {
+  if (
+    result
+    && typeof result === 'object'
+    && !Array.isArray(result)
+    && ('task' in result || 'success' in result)
+  ) {
+    if (result.task) {
+      return result.task;
+    }
+    throw new Error('task response is missing');
+  }
+  return result as TaskManagerTaskResponse;
+};
+
 export const getTaskManagerTasks = async (
   request: ApiRequestFn,
   sessionId: string,
@@ -59,13 +76,13 @@ export const updateTaskManagerTask = (
 
   const params = new URLSearchParams();
   params.set('session_id', sessionId);
-  return request<TaskManagerTaskResponse>(
+  return request<TaskMutationEnvelope>(
     '/task-manager/tasks/' + encodeURIComponent(taskId) + '?' + params.toString(),
     {
-    method: 'PATCH',
-    body: JSON.stringify(payload),
+      method: 'PATCH',
+      body: JSON.stringify(payload),
     },
-  );
+  ).then(unwrapTaskMutationResponse);
 };
 
 export const completeTaskManagerTask = (
@@ -82,13 +99,85 @@ export const completeTaskManagerTask = (
 
   const params = new URLSearchParams();
   params.set('session_id', sessionId);
-  return request<TaskManagerTaskResponse>(
+  return request<TaskMutationEnvelope>(
     '/task-manager/tasks/' + encodeURIComponent(taskId) + '/complete?' + params.toString(),
     {
-    method: 'POST',
-    body: JSON.stringify({}),
+      method: 'POST',
+      body: JSON.stringify({}),
     },
-  );
+  ).then(unwrapTaskMutationResponse);
+};
+
+export const confirmTaskManagerTask = (
+  request: ApiRequestFn,
+  sessionId: string,
+  taskId: string,
+  payload?: { note?: string }
+): Promise<TaskManagerTaskResponse> => {
+  if (!sessionId) {
+    throw new Error('sessionId is required');
+  }
+  if (!taskId) {
+    throw new Error('taskId is required');
+  }
+
+  const params = new URLSearchParams();
+  params.set('session_id', sessionId);
+  return request<TaskMutationEnvelope>(
+    '/task-manager/tasks/' + encodeURIComponent(taskId) + '/confirm?' + params.toString(),
+    {
+      method: 'POST',
+      body: JSON.stringify(payload || {}),
+    },
+  ).then(unwrapTaskMutationResponse);
+};
+
+export const pauseTaskManagerTask = (
+  request: ApiRequestFn,
+  sessionId: string,
+  taskId: string,
+  payload?: { reason?: string }
+): Promise<TaskManagerTaskResponse> => {
+  if (!sessionId) {
+    throw new Error('sessionId is required');
+  }
+  if (!taskId) {
+    throw new Error('taskId is required');
+  }
+
+  const params = new URLSearchParams();
+  params.set('session_id', sessionId);
+  return request<TaskMutationEnvelope>(
+    '/task-manager/tasks/' + encodeURIComponent(taskId) + '/pause?' + params.toString(),
+    {
+      method: 'POST',
+      body: JSON.stringify(payload || {}),
+    },
+  ).then(unwrapTaskMutationResponse);
+};
+
+export const resumeTaskManagerTask = (
+  request: ApiRequestFn,
+  sessionId: string,
+  taskId: string,
+  payload?: { note?: string }
+): Promise<TaskManagerTaskResponse> => {
+  if (!sessionId) {
+    throw new Error('sessionId is required');
+  }
+  if (!taskId) {
+    throw new Error('taskId is required');
+  }
+
+  const params = new URLSearchParams();
+  params.set('session_id', sessionId);
+  return request<TaskMutationEnvelope>(
+    '/task-manager/tasks/' + encodeURIComponent(taskId) + '/resume?' + params.toString(),
+    {
+      method: 'POST',
+      body: JSON.stringify(payload || {}),
+    },
+  ).then(unwrapTaskMutationResponse);
 };
 
 export const deleteTaskManagerTask = (

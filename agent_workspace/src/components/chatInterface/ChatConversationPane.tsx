@@ -49,6 +49,9 @@ interface ChatConversationPaneProps {
   onOpenUiPromptHistory: (sessionId: string) => void;
   uiPromptHistoryCount: number;
   uiPromptHistoryLoading: boolean;
+  onConfirmTask: ChatComposerPanelProps['onConfirmTask'];
+  onPauseTask: ChatComposerPanelProps['onPauseTask'];
+  onResumeTask: ChatComposerPanelProps['onResumeTask'];
   onCompleteTask: ChatComposerPanelProps['onCompleteTask'];
   onDeleteTask: ChatComposerPanelProps['onDeleteTask'];
   onEditTask: ChatComposerPanelProps['onEditTask'];
@@ -240,6 +243,9 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
   onOpenUiPromptHistory,
   uiPromptHistoryCount,
   uiPromptHistoryLoading,
+  onConfirmTask,
+  onPauseTask,
+  onResumeTask,
   onCompleteTask,
   onDeleteTask,
   onEditTask,
@@ -325,6 +331,9 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
           onOpenUiPromptHistory={onOpenUiPromptHistory}
           uiPromptHistoryCount={uiPromptHistoryCount}
           uiPromptHistoryLoading={uiPromptHistoryLoading}
+          onConfirmTask={onConfirmTask}
+          onPauseTask={onPauseTask}
+          onResumeTask={onResumeTask}
           onCompleteTask={onCompleteTask}
           onDeleteTask={onDeleteTask}
           onEditTask={onEditTask}

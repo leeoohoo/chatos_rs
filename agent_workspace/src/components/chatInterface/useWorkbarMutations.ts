@@ -2,6 +2,21 @@ import { useCallback, useState } from 'react';
 import type { TaskWorkbarItem } from '../TaskWorkbar';
 
 interface WorkbarMutationApiClient {
+  confirmTaskManagerTask: (
+    sessionId: string,
+    taskId: string,
+    payload?: { note?: string }
+  ) => Promise<unknown>;
+  pauseTaskManagerTask: (
+    sessionId: string,
+    taskId: string,
+    payload?: { reason?: string }
+  ) => Promise<unknown>;
+  resumeTaskManagerTask: (
+    sessionId: string,
+    taskId: string,
+    payload?: { note?: string }
+  ) => Promise<unknown>;
   completeTaskManagerTask: (sessionId: string, taskId: string) => Promise<unknown>;
   deleteTaskManagerTask: (sessionId: string, taskId: string) => Promise<unknown>;
   updateTaskManagerTask: (
@@ -54,6 +69,15 @@ export function useWorkbarMutations({
     });
   }, [apiClient, currentSessionId, withWorkbarTaskMutation]);
 
+  const handleWorkbarConfirmTask = useCallback(async (task: TaskWorkbarItem) => {
+    if (!currentSessionId) {
+      return;
+    }
+    await withWorkbarTaskMutation(task.id, async () => {
+      await apiClient.confirmTaskManagerTask(currentSessionId, task.id);
+    });
+  }, [apiClient, currentSessionId, withWorkbarTaskMutation]);
+
   const handleWorkbarDeleteTask = useCallback(async (task: TaskWorkbarItem) => {
     if (!currentSessionId) {
       return;
@@ -67,6 +91,24 @@ export function useWorkbarMutations({
 
     await withWorkbarTaskMutation(task.id, async () => {
       await apiClient.deleteTaskManagerTask(currentSessionId, task.id);
+    });
+  }, [apiClient, currentSessionId, withWorkbarTaskMutation]);
+
+  const handleWorkbarPauseTask = useCallback(async (task: TaskWorkbarItem) => {
+    if (!currentSessionId) {
+      return;
+    }
+    await withWorkbarTaskMutation(task.id, async () => {
+      await apiClient.pauseTaskManagerTask(currentSessionId, task.id);
+    });
+  }, [apiClient, currentSessionId, withWorkbarTaskMutation]);
+
+  const handleWorkbarResumeTask = useCallback(async (task: TaskWorkbarItem) => {
+    if (!currentSessionId) {
+      return;
+    }
+    await withWorkbarTaskMutation(task.id, async () => {
+      await apiClient.resumeTaskManagerTask(currentSessionId, task.id);
     });
   }, [apiClient, currentSessionId, withWorkbarTaskMutation]);
 
@@ -164,8 +206,11 @@ export function useWorkbarMutations({
 
   return {
     workbarActionLoadingTaskId,
+    handleWorkbarConfirmTask,
     handleWorkbarCompleteTask,
     handleWorkbarDeleteTask,
     handleWorkbarEditTask,
+    handleWorkbarPauseTask,
+    handleWorkbarResumeTask,
   };
 }

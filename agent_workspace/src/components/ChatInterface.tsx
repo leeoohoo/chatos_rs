@@ -201,9 +201,12 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     handleTaskReviewConfirm,
     handleUiPromptCancel,
     handleUiPromptSubmit,
+    handleWorkbarConfirmTask,
     handleWorkbarCompleteTask,
     handleWorkbarDeleteTask,
     handleWorkbarEditTask,
+    handleWorkbarPauseTask,
+    handleWorkbarResumeTask,
     mergedCurrentTurnTasks,
     resetAllWorkbarState,
     resetHistoryWorkbarState,
@@ -334,6 +337,15 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     onOpenUiPromptHistory: handleOpenUiPromptHistory,
     uiPromptHistoryCount: uiPromptHistoryItems.length,
     uiPromptHistoryLoading,
+    onConfirmTask: (task: any) => {
+      void handleWorkbarConfirmTask(task);
+    },
+    onPauseTask: (task: any) => {
+      void handleWorkbarPauseTask(task);
+    },
+    onResumeTask: (task: any) => {
+      void handleWorkbarResumeTask(task);
+    },
     onCompleteTask: (task: any) => {
       void handleWorkbarCompleteTask(task);
     },

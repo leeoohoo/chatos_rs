@@ -608,9 +608,15 @@ pub fn compose_contact_task_planning_prompt(
         lines.extend(serialized.lines().map(ToOwned::to_owned));
         lines.push("```".to_string());
     }
+    lines.push("能力选择规则补充：".to_string());
+    lines.push("- 如果任务是实现/改造/修复代码、页面、组件、接口、脚本或文档落地，`required_builtin_capabilities` 至少包含 `write`。".to_string());
+    lines.push("- 如果任务还需要运行命令、构建、测试、启动服务或查看日志，额外包含 `terminal`。".to_string());
+    lines.push("- 不要创建只带 `read` 的 implementation/migration/documentation 任务。".to_string());
 
     let mut examples = Vec::new();
-    let example_capabilities = allowed_capabilities.iter().take(2).cloned().collect::<Vec<_>>();
+    let has_read = allowed_capabilities.iter().any(|item| item == "read");
+    let has_write = allowed_capabilities.iter().any(|item| item == "write");
+    let has_terminal = allowed_capabilities.iter().any(|item| item == "terminal");
     let skill_ref = runtime_context
         .and_then(|agent| agent.runtime_skills.first())
         .map(|_| "SK1".to_string());
@@ -635,11 +641,19 @@ pub fn compose_contact_task_planning_prompt(
             "asset_ref": asset_ref,
         }));
     }
-    if !required_context_assets.is_empty() || !example_capabilities.is_empty() {
+    let mut implementation_capabilities = Vec::new();
+    if has_write {
+        implementation_capabilities.push("write".to_string());
+    }
+    if has_terminal {
+        implementation_capabilities.push("terminal".to_string());
+    }
+    if !required_context_assets.is_empty() || !implementation_capabilities.is_empty() {
         examples.push(json!({
-            "title": "先梳理需求并形成可执行结果",
-            "details": "结合当前轮已经看到的上下文，执行任务并输出明确结果；不要在执行阶段重复做无边界探索。",
-            "required_builtin_capabilities": example_capabilities,
+            "task_kind": "implementation",
+            "title": "实现当前需求并完成落地修改",
+            "details": "基于当前轮已经确认的范围直接修改项目内容并完成交付；执行阶段不要再重复做聊天阶段已经完成的无边界查看。",
+            "required_builtin_capabilities": implementation_capabilities,
             "required_context_assets": required_context_assets,
             "execution_result_contract": {
                 "result_required": true,
@@ -649,15 +663,15 @@ pub fn compose_contact_task_planning_prompt(
     }
 
     if let Some(asset_ref) = plugin_ref {
-        let second_example_capabilities = if example_capabilities.is_empty() {
-            Vec::new()
-        } else {
-            vec![example_capabilities[0].clone()]
-        };
+        let mut analysis_capabilities = Vec::new();
+        if has_read {
+            analysis_capabilities.push("read".to_string());
+        }
         examples.push(json!({
+            "task_kind": "analysis",
             "title": "基于当前联系人插件能力完成任务",
-            "details": "优先利用联系人已有插件与技能，不要重新发明流程。",
-            "required_builtin_capabilities": second_example_capabilities,
+            "details": "优先利用联系人已有插件与技能进行必要分析和定界，避免重复探索。",
+            "required_builtin_capabilities": analysis_capabilities,
             "required_context_assets": [{
                 "asset_type": "plugin",
                 "asset_ref": asset_ref,

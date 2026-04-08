@@ -8,7 +8,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::api::chat_stream_common::{
-    build_prefixed_input_items, resolve_chat_stream_context, sync_chat_turn_snapshot,
+    build_chat_system_prompt, resolve_chat_stream_context, sync_chat_turn_snapshot,
     validate_chat_stream_request, wire_implicit_command_tracking, ChatStreamRequest,
 };
 use crate::config::Config;
@@ -387,13 +387,14 @@ where
         model_runtime.use_active_system_context,
     )
     .await;
-    if runtime_context.base_system_prompt.is_some() {
-        ai_server.set_system_prompt(runtime_context.base_system_prompt.clone());
-    }
-    let prefixed_input_items = build_prefixed_input_items(
+    let effective_system_prompt = build_chat_system_prompt(
+        runtime_context.base_system_prompt.as_deref(),
         runtime_context.contact_system_prompt.as_deref(),
         runtime_context.command_system_prompt.as_deref(),
     );
+    if effective_system_prompt.is_some() {
+        ai_server.set_system_prompt(effective_system_prompt);
+    }
 
     let (http_servers, stdio_servers, builtin_servers) = runtime_context.mcp_server_bundle.clone();
     let use_tools = runtime_context.use_tools;
@@ -480,7 +481,7 @@ where
                 user_message_id: Some(user_message_id.clone()),
                 message_mode: Some("model".to_string()),
                 message_source: Some(model_runtime.model.clone()),
-                prefixed_input_items,
+                prefixed_input_items: None,
                 request_cwd: if model_runtime.use_codex_gateway_mcp_passthrough {
                     runtime_context.resolved_project_root.clone()
                 } else {
@@ -489,6 +490,7 @@ where
                 use_codex_gateway_mcp_passthrough: Some(
                     model_runtime.use_codex_gateway_mcp_passthrough,
                 ),
+                disable_prev_response_reuse: Some(runtime_context.is_im_session),
             },
         )
         .await;

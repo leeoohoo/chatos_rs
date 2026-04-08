@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use tracing::{info, warn};
 
 use crate::api::chat_stream_common::{
-    build_prefixed_input_items, resolve_chat_stream_context, ChatStreamRequest,
+    build_chat_system_prompt, resolve_chat_stream_context, ChatStreamRequest,
 };
 use crate::config::Config;
 use crate::core::ai_model_config::resolve_chat_model_config;
@@ -531,7 +531,7 @@ struct PreparedTaskRuntime {
 }
 
 impl PreparedTaskRuntime {
-    fn chat_options(&self, turn_suffix: &str, task: Option<&TaskRecordDto>) -> ChatOptions {
+    fn chat_options(&self, turn_suffix: &str, _task: Option<&TaskRecordDto>) -> ChatOptions {
         ChatOptions {
             model: Some(self.model_runtime.model.clone()),
             provider: Some(self.model_runtime.provider.clone()),
@@ -548,10 +548,7 @@ impl PreparedTaskRuntime {
             user_message_id: None,
             message_mode: Some("model".to_string()),
             message_source: Some(self.model_runtime.model.clone()),
-            prefixed_input_items: build_task_execution_prefixed_input_items(
-                &self.runtime_context,
-                task,
-            ),
+            prefixed_input_items: None,
             request_cwd: if self.model_runtime.use_codex_gateway_mcp_passthrough {
                 self.runtime_context.resolved_project_root.clone()
             } else {
@@ -560,6 +557,7 @@ impl PreparedTaskRuntime {
             use_codex_gateway_mcp_passthrough: Some(
                 self.model_runtime.use_codex_gateway_mcp_passthrough,
             ),
+            disable_prev_response_reuse: None,
         }
     }
 }
@@ -637,13 +635,24 @@ async fn build_task_runtime(
         model_runtime.use_active_system_context,
     )
     .await;
-    if runtime_context.base_system_prompt.is_some() {
-        ai_server.set_system_prompt(runtime_context.base_system_prompt.clone());
-    }
 
     let execution_asset_context =
         build_task_execution_asset_context(scope.contact_agent_id.as_str(), task).await?;
     let dependency_handoff_context = build_task_dependency_handoff_context(task).await?;
+
+    let runtime_context = crate::api::chat_stream_common::ResolvedChatStreamContext {
+        contact_system_prompt: join_optional_sections(&[
+            runtime_context.contact_system_prompt.clone(),
+            execution_asset_context,
+            dependency_handoff_context,
+        ]),
+        ..runtime_context
+    };
+    let effective_task_system_prompt =
+        build_task_execution_system_prompt(&runtime_context, task);
+    if effective_task_system_prompt.is_some() {
+        ai_server.set_system_prompt(effective_task_system_prompt);
+    }
 
     let (http_servers, stdio_servers, mut builtin_servers) =
         runtime_context.mcp_server_bundle.clone();
@@ -692,14 +701,7 @@ async fn build_task_runtime(
     Ok(PreparedTaskRuntime {
         ai_server,
         model_runtime,
-        runtime_context: crate::api::chat_stream_common::ResolvedChatStreamContext {
-            contact_system_prompt: join_optional_sections(&[
-                runtime_context.contact_system_prompt.clone(),
-                execution_asset_context,
-                dependency_handoff_context,
-            ]),
-            ..runtime_context
-        },
+        runtime_context,
         runtime_session_key: format!("task-exec-scope:{}", scope.scope_key),
         max_tokens,
     })
@@ -781,15 +783,18 @@ async fn resolve_task_execution_contact_id(
         })
 }
 
-fn build_task_execution_prefixed_input_items(
+fn build_task_execution_system_prompt(
     runtime_context: &crate::api::chat_stream_common::ResolvedChatStreamContext,
     task: Option<&TaskRecordDto>,
-) -> Option<Vec<Value>> {
-    let mut items = build_prefixed_input_items(
+) -> Option<String> {
+    let mut sections = Vec::new();
+    if let Some(base_prompt) = build_chat_system_prompt(
+        runtime_context.base_system_prompt.as_deref(),
         runtime_context.contact_system_prompt.as_deref(),
         runtime_context.command_system_prompt.as_deref(),
-    )
-    .unwrap_or_default();
+    ) {
+        sections.push(base_prompt);
+    }
 
     if let Some(summary) = runtime_context
         .memory_summary_prompt
@@ -797,9 +802,7 @@ fn build_task_execution_prefixed_input_items(
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
-        items.push(system_input_item(
-            format!("历史上下文总结：\n{}", summary).as_str(),
-        ));
+        sections.push(format!("历史上下文总结：\n{}", summary));
     }
 
     if let Some(task) = task {
@@ -901,22 +904,14 @@ fn build_task_execution_prefixed_input_items(
         lines.push("如果新增要求已经超出当前任务边界，必须使用 create_tasks 创建后续任务；必要时在安全点调用 ack_pause_request 暂停当前任务，再交由后续任务处理。".to_string());
         lines.push("如果新增要求使当前任务目标本身发生变化，请优先以最新用户要求为准；必要时暂停或停止当前任务，并重新拆分任务，而不是机械地把要求视为原任务附注。".to_string());
         lines.push("执行完成后，应输出明确结果；如失败，也必须说明失败结果。".to_string());
-        items.push(system_input_item(lines.join("\n").as_str()));
+        sections.push(lines.join("\n"));
     }
 
-    if items.is_empty() {
+    if sections.is_empty() {
         None
     } else {
-        Some(items)
+        Some(sections.join("\n\n"))
     }
-}
-
-fn system_input_item(text: &str) -> Value {
-    json!({
-        "type": "message",
-        "role": "system",
-        "content": [{ "type": "input_text", "text": text }],
-    })
 }
 
 fn join_optional_sections(sections: &[Option<String>]) -> Option<String> {

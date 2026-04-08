@@ -26,6 +26,7 @@ use crate::core::turn_runtime_snapshot::{
 use crate::services::ai_client_common::AiClientCallbacks;
 use crate::services::builtin_mcp::contact_chat_default_mcp_ids;
 use crate::services::memory_server_client::{self, TurnRuntimeSnapshotSelectedCommandDto};
+use crate::services::task_manager::list_tasks_for_context;
 
 const CONTACT_CHAT_TASK_PLANNING_RULES: &str =
     include_str!("../../config/prompts/contact_chat_task_planning.md");
@@ -85,6 +86,7 @@ pub(crate) fn validate_chat_stream_request(
 pub(crate) struct ResolvedChatStreamContext {
     pub effective_user_id: Option<String>,
     pub contact_agent_id: Option<String>,
+    pub is_im_session: bool,
     pub base_system_prompt: Option<String>,
     pub contact_system_prompt: Option<String>,
     pub command_system_prompt: Option<String>,
@@ -118,6 +120,17 @@ pub(crate) async fn resolve_chat_stream_context(
     let session_metadata = memory_session
         .as_ref()
         .and_then(|session| session.metadata.as_ref());
+    let is_im_session = session_metadata
+        .and_then(|metadata| metadata.get("im"))
+        .map(|node| {
+            node.get("conversation_id")
+                .or_else(|| node.get("conversationId"))
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .map(|value| !value.is_empty())
+                .unwrap_or(false)
+        })
+        .unwrap_or(false);
     let runtime_metadata = ChatRuntimeMetadata::from_metadata(session_metadata);
 
     let effective_user_id = resolve_effective_user_id(req.user_id.clone(), session_id).await;
@@ -225,9 +238,23 @@ pub(crate) async fn resolve_chat_stream_context(
         None
     };
     let merged_task_planning_prompt = if is_contact_chat_context {
+        let existing_tasks_prompt = match list_tasks_for_context(session_id, None, false, 12).await {
+            Ok(tasks) => format_existing_unfinished_tasks_prompt(tasks.as_slice()),
+            Err(err) => {
+                warn!(
+                    "load unfinished tasks for contact planning prompt failed: session_id={} detail={}",
+                    session_id, err
+                );
+                None
+            }
+        };
+        let runtime_task_planning_prompt = merge_prompt_sections(
+            contact_task_planning_prompt.as_deref(),
+            existing_tasks_prompt.as_deref(),
+        );
         merge_prompt_sections(
             Some(CONTACT_CHAT_TASK_PLANNING_RULES),
-            contact_task_planning_prompt.as_deref(),
+            runtime_task_planning_prompt.as_deref(),
         )
     } else {
         None
@@ -324,6 +351,7 @@ pub(crate) async fn resolve_chat_stream_context(
     ResolvedChatStreamContext {
         effective_user_id,
         contact_agent_id,
+        is_im_session,
         base_system_prompt,
         contact_system_prompt,
         command_system_prompt,
@@ -364,30 +392,17 @@ pub(crate) fn build_prefixed_messages(
     }
 }
 
-pub(crate) fn build_prefixed_input_items(
+pub(crate) fn build_chat_system_prompt(
+    base_system_prompt: Option<&str>,
     contact_system_prompt: Option<&str>,
     command_system_prompt: Option<&str>,
-) -> Option<Vec<Value>> {
-    let mut prefixed_input_items = Vec::new();
-    if let Some(prompt) = normalize_optional_text(contact_system_prompt) {
-        prefixed_input_items.push(json!({
-            "type": "message",
-            "role": "system",
-            "content": [{ "type": "input_text", "text": prompt }],
-        }));
-    }
-    if let Some(prompt) = normalize_optional_text(command_system_prompt) {
-        prefixed_input_items.push(json!({
-            "type": "message",
-            "role": "system",
-            "content": [{ "type": "input_text", "text": prompt }],
-        }));
-    }
-    if prefixed_input_items.is_empty() {
-        None
-    } else {
-        Some(prefixed_input_items)
-    }
+) -> Option<String> {
+    let merged_contact_prompt =
+        merge_prompt_sections(base_system_prompt, contact_system_prompt);
+    merge_prompt_sections(
+        merged_contact_prompt.as_deref(),
+        command_system_prompt,
+    )
 }
 
 pub(crate) fn wire_implicit_command_tracking(
@@ -528,9 +543,99 @@ fn merge_prompt_sections(base: Option<&str>, extra: Option<&str>) -> Option<Stri
     }
 }
 
+fn format_existing_unfinished_tasks_prompt(
+    tasks: &[crate::services::task_manager::TaskRecord],
+) -> Option<String> {
+    if tasks.is_empty() {
+        return None;
+    }
+
+    let mut lines = Vec::new();
+    lines.push("当前上下文里已经存在未完成任务，先阅读并结合它们决定是否需要重排，而不是默认重新创建：".to_string());
+    lines.push("规则：如果已有任务可以覆盖用户新增要求，优先调整、确认、暂停、恢复或停止现有任务；只有当现有任务无法承接时，才新建任务。".to_string());
+    for (index, task) in tasks.iter().take(8).enumerate() {
+        let mut parts = vec![
+            format!("{}.", index + 1),
+            format!("id={}", task.id.trim()),
+            format!("status={}", task.status.trim()),
+            format!("title={}", task.title.trim()),
+        ];
+        if let Some(task_ref) = task.task_ref.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+            parts.push(format!("task_ref={}", task_ref));
+        }
+        if let Some(task_kind) = task
+            .task_kind
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            parts.push(format!("kind={}", task_kind));
+        }
+        if !task.depends_on_task_ids.is_empty() {
+            parts.push(format!("depends_on={}", task.depends_on_task_ids.join(",")));
+        }
+        if !task.verification_of_task_ids.is_empty() {
+            parts.push(format!(
+                "verification_of={}",
+                task.verification_of_task_ids.join(",")
+            ));
+        }
+        lines.push(parts.join(" | "));
+
+        let details = task.details.trim();
+        if !details.is_empty() {
+            lines.push(format!("- details: {}", details));
+        }
+        if let Some(blocked_reason) = task
+            .blocked_reason
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            lines.push(format!("- blocked_reason: {}", blocked_reason));
+        }
+        if let Some(result_summary) = task
+            .result_summary
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            lines.push(format!("- latest_result_summary: {}", result_summary));
+        }
+    }
+
+    Some(lines.join("\n"))
+}
+
 fn normalize_optional_text(value: Option<&str>) -> Option<String> {
     value
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_chat_system_prompt;
+
+    #[test]
+    fn build_chat_system_prompt_merges_stable_sections_in_order() {
+        let prompt = build_chat_system_prompt(
+            Some("base rules"),
+            Some("contact rules"),
+            Some("command rules"),
+        );
+
+        assert_eq!(
+            prompt.as_deref(),
+            Some("base rules\n\ncontact rules\n\ncommand rules")
+        );
+    }
+
+    #[test]
+    fn build_chat_system_prompt_skips_empty_sections() {
+        let prompt = build_chat_system_prompt(Some("base rules"), Some(""), None);
+
+        assert_eq!(prompt.as_deref(), Some("base rules"));
+    }
 }

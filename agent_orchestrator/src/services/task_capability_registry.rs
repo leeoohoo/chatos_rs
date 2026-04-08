@@ -149,3 +149,20 @@ pub fn infer_capability_mcp_ids_from_text(
     }
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::infer_capability_mcp_ids_from_text;
+
+    #[test]
+    fn infers_write_capability_from_common_chinese_implementation_phrases() {
+        let inferred = infer_capability_mcp_ids_from_text(
+            "实现 Admin 报表页面，新增路由并接入接口",
+            &vec!["builtin_code_maintainer_write".to_string()],
+            true,
+            false,
+        );
+
+        assert_eq!(inferred, vec!["builtin_code_maintainer_write".to_string()]);
+    }
+}

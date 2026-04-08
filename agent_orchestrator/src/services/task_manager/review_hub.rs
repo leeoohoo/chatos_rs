@@ -5,7 +5,8 @@ use once_cell::sync::Lazy;
 use tokio::sync::{oneshot, Mutex};
 use uuid::Uuid;
 
-use super::normalizer::{normalize_task_drafts, trimmed_non_empty};
+use super::normalizer::trimmed_non_empty;
+use super::store::prepare_task_drafts_for_creation;
 use super::types::{
     TaskCreateReviewPayload, TaskDraft, TaskReviewAction, TaskReviewDecision, REVIEW_NOT_FOUND_ERR,
     REVIEW_TIMEOUT_ERR, REVIEW_TIMEOUT_MS_DEFAULT,
@@ -50,11 +51,11 @@ impl TaskReviewHub {
         let resolved_tasks = match action {
             TaskReviewAction::Confirm => {
                 let source_tasks = tasks.unwrap_or_else(|| entry.payload.draft_tasks.clone());
-                let normalized = normalize_task_drafts(source_tasks)?;
-                if normalized.is_empty() {
+                let prepared = prepare_task_drafts_for_creation(source_tasks)?;
+                if prepared.is_empty() {
                     return Err("tasks is required for confirm action".to_string());
                 }
-                normalized
+                prepared
             }
             TaskReviewAction::Cancel => Vec::new(),
         };
@@ -103,7 +104,7 @@ pub async fn create_task_review(
         .ok_or_else(|| "conversation_turn_id is required for task review".to_string())?
         .to_string();
 
-    let draft_tasks = normalize_task_drafts(draft_tasks)?;
+    let draft_tasks = prepare_task_drafts_for_creation(draft_tasks)?;
     if draft_tasks.is_empty() {
         return Err("at least one draft task is required".to_string());
     }

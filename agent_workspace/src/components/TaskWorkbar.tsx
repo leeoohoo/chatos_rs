@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import {
   formatGuidanceAppliedTime,
   sortTasks,
+  statusText,
 } from './taskWorkbar/helpers';
 import RuntimeGuidanceSection from './taskWorkbar/RuntimeGuidanceSection';
 import TaskCard from './taskWorkbar/TaskCard';
@@ -31,6 +32,9 @@ interface TaskWorkbarProps {
   onOpenUiPromptHistory?: () => void;
   uiPromptHistoryCount?: number;
   uiPromptHistoryLoading?: boolean;
+  onConfirmTask?: (task: TaskWorkbarItem) => void;
+  onPauseTask?: (task: TaskWorkbarItem) => void;
+  onResumeTask?: (task: TaskWorkbarItem) => void;
   onCompleteTask?: (task: TaskWorkbarItem) => void;
   onDeleteTask?: (task: TaskWorkbarItem) => void;
   onEditTask?: (task: TaskWorkbarItem) => void;
@@ -54,6 +58,9 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
   onOpenUiPromptHistory,
   uiPromptHistoryCount = 0,
   uiPromptHistoryLoading = false,
+  onConfirmTask,
+  onPauseTask,
+  onResumeTask,
   onCompleteTask,
   onDeleteTask,
   onEditTask,
@@ -143,6 +150,22 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
       items,
     }));
   }, [currentTurnTasks]);
+  const currentTurnStatusSummary = useMemo(() => {
+    return currentTurnTasks.reduce<Record<TaskWorkbarItem['status'], number>>((acc, task) => {
+      acc[task.status] += 1;
+      return acc;
+    }, {
+      pending_confirm: 0,
+      pending_execute: 0,
+      running: 0,
+      paused: 0,
+      blocked: 0,
+      completed: 0,
+      failed: 0,
+      cancelled: 0,
+      skipped: 0,
+    });
+  }, [currentTurnTasks]);
 
   const handleOpenHistory = (filter: HistoryFilter = 'all') => {
     setHistoryFilter(filter);
@@ -152,7 +175,7 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
 
   return (
     <>
-      <div className="mx-2 mt-2 rounded-lg border border-border bg-card/70 px-3 py-2">
+      <div className="mx-2 mt-2 rounded-xl border border-border bg-card/80 px-3 py-3 shadow-sm">
         <div className="flex items-center justify-between gap-2">
           <button
             type="button"
@@ -167,14 +190,14 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
               <path d="M7 5l6 5-6 5V5z" />
             </svg>
             <div className="min-w-0">
-              <div className="text-xs font-semibold text-foreground">Workbar</div>
-              <div className="text-[11px] text-muted-foreground">{`\u5f53\u524d\u8f6e\u4efb\u52a1\uff1a${currentTurnTasks.length}`}</div>
+              <div className="text-sm font-semibold text-foreground">任务面板</div>
+              <div className="text-xs text-muted-foreground">{`当前轮次任务：${currentTurnTasks.length}`}</div>
               {runtimeGuidanceHint ? (
-                <div className="text-[11px] text-muted-foreground">{runtimeGuidanceHint}</div>
+                <div className="text-xs text-muted-foreground">{runtimeGuidanceHint}</div>
               ) : null}
               {latestRuntimeGuidanceContent ? (
                 <div
-                  className="truncate text-[11px] text-muted-foreground"
+                  className="truncate text-xs text-muted-foreground"
                   title={latestRuntimeGuidanceContent}
                 >
                   {`最近引导：${latestRuntimeGuidanceContent}`}
@@ -224,8 +247,23 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
           </div>
         </div>
 
+        {currentTurnTasks.length > 0 ? (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {Object.entries(currentTurnStatusSummary)
+              .filter(([, count]) => count > 0)
+              .map(([status, count]) => (
+                <span
+                  key={status}
+                  className="rounded-full border border-border bg-background px-2.5 py-1 text-[11px] text-muted-foreground"
+                >
+                  {`${statusText[status as TaskWorkbarItem['status']]} ${count}`}
+                </span>
+              ))}
+          </div>
+        ) : null}
+
         {expanded ? (
-          <div className="mt-2 border-t border-border pt-2">
+          <div className="mt-3 max-h-[48vh] overflow-y-auto border-t border-border pt-3 pr-1">
             {error ? (
               <div className="mb-2 rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] text-rose-700 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200">
                 {error}
@@ -247,18 +285,48 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
             ) : null}
 
             {currentTurnTasks.length > 0 ? (
-              <div className="space-y-2">
+              <div className="space-y-3">
                 {currentTurnTaskPlans.map((plan) => (
-                  <div key={plan.planId} className="space-y-1">
-                    <div className="rounded-md border border-border bg-background px-2 py-1 text-[11px] font-medium text-foreground">
-                      {`计划 ${plan.planId} · ${plan.items.length} 个任务`}
+                  <div key={plan.planId} className="rounded-xl border border-border bg-background/80 p-3">
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <div className="text-sm font-semibold text-foreground">{`计划 ${plan.planId}`}</div>
+                        <div className="text-xs text-muted-foreground">{`${plan.items.length} 个任务`}</div>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {Object.entries(plan.items.reduce<Record<TaskWorkbarItem['status'], number>>((acc, task) => {
+                          acc[task.status] += 1;
+                          return acc;
+                        }, {
+                          pending_confirm: 0,
+                          pending_execute: 0,
+                          running: 0,
+                          paused: 0,
+                          blocked: 0,
+                          completed: 0,
+                          failed: 0,
+                          cancelled: 0,
+                          skipped: 0,
+                        }))
+                          .filter(([, count]) => count > 0)
+                          .map(([status, count]) => (
+                            <span
+                              key={`${plan.planId}-${status}`}
+                              className="rounded-full border border-border px-2 py-1 text-[11px] text-muted-foreground"
+                            >
+                              {`${statusText[status as TaskWorkbarItem['status']]} ${count}`}
+                            </span>
+                          ))}
+                      </div>
                     </div>
-                    <div className="flex gap-1.5 overflow-x-auto pb-1">
+                    <div className="space-y-2">
                       {plan.items.map((task) => (
                         <TaskCard
                           key={task.id}
                           task={task}
-                          compact
+                          onConfirmTask={onConfirmTask}
+                          onPauseTask={onPauseTask}
+                          onResumeTask={onResumeTask}
                           onCompleteTask={onCompleteTask}
                           onDeleteTask={onDeleteTask}
                           onEditTask={onEditTask}
@@ -287,6 +355,9 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
         onClose={() => setHistoryOpen(false)}
         onRefresh={onRefresh}
         onSetHistoryFilter={setHistoryFilter}
+        onConfirmTask={onConfirmTask}
+        onPauseTask={onPauseTask}
+        onResumeTask={onResumeTask}
         onCompleteTask={onCompleteTask}
         onDeleteTask={onDeleteTask}
         onEditTask={onEditTask}

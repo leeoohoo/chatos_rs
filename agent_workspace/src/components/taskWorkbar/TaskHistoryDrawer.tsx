@@ -14,6 +14,9 @@ interface TaskHistoryDrawerProps {
   onClose: () => void;
   onRefresh?: () => void;
   onSetHistoryFilter: (filter: HistoryFilter) => void;
+  onConfirmTask?: (task: TaskWorkbarItem) => void;
+  onPauseTask?: (task: TaskWorkbarItem) => void;
+  onResumeTask?: (task: TaskWorkbarItem) => void;
   onCompleteTask?: (task: TaskWorkbarItem) => void;
   onDeleteTask?: (task: TaskWorkbarItem) => void;
   onEditTask?: (task: TaskWorkbarItem) => void;
@@ -32,6 +35,9 @@ const TaskHistoryDrawer = ({
   onClose,
   onRefresh,
   onSetHistoryFilter,
+  onConfirmTask,
+  onPauseTask,
+  onResumeTask,
   onCompleteTask,
   onDeleteTask,
   onEditTask,
@@ -62,7 +68,7 @@ const TaskHistoryDrawer = ({
         className="absolute inset-0 bg-black/35"
         onClick={onClose}
       />
-      <div className="absolute right-0 top-0 h-full w-full max-w-md border-l border-border bg-card shadow-xl">
+      <div className="absolute right-0 top-0 h-full w-full max-w-2xl border-l border-border bg-card shadow-xl">
         <div className="flex h-full flex-col">
           <div className="flex items-center justify-between border-b border-border px-4 py-3">
             <div>
@@ -138,13 +144,16 @@ const TaskHistoryDrawer = ({
               <div className="space-y-3">
                 {groupedVisibleTasks.map((group) => (
                   <div key={group.planId} className="space-y-2">
-                    <div className="sticky top-0 z-10 rounded-md border border-border bg-background/95 px-2 py-1 text-[11px] font-medium text-foreground backdrop-blur">
+                    <div className="sticky top-0 z-10 rounded-lg border border-border bg-background/95 px-3 py-2 text-xs font-medium text-foreground backdrop-blur">
                       {`计划 ${group.planId} · ${group.tasks.length} 个任务`}
                     </div>
                     {group.tasks.map((task) => (
                       <TaskCard
                         key={task.id}
                         task={task}
+                        onConfirmTask={onConfirmTask}
+                        onPauseTask={onPauseTask}
+                        onResumeTask={onResumeTask}
                         onCompleteTask={onCompleteTask}
                         onDeleteTask={onDeleteTask}
                         onEditTask={onEditTask}

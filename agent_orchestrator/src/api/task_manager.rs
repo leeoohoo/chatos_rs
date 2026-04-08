@@ -10,9 +10,10 @@ use serde_json::{json, Value};
 use crate::core::auth::AuthUser;
 use crate::core::session_access::{ensure_owned_session, map_session_access_error_with_success};
 use crate::services::task_manager::{
-    complete_task_by_id, delete_task_by_id, get_task_review_payload, list_tasks_for_context,
-    submit_task_review_decision, update_task_by_id, TaskDraft, TaskReviewAction, TaskUpdatePatch,
-    REVIEW_NOT_FOUND_ERR, TASK_NOT_FOUND_ERR,
+    complete_task_by_id, confirm_task_by_id, delete_task_by_id, get_task_review_payload,
+    list_tasks_for_context, pause_task_by_id, resume_task_by_id, submit_task_review_decision,
+    update_task_by_id, TaskDraft, TaskReviewAction, TaskUpdatePatch, REVIEW_NOT_FOUND_ERR,
+    TASK_NOT_FOUND_ERR,
 };
 
 #[derive(Debug, Deserialize)]
@@ -48,6 +49,21 @@ struct UpdateTaskRequest {
     due_at_legacy: Option<Option<String>>,
 }
 
+#[derive(Debug, Deserialize)]
+struct ConfirmTaskRequest {
+    note: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PauseTaskRequest {
+    reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ResumeTaskRequest {
+    note: Option<String>,
+}
+
 pub fn router() -> Router {
     Router::new()
         .route(
@@ -63,6 +79,12 @@ pub fn router() -> Router {
             "/api/task-manager/tasks/:task_id/complete",
             post(complete_task),
         )
+        .route(
+            "/api/task-manager/tasks/:task_id/confirm",
+            post(confirm_task),
+        )
+        .route("/api/task-manager/tasks/:task_id/pause", post(pause_task))
+        .route("/api/task-manager/tasks/:task_id/resume", post(resume_task))
 }
 
 async fn list_tasks(
@@ -208,6 +230,47 @@ async fn complete_task(
     }
 }
 
+async fn confirm_task(
+    auth: AuthUser,
+    Path(task_id): Path<String>,
+    Query(scope): Query<SessionScopeQuery>,
+    Json(req): Json<ConfirmTaskRequest>,
+) -> (StatusCode, Json<Value>) {
+    if scope.session_id.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "success": false, "error": "session_id is required" })),
+        );
+    }
+    if task_id.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "success": false, "error": "task_id is required" })),
+        );
+    }
+    if let Err(err) = ensure_owned_session(scope.session_id.as_str(), &auth).await {
+        return map_session_access_error_with_success(err);
+    }
+
+    match confirm_task_by_id(scope.session_id.as_str(), task_id.as_str(), req.note).await {
+        Ok(task) => (
+            StatusCode::OK,
+            Json(json!({
+                "success": true,
+                "task": task,
+            })),
+        ),
+        Err(err) if err == TASK_NOT_FOUND_ERR => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "success": false, "error": err })),
+        ),
+        Err(err) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "success": false, "error": err })),
+        ),
+    }
+}
+
 async fn delete_task(
     auth: AuthUser,
     Path(task_id): Path<String>,
@@ -237,6 +300,88 @@ async fn delete_task(
         Ok(false) => (
             StatusCode::NOT_FOUND,
             Json(json!({ "success": false, "deleted": false, "error": TASK_NOT_FOUND_ERR })),
+        ),
+        Err(err) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "success": false, "error": err })),
+        ),
+    }
+}
+
+async fn pause_task(
+    auth: AuthUser,
+    Path(task_id): Path<String>,
+    Query(scope): Query<SessionScopeQuery>,
+    Json(req): Json<PauseTaskRequest>,
+) -> (StatusCode, Json<Value>) {
+    if scope.session_id.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "success": false, "error": "session_id is required" })),
+        );
+    }
+    if task_id.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "success": false, "error": "task_id is required" })),
+        );
+    }
+    if let Err(err) = ensure_owned_session(scope.session_id.as_str(), &auth).await {
+        return map_session_access_error_with_success(err);
+    }
+
+    match pause_task_by_id(scope.session_id.as_str(), task_id.as_str(), req.reason).await {
+        Ok(task) => (
+            StatusCode::OK,
+            Json(json!({
+                "success": true,
+                "task": task,
+            })),
+        ),
+        Err(err) if err == TASK_NOT_FOUND_ERR => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "success": false, "error": err })),
+        ),
+        Err(err) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "success": false, "error": err })),
+        ),
+    }
+}
+
+async fn resume_task(
+    auth: AuthUser,
+    Path(task_id): Path<String>,
+    Query(scope): Query<SessionScopeQuery>,
+    Json(req): Json<ResumeTaskRequest>,
+) -> (StatusCode, Json<Value>) {
+    if scope.session_id.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "success": false, "error": "session_id is required" })),
+        );
+    }
+    if task_id.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "success": false, "error": "task_id is required" })),
+        );
+    }
+    if let Err(err) = ensure_owned_session(scope.session_id.as_str(), &auth).await {
+        return map_session_access_error_with_success(err);
+    }
+
+    match resume_task_by_id(scope.session_id.as_str(), task_id.as_str(), req.note).await {
+        Ok(task) => (
+            StatusCode::OK,
+            Json(json!({
+                "success": true,
+                "task": task,
+            })),
+        ),
+        Err(err) if err == TASK_NOT_FOUND_ERR => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "success": false, "error": err })),
         ),
         Err(err) => (
             StatusCode::BAD_REQUEST,

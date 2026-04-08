@@ -198,7 +198,7 @@ impl TaskPlannerService {
         self.register_tool(
             "create_tasks",
             &format!(
-                "Create one or more tasks for the current conversation turn. New tasks always start in pending_confirm. Only use the simplified fields exposed in this schema. Prefer required_builtin_capabilities and required_context_assets; the server will map them into internal task planning fields and auto-pass current turn runtime, selected commons, project_root, remote_connection_id, and related planning context when possible (server: {server_name})."
+                "Create one or more tasks for the current conversation turn. New tasks always start in pending_confirm. Only use the simplified fields exposed in this schema. Prefer required_builtin_capabilities and required_context_assets; the server will map them into internal task planning fields and auto-pass current turn runtime, selected commons, project_root, remote_connection_id, and related planning context when possible. For implementation/migration/documentation tasks that modify files, required_builtin_capabilities must include write; if commands/build/tests/logs are needed, also include terminal (server: {server_name})."
             ),
             json!({
                 "type": "object",

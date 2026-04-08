@@ -292,7 +292,15 @@ impl AiClient {
                 Some(resp) => resp,
                 None => return Err(last_error.unwrap_or_else(|| "request failed".to_string())),
             };
-            log_usage_snapshot(purpose, ai_response.usage.as_ref());
+            log_usage_snapshot(
+                purpose,
+                session_id.as_deref(),
+                turn_id.as_deref(),
+                iteration,
+                use_prev_id,
+                can_use_prev_id,
+                ai_response.usage.as_ref(),
+            );
 
             if let Some(err) = completion_failed_error(
                 ai_response.finish_reason.as_deref(),
@@ -551,6 +559,12 @@ impl AiClient {
                     reply_prompt.as_str(),
                     force_text_content,
                 ));
+                if let (Some(sid), Some(tid)) = (session_id.as_deref(), turn_id.as_deref()) {
+                    // Once planning mutation succeeds, this turn should only emit the final
+                    // natural-language summary. New user messages must start a fresh IM run
+                    // instead of being merged into this tool-free finalize phase.
+                    runtime_guidance_manager().close_turn(sid, tid);
+                }
                 im_planning_finalize_only = true;
                 im_planning_finalize_fallback = Some(fallback_reply);
                 tools.clear();
@@ -724,13 +738,36 @@ fn is_successful_im_planning_mutation_result(result: &ToolResult) -> bool {
     im_planning_mutation_summary(result).is_some()
 }
 
+fn canonical_im_planning_tool_name(name: &str) -> Option<&'static str> {
+    const PLANNING_MUTATION_TOOLS: [&str; 5] = [
+        "create_tasks",
+        "confirm_task",
+        "request_pause_running_task",
+        "request_stop_running_task",
+        "resume_task",
+    ];
+
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    PLANNING_MUTATION_TOOLS.iter().copied().find(|candidate| {
+        trimmed == *candidate
+            || trimmed
+                .strip_suffix(candidate)
+                .and_then(|prefix| prefix.strip_suffix('_'))
+                .is_some()
+    })
+}
+
 fn im_planning_mutation_summary(result: &ToolResult) -> Option<String> {
     if !result.success || result.is_error || result.is_stream {
         return None;
     }
 
     let payload = serde_json::from_str::<Value>(result.content.as_str()).ok();
-    match result.name.as_str() {
+    match canonical_im_planning_tool_name(result.name.as_str())? {
         "create_tasks" => {
             let confirmed = payload
                 .as_ref()
@@ -773,7 +810,9 @@ fn im_planning_mutation_summary(result: &ToolResult) -> Option<String> {
             .and_then(|value| value.get("requested").and_then(Value::as_bool))
             .filter(|requested| *requested)
             .map(|_| {
-                if result.name == "request_pause_running_task" {
+                if canonical_im_planning_tool_name(result.name.as_str())
+                    == Some("request_pause_running_task")
+                {
                     "已提交暂停当前任务的请求".to_string()
                 } else {
                     "已提交停止当前任务的请求".to_string()
@@ -792,7 +831,8 @@ fn im_planning_mutation_summary(result: &ToolResult) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_im_planning_finalize_reply, is_successful_im_planning_mutation_result,
+        build_im_planning_finalize_reply, canonical_im_planning_tool_name,
+        is_successful_im_planning_mutation_result,
     };
     use crate::core::mcp_tools::ToolResult;
 
@@ -852,6 +892,45 @@ mod tests {
     #[test]
     fn resume_task_is_treated_as_planning_mutation() {
         let result = tool_result("resume_task", r#"{"task_id":"task_2","status":"pending_execute"}"#);
+        assert!(is_successful_im_planning_mutation_result(&result));
+        assert!(build_im_planning_finalize_reply(
+            Some("im-run-123"),
+            "chat",
+            &[result]
+        )
+        .is_some());
+    }
+
+    #[test]
+    fn prefixed_builtin_tool_names_are_canonicalized() {
+        assert_eq!(
+            canonical_im_planning_tool_name("contact_task_create_tasks"),
+            Some("create_tasks")
+        );
+        assert_eq!(
+            canonical_im_planning_tool_name("builtin_confirm_task"),
+            Some("confirm_task")
+        );
+        assert_eq!(
+            canonical_im_planning_tool_name("task_executor_request_pause_running_task"),
+            Some("request_pause_running_task")
+        );
+        assert_eq!(
+            canonical_im_planning_tool_name("task_executor_request_stop_running_task"),
+            Some("request_stop_running_task")
+        );
+        assert_eq!(
+            canonical_im_planning_tool_name("task_runtime_resume_task"),
+            Some("resume_task")
+        );
+    }
+
+    #[test]
+    fn prefixed_create_tasks_also_finish_current_im_turn() {
+        let result = tool_result(
+            "contact_task_create_tasks",
+            r#"{"confirmed":true,"cancelled":false,"created_count":2}"#,
+        );
         assert!(is_successful_im_planning_mutation_result(&result));
         assert!(build_im_planning_finalize_reply(
             Some("im-run-123"),

@@ -74,6 +74,9 @@ interface TeamMemberWorkspaceProps {
   workbarActionLoadingTaskId: string | null;
   onRefreshWorkbarTasks: () => void;
   onOpenWorkbarHistory: (sessionId: string) => void;
+  onConfirmTask: (task: TaskWorkbarItem) => void;
+  onPauseTask: (task: TaskWorkbarItem) => void;
+  onResumeTask: (task: TaskWorkbarItem) => void;
   onCompleteTask: (task: TaskWorkbarItem) => void;
   onDeleteTask: (task: TaskWorkbarItem) => void;
   onEditTask: (task: TaskWorkbarItem) => void;
@@ -137,6 +140,9 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
   workbarActionLoadingTaskId,
   onRefreshWorkbarTasks,
   onOpenWorkbarHistory,
+  onConfirmTask,
+  onPauseTask,
+  onResumeTask,
   onCompleteTask,
   onDeleteTask,
   onEditTask,
@@ -228,6 +234,9 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
         onOpenHistory={onOpenWorkbarHistory}
         uiPromptHistoryCount={0}
         uiPromptHistoryLoading={false}
+        onConfirmTask={onConfirmTask}
+        onPauseTask={onPauseTask}
+        onResumeTask={onResumeTask}
         onCompleteTask={onCompleteTask}
         onDeleteTask={onDeleteTask}
         onEditTask={onEditTask}

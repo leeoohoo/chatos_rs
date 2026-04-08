@@ -97,10 +97,16 @@ fn usage_nested_i64(value: &Value, parent: &str, key: &str) -> Option<i64> {
         .and_then(|item| item.as_i64().or_else(|| item.as_u64().map(|v| v as i64)))
 }
 
-pub(super) fn log_usage_snapshot(purpose: &str, usage: Option<&Value>) {
-    let Some(usage) = usage else {
-        return;
-    };
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct UsageSnapshotMetrics {
+    pub input_tokens: i64,
+    pub cached_tokens: i64,
+    pub uncached_input_tokens: i64,
+    pub output_tokens: i64,
+    pub cache_hit_ratio: f64,
+}
+
+fn usage_snapshot_metrics(usage: &Value) -> UsageSnapshotMetrics {
     let input_tokens = usage_value_i64(usage, "input_tokens")
         .or_else(|| usage_value_i64(usage, "prompt_tokens"))
         .unwrap_or(-1);
@@ -110,10 +116,53 @@ pub(super) fn log_usage_snapshot(purpose: &str, usage: Option<&Value>) {
     let cached_tokens = usage_nested_i64(usage, "input_tokens_details", "cached_tokens")
         .or_else(|| usage_nested_i64(usage, "prompt_tokens_details", "cached_tokens"))
         .unwrap_or(0);
+    let uncached_input_tokens = if input_tokens >= 0 {
+        (input_tokens - cached_tokens).max(0)
+    } else {
+        -1
+    };
+    let cache_hit_ratio = if input_tokens > 0 && cached_tokens >= 0 {
+        cached_tokens as f64 / input_tokens as f64
+    } else {
+        0.0
+    };
+
+    UsageSnapshotMetrics {
+        input_tokens,
+        cached_tokens,
+        uncached_input_tokens,
+        output_tokens,
+        cache_hit_ratio,
+    }
+}
+
+pub(super) fn log_usage_snapshot(
+    purpose: &str,
+    session_id: Option<&str>,
+    turn_id: Option<&str>,
+    iteration: i64,
+    use_prev_id: bool,
+    can_use_prev_id: bool,
+    usage: Option<&Value>,
+) {
+    let Some(usage) = usage else {
+        return;
+    };
+    let metrics = usage_snapshot_metrics(usage);
 
     info!(
-        "[AI_V3] usage snapshot: purpose={}, input_tokens={}, cached_tokens={}, output_tokens={}",
-        purpose, input_tokens, cached_tokens, output_tokens
+        "[AI_V3] usage snapshot: purpose={}, session_id={}, turn_id={}, iteration={}, use_prev_id={}, can_use_prev_id={}, input_tokens={}, cached_tokens={}, uncached_input_tokens={}, cache_hit_ratio={:.2}%, output_tokens={}",
+        purpose,
+        session_id.unwrap_or("n/a"),
+        turn_id.unwrap_or("n/a"),
+        iteration,
+        use_prev_id,
+        can_use_prev_id,
+        metrics.input_tokens,
+        metrics.cached_tokens,
+        metrics.uncached_input_tokens,
+        metrics.cache_hit_ratio * 100.0,
+        metrics.output_tokens
     );
 }
 
@@ -208,8 +257,8 @@ mod tests {
     use serde_json::{json, Value};
 
     use super::{
-        response_content_to_text, rewrite_system_messages_to_user,
-        truncate_function_call_outputs_in_input,
+        response_content_to_text, rewrite_system_messages_to_user, truncate_function_call_outputs_in_input,
+        usage_snapshot_metrics,
     };
 
     #[test]
@@ -302,5 +351,22 @@ mod tests {
         ]);
         let truncated = truncate_function_call_outputs_in_input(&input);
         assert!(truncated.is_none());
+    }
+
+    #[test]
+    fn computes_usage_snapshot_metrics_with_cache_ratio() {
+        let metrics = usage_snapshot_metrics(&json!({
+            "input_tokens": 2000,
+            "output_tokens": 300,
+            "input_tokens_details": {
+                "cached_tokens": 1500
+            }
+        }));
+
+        assert_eq!(metrics.input_tokens, 2000);
+        assert_eq!(metrics.cached_tokens, 1500);
+        assert_eq!(metrics.uncached_input_tokens, 500);
+        assert_eq!(metrics.output_tokens, 300);
+        assert!((metrics.cache_hit_ratio - 0.75).abs() < f64::EPSILON);
     }
 }

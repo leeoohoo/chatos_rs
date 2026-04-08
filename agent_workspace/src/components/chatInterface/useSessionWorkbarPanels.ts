@@ -36,6 +36,21 @@ interface SessionWorkbarApiClient {
       due_at?: string | null;
     },
   ) => Promise<unknown>;
+  confirmTaskManagerTask: (
+    sessionId: string,
+    taskId: string,
+    payload?: { note?: string },
+  ) => Promise<unknown>;
+  pauseTaskManagerTask: (
+    sessionId: string,
+    taskId: string,
+    payload?: { reason?: string },
+  ) => Promise<unknown>;
+  resumeTaskManagerTask: (
+    sessionId: string,
+    taskId: string,
+    payload?: { note?: string },
+  ) => Promise<unknown>;
   submitTaskReviewDecision: (
     reviewId: string,
     payload: {
@@ -252,9 +267,12 @@ export const useSessionWorkbarPanels = ({
 
   const {
     workbarActionLoadingTaskId,
+    handleWorkbarConfirmTask,
     handleWorkbarCompleteTask,
     handleWorkbarDeleteTask,
     handleWorkbarEditTask,
+    handleWorkbarPauseTask,
+    handleWorkbarResumeTask,
   } = useWorkbarMutations({
     apiClient,
     currentSessionId: enabled ? (sessionId ?? null) : null,
@@ -326,9 +344,12 @@ export const useSessionWorkbarPanels = ({
     handleTaskReviewConfirm,
     handleUiPromptCancel,
     handleUiPromptSubmit,
+    handleWorkbarConfirmTask,
     handleWorkbarCompleteTask,
     handleWorkbarDeleteTask,
     handleWorkbarEditTask,
+    handleWorkbarPauseTask,
+    handleWorkbarResumeTask,
     mergedCurrentTurnTasks,
     resetAllWorkbarState,
     resetHistoryWorkbarState,

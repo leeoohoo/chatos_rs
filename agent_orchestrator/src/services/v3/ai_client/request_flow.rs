@@ -5,7 +5,7 @@ use super::input_transform::{
     build_current_input_items, extract_raw_input, normalize_input_for_provider,
 };
 use super::prev_context::{
-    model_supports_prev_response_id, should_disable_prev_id_for_prefixed_input_items,
+    allow_prev_response_reuse, should_disable_prev_id_for_prefixed_input_items,
     should_prefer_stateless_context,
 };
 use super::{AiClient, ProcessOptions};
@@ -33,6 +33,7 @@ impl AiClient {
         let request_cwd = options.request_cwd;
         let use_codex_gateway_mcp_passthrough =
             options.use_codex_gateway_mcp_passthrough.unwrap_or(false);
+        let disable_prev_response_reuse = options.disable_prev_response_reuse.unwrap_or(false);
         let turn_id = options
             .conversation_turn_id
             .as_deref()
@@ -47,15 +48,21 @@ impl AiClient {
         let prefer_stateless =
             should_prefer_stateless_context(&purpose, supports_responses, history_limit);
         info!(
-            "[AI_V3][prev-id] request begin: session_id={}, purpose={}, supports_responses={}, prefer_stateless={}, history_limit={}",
+            "[AI_V3][prev-id] request begin: session_id={}, purpose={}, supports_responses={}, prefer_stateless={}, history_limit={}, disable_prev_response_reuse={}",
             session_id.clone().unwrap_or_else(|| "n/a".to_string()),
             purpose,
             supports_responses,
             prefer_stateless,
-            history_limit
+            history_limit,
+            disable_prev_response_reuse
         );
         let mut previous_response_id: Option<String> = None;
-        if !prefer_stateless {
+        if disable_prev_response_reuse {
+            info!(
+                "[AI_V3][prev-id] skipped fetch because this request explicitly disables previous_response_id reuse: session_id={}",
+                session_id.clone().unwrap_or_else(|| "n/a".to_string())
+            );
+        } else if !prefer_stateless {
             if let Some(sid) = session_id.as_ref() {
                 let limit = if history_limit > 0 {
                     Some(history_limit)
@@ -101,8 +108,11 @@ impl AiClient {
             .as_ref()
             .map(|s| !self.prev_response_id_disabled_sessions.contains(s))
             .unwrap_or(true);
-        let mut can_use_prev_id =
-            allow_prev_id && model_supports_prev_response_id(supports_responses);
+        let mut can_use_prev_id = allow_prev_response_reuse(
+            disable_prev_response_reuse,
+            allow_prev_id,
+            supports_responses,
+        );
         if can_use_prev_id
             && should_disable_prev_id_for_prefixed_input_items(prefixed_input_items.as_slice())
         {

@@ -3,23 +3,40 @@ import { useState } from 'react';
 import {
   priorityStyles,
   priorityText,
-  statusStyles,
   statusText,
+  statusStyles,
 } from './helpers';
 import type { TaskWorkbarItem } from './types';
 
 interface TaskCardProps {
   task: TaskWorkbarItem;
   compact?: boolean;
+  onConfirmTask?: (task: TaskWorkbarItem) => void;
+  onPauseTask?: (task: TaskWorkbarItem) => void;
+  onResumeTask?: (task: TaskWorkbarItem) => void;
   onCompleteTask?: (task: TaskWorkbarItem) => void;
   onDeleteTask?: (task: TaskWorkbarItem) => void;
   onEditTask?: (task: TaskWorkbarItem) => void;
   isMutating?: boolean;
 }
 
+const formatTaskTime = (value?: string | null): string | null => {
+  if (!value) {
+    return null;
+  }
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) {
+    return value;
+  }
+  return new Date(parsed).toLocaleString();
+};
+
 const TaskCard = ({
   task,
   compact = false,
+  onConfirmTask,
+  onPauseTask,
+  onResumeTask,
   onCompleteTask,
   onDeleteTask,
   onEditTask,
@@ -27,25 +44,17 @@ const TaskCard = ({
 }: TaskCardProps) => {
   const [expanded, setExpanded] = useState(false);
   const cardClass = compact
-    ? 'min-w-[160px] max-w-[190px] min-w-0 overflow-hidden rounded-md border border-border bg-background p-2'
-    : 'min-w-0 overflow-hidden rounded-lg border border-border bg-background p-2.5';
-
-  const titleClass = compact
-    ? 'min-w-0 line-clamp-2 break-words text-xs font-medium text-foreground'
-    : 'min-w-0 line-clamp-2 break-words text-sm font-medium text-foreground';
-
-  const detailsClass = compact
-    ? 'mb-1 line-clamp-1 break-all text-[11px] text-muted-foreground'
-    : 'mb-1 line-clamp-2 break-all text-xs text-muted-foreground';
-
-  const metaClass = compact ? 'text-[10px] text-muted-foreground' : 'text-[11px] text-muted-foreground';
-  const actionClass = compact
-    ? 'rounded border border-border bg-background px-1.5 py-0.5 text-[10px] text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50'
-    : 'rounded border border-border bg-background px-2 py-0.5 text-[11px] text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50';
+    ? 'min-w-0 overflow-hidden rounded-xl border border-border bg-card/90 p-3 shadow-sm'
+    : 'min-w-0 overflow-hidden rounded-xl border border-border bg-card/90 p-3 shadow-sm';
+  const actionClass = 'rounded-md border border-border bg-background px-2.5 py-1 text-xs text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50';
+  const primaryActionClass = 'rounded-md bg-amber-500 px-2.5 py-1 text-xs font-medium text-white hover:bg-amber-600 disabled:cursor-not-allowed disabled:opacity-50';
   const isTerminal = task.status === 'completed'
     || task.status === 'failed'
     || task.status === 'cancelled'
     || task.status === 'skipped';
+  const isPendingConfirm = task.status === 'pending_confirm';
+  const isRunning = task.status === 'running';
+  const isPaused = task.status === 'paused';
   const hasExecutionManifest = (task.plannedBuiltinMcpIds?.length || 0) > 0
     || !!task.taskPlanId
     || !!task.taskRef
@@ -64,38 +73,104 @@ const TaskCard = ({
     || !!task.planningSnapshot?.sourceConstraintsSummary
     || !!task.resultSummary
     || !!task.lastError;
+  const startedAt = formatTaskTime(task.startedAt);
+  const finishedAt = formatTaskTime(task.finishedAt);
+  const confirmedAt = formatTaskTime(task.confirmedAt);
+  const dueAt = formatTaskTime(task.dueAt);
+  const metaPills = [
+    `优先级 ${priorityText[task.priority]}`,
+    task.taskKind ? `类型 ${task.taskKind}` : null,
+    task.dependsOnTaskIds && task.dependsOnTaskIds.length > 0 ? `依赖 ${task.dependsOnTaskIds.length}` : null,
+    task.verificationOfTaskIds && task.verificationOfTaskIds.length > 0 ? `验证 ${task.verificationOfTaskIds.length}` : null,
+    task.plannedBuiltinMcpIds && task.plannedBuiltinMcpIds.length > 0 ? `MCP ${task.plannedBuiltinMcpIds.length}` : null,
+    task.plannedContextAssets && task.plannedContextAssets.length > 0 ? `资源 ${task.plannedContextAssets.length}` : null,
+  ].filter(Boolean) as string[];
 
   return (
     <div className={cardClass}>
-      <div className="mb-1 flex min-w-0 items-start justify-between gap-2">
-        <div className={titleClass}>{task.title}</div>
-        <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${statusStyles[task.status]}`}>
+      <div className="flex min-w-0 items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="min-w-0 break-words text-sm font-semibold text-foreground">{task.title}</div>
+            {task.taskRef ? (
+              <span className="rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground">
+                {task.taskRef}
+              </span>
+            ) : null}
+          </div>
+          {task.details ? (
+            <div className="mt-1 line-clamp-3 break-words text-xs text-muted-foreground">
+              {task.details}
+            </div>
+          ) : null}
+        </div>
+        <span className={`shrink-0 rounded-full px-2 py-1 text-[11px] font-medium ${statusStyles[task.status]}`}>
           {statusText[task.status]}
         </span>
       </div>
 
-      {task.details ? <div className={detailsClass}>{task.details}</div> : null}
-
-      <div className={metaClass}>
+      <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-muted-foreground">
         {task.taskPlanId ? (
-          <div className="truncate" title={task.taskPlanId}>
-            计划 {task.taskPlanId}
-          </div>
+          <span className="rounded-full border border-border bg-background px-2 py-1">
+            {`计划 ${task.taskPlanId}`}
+          </span>
         ) : null}
-        <div>
-          <span className={priorityStyles[task.priority]}>优先级 {priorityText[task.priority]}</span>
-        </div>
-        {task.taskKind ? <div>{`类型 ${task.taskKind}`}</div> : null}
-        {task.taskRef ? <div className="truncate" title={task.taskRef}>{`引用 ${task.taskRef}`}</div> : null}
-        <div className="truncate" title={task.conversationTurnId}>
-          轮次 {task.conversationTurnId}
-        </div>
-        {task.startedAt ? <div>开始 {task.startedAt}</div> : null}
-        {task.finishedAt ? <div>结束 {task.finishedAt}</div> : null}
+        {metaPills.map((item) => (
+          <span key={`${task.id}-${item}`} className={`rounded-full border border-border bg-background px-2 py-1 ${item.startsWith('优先级') ? priorityStyles[task.priority] : ''}`}>
+            {item}
+          </span>
+        ))}
+        <span className="rounded-full border border-border bg-background px-2 py-1" title={task.conversationTurnId}>
+          {`轮次 ${task.conversationTurnId}`}
+        </span>
+        {dueAt ? (
+          <span className="rounded-full border border-border bg-background px-2 py-1">
+            {`截止 ${dueAt}`}
+          </span>
+        ) : null}
       </div>
 
-      {(onCompleteTask || onEditTask || onDeleteTask) ? (
-        <div className={compact ? 'mt-1 flex items-center gap-1' : 'mt-2 flex items-center gap-1'}>
+      {isPendingConfirm ? (
+        <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
+          这个任务还在等待确认。确认后会进入待执行队列。
+        </div>
+      ) : null}
+
+      {task.blockedReason ? (
+        <div className="mt-3 rounded-lg border border-orange-200 bg-orange-50 px-3 py-2 text-xs text-orange-800 dark:border-orange-900/60 dark:bg-orange-950/30 dark:text-orange-100">
+          {`阻塞原因：${task.blockedReason}`}
+        </div>
+      ) : null}
+
+      {!task.blockedReason && task.lastError ? (
+        <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800 dark:border-rose-900/60 dark:bg-rose-950/30 dark:text-rose-100">
+          {`失败原因：${task.lastError}`}
+        </div>
+      ) : null}
+
+      {!task.lastError && task.resultSummary ? (
+        <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-100">
+          {task.resultSummary}
+        </div>
+      ) : null}
+
+      {(onConfirmTask || onPauseTask || onResumeTask || onCompleteTask || onEditTask || onDeleteTask || hasExecutionManifest) ? (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          {onConfirmTask && isPendingConfirm ? (
+            <button type="button" className={primaryActionClass} onClick={() => onConfirmTask(task)} disabled={isMutating}>
+              确认执行
+            </button>
+          ) : null}
+          {onPauseTask && isRunning ? (
+            <button type="button" className={actionClass} onClick={() => onPauseTask(task)} disabled={isMutating}>
+              暂停
+            </button>
+          ) : null}
+          {onResumeTask && isPaused ? (
+            <button type="button" className={actionClass} onClick={() => onResumeTask(task)} disabled={isMutating}>
+              开始
+            </button>
+          ) : null}
           {onCompleteTask && !isTerminal ? (
             <button type="button" className={actionClass} onClick={() => onCompleteTask(task)} disabled={isMutating}>
               完成
@@ -117,21 +192,41 @@ const TaskCard = ({
             </button>
           ) : null}
           {isMutating ? (
-            <span className={compact ? 'text-[10px] text-muted-foreground' : 'text-[11px] text-muted-foreground'}>
+            <span className="text-xs text-muted-foreground">
               处理中...
             </span>
           ) : null}
         </div>
       ) : null}
 
-      {task.dueAt ? (
-        <div className={compact ? 'mt-1 truncate text-[10px] text-muted-foreground' : 'mt-1 truncate text-[11px] text-muted-foreground'} title={task.dueAt}>
-          截止 {task.dueAt}
-        </div>
-      ) : null}
-
       {expanded ? (
-        <div className={compact ? 'mt-1 space-y-1 text-[10px] text-muted-foreground' : 'mt-2 space-y-1.5 text-[11px] text-muted-foreground'}>
+        <div className="mt-4 space-y-3 border-t border-border pt-3 text-xs text-muted-foreground">
+          <div className="grid gap-2 md:grid-cols-2">
+            {confirmedAt ? (
+              <div className="rounded-lg border border-border bg-background px-3 py-2">
+                <div className="font-medium text-foreground/90">确认时间</div>
+                <div>{confirmedAt}</div>
+              </div>
+            ) : null}
+            {startedAt ? (
+              <div className="rounded-lg border border-border bg-background px-3 py-2">
+                <div className="font-medium text-foreground/90">开始时间</div>
+                <div>{startedAt}</div>
+              </div>
+            ) : null}
+            {finishedAt ? (
+              <div className="rounded-lg border border-border bg-background px-3 py-2">
+                <div className="font-medium text-foreground/90">结束时间</div>
+                <div>{finishedAt}</div>
+              </div>
+            ) : null}
+            {task.projectRoot ? (
+              <div className="rounded-lg border border-border bg-background px-3 py-2 md:col-span-2">
+                <div className="font-medium text-foreground/90">项目路径</div>
+                <div className="break-all whitespace-pre-wrap">{task.projectRoot}</div>
+              </div>
+            ) : null}
+          </div>
           {task.taskPlanId ? (
             <div>
               <div className="font-medium text-foreground/90">任务计划</div>
@@ -175,12 +270,6 @@ const TaskCard = ({
                   </div>
                 ))}
               </div>
-            </div>
-          ) : null}
-          {task.projectRoot ? (
-            <div>
-              <div className="font-medium text-foreground/90">项目路径</div>
-              <div className="break-all whitespace-pre-wrap">{task.projectRoot}</div>
             </div>
           ) : null}
           {task.remoteConnectionId ? (
