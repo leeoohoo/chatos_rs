@@ -53,7 +53,7 @@ export default function App() {
 cd server/chat_app_node_server
 npm install
 cp .env.example .env   # 设置 OPENAI_API_KEY 等 set your OPENAI_API_KEY
-npm start              # http://localhost:3001
+npm start              # http://localhost:3997
 ```
 
 - 启动前端 Start the frontend demo
@@ -61,7 +61,7 @@ npm start              # http://localhost:3001
 ```bash
 cd /path/to/chat_app
 npm install
-npm run dev            # http://localhost:5173 (proxy /api → 3001)
+npm run dev            # http://localhost:5173 (proxy /api → 3997)
 ```
 
 生产环境可通过组件传入 `apiBaseUrl` 或 `port` 覆盖后端地址。
@@ -70,7 +70,7 @@ In production, pass `apiBaseUrl` or `port` to the component to point at your ser
 ```tsx
 <StandaloneChatInterface apiBaseUrl="https://your.domain/api" />
 // or
-<StandaloneChatInterface port={3001} />
+<StandaloneChatInterface port={3997} />
 ```
 
 ## 使用 Usage
@@ -122,7 +122,7 @@ export default function App() {
 
 前端 Frontend
 
-- 开发环境 dev: Vite 代理将 `/api` 指向 `http://localhost:3001`
+- 开发环境 dev: Vite 代理将 `/api` 指向 `http://localhost:3997`
 - 生产 prod: 通过 `apiBaseUrl`/`port` 或自行配置反向代理 Configure `apiBaseUrl`/`port` or reverse proxy
 
 后端 Server (`server/chat_app_node_server`)
@@ -132,7 +132,7 @@ export default function App() {
 ```env
 OPENAI_API_KEY=your_api_key
 OPENAI_BASE_URL=https://api.openai.com/v1
-PORT=3001
+BACKEND_PORT=3997
 NODE_ENV=development
 ```
 
