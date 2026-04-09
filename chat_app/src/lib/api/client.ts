@@ -10,8 +10,11 @@ import type {
 } from './client/types';
 import * as workspaceApi from './client/workspace';
 
-// 使用相对路径，让浏览器自动处理协议和域名
-const API_BASE_URL = '/api';
+// Dev 环境默认直连后端，避免本地代理异常导致 /api 404。
+// 可通过 VITE_API_BASE_URL 显式覆盖（例如 https://your.domain/api）。
+const ENV_API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').trim();
+const API_BASE_URL =
+  ENV_API_BASE_URL || (import.meta.env.DEV ? 'http://127.0.0.1:3997/api' : '/api');
 
 class ApiClient {
   private baseUrl: string;

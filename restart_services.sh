@@ -12,7 +12,8 @@ MEMORY_BACKEND_DIR="$MEMORY_ROOT_DIR/backend"
 MEMORY_FRONTEND_DIR="$MEMORY_ROOT_DIR/frontend"
 MEMORY_BACKEND_ENV_FILE="$MEMORY_BACKEND_DIR/.env"
 
-MAIN_BACKEND_PORT="${BACKEND_PORT:-3001}"
+MAIN_BACKEND_PORT=3997
+LEGACY_MAIN_BACKEND_PORT=3001
 MAIN_FRONTEND_PORT="${FRONTEND_PORT:-8088}"
 MEMORY_BACKEND_PORT="${MEMORY_SERVER_BACKEND_PORT:-}"
 MEMORY_FRONTEND_PORT="${MEMORY_SERVER_FRONTEND_PORT:-5176}"
@@ -122,7 +123,7 @@ prepare() {
 
 start_main_backend() {
   echo "[INFO] 启动原项目 backend..."
-  nohup bash -lc "cd \"$MAIN_BACKEND_DIR\" && cargo run --bin chat_app_server_rs" >"$MAIN_BACKEND_LOG_FILE" 2>&1 &
+  nohup bash -lc "cd \"$MAIN_BACKEND_DIR\" && BACKEND_PORT=\"$MAIN_BACKEND_PORT\" cargo run --bin chat_app_server_rs" >"$MAIN_BACKEND_LOG_FILE" 2>&1 &
   echo $! >"$MAIN_BACKEND_PID_FILE"
 }
 
@@ -164,6 +165,9 @@ do_stop() {
   stop_from_pid_file "memory frontend" "$MEMORY_FRONTEND_PID_FILE"
 
   stop_from_port "原项目 backend" "$MAIN_BACKEND_PORT"
+  if [[ "$LEGACY_MAIN_BACKEND_PORT" != "$MAIN_BACKEND_PORT" ]]; then
+    stop_from_port "原项目 backend(legacy)" "$LEGACY_MAIN_BACKEND_PORT"
+  fi
   stop_from_port "原项目 frontend" "$MAIN_FRONTEND_PORT"
   stop_from_port "memory backend" "$MEMORY_BACKEND_PORT"
   stop_from_port "memory frontend" "$MEMORY_FRONTEND_PORT"

@@ -29,10 +29,10 @@ RUN mkdir -p /app/data /app/logs
 
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
-    PORT=3001 \
+    BACKEND_PORT=3997 \
     OPENAI_BASE_URL=https://api.openai.com/v1
 
-EXPOSE 3001
+EXPOSE 3997
 CMD ["/app/chat_app_server_rs"]
 
 FROM runtime-base AS runtime

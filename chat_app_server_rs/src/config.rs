@@ -66,10 +66,10 @@ impl Config {
         let openai_base_url = std::env::var("OPENAI_BASE_URL")
             .unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
 
-        let port = std::env::var("PORT")
+        let port = std::env::var("BACKEND_PORT")
             .ok()
             .and_then(|v| v.parse::<u16>().ok())
-            .unwrap_or(3001);
+            .unwrap_or(3997);
         let node_env = std::env::var("NODE_ENV").unwrap_or_else(|_| "development".to_string());
         let host = std::env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
 
@@ -160,7 +160,7 @@ impl Config {
     pub fn print(&self) {
         println!("当前配置:");
         println!("  - NODE_ENV: {}", self.node_env);
-        println!("  - PORT: {}", self.port);
+        println!("  - BACKEND_PORT: {}", self.port);
         println!("  - HOST: {}", self.host);
         println!("  - OPENAI_BASE_URL: {}", self.openai_base_url);
         println!(

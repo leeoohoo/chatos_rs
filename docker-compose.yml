@@ -13,7 +13,7 @@ services:
       NODE_ENV: ${NODE_ENV:-production}
       HOST: ${HOST:-0.0.0.0}
       # Container-internal backend port; keep this aligned with nginx upstream.
-      PORT: 3001
+      BACKEND_PORT: 3997
       DATABASE_TYPE: ${DATABASE_TYPE:-sqlite}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
@@ -29,8 +29,7 @@ services:
       # Example: HOST_MOUNT_DIR=/Users/lilei/workspace
       - ${HOST_MOUNT_DIR:-.}:/workspace:rw
     ports:
-      # Host port is configurable to avoid conflicts with local dev backend.
-      - "${BACKEND_HOST_PORT:-3001}:3001"
+      - "3997:3997"
 
   frontend:
     build:
