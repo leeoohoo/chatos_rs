@@ -24,3 +24,4 @@ url = "2"
 parking_lot = "0.12"
 sha2 = "0.10"
 base64 = "0.22"
+auth_core = { path = "../../shared/auth_core" }

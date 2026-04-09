@@ -2,11 +2,11 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
 use serde_json::{json, Value};
 
+use auth_core::parse_auth_token;
+
 use crate::api::SharedState;
 use crate::repositories::auth as auth_repo;
 use crate::state::AppState;
-
-use super::auth_token::parse_auth_token;
 
 #[derive(Debug, Clone)]
 pub(crate) struct AuthIdentity {

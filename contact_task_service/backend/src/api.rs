@@ -1,6 +1,4 @@
 use std::sync::Arc;
-use std::time::Duration;
-
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post};
@@ -9,17 +7,19 @@ use once_cell::sync::Lazy;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::auth::{login_via_memory, require_auth, resolve_scope_user_id, AuthIdentity};
+use crate::auth::{login_via_memory, require_auth, resolve_scope_user_id};
 use crate::models::{
     AckAllDoneRequest, AckPauseTaskRequest, AckStopTaskRequest, ConfirmTaskRequest,
     CreateTaskRequest, LoginRequest, PauseTaskRequest, ResumeTaskRequest, RetryTaskRequest,
-    SchedulerRequest, StopTaskRequest, TaskExecutionMessageView, TaskResultBriefView,
-    UpdateTaskPlanRequest, UpdateTaskRequest,
+    SchedulerRequest, StopTaskRequest, TaskExecutionMessageView, UpdateTaskPlanRequest,
+    UpdateTaskRequest,
 };
 use crate::{repository, AppState};
 
 type SharedState = Arc<AppState>;
 static MEMORY_HTTP: Lazy<reqwest::Client> = Lazy::new(reqwest::Client::new);
+mod support;
+use self::support::*;
 
 #[derive(Debug, Deserialize)]
 struct ListTasksQuery {
@@ -175,40 +175,6 @@ async fn me(State(state): State<SharedState>, headers: HeaderMap) -> (StatusCode
     }
 }
 
-fn visible_user_ids(auth: &AuthIdentity, requested: Option<String>) -> Vec<String> {
-    if auth.is_admin() {
-        match requested
-            .map(|v| v.trim().to_string())
-            .filter(|v| !v.is_empty())
-        {
-            Some(user_id) => vec![user_id],
-            None => Vec::new(),
-        }
-    } else {
-        vec![auth.user_id.clone()]
-    }
-}
-
-fn internal_visible_user_ids(requested: Option<String>) -> Vec<String> {
-    requested
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty())
-        .map(|user_id| vec![user_id])
-        .unwrap_or_default()
-}
-
-fn memory_timeout_duration(state: &SharedState) -> Duration {
-    Duration::from_millis(state.config.memory_server_request_timeout_ms.max(300))
-}
-
-fn build_memory_url(state: &SharedState, path: &str) -> String {
-    format!(
-        "{}{}",
-        state.config.memory_server_base_url.trim_end_matches('/'),
-        path
-    )
-}
-
 async fn create_task(
     State(state): State<SharedState>,
     headers: HeaderMap,
@@ -244,25 +210,8 @@ async fn list_tasks(
         Ok(v) => v,
         Err(err) => return err,
     };
-    match repository::list_tasks(
-        &state.db,
-        visible_user_ids(&auth, q.user_id).as_slice(),
-        q.contact_agent_id.as_deref(),
-        q.project_id.as_deref(),
-        q.session_id.as_deref(),
-        q.conversation_turn_id.as_deref(),
-        q.status.as_deref(),
-        q.limit.unwrap_or(100),
-        q.offset.unwrap_or(0),
-    )
-    .await
-    {
-        Ok(items) => (StatusCode::OK, Json(json!({"items": items}))),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": "list tasks failed", "detail": err})),
-        ),
-    }
+    let user_ids = visible_user_ids(&auth, q.user_id.clone());
+    list_tasks_with_scope(&state, user_ids.as_slice(), &q).await
 }
 
 async fn list_task_plans(
@@ -274,41 +223,17 @@ async fn list_task_plans(
         Ok(v) => v,
         Err(err) => return err,
     };
-    match repository::list_task_plans(
-        &state.db,
-        visible_user_ids(&auth, q.user_id).as_slice(),
-        q.contact_agent_id.as_deref(),
-        q.project_id.as_deref(),
-        q.session_id.as_deref(),
-        q.conversation_turn_id.as_deref(),
-        q.status.as_deref(),
-        q.limit.unwrap_or(100),
-        q.offset.unwrap_or(0),
-    )
-    .await
-    {
-        Ok(items) => (StatusCode::OK, Json(json!({"items": items}))),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": "list task plans failed", "detail": err})),
-        ),
-    }
+    let user_ids = visible_user_ids(&auth, q.user_id.clone());
+    list_task_plans_with_scope(&state, user_ids.as_slice(), &q).await
 }
 
 async fn internal_create_task(
     State(state): State<SharedState>,
     Json(req): Json<CreateTaskRequest>,
 ) -> (StatusCode, Json<Value>) {
-    let scope_user_id = req
-        .user_id
-        .clone()
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty());
-    let Some(scope_user_id) = scope_user_id else {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "user_id is required"})),
-        );
+    let scope_user_id = match require_scope_user_id(req.user_id.clone()) {
+        Ok(user_id) => user_id,
+        Err(err) => return err,
     };
     match repository::create_task(
         &state.db,
@@ -330,50 +255,16 @@ async fn internal_list_task_plans(
     State(state): State<SharedState>,
     Query(q): Query<ListTasksQuery>,
 ) -> (StatusCode, Json<Value>) {
-    match repository::list_task_plans(
-        &state.db,
-        internal_visible_user_ids(q.user_id).as_slice(),
-        q.contact_agent_id.as_deref(),
-        q.project_id.as_deref(),
-        q.session_id.as_deref(),
-        q.conversation_turn_id.as_deref(),
-        q.status.as_deref(),
-        q.limit.unwrap_or(100),
-        q.offset.unwrap_or(0),
-    )
-    .await
-    {
-        Ok(items) => (StatusCode::OK, Json(json!({"items": items}))),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": "list task plans failed", "detail": err})),
-        ),
-    }
+    let user_ids = internal_visible_user_ids(q.user_id.clone());
+    list_task_plans_with_scope(&state, user_ids.as_slice(), &q).await
 }
 
 async fn internal_list_tasks(
     State(state): State<SharedState>,
     Query(q): Query<ListTasksQuery>,
 ) -> (StatusCode, Json<Value>) {
-    match repository::list_tasks(
-        &state.db,
-        internal_visible_user_ids(q.user_id).as_slice(),
-        q.contact_agent_id.as_deref(),
-        q.project_id.as_deref(),
-        q.session_id.as_deref(),
-        q.conversation_turn_id.as_deref(),
-        q.status.as_deref(),
-        q.limit.unwrap_or(100),
-        q.offset.unwrap_or(0),
-    )
-    .await
-    {
-        Ok(items) => (StatusCode::OK, Json(json!({"items": items}))),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": "list tasks failed", "detail": err})),
-        ),
-    }
+    let user_ids = internal_visible_user_ids(q.user_id.clone());
+    list_tasks_with_scope(&state, user_ids.as_slice(), &q).await
 }
 
 async fn get_task_plan(
@@ -385,40 +276,15 @@ async fn get_task_plan(
         Ok(v) => v,
         Err(err) => return err,
     };
-    match repository::get_task_plan(
-        &state.db,
-        plan_id.as_str(),
-        visible_user_ids(&auth, None).as_slice(),
-    )
-    .await
-    {
-        Ok(Some(plan)) => (StatusCode::OK, Json(json!({ "item": plan }))),
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": "task plan not found"})),
-        ),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": "get task plan failed", "detail": err})),
-        ),
-    }
+    let user_ids = visible_user_ids(&auth, None);
+    get_task_plan_with_scope(&state, plan_id.as_str(), user_ids.as_slice()).await
 }
 
 async fn internal_get_task_plan(
     State(state): State<SharedState>,
     Path(plan_id): Path<String>,
 ) -> (StatusCode, Json<Value>) {
-    match repository::get_task_plan(&state.db, plan_id.as_str(), &[]).await {
-        Ok(Some(plan)) => (StatusCode::OK, Json(json!({ "item": plan }))),
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": "task plan not found"})),
-        ),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": "get task plan failed", "detail": err})),
-        ),
-    }
+    get_task_plan_with_scope(&state, plan_id.as_str(), &[]).await
 }
 
 async fn get_task(
@@ -430,37 +296,14 @@ async fn get_task(
         Ok(v) => v,
         Err(err) => return err,
     };
-    match repository::get_task(&state.db, task_id.as_str()).await {
-        Ok(Some(task)) if auth.is_admin() || task.user_id == auth.user_id => {
-            (StatusCode::OK, Json(json!(task)))
-        }
-        Ok(Some(_)) => (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"}))),
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": "task not found"})),
-        ),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": "get task failed", "detail": err})),
-        ),
-    }
+    get_task_response(&state, task_id.as_str(), Some(&auth)).await
 }
 
 async fn internal_get_task(
     State(state): State<SharedState>,
     Path(task_id): Path<String>,
 ) -> (StatusCode, Json<Value>) {
-    match repository::get_task(&state.db, task_id.as_str()).await {
-        Ok(Some(task)) => (StatusCode::OK, Json(json!(task))),
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": "task not found"})),
-        ),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": "get task failed", "detail": err})),
-        ),
-    }
+    get_task_response(&state, task_id.as_str(), None).await
 }
 
 async fn list_task_execution_messages(
@@ -472,23 +315,12 @@ async fn list_task_execution_messages(
         Ok(v) => v,
         Err(err) => return err,
     };
-    let task = match repository::get_task(&state.db, task_id.as_str()).await {
-        Ok(Some(task)) => task,
-        Ok(None) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({"error": "task not found"})),
-            )
-        }
-        Err(err) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "load task failed", "detail": err})),
-            )
-        }
+    let task = match load_task_or_http_error(&state, task_id.as_str()).await {
+        Ok(task) => task,
+        Err(err) => return err,
     };
-    if !auth.is_admin() && task.user_id != auth.user_id {
-        return (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"})));
+    if let Err(err) = ensure_owner_or_admin(&auth, task.user_id.as_str()) {
+        return err;
     }
 
     let req = MEMORY_HTTP
@@ -557,135 +389,27 @@ async fn get_task_result_brief(
         Ok(v) => v,
         Err(err) => return err,
     };
-    let task = match repository::get_task(&state.db, task_id.as_str()).await {
-        Ok(Some(task)) => task,
-        Ok(None) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({"error": "task not found"})),
-            )
-        }
-        Err(err) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "load task failed", "detail": err})),
-            )
-        }
+    let task = match load_task_or_http_error(&state, task_id.as_str()).await {
+        Ok(task) => task,
+        Err(err) => return err,
     };
-    if !auth.is_admin() && task.user_id != auth.user_id {
-        return (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"})));
+    if let Err(err) = ensure_owner_or_admin(&auth, task.user_id.as_str()) {
+        return err;
     }
 
-    let resp = match MEMORY_HTTP
-        .get(build_memory_url(
-            &state,
-            format!("/internal/task-result-briefs/by-task/{}", task.id.as_str()).as_str(),
-        ))
-        .timeout(memory_timeout_duration(&state))
-        .send()
-        .await
-    {
-        Ok(resp) => resp,
-        Err(err) => {
-            return (
-                StatusCode::BAD_GATEWAY,
-                Json(json!({"error": "get task result brief failed", "detail": err.to_string()})),
-            )
-        }
-    };
-    if resp.status().as_u16() == 404 {
-        return (StatusCode::OK, Json(json!({ "item": Value::Null })));
-    }
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let detail = resp.text().await.unwrap_or_default();
-        return (
-            StatusCode::BAD_GATEWAY,
-            Json(
-                json!({"error": "get task result brief failed", "detail": format!("status={} body={}", status, detail)}),
-            ),
-        );
-    }
-
-    let item = match resp.json::<TaskResultBriefView>().await {
-        Ok(item) => item,
-        Err(err) => {
-            return (
-                StatusCode::BAD_GATEWAY,
-                Json(
-                    json!({"error": "invalid task result brief response", "detail": err.to_string()}),
-                ),
-            )
-        }
-    };
-
-    (StatusCode::OK, Json(json!({ "item": item })))
+    get_task_result_brief_response_by_task(&state, &task).await
 }
 
 async fn internal_get_task_result_brief(
     State(state): State<SharedState>,
     Path(task_id): Path<String>,
 ) -> (StatusCode, Json<Value>) {
-    let task = match repository::get_task(&state.db, task_id.as_str()).await {
-        Ok(Some(task)) => task,
-        Ok(None) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({"error": "task not found"})),
-            )
-        }
-        Err(err) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "load task failed", "detail": err})),
-            )
-        }
+    let task = match load_task_or_http_error(&state, task_id.as_str()).await {
+        Ok(task) => task,
+        Err(err) => return err,
     };
 
-    let resp = match MEMORY_HTTP
-        .get(build_memory_url(
-            &state,
-            format!("/internal/task-result-briefs/by-task/{}", task.id.as_str()).as_str(),
-        ))
-        .timeout(memory_timeout_duration(&state))
-        .send()
-        .await
-    {
-        Ok(resp) => resp,
-        Err(err) => {
-            return (
-                StatusCode::BAD_GATEWAY,
-                Json(json!({"error": "get task result brief failed", "detail": err.to_string()})),
-            )
-        }
-    };
-    if resp.status().as_u16() == 404 {
-        return (StatusCode::OK, Json(json!({ "item": Value::Null })));
-    }
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let detail = resp.text().await.unwrap_or_default();
-        return (
-            StatusCode::BAD_GATEWAY,
-            Json(
-                json!({"error": "get task result brief failed", "detail": format!("status={} body={}", status, detail)}),
-            ),
-        );
-    }
-
-    let item = match resp.json::<TaskResultBriefView>().await {
-        Ok(item) => item,
-        Err(err) => {
-            return (
-                StatusCode::BAD_GATEWAY,
-                Json(
-                    json!({"error": "invalid task result brief response", "detail": err.to_string()}),
-                ),
-            )
-        }
-    };
-
-    (StatusCode::OK, Json(json!({ "item": item })))
+    get_task_result_brief_response_by_task(&state, &task).await
 }
 
 fn task_execution_message_matches_task(item: &TaskExecutionMessageView, task_id: &str) -> bool {
@@ -713,36 +437,14 @@ async fn update_task(
         Ok(v) => v,
         Err(err) => return err,
     };
-    let existing = match repository::get_task(&state.db, task_id.as_str()).await {
-        Ok(Some(task)) => task,
-        Ok(None) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({"error": "task not found"})),
-            )
-        }
-        Err(err) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "load task failed", "detail": err})),
-            )
-        }
+    let existing = match load_task_or_http_error(&state, task_id.as_str()).await {
+        Ok(task) => task,
+        Err(err) => return err,
     };
-    if !auth.is_admin() && existing.user_id != auth.user_id {
-        return (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"})));
+    if let Err(err) = ensure_owner_or_admin(&auth, existing.user_id.as_str()) {
+        return err;
     }
-
-    match repository::update_task(&state.db, task_id.as_str(), req).await {
-        Ok(Some(task)) => (StatusCode::OK, Json(json!(task))),
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": "task not found"})),
-        ),
-        Err(err) => (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "update task failed", "detail": err})),
-        ),
-    }
+    update_task_response(&state, task_id.as_str(), req).await
 }
 
 async fn internal_update_task(
@@ -750,17 +452,7 @@ async fn internal_update_task(
     Path(task_id): Path<String>,
     Json(req): Json<UpdateTaskRequest>,
 ) -> (StatusCode, Json<Value>) {
-    match repository::update_task(&state.db, task_id.as_str(), req).await {
-        Ok(Some(task)) => (StatusCode::OK, Json(json!(task))),
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": "task not found"})),
-        ),
-        Err(err) => (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "update task failed", "detail": err})),
-        ),
-    }
+    update_task_response(&state, task_id.as_str(), req).await
 }
 
 async fn update_task_plan(
@@ -794,27 +486,10 @@ async fn update_task_plan(
             )
         }
     };
-    if !auth.is_admin() && existing.user_id != auth.user_id {
-        return (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"})));
+    if let Err(err) = ensure_owner_or_admin(&auth, existing.user_id.as_str()) {
+        return err;
     }
-
-    match repository::update_task_plan(&state.db, plan_id.as_str(), req).await {
-        Ok(Some(resp)) => (
-            StatusCode::OK,
-            Json(json!({
-                "item": resp.item,
-                "operation_results": resp.operation_results,
-            })),
-        ),
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": "task plan not found"})),
-        ),
-        Err(err) => (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "update task plan failed", "detail": err})),
-        ),
-    }
+    update_task_plan_response(&state, plan_id.as_str(), req).await
 }
 
 async fn internal_update_task_plan(
@@ -822,23 +497,7 @@ async fn internal_update_task_plan(
     Path(plan_id): Path<String>,
     Json(req): Json<UpdateTaskPlanRequest>,
 ) -> (StatusCode, Json<Value>) {
-    match repository::update_task_plan(&state.db, plan_id.as_str(), req).await {
-        Ok(Some(resp)) => (
-            StatusCode::OK,
-            Json(json!({
-                "item": resp.item,
-                "operation_results": resp.operation_results,
-            })),
-        ),
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": "task plan not found"})),
-        ),
-        Err(err) => (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "update task plan failed", "detail": err})),
-        ),
-    }
+    update_task_plan_response(&state, plan_id.as_str(), req).await
 }
 
 async fn delete_task(
@@ -850,23 +509,12 @@ async fn delete_task(
         Ok(v) => v,
         Err(err) => return err,
     };
-    let existing = match repository::get_task(&state.db, task_id.as_str()).await {
-        Ok(Some(task)) => task,
-        Ok(None) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({"error": "task not found"})),
-            )
-        }
-        Err(err) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "load task failed", "detail": err})),
-            )
-        }
+    let existing = match load_task_or_http_error(&state, task_id.as_str()).await {
+        Ok(task) => task,
+        Err(err) => return err,
     };
-    if !auth.is_admin() && existing.user_id != auth.user_id {
-        return (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"})));
+    if let Err(err) = ensure_owner_or_admin(&auth, existing.user_id.as_str()) {
+        return err;
     }
 
     match repository::delete_task(&state.db, task_id.as_str()).await {
@@ -888,46 +536,15 @@ async fn confirm_task(
     Path(task_id): Path<String>,
     Json(req): Json<ConfirmTaskRequest>,
 ) -> (StatusCode, Json<Value>) {
-    let auth = match require_auth(&headers, &state.config).await {
-        Ok(v) => v,
-        Err(err) => return err,
-    };
-    let existing = match repository::get_task(&state.db, task_id.as_str()).await {
-        Ok(Some(task)) => task,
-        Ok(None) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({"error": "task not found"})),
-            )
-        }
-        Err(err) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "load task failed", "detail": err})),
-            )
-        }
-    };
-    let scope_user_id = resolve_scope_user_id(&auth, req.user_id);
-    if !auth.is_admin() && existing.user_id != auth.user_id {
-        return (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"})));
+    if let Err(err) =
+        ensure_public_task_action_scope(&state, &headers, task_id.as_str(), req.user_id.as_deref()).await
+    {
+        return err;
     }
-    if existing.user_id != scope_user_id {
-        return (
-            StatusCode::FORBIDDEN,
-            Json(json!({"error": "scope mismatch"})),
-        );
-    }
-    match repository::confirm_task(&state.db, task_id.as_str(), req.note).await {
-        Ok(Some(task)) => (StatusCode::OK, Json(json!(task))),
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": "task not found"})),
-        ),
-        Err(err) => (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "confirm task failed", "detail": err})),
-        ),
-    }
+    map_task_action_result(
+        "confirm task",
+        repository::confirm_task(&state.db, task_id.as_str(), req.note).await,
+    )
 }
 
 async fn internal_confirm_task(
@@ -935,46 +552,15 @@ async fn internal_confirm_task(
     Path(task_id): Path<String>,
     Json(req): Json<ConfirmTaskRequest>,
 ) -> (StatusCode, Json<Value>) {
-    let existing = match repository::get_task(&state.db, task_id.as_str()).await {
-        Ok(Some(task)) => task,
-        Ok(None) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({"error": "task not found"})),
-            )
-        }
-        Err(err) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "load task failed", "detail": err})),
-            )
-        }
-    };
-    if let Some(scope_user_id) = req
-        .user_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
+    if let Err(err) =
+        ensure_internal_task_action_scope(&state, task_id.as_str(), req.user_id.as_deref()).await
     {
-        if existing.user_id != scope_user_id {
-            return (
-                StatusCode::FORBIDDEN,
-                Json(json!({"error": "scope mismatch"})),
-            );
-        }
+        return err;
     }
-
-    match repository::confirm_task(&state.db, task_id.as_str(), req.note).await {
-        Ok(Some(task)) => (StatusCode::OK, Json(json!(task))),
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": "task not found"})),
-        ),
-        Err(err) => (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "confirm task failed", "detail": err})),
-        ),
-    }
+    map_task_action_result(
+        "confirm task",
+        repository::confirm_task(&state.db, task_id.as_str(), req.note).await,
+    )
 }
 
 async fn request_pause_task(
@@ -983,46 +569,15 @@ async fn request_pause_task(
     Path(task_id): Path<String>,
     Json(req): Json<PauseTaskRequest>,
 ) -> (StatusCode, Json<Value>) {
-    let auth = match require_auth(&headers, &state.config).await {
-        Ok(v) => v,
-        Err(err) => return err,
-    };
-    let existing = match repository::get_task(&state.db, task_id.as_str()).await {
-        Ok(Some(task)) => task,
-        Ok(None) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({"error": "task not found"})),
-            )
-        }
-        Err(err) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "load task failed", "detail": err})),
-            )
-        }
-    };
-    let scope_user_id = resolve_scope_user_id(&auth, req.user_id.clone());
-    if !auth.is_admin() && existing.user_id != auth.user_id {
-        return (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"})));
+    if let Err(err) =
+        ensure_public_task_action_scope(&state, &headers, task_id.as_str(), req.user_id.as_deref()).await
+    {
+        return err;
     }
-    if existing.user_id != scope_user_id {
-        return (
-            StatusCode::FORBIDDEN,
-            Json(json!({"error": "scope mismatch"})),
-        );
-    }
-    match repository::request_pause_task(&state.db, task_id.as_str(), req).await {
-        Ok(Some(task)) => (StatusCode::OK, Json(json!(task))),
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": "task not found"})),
-        ),
-        Err(err) => (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "request pause task failed", "detail": err})),
-        ),
-    }
+    map_task_action_result(
+        "request pause task",
+        repository::request_pause_task(&state.db, task_id.as_str(), req).await,
+    )
 }
 
 async fn internal_request_pause_task(
@@ -1030,45 +585,15 @@ async fn internal_request_pause_task(
     Path(task_id): Path<String>,
     Json(req): Json<PauseTaskRequest>,
 ) -> (StatusCode, Json<Value>) {
-    let existing = match repository::get_task(&state.db, task_id.as_str()).await {
-        Ok(Some(task)) => task,
-        Ok(None) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({"error": "task not found"})),
-            )
-        }
-        Err(err) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "load task failed", "detail": err})),
-            )
-        }
-    };
-    if let Some(scope_user_id) = req
-        .user_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
+    if let Err(err) =
+        ensure_internal_task_action_scope(&state, task_id.as_str(), req.user_id.as_deref()).await
     {
-        if existing.user_id != scope_user_id {
-            return (
-                StatusCode::FORBIDDEN,
-                Json(json!({"error": "scope mismatch"})),
-            );
-        }
+        return err;
     }
-    match repository::request_pause_task(&state.db, task_id.as_str(), req).await {
-        Ok(Some(task)) => (StatusCode::OK, Json(json!(task))),
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": "task not found"})),
-        ),
-        Err(err) => (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "request pause task failed", "detail": err})),
-        ),
-    }
+    map_task_action_result(
+        "request pause task",
+        repository::request_pause_task(&state.db, task_id.as_str(), req).await,
+    )
 }
 
 async fn request_stop_task(
@@ -1077,46 +602,15 @@ async fn request_stop_task(
     Path(task_id): Path<String>,
     Json(req): Json<StopTaskRequest>,
 ) -> (StatusCode, Json<Value>) {
-    let auth = match require_auth(&headers, &state.config).await {
-        Ok(v) => v,
-        Err(err) => return err,
-    };
-    let existing = match repository::get_task(&state.db, task_id.as_str()).await {
-        Ok(Some(task)) => task,
-        Ok(None) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({"error": "task not found"})),
-            )
-        }
-        Err(err) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "load task failed", "detail": err})),
-            )
-        }
-    };
-    let scope_user_id = resolve_scope_user_id(&auth, req.user_id.clone());
-    if !auth.is_admin() && existing.user_id != auth.user_id {
-        return (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"})));
+    if let Err(err) =
+        ensure_public_task_action_scope(&state, &headers, task_id.as_str(), req.user_id.as_deref()).await
+    {
+        return err;
     }
-    if existing.user_id != scope_user_id {
-        return (
-            StatusCode::FORBIDDEN,
-            Json(json!({"error": "scope mismatch"})),
-        );
-    }
-    match repository::request_stop_task(&state.db, task_id.as_str(), req).await {
-        Ok(Some(task)) => (StatusCode::OK, Json(json!(task))),
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": "task not found"})),
-        ),
-        Err(err) => (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "request stop task failed", "detail": err})),
-        ),
-    }
+    map_task_action_result(
+        "request stop task",
+        repository::request_stop_task(&state.db, task_id.as_str(), req).await,
+    )
 }
 
 async fn internal_request_stop_task(
@@ -1124,45 +618,15 @@ async fn internal_request_stop_task(
     Path(task_id): Path<String>,
     Json(req): Json<StopTaskRequest>,
 ) -> (StatusCode, Json<Value>) {
-    let existing = match repository::get_task(&state.db, task_id.as_str()).await {
-        Ok(Some(task)) => task,
-        Ok(None) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({"error": "task not found"})),
-            )
-        }
-        Err(err) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "load task failed", "detail": err})),
-            )
-        }
-    };
-    if let Some(scope_user_id) = req
-        .user_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
+    if let Err(err) =
+        ensure_internal_task_action_scope(&state, task_id.as_str(), req.user_id.as_deref()).await
     {
-        if existing.user_id != scope_user_id {
-            return (
-                StatusCode::FORBIDDEN,
-                Json(json!({"error": "scope mismatch"})),
-            );
-        }
+        return err;
     }
-    match repository::request_stop_task(&state.db, task_id.as_str(), req).await {
-        Ok(Some(task)) => (StatusCode::OK, Json(json!(task))),
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": "task not found"})),
-        ),
-        Err(err) => (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "request stop task failed", "detail": err})),
-        ),
-    }
+    map_task_action_result(
+        "request stop task",
+        repository::request_stop_task(&state.db, task_id.as_str(), req).await,
+    )
 }
 
 async fn resume_task(
@@ -1171,46 +635,15 @@ async fn resume_task(
     Path(task_id): Path<String>,
     Json(req): Json<ResumeTaskRequest>,
 ) -> (StatusCode, Json<Value>) {
-    let auth = match require_auth(&headers, &state.config).await {
-        Ok(v) => v,
-        Err(err) => return err,
-    };
-    let existing = match repository::get_task(&state.db, task_id.as_str()).await {
-        Ok(Some(task)) => task,
-        Ok(None) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({"error": "task not found"})),
-            )
-        }
-        Err(err) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "load task failed", "detail": err})),
-            )
-        }
-    };
-    let scope_user_id = resolve_scope_user_id(&auth, req.user_id.clone());
-    if !auth.is_admin() && existing.user_id != auth.user_id {
-        return (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"})));
+    if let Err(err) =
+        ensure_public_task_action_scope(&state, &headers, task_id.as_str(), req.user_id.as_deref()).await
+    {
+        return err;
     }
-    if existing.user_id != scope_user_id {
-        return (
-            StatusCode::FORBIDDEN,
-            Json(json!({"error": "scope mismatch"})),
-        );
-    }
-    match repository::resume_task(&state.db, task_id.as_str(), req).await {
-        Ok(Some(task)) => (StatusCode::OK, Json(json!(task))),
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": "task not found"})),
-        ),
-        Err(err) => (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "resume task failed", "detail": err})),
-        ),
-    }
+    map_task_action_result(
+        "resume task",
+        repository::resume_task(&state.db, task_id.as_str(), req).await,
+    )
 }
 
 async fn internal_resume_task(
@@ -1218,45 +651,15 @@ async fn internal_resume_task(
     Path(task_id): Path<String>,
     Json(req): Json<ResumeTaskRequest>,
 ) -> (StatusCode, Json<Value>) {
-    let existing = match repository::get_task(&state.db, task_id.as_str()).await {
-        Ok(Some(task)) => task,
-        Ok(None) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({"error": "task not found"})),
-            )
-        }
-        Err(err) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "load task failed", "detail": err})),
-            )
-        }
-    };
-    if let Some(scope_user_id) = req
-        .user_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
+    if let Err(err) =
+        ensure_internal_task_action_scope(&state, task_id.as_str(), req.user_id.as_deref()).await
     {
-        if existing.user_id != scope_user_id {
-            return (
-                StatusCode::FORBIDDEN,
-                Json(json!({"error": "scope mismatch"})),
-            );
-        }
+        return err;
     }
-    match repository::resume_task(&state.db, task_id.as_str(), req).await {
-        Ok(Some(task)) => (StatusCode::OK, Json(json!(task))),
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": "task not found"})),
-        ),
-        Err(err) => (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "resume task failed", "detail": err})),
-        ),
-    }
+    map_task_action_result(
+        "resume task",
+        repository::resume_task(&state.db, task_id.as_str(), req).await,
+    )
 }
 
 async fn retry_task(
@@ -1265,46 +668,15 @@ async fn retry_task(
     Path(task_id): Path<String>,
     Json(req): Json<RetryTaskRequest>,
 ) -> (StatusCode, Json<Value>) {
-    let auth = match require_auth(&headers, &state.config).await {
-        Ok(v) => v,
-        Err(err) => return err,
-    };
-    let existing = match repository::get_task(&state.db, task_id.as_str()).await {
-        Ok(Some(task)) => task,
-        Ok(None) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({"error": "task not found"})),
-            )
-        }
-        Err(err) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "load task failed", "detail": err})),
-            )
-        }
-    };
-    let scope_user_id = resolve_scope_user_id(&auth, req.user_id.clone());
-    if !auth.is_admin() && existing.user_id != auth.user_id {
-        return (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"})));
+    if let Err(err) =
+        ensure_public_task_action_scope(&state, &headers, task_id.as_str(), req.user_id.as_deref()).await
+    {
+        return err;
     }
-    if existing.user_id != scope_user_id {
-        return (
-            StatusCode::FORBIDDEN,
-            Json(json!({"error": "scope mismatch"})),
-        );
-    }
-    match repository::retry_task(&state.db, task_id.as_str(), req).await {
-        Ok(Some(task)) => (StatusCode::OK, Json(json!(task))),
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": "task not found"})),
-        ),
-        Err(err) => (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "retry task failed", "detail": err})),
-        ),
-    }
+    map_task_action_result(
+        "retry task",
+        repository::retry_task(&state.db, task_id.as_str(), req).await,
+    )
 }
 
 async fn internal_retry_task(
@@ -1312,45 +684,15 @@ async fn internal_retry_task(
     Path(task_id): Path<String>,
     Json(req): Json<RetryTaskRequest>,
 ) -> (StatusCode, Json<Value>) {
-    let existing = match repository::get_task(&state.db, task_id.as_str()).await {
-        Ok(Some(task)) => task,
-        Ok(None) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({"error": "task not found"})),
-            )
-        }
-        Err(err) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "load task failed", "detail": err})),
-            )
-        }
-    };
-    if let Some(scope_user_id) = req
-        .user_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
+    if let Err(err) =
+        ensure_internal_task_action_scope(&state, task_id.as_str(), req.user_id.as_deref()).await
     {
-        if existing.user_id != scope_user_id {
-            return (
-                StatusCode::FORBIDDEN,
-                Json(json!({"error": "scope mismatch"})),
-            );
-        }
+        return err;
     }
-    match repository::retry_task(&state.db, task_id.as_str(), req).await {
-        Ok(Some(task)) => (StatusCode::OK, Json(json!(task))),
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": "task not found"})),
-        ),
-        Err(err) => (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "retry task failed", "detail": err})),
-        ),
-    }
+    map_task_action_result(
+        "retry task",
+        repository::retry_task(&state.db, task_id.as_str(), req).await,
+    )
 }
 
 async fn internal_ack_pause_task(
@@ -1358,17 +700,10 @@ async fn internal_ack_pause_task(
     Path(task_id): Path<String>,
     Json(req): Json<AckPauseTaskRequest>,
 ) -> (StatusCode, Json<Value>) {
-    match repository::ack_pause_task(&state.db, task_id.as_str(), req).await {
-        Ok(Some(task)) => (StatusCode::OK, Json(json!(task))),
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": "task not found"})),
-        ),
-        Err(err) => (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "ack pause task failed", "detail": err})),
-        ),
-    }
+    map_task_action_result(
+        "ack pause task",
+        repository::ack_pause_task(&state.db, task_id.as_str(), req).await,
+    )
 }
 
 async fn internal_ack_stop_task(
@@ -1376,17 +711,10 @@ async fn internal_ack_stop_task(
     Path(task_id): Path<String>,
     Json(req): Json<AckStopTaskRequest>,
 ) -> (StatusCode, Json<Value>) {
-    match repository::ack_stop_task(&state.db, task_id.as_str(), req).await {
-        Ok(Some(task)) => (StatusCode::OK, Json(json!(task))),
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": "task not found"})),
-        ),
-        Err(err) => (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "ack stop task failed", "detail": err})),
-        ),
-    }
+    map_task_action_result(
+        "ack stop task",
+        repository::ack_stop_task(&state.db, task_id.as_str(), req).await,
+    )
 }
 
 async fn scheduler_next(
@@ -1398,21 +726,8 @@ async fn scheduler_next(
         Ok(v) => v,
         Err(err) => return err,
     };
-    let scope_user_id = resolve_scope_user_id(&auth, req.user_id);
-    match repository::scheduler_next(
-        &state.db,
-        scope_user_id.as_str(),
-        req.contact_agent_id.as_str(),
-        req.project_id.as_str(),
-    )
-    .await
-    {
-        Ok(result) => (StatusCode::OK, Json(json!(result))),
-        Err(err) => (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "scheduler next failed", "detail": err})),
-        ),
-    }
+    let scope_user_id = resolve_scope_user_id(&auth, req.user_id.clone());
+    scheduler_next_for_scope(&state, scope_user_id.as_str(), &req).await
 }
 
 async fn list_scheduler_scopes(
@@ -1424,68 +739,27 @@ async fn list_scheduler_scopes(
         Ok(v) => v,
         Err(err) => return err,
     };
-    match repository::list_scheduler_scopes(
-        &state.db,
-        visible_user_ids(&auth, q.user_id).as_slice(),
-        q.limit.unwrap_or(500),
-    )
-    .await
-    {
-        Ok(items) => (StatusCode::OK, Json(json!({ "items": items }))),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": "list scheduler scopes failed", "detail": err})),
-        ),
-    }
+    let user_ids = visible_user_ids(&auth, q.user_id);
+    list_scheduler_scopes_with_user_ids(&state, user_ids.as_slice(), q.limit.unwrap_or(500)).await
 }
 
 async fn internal_scheduler_next(
     State(state): State<SharedState>,
     Json(req): Json<SchedulerRequest>,
 ) -> (StatusCode, Json<Value>) {
-    let scope_user_id = req
-        .user_id
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty());
-    let Some(scope_user_id) = scope_user_id else {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "user_id is required"})),
-        );
+    let scope_user_id = match require_scope_user_id(req.user_id.clone()) {
+        Ok(user_id) => user_id,
+        Err(err) => return err,
     };
-    match repository::scheduler_next(
-        &state.db,
-        scope_user_id.as_str(),
-        req.contact_agent_id.as_str(),
-        req.project_id.as_str(),
-    )
-    .await
-    {
-        Ok(result) => (StatusCode::OK, Json(json!(result))),
-        Err(err) => (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "scheduler next failed", "detail": err})),
-        ),
-    }
+    scheduler_next_for_scope(&state, scope_user_id.as_str(), &req).await
 }
 
 async fn internal_list_scheduler_scopes(
     State(state): State<SharedState>,
     Query(q): Query<ListTasksQuery>,
 ) -> (StatusCode, Json<Value>) {
-    match repository::list_scheduler_scopes(
-        &state.db,
-        internal_visible_user_ids(q.user_id).as_slice(),
-        q.limit.unwrap_or(500),
-    )
-    .await
-    {
-        Ok(items) => (StatusCode::OK, Json(json!({ "items": items }))),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": "list scheduler scopes failed", "detail": err})),
-        ),
-    }
+    let user_ids = internal_visible_user_ids(q.user_id);
+    list_scheduler_scopes_with_user_ids(&state, user_ids.as_slice(), q.limit.unwrap_or(500)).await
 }
 
 async fn ack_all_done(
@@ -1497,63 +771,17 @@ async fn ack_all_done(
         Ok(v) => v,
         Err(err) => return err,
     };
-    let scope_user_id = resolve_scope_user_id(&auth, req.user_id);
-    let ack_at = req
-        .ack_at
-        .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
-    match repository::ack_all_done(
-        &state.db,
-        scope_user_id.as_str(),
-        req.contact_agent_id.as_str(),
-        req.project_id.as_str(),
-        ack_at.as_str(),
-    )
-    .await
-    {
-        Ok(()) => (
-            StatusCode::OK,
-            Json(json!({"success": true, "ack_at": ack_at})),
-        ),
-        Err(err) => (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "ack all done failed", "detail": err})),
-        ),
-    }
+    let scope_user_id = resolve_scope_user_id(&auth, req.user_id.clone());
+    ack_all_done_for_scope(&state, scope_user_id.as_str(), &req).await
 }
 
 async fn internal_ack_all_done(
     State(state): State<SharedState>,
     Json(req): Json<AckAllDoneRequest>,
 ) -> (StatusCode, Json<Value>) {
-    let scope_user_id = req
-        .user_id
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty());
-    let Some(scope_user_id) = scope_user_id else {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "user_id is required"})),
-        );
+    let scope_user_id = match require_scope_user_id(req.user_id.clone()) {
+        Ok(user_id) => user_id,
+        Err(err) => return err,
     };
-    let ack_at = req
-        .ack_at
-        .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
-    match repository::ack_all_done(
-        &state.db,
-        scope_user_id.as_str(),
-        req.contact_agent_id.as_str(),
-        req.project_id.as_str(),
-        ack_at.as_str(),
-    )
-    .await
-    {
-        Ok(()) => (
-            StatusCode::OK,
-            Json(json!({"success": true, "ack_at": ack_at})),
-        ),
-        Err(err) => (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "ack all done failed", "detail": err})),
-        ),
-    }
+    ack_all_done_for_scope(&state, scope_user_id.as_str(), &req).await
 }

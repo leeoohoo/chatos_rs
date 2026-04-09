@@ -19,3 +19,4 @@ tower-http = { version = "0.5", features = ["cors", "trace"] }
 sha2 = "0.10"
 base64 = "0.22"
 serde_path_to_error = "0.1"
+auth_core = { path = "../../shared/auth_core" }

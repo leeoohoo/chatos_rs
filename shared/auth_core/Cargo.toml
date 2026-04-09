@@ -1,0 +1,9 @@
+[package]
+name = "auth_core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+base64 = "0.22"
+chrono = { version = "0.4", features = ["clock"] }
+sha2 = "0.10"

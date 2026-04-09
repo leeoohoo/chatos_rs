@@ -68,4 +68,5 @@ find "$ROOT_DIR" \
 
 print_header "Suggested Commands"
 echo "bash scripts/check-large-files.sh --threshold 20"
+echo "bash scripts/check-code-structure.sh --warn-lines 800 --max-lines 1200"
 echo "bash scripts/cleanup-dev-artifacts.sh --dry-run"
