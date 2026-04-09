@@ -61,6 +61,7 @@ fn read_task_service_token(node_env: &str) -> String {
 }
 
 fn read_im_service_token(node_env: &str) -> String {
+    std::env::var("IM_SERVICE_SERVICE_TOKEN")
         .or_else(|_| std::env::var("MEMORY_SERVER_SERVICE_TOKEN"))
         .ok()
         .map(|value| value.trim().to_string())
