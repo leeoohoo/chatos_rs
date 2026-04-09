@@ -99,7 +99,13 @@ pub async fn confirm_task_by_id(
     task_id: &str,
     note: Option<String>,
 ) -> Result<TaskRecord, String> {
-    let _existing = load_session_scoped_remote_task(session_id, task_id).await?;
+    let existing = load_session_scoped_remote_task(session_id, task_id).await?;
+    if existing.status != "pending_confirm" {
+        return Err(format!(
+            "task {} status={} cannot be confirmed again; create a new task for new work",
+            task_id, existing.status
+        ));
+    }
     let scope = resolve_task_scope_context(session_id).await?;
     let updated = task_service_client::confirm_task(
         task_id,

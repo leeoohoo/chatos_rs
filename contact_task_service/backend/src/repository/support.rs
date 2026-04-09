@@ -433,13 +433,39 @@ pub(super) fn apply_status_and_blocked_reason(
     update.blocked_reason = Some(blocked_reason);
 }
 
-pub(super) fn status_and_blocked_reason_for_dependencies(
+pub(super) fn blocked_reason_for_dependencies(
     depends_on_task_ids: &[String],
-) -> (String, Option<String>) {
+    dependency_tasks: &[ContactTask],
+) -> Option<String> {
     if depends_on_task_ids.is_empty() {
-        ("pending_execute".to_string(), None)
+        None
+    } else if dependency_tasks.len() != depends_on_task_ids.len() {
+        Some("dependency_missing".to_string())
+    } else if dependency_tasks
+        .iter()
+        .all(|item| item.status == "completed" || item.status == "skipped")
+    {
+        None
+    } else if dependency_tasks
+        .iter()
+        .any(|item| item.status == "failed" || item.status == "cancelled")
+    {
+        Some("upstream_terminal_failure".to_string())
     } else {
-        ("blocked".to_string(), Some("waiting_for_dependencies".to_string()))
+        Some("waiting_for_dependencies".to_string())
+    }
+}
+
+pub(super) async fn resolve_status_and_blocked_reason_for_dependencies(
+    db: &Db,
+    depends_on_task_ids: &[String],
+) -> Result<(String, Option<String>), String> {
+    let dependency_tasks = list_tasks_by_ids(db, depends_on_task_ids).await?;
+    let blocked_reason = blocked_reason_for_dependencies(depends_on_task_ids, &dependency_tasks);
+    if blocked_reason.is_none() {
+        Ok(("pending_execute".to_string(), None))
+    } else {
+        Ok(("blocked".to_string(), blocked_reason))
     }
 }
 

@@ -8,7 +8,7 @@ use crate::models::{
 
 use super::support::{
     apply_status_and_blocked_reason, build_handoff_payload, empty_task_update, normalize_optional_text,
-    resolve_queue_position, runtimes, status_and_blocked_reason_for_dependencies, tasks,
+    resolve_queue_position, resolve_status_and_blocked_reason_for_dependencies, runtimes, tasks,
 };
 use super::{get_task, update_task, upsert_scope_runtime};
 
@@ -59,6 +59,12 @@ pub(super) async fn confirm_task(
     let Some(task) = get_task(db, task_id).await? else {
         return Ok(None);
     };
+    if task.status != "pending_confirm" {
+        return Err(
+            "only pending_confirm tasks can be confirmed; create a new task for additional work"
+                .to_string(),
+        );
+    }
     if task
         .model_config_id
         .as_deref()
@@ -70,7 +76,8 @@ pub(super) async fn confirm_task(
     }
     let queue_position = resolve_queue_position(db, &task).await?;
     let (next_status, blocked_reason) =
-        status_and_blocked_reason_for_dependencies(task.depends_on_task_ids.as_slice());
+        resolve_status_and_blocked_reason_for_dependencies(db, task.depends_on_task_ids.as_slice())
+            .await?;
     let mut update = empty_task_update();
     apply_status_and_blocked_reason(&mut update, next_status, blocked_reason);
     update.confirm_note = note;
@@ -249,8 +256,11 @@ pub(super) async fn retry_task(
 
     let now = chrono::Utc::now().to_rfc3339();
     let queue_position = resolve_queue_position(db, &task).await?;
-    let (next_status, next_blocked_reason) =
-        status_and_blocked_reason_for_dependencies(task.depends_on_task_ids.as_slice());
+    let (next_status, next_blocked_reason) = resolve_status_and_blocked_reason_for_dependencies(
+        db,
+        task.depends_on_task_ids.as_slice(),
+    )
+    .await?;
 
     let mut updated = task.clone();
     updated.blocked_reason = next_blocked_reason;

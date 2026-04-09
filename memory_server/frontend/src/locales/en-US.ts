@@ -145,6 +145,9 @@ export const enUS: Record<string, string> = {
   'agents.projectSessions': 'Project Sessions',
   'agents.messages': 'Messages',
   'agents.untitledSession': 'Untitled Conversation',
+  'agents.clearHistory': 'Clear History',
+  'agents.clearHistoryConfirm': 'Clear history messages for the current project session?',
+  'agents.clearHistorySuccess': 'History messages cleared',
 
   'sessions.title': 'Sessions',
   'sessions.newTitle': 'New session title',

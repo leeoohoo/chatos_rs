@@ -1,10 +1,12 @@
 import {
+  Button,
   Card,
   Collapse,
   Drawer,
   Empty,
   List,
   Pagination,
+  Popconfirm,
   Space,
   Spin,
   Tag,
@@ -70,6 +72,7 @@ interface AgentConversationsDrawerProps {
   state: AgentConversationPanelState;
   onClose: () => void;
   onSelectSession: (sessionId: string, page?: number) => void | Promise<void>;
+  onClearMessages: (sessionId: string) => void | Promise<void>;
 }
 
 export function AgentConversationsDrawer({
@@ -77,6 +80,7 @@ export function AgentConversationsDrawer({
   state,
   onClose,
   onSelectSession,
+  onClearMessages,
 }: AgentConversationsDrawerProps) {
   const messagesTotalEstimate = state.messagesHasMore
     ? state.messagesPage * state.messagesPageSize + 1
@@ -115,9 +119,32 @@ export function AgentConversationsDrawer({
             <Space direction="vertical" size={10} style={{ width: '100%' }}>
               {state.groupedSessions.map((group) => (
                 <div key={group.projectId}>
-                  <Text strong style={{ color: '#0958d9', fontSize: 13 }}>
-                    {group.projectName}
-                  </Text>
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 8,
+                      marginBottom: 6,
+                    }}
+                  >
+                    <Text strong style={{ color: '#0958d9', fontSize: 13 }}>
+                      {group.projectName}
+                    </Text>
+                    <Popconfirm
+                      title={t('agents.clearHistoryConfirm')}
+                      okText={t('common.confirm')}
+                      cancelText={t('common.cancel')}
+                      onConfirm={() => {
+                        void onClearMessages(group.session.id);
+                      }}
+                      disabled={state.clearing}
+                    >
+                      <Button size="small" danger loading={state.clearing} disabled={state.clearing}>
+                        {t('agents.clearHistory')}
+                      </Button>
+                    </Popconfirm>
+                  </div>
                   <List
                     size="small"
                     dataSource={[group.session]}

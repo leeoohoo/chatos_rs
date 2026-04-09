@@ -361,6 +361,12 @@ impl TaskPlannerService {
                         task_id
                     ));
                 }
+                if existing.status != "pending_confirm" {
+                    return Err(format!(
+                        "task {} status={} cannot be confirmed again; create a new task for new work",
+                        task_id, existing.status
+                    ));
+                }
 
                 let effective_model_id = block_on_result(
                     resolve_effective_contact_agent_model_config_id(

@@ -553,6 +553,7 @@ fn format_existing_unfinished_tasks_prompt(
     let mut lines = Vec::new();
     lines.push("当前上下文里已经存在未完成任务，先阅读并结合它们决定是否需要重排，而不是默认重新创建：".to_string());
     lines.push("规则：如果已有任务可以覆盖用户新增要求，优先调整、确认、暂停、恢复或停止现有任务；只有当现有任务无法承接时，才新建任务。".to_string());
+    lines.push("强规则：已 completed 的任务禁止再次确认或重开执行；如果用户提出新增需求，必须新建任务。".to_string());
     for (index, task) in tasks.iter().take(8).enumerate() {
         let mut parts = vec![
             format!("{}.", index + 1),

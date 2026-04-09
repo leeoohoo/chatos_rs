@@ -18,33 +18,75 @@ pub(super) async fn scheduler_next(
         .find_one(doc! {"scope_key": &key})
         .await
         .map_err(|e| e.to_string())?;
+    let ack_at = runtime
+        .as_ref()
+        .and_then(|item| item.last_all_done_ack_at.clone());
 
     if let Some(runtime) = runtime.as_ref() {
-        if runtime
+        let control_request_active = runtime
             .control_request
             .as_deref()
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .is_some()
+            .is_some();
+        let mut has_stale_running_task_marker = false;
+        if let Some(running_task_id) = runtime
+            .running_task_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
         {
-            return Ok(SchedulerDecision {
-                decision: "pass".to_string(),
-                task: None,
-                scope_key: key,
-            });
-        }
-        if let Some(running_task_id) = runtime.running_task_id.as_deref() {
             if let Some(task) = super::get_task(db, running_task_id).await? {
-                if task.status == "running" {
+                let is_same_scope = task.user_id == user_id
+                    && task.contact_agent_id == contact_agent_id
+                    && task.project_id == project_id;
+                if task.status == "running" && is_same_scope {
                     return Ok(SchedulerDecision {
                         decision: "pass".to_string(),
                         task: None,
                         scope_key: key,
                     });
                 }
+                has_stale_running_task_marker = true;
+            } else {
+                has_stale_running_task_marker = true;
             }
         }
+
+        let has_control_marker = control_request_active
+            || runtime
+                .control_requested_at
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .is_some()
+            || runtime
+                .control_reason
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .is_some();
+        let has_stale_runtime_marker = has_stale_running_task_marker || has_control_marker;
+
+        if has_stale_runtime_marker {
+            upsert_scope_runtime(
+                db,
+                &key,
+                user_id,
+                contact_agent_id,
+                project_id,
+                None,
+                None,
+                None,
+                None,
+                runtime.resume_target_task_id.clone(),
+                runtime.last_all_done_ack_at.clone(),
+            )
+            .await?;
+        }
     }
+
+    refresh_blocked_scope_tasks(db, user_id, contact_agent_id, project_id).await?;
 
     let paused_tasks = list_scope_tasks(db, user_id, contact_agent_id, project_id, &["paused"]).await?;
     if !paused_tasks.is_empty() {
@@ -54,8 +96,6 @@ pub(super) async fn scheduler_next(
             scope_key: key,
         });
     }
-
-    refresh_blocked_scope_tasks(db, user_id, contact_agent_id, project_id).await?;
 
     let now = chrono::Utc::now().to_rfc3339();
     let options = FindOneAndUpdateOptions::builder()
@@ -97,7 +137,7 @@ pub(super) async fn scheduler_next(
             None,
             None,
             None,
-            runtime.and_then(|item| item.last_all_done_ack_at),
+            ack_at.clone(),
         )
         .await?;
         return Ok(SchedulerDecision {
@@ -135,7 +175,6 @@ pub(super) async fn scheduler_next(
         });
     }
 
-    let ack_at = runtime.and_then(|item| item.last_all_done_ack_at);
     if let Some(task) = last_terminal {
         let should_send_all_done = ack_at
             .as_deref()

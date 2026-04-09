@@ -145,6 +145,9 @@ export const zhCN: Record<string, string> = {
   'agents.projectSessions': '项目会话',
   'agents.messages': '消息明细',
   'agents.untitledSession': '未命名对话',
+  'agents.clearHistory': '清除历史消息',
+  'agents.clearHistoryConfirm': '确认清除当前项目会话的历史消息？',
+  'agents.clearHistorySuccess': '历史消息已清除',
 
   'sessions.title': '会话列表',
   'sessions.newTitle': '新会话标题',

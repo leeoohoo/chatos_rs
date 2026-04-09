@@ -33,6 +33,8 @@ const IM_PLANNING_MUTATION_REPLY_PROMPT_SUFFIX: &str =
     "请立即用简短自然语言向用户总结本轮结果，并结束当前回复。";
 const IM_PLANNING_FINALIZE_FALLBACK_REPLY: &str =
     "本轮任务规划或任务调整已经处理完毕，后续将按新的任务状态异步推进。";
+const IM_PLANNING_NO_TOOL_MUTATION_FALLBACK_REPLY: &str =
+    "本轮未实际调用任务变更工具，因此没有创建或变更任何任务状态。请重试，我会先执行工具再回报结果。";
 
 impl AiClient {
     pub(super) async fn process_with_tools(
@@ -433,9 +435,22 @@ impl AiClient {
                         "iteration": iteration
                     }));
                 }
+                let content = sanitize_im_planning_reply_without_tool_calls(
+                    purpose,
+                    turn_id.as_deref(),
+                    ai_response.content.as_str(),
+                )
+                .unwrap_or_else(|| ai_response.content.clone());
+                if content != ai_response.content {
+                    warn!(
+                        "[AI_V3] blocked unbacked IM planning mutation claim without tool calls: session_id={}, turn_id={}",
+                        session_id.as_deref().unwrap_or("n/a"),
+                        turn_id.as_deref().unwrap_or("n/a")
+                    );
+                }
                 return Ok(json!({
                     "success": true,
-                    "content": ai_response.content,
+                    "content": content,
                     "reasoning": ai_response.reasoning,
                     "tool_calls": Value::Null,
                     "finish_reason": ai_response.finish_reason,
@@ -697,20 +712,80 @@ fn is_non_terminal_finish_reason(finish_reason: Option<&str>) -> bool {
     )
 }
 
+fn is_im_planning_turn(turn_id: Option<&str>, purpose: &str) -> bool {
+    if purpose != "chat" {
+        return false;
+    }
+    turn_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.starts_with("im-run-"))
+        .unwrap_or(false)
+}
+
+fn is_unbacked_im_planning_mutation_claim(content: &str) -> bool {
+    let text = content.trim();
+    if text.is_empty() {
+        return false;
+    }
+    let lower = text.to_ascii_lowercase();
+    let has_positive_signal = text.contains("已创建")
+        || text.contains("创建了")
+        || text.contains("已确认")
+        || text.contains("已暂停")
+        || text.contains("已恢复")
+        || text.contains("已停止")
+        || text.contains("已重试")
+        || lower.contains("successfully created")
+        || lower.contains("created_count")
+        || lower.contains("confirm_task")
+        || lower.contains("create_tasks")
+        || lower.contains("resume_task")
+        || lower.contains("request_pause_running_task")
+        || lower.contains("request_stop_running_task")
+        || lower.contains(" call_")
+        || lower.starts_with("call_");
+    if !has_positive_signal {
+        return false;
+    }
+
+    let has_negative_signal = text.contains("未创建")
+        || text.contains("没有创建")
+        || text.contains("未确认")
+        || text.contains("未暂停")
+        || text.contains("未恢复")
+        || text.contains("未停止")
+        || text.contains("未重试")
+        || text.contains("未调用")
+        || text.contains("没有调用")
+        || text.contains("严禁在回复中声称")
+        || lower.contains("not created")
+        || lower.contains("did not create")
+        || lower.contains("failed to create")
+        || lower.contains("without calling");
+    has_positive_signal && !has_negative_signal
+}
+
+fn sanitize_im_planning_reply_without_tool_calls(
+    purpose: &str,
+    turn_id: Option<&str>,
+    content: &str,
+) -> Option<String> {
+    if !is_im_planning_turn(turn_id, purpose) {
+        return None;
+    }
+    if !is_unbacked_im_planning_mutation_claim(content) {
+        return None;
+    }
+    Some(IM_PLANNING_NO_TOOL_MUTATION_FALLBACK_REPLY.to_string())
+}
+
 fn build_im_planning_finalize_reply(
     turn_id: Option<&str>,
     purpose: &str,
     tool_results: &[ToolResult],
 ) -> Option<(String, String)> {
-    if purpose != "chat" {
-        return None;
-    }
-    if !turn_id
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| value.starts_with("im-run-"))
-        .unwrap_or(false)
-    {
+    if !is_im_planning_turn(turn_id, purpose) {
         return None;
     }
 
@@ -783,7 +858,7 @@ fn im_planning_mutation_summary(result: &ToolResult) -> Option<String> {
                 .unwrap_or(0);
             if confirmed {
                 let task_count = created_count.max(1);
-                Some(format!("已创建 {} 个待确认任务", task_count))
+                Some(format!("已创建 {} 个任务", task_count))
             } else if cancelled {
                 let reason = payload
                     .as_ref()
@@ -832,7 +907,7 @@ fn im_planning_mutation_summary(result: &ToolResult) -> Option<String> {
 mod tests {
     use super::{
         build_im_planning_finalize_reply, canonical_im_planning_tool_name,
-        is_successful_im_planning_mutation_result,
+        is_successful_im_planning_mutation_result, sanitize_im_planning_reply_without_tool_calls,
     };
     use crate::core::mcp_tools::ToolResult;
 
@@ -938,5 +1013,25 @@ mod tests {
             &[result]
         )
         .is_some());
+    }
+
+    #[test]
+    fn blocks_unbacked_creation_claim_without_tool_calls() {
+        let sanitized = sanitize_im_planning_reply_without_tool_calls(
+            "chat",
+            Some("im-run-abc"),
+            "已按你的要求创建了 2 个任务，任务ID分别是 ...",
+        );
+        assert!(sanitized.is_some());
+    }
+
+    #[test]
+    fn allows_explicit_non_creation_statement_without_tool_calls() {
+        let sanitized = sanitize_im_planning_reply_without_tool_calls(
+            "chat",
+            Some("im-run-abc"),
+            "本轮未调用 create_tasks，所以没有创建任何任务。",
+        );
+        assert!(sanitized.is_none());
     }
 }

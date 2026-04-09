@@ -612,6 +612,9 @@ pub fn compose_contact_task_planning_prompt(
     lines.push("- 如果任务是实现/改造/修复代码、页面、组件、接口、脚本或文档落地，`required_builtin_capabilities` 至少包含 `write`。".to_string());
     lines.push("- 如果任务还需要运行命令、构建、测试、启动服务或查看日志，额外包含 `terminal`。".to_string());
     lines.push("- 不要创建只带 `read` 的 implementation/migration/documentation 任务。".to_string());
+    lines.push("- 涉及任务状态变更（创建/确认/暂停/恢复/停止/重试）时，必须先调用对应任务工具，并严格以工具返回结果为准。".to_string());
+    lines.push("- 若本轮未调用任务工具，严禁在回复中声称“已创建/已确认/已暂停/已恢复/已停止/已重试”。".to_string());
+    lines.push("- 只有当 `create_tasks` 返回 `confirmed=true` 且 `created_count>0` 时，才可以声称创建成功；否则必须明确说明未创建成功。".to_string());
 
     let mut examples = Vec::new();
     let has_read = allowed_capabilities.iter().any(|item| item == "read");

@@ -150,6 +150,14 @@ export const api = {
     return data.items ?? [];
   },
 
+  async clearSessionMessages(sessionId: string): Promise<{ deleted: number; success: boolean }> {
+    const { data } = await client.delete(`/sessions/${sessionId}/messages`);
+    return {
+      deleted: Number(data?.deleted ?? 0),
+      success: Boolean(data?.success),
+    };
+  },
+
   async createMessage(
     sessionId: string,
     payload: { role: string; content: string; message_source?: string },

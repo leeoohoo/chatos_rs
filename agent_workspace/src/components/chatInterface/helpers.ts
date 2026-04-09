@@ -651,11 +651,56 @@ export const selectLatestTurnTasks = (tasks: TaskWorkbarItem[]): TaskWorkbarItem
     return [];
   }
 
-  const latestTaskWithTurn = tasks.find((task) => task.conversationTurnId.trim().length > 0);
-  if (!latestTaskWithTurn) {
+  const withTurn = tasks.filter((task) => task.conversationTurnId.trim().length > 0);
+  if (withTurn.length === 0) {
     return tasks.slice(0, 8);
   }
 
-  const latestTurnId = latestTaskWithTurn.conversationTurnId.trim();
-  return tasks.filter((task) => task.conversationTurnId.trim() === latestTurnId);
+  type TurnBucket = {
+    turnId: string;
+    latestCreatedAt: number;
+    hasInProgressTask: boolean;
+  };
+
+  const buckets = new Map<string, TurnBucket>();
+  for (const task of withTurn) {
+    const turnId = task.conversationTurnId.trim();
+    const createdAt = Date.parse(task.createdAt) || 0;
+    const isInProgress = task.status === 'pending_confirm'
+      || task.status === 'pending_execute'
+      || task.status === 'running'
+      || task.status === 'paused'
+      || task.status === 'blocked';
+    const existing = buckets.get(turnId);
+    if (!existing) {
+      buckets.set(turnId, {
+        turnId,
+        latestCreatedAt: createdAt,
+        hasInProgressTask: isInProgress,
+      });
+      continue;
+    }
+    if (createdAt > existing.latestCreatedAt) {
+      existing.latestCreatedAt = createdAt;
+    }
+    if (isInProgress) {
+      existing.hasInProgressTask = true;
+    }
+  }
+
+  const orderedBuckets = Array.from(buckets.values()).sort((left, right) => {
+    if (left.hasInProgressTask !== right.hasInProgressTask) {
+      return left.hasInProgressTask ? -1 : 1;
+    }
+    if (left.latestCreatedAt !== right.latestCreatedAt) {
+      return right.latestCreatedAt - left.latestCreatedAt;
+    }
+    return right.turnId.localeCompare(left.turnId);
+  });
+  const preferredTurnId = orderedBuckets[0]?.turnId || '';
+  if (!preferredTurnId) {
+    return tasks.slice(0, 8);
+  }
+
+  return tasks.filter((task) => task.conversationTurnId.trim() === preferredTurnId);
 };

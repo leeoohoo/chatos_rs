@@ -59,10 +59,9 @@ export function TaskBoardTable({
         render: (value: string, record: ContactTask) => (
           <Space direction="vertical" size={2}>
             <Text strong>{value}</Text>
-            <Text type="secondary">
-              {record.id.slice(0, 8)}
-              {typeof record.queue_position === 'number' ? ` · 队列 ${record.queue_position}` : ''}
-            </Text>
+            {typeof record.queue_position === 'number' ? (
+              <Text type="secondary">{`队列 ${record.queue_position}`}</Text>
+            ) : null}
           </Space>
         ),
       },
@@ -82,13 +81,6 @@ export function TaskBoardTable({
               {' '}
               {getProjectDisplayName(record)}
             </Text>
-            <Text type="secondary">
-              IDs:
-              {' '}
-              {record.contact_agent_id}
-              {' / '}
-              {record.project_id}
-            </Text>
           </Space>
         ),
       },
@@ -97,7 +89,7 @@ export function TaskBoardTable({
         key: 'plan',
         render: (_: unknown, record: ContactTask) => (
           <Space direction="vertical" size={2}>
-            <Text>{record.task_plan_id || '-'}</Text>
+            <Text>{record.task_plan_id ? '已归属计划' : '未归属计划'}</Text>
             <Text type="secondary">
               {record.task_ref || '-'}
               {record.task_kind ? ` · ${record.task_kind}` : ''}

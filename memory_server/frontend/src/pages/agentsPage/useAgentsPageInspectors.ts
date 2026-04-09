@@ -1,5 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
 
+import { message as antdMessage } from 'antd';
+
 import { api } from '../../api/client';
 import type {
   MemoryAgent,
@@ -33,6 +35,7 @@ export interface AgentsPageInspectorsResult {
   openConversationDrawer: (agent: MemoryAgent) => Promise<void>;
   closeConversationDrawer: () => void;
   loadConversationMessages: (sessionId: string, page?: number) => Promise<void>;
+  clearConversationMessages: (sessionId?: string) => Promise<void>;
   pluginPreviewState: AgentPluginPreviewState;
   openPluginPreview: (pluginSource: string) => Promise<void>;
   closePluginPreview: () => void;
@@ -64,6 +67,7 @@ export function useAgentsPageInspectors({
   const [conversationSessionId, setConversationSessionId] = useState<string | null>(null);
   const [conversationMessages, setConversationMessages] = useState<Message[]>([]);
   const [conversationMessagesLoading, setConversationMessagesLoading] = useState(false);
+  const [conversationClearing, setConversationClearing] = useState(false);
   const [conversationMessagesPage, setConversationMessagesPage] = useState(1);
   const [conversationMessagesHasMore, setConversationMessagesHasMore] = useState(false);
   const [conversationProjectNames, setConversationProjectNames] = useState<Record<string, string>>({});
@@ -279,9 +283,29 @@ export function useAgentsPageInspectors({
     setConversationProjectNames({});
     setConversationSessionId(null);
     setConversationMessages([]);
+    setConversationClearing(false);
     setConversationMessagesPage(1);
     setConversationMessagesHasMore(false);
   };
+
+  const clearConversationMessages = useCallback(async (sessionId?: string) => {
+    const normalizedSessionId = (sessionId || conversationSessionId || '').trim();
+    if (!normalizedSessionId) {
+      return;
+    }
+    setConversationClearing(true);
+    try {
+      const result = await api.clearSessionMessages(normalizedSessionId);
+      await loadConversationMessages(normalizedSessionId, 1);
+      if (result.success) {
+        antdMessage.success(t('agents.clearHistorySuccess'));
+      }
+    } catch (err) {
+      onError((err as Error).message);
+    } finally {
+      setConversationClearing(false);
+    }
+  }, [conversationSessionId, loadConversationMessages, onError, t]);
 
   const conversationState: AgentConversationPanelState = {
     open: conversationOpen,
@@ -291,6 +315,7 @@ export function useAgentsPageInspectors({
     sessionId: conversationSessionId,
     messages: conversationMessages,
     messagesLoading: conversationMessagesLoading,
+    clearing: conversationClearing,
     messagesPage: conversationMessagesPage,
     messagesPageSize: CONVERSATION_MESSAGES_PAGE_SIZE,
     messagesHasMore: conversationMessagesHasMore,
@@ -317,6 +342,7 @@ export function useAgentsPageInspectors({
     openConversationDrawer,
     closeConversationDrawer,
     loadConversationMessages,
+    clearConversationMessages,
     pluginPreviewState,
     openPluginPreview,
     closePluginPreview,

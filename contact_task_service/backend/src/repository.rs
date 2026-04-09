@@ -9,18 +9,19 @@ use crate::db::Db;
 use crate::models::{
     scope_key, AckPauseTaskRequest, AckStopTaskRequest, ContactTask, CreateTaskRequest,
     PauseTaskRequest, ResumeTaskRequest, RetryTaskRequest, SchedulerDecision, StopTaskRequest,
-    TaskExecutionResultContract, TaskExecutionScopeView, TaskPlanView,
-    UpdateTaskPlanRequest, UpdateTaskPlanResponse, UpdateTaskRequest,
+    TaskExecutionResultContract, TaskExecutionScopeView, TaskPlanView, UpdateTaskPlanRequest,
+    UpdateTaskPlanResponse, UpdateTaskRequest,
 };
 
-mod support;
 mod lifecycle;
-mod scheduler;
 mod plan_ops;
+mod scheduler;
+mod support;
 use self::support::{
     apply_status_and_blocked_reason, build_task_plan_view, build_tasks_filter, empty_task_update,
-    list_plan_tasks, list_scope_tasks, list_tasks_by_ids, next_queue_position,
-    normalize_builtin_mcp_ids, normalize_optional_text, normalize_string_list, runtimes, tasks,
+    list_plan_tasks, list_scope_tasks, next_queue_position, normalize_builtin_mcp_ids,
+    normalize_optional_text, normalize_string_list,
+    resolve_status_and_blocked_reason_for_dependencies, runtimes, tasks,
 };
 
 async fn refresh_blocked_scope_tasks(
@@ -29,31 +30,17 @@ async fn refresh_blocked_scope_tasks(
     contact_agent_id: &str,
     project_id: &str,
 ) -> Result<(), String> {
-    let blocked_tasks = list_scope_tasks(db, user_id, contact_agent_id, project_id, &["blocked"]).await?;
+    let blocked_tasks =
+        list_scope_tasks(db, user_id, contact_agent_id, project_id, &["blocked"]).await?;
     for task in blocked_tasks {
-        let dependency_tasks = list_tasks_by_ids(db, task.depends_on_task_ids.as_slice()).await?;
-        let next_blocked_reason = if task.depends_on_task_ids.is_empty() {
-            None
-        } else if dependency_tasks.len() != task.depends_on_task_ids.len() {
-            Some("dependency_missing".to_string())
-        } else if dependency_tasks.iter().all(|item| item.status == "completed") {
-            None
-        } else if dependency_tasks
-            .iter()
-            .any(|item| item.status == "failed" || item.status == "cancelled" || item.status == "skipped")
-        {
-            Some("upstream_terminal_failure".to_string())
-        } else {
-            Some("waiting_for_dependencies".to_string())
-        };
-        let next_status = if next_blocked_reason.is_none() {
-            "pending_execute"
-        } else {
-            "blocked"
-        };
+        let (next_status, next_blocked_reason) = resolve_status_and_blocked_reason_for_dependencies(
+            db,
+            task.depends_on_task_ids.as_slice(),
+        )
+        .await?;
         let mut update = empty_task_update();
         apply_status_and_blocked_reason(&mut update, next_status, next_blocked_reason);
-        update_task(db, task.id.as_str(), update).await?;
+        update_task_internal(db, task.id.as_str(), update).await?;
     }
 
     Ok(())
@@ -223,7 +210,11 @@ pub async fn list_task_plans(
 
     let safe_offset = offset.max(0) as usize;
     let safe_limit = limit.max(1).min(500) as usize;
-    Ok(plans.into_iter().skip(safe_offset).take(safe_limit).collect())
+    Ok(plans
+        .into_iter()
+        .skip(safe_offset)
+        .take(safe_limit)
+        .collect())
 }
 
 pub async fn get_task_plan(
@@ -301,7 +292,7 @@ pub async fn get_task(db: &Db, task_id: &str) -> Result<Option<ContactTask>, Str
         .map_err(|e| e.to_string())
 }
 
-pub async fn update_task(
+async fn update_task_internal(
     db: &Db,
     task_id: &str,
     req: UpdateTaskRequest,
@@ -318,6 +309,9 @@ pub async fn update_task(
     };
 
     let status = req.status.clone().unwrap_or(existing.status.clone());
+    if existing.status == "completed" && status != "completed" {
+        return Err("completed tasks cannot be reopened; create a new task instead".to_string());
+    }
     let finished_at = match status.as_str() {
         "completed" | "failed" | "cancelled" | "skipped" => Some(now.clone()),
         "pending_confirm" | "pending_execute" | "running" | "paused" | "blocked" => None,
@@ -336,12 +330,7 @@ pub async fn update_task(
         existing.started_at.clone()
     };
     let paused_at = if status == "paused" {
-        Some(
-            existing
-                .paused_at
-                .clone()
-                .unwrap_or_else(|| now.clone()),
-        )
+        Some(existing.paused_at.clone().unwrap_or_else(|| now.clone()))
     } else {
         None
     };
@@ -384,7 +373,9 @@ pub async fn update_task(
         .acceptance_criteria
         .map(normalize_string_list)
         .unwrap_or(existing.acceptance_criteria.clone());
-    let blocked_reason = req.blocked_reason.unwrap_or(existing.blocked_reason.clone());
+    let blocked_reason = req
+        .blocked_reason
+        .unwrap_or(existing.blocked_reason.clone());
 
     let updated = ContactTask {
         id: existing.id.clone(),
@@ -432,7 +423,9 @@ pub async fn update_task(
             .execution_result_contract
             .or(existing.execution_result_contract.clone()),
         planning_snapshot: req.planning_snapshot.or(existing.planning_snapshot.clone()),
-        handoff_payload: req.handoff_payload.unwrap_or(existing.handoff_payload.clone()),
+        handoff_payload: req
+            .handoff_payload
+            .unwrap_or(existing.handoff_payload.clone()),
         created_by: existing.created_by.clone(),
         created_at: existing.created_at.clone(),
         updated_at: now.clone(),
@@ -457,7 +450,87 @@ pub async fn update_task(
         .replace_one(doc! {"id": task_id}, updated.clone())
         .await
         .map_err(|e| e.to_string())?;
+
     Ok(Some(updated))
+}
+
+pub async fn update_task(
+    db: &Db,
+    task_id: &str,
+    req: UpdateTaskRequest,
+) -> Result<Option<ContactTask>, String> {
+    let existing = get_task(db, task_id).await?;
+    let updated = update_task_internal(db, task_id, req).await?;
+
+    if let (Some(before), Some(after)) = (existing.as_ref(), updated.as_ref()) {
+        let should_clear_scope_runtime = before.status == "running" && after.status != "running";
+        if should_clear_scope_runtime {
+            let runtime = runtimes(db)
+                .find_one(doc! {"scope_key": before.scope_key.as_str()})
+                .await
+                .map_err(|e| e.to_string())?;
+            if let Some(runtime) = runtime {
+                let running_matches_task = runtime
+                    .running_task_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(|value| value == before.id.as_str())
+                    .unwrap_or(false);
+                let has_control_marker = runtime
+                    .control_request
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .is_some()
+                    || runtime
+                        .control_requested_at
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .is_some()
+                    || runtime
+                        .control_reason
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .is_some();
+                if running_matches_task || has_control_marker {
+                    upsert_scope_runtime(
+                        db,
+                        before.scope_key.as_str(),
+                        before.user_id.as_str(),
+                        before.contact_agent_id.as_str(),
+                        before.project_id.as_str(),
+                        None,
+                        None,
+                        None,
+                        None,
+                        runtime.resume_target_task_id.clone(),
+                        runtime.last_all_done_ack_at.clone(),
+                    )
+                    .await?;
+                }
+            }
+        }
+
+        let should_refresh_blocked_dependents = before.status != after.status
+            && matches!(
+                after.status.as_str(),
+                "completed" | "failed" | "cancelled" | "skipped"
+            );
+        if should_refresh_blocked_dependents {
+            refresh_blocked_scope_tasks(
+                db,
+                before.user_id.as_str(),
+                before.contact_agent_id.as_str(),
+                before.project_id.as_str(),
+            )
+            .await?;
+        }
+    }
+
+    Ok(updated)
 }
 
 pub async fn delete_task(db: &Db, task_id: &str) -> Result<bool, String> {

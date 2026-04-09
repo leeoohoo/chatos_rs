@@ -28,14 +28,25 @@ export function TaskPlanOverviewSection({
     return null;
   }
 
+  const formatTimeText = (value: string): string => {
+    const ts = Date.parse(value) || 0;
+    if (ts <= 0) {
+      return '-';
+    }
+    return new Date(ts).toLocaleString();
+  };
+
   return (
     <>
+      <Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>
+        默认按最近更新时间降序展示（越新的计划越靠前）。
+      </Text>
       <Space
         wrap
         size={12}
         style={{ width: '100%', marginBottom: 16, alignItems: 'stretch' }}
       >
-        {taskPlans.slice(0, 6).map((plan) => (
+        {taskPlans.slice(0, 6).map((plan, index) => (
           <Card
             key={plan.plan_id}
             size="small"
@@ -48,10 +59,11 @@ export function TaskPlanOverviewSection({
           >
             <Space direction="vertical" size={6} style={{ width: '100%' }}>
               <Space wrap>
-                <Tag color="geekblue">{plan.plan_id}</Tag>
+                <Tag color="geekblue">{`计划 ${index + 1}`}</Tag>
                 <Tag>{`${plan.task_count} 个任务`}</Tag>
               </Space>
               <Text strong>{truncateText(plan.title, 36)}</Text>
+              <Text type="secondary">{`计划ID: ${plan.plan_id}`}</Text>
               <Space wrap>
                 {Object.entries(plan.status_counts).map(([statusKey, count]) => (
                   <Tag key={`${plan.plan_id}-${statusKey}`} color={formatTaskStatusColor(statusKey)}>
@@ -62,9 +74,7 @@ export function TaskPlanOverviewSection({
               <Text type="secondary">
                 最近更新:
                 {' '}
-                {(Date.parse(plan.latest_updated_at) || 0) > 0
-                  ? new Date(plan.latest_updated_at).toLocaleString()
-                  : '-'}
+                {formatTimeText(plan.latest_updated_at)}
               </Text>
               <Space wrap>
                 <Button
@@ -97,8 +107,9 @@ export function TaskPlanOverviewSection({
           key: `plan-${plan.plan_id}`,
           label: (
             <Space wrap>
-              <Text strong>{plan.plan_id}</Text>
+              <Text strong>{truncateText(plan.title, 44)}</Text>
               <Tag>{`${plan.task_count} 个节点`}</Tag>
+              <Text type="secondary">{`最近更新: ${formatTimeText(plan.latest_updated_at)}`}</Text>
               {Object.entries(plan.status_counts).map(([statusKey, count]) => (
                 <Tag key={`${plan.plan_id}-collapse-${statusKey}`} color={formatTaskStatusColor(statusKey)}>
                   {`${statusKey}: ${count}`}

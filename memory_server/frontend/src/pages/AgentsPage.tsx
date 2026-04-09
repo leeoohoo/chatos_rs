@@ -98,6 +98,7 @@ export function AgentsPage({ filterUserId, currentUserId, isAdmin }: AgentsPageP
         state={controller.conversationState}
         onClose={controller.closeConversationDrawer}
         onSelectSession={controller.loadConversationMessages}
+        onClearMessages={controller.clearConversationMessages}
       />
 
       <AgentEditorModal

@@ -267,6 +267,19 @@ function App() {
     return items;
   }, [tasks]);
 
+  const sortedTaskPlans = useMemo(() => {
+    const items = [...taskPlans];
+    items.sort((left, right) => {
+      const rightUpdated = Date.parse(right.latest_updated_at) || 0;
+      const leftUpdated = Date.parse(left.latest_updated_at) || 0;
+      if (rightUpdated !== leftUpdated) {
+        return rightUpdated - leftUpdated;
+      }
+      return right.plan_id.localeCompare(left.plan_id);
+    });
+    return items;
+  }, [taskPlans]);
+
   const visibleTasks = useMemo(() => {
     const normalizedPlanId = (selectedPlanId || '').trim();
     if (!normalizedPlanId) {
@@ -291,7 +304,7 @@ function App() {
         blockedTaskCount: selectedPlanDetails.blocked_task_count,
       };
     }
-    const localPlan = taskPlans.find((plan) => plan.plan_id === normalizedPlanId) || null;
+    const localPlan = sortedTaskPlans.find((plan) => plan.plan_id === normalizedPlanId) || null;
     if (!localPlan) {
       return null;
     }
@@ -304,7 +317,22 @@ function App() {
       activeTaskId: localPlan.active_task_id || null,
       blockedTaskCount: localPlan.blocked_task_count,
     };
-  }, [selectedPlanDetails, selectedPlanId, taskPlans]);
+  }, [selectedPlanDetails, selectedPlanId, sortedTaskPlans]);
+
+  const selectedPlanHint = useMemo(() => {
+    const normalizedPlanId = (selectedPlanId || '').trim();
+    if (!normalizedPlanId) {
+      return null;
+    }
+    const plan = sortedTaskPlans.find((item) => item.plan_id === normalizedPlanId)
+      || (selectedPlanDetails && selectedPlanDetails.plan_id === normalizedPlanId
+        ? selectedPlanDetails
+        : null);
+    return {
+      planId: normalizedPlanId,
+      title: plan?.title || normalizedPlanId,
+    };
+  }, [selectedPlanDetails, selectedPlanId, sortedTaskPlans]);
 
   const formatRelatedTask = useMemo(() => (
     (taskId: string): string => {
@@ -338,7 +366,7 @@ function App() {
       return;
     }
     setSelectedPlanId(normalizedPlanId);
-    const plan = taskPlans.find((item) => item.plan_id === normalizedPlanId);
+    const plan = sortedTaskPlans.find((item) => item.plan_id === normalizedPlanId);
     if (plan) {
       setExpandedTaskIds(plan.tasks.map((item) => item.id));
     }
@@ -794,7 +822,8 @@ function App() {
                     type="info"
                     showIcon
                     style={{ marginBottom: 12 }}
-                    message={`当前只看计划 ${selectedPlanId}`}
+                    message={`当前只看计划：${selectedPlanHint?.title || selectedPlanId}`}
+                    description={selectedPlanHint ? `计划ID: ${selectedPlanHint.planId}` : undefined}
                     action={(
                       <Button size="small" onClick={clearTaskPlanFocus}>
                         清除计划筛选
@@ -822,7 +851,7 @@ function App() {
                   />
                 )}
                 <TaskPlanOverviewSection
-                  taskPlans={taskPlans}
+                  taskPlans={sortedTaskPlans}
                   selectedPlanId={selectedPlanId}
                   formatRelatedTask={formatRelatedTask}
                   getContactDisplayName={getContactDisplayName}
