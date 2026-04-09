@@ -60,6 +60,20 @@ fn read_task_service_token(node_env: &str) -> String {
         })
 }
 
+fn read_im_service_token(node_env: &str) -> String {
+        .or_else(|_| std::env::var("MEMORY_SERVER_SERVICE_TOKEN"))
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| {
+            if node_env.eq_ignore_ascii_case("production") {
+                String::new()
+            } else {
+                "agent-orchestrator-dev-service-token".to_string()
+            }
+        })
+}
+
 impl Config {
     pub fn init_global() -> Result<&'static Config, String> {
         let cfg = Config::from_env()?;
@@ -143,9 +157,7 @@ impl Config {
             read_int("AUTH_ACCESS_TOKEN_TTL_SECONDS", 43_200).max(60);
         let im_service_base_url = std::env::var("IM_SERVICE_BASE_URL")
             .unwrap_or_else(|_| "http://127.0.0.1:7090/api/im/v1".to_string());
-        let im_service_service_token = std::env::var("IM_SERVICE_SERVICE_TOKEN")
-            .or_else(|_| std::env::var("MEMORY_SERVER_SERVICE_TOKEN"))
-            .unwrap_or_default();
+        let im_service_service_token = read_im_service_token(node_env.as_str());
         let im_service_request_timeout_ms =
             read_int("IM_SERVICE_REQUEST_TIMEOUT_MS", 5000).max(300);
         let memory_server_base_url = std::env::var("MEMORY_SERVER_BASE_URL")

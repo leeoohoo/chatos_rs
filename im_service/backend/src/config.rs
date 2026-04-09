@@ -13,6 +13,7 @@ pub struct AppConfig {
 
 impl AppConfig {
     pub fn from_env() -> Self {
+        let node_env = env::var("NODE_ENV").unwrap_or_else(|_| "development".to_string());
         let host = env_text("IM_SERVICE_HOST").unwrap_or_else(|| "0.0.0.0".to_string());
         let port = env::var("IM_SERVICE_PORT")
             .ok()
@@ -26,7 +27,7 @@ impl AppConfig {
         let mongodb_database =
             env_text("IM_SERVICE_MONGODB_DATABASE").unwrap_or_else(|| "im_service".to_string());
 
-        let service_token = env_text("IM_SERVICE_SERVICE_TOKEN");
+        let service_token = read_service_token(node_env.as_str());
 
         let auth_secret = env_text("IM_SERVICE_AUTH_SECRET")
             .unwrap_or_else(|| "memory_server_dev_change_me".to_string());
@@ -54,4 +55,16 @@ fn env_text(key: &str) -> Option<String> {
         .ok()
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())
+}
+
+fn read_service_token(node_env: &str) -> Option<String> {
+    env_text("IM_SERVICE_SERVICE_TOKEN")
+        .or_else(|| env_text("MEMORY_SERVER_SERVICE_TOKEN"))
+        .or_else(|| {
+            if node_env.eq_ignore_ascii_case("production") {
+                None
+            } else {
+                Some("agent-orchestrator-dev-service-token".to_string())
+            }
+        })
 }
