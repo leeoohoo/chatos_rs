@@ -1,0 +1,1383 @@
+# Chatos RS Incremental Optimization Plan (2026-04-09)
+
+## 1) Scope And Goal
+- Scope: `chat_app`, `chat_app_server_rs`, `memory_server`, `openai-codex-gateway`, root scripts/config.
+- Goal: Build a stable engineering loop first, then reduce maintenance cost and improve security/performance.
+- Principle: Small steps, each step verifiable, no large-bang refactor.
+
+## 2) Baseline (Checked On 2026-04-09)
+- `chat_app_server_rs`: `cargo check` passed, `cargo test` failed (225 passed, 2 failed).
+- `memory_server/backend`: `cargo check` and `cargo test` passed.
+- `chat_app`: `npm run type-check` and `npm run test -- --run` passed; `npm run lint` failed (missing ESLint config); `npm run build` passed.
+- `memory_server/frontend`: `npm run build` passed (chunk-size warning).
+- Repo observations:
+- No CI workflow found (`.github/workflows` missing).
+- `openai-codex-gateway/server.py` is a large single file (2439 LOC).
+- `chat_app` currently has many `as any` usages (57).
+
+## 3) Execution Strategy
+- Priority order: `P0 (quality gate)` -> `P1 (maintainability)` -> `P2 (security/perf)` -> `P3 (continuous governance)`.
+- Completion rule for each task:
+- Code change done.
+- Local verification command done.
+- Short change log added to this document.
+
+## 4) P0 - Quality Gate (Must Finish First)
+
+### P0.1 Unblock Frontend Lint
+- Task:
+- Add ESLint config for `chat_app`.
+- Make `npm run lint` executable in current codebase.
+- Acceptance:
+- `cd chat_app && npm run lint` runs with deterministic result.
+
+### P0.2 Fix Main Backend Failing Tests
+- Task:
+- Fix 2 failing tests in:
+- `chat_app_server_rs/src/services/v3/ai_request_handler/parser.rs`
+- `chat_app_server_rs/src/services/v3/ai_client/tests.rs`
+- Acceptance:
+- `cd chat_app_server_rs && cargo test -q` all pass.
+
+### P0.3 Add Minimal CI
+- Task:
+- Add CI workflow (Rust + frontend essential checks).
+- Suggested CI jobs:
+- `chat_app_server_rs`: `cargo check`, `cargo test -q`
+- `memory_server/backend`: `cargo check`, `cargo test -q`
+- `chat_app`: `npm ci`, `npm run type-check`, `npm run test -- --run`, `npm run build`, `npm run lint`
+- `memory_server/frontend`: `npm ci`, `npm run build`
+- Acceptance:
+- Workflow can run on PR and main branch.
+
+## 5) P1 - Maintainability Refactor (Incremental)
+
+### P1.1 Gateway Modularization
+- Task:
+- Split `openai-codex-gateway/server.py` into modules:
+- `app.py` (server bootstrap)
+- `routes.py` (HTTP handlers)
+- `adapters/` (OpenAI-protocol mapping)
+- `state_store.py` (SQLite mapping store)
+- `errors.py` (error serialization)
+- Acceptance:
+- External API behavior unchanged (`/healthz`, `/v1/models`, `/v1/responses`).
+- Existing gateway tests/scripts remain runnable.
+
+### P1.2 Reduce Type Debt In `chat_app`
+- Task:
+- Remove `as any` in high-frequency paths first:
+- `src/lib/store/actions/sessionsUtils.ts`
+- `src/lib/store/actions/sessionsSelectHelpers.ts`
+- `src/components/ChatInterface.tsx`
+- Acceptance:
+- At least 30% reduction of `as any` in first batch.
+- `npm run type-check` and tests still pass.
+
+### P1.3 Large File Split For Hotspots
+- Task:
+- Split files > 500 LOC in critical modules into feature slices.
+- Acceptance:
+- Core hotspots reduced under ~500 LOC where practical.
+- No behavior regression in existing tests.
+
+## 6) P2 - Security And Performance Hardening
+
+### P2.1 Safer Defaults
+- Task:
+- Restrict wildcard CORS defaults for production mode.
+- Enforce non-default secret checks in production.
+- Acceptance:
+- Production startup fails fast on unsafe defaults.
+
+### P2.2 Frontend Bundle Optimization
+- Task:
+- Apply lazy loading for heavy modules (e.g. mermaid/katex-related paths).
+- Tune Vite chunk split strategy.
+- Acceptance:
+- Main JS chunk size reduced significantly from current baseline.
+- `npm run build` warnings reduced.
+
+## 7) P3 - Governance And Documentation Alignment
+- Task:
+- Fix doc drift (outdated Node wording, stale script/path references).
+- Add one root-level engineering command doc (how to run all checks locally).
+- Acceptance:
+- README and real project structure/scripts are consistent.
+
+## 8) Change Log (Execution Record)
+- 2026-04-09:
+- Plan created.
+- `P0.1 Unblock Frontend Lint` completed:
+- Added `chat_app/.eslintrc.cjs`.
+- Refactored several components to remove conditional React Hook invocation patterns.
+- Verification passed:
+- `cd chat_app && npm run lint`
+- `cd chat_app && npm run type-check`
+- `cd chat_app && npm run test -- --run`
+- `P0.2 Fix Main Backend Failing Tests` completed:
+- Fixed tool-call id overwrite in v3 stream parser to keep `call_id` as canonical id.
+- Fixed no-`type` failed-response parsing in v3 stream parser so `status`/`error` responses trigger recovery flow.
+- Verification passed:
+- `cd chat_app_server_rs && cargo test -q apply_stream_event_collects_function_calls_from_stream_events`
+- `cd chat_app_server_rs && cargo test -q recovers_prev_id_then_completion_overflow_and_succeeds`
+- `cd chat_app_server_rs && cargo test -q`
+- `P0.3 Add Minimal CI` completed:
+- Added workflow: `.github/workflows/ci.yml`
+- CI covers:
+- `chat_app_server_rs`: `cargo check`, `cargo test -q`
+- `memory_server/backend`: `cargo check`, `cargo test -q`
+- `chat_app`: `npm ci`, `npm run type-check`, `npm run test -- --run`, `npm run build`, `npm run lint`
+- `memory_server/frontend`: `npm ci`, `npm run build`
+- Local verification passed:
+- `cd chat_app_server_rs && cargo check`
+- `cd memory_server/backend && cargo test -q`
+- `cd chat_app && npm run lint`
+- `cd memory_server/frontend && npm run build`
+- `P1.1 Gateway Modularization` started (phase 1):
+- Extracted shared gateway modules from `openai-codex-gateway/server.py`:
+- `openai-codex-gateway/gateway_logging.py`
+- `openai-codex-gateway/gateway_types.py`
+- `openai-codex-gateway/gateway_state_store.py`
+- Updated `server.py` to import and use extracted modules without behavior changes.
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_logging.py openai-codex-gateway/gateway_state_store.py openai-codex-gateway/gateway_types.py`
+- `python openai-codex-gateway/server.py --help`
+- `P1.1 Gateway Modularization` progressed (phase 2):
+- Extracted runtime/config parsing and shared utility helpers:
+- `openai-codex-gateway/gateway_runtime.py`
+- `openai-codex-gateway/gateway_utils.py`
+- Updated `server.py` to consume extracted modules; no behavior change intended.
+- `server.py` LOC reduced from 2439 -> 2226 in this iteration.
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_logging.py openai-codex-gateway/gateway_state_store.py openai-codex-gateway/gateway_types.py openai-codex-gateway/gateway_runtime.py openai-codex-gateway/gateway_utils.py`
+- `python openai-codex-gateway/server.py --help`
+- `P1.1 Gateway Modularization` progressed (phase 3):
+- Extracted payload parsing and request-normalization helpers:
+- `openai-codex-gateway/gateway_payload.py`
+- Updated `server.py` to import payload helpers; behavior unchanged by design.
+- `server.py` LOC reduced from 2226 -> 1589 in this iteration.
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_logging.py openai-codex-gateway/gateway_state_store.py openai-codex-gateway/gateway_types.py openai-codex-gateway/gateway_runtime.py openai-codex-gateway/gateway_utils.py openai-codex-gateway/gateway_payload.py`
+- `python openai-codex-gateway/server.py --help`
+- `python openai-codex-gateway/tests/test_gateway_tool_guards.py`
+- `P1.1 Gateway Modularization` progressed (phase 4):
+- Extracted SDK discovery/import logic:
+- `openai-codex-gateway/gateway_sdk_loader.py`
+- Updated `server.py` to consume loader output (`SDK_IMPORT_SOURCE` + imported SDK symbols) without changing external behavior.
+- `server.py` LOC reduced from 1589 -> 1471 in this iteration.
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_logging.py openai-codex-gateway/gateway_state_store.py openai-codex-gateway/gateway_types.py openai-codex-gateway/gateway_runtime.py openai-codex-gateway/gateway_utils.py openai-codex-gateway/gateway_payload.py openai-codex-gateway/gateway_sdk_loader.py`
+- `python openai-codex-gateway/server.py --help`
+- `python openai-codex-gateway/tests/test_gateway_tool_guards.py`
+- `P1.1 Gateway Modularization` progressed (phase 5):
+- Extracted generic tool-policy helpers:
+- `openai-codex-gateway/gateway_policy.py`
+- Updated `server.py` to reuse policy helpers while keeping thread-item type guard logic in place.
+- Preserved compatibility of `gateway_server.*` helper access used by existing tests.
+- `server.py` LOC reduced from 1471 -> 1423 in this iteration.
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_logging.py openai-codex-gateway/gateway_state_store.py openai-codex-gateway/gateway_types.py openai-codex-gateway/gateway_runtime.py openai-codex-gateway/gateway_utils.py openai-codex-gateway/gateway_payload.py openai-codex-gateway/gateway_sdk_loader.py openai-codex-gateway/gateway_policy.py`
+- `python openai-codex-gateway/server.py --help`
+- `python openai-codex-gateway/tests/test_gateway_tool_guards.py`
+- `P1.1 Gateway Modularization` progressed (phase 6):
+- Split turn-event parsing path out of `CodexBridge._run_turn`:
+- Introduced `TurnRuntimeState` dataclass in `openai-codex-gateway/server.py`.
+- Added `CodexBridge._process_turn_notification(...)` to centralize event handling for:
+- tool-violation detection on item notifications
+- message/reasoning deltas
+- reasoning fallback from completed reasoning items
+- token usage snapshots
+- final turn completion/error shaping
+- Updated `_run_turn` loop to use `TurnRuntimeState` + `_process_turn_notification` (behavior-preserving refactor).
+- Added focused unit tests:
+- `openai-codex-gateway/tests/test_gateway_turn_event_processing.py`
+- Verified cases:
+- reasoning delta accumulation + callback
+- reasoning fallback extraction from completed reasoning item
+- token usage snapshot update
+- disallowed dynamic tool detection path
+- disallowed-tool finalization forcing failed status + gateway error envelope
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_logging.py openai-codex-gateway/gateway_state_store.py openai-codex-gateway/gateway_types.py openai-codex-gateway/gateway_runtime.py openai-codex-gateway/gateway_utils.py openai-codex-gateway/gateway_payload.py openai-codex-gateway/gateway_sdk_loader.py openai-codex-gateway/gateway_policy.py openai-codex-gateway/tests/test_gateway_turn_event_processing.py`
+- `python openai-codex-gateway/tests/test_gateway_turn_event_processing.py`
+- `python openai-codex-gateway/tests/test_gateway_tool_guards.py`
+- `python openai-codex-gateway/server.py --help`
+- `P1.1 Gateway Modularization` progressed (phase 7):
+- Extracted response serialization/building helpers:
+- `openai-codex-gateway/gateway_response_builder.py`
+- Refactored non-stream response body assembly in `create_response` to builder call.
+- Refactored stream response/message item assembly in `_handle_stream` to builder call.
+- Added serialization-focused tests:
+- `openai-codex-gateway/tests/test_gateway_response_builder.py`
+- `server.py` LOC reduced from 1454 -> 1384 in this iteration.
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_logging.py openai-codex-gateway/gateway_state_store.py openai-codex-gateway/gateway_types.py openai-codex-gateway/gateway_runtime.py openai-codex-gateway/gateway_utils.py openai-codex-gateway/gateway_payload.py openai-codex-gateway/gateway_sdk_loader.py openai-codex-gateway/gateway_policy.py openai-codex-gateway/gateway_response_builder.py openai-codex-gateway/tests/test_gateway_turn_event_processing.py openai-codex-gateway/tests/test_gateway_response_builder.py`
+- `python openai-codex-gateway/tests/test_gateway_response_builder.py`
+- `python openai-codex-gateway/tests/test_gateway_turn_event_processing.py`
+- `python openai-codex-gateway/tests/test_gateway_tool_guards.py`
+- `python openai-codex-gateway/server.py --help`
+- `P1.1 Gateway Modularization` progressed (phase 8):
+- Split HTTP endpoint routing logic into dedicated module:
+- `openai-codex-gateway/gateway_http_routing.py`
+- Extracted:
+- GET route resolution (`/healthz`, `/v1/models`, fallback)
+- POST route resolution (`/v1/responses`, fallback)
+- Not-found payload builder
+- non-stream response HTTP status mapping (`failed` -> `502`, others -> `200`)
+- Updated `GatewayHandler.do_GET/do_POST` to consume routing helpers while preserving behavior.
+- Added endpoint-level unit tests:
+- `openai-codex-gateway/tests/test_gateway_http_routing.py`
+- `server.py` current LOC is `1392` (small import/dispatch glue added during route extraction).
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_logging.py openai-codex-gateway/gateway_state_store.py openai-codex-gateway/gateway_types.py openai-codex-gateway/gateway_runtime.py openai-codex-gateway/gateway_utils.py openai-codex-gateway/gateway_payload.py openai-codex-gateway/gateway_sdk_loader.py openai-codex-gateway/gateway_policy.py openai-codex-gateway/gateway_response_builder.py openai-codex-gateway/gateway_http_routing.py openai-codex-gateway/tests/test_gateway_http_routing.py openai-codex-gateway/tests/test_gateway_turn_event_processing.py openai-codex-gateway/tests/test_gateway_response_builder.py`
+- `python openai-codex-gateway/tests/test_gateway_http_routing.py`
+- `python openai-codex-gateway/tests/test_gateway_response_builder.py`
+- `python openai-codex-gateway/tests/test_gateway_turn_event_processing.py`
+- `python openai-codex-gateway/tests/test_gateway_tool_guards.py`
+- `python openai-codex-gateway/server.py --help`
+- `P1.1 Gateway Modularization` progressed (phase 9):
+- Split stream transport/event emission helpers from `_handle_stream`:
+- `openai-codex-gateway/gateway_stream_transport.py`
+- Extracted:
+- sequence numbering + event emission
+- reasoning delta/done stream logging
+- `[DONE]` marker emission
+- standard stream error event envelope
+- Updated `_handle_stream` to use `StreamEventTransport` with no SSE shape changes.
+- Added transport-focused unit tests:
+- `openai-codex-gateway/tests/test_gateway_stream_transport.py`
+- `server.py` LOC reduced from 1392 -> 1367 in this iteration.
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_logging.py openai-codex-gateway/gateway_state_store.py openai-codex-gateway/gateway_types.py openai-codex-gateway/gateway_runtime.py openai-codex-gateway/gateway_utils.py openai-codex-gateway/gateway_payload.py openai-codex-gateway/gateway_sdk_loader.py openai-codex-gateway/gateway_policy.py openai-codex-gateway/gateway_response_builder.py openai-codex-gateway/gateway_http_routing.py openai-codex-gateway/gateway_stream_transport.py openai-codex-gateway/tests/test_gateway_http_routing.py openai-codex-gateway/tests/test_gateway_turn_event_processing.py openai-codex-gateway/tests/test_gateway_response_builder.py openai-codex-gateway/tests/test_gateway_stream_transport.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_transport.py`
+- `python openai-codex-gateway/tests/test_gateway_http_routing.py`
+- `python openai-codex-gateway/tests/test_gateway_response_builder.py`
+- `python openai-codex-gateway/tests/test_gateway_turn_event_processing.py`
+- `python openai-codex-gateway/tests/test_gateway_tool_guards.py`
+- `python openai-codex-gateway/server.py --help`
+- `P1.1 Gateway Modularization` progressed (phase 10):
+- Split `POST /v1/responses` request-preprocessing/log-context extraction into dedicated parser:
+- `openai-codex-gateway/gateway_request_parser.py`
+- Added `ResponsesRequestContext` + `parse_responses_request(...)` to centralize:
+- cwd/config/tool parsing
+- tool-output extraction
+- stream flag and Bearer API key extraction
+- tools-count and reasoning context extraction for logging
+- Updated `GatewayHandler.do_POST` to consume parser output while preserving response behavior.
+- Added parser-focused unit tests:
+- `openai-codex-gateway/tests/test_gateway_request_parser.py`
+- `server.py` LOC reduced from 1367 -> 1362 in this iteration.
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_logging.py openai-codex-gateway/gateway_state_store.py openai-codex-gateway/gateway_types.py openai-codex-gateway/gateway_runtime.py openai-codex-gateway/gateway_utils.py openai-codex-gateway/gateway_payload.py openai-codex-gateway/gateway_sdk_loader.py openai-codex-gateway/gateway_policy.py openai-codex-gateway/gateway_response_builder.py openai-codex-gateway/gateway_http_routing.py openai-codex-gateway/gateway_stream_transport.py openai-codex-gateway/gateway_request_parser.py openai-codex-gateway/tests/test_gateway_request_parser.py openai-codex-gateway/tests/test_gateway_http_routing.py openai-codex-gateway/tests/test_gateway_turn_event_processing.py openai-codex-gateway/tests/test_gateway_response_builder.py openai-codex-gateway/tests/test_gateway_stream_transport.py`
+- `python openai-codex-gateway/tests/test_gateway_request_parser.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_transport.py`
+- `python openai-codex-gateway/tests/test_gateway_http_routing.py`
+- `python openai-codex-gateway/tests/test_gateway_response_builder.py`
+- `python openai-codex-gateway/tests/test_gateway_turn_event_processing.py`
+- `python openai-codex-gateway/tests/test_gateway_tool_guards.py`
+- `python openai-codex-gateway/server.py --help`
+- `P1.1 Gateway Modularization` progressed (phase 11):
+- Split `_handle_stream` branch assemblers into dedicated stream-flow helpers:
+- `openai-codex-gateway/gateway_stream_flow.py`
+- Extracted reusable event builders for:
+- message start/delta/finalize flow
+- reasoning delta/done events
+- function-call output event sequences (with argument delta/done)
+- stream completion event type mapping
+- Updated `_handle_stream` to call stream-flow helpers while preserving event schema and sequencing.
+- Added flow-focused unit tests:
+- `openai-codex-gateway/tests/test_gateway_stream_flow.py`
+- Preserved compatibility of `gateway_server.extract_request_config_overrides` export used by existing tests.
+- `server.py` LOC reduced from 1362 -> 1142 in this iteration.
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_logging.py openai-codex-gateway/gateway_state_store.py openai-codex-gateway/gateway_types.py openai-codex-gateway/gateway_runtime.py openai-codex-gateway/gateway_utils.py openai-codex-gateway/gateway_payload.py openai-codex-gateway/gateway_sdk_loader.py openai-codex-gateway/gateway_policy.py openai-codex-gateway/gateway_response_builder.py openai-codex-gateway/gateway_http_routing.py openai-codex-gateway/gateway_stream_transport.py openai-codex-gateway/gateway_request_parser.py openai-codex-gateway/gateway_stream_flow.py openai-codex-gateway/tests/test_gateway_request_parser.py openai-codex-gateway/tests/test_gateway_http_routing.py openai-codex-gateway/tests/test_gateway_turn_event_processing.py openai-codex-gateway/tests/test_gateway_response_builder.py openai-codex-gateway/tests/test_gateway_stream_transport.py openai-codex-gateway/tests/test_gateway_stream_flow.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_flow.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_transport.py`
+- `python openai-codex-gateway/tests/test_gateway_request_parser.py`
+- `python openai-codex-gateway/tests/test_gateway_http_routing.py`
+- `python openai-codex-gateway/tests/test_gateway_response_builder.py`
+- `python openai-codex-gateway/tests/test_gateway_turn_event_processing.py`
+- `python openai-codex-gateway/tests/test_gateway_tool_guards.py`
+- `python openai-codex-gateway/server.py --help`
+- `P1.1 Gateway Modularization` progressed (phase 12):
+- Split stream execution branches into dedicated orchestrators:
+- `openai-codex-gateway/gateway_stream_orchestrator.py`
+- Extracted branch orchestration for:
+- function-tools flow (pending tool calls + regular completion path)
+- plain-message flow
+- Updated `_handle_stream` to delegate post-turn stream composition to orchestrators.
+- Added orchestrator-focused unit tests:
+- `openai-codex-gateway/tests/test_gateway_stream_orchestrator.py`
+- `server.py` LOC reduced from 1142 -> 1046 in this iteration.
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_logging.py openai-codex-gateway/gateway_state_store.py openai-codex-gateway/gateway_types.py openai-codex-gateway/gateway_runtime.py openai-codex-gateway/gateway_utils.py openai-codex-gateway/gateway_payload.py openai-codex-gateway/gateway_sdk_loader.py openai-codex-gateway/gateway_policy.py openai-codex-gateway/gateway_response_builder.py openai-codex-gateway/gateway_http_routing.py openai-codex-gateway/gateway_stream_transport.py openai-codex-gateway/gateway_request_parser.py openai-codex-gateway/gateway_stream_flow.py openai-codex-gateway/gateway_stream_orchestrator.py openai-codex-gateway/tests/test_gateway_request_parser.py openai-codex-gateway/tests/test_gateway_http_routing.py openai-codex-gateway/tests/test_gateway_turn_event_processing.py openai-codex-gateway/tests/test_gateway_response_builder.py openai-codex-gateway/tests/test_gateway_stream_transport.py openai-codex-gateway/tests/test_gateway_stream_flow.py openai-codex-gateway/tests/test_gateway_stream_orchestrator.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_orchestrator.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_flow.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_transport.py`
+- `python openai-codex-gateway/tests/test_gateway_request_parser.py`
+- `python openai-codex-gateway/tests/test_gateway_http_routing.py`
+- `python openai-codex-gateway/tests/test_gateway_response_builder.py`
+- `python openai-codex-gateway/tests/test_gateway_turn_event_processing.py`
+- `python openai-codex-gateway/tests/test_gateway_tool_guards.py`
+- `python openai-codex-gateway/server.py --help`
+- `P1.1 Gateway Modularization` progressed (phase 13):
+- Split HTTP body/SSE IO helpers out of `GatewayHandler`:
+- `openai-codex-gateway/gateway_http_io.py`
+- Extracted:
+- JSON response body encoding helper
+- SSE frame serialization helper
+- Updated `_write_json` and `_send_sse` to consume IO helpers.
+- Added IO-helper-focused unit tests:
+- `openai-codex-gateway/tests/test_gateway_http_io.py`
+- `server.py` LOC reduced from 1046 -> 1043 in this iteration.
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_logging.py openai-codex-gateway/gateway_state_store.py openai-codex-gateway/gateway_types.py openai-codex-gateway/gateway_runtime.py openai-codex-gateway/gateway_utils.py openai-codex-gateway/gateway_payload.py openai-codex-gateway/gateway_sdk_loader.py openai-codex-gateway/gateway_policy.py openai-codex-gateway/gateway_response_builder.py openai-codex-gateway/gateway_http_routing.py openai-codex-gateway/gateway_stream_transport.py openai-codex-gateway/gateway_request_parser.py openai-codex-gateway/gateway_stream_flow.py openai-codex-gateway/gateway_stream_orchestrator.py openai-codex-gateway/gateway_http_io.py openai-codex-gateway/tests/test_gateway_request_parser.py openai-codex-gateway/tests/test_gateway_http_routing.py openai-codex-gateway/tests/test_gateway_turn_event_processing.py openai-codex-gateway/tests/test_gateway_response_builder.py openai-codex-gateway/tests/test_gateway_stream_transport.py openai-codex-gateway/tests/test_gateway_stream_flow.py openai-codex-gateway/tests/test_gateway_stream_orchestrator.py openai-codex-gateway/tests/test_gateway_http_io.py`
+- `python openai-codex-gateway/tests/test_gateway_http_io.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_orchestrator.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_flow.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_transport.py`
+- `python openai-codex-gateway/tests/test_gateway_request_parser.py`
+- `python openai-codex-gateway/tests/test_gateway_http_routing.py`
+- `python openai-codex-gateway/tests/test_gateway_response_builder.py`
+- `python openai-codex-gateway/tests/test_gateway_turn_event_processing.py`
+- `python openai-codex-gateway/tests/test_gateway_tool_guards.py`
+- `python openai-codex-gateway/server.py --help`
+- `P1.1 Gateway Modularization` progressed (phase 14):
+- Extracted `create_response` input/context normalization helper:
+- `openai-codex-gateway/gateway_create_response_parser.py`
+- Added `CreateResponseContext` + `parse_create_response_context(...)` for:
+- input normalization and non-empty validation
+- model/model_name normalization
+- previous_response_id normalization
+- reasoning options extraction
+- response tools normalization
+- Updated `CodexBridge.create_response` to consume this helper.
+- Added create-response-focused unit tests:
+- `openai-codex-gateway/tests/test_gateway_create_response_parser.py`
+- `server.py` LOC reduced from 1043 -> 1030 in this iteration.
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_create_response_parser.py openai-codex-gateway/tests/test_gateway_create_response_parser.py`
+- `python openai-codex-gateway/tests/test_gateway_create_response_parser.py`
+- `python openai-codex-gateway/tests/test_gateway_tool_guards.py`
+- `python openai-codex-gateway/server.py --help`
+- `P1.1 Gateway Modularization` progressed (phase 15):
+- Extracted `_handle_stream` request context normalization helper:
+- `openai-codex-gateway/gateway_stream_request_parser.py`
+- Added `StreamRequestContext` + `parse_stream_request_context(...)` for:
+- stream model/model_name normalization
+- previous_response_id normalization
+- response tools normalization
+- reasoning options extraction
+- Updated `_handle_stream` to consume stream request context helper.
+- Added stream-request-focused unit tests:
+- `openai-codex-gateway/tests/test_gateway_stream_request_parser.py`
+- `server.py` LOC reduced from 1030 -> 1021 in this iteration.
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_create_response_parser.py openai-codex-gateway/gateway_stream_request_parser.py openai-codex-gateway/tests/test_gateway_create_response_parser.py openai-codex-gateway/tests/test_gateway_stream_request_parser.py`
+- `python openai-codex-gateway/tests/test_gateway_create_response_parser.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_request_parser.py`
+- `python openai-codex-gateway/tests/test_gateway_http_io.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_orchestrator.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_flow.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_transport.py`
+- `python openai-codex-gateway/tests/test_gateway_request_parser.py`
+- `python openai-codex-gateway/tests/test_gateway_http_routing.py`
+- `python openai-codex-gateway/tests/test_gateway_response_builder.py`
+- `python openai-codex-gateway/tests/test_gateway_turn_event_processing.py`
+- `python openai-codex-gateway/tests/test_gateway_tool_guards.py`
+- `python openai-codex-gateway/server.py --help`
+- `P1.1 Gateway Modularization` progressed (phase 16):
+- Extracted stream envelope setup helper:
+- `openai-codex-gateway/gateway_stream_envelope.py`
+- Added `build_stream_envelope_setup(...)` to encapsulate:
+- `response_id` / `created_at` metadata
+- stream `response_obj` factory binding (`model_name`/`response_tools`)
+- Updated `_handle_stream` to consume `StreamEnvelopeSetup`.
+- Added envelope-focused unit tests:
+- `openai-codex-gateway/tests/test_gateway_stream_envelope.py`
+- `server.py` LOC reduced from 1021 -> 1004 in this iteration.
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_stream_envelope.py openai-codex-gateway/tests/test_gateway_stream_envelope.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_envelope.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_request_parser.py`
+- `python openai-codex-gateway/tests/test_gateway_create_response_parser.py`
+- `python openai-codex-gateway/tests/test_gateway_http_io.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_orchestrator.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_flow.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_transport.py`
+- `python openai-codex-gateway/tests/test_gateway_request_parser.py`
+- `python openai-codex-gateway/tests/test_gateway_http_routing.py`
+- `python openai-codex-gateway/tests/test_gateway_response_builder.py`
+- `python openai-codex-gateway/tests/test_gateway_turn_event_processing.py`
+- `python openai-codex-gateway/tests/test_gateway_tool_guards.py`
+- `python openai-codex-gateway/server.py --help`
+- `P1.1 Gateway Modularization` progressed (phase 17):
+- Extracted stream input preparation helper:
+- `openai-codex-gateway/gateway_stream_input_prep.py`
+- Added `prepare_stream_input_items(...)` for:
+- stream input item normalization
+- tool-output merge into turn input
+- empty-input validation with consistent error message
+- Updated `_handle_stream` to consume stream input preparation helper.
+- Added preparation-focused unit tests:
+- `openai-codex-gateway/tests/test_gateway_stream_input_prep.py`
+- `server.py` LOC reduced from 1004 -> 1001 in this iteration.
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_stream_input_prep.py openai-codex-gateway/tests/test_gateway_stream_input_prep.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_input_prep.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_envelope.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_request_parser.py`
+- `python openai-codex-gateway/tests/test_gateway_create_response_parser.py`
+- `python openai-codex-gateway/tests/test_gateway_http_io.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_orchestrator.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_flow.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_transport.py`
+- `python openai-codex-gateway/tests/test_gateway_request_parser.py`
+- `python openai-codex-gateway/tests/test_gateway_http_routing.py`
+- `python openai-codex-gateway/tests/test_gateway_response_builder.py`
+- `python openai-codex-gateway/tests/test_gateway_turn_event_processing.py`
+- `python openai-codex-gateway/tests/test_gateway_tool_guards.py`
+- `python openai-codex-gateway/server.py --help`
+- `P1.1 Gateway Modularization` progressed (phase 18):
+- Extracted function-tools stream callbacks/state handling helper:
+- `openai-codex-gateway/gateway_stream_tool_callbacks.py`
+- Added `FunctionToolStreamCallbacks` to encapsulate:
+- tool message start gating (`tool_message_started`)
+- tool delta accumulation and emission
+- reasoning delta accumulation and emission
+- Updated `_handle_stream` function-tools branch to use callback helper.
+- Added callback-focused unit tests:
+- `openai-codex-gateway/tests/test_gateway_stream_tool_callbacks.py`
+- `server.py` LOC reduced from 1001 -> 984 in this iteration.
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_stream_tool_callbacks.py openai-codex-gateway/tests/test_gateway_stream_tool_callbacks.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_tool_callbacks.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_orchestrator.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_input_prep.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_envelope.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_request_parser.py`
+- `python openai-codex-gateway/tests/test_gateway_create_response_parser.py`
+- `python openai-codex-gateway/tests/test_gateway_http_io.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_flow.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_transport.py`
+- `python openai-codex-gateway/tests/test_gateway_request_parser.py`
+- `python openai-codex-gateway/tests/test_gateway_http_routing.py`
+- `python openai-codex-gateway/tests/test_gateway_response_builder.py`
+- `python openai-codex-gateway/tests/test_gateway_turn_event_processing.py`
+- `python openai-codex-gateway/tests/test_gateway_tool_guards.py`
+- `python openai-codex-gateway/server.py --help`
+- `P1.1 Gateway Modularization` progressed (phase 19):
+- Extracted plain-message stream callbacks/state handling helper:
+- `openai-codex-gateway/gateway_stream_message_callbacks.py`
+- Added `PlainMessageStreamCallbacks` to encapsulate:
+- plain message start event emission
+- output delta accumulation and emission
+- reasoning delta accumulation and emission
+- Updated `_handle_stream` plain-message branch to consume callback helper.
+- Added callback-focused unit tests:
+- `openai-codex-gateway/tests/test_gateway_stream_message_callbacks.py`
+- `server.py` LOC reduced from 984 -> 970 in this iteration.
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_stream_message_callbacks.py openai-codex-gateway/tests/test_gateway_stream_message_callbacks.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_message_callbacks.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_tool_callbacks.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_input_prep.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_envelope.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_request_parser.py`
+- `python openai-codex-gateway/tests/test_gateway_create_response_parser.py`
+- `python openai-codex-gateway/tests/test_gateway_http_io.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_orchestrator.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_flow.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_transport.py`
+- `python openai-codex-gateway/tests/test_gateway_request_parser.py`
+- `python openai-codex-gateway/tests/test_gateway_http_routing.py`
+- `python openai-codex-gateway/tests/test_gateway_response_builder.py`
+- `python openai-codex-gateway/tests/test_gateway_turn_event_processing.py`
+- `python openai-codex-gateway/tests/test_gateway_tool_guards.py`
+- `python openai-codex-gateway/server.py --help`
+- `P1.1 Gateway Modularization` progressed (phase 20):
+- Extracted common stream turn execution invocation helper:
+- `openai-codex-gateway/gateway_stream_turn_runner.py`
+- Added `run_stream_turn(...)` to encapsulate:
+- stream `model_raw -> model` normalization (`str` or `None`)
+- shared `_run_turn` kwarg assembly for stream branches
+- callback passthrough for output/reasoning deltas
+- Updated `_handle_stream` function-tools/plain-message branches to call `run_stream_turn(...)`.
+- Added invocation-focused unit tests:
+- `openai-codex-gateway/tests/test_gateway_stream_turn_runner.py`
+- `server.py` LOC reduced from 970 -> 967 in this iteration.
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_stream_turn_runner.py openai-codex-gateway/tests/test_gateway_stream_turn_runner.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_turn_runner.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_message_callbacks.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_tool_callbacks.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_orchestrator.py`
+- `python openai-codex-gateway/tests/test_gateway_tool_guards.py`
+- `python -m unittest discover -s openai-codex-gateway/tests -p 'test_gateway_*.py'`
+- `python openai-codex-gateway/server.py --help`
+- `P1.1 Gateway Modularization` progressed (phase 21):
+- Extracted stream lifecycle glue helpers:
+- `openai-codex-gateway/gateway_stream_lifecycle.py`
+- Added:
+- `emit_response_created_event(...)` for unified stream `response.created` envelope emission
+- `persist_response_thread_mapping(...)` for unified `response_id -> thread_id` store synchronization
+- Updated `_handle_stream` to consume lifecycle helpers in both function-tools and plain-message branches.
+- Added lifecycle-focused unit tests:
+- `openai-codex-gateway/tests/test_gateway_stream_lifecycle.py`
+- `server.py` LOC changed from 967 -> 971 in this iteration (small net increase due helper wiring/import glue).
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_stream_turn_runner.py openai-codex-gateway/gateway_stream_lifecycle.py openai-codex-gateway/tests/test_gateway_stream_turn_runner.py openai-codex-gateway/tests/test_gateway_stream_lifecycle.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_lifecycle.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_turn_runner.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_orchestrator.py`
+- `python openai-codex-gateway/tests/test_gateway_tool_guards.py`
+- `python -m unittest discover -s openai-codex-gateway/tests -p 'test_gateway_*.py'`
+- `python openai-codex-gateway/server.py --help`
+- `P1.1 Gateway Modularization` progressed (phase 22):
+- Extracted non-stream create_response completion helper:
+- `openai-codex-gateway/gateway_create_response_completion.py`
+- Added `finalize_create_response(...)` to encapsulate:
+- completion-time `response_id` / `message_id` generation wiring
+- response-thread mapping persistence (`response_id -> thread_id`)
+- final non-stream response envelope + metadata assembly dispatch
+- Updated `CodexBridge.create_response` to delegate post-turn completion packaging to helper.
+- Added completion-focused unit tests:
+- `openai-codex-gateway/tests/test_gateway_create_response_completion.py`
+- `server.py` LOC reduced from 971 -> 966 in this iteration.
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_create_response_completion.py openai-codex-gateway/tests/test_gateway_create_response_completion.py`
+- `python openai-codex-gateway/tests/test_gateway_create_response_completion.py`
+- `python openai-codex-gateway/tests/test_gateway_create_response_parser.py`
+- `python openai-codex-gateway/tests/test_gateway_response_builder.py`
+- `python openai-codex-gateway/tests/test_gateway_tool_guards.py`
+- `python -m unittest discover -s openai-codex-gateway/tests -p 'test_gateway_*.py'`
+- `python openai-codex-gateway/server.py --help`
+- `P1.1 Gateway Modularization` progressed (phase 23):
+- Extracted stream transport bootstrap/session glue:
+- `openai-codex-gateway/gateway_stream_session.py`
+- Added:
+- `create_stream_session(...)` to encapsulate `send_event` delegation + `[DONE]` marker emission + connection-close callback
+- `log_stream_start(...)` to centralize stream start reasoning-log envelope fields
+- Updated `_handle_stream` to consume session helper instead of inline transport/bootstrap closures.
+- Added session-focused unit tests:
+- `openai-codex-gateway/tests/test_gateway_stream_session.py`
+- `server.py` LOC changed from 966 -> 970 in this iteration (small net increase due explicit helper wiring).
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_create_response_completion.py openai-codex-gateway/gateway_stream_session.py openai-codex-gateway/tests/test_gateway_create_response_completion.py openai-codex-gateway/tests/test_gateway_stream_session.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_session.py`
+- `python openai-codex-gateway/tests/test_gateway_create_response_completion.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_transport.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_orchestrator.py`
+- `python openai-codex-gateway/tests/test_gateway_tool_guards.py`
+- `python -m unittest discover -s openai-codex-gateway/tests -p 'test_gateway_*.py'`
+- `python openai-codex-gateway/server.py --help`
+- `P1.1 Gateway Modularization` progressed (phase 24):
+- Extracted non-stream create_response turn-execution invocation helper:
+- `openai-codex-gateway/gateway_create_response_turn_runner.py`
+- Added `run_create_response_turn(...)` to encapsulate:
+- create-response `_run_turn` kwargs assembly
+- context field passthrough (`input_items/model/reasoning/previous_response_id`)
+- request-level passthrough (`api_key/cwd/config_overrides/tools/tool_outputs/on_delta`)
+- Updated `CodexBridge.create_response` to delegate turn invocation to helper.
+- Added invocation-focused unit tests:
+- `openai-codex-gateway/tests/test_gateway_create_response_turn_runner.py`
+- `server.py` LOC reduced from 970 -> 968 in this iteration.
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_create_response_turn_runner.py openai-codex-gateway/tests/test_gateway_create_response_turn_runner.py`
+- `python openai-codex-gateway/tests/test_gateway_create_response_turn_runner.py`
+- `python openai-codex-gateway/tests/test_gateway_create_response_completion.py`
+- `python openai-codex-gateway/tests/test_gateway_create_response_parser.py`
+- `python openai-codex-gateway/tests/test_gateway_tool_guards.py`
+- `python -m unittest discover -s openai-codex-gateway/tests -p 'test_gateway_*.py'`
+- `python openai-codex-gateway/server.py --help`
+- `P1.1 Gateway Modularization` progressed (phase 25):
+- Extracted `_handle_stream` exception/termination glue helper:
+- `openai-codex-gateway/gateway_stream_termination.py`
+- Added `emit_stream_error_and_done(...)` to encapsulate:
+- stream error debug logging
+- traceback emission hook
+- error event envelope emission
+- done-marker finalize path
+- Updated `_handle_stream` generic exception branch to delegate finalize behavior to helper.
+- Added termination-focused unit tests:
+- `openai-codex-gateway/tests/test_gateway_stream_termination.py`
+- `server.py` LOC changed from 968 -> 971 in this iteration (small net increase due helper wiring/imports).
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_stream_termination.py openai-codex-gateway/tests/test_gateway_stream_termination.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_termination.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_session.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_transport.py`
+- `python openai-codex-gateway/tests/test_gateway_tool_guards.py`
+- `python -m unittest discover -s openai-codex-gateway/tests -p 'test_gateway_*.py'`
+- `python openai-codex-gateway/server.py --help`
+- `P1.1 Gateway Modularization` progressed (phase 26):
+- Extracted `_handle_stream` callback branch setup helper:
+- `openai-codex-gateway/gateway_stream_callback_setup.py`
+- Added `setup_stream_callbacks(...)` to encapsulate:
+- function-tools callback wiring (`FunctionToolStreamCallbacks`) with deferred start
+- plain-message callback wiring (`PlainMessageStreamCallbacks`) with start-event pre-emission
+- unified callback function surface (`on_delta` / `on_reasoning_delta`) + message id export
+- Updated `_handle_stream` to consume callback-setup helper and remove inline branch-init boilerplate.
+- Added callback-setup-focused unit tests:
+- `openai-codex-gateway/tests/test_gateway_stream_callback_setup.py`
+- `server.py` LOC changed from 971 -> 972 in this iteration (small net increase due explicit helper wiring/runtime guards).
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_stream_callback_setup.py openai-codex-gateway/tests/test_gateway_stream_callback_setup.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_callback_setup.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_session.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_tool_callbacks.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_message_callbacks.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_orchestrator.py`
+- `python -m unittest discover -s openai-codex-gateway/tests -p 'test_gateway_*.py'`
+- `python openai-codex-gateway/server.py --help`
+- `P1.1 Gateway Modularization` progressed (phase 27):
+- Extracted duplicated stream turn-execution + state persistence helper:
+- `openai-codex-gateway/gateway_stream_turn_execution.py`
+- Added `run_and_persist_stream_turn(...)` to encapsulate:
+- stream turn invocation delegation (`run_stream_turn(...)`)
+- response-thread mapping persistence delegation (`persist_response_thread_mapping(...)`)
+- shared callback/tool/config passthrough for both stream branches
+- Updated `_handle_stream` function-tools/plain-message branches to consume this helper and remove duplicated run+persist sequence.
+- Added execution-focused unit tests:
+- `openai-codex-gateway/tests/test_gateway_stream_turn_execution.py`
+- `server.py` LOC reduced from 972 -> 964 in this iteration.
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_stream_turn_execution.py openai-codex-gateway/tests/test_gateway_stream_turn_execution.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_turn_execution.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_callback_setup.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_orchestrator.py`
+- `python openai-codex-gateway/tests/test_gateway_tool_guards.py`
+- `python -m unittest discover -s openai-codex-gateway/tests -p 'test_gateway_*.py'`
+- `python openai-codex-gateway/server.py --help`
+- `P1.1 Gateway Modularization` progressed (phase 28):
+- Extracted function-tools branch completion helper:
+- `openai-codex-gateway/gateway_stream_function_tools_completion.py`
+- Added `complete_function_tools_stream(...)` to encapsulate:
+- unresolved function-call derivation (excluding already provided tool outputs)
+- function-tools orchestrator invocation dispatch
+- done-marker finalization
+- Updated `_handle_stream` function-tools branch to consume completion helper and remove inline completion boilerplate.
+- Added completion-focused unit tests:
+- `openai-codex-gateway/tests/test_gateway_stream_function_tools_completion.py`
+- `server.py` LOC reduced from 964 -> 962 in this iteration.
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_stream_function_tools_completion.py openai-codex-gateway/tests/test_gateway_stream_function_tools_completion.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_function_tools_completion.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_orchestrator.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_turn_execution.py`
+- `python openai-codex-gateway/tests/test_gateway_tool_guards.py`
+- `python -m unittest discover -s openai-codex-gateway/tests -p 'test_gateway_*.py'`
+- `python openai-codex-gateway/server.py --help`
+- `P1.1 Gateway Modularization` progressed (phase 29):
+- Extracted plain-message branch completion helper:
+- `openai-codex-gateway/gateway_stream_plain_completion.py`
+- Added `complete_plain_message_stream(...)` to encapsulate:
+- plain-message orchestrator invocation dispatch
+- done-marker finalization
+- Updated `_handle_stream` plain-message branch to consume completion helper and remove inline completion boilerplate.
+- Added completion-focused unit tests:
+- `openai-codex-gateway/tests/test_gateway_stream_plain_completion.py`
+- `server.py` LOC remained 962 in this iteration (behavior-preserving structure move).
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_stream_plain_completion.py openai-codex-gateway/tests/test_gateway_stream_plain_completion.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_plain_completion.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_function_tools_completion.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_orchestrator.py`
+- `python openai-codex-gateway/tests/test_gateway_tool_guards.py`
+- `python -m unittest discover -s openai-codex-gateway/tests -p 'test_gateway_*.py'`
+- `python openai-codex-gateway/server.py --help`
+- `P1.1 Gateway Modularization` progressed (phase 30):
+- Extracted stream bootstrap setup helper:
+- `openai-codex-gateway/gateway_stream_bootstrap.py`
+- Added `setup_stream_bootstrap(...)` to encapsulate:
+- stream request-context parsing (`parse_stream_request_context`)
+- stream response envelope initialization (`build_stream_envelope_setup`)
+- stream session wiring (`create_stream_session`)
+- stream start diagnostics logging (`log_stream_start`)
+- Updated `_handle_stream` to consume bootstrap helper and remove inline context/envelope/session bootstrap boilerplate.
+- Added bootstrap-focused unit tests:
+- `openai-codex-gateway/tests/test_gateway_stream_bootstrap.py`
+- `server.py` LOC reduced from 962 -> 948 in this iteration.
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_stream_bootstrap.py openai-codex-gateway/tests/test_gateway_stream_bootstrap.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_bootstrap.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_session.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_envelope.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_callback_setup.py`
+- `python openai-codex-gateway/tests/test_gateway_tool_guards.py`
+- `python -m unittest discover -s openai-codex-gateway/tests -p 'test_gateway_*.py'`
+- `python openai-codex-gateway/server.py --help`
+- `P1.1 Gateway Modularization` progressed (phase 31):
+- Extracted stream pre-branch setup helper:
+- `openai-codex-gateway/gateway_stream_pre_branch_setup.py`
+- Added `setup_stream_pre_branch(...)` to encapsulate:
+- `response.created` emission dispatch
+- stream input preparation (`prepare_stream_input_items`)
+- callback setup selection (`setup_stream_callbacks`)
+- Updated `_handle_stream` to consume pre-branch helper and remove inline pre-branch boilerplate.
+- Added pre-branch-focused unit tests:
+- `openai-codex-gateway/tests/test_gateway_stream_pre_branch_setup.py`
+- `server.py` LOC reduced from 948 -> 941 in this iteration.
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_stream_pre_branch_setup.py openai-codex-gateway/tests/test_gateway_stream_pre_branch_setup.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_pre_branch_setup.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_bootstrap.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_callback_setup.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_plain_completion.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_function_tools_completion.py`
+- `python -m unittest discover -s openai-codex-gateway/tests -p 'test_gateway_*.py'`
+- `python openai-codex-gateway/server.py --help`
+- `P1.1 Gateway Modularization` progressed (phase 32):
+- Extracted stream branch dispatcher helper:
+- `openai-codex-gateway/gateway_stream_branch_dispatcher.py`
+- Added `dispatch_stream_branch(...)` to encapsulate:
+- function-tools/plain-message branch selection
+- callback presence guards for both modes
+- branch callback invocation contract
+- Updated `_handle_stream` to consume branch dispatcher and remove inline path-selection/guard boilerplate.
+- Added dispatcher-focused unit tests:
+- `openai-codex-gateway/tests/test_gateway_stream_branch_dispatcher.py`
+- `server.py` LOC reduced from 941 -> 939 in this iteration.
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_stream_branch_dispatcher.py openai-codex-gateway/tests/test_gateway_stream_branch_dispatcher.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_branch_dispatcher.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_pre_branch_setup.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_turn_execution.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_function_tools_completion.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_plain_completion.py`
+- `python -m unittest discover -s openai-codex-gateway/tests -p 'test_gateway_*.py'`
+- `python openai-codex-gateway/server.py --help`
+- `P1.1 Gateway Modularization` progressed (phase 33):
+- Extracted stream branch execution helper:
+- `openai-codex-gateway/gateway_stream_branch_execution.py`
+- Added:
+- `execute_function_tools_branch(...)` for function-tools run+persist+complete execution path
+- `execute_plain_message_branch(...)` for plain-message run+persist+complete execution path
+- Updated `_handle_stream` to consume branch execution helper (via `partial`) and remove inline execution closures.
+- Added execution-focused unit tests:
+- `openai-codex-gateway/tests/test_gateway_stream_branch_execution.py`
+- `server.py` LOC reduced from 939 -> 923 in this iteration.
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_stream_branch_execution.py openai-codex-gateway/tests/test_gateway_stream_branch_execution.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_branch_execution.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_branch_dispatcher.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_pre_branch_setup.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_turn_execution.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_function_tools_completion.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_plain_completion.py`
+- `python -m unittest discover -s openai-codex-gateway/tests -p 'test_gateway_*.py'`
+- `python openai-codex-gateway/server.py --help`
+- `P1.1 Gateway Modularization` progressed (phase 34):
+- Extracted stream main-flow coordinator helper:
+- `openai-codex-gateway/gateway_stream_main_flow.py`
+- Added `run_stream_main_flow(...)` to encapsulate:
+- pre-branch setup orchestration (`setup_stream_pre_branch`)
+- branch handler wiring for function-tools/plain-message execution
+- branch dispatch coordination (`dispatch_stream_branch`)
+- Updated `_handle_stream` to delegate main-flow orchestration to coordinator helper.
+- Added coordinator-focused unit tests:
+- `openai-codex-gateway/tests/test_gateway_stream_main_flow.py`
+- `server.py` LOC reduced from 923 -> 878 in this iteration.
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_stream_main_flow.py openai-codex-gateway/tests/test_gateway_stream_main_flow.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_main_flow.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_branch_execution.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_branch_dispatcher.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_pre_branch_setup.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_turn_execution.py`
+- `python openai-codex-gateway/tests/test_gateway_tool_guards.py`
+- `python -m unittest discover -s openai-codex-gateway/tests -p 'test_gateway_*.py'`
+- `python openai-codex-gateway/server.py --help`
+- `P1.1 Gateway Modularization` progressed (phase 35):
+- Extracted stream error boundary helper:
+- `openai-codex-gateway/gateway_stream_error_boundary.py`
+- Added `run_stream_with_error_boundary(...)` to encapsulate:
+- stream main-flow execution boundary
+- BrokenPipe short-circuit handling
+- generic exception fallback to stream error termination handler
+- Updated `_handle_stream` to delegate `try/except` orchestration to error-boundary helper.
+- Added error-boundary-focused unit tests:
+- `openai-codex-gateway/tests/test_gateway_stream_error_boundary.py`
+- `server.py` LOC reduced from 878 -> 873 in this iteration.
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_stream_error_boundary.py openai-codex-gateway/tests/test_gateway_stream_error_boundary.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_error_boundary.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_main_flow.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_branch_execution.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_pre_branch_setup.py`
+- `python openai-codex-gateway/tests/test_gateway_tool_guards.py`
+- `python -m unittest discover -s openai-codex-gateway/tests -p 'test_gateway_*.py'`
+- `python openai-codex-gateway/server.py --help`
+- `P1.1 Gateway Modularization` progressed (phase 36):
+- Extracted stream SSE response header initialization helper:
+- `openai-codex-gateway/gateway_stream_headers.py`
+- Added `write_stream_response_headers(...)` to encapsulate:
+- status/header emission for SSE response
+- header ordering and fixed SSE header set
+- Updated `_handle_stream` to delegate SSE response header write path to helper.
+- Added header-helper-focused unit tests:
+- `openai-codex-gateway/tests/test_gateway_stream_headers.py`
+- `server.py` LOC changed from 873 -> 874 in this iteration (small net increase due helper import/wiring).
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_stream_headers.py openai-codex-gateway/tests/test_gateway_stream_headers.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_headers.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_error_boundary.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_main_flow.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_bootstrap.py`
+- `python openai-codex-gateway/tests/test_gateway_tool_guards.py`
+- `python -m unittest discover -s openai-codex-gateway/tests -p 'test_gateway_*.py'`
+- `python openai-codex-gateway/server.py --help`
+- `P1.1 Gateway Modularization` progressed (phase 37):
+- Extracted stream close-connection marker helper:
+- `openai-codex-gateway/gateway_stream_connection.py`
+- Added `make_close_connection_marker(...)` to encapsulate close-connection marker closure construction.
+- Updated `_handle_stream` bootstrap wiring to consume close-connection marker helper.
+- Added connection-helper-focused unit tests:
+- `openai-codex-gateway/tests/test_gateway_stream_connection.py`
+- `server.py` LOC changed from 874 -> 876 in this iteration (small net increase due helper import/wiring).
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_stream_connection.py openai-codex-gateway/tests/test_gateway_stream_connection.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_connection.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_bootstrap.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_headers.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_error_boundary.py`
+- `python openai-codex-gateway/tests/test_gateway_tool_guards.py`
+- `python -m unittest discover -s openai-codex-gateway/tests -p 'test_gateway_*.py'`
+- `python openai-codex-gateway/server.py --help`
+- `P1.1 Gateway Modularization` progressed (phase 38):
+- Extracted stream bootstrap factory-bundle helper:
+- `openai-codex-gateway/gateway_stream_bootstrap_factories.py`
+- Added:
+- `StreamBootstrapFactories` dataclass
+- `build_default_stream_bootstrap_factories(...)` for response-id/time factory lambda bundling
+- Updated `_handle_stream` bootstrap wiring to consume bundled factories for `setup_stream_bootstrap(...)`.
+- Added factory-bundle-focused unit tests:
+- `openai-codex-gateway/tests/test_gateway_stream_bootstrap_factories.py`
+- `server.py` LOC changed from 876 -> 881 in this iteration (small net increase due helper import/wiring).
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_stream_bootstrap_factories.py openai-codex-gateway/tests/test_gateway_stream_bootstrap_factories.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_bootstrap_factories.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_bootstrap.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_headers.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_error_boundary.py`
+- `python openai-codex-gateway/tests/test_gateway_tool_guards.py`
+- `python -m unittest discover -s openai-codex-gateway/tests -p 'test_gateway_*.py'`
+- `python openai-codex-gateway/server.py --help`
+- `P1.1 Gateway Modularization` progressed (phase 39):
+- Extracted stream bootstrap field-binding helper:
+- `openai-codex-gateway/gateway_stream_bootstrap_bindings.py`
+- Added:
+- `StreamBootstrapBindings` dataclass
+- `bind_stream_bootstrap(...)` to encapsulate local bootstrap field unpacking (`stream_context/response_id/send_stream_event/send_done_marker/response_obj`)
+- Updated `_handle_stream` to consume bootstrap-binding helper and remove inline field-unpacking boilerplate.
+- Added binding-focused unit tests:
+- `openai-codex-gateway/tests/test_gateway_stream_bootstrap_bindings.py`
+- `server.py` LOC changed from 881 -> 883 in this iteration (small net increase due helper import/wiring).
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_stream_bootstrap_bindings.py openai-codex-gateway/tests/test_gateway_stream_bootstrap_bindings.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_bootstrap_bindings.py`
+- `python -m unittest discover -s openai-codex-gateway/tests -p 'test_gateway_*.py'`
+- `python openai-codex-gateway/server.py --help`
+- `P1.1 Gateway Modularization` progressed (phase 40):
+- Extracted stream main-flow invocation adapter helper:
+- `openai-codex-gateway/gateway_stream_main_flow_invocation.py`
+- Added `invoke_stream_main_flow_with_error_boundary(...)` to encapsulate:
+- `run_stream_with_error_boundary(...)` boundary wiring
+- nested `run_stream_main_flow(...)` invocation argument assembly
+- Updated `_handle_stream` to delegate main-flow + boundary glue invocation to adapter helper.
+- Added invocation-focused unit tests:
+- `openai-codex-gateway/tests/test_gateway_stream_main_flow_invocation.py`
+- `server.py` LOC reduced from 883 -> 878 in this iteration.
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_stream_main_flow_invocation.py openai-codex-gateway/tests/test_gateway_stream_main_flow_invocation.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_main_flow_invocation.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_bootstrap_bindings.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_main_flow.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_error_boundary.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_bootstrap.py`
+- `python openai-codex-gateway/tests/test_gateway_tool_guards.py`
+- `python -m unittest discover -s openai-codex-gateway/tests -p 'test_gateway_*.py'`
+- `python openai-codex-gateway/server.py --help`
+- `P1.1 Gateway Modularization` progressed (phase 41):
+- Extracted stream bootstrap invocation adapter helper:
+- `openai-codex-gateway/gateway_stream_bootstrap_invocation.py`
+- Added `invoke_stream_bootstrap_setup(...)` to encapsulate:
+- close-connection marker construction (`make_close_connection_marker`)
+- bootstrap factory bundle construction (`build_default_stream_bootstrap_factories`)
+- `setup_stream_bootstrap(...)` invocation argument wiring
+- Updated `_handle_stream` to delegate bootstrap adapter wiring and remove inline bootstrap glue.
+- Added bootstrap-invocation-focused unit tests:
+- `openai-codex-gateway/tests/test_gateway_stream_bootstrap_invocation.py`
+- `server.py` LOC reduced from 878 -> 868 in this iteration.
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_stream_bootstrap_invocation.py openai-codex-gateway/tests/test_gateway_stream_bootstrap_invocation.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_bootstrap_invocation.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_bootstrap_bindings.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_main_flow_invocation.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_bootstrap.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_main_flow.py`
+- `python openai-codex-gateway/tests/test_gateway_tool_guards.py`
+- `python -m unittest discover -s openai-codex-gateway/tests -p 'test_gateway_*.py'`
+- `python openai-codex-gateway/server.py --help`
+- `P1.1 Gateway Modularization` progressed (phase 42):
+- Extracted stream main-flow id-factory bundle helper:
+- `openai-codex-gateway/gateway_stream_main_flow_factories.py`
+- Added:
+- `StreamMainFlowFactories` dataclass
+- `build_default_stream_main_flow_factories(...)` for `message_id_factory/function_item_id_factory` lambda bundling
+- Updated `_handle_stream` to consume bundled main-flow id factories for `invoke_stream_main_flow_with_error_boundary(...)`.
+- Added main-flow-factory-focused unit tests:
+- `openai-codex-gateway/tests/test_gateway_stream_main_flow_factories.py`
+- `server.py` LOC changed from 868 -> 872 in this iteration (small net increase due helper import/wiring).
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_stream_main_flow_factories.py openai-codex-gateway/tests/test_gateway_stream_main_flow_factories.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_main_flow_factories.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_main_flow_invocation.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_bootstrap_invocation.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_main_flow.py`
+- `python openai-codex-gateway/tests/test_gateway_tool_guards.py`
+- `python -m unittest discover -s openai-codex-gateway/tests -p 'test_gateway_*.py'`
+- `python openai-codex-gateway/server.py --help`
+- `P1.1 Gateway Modularization` progressed (phase 43):
+- Extracted stream main-flow invocation binding adapter helper:
+- `openai-codex-gateway/gateway_stream_main_flow_bindings.py`
+- Added:
+- `StreamMainFlowInvocationBindings` dataclass
+- `bind_stream_main_flow_invocation(...)` for bootstrap-binding + main-flow-factory wiring
+- Updated `_handle_stream` to consume invocation binding adapter and remove local unpacking boilerplate.
+- Added invocation-binding-focused unit tests:
+- `openai-codex-gateway/tests/test_gateway_stream_main_flow_bindings.py`
+- `server.py` LOC changed from 872 -> 871 in this iteration.
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_stream_main_flow_bindings.py openai-codex-gateway/tests/test_gateway_stream_main_flow_bindings.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_main_flow_bindings.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_main_flow_factories.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_main_flow_invocation.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_bootstrap_invocation.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_main_flow.py`
+- `python openai-codex-gateway/tests/test_gateway_tool_guards.py`
+- `python -m unittest discover -s openai-codex-gateway/tests -p 'test_gateway_*.py'`
+- `python openai-codex-gateway/server.py --help`
+- `P1.1 Gateway Modularization` progressed (phase 44):
+- Extended stream connection helper with close-connection setter adapter:
+- `openai-codex-gateway/gateway_stream_connection.py`
+- Added `make_close_connection_setter(...)` to encapsulate target attribute setter closure construction.
+- Updated `_handle_stream` to consume setter adapter instead of inline `setattr` lambda.
+- Expanded connection-helper-focused unit tests:
+- `openai-codex-gateway/tests/test_gateway_stream_connection.py`
+- `server.py` LOC changed from 871 -> 872 in this iteration (small net increase due helper import/wiring).
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_stream_connection.py openai-codex-gateway/tests/test_gateway_stream_connection.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_connection.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_bootstrap_invocation.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_main_flow_bindings.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_main_flow_invocation.py`
+- `python openai-codex-gateway/tests/test_gateway_tool_guards.py`
+- `python -m unittest discover -s openai-codex-gateway/tests -p 'test_gateway_*.py'`
+- `python openai-codex-gateway/server.py --help`
+- `P1.1 Gateway Modularization` progressed (phase 45):
+- Extracted traceback-printer closure helper:
+- `openai-codex-gateway/gateway_traceback.py`
+- Added `make_traceback_printer(...)` to encapsulate traceback printer closure wiring with stderr defaulting.
+- Updated `_handle_stream` to consume traceback-printer helper instead of inline traceback lambda.
+- Added traceback-helper-focused unit tests:
+- `openai-codex-gateway/tests/test_gateway_traceback.py`
+- `server.py` LOC changed from 872 -> 873 in this iteration (small net increase due helper import/wiring).
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_traceback.py openai-codex-gateway/tests/test_gateway_traceback.py`
+- `python openai-codex-gateway/tests/test_gateway_traceback.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_main_flow_bindings.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_connection.py`
+- `python openai-codex-gateway/tests/test_gateway_tool_guards.py`
+- `python -m unittest discover -s openai-codex-gateway/tests -p 'test_gateway_*.py'`
+- `python openai-codex-gateway/server.py --help`
+- `P1.1 Gateway Modularization` progressed (phase 46):
+- Extracted stream invocation dependency assembly helper:
+- `openai-codex-gateway/gateway_stream_invocation_dependencies.py`
+- Added:
+- `StreamInvocationDependencies` dataclass
+- `build_stream_invocation_dependencies(...)` to encapsulate:
+- `bind_stream_bootstrap(...)` binding assembly
+- `build_default_stream_main_flow_factories(...)` factory assembly
+- `bind_stream_main_flow_invocation(...)` invocation binding assembly
+- `make_traceback_printer(...)` traceback dependency assembly
+- Updated `_handle_stream` to consume invocation dependency helper and remove inline dependency assembly boilerplate.
+- Added invocation-dependency-focused unit tests:
+- `openai-codex-gateway/tests/test_gateway_stream_invocation_dependencies.py`
+- `server.py` LOC reduced from 873 -> 868 in this iteration.
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_stream_invocation_dependencies.py openai-codex-gateway/tests/test_gateway_stream_invocation_dependencies.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_invocation_dependencies.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_main_flow_bindings.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_main_flow_factories.py`
+- `python openai-codex-gateway/tests/test_gateway_traceback.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_main_flow_invocation.py`
+- `python openai-codex-gateway/tests/test_gateway_tool_guards.py`
+- `python -m unittest discover -s openai-codex-gateway/tests -p 'test_gateway_*.py'`
+- `python openai-codex-gateway/server.py --help`
+- `P1.1 Gateway Modularization` progressed (phase 47):
+- Extracted stream orchestration dependency setup adapter helper:
+- `openai-codex-gateway/gateway_stream_orchestration_setup.py`
+- Added `prepare_stream_orchestration_dependencies(...)` to encapsulate:
+- close-connection setter assembly (`make_close_connection_setter`)
+- stream bootstrap setup invocation (`invoke_stream_bootstrap_setup`)
+- invocation dependency assembly (`build_stream_invocation_dependencies`)
+- Updated `_handle_stream` to consume orchestration setup helper and remove split bootstrap/dependency assembly boilerplate.
+- Added orchestration-setup-focused unit tests:
+- `openai-codex-gateway/tests/test_gateway_stream_orchestration_setup.py`
+- `server.py` LOC reduced from 868 -> 862 in this iteration.
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_stream_orchestration_setup.py openai-codex-gateway/tests/test_gateway_stream_orchestration_setup.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_orchestration_setup.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_invocation_dependencies.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_bootstrap_invocation.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_main_flow_invocation.py`
+- `python openai-codex-gateway/tests/test_gateway_tool_guards.py`
+- `python -m unittest discover -s openai-codex-gateway/tests -p 'test_gateway_*.py'`
+- `python openai-codex-gateway/server.py --help`
+- `P1.1 Gateway Modularization` progressed (phase 48):
+- Extracted prepared main-flow invocation adapter helper:
+- `openai-codex-gateway/gateway_stream_main_flow_execution.py`
+- Added `execute_prepared_stream_main_flow(...)` to encapsulate:
+- prepared invocation dependency binding unpacking
+- `invoke_stream_main_flow_with_error_boundary(...)` argument assembly
+- Updated `_handle_stream` to delegate prepared main-flow invocation assembly to adapter helper.
+- Added main-flow-execution-focused unit tests:
+- `openai-codex-gateway/tests/test_gateway_stream_main_flow_execution.py`
+- `server.py` LOC reduced from 862 -> 853 in this iteration.
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_stream_main_flow_execution.py openai-codex-gateway/tests/test_gateway_stream_main_flow_execution.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_main_flow_execution.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_orchestration_setup.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_main_flow_invocation.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_invocation_dependencies.py`
+- `python openai-codex-gateway/tests/test_gateway_tool_guards.py`
+- `python -m unittest discover -s openai-codex-gateway/tests -p 'test_gateway_*.py'`
+- `python openai-codex-gateway/server.py --help`
+- `P1.1 Gateway Modularization` progressed (phase 49):
+- Extended stream orchestration setup adapter with defaults-oriented entrypoint:
+- `openai-codex-gateway/gateway_stream_orchestration_setup.py`
+- Added `prepare_default_stream_orchestration_dependencies(...)` to encapsulate:
+- default reasoning logger wiring (`reasoning_log`)
+- default id/time factory wiring (`make_id`/`time.time`)
+- forwarding into `prepare_stream_orchestration_dependencies(...)`
+- Updated `_handle_stream` to consume defaults-oriented orchestration adapter and remove inline defaults argument assembly.
+- Added defaults-adapter-focused unit tests:
+- `openai-codex-gateway/tests/test_gateway_stream_orchestration_setup.py`
+- `server.py` LOC changed from 853 -> 852 in this iteration.
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_stream_orchestration_setup.py openai-codex-gateway/tests/test_gateway_stream_orchestration_setup.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_orchestration_setup.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_main_flow_execution.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_invocation_dependencies.py`
+- `python openai-codex-gateway/tests/test_gateway_tool_guards.py`
+- `python -m unittest discover -s openai-codex-gateway/tests -p 'test_gateway_*.py'`
+- `python openai-codex-gateway/server.py --help`
+- `P1.1 Gateway Modularization` progressed (phase 50):
+- Extended stream headers helper with defaults-oriented adapter entrypoint:
+- `openai-codex-gateway/gateway_stream_headers.py`
+- Added `write_default_stream_response_headers(...)` to encapsulate:
+- target-method extraction (`send_response/_write_common_headers/send_header/end_headers`)
+- forwarding into `write_stream_response_headers(...)`
+- Updated `_handle_stream` to consume defaults-oriented stream-header adapter and remove inline header-writer argument assembly.
+- Expanded headers-helper-focused unit tests:
+- `openai-codex-gateway/tests/test_gateway_stream_headers.py`
+- `server.py` LOC reduced from 852 -> 847 in this iteration.
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_stream_headers.py openai-codex-gateway/tests/test_gateway_stream_headers.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_headers.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_orchestration_setup.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_main_flow_execution.py`
+- `python openai-codex-gateway/tests/test_gateway_tool_guards.py`
+- `python -m unittest discover -s openai-codex-gateway/tests -p 'test_gateway_*.py'`
+- `python openai-codex-gateway/server.py --help`
+- `P1.1 Gateway Modularization` progressed (phase 51):
+- Extended stream main-flow execution helper with orchestration+execution runner entrypoint:
+- `openai-codex-gateway/gateway_stream_main_flow_execution.py`
+- Added `run_stream_main_flow_with_default_orchestration(...)` to encapsulate:
+- default orchestration dependency preparation (`prepare_default_stream_orchestration_dependencies`)
+- prepared main-flow execution dispatch (`execute_prepared_stream_main_flow`)
+- Updated `_handle_stream` to consume two-step runner helper and remove local orchestration+execution sequence wiring.
+- Expanded main-flow-execution-focused unit tests:
+- `openai-codex-gateway/tests/test_gateway_stream_main_flow_execution.py`
+- `server.py` LOC reduced from 847 -> 839 in this iteration.
+- Verification passed:
+- `python -m py_compile openai-codex-gateway/server.py openai-codex-gateway/gateway_stream_main_flow_execution.py openai-codex-gateway/tests/test_gateway_stream_main_flow_execution.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_main_flow_execution.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_orchestration_setup.py`
+- `python openai-codex-gateway/tests/test_gateway_stream_headers.py`
+- `python openai-codex-gateway/tests/test_gateway_tool_guards.py`
+- `python -m unittest discover -s openai-codex-gateway/tests -p 'test_gateway_*.py'`
+- `python openai-codex-gateway/server.py --help`
+- `P1.1 Gateway Modularization` progressed (phase 52):
+- Applied stream-module folder classification (flat-file to package layout):
+- created subpackage:
+- `openai-codex-gateway/gateway_stream/`
+- moved all `gateway_stream_*.py` modules into `gateway_stream/*.py`
+- normalized imports project-wide to package form:
+- `from gateway_stream_xxx import ...` -> `from gateway_stream.xxx import ...`
+- Updated `server.py` stream imports to package form and preserved behavior.
+- Added package marker:
+- `openai-codex-gateway/gateway_stream/__init__.py`
+- Verification passed:
+- `python -m unittest discover -s openai-codex-gateway/tests -p 'test_gateway_*.py'`
+- `python openai-codex-gateway/server.py --help`
+- `server.py` LOC kept at 839 in this iteration (structure/classification change).
+- `P1.1 Gateway Modularization` progressed (phase 53):
+- Applied create-response module folder classification:
+- created subpackage:
+- `openai-codex-gateway/create_response/`
+- moved modules:
+- `gateway_create_response_completion.py` -> `create_response/completion.py`
+- `gateway_create_response_parser.py` -> `create_response/parser.py`
+- `gateway_create_response_turn_runner.py` -> `create_response/turn_runner.py`
+- normalized imports project-wide:
+- `from gateway_create_response_xxx import ...` -> `from create_response.xxx import ...`
+- added package marker:
+- `openai-codex-gateway/create_response/__init__.py`
+- Verification passed:
+- `python -m unittest discover -s openai-codex-gateway/tests -p 'test_gateway_*.py'`
+- `python openai-codex-gateway/server.py --help`
+- `server.py` LOC kept at 839 in this iteration (structure/classification change).
+- `P1.1 Gateway Modularization` progressed (phase 54):
+- Applied HTTP module folder classification:
+- created subpackage (named to avoid stdlib `http` namespace collision):
+- `openai-codex-gateway/gateway_http/`
+- moved modules:
+- `gateway_http_io.py` -> `gateway_http/io.py`
+- `gateway_http_routing.py` -> `gateway_http/routing.py`
+- normalized imports project-wide:
+- `from gateway_http_xxx import ...` -> `from gateway_http.xxx import ...`
+- added package marker:
+- `openai-codex-gateway/gateway_http/__init__.py`
+- Verification passed:
+- `python -m unittest discover -s openai-codex-gateway/tests -p 'test_gateway_*.py'`
+- `python openai-codex-gateway/server.py --help`
+- `server.py` LOC kept at 839 in this iteration (structure/classification change).
+- `P1.1 Gateway Modularization` progressed (phase 55):
+- Applied request/payload parsing module folder classification:
+- created subpackage:
+- `openai-codex-gateway/gateway_request/`
+- moved modules:
+- `gateway_payload.py` -> `gateway_request/payload.py`
+- `gateway_request_parser.py` -> `gateway_request/parser.py`
+- normalized imports project-wide:
+- `from gateway_payload import ...` -> `from gateway_request.payload import ...`
+- `from gateway_request_parser import ...` -> `from gateway_request.parser import ...`
+- added package marker:
+- `openai-codex-gateway/gateway_request/__init__.py`
+- Verification passed:
+- `python -m unittest discover -s openai-codex-gateway/tests -p 'test_gateway_*.py'`
+- `python openai-codex-gateway/server.py --help`
+- `server.py` LOC kept at 839 in this iteration (structure/classification change).
+- `P1.1 Gateway Modularization` progressed (phase 56):
+- Applied runtime/core module folder classification:
+- created subpackage:
+- `openai-codex-gateway/gateway_core/`
+- moved modules:
+- `gateway_runtime.py` -> `gateway_core/runtime.py`
+- `gateway_sdk_loader.py` -> `gateway_core/sdk_loader.py`
+- `gateway_state_store.py` -> `gateway_core/state_store.py`
+- normalized imports:
+- `from gateway_runtime import ...` -> `from gateway_core.runtime import ...`
+- `from gateway_sdk_loader import ...` -> `from gateway_core.sdk_loader import ...`
+- `from gateway_state_store import ...` -> `from gateway_core.state_store import ...`
+- added package marker:
+- `openai-codex-gateway/gateway_core/__init__.py`
+- compatibility fix after move:
+- adjusted `gateway_core/runtime.py` path constants (`REPO_ROOT`/legacy db path) to preserve previous runtime behavior.
+- Verification passed:
+- `python -m unittest discover -s openai-codex-gateway/tests -p 'test_gateway_*.py'`
+- `python openai-codex-gateway/server.py --help`
+- `server.py` LOC kept at 839 in this iteration (structure/classification change).
+- `P1.1 Gateway Modularization` progressed (phase 57):
+- Applied base/common module folder classification:
+- created subpackage:
+- `openai-codex-gateway/gateway_base/`
+- moved modules:
+- `gateway_logging.py` -> `gateway_base/logging.py`
+- `gateway_policy.py` -> `gateway_base/policy.py`
+- `gateway_types.py` -> `gateway_base/types.py`
+- `gateway_utils.py` -> `gateway_base/utils.py`
+- normalized imports project-wide:
+- `from gateway_logging import ...` -> `from gateway_base.logging import ...`
+- `from gateway_policy import ...` -> `from gateway_base.policy import ...`
+- `from gateway_types import ...` -> `from gateway_base.types import ...`
+- `from gateway_utils import ...` -> `from gateway_base.utils import ...`
+- added package marker:
+- `openai-codex-gateway/gateway_base/__init__.py`
+- Verification passed:
+- `python -m unittest discover -s openai-codex-gateway/tests -p 'test_gateway_*.py'`
+- `python openai-codex-gateway/server.py --help`
+- `server.py` LOC kept at 839 in this iteration (structure/classification change).
+- `P1.1 Gateway Modularization` progressed (phase 58):
+- Applied response/traceback module folder classification:
+- created subpackage:
+- `openai-codex-gateway/gateway_response/`
+- moved modules:
+- `gateway_response_builder.py` -> `gateway_response/builder.py`
+- `gateway_traceback.py` -> `gateway_base/traceback.py`
+- normalized imports project-wide:
+- `from gateway_response_builder import ...` -> `from gateway_response.builder import ...`
+- `from gateway_traceback import ...` -> `from gateway_base.traceback import ...`
+- added package marker:
+- `openai-codex-gateway/gateway_response/__init__.py`
+- Verification passed:
+- `python -m unittest discover -s openai-codex-gateway/tests -p 'test_gateway_*.py'`
+- `python openai-codex-gateway/server.py --help`
+- `server.py` LOC kept at 839 in this iteration (structure/classification change).
+- `P1.1 Gateway Modularization` progressed (phase 59):
+- Applied first-step tests folder classification (domain grouping without import collisions):
+- created test subdirectories:
+- `openai-codex-gateway/tests/case_http/`
+- `openai-codex-gateway/tests/case_request/`
+- `openai-codex-gateway/tests/case_create_response/`
+- moved tests:
+- HTTP tests -> `tests/case_http/`
+- request parser tests -> `tests/case_request/`
+- create-response tests -> `tests/case_create_response/`
+- updated moved tests' gateway-root path bootstrap:
+- `Path(__file__).resolve().parents[1]` -> `parents[2]`
+- added test package markers for stable recursive discovery:
+- `tests/__init__.py`
+- `tests/case_http/__init__.py`
+- `tests/case_request/__init__.py`
+- `tests/case_create_response/__init__.py`
+- naming note:
+- used `case_*` prefixes to avoid stdlib/app package shadowing (`http`, `create_response`) during unittest import.
+- Verification passed:
+- `python -m unittest discover -s openai-codex-gateway/tests -p 'test_gateway_*.py'` (102 tests)
+- `python openai-codex-gateway/server.py --help`
+- `server.py` LOC kept at 839 in this iteration (structure/classification change).
+- `P1.1 Gateway Modularization` progressed (phase 60):
+- Continued tests folder classification for remaining gateway domains:
+- created/filled test subdirectories:
+- `openai-codex-gateway/tests/case_stream/`
+- `openai-codex-gateway/tests/case_response/`
+- `openai-codex-gateway/tests/case_base/`
+- `openai-codex-gateway/tests/case_core/`
+- moved tests:
+- all `test_gateway_stream_*.py` -> `tests/case_stream/`
+- `test_gateway_response_builder.py` -> `tests/case_response/`
+- `test_gateway_traceback.py` -> `tests/case_base/`
+- `test_gateway_tool_guards.py` + `test_gateway_turn_event_processing.py` -> `tests/case_core/`
+- updated moved tests' gateway-root path bootstrap:
+- `Path(__file__).resolve().parents[1]` -> `parents[2]`
+- discovery stability note:
+- kept `case_*` naming plus package markers to avoid stdlib/app package shadowing and keep recursive unittest discovery stable.
+- Verification passed:
+- `python -m unittest discover -s openai-codex-gateway/tests -p 'test_gateway_*.py'` (102 tests)
+- `python openai-codex-gateway/server.py --help`
+- `server.py` LOC kept at 839 in this iteration (structure/classification change).
+- `P1.1 Gateway Modularization` progressed (phase 61):
+- Completed tests folder classification for integration scenario scripts:
+- created/finalized:
+- `openai-codex-gateway/tests/case_integration/`
+- moved tests:
+- `test_continuous_session.py`
+- `test_function_tools_multi_call.py`
+- `test_function_tools_single.py`
+- `test_function_tools_stream.py`
+- `test_long_conversation.py`
+- `test_mcp_tools_full_session.py`
+- `test_mcp_tools_request.py`
+- `test_mcp_tools_stream.py`
+- `test_single_turn.py`
+- path fix for moved MCP tests:
+- fixture path updated from `Path(__file__).resolve().parent / "fixtures"` to `Path(__file__).resolve().parents[1] / "fixtures"`
+- added package marker:
+- `openai-codex-gateway/tests/case_integration/__init__.py`
+- Verification passed:
+- `python -m unittest discover -s openai-codex-gateway/tests -p 'test_gateway_*.py'` (102 tests)
+- `python openai-codex-gateway/server.py --help`
+- `server.py` LOC kept at 839 in this iteration (structure/classification change).
+- `P1.1 Gateway Modularization` progressed (phase 62):
+- Synchronized gateway documentation with the new folder/package classification and test layout:
+- updated:
+- `openai-codex-gateway/README.md`
+- `openai-codex-gateway/README.en.md`
+- `openai-codex-gateway/README.zh-CN.md`
+- documentation updates:
+- added code package map (`gateway_base` / `gateway_core` / `gateway_http` / `gateway_request` / `gateway_response` / `gateway_stream` / `create_response`)
+- added tests map (`tests/case_*`) and naming rationale (avoid import collisions with stdlib/app module names like `http` and `create_response`)
+- replaced legacy integration script paths with `tests/case_integration/...`
+- added recommended commands for full regression + per-domain regression
+- Verification passed:
+- `python -m unittest discover -s openai-codex-gateway/tests -p 'test_gateway_*.py'` (102 tests)
+- `python openai-codex-gateway/server.py --help`
+- `server.py` LOC kept at 839 in this iteration (documentation-only change).
+- `P1.1 Gateway Modularization` progressed (phase 63):
+- Added domain-oriented test runner script to reduce command verbosity and align with `tests/case_*` layout:
+- added:
+- `openai-codex-gateway/tests/run_by_case.sh`
+- script capabilities:
+- supports grouped targets (`all`, `stream`, `http`, `request`, `create-response`, `response`, `base`, `core`, `integration`)
+- supports frequently-used integration script shortcuts (`mcp-request`, `mcp-stream`, `mcp-full`, `function-single`, `function-multi`, `function-stream`)
+- Documentation sync:
+- updated runner usage in:
+- `openai-codex-gateway/README.md`
+- `openai-codex-gateway/README.en.md`
+- `openai-codex-gateway/README.zh-CN.md`
+- Verification passed:
+- `bash openai-codex-gateway/tests/run_by_case.sh --help`
+- `bash openai-codex-gateway/tests/run_by_case.sh all` (102 tests)
+- `python openai-codex-gateway/server.py --help`
+- `server.py` LOC kept at 839 in this iteration (test tooling/doc improvement).
+- `P1.1 Gateway Modularization` progressed (phase 64):
+- Added Makefile-level test aliases to simplify daily usage while keeping `tests/case_*` domain boundaries:
+- added:
+- `openai-codex-gateway/Makefile`
+- behavior:
+- `make test` maps to gateway unit regression (`test_gateway_*.py`)
+- per-domain aliases map to `tests/run_by_case.sh` targets (stream/http/request/create-response/response/base/core/integration)
+- integration shortcuts exposed as Make targets (`test-mcp-*`, `test-function-*`)
+- Documentation sync:
+- updated usage snippets in:
+- `openai-codex-gateway/README.md`
+- `openai-codex-gateway/README.en.md`
+- `openai-codex-gateway/README.zh-CN.md`
+- Verification passed:
+- `make -C openai-codex-gateway help`
+- `make -C openai-codex-gateway test` (102 tests)
+- `python openai-codex-gateway/server.py --help`
+- `server.py` LOC kept at 839 in this iteration (test tooling/doc improvement).
+- `P1.1 Gateway Modularization` progressed (phase 65):
+- Reduced gateway top-level script sprawl via folder classification with compatibility preserved:
+- added:
+- `openai-codex-gateway/scripts/gateway_ctl.sh`
+- changed:
+- `openai-codex-gateway/gateway_ctl.sh` -> backward-compatible wrapper to `scripts/gateway_ctl.sh`
+- Documentation sync:
+- updated script layout notes in:
+- `openai-codex-gateway/README.md`
+- `openai-codex-gateway/README.en.md`
+- `openai-codex-gateway/README.zh-CN.md`
+- Verification passed:
+- `bash openai-codex-gateway/gateway_ctl.sh status`
+- `bash openai-codex-gateway/scripts/gateway_ctl.sh status`
+- `make -C openai-codex-gateway test` (102 tests)
+- `python openai-codex-gateway/server.py --help`
+- `server.py` LOC kept at 839 in this iteration (script classification + compatibility wrapper).
+- `P1.1 Gateway Modularization` progressed (phase 66):
+- Continued script classification under dedicated folders while preserving stable wrapper entrypoints:
+- added:
+- `openai-codex-gateway/tests/scripts/run_by_case.sh`
+- `openai-codex-gateway/docs/ENTRYPOINTS.md`
+- changed:
+- `openai-codex-gateway/tests/run_by_case.sh` -> backward-compatible wrapper to `tests/scripts/run_by_case.sh`
+- Documentation sync:
+- updated directory/entrypoint notes in:
+- `openai-codex-gateway/README.md`
+- `openai-codex-gateway/README.en.md`
+- `openai-codex-gateway/README.zh-CN.md`
+- Verification passed:
+- `bash openai-codex-gateway/tests/run_by_case.sh --help`
+- `bash openai-codex-gateway/tests/scripts/run_by_case.sh --help`
+- `make -C openai-codex-gateway help`
+- `make -C openai-codex-gateway test` (102 tests)
+- `python openai-codex-gateway/server.py --help`
+- `server.py` LOC kept at 839 in this iteration (entrypoint classification + docs index).
+
+## 9) Current Next Step
+- Immediate execution target: `P1.1 Gateway Modularization (phase 67: split gateway docs into topic-specific pages under docs/ and keep README focused as quickstart + index)`.

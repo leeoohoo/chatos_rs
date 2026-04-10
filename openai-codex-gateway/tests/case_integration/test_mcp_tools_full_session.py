@@ -33,7 +33,7 @@ def main() -> None:
     api_key = os.environ.get("GATEWAY_API_KEY", "dummy-key")
     model = os.environ.get("GATEWAY_TEST_MODEL")
     fixture_server = (
-        Path(__file__).resolve().parent / "fixtures" / "mcp_secret_server.py"
+        Path(__file__).resolve().parents[1] / "fixtures" / "mcp_secret_server.py"
     ).as_posix()
 
     if not os.path.exists(fixture_server):

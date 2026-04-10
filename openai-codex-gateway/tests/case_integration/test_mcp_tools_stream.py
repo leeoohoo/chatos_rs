@@ -22,7 +22,7 @@ def main() -> None:
     model = os.environ.get("GATEWAY_TEST_MODEL")
     secret = f"mcp-secret-stream-{uuid.uuid4().hex}"
     fixture_server = (
-        Path(__file__).resolve().parent / "fixtures" / "mcp_secret_server.py"
+        Path(__file__).resolve().parents[1] / "fixtures" / "mcp_secret_server.py"
     ).as_posix()
 
     if not os.path.exists(fixture_server):

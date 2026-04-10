@@ -430,13 +430,14 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     loadChangeSummary,
   });
 
-  if (!project) {
-    return (
-      <div className={cn('flex items-center justify-center h-full text-muted-foreground', className)}>
-        请选择一个项目查看文件
-      </div>
-    );
-  }
+  const effectiveProject: Project = project ?? {
+    id: '__placeholder__',
+    name: '',
+    rootPath: '',
+    createdAt: new Date(0),
+    updatedAt: new Date(0),
+  };
+
   const {
     treePaneProps,
     previewPaneProps,
@@ -449,7 +450,7 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     handleDownloadSelected: workspaceHandleDownloadSelected,
     handleDeleteSelected: workspaceHandleDeleteSelected,
   } = useProjectExplorerWorkspaceView({
-    project,
+    project: effectiveProject,
     treeWidth,
     treeScrollRef,
     entriesMap,
@@ -516,6 +517,14 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     setSelectedRunTargetId,
     handleAnalyzeRunTargets,
   });
+
+  if (!project) {
+    return (
+      <div className={cn('flex items-center justify-center h-full text-muted-foreground', className)}>
+        请选择一个项目查看文件
+      </div>
+    );
+  }
 
   return (
     <div ref={containerRef} className={cn('flex h-full flex-col overflow-hidden', className)}>

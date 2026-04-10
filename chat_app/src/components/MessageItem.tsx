@@ -132,6 +132,24 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
     && renderContext !== 'process_drawer'
   );
 
+  const attachments = message.metadata?.attachments || [];
+  // 获取工具调用数据 - 同时检查顶层和metadata中的toolCalls（兼容不同的数据格式）
+  const toolCalls = (message as any).toolCalls || message.metadata?.toolCalls || [];
+  const renderContentSegments = useMemo(
+    () => normalizeContentSegmentsForRender(Array.isArray(message.metadata?.contentSegments) ? message.metadata.contentSegments : []),
+    [message.metadata?.contentSegments],
+  );
+  const toolCallsById = useMemo(() => {
+    if (!toolCalls || toolCalls.length === 0) return new Map<string, any>();
+    const map = new Map<string, any>();
+    for (const tc of toolCalls) {
+      if (tc && tc.id) {
+        map.set(tc.id, tc);
+      }
+    }
+    return map;
+  }, [toolCalls]);
+
   // 隐藏tool角色的消息，因为它们应该作为工具调用的结果显示
   if (isTool) {
     return null;
@@ -161,24 +179,6 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
       console.error('Failed to copy message:', error);
     }
   };
-
-  const attachments = message.metadata?.attachments || [];
-  // 获取工具调用数据 - 同时检查顶层和metadata中的toolCalls（兼容不同的数据格式）
-  const toolCalls = (message as any).toolCalls || message.metadata?.toolCalls || [];
-  const renderContentSegments = useMemo(
-    () => normalizeContentSegmentsForRender(Array.isArray(message.metadata?.contentSegments) ? message.metadata.contentSegments : []),
-    [message.metadata?.contentSegments],
-  );
-  const toolCallsById = useMemo(() => {
-    if (!toolCalls || toolCalls.length === 0) return new Map<string, any>();
-    const map = new Map<string, any>();
-    for (const tc of toolCalls) {
-      if (tc && tc.id) {
-        map.set(tc.id, tc);
-      }
-    }
-    return map;
-  }, [toolCalls, toolCalls?.length]);
 
   return (
     <div

@@ -79,6 +79,17 @@ export const useChatStoreSelector = <T,>(
   return useStoreWithEqualityFn(store, selector, equalityFn);
 };
 
+export const useOptionalChatStoreContext = (): ChatStore | null => {
+  const context = useContext(ChatStoreContext);
+  return context?.store ?? null;
+};
+
+export const useChatStoreResolved = (): ChatState & ChatActions => {
+  const context = useContext(ChatStoreContext);
+  const store = context?.store ?? useChatStore;
+  return useStoreWithEqualityFn(store, (state) => state);
+};
+
 // 新增：导出当前运行环境（userId、projectId）
 export const useChatRuntimeEnv = () => {
   const context = useContext(ChatStoreContext);

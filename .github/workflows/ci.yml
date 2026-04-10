@@ -1,0 +1,119 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  chat-app-server-rs:
+    name: chat_app_server_rs (Rust)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: chat_app_server_rs
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust deps
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: chat_app_server_rs -> target
+
+      - name: cargo check
+        run: cargo check
+
+      - name: cargo test
+        run: cargo test -q
+
+  memory-server-backend:
+    name: memory_server/backend (Rust)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: memory_server/backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust deps
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: memory_server/backend -> target
+
+      - name: cargo check
+        run: cargo check
+
+      - name: cargo test
+        run: cargo test -q
+
+  chat-app-frontend:
+    name: chat_app (TypeScript)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: chat_app
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: chat_app/package-lock.json
+
+      - name: npm ci
+        run: npm ci
+
+      - name: type-check
+        run: npm run type-check
+
+      - name: test
+        run: npm run test -- --run
+
+      - name: build
+        run: npm run build
+
+      - name: lint
+        run: npm run lint
+
+  memory-server-frontend:
+    name: memory_server/frontend (TypeScript)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: memory_server/frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: memory_server/frontend/package-lock.json
+
+      - name: npm ci
+        run: npm ci
+
+      - name: build
+        run: npm run build

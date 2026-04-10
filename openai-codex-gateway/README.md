@@ -7,7 +7,16 @@
 
 ## 目录
 
-- `server.py`：网关服务实现（标准库 HTTP Server）
+- `server.py`：网关服务入口（标准库 HTTP Server）
+- `gateway_base/`：基础通用能力（日志、策略、类型、工具、traceback）
+- `gateway_core/`：运行时核心能力（runtime、sdk_loader、state_store）
+- `gateway_http/`：HTTP 输入输出与路由
+- `gateway_request/`：请求解析与 payload 处理
+- `gateway_response/`：响应对象构建
+- `gateway_stream/`：流式响应与事件编排
+- `create_response/`：create-response 相关解析与执行编排
+- `tests/`：测试目录，按 `case_*` 域拆分
+- `docs/ENTRYPOINTS.md`：网关启动/测试入口索引
 
 ## 启动前准备
 
@@ -49,6 +58,11 @@ cd openai-codex-gateway
 ./gateway_ctl.sh restart
 ./gateway_ctl.sh stop
 ```
+
+脚本目录说明：
+
+- 兼容入口保留在根目录：`./gateway_ctl.sh`
+- 具体实现位于：`scripts/gateway_ctl.sh`
 
 默认日志与 PID：
 
@@ -160,17 +174,69 @@ for event in stream:
 python -m pip install openai
 ```
 
-然后执行（默认调用 `http://127.0.0.1:8089/v1`）：
+测试目录分层（`openai-codex-gateway/tests`）：
+
+- `case_stream/`：流式主链路与编排逻辑
+- `case_http/`：HTTP 层 IO 与路由
+- `case_request/`：请求解析与 payload 处理
+- `case_create_response/`：create-response 解析与执行
+- `case_response/`：响应构建
+- `case_base/`：基础能力（traceback 等）
+- `case_core/`：运行时核心能力
+- `case_integration/`：端到端/会话级集成脚本
+
+命名说明：
+
+- 测试子目录统一使用 `case_*` 前缀，避免与 `http`、`create_response` 等模块名或标准库包同名，导致 `unittest` 导入冲突。
+
+推荐执行命令（在仓库根目录运行，默认调用 `http://127.0.0.1:8089/v1`）：
 
 ```bash
-python openai-codex-gateway/tests/test_single_turn.py
-python openai-codex-gateway/tests/test_continuous_session.py
-python openai-codex-gateway/tests/test_long_conversation.py
-python openai-codex-gateway/tests/test_mcp_tools_request.py
-python openai-codex-gateway/tests/test_mcp_tools_stream.py
-python openai-codex-gateway/tests/test_function_tools_single.py
-python openai-codex-gateway/tests/test_function_tools_multi_call.py
-python openai-codex-gateway/tests/test_function_tools_stream.py
+# 全量回归（推荐）
+python -m unittest discover -s openai-codex-gateway/tests -p 'test_gateway_*.py'
+
+# 按域回归
+python -m unittest discover -s openai-codex-gateway/tests/case_stream -p 'test_gateway_*.py'
+python -m unittest discover -s openai-codex-gateway/tests/case_http -p 'test_gateway_*.py'
+python -m unittest discover -s openai-codex-gateway/tests/case_request -p 'test_gateway_*.py'
+python -m unittest discover -s openai-codex-gateway/tests/case_create_response -p 'test_gateway_*.py'
+python -m unittest discover -s openai-codex-gateway/tests/case_response -p 'test_gateway_*.py'
+python -m unittest discover -s openai-codex-gateway/tests/case_base -p 'test_gateway_*.py'
+python -m unittest discover -s openai-codex-gateway/tests/case_core -p 'test_gateway_*.py'
+```
+
+也可以使用分类快捷脚本：
+
+```bash
+bash openai-codex-gateway/tests/run_by_case.sh all
+bash openai-codex-gateway/tests/run_by_case.sh stream
+bash openai-codex-gateway/tests/run_by_case.sh mcp-request
+```
+
+测试脚本目录说明：
+
+- 兼容入口：`tests/run_by_case.sh`
+- 具体实现：`tests/scripts/run_by_case.sh`
+
+如果你已经在 `openai-codex-gateway/` 目录，也可以直接用 Makefile 别名：
+
+```bash
+make test
+make test-stream
+make test-mcp-request
+```
+
+常用集成脚本：
+
+```bash
+python openai-codex-gateway/tests/case_integration/test_single_turn.py
+python openai-codex-gateway/tests/case_integration/test_continuous_session.py
+python openai-codex-gateway/tests/case_integration/test_long_conversation.py
+python openai-codex-gateway/tests/case_integration/test_mcp_tools_request.py
+python openai-codex-gateway/tests/case_integration/test_mcp_tools_stream.py
+python openai-codex-gateway/tests/case_integration/test_function_tools_single.py
+python openai-codex-gateway/tests/case_integration/test_function_tools_multi_call.py
+python openai-codex-gateway/tests/case_integration/test_function_tools_stream.py
 ```
 
 可选环境变量：
@@ -202,7 +268,7 @@ python openai-codex-gateway/tests/test_function_tools_stream.py
 - 不能传 inline `bearer_token`；请使用 `bearer_token_env_var`。
 - 每个请求里的 `server_label` 不能重复。
 
-可用验证脚本：`tests/test_mcp_tools_request.py`
+可用验证脚本：`tests/case_integration/test_mcp_tools_request.py`
 
 这个脚本会启动一个本地最小 MCP stdio server（`tests/fixtures/mcp_secret_server.py`），
 然后通过请求级 `tools` 验证网关可成功调用 MCP 工具并返回结果。
@@ -210,13 +276,13 @@ python openai-codex-gateway/tests/test_function_tools_stream.py
 完整会话验证（两轮续聊 + 每轮请求级 MCP）：
 
 ```bash
-python openai-codex-gateway/tests/test_mcp_tools_full_session.py
+python openai-codex-gateway/tests/case_integration/test_mcp_tools_full_session.py
 ```
 
 流式验证（请求级 MCP + SSE）：
 
 ```bash
-python openai-codex-gateway/tests/test_mcp_tools_stream.py
+python openai-codex-gateway/tests/case_integration/test_mcp_tools_stream.py
 ```
 
 ## 函数工具（客户端本地执行，不服务化 MCP）
@@ -275,9 +341,9 @@ python openai-codex-gateway/tests/test_mcp_tools_stream.py
 
 可运行脚本：
 
-- `tests/test_function_tools_single.py`：单工具调用循环
-- `tests/test_function_tools_multi_call.py`：多工具调用循环（包含同轮多个 `function_call` 的处理逻辑）
-- `tests/test_function_tools_stream.py`：流式 function-call 循环（首轮流式拿 call，第二轮流式回传输出）
+- `tests/case_integration/test_function_tools_single.py`：单工具调用循环
+- `tests/case_integration/test_function_tools_multi_call.py`：多工具调用循环（包含同轮多个 `function_call` 的处理逻辑）
+- `tests/case_integration/test_function_tools_stream.py`：流式 function-call 循环（首轮流式拿 call，第二轮流式回传输出）
 
 ## 完整调用模板（OpenAI SDK）
 

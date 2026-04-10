@@ -1,7 +1,6 @@
 import React from 'react';
 
-import { useChatStore } from '../lib/store';
-import { useChatStoreFromContext } from '../lib/store/ChatStoreContext';
+import { useChatStoreResolved } from '../lib/store/ChatStoreContext';
 import ConfirmDialog from './ui/ConfirmDialog';
 import SystemContextSidebar from './systemContextEditor/SystemContextSidebar';
 import SystemContextWorkspace from './systemContextEditor/SystemContextWorkspace';
@@ -32,15 +31,11 @@ const XMarkIcon = () => (
 );
 
 function useResolvedStore(externalStore?: SystemContextEditorProps['store']): SystemContextEditorStoreLike {
+  const internalStoreData = useChatStoreResolved() as SystemContextEditorStoreLike;
   if (externalStore) {
     return externalStore() as SystemContextEditorStoreLike;
   }
-
-  try {
-    return useChatStoreFromContext() as SystemContextEditorStoreLike;
-  } catch {
-    return useChatStore() as SystemContextEditorStoreLike;
-  }
+  return internalStoreData;
 }
 
 const SystemContextEditor: React.FC<SystemContextEditorProps> = ({ onClose, store: externalStore }) => {

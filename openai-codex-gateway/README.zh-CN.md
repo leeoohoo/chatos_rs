@@ -30,6 +30,81 @@
 - `GET /v1/models`
 - `POST /v1/responses`
 
+## 代码目录分层
+- `server.py`：网关入口（标准库 HTTP Server）
+- `gateway_base/`：基础通用能力（日志、策略、类型、traceback 等）
+- `gateway_core/`：运行时核心能力（runtime、sdk loader、state store）
+- `gateway_http/`：HTTP 输入输出与路由
+- `gateway_request/`：请求解析与 payload 归一化
+- `gateway_response/`：响应对象构建
+- `gateway_stream/`：流式编排与 SSE 事件流
+- `create_response/`：create-response 解析与执行模块
+- `tests/`：按域拆分的测试目录
+- `docs/ENTRYPOINTS.md`：启动/测试入口索引
+
+## 测试目录分层
+- `tests/case_stream/`
+- `tests/case_http/`
+- `tests/case_request/`
+- `tests/case_create_response/`
+- `tests/case_response/`
+- `tests/case_base/`
+- `tests/case_core/`
+- `tests/case_integration/`
+
+为什么使用 `case_*` 命名：
+- 避免与 `http`、`create_response` 等模块名/标准库包同名，降低 `unittest` 发现与导入冲突风险。
+
+## 推荐测试命令
+在仓库根目录执行：
+
+```bash
+# 全量回归（推荐）
+python -m unittest discover -s openai-codex-gateway/tests -p 'test_gateway_*.py'
+
+# 按域回归
+python -m unittest discover -s openai-codex-gateway/tests/case_stream -p 'test_gateway_*.py'
+python -m unittest discover -s openai-codex-gateway/tests/case_http -p 'test_gateway_*.py'
+python -m unittest discover -s openai-codex-gateway/tests/case_request -p 'test_gateway_*.py'
+python -m unittest discover -s openai-codex-gateway/tests/case_create_response -p 'test_gateway_*.py'
+python -m unittest discover -s openai-codex-gateway/tests/case_response -p 'test_gateway_*.py'
+python -m unittest discover -s openai-codex-gateway/tests/case_base -p 'test_gateway_*.py'
+python -m unittest discover -s openai-codex-gateway/tests/case_core -p 'test_gateway_*.py'
+```
+
+也可以用快捷脚本：
+
+```bash
+bash openai-codex-gateway/tests/run_by_case.sh all
+bash openai-codex-gateway/tests/run_by_case.sh stream
+bash openai-codex-gateway/tests/run_by_case.sh mcp-request
+```
+
+测试脚本目录说明：
+- 兼容入口：`tests/run_by_case.sh`
+- 具体实现：`tests/scripts/run_by_case.sh`
+
+如果你已经在 `openai-codex-gateway/` 目录，也可以用 Makefile 别名：
+
+```bash
+make test
+make test-stream
+make test-mcp-request
+```
+
+常用集成脚本：
+
+```bash
+python openai-codex-gateway/tests/case_integration/test_single_turn.py
+python openai-codex-gateway/tests/case_integration/test_continuous_session.py
+python openai-codex-gateway/tests/case_integration/test_long_conversation.py
+python openai-codex-gateway/tests/case_integration/test_mcp_tools_request.py
+python openai-codex-gateway/tests/case_integration/test_mcp_tools_stream.py
+python openai-codex-gateway/tests/case_integration/test_function_tools_single.py
+python openai-codex-gateway/tests/case_integration/test_function_tools_multi_call.py
+python openai-codex-gateway/tests/case_integration/test_function_tools_stream.py
+```
+
 ## 模型传参说明
 - 支持客户端在 `POST /v1/responses` 中传 `model`。
 - 网关会把该模型透传给 codex app-server。
@@ -63,6 +138,10 @@ python server.py --host 127.0.0.1 --port 8089
 ./gateway_ctl.sh restart
 ./gateway_ctl.sh stop
 ```
+
+脚本目录说明：
+- 兼容入口保留在根目录：`./gateway_ctl.sh`
+- 具体实现位于：`scripts/gateway_ctl.sh`
 
 默认日志与 PID：
 - `/tmp/chatos_rs_dev/codex_gateway.log`

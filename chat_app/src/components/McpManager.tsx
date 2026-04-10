@@ -2,8 +2,7 @@ import React, { useState } from 'react';
 
 import { useConfirmDialog } from '../hooks/useConfirmDialog';
 import { apiClient } from '../lib/api/client';
-import { useChatStore } from '../lib/store';
-import { useChatStoreFromContext } from '../lib/store/ChatStoreContext';
+import { useChatStoreResolved } from '../lib/store/ChatStoreContext';
 import type { McpConfig } from '../types';
 import ConfirmDialog from './ui/ConfirmDialog';
 import {
@@ -26,16 +25,8 @@ type McpManagerWindow = Window & {
 };
 
 const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }) => {
-  let storeData;
-  if (externalStore) {
-    storeData = externalStore();
-  } else {
-    try {
-      storeData = useChatStoreFromContext();
-    } catch (_) {
-      storeData = useChatStore();
-    }
-  }
+  const internalStoreData = useChatStoreResolved();
+  const storeData = externalStore ? externalStore() : internalStoreData;
 
   const { mcpConfigs, updateMcpConfig, deleteMcpConfig, loadMcpConfigs } = storeData;
   const { dialogState, showConfirmDialog, handleConfirm, handleCancel } = useConfirmDialog();

@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react';
 
-import { useChatStoreFromContext } from '../lib/store/ChatStoreContext';
-import { useChatStore } from '../lib/store';
+import { useChatStoreResolved } from '../lib/store/ChatStoreContext';
 import type { Application } from '../types';
 import ApplicationsBrowseView from './applicationsPanel/ApplicationsBrowseView';
 import ApplicationsManageView from './applicationsPanel/ApplicationsManageView';
@@ -25,12 +24,7 @@ const ApplicationsPanel: React.FC<ApplicationsPanelProps> = ({
   layout = 'modal',
   onApplicationSelect,
 }) => {
-    let storeData: ApplicationPanelStore;
-    try {
-        storeData = useChatStoreFromContext();
-    } catch {
-        storeData = useChatStore();
-    }
+    const storeData: ApplicationPanelStore = useChatStoreResolved();
 
     const {
         applications,
