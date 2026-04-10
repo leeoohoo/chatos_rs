@@ -1,6 +1,6 @@
 import React from 'react';
 import { MessageList } from '../MessageList';
-import { MarkdownRenderer } from '../MarkdownRenderer';
+import { LazyMarkdownRenderer } from '../LazyMarkdownRenderer';
 import type { ChatInterfaceProps, Message } from '../../types';
 
 interface SessionSummaryViewItem {
@@ -172,7 +172,7 @@ const SummaryPane: React.FC<SummaryPaneProps> = ({
                     <span>{formatTextDate(item.time)}</span>
                   </div>
                   <div className="mt-1 text-sm leading-6">
-                    <MarkdownRenderer content={item.text} />
+                    <LazyMarkdownRenderer content={item.text} />
                   </div>
                 </div>
               ))}

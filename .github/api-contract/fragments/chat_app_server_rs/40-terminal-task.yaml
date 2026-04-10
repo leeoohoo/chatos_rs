@@ -1,0 +1,192 @@
+paths:
+  /api/terminals:
+    get:
+      summary: List terminals
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiTerminals
+    post:
+      summary: Create terminal
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiTerminals
+  /api/terminals/dispatch-command:
+    post:
+      summary: Dispatch terminal command
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiTerminalsDispatchCommand
+  /api/terminals/{id}:
+    get:
+      summary: Get terminal
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiTerminalsById
+    delete:
+      summary: Delete terminal
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: deleteApiTerminalsById
+  /api/terminals/{id}/interrupt:
+    post:
+      summary: Interrupt terminal command
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiTerminalsByIdInterrupt
+  /api/terminals/{id}/history:
+    get:
+      summary: Get terminal history
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiTerminalsByIdHistory
+  /api/terminals/{id}/ws:
+    get:
+      summary: Terminal websocket
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '101':
+          description: Switching Protocols
+      operationId: getApiTerminalsByIdWs
+  /api/task-manager/tasks:
+    get:
+      summary: List tasks
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiTaskManagerTasks
+  /api/task-manager/tasks/{task_id}:
+    patch:
+      summary: Update task
+      parameters:
+      - in: path
+        name: task_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: patchApiTaskManagerTasksByTaskId
+  /api/task-manager/tasks/{task_id}/events:
+    get:
+      summary: List task events
+      parameters:
+      - in: path
+        name: task_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiTaskManagerTasksByTaskIdEvents
+  /api/task-manager/tasks/{task_id}/complete:
+    post:
+      summary: Complete task
+      parameters:
+      - in: path
+        name: task_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiTaskManagerTasksByTaskIdComplete
+  /api/task-manager/reviews/{review_id}/decision:
+    post:
+      summary: Submit task review decision
+      parameters:
+      - in: path
+        name: review_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiTaskManagerReviewsByReviewIdDecision

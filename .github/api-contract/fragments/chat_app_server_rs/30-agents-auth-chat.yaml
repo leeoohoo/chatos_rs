@@ -1,0 +1,298 @@
+paths:
+  /api/agent_v3/chat/stream:
+    post:
+      summary: Stream agent v3 chat
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiAgentV3ChatStream
+  /api/agent_v3/chat/stop:
+    post:
+      summary: Stop agent v3 chat
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiAgentV3ChatStop
+  /api/agent_v3/chat/guide:
+    post:
+      summary: Submit runtime guidance
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiAgentV3ChatGuide
+  /api/agent_v3/tools:
+    get:
+      summary: List agent v3 tools
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiAgentV3Tools
+  /api/agent_v3/status:
+    get:
+      summary: Get agent v3 status
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiAgentV3Status
+  /api/agent_v3/session/{session_id}/reset:
+    post:
+      summary: Reset agent v3 session
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiAgentV3SessionBySessionIdReset
+  /api/auth/login:
+    post:
+      summary: Login
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiAuthLogin
+  /api/auth/register:
+    post:
+      summary: Register
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiAuthRegister
+  /api/auth/me:
+    get:
+      summary: Current user
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiAuthMe
+  /api/agent_v2/chat/stream:
+    post:
+      summary: Stream agent v2 chat
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiAgentV2ChatStream
+  /api/agent_v2/tools:
+    get:
+      summary: List agent v2 tools
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiAgentV2Tools
+  /api/agent_v2/status:
+    get:
+      summary: Get agent v2 status
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiAgentV2Status
+  /api/agent_v2/session/{session_id}/config:
+    get:
+      summary: Get agent v2 session config
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiAgentV2SessionBySessionIdConfig
+    post:
+      summary: Set agent v2 session config
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiAgentV2SessionBySessionIdConfig
+  /api/agent_v2/session/{session_id}/reset:
+    post:
+      summary: Reset agent v2 session
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiAgentV2SessionBySessionIdReset
+  /api/chat/stop:
+    post:
+      summary: Stop chat (legacy endpoint)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiChatStop
+  /api/memory-agents:
+    get:
+      summary: List memory agents
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryAgents
+    post:
+      summary: Create memory agent
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiMemoryAgents
+  /api/memory-agents/{agent_id}:
+    get:
+      summary: Get memory agent
+      parameters:
+      - in: path
+        name: agent_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryAgentsByAgentId
+    patch:
+      summary: Update memory agent
+      parameters:
+      - in: path
+        name: agent_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: patchApiMemoryAgentsByAgentId
+    delete:
+      summary: Delete memory agent
+      parameters:
+      - in: path
+        name: agent_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: deleteApiMemoryAgentsByAgentId
+  /api/memory-agents/{agent_id}/runtime-context:
+    get:
+      summary: Get memory agent runtime context
+      parameters:
+      - in: path
+        name: agent_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryAgentsByAgentIdRuntimeContext
+  /api/agent-builder/ai-create:
+    post:
+      summary: AI create agent blueprint
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiAgentBuilderAiCreate

@@ -1,0 +1,617 @@
+paths:
+  /api/mcp-configs:
+    get:
+      summary: List MCP configs
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMcpConfigs
+    post:
+      summary: Create MCP config
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiMcpConfigs
+  /api/mcp-configs/{config_id}:
+    put:
+      summary: Update MCP config
+      parameters:
+      - in: path
+        name: config_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: putApiMcpConfigsByConfigId
+    delete:
+      summary: Delete MCP config
+      parameters:
+      - in: path
+        name: config_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: deleteApiMcpConfigsByConfigId
+  /api/notepad/init:
+    get:
+      summary: Initialize notepad context
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiNotepadInit
+  /api/notepad/folders:
+    get:
+      summary: List notepad folders
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiNotepadFolders
+    post:
+      summary: Create notepad folder
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiNotepadFolders
+    patch:
+      summary: Update notepad folder
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: patchApiNotepadFolders
+    delete:
+      summary: Delete notepad folder
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: deleteApiNotepadFolders
+  /api/notepad/notes:
+    get:
+      summary: List notepad notes
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiNotepadNotes
+    post:
+      summary: Create notepad note
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiNotepadNotes
+  /api/notepad/notes/{note_id}:
+    get:
+      summary: Get notepad note
+      parameters:
+      - in: path
+        name: note_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiNotepadNotesByNoteId
+    patch:
+      summary: Update notepad note
+      parameters:
+      - in: path
+        name: note_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: patchApiNotepadNotesByNoteId
+    delete:
+      summary: Delete notepad note
+      parameters:
+      - in: path
+        name: note_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: deleteApiNotepadNotesByNoteId
+  /api/notepad/search:
+    get:
+      summary: Search notepad notes
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiNotepadSearch
+  /api/notepad/tags:
+    get:
+      summary: List notepad tags
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiNotepadTags
+  /api/fs/list:
+    get:
+      summary: List file system entries
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiFsList
+  /api/fs/entries:
+    get:
+      summary: Get file system entry metadata
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiFsEntries
+  /api/fs/read:
+    get:
+      summary: Read file
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiFsRead
+  /api/fs/search:
+    get:
+      summary: Search files
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiFsSearch
+  /api/remote-connections:
+    get:
+      summary: List remote connections
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiRemoteConnections
+    post:
+      summary: Create remote connection
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiRemoteConnections
+  /api/remote-connections/{id}:
+    get:
+      summary: Get remote connection
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiRemoteConnectionsById
+    put:
+      summary: Update remote connection
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: putApiRemoteConnectionsById
+    delete:
+      summary: Delete remote connection
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: deleteApiRemoteConnectionsById
+  /api/remote-connections/test:
+    post:
+      summary: Test remote connection request body
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiRemoteConnectionsTest
+  /api/remote-connections/{id}/test:
+    post:
+      summary: Test remote connection
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiRemoteConnectionsByIdTest
+  /api/remote-connections/{id}/disconnect:
+    post:
+      summary: Disconnect remote connection
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiRemoteConnectionsByIdDisconnect
+  /api/fs/download:
+    get:
+      summary: Download file
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiFsDownload
+  /api/fs/delete:
+    post:
+      summary: Delete file or directory
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiFsDelete
+  /api/fs/mkdir:
+    post:
+      summary: Create directory
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiFsMkdir
+  /api/fs/move:
+    post:
+      summary: Move file or directory
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiFsMove
+  /api/fs/touch:
+    post:
+      summary: Create empty file
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiFsTouch
+  /api/mcp-configs/resource/config:
+    post:
+      summary: Create MCP resource config
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiMcpConfigsResourceConfig
+  /api/mcp-configs/{config_id}/resource/config:
+    get:
+      summary: Get MCP resource config
+      parameters:
+      - in: path
+        name: config_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMcpConfigsByConfigIdResourceConfig
+  /api/remote-connections/{id}/sftp/list:
+    get:
+      summary: List remote SFTP entries
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiRemoteConnectionsByIdSftpList
+  /api/remote-connections/{id}/sftp/transfer/{transfer_id}:
+    get:
+      summary: Get remote SFTP transfer
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: transfer_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiRemoteConnectionsByIdSftpTransferByTransferId
+  /api/remote-connections/{id}/sftp/transfer/start:
+    post:
+      summary: Start remote SFTP transfer
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiRemoteConnectionsByIdSftpTransferStart
+  /api/remote-connections/{id}/sftp/transfer/{transfer_id}/cancel:
+    post:
+      summary: Cancel remote SFTP transfer
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: transfer_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiRemoteConnectionsByIdSftpTransferByTransferIdCancel
+  /api/remote-connections/{id}/sftp/download:
+    post:
+      summary: Download via remote SFTP
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiRemoteConnectionsByIdSftpDownload
+  /api/remote-connections/{id}/sftp/upload:
+    post:
+      summary: Upload via remote SFTP
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiRemoteConnectionsByIdSftpUpload
+  /api/remote-connections/{id}/sftp/delete:
+    post:
+      summary: Delete remote SFTP entry
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiRemoteConnectionsByIdSftpDelete
+  /api/remote-connections/{id}/sftp/mkdir:
+    post:
+      summary: Create remote SFTP directory
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiRemoteConnectionsByIdSftpMkdir
+  /api/remote-connections/{id}/sftp/rename:
+    post:
+      summary: Rename remote SFTP entry
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiRemoteConnectionsByIdSftpRename
+  /api/remote-connections/{id}/ws:
+    get:
+      summary: Open remote connection websocket
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '101':
+          description: Switching Protocols
+      operationId: getApiRemoteConnectionsByIdWs

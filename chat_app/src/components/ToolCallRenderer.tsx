@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { MarkdownRenderer } from './MarkdownRenderer';
+import { LazyMarkdownRenderer } from './LazyMarkdownRenderer';
 import type { ToolCall, Message } from '../types';
 import './ToolCallRenderer.css';
 
@@ -357,7 +357,7 @@ export const ToolCallRenderer: React.FC<ToolCallRendererProps> = ({
               {/* 使用格式化的参数内容，而不是原始JSON */}
               {argumentsMessage && (
                 <div className="border-l-4 border-blue-400 dark:border-blue-500 rounded-lg overflow-hidden bg-blue-50/50 dark:bg-blue-900/20 mb-4">
-                  <MarkdownRenderer 
+                  <LazyMarkdownRenderer 
                     content={argumentsMessage} 
                   />
                 </div>
@@ -372,7 +372,7 @@ export const ToolCallRenderer: React.FC<ToolCallRendererProps> = ({
               {hasStructuredResult ? (
                 <TreeTable data={parsedResult} />
               ) : (
-                <MarkdownRenderer content={typeof result === 'string' ? result : JSON.stringify(result)} />
+                <LazyMarkdownRenderer content={typeof result === 'string' ? result : JSON.stringify(result)} />
               )}
             </div>
           )}
@@ -380,7 +380,7 @@ export const ToolCallRenderer: React.FC<ToolCallRendererProps> = ({
           {hasStreamLog && !hasResult && (
             <div>
               <div className="details-title">流式输出:</div>
-              <MarkdownRenderer content={streamLogText} isStreaming />
+              <LazyMarkdownRenderer content={streamLogText} isStreaming />
             </div>
           )}
 

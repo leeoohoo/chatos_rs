@@ -20,6 +20,11 @@ pub const TERMINAL_CONTROLLER_DISPLAY_NAME: &str = "Terminal Controller (Builtin
 pub const TERMINAL_CONTROLLER_SERVER_NAME: &str = "terminal_controller";
 pub const TERMINAL_CONTROLLER_COMMAND: &str = "builtin:terminal_controller";
 
+pub const COMPUTER_USE_MCP_ID: &str = "builtin_computer_use";
+pub const COMPUTER_USE_DISPLAY_NAME: &str = "Computer Use (Builtin)";
+pub const COMPUTER_USE_SERVER_NAME: &str = "computer_use";
+pub const COMPUTER_USE_COMMAND: &str = "builtin:computer_use";
+
 pub const TASK_MANAGER_MCP_ID: &str = "builtin_task_manager";
 pub const TASK_MANAGER_DISPLAY_NAME: &str = "Task Manager (Builtin)";
 pub const TASK_MANAGER_SERVER_NAME: &str = "task_manager";
@@ -55,6 +60,7 @@ pub enum BuiltinMcpKind {
     CodeMaintainerRead,
     CodeMaintainerWrite,
     TerminalController,
+    ComputerUse,
     TaskManager,
     Notepad,
     AgentBuilder,
@@ -72,6 +78,7 @@ pub fn builtin_kind_by_id(id: &str) -> Option<BuiltinMcpKind> {
             Some(BuiltinMcpKind::CodeMaintainerWrite)
         }
         TERMINAL_CONTROLLER_MCP_ID => Some(BuiltinMcpKind::TerminalController),
+        COMPUTER_USE_MCP_ID => Some(BuiltinMcpKind::ComputerUse),
         TASK_MANAGER_MCP_ID => Some(BuiltinMcpKind::TaskManager),
         NOTEPAD_MCP_ID => Some(BuiltinMcpKind::Notepad),
         AGENT_BUILDER_MCP_ID => Some(BuiltinMcpKind::AgentBuilder),
@@ -88,6 +95,7 @@ pub fn builtin_kind_by_command(command: &str) -> Option<BuiltinMcpKind> {
             Some(BuiltinMcpKind::CodeMaintainerWrite)
         }
         TERMINAL_CONTROLLER_COMMAND => Some(BuiltinMcpKind::TerminalController),
+        COMPUTER_USE_COMMAND => Some(BuiltinMcpKind::ComputerUse),
         TASK_MANAGER_COMMAND => Some(BuiltinMcpKind::TaskManager),
         NOTEPAD_COMMAND => Some(BuiltinMcpKind::Notepad),
         AGENT_BUILDER_COMMAND => Some(BuiltinMcpKind::AgentBuilder),
@@ -109,6 +117,7 @@ pub fn get_builtin_mcp_config(id: &str) -> Option<McpConfig> {
         AGENT_BUILDER_MCP_ID => Some(agent_builder_config()),
         _ => match builtin_kind_by_id(id) {
             Some(BuiltinMcpKind::TerminalController) => Some(terminal_controller_config()),
+            Some(BuiltinMcpKind::ComputerUse) => Some(computer_use_config()),
             Some(BuiltinMcpKind::TaskManager) => Some(task_manager_config()),
             Some(BuiltinMcpKind::Notepad) => Some(notepad_config()),
             Some(BuiltinMcpKind::AgentBuilder) => Some(agent_builder_config()),
@@ -126,6 +135,7 @@ pub fn list_builtin_mcp_configs() -> Vec<McpConfig> {
         code_maintainer_read_config(),
         code_maintainer_write_config(),
         terminal_controller_config(),
+        computer_use_config(),
         task_manager_config(),
         notepad_config(),
         agent_builder_config(),
@@ -141,6 +151,7 @@ pub fn builtin_display_name(id: &str) -> Option<&'static str> {
             Some(CODE_MAINTAINER_WRITE_DISPLAY_NAME)
         }
         TERMINAL_CONTROLLER_MCP_ID => Some(TERMINAL_CONTROLLER_DISPLAY_NAME),
+        COMPUTER_USE_MCP_ID => Some(COMPUTER_USE_DISPLAY_NAME),
         TASK_MANAGER_MCP_ID => Some(TASK_MANAGER_DISPLAY_NAME),
         NOTEPAD_MCP_ID => Some(NOTEPAD_DISPLAY_NAME),
         AGENT_BUILDER_MCP_ID => Some(AGENT_BUILDER_DISPLAY_NAME),
@@ -209,6 +220,23 @@ fn terminal_controller_config() -> McpConfig {
         command: TERMINAL_CONTROLLER_COMMAND.to_string(),
         r#type: "stdio".to_string(),
         args: Some(json!(["--name", TERMINAL_CONTROLLER_SERVER_NAME])),
+        env: None,
+        cwd: None,
+        user_id: None,
+        enabled: true,
+        created_at: now.clone(),
+        updated_at: now,
+    }
+}
+
+fn computer_use_config() -> McpConfig {
+    let now = crate::core::time::now_rfc3339();
+    McpConfig {
+        id: COMPUTER_USE_MCP_ID.to_string(),
+        name: COMPUTER_USE_SERVER_NAME.to_string(),
+        command: COMPUTER_USE_COMMAND.to_string(),
+        r#type: "stdio".to_string(),
+        args: Some(json!(["--name", COMPUTER_USE_SERVER_NAME])),
         env: None,
         cwd: None,
         user_id: None,

@@ -1,0 +1,275 @@
+paths:
+  /api/memory/v1/auth/login:
+    post:
+      summary: Login for memory API
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiMemoryV1AuthLogin
+  /api/memory/v1/auth/me:
+    get:
+      summary: Current memory API user
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1AuthMe
+  /api/memory/v1/skills/plugins/install:
+    post:
+      summary: Install skill plugin
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiMemoryV1SkillsPluginsInstall
+  /api/memory/v1/agents:
+    get:
+      summary: List memory agents
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1Agents
+    post:
+      summary: Create memory agent
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiMemoryV1Agents
+  /api/memory/v1/agents/{agent_id}:
+    get:
+      summary: Get memory agent
+      parameters:
+      - in: path
+        name: agent_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1AgentsByAgentId
+    patch:
+      summary: Update memory agent
+      parameters:
+      - in: path
+        name: agent_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: patchApiMemoryV1AgentsByAgentId
+    delete:
+      summary: Delete memory agent
+      parameters:
+      - in: path
+        name: agent_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: deleteApiMemoryV1AgentsByAgentId
+  /api/memory/v1/agents/{agent_id}/runtime-context:
+    get:
+      summary: Get memory agent runtime context
+      parameters:
+      - in: path
+        name: agent_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1AgentsByAgentIdRuntimeContext
+  /api/memory/v1/agents/{agent_id}/sessions:
+    get:
+      summary: List sessions for memory agent
+      parameters:
+      - in: path
+        name: agent_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1AgentsByAgentIdSessions
+  /api/memory/v1/auth/users:
+    get:
+      summary: List memory API users
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1AuthUsers
+    post:
+      summary: Create memory API user
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiMemoryV1AuthUsers
+  /api/memory/v1/auth/users/{username}:
+    patch:
+      summary: Update memory API user
+      parameters:
+      - in: path
+        name: username
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: patchApiMemoryV1AuthUsersByUsername
+    delete:
+      summary: Delete memory API user
+      parameters:
+      - in: path
+        name: username
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: deleteApiMemoryV1AuthUsersByUsername
+  /api/memory/v1/skills:
+    get:
+      summary: List memory skills
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1Skills
+  /api/memory/v1/skills/{skill_id}:
+    get:
+      summary: Get memory skill
+      parameters:
+      - in: path
+        name: skill_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1SkillsBySkillId
+  /api/memory/v1/skills/plugins:
+    get:
+      summary: List available skill plugins
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1SkillsPlugins
+  /api/memory/v1/skills/plugins/detail:
+    get:
+      summary: Get skill plugin detail
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1SkillsPluginsDetail
+  /api/memory/v1/skills/import-git:
+    post:
+      summary: Import skill from git
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiMemoryV1SkillsImportGit
+  /api/memory/v1/agents/ai-create:
+    post:
+      summary: AI create memory agent
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiMemoryV1AgentsAiCreate
+  /api/memory/v1/context/compose:
+    post:
+      summary: Compose runtime context
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiMemoryV1ContextCompose

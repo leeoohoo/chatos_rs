@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState, memo } from 'react';
-import { MarkdownRenderer } from './MarkdownRenderer';
+import { LazyMarkdownRenderer } from './LazyMarkdownRenderer';
 import { AttachmentRenderer } from './AttachmentRenderer';
 import { cn, formatTime } from '../lib/utils';
 import type { Message, Attachment, ToolCall } from '../types';
@@ -262,7 +262,7 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
                 查看摘要内容
               </summary>
               <div className="mt-2 prose prose-sm max-w-none">
-                <MarkdownRenderer
+                <LazyMarkdownRenderer
                   content={(message.rawContent || message.metadata?.summary || '').toString()}
                   isStreaming={false}
                   onApplyCode={() => {}}

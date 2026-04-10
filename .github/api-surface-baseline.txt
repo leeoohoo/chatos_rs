@@ -1,0 +1,174 @@
+# API Surface Baseline
+
+main_backend_route_count=111
+memory_backend_route_count=53
+total_route_count=164
+
+## chat_app_server_rs/src/api (.route lines)
+chat_app_server_rs/src/api/agent_builder.rs: Router::new().route("/api/agent-builder/ai-create", post(ai_create))
+chat_app_server_rs/src/api/applications.rs: .route(
+chat_app_server_rs/src/api/applications.rs: .route("/", get(list_apps).post(create_app))
+chat_app_server_rs/src/api/auth.rs: .route("/api/auth/login", post(login))
+chat_app_server_rs/src/api/auth.rs: .route("/api/auth/me", axum::routing::get(me))
+chat_app_server_rs/src/api/auth.rs: .route("/api/auth/register", post(register))
+chat_app_server_rs/src/api/chat_v2.rs: .route(
+chat_app_server_rs/src/api/chat_v2.rs: .route(
+chat_app_server_rs/src/api/chat_v2.rs: .route("/api/agent_v2/chat/stream", post(agent_chat_stream))
+chat_app_server_rs/src/api/chat_v2.rs: .route("/api/agent_v2/status", get(agent_status))
+chat_app_server_rs/src/api/chat_v2.rs: .route("/api/agent_v2/tools", get(agent_tools))
+chat_app_server_rs/src/api/chat_v2.rs: .route("/api/chat/stop", post(stop_chat))
+chat_app_server_rs/src/api/chat_v3.rs: .route(
+chat_app_server_rs/src/api/chat_v3.rs: .route("/api/agent_v3/chat/guide", post(submit_runtime_guidance))
+chat_app_server_rs/src/api/chat_v3.rs: .route("/api/agent_v3/chat/stop", post(stop_chat))
+chat_app_server_rs/src/api/chat_v3.rs: .route("/api/agent_v3/chat/stream", post(agent_chat_stream))
+chat_app_server_rs/src/api/chat_v3.rs: .route("/api/agent_v3/status", get(agent_status))
+chat_app_server_rs/src/api/chat_v3.rs: .route("/api/agent_v3/tools", get(agent_tools))
+chat_app_server_rs/src/api/configs.rs: .route(
+chat_app_server_rs/src/api/configs.rs: .route(
+chat_app_server_rs/src/api/configs.rs: .route(
+chat_app_server_rs/src/api/configs.rs: .route(
+chat_app_server_rs/src/api/configs.rs: .route(
+chat_app_server_rs/src/api/configs.rs: .route(
+chat_app_server_rs/src/api/contacts.rs: .route(
+chat_app_server_rs/src/api/contacts.rs: .route(
+chat_app_server_rs/src/api/contacts.rs: .route(
+chat_app_server_rs/src/api/contacts.rs: .route(
+chat_app_server_rs/src/api/contacts.rs: .route(
+chat_app_server_rs/src/api/contacts.rs: .route("/api/contacts", get(list_contacts).post(create_contact))
+chat_app_server_rs/src/api/fs.rs: .route("/api/fs/delete", post(delete_entry))
+chat_app_server_rs/src/api/fs.rs: .route("/api/fs/download", get(download_entry))
+chat_app_server_rs/src/api/fs.rs: .route("/api/fs/entries", get(list_entries))
+chat_app_server_rs/src/api/fs.rs: .route("/api/fs/list", get(list_dirs))
+chat_app_server_rs/src/api/fs.rs: .route("/api/fs/mkdir", post(create_dir))
+chat_app_server_rs/src/api/fs.rs: .route("/api/fs/move", post(move_entry))
+chat_app_server_rs/src/api/fs.rs: .route("/api/fs/read", get(read_file))
+chat_app_server_rs/src/api/fs.rs: .route("/api/fs/search", get(search_entries))
+chat_app_server_rs/src/api/fs.rs: .route("/api/fs/touch", post(create_file))
+chat_app_server_rs/src/api/memory_agents.rs: .route(
+chat_app_server_rs/src/api/memory_agents.rs: .route(
+chat_app_server_rs/src/api/memory_agents.rs: .route("/api/memory-agents", get(list_agents).post(create_agent))
+chat_app_server_rs/src/api/messages.rs: .route("/api/messages", get(list_messages).post(create_message))
+chat_app_server_rs/src/api/messages.rs: .route("/api/messages/:id", get(get_message).delete(delete_message))
+chat_app_server_rs/src/api/mod.rs: .route("/", axum::routing::get(root))
+chat_app_server_rs/src/api/mod.rs: .route("/health", axum::routing::get(health))
+chat_app_server_rs/src/api/notepad.rs: .route(
+chat_app_server_rs/src/api/notepad.rs: .route(
+chat_app_server_rs/src/api/notepad.rs: .route("/api/notepad/init", get(init_notepad))
+chat_app_server_rs/src/api/notepad.rs: .route("/api/notepad/notes", get(list_notes).post(create_note))
+chat_app_server_rs/src/api/notepad.rs: .route("/api/notepad/search", get(search_notes))
+chat_app_server_rs/src/api/notepad.rs: .route("/api/notepad/tags", get(list_tags))
+chat_app_server_rs/src/api/projects.rs: .route(
+chat_app_server_rs/src/api/projects.rs: .route(
+chat_app_server_rs/src/api/projects.rs: .route(
+chat_app_server_rs/src/api/projects.rs: .route(
+chat_app_server_rs/src/api/projects.rs: .route(
+chat_app_server_rs/src/api/projects.rs: .route("/api/projects", get(list_projects).post(create_project))
+chat_app_server_rs/src/api/projects.rs: .route("/api/projects/:id/changes", get(list_project_changes))
+chat_app_server_rs/src/api/projects.rs: .route("/api/projects/:id/run/analyze", post(analyze_project_run))
+chat_app_server_rs/src/api/projects.rs: .route("/api/projects/:id/run/catalog", get(get_project_run_catalog))
+chat_app_server_rs/src/api/projects.rs: .route("/api/projects/:id/run/default", post(set_project_run_default))
+chat_app_server_rs/src/api/projects.rs: .route("/api/projects/:id/run/execute", post(execute_project_run))
+chat_app_server_rs/src/api/remote_connections.rs: .route(
+chat_app_server_rs/src/api/remote_connections.rs: .route(
+chat_app_server_rs/src/api/remote_connections.rs: .route(
+chat_app_server_rs/src/api/remote_connections.rs: .route(
+chat_app_server_rs/src/api/remote_connections.rs: .route(
+chat_app_server_rs/src/api/remote_connections.rs: .route(
+chat_app_server_rs/src/api/remote_connections.rs: .route(
+chat_app_server_rs/src/api/remote_connections.rs: .route(
+chat_app_server_rs/src/api/remote_connections.rs: .route(
+chat_app_server_rs/src/api/remote_connections.rs: .route(
+chat_app_server_rs/src/api/remote_connections.rs: .route(
+chat_app_server_rs/src/api/remote_connections.rs: .route(
+chat_app_server_rs/src/api/remote_connections.rs: .route(
+chat_app_server_rs/src/api/remote_connections.rs: .route(
+chat_app_server_rs/src/api/remote_connections.rs: .route("/api/remote-connections/:id/ws", get(remote_terminal_ws))
+chat_app_server_rs/src/api/session_summary_job_config.rs: Router::new().route(
+chat_app_server_rs/src/api/sessions.rs: .route(
+chat_app_server_rs/src/api/sessions.rs: .route(
+chat_app_server_rs/src/api/sessions.rs: .route(
+chat_app_server_rs/src/api/sessions.rs: .route(
+chat_app_server_rs/src/api/sessions.rs: .route(
+chat_app_server_rs/src/api/sessions.rs: .route(
+chat_app_server_rs/src/api/sessions.rs: .route(
+chat_app_server_rs/src/api/sessions.rs: .route(
+chat_app_server_rs/src/api/sessions.rs: .route(
+chat_app_server_rs/src/api/sessions.rs: .route(
+chat_app_server_rs/src/api/sessions.rs: .route("/api/sessions", get(list_sessions).post(create_session))
+chat_app_server_rs/src/api/system_contexts/mod.rs: .route(
+chat_app_server_rs/src/api/system_contexts/mod.rs: .route(
+chat_app_server_rs/src/api/system_contexts/mod.rs: .route(
+chat_app_server_rs/src/api/system_contexts/mod.rs: .route(
+chat_app_server_rs/src/api/system_contexts/mod.rs: .route(
+chat_app_server_rs/src/api/system_contexts/mod.rs: .route(
+chat_app_server_rs/src/api/system_contexts/mod.rs: .route("/api/system-context/active", get(get_active_system_context))
+chat_app_server_rs/src/api/task_manager.rs: .route(
+chat_app_server_rs/src/api/task_manager.rs: .route(
+chat_app_server_rs/src/api/task_manager.rs: .route(
+chat_app_server_rs/src/api/task_manager.rs: .route("/api/task-manager/tasks", get(list_tasks))
+chat_app_server_rs/src/api/terminals.rs: .route(
+chat_app_server_rs/src/api/terminals.rs: .route("/api/terminals", get(list_terminals).post(create_terminal))
+chat_app_server_rs/src/api/terminals.rs: .route("/api/terminals/:id/history", get(list_terminal_logs))
+chat_app_server_rs/src/api/terminals.rs: .route("/api/terminals/:id/interrupt", post(interrupt_terminal_command))
+chat_app_server_rs/src/api/terminals.rs: .route("/api/terminals/:id/ws", get(terminal_ws))
+chat_app_server_rs/src/api/terminals.rs: .route("/api/terminals/dispatch-command", post(dispatch_terminal_command))
+chat_app_server_rs/src/api/ui_prompts.rs: .route(
+chat_app_server_rs/src/api/ui_prompts.rs: .route("/api/ui-prompts/history", get(list_ui_prompt_history))
+chat_app_server_rs/src/api/ui_prompts.rs: .route("/api/ui-prompts/pending", get(list_pending_ui_prompts))
+chat_app_server_rs/src/api/user_settings.rs: Router::new().route(
+
+## memory_server/backend/src/api (.route lines)
+memory_server/backend/src/api/mod.rs: .route(
+memory_server/backend/src/api/mod.rs: .route(
+memory_server/backend/src/api/mod.rs: .route(
+memory_server/backend/src/api/mod.rs: .route(
+memory_server/backend/src/api/mod.rs: .route(
+memory_server/backend/src/api/mod.rs: .route(
+memory_server/backend/src/api/mod.rs: .route(
+memory_server/backend/src/api/mod.rs: .route(
+memory_server/backend/src/api/mod.rs: .route(
+memory_server/backend/src/api/mod.rs: .route(
+memory_server/backend/src/api/mod.rs: .route(
+memory_server/backend/src/api/mod.rs: .route(
+memory_server/backend/src/api/mod.rs: .route(
+memory_server/backend/src/api/mod.rs: .route(
+memory_server/backend/src/api/mod.rs: .route(
+memory_server/backend/src/api/mod.rs: .route(
+memory_server/backend/src/api/mod.rs: .route(
+memory_server/backend/src/api/mod.rs: .route(
+memory_server/backend/src/api/mod.rs: .route(
+memory_server/backend/src/api/mod.rs: .route(
+memory_server/backend/src/api/mod.rs: .route(
+memory_server/backend/src/api/mod.rs: .route(
+memory_server/backend/src/api/mod.rs: .route(
+memory_server/backend/src/api/mod.rs: .route(
+memory_server/backend/src/api/mod.rs: .route(
+memory_server/backend/src/api/mod.rs: .route(
+memory_server/backend/src/api/mod.rs: .route(
+memory_server/backend/src/api/mod.rs: .route(
+memory_server/backend/src/api/mod.rs: .route(
+memory_server/backend/src/api/mod.rs: .route(
+memory_server/backend/src/api/mod.rs: .route(
+memory_server/backend/src/api/mod.rs: .route(
+memory_server/backend/src/api/mod.rs: .route(
+memory_server/backend/src/api/mod.rs: .route(
+memory_server/backend/src/api/mod.rs: .route(
+memory_server/backend/src/api/mod.rs: .route(
+memory_server/backend/src/api/mod.rs: .route(
+memory_server/backend/src/api/mod.rs: .route(
+memory_server/backend/src/api/mod.rs: .route(
+memory_server/backend/src/api/mod.rs: .route(
+memory_server/backend/src/api/mod.rs: .route(
+memory_server/backend/src/api/mod.rs: .route(
+memory_server/backend/src/api/mod.rs: .route(
+memory_server/backend/src/api/mod.rs: .route(
+memory_server/backend/src/api/mod.rs: .route(
+memory_server/backend/src/api/mod.rs: .route(
+memory_server/backend/src/api/mod.rs: .route("/api/memory/v1/auth/login", post(auth_api::login))
+memory_server/backend/src/api/mod.rs: .route("/api/memory/v1/auth/me", get(auth_api::me))
+memory_server/backend/src/api/mod.rs: .route("/api/memory/v1/jobs/runs", get(jobs_api::list_job_runs))
+memory_server/backend/src/api/mod.rs: .route("/api/memory/v1/jobs/stats", get(jobs_api::job_stats))
+memory_server/backend/src/api/mod.rs: .route("/api/memory/v1/projects", get(projects_api::list_projects))
+memory_server/backend/src/api/mod.rs: .route("/api/memory/v1/skills", get(skills_api::list_skills))
+memory_server/backend/src/api/mod.rs: .route("/health", get(health))
+

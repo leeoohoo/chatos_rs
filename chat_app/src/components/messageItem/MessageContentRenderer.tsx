@@ -1,5 +1,5 @@
 import React from 'react';
-import { MarkdownRenderer } from '../MarkdownRenderer';
+import { LazyMarkdownRenderer } from '../LazyMarkdownRenderer';
 import type { Message, ToolCall } from '../../types';
 import type { RenderSegment, ToolCallLookupMap } from './types';
 import { ToolCallTimeline } from './ToolCallTimeline';
@@ -97,7 +97,7 @@ export const MessageContentRenderer: React.FC<MessageContentRendererProps> = ({
         if (content || shouldRenderStreamingCursor) {
           nodes.push(
             <div key={`segment-${index}`} className="prose prose-sm max-w-none">
-              <MarkdownRenderer
+              <LazyMarkdownRenderer
                 content={content}
                 isStreaming={shouldRenderStreamingCursor}
                 onApplyCode={onApplyCode}
@@ -121,7 +121,7 @@ export const MessageContentRenderer: React.FC<MessageContentRendererProps> = ({
                 Thinking
               </summary>
               <div className="mt-1">
-                <MarkdownRenderer
+                <LazyMarkdownRenderer
                   content={segment.content || ''}
                   isStreaming={isCurrentlyStreaming && index === renderContentSegments.length - 1}
                   onApplyCode={onApplyCode}
@@ -146,7 +146,7 @@ export const MessageContentRenderer: React.FC<MessageContentRendererProps> = ({
     <div className="space-y-0.5">
       {hasContent && (
         <div className="prose prose-sm max-w-none">
-          <MarkdownRenderer
+          <LazyMarkdownRenderer
             content={message.content}
             isStreaming={isCurrentlyStreaming}
             onApplyCode={onApplyCode}

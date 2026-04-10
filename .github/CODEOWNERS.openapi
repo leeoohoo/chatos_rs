@@ -1,0 +1,50 @@
+# Optional OpenAPI-focused CODEOWNERS mapping.
+# Copy needed entries into `.github/CODEOWNERS` if you want GitHub review-request automation.
+
+# Platform and shared governance
+.github/api-contract/openapi-gate-policy.env @chatos-rs/platform-maintainers
+.github/api-contract/OWNERSHIP_MAP.md @chatos-rs/platform-maintainers
+.github/api-contract/ownership/README.md @chatos-rs/platform-maintainers
+.github/api-contract/ownership/manifest.yaml @chatos-rs/platform-maintainers
+.github/api-contract/ownership/owner-report.schema.json @chatos-rs/platform-maintainers
+.github/api-contract/ownership/governance-bundle-index.schema.json @chatos-rs/platform-maintainers
+.github/api-contract/COVERAGE_TARGETS.md @chatos-rs/platform-maintainers
+.github/api-contract/README.md @chatos-rs/platform-maintainers
+.github/api-contract/fragments/README.md @chatos-rs/platform-maintainers
+.github/workflows/ci.yml @chatos-rs/platform-maintainers
+scripts/assemble_openapi_contracts.py @chatos-rs/platform-maintainers
+scripts/check_openapi_contract_assembly.sh @chatos-rs/platform-maintainers
+scripts/update_openapi_contract_assembly.sh @chatos-rs/platform-maintainers
+scripts/check_openapi_contract_gate.sh @chatos-rs/platform-maintainers
+scripts/check_openapi_method_contract_gate.sh @chatos-rs/platform-maintainers
+scripts/check_openapi_contract_quality_gate.sh @chatos-rs/platform-maintainers
+scripts/check_openapi_contract_semantic_gate.sh @chatos-rs/platform-maintainers
+scripts/check_openapi_contract_fast_diff.sh @chatos-rs/platform-maintainers
+scripts/check_openapi_fragment_owner_policy.sh @chatos-rs/platform-maintainers
+scripts/check_openapi_ownership_map_consistency.sh @chatos-rs/platform-maintainers
+scripts/check_openapi_owner_report_schema.sh @chatos-rs/platform-maintainers
+scripts/check_openapi_governance_bundle_integrity.sh @chatos-rs/platform-maintainers
+scripts/generate_openapi_ownership_drift_trend.sh @chatos-rs/platform-maintainers
+scripts/generate_openapi_governance_bundle.sh @chatos-rs/platform-maintainers
+scripts/check_openapi_contract_advisory.sh @chatos-rs/platform-maintainers
+scripts/report_openapi_fragment_owners.sh @chatos-rs/platform-maintainers
+scripts/generate_openapi_contract_change_summary.sh @chatos-rs/platform-maintainers
+scripts/precommit_openapi_contracts.sh @chatos-rs/platform-maintainers
+
+# Main backend fragments
+.github/api-contract/fragments/chat_app_server_rs/10-core-sessions-messages.yaml @chatos-rs/main-chat-runtime
+.github/api-contract/fragments/chat_app_server_rs/20-projects-contacts.yaml @chatos-rs/main-projects-contacts
+.github/api-contract/fragments/chat_app_server_rs/30-agents-auth-chat.yaml @chatos-rs/main-agents-auth
+.github/api-contract/fragments/chat_app_server_rs/40-terminal-task.yaml @chatos-rs/main-terminal-task
+.github/api-contract/fragments/chat_app_server_rs/50-notepad-fs-remote-mcp.yaml @chatos-rs/main-io-notepad-mcp
+.github/api-contract/fragments/chat_app_server_rs/60-system-config-ui.yaml @chatos-rs/main-system-config-ui
+.github/api-contract/fragments/chat_app_server_rs/70-entrypoints.yaml @chatos-rs/platform-maintainers
+.github/api-contract/fragments/chat_app_server_rs/_meta.yaml @chatos-rs/platform-maintainers
+
+# Memory backend fragments
+.github/api-contract/fragments/memory_server/10-core-sessions-messages.yaml @chatos-rs/memory-sessions
+.github/api-contract/fragments/memory_server/20-contacts-projects.yaml @chatos-rs/memory-contacts-projects
+.github/api-contract/fragments/memory_server/30-configs-jobs.yaml @chatos-rs/memory-configs-jobs
+.github/api-contract/fragments/memory_server/40-agents-auth-skills.yaml @chatos-rs/memory-agents-auth-skills
+.github/api-contract/fragments/memory_server/50-runtime-sync.yaml @chatos-rs/memory-sessions
+.github/api-contract/fragments/memory_server/_meta.yaml @chatos-rs/platform-maintainers

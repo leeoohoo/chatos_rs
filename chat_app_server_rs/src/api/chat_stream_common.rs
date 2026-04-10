@@ -23,9 +23,9 @@ use crate::core::turn_runtime_snapshot::{
     build_turn_runtime_snapshot_payload, BuildTurnRuntimeSnapshotInput,
 };
 use crate::services::ai_client_common::AiClientCallbacks;
-use crate::services::memory_server_client::{
-    self, TurnRuntimeSnapshotSelectedCommandDto,
-};
+use crate::services::builtin_mcp::BuiltinMcpKind;
+use crate::services::mcp_loader::McpBuiltinServer;
+use crate::services::memory_server_client::{self, TurnRuntimeSnapshotSelectedCommandDto};
 
 #[derive(Debug, Deserialize, Clone)]
 pub(crate) struct ChatStreamRequest {
@@ -130,10 +130,7 @@ pub(crate) async fn resolve_chat_stream_context(
             )
             .await
             {
-                if let Some(contact) = contacts
-                    .iter()
-                    .find(|item| item.id.trim() == contact_id)
-                {
+                if let Some(contact) = contacts.iter().find(|item| item.id.trim() == contact_id) {
                     contact_agent_id = normalize_id(Some(contact.agent_id.clone()));
                     if let Some(agent_id) = contact_agent_id.as_deref() {
                         warn!(
@@ -175,12 +172,13 @@ pub(crate) async fn resolve_chat_stream_context(
         effective_user_id.clone(),
     )
     .await;
-    let contact_system_prompt = compose_contact_system_prompt(contact_runtime_context.as_ref());
+    let mut contact_system_prompt = compose_contact_system_prompt(contact_runtime_context.as_ref());
     let selected_command =
         parse_contact_command_invocation(content, contact_runtime_context.as_ref());
     let command_system_prompt = compose_contact_command_system_prompt(selected_command.as_ref());
-    let selected_commands_for_snapshot =
-        Arc::new(Mutex::new(seed_selected_commands(selected_command.as_ref())));
+    let selected_commands_for_snapshot = Arc::new(Mutex::new(seed_selected_commands(
+        selected_command.as_ref(),
+    )));
 
     let requested_project_id = normalize_id(req.project_id.clone())
         .or_else(|| runtime_metadata.project_id.clone())
@@ -254,6 +252,10 @@ pub(crate) async fn resolve_chat_stream_context(
     for server in &mut builtin_servers {
         server.remote_connection_id = default_remote_connection_id.clone();
     }
+    contact_system_prompt = merge_system_prompts(
+        contact_system_prompt,
+        compose_computer_use_system_prompt(builtin_servers.as_slice()),
+    );
 
     let use_tools = has_any_mcp_server(&http_servers, &stdio_servers, &builtin_servers);
     let memory_summary_prompt = memory_server_client::compose_context(session_id, 2)
@@ -418,4 +420,89 @@ fn normalize_optional_text(value: Option<&str>) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
+}
+
+fn merge_system_prompts(primary: Option<String>, extra: Option<String>) -> Option<String> {
+    match (
+        normalize_optional_text(primary.as_deref()),
+        normalize_optional_text(extra.as_deref()),
+    ) {
+        (None, None) => None,
+        (Some(prompt), None) | (None, Some(prompt)) => Some(prompt),
+        (Some(primary_prompt), Some(extra_prompt)) => {
+            Some(format!("{}\n\n{}", primary_prompt, extra_prompt))
+        }
+    }
+}
+
+fn compose_computer_use_system_prompt(builtin_servers: &[McpBuiltinServer]) -> Option<String> {
+    let has_computer_use = builtin_servers
+        .iter()
+        .any(|server| matches!(server.kind, BuiltinMcpKind::ComputerUse));
+    if !has_computer_use {
+        return None;
+    }
+
+    Some(
+        [
+            "电脑操作工具使用规范（必须遵守）：",
+            "1. 只使用单入口工具：名称通常为 `computer_use_*_command`（常见 `computer_use_builtin_command`）。",
+            "2. 调用参数固定为 JSON：`{\"command\":\"...\"}`，不要再拆分为多个工具。",
+            "3. 尽量在命令末尾加 `--json`，便于稳定解析。",
+            "4. 常用示例：`{\"command\":\"windows \\\"Safari\\\" --json\"}`",
+            "4.1 若不确定应用名，先执行 `{\"command\":\"list --json\"}`；确认后再 `open \\\"<App>\\\"`，再执行 `windows \\\"<App>\\\" --json`。",
+            "5. 点击示例：`{\"command\":\"click \\\"Safari\\\" --button \\\"新标签页\\\" --json\"}`",
+            "6. 输入示例：`{\"command\":\"type \\\"Safari\\\" --text \\\"hello world\\\" --enter --json\"}`",
+            "7. 截图示例：`{\"command\":\"screenshot \\\"Safari\\\" --json\"}`（返回结果已包含 base64，可直接用于后续推理）。",
+            "7.1 网址可直接：`{\"command\":\"open \\\"https://example.com\\\" --json\"}`；这会调用系统浏览器打开链接。",
+            "8. 兼容写法也可用：`{\"command\":\"cargo run -- click \\\"Safari\\\" --button \\\"新标签页\\\" --json\"}`，系统会自动归一化。",
+            "9. 每一轮只执行一个 command：先基于最新观察决定下一步，不要一次发起多个动作。",
+            "10. 如果动作失败或元素没命中，先用 `windows \"<App>\" --json` 重新观察，再继续 click/type。",
+            "11. 对 open/click/type/key/scroll，返回里通常会自动包含 `post_observation`（一次 windows --json 结果）；先读它，再决定是否继续观察。",
+            "12. 浏览器输入优先：`type \"<Browser>\" --text \"<内容>\" --enter --json`；系统会走地址栏快捷方式并返回前后状态（URL/标题）用于校验是否生效。",
+            "13. 不要连续多轮只做 `windows/screenshot` 观察；若两轮观察无新信息，下一轮必须执行操作命令。",
+        ]
+        .join("\n"),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{compose_computer_use_system_prompt, merge_system_prompts};
+    use crate::services::builtin_mcp::BuiltinMcpKind;
+    use crate::services::mcp_loader::McpBuiltinServer;
+
+    fn mock_builtin(kind: BuiltinMcpKind) -> McpBuiltinServer {
+        McpBuiltinServer {
+            name: "mock".to_string(),
+            kind,
+            workspace_dir: ".".to_string(),
+            user_id: None,
+            project_id: None,
+            remote_connection_id: None,
+            contact_agent_id: None,
+            allow_writes: false,
+            max_file_bytes: 0,
+            max_write_bytes: 0,
+            search_limit: 0,
+        }
+    }
+
+    #[test]
+    fn computer_use_prompt_emits_when_builtin_available() {
+        let prompt =
+            compose_computer_use_system_prompt(&[mock_builtin(BuiltinMcpKind::ComputerUse)])
+                .expect("prompt should exist");
+        assert!(prompt.contains("computer_use_*_command"));
+        assert!(prompt.contains("{\"command\":\"windows \\\"Safari\\\" --json\"}"));
+    }
+
+    #[test]
+    fn merge_system_prompts_joins_when_both_present() {
+        let merged = merge_system_prompts(Some("A".to_string()), Some("B".to_string()))
+            .expect("merged prompt");
+        assert!(merged.contains("A"));
+        assert!(merged.contains("B"));
+        assert!(merged.contains("\n\n"));
+    }
 }

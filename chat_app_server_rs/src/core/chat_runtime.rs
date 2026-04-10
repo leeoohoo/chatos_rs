@@ -102,7 +102,8 @@ pub fn metadata_string_list(metadata: Option<&Value>, path: &[&str]) -> Vec<Stri
 }
 
 fn metadata_string_aliases(metadata: Option<&Value>, paths: &[&[&str]]) -> Option<String> {
-    paths.iter()
+    paths
+        .iter()
         .find_map(|path| metadata_string(metadata, path))
 }
 
@@ -111,10 +112,15 @@ fn metadata_bool_aliases(metadata: Option<&Value>, paths: &[&[&str]]) -> Option<
 }
 
 fn metadata_string_list_aliases(metadata: Option<&Value>, paths: &[&[&str]]) -> Vec<String> {
-    paths.iter()
+    paths
+        .iter()
         .find_map(|path| {
             let values = metadata_string_list(metadata, path);
-            if values.is_empty() { None } else { Some(values) }
+            if values.is_empty() {
+                None
+            } else {
+                Some(values)
+            }
         })
         .unwrap_or_default()
 }
@@ -148,15 +154,24 @@ impl ChatRuntimeMetadata {
             ),
             project_id: metadata_string_aliases(
                 metadata,
-                &[&["chat_runtime", "project_id"], &["chat_runtime", "projectId"]],
+                &[
+                    &["chat_runtime", "project_id"],
+                    &["chat_runtime", "projectId"],
+                ],
             ),
             project_root: metadata_string_aliases(
                 metadata,
-                &[&["chat_runtime", "project_root"], &["chat_runtime", "projectRoot"]],
+                &[
+                    &["chat_runtime", "project_root"],
+                    &["chat_runtime", "projectRoot"],
+                ],
             ),
             workspace_root: metadata_string_aliases(
                 metadata,
-                &[&["chat_runtime", "workspace_root"], &["chat_runtime", "workspaceRoot"]],
+                &[
+                    &["chat_runtime", "workspace_root"],
+                    &["chat_runtime", "workspaceRoot"],
+                ],
             ),
             remote_connection_id: metadata_string_aliases(
                 metadata,
@@ -167,7 +182,10 @@ impl ChatRuntimeMetadata {
             ),
             mcp_enabled: metadata_bool_aliases(
                 metadata,
-                &[&["chat_runtime", "mcp_enabled"], &["chat_runtime", "mcpEnabled"]],
+                &[
+                    &["chat_runtime", "mcp_enabled"],
+                    &["chat_runtime", "mcpEnabled"],
+                ],
             ),
             enabled_mcp_ids: metadata_string_list_aliases(
                 metadata,
@@ -659,6 +677,49 @@ pub fn compose_contact_system_prompt(
         ));
     }
 
+    lines.push(String::new());
+    lines.push("电脑操作（单入口 command）：".to_string());
+    lines.push(
+        "优先使用名称形如 `computer_use_*_command`（常见为 `computer_use_builtin_command`）的工具，参数仅传 JSON：`{\"command\":\"...\"}`。".to_string(),
+    );
+    lines.push("建议总是附加 `--json`，便于稳定解析。".to_string());
+    lines.push(
+        "建议流程：先 `list --json` 确认应用名，再 `open \"<App>\"`，然后 `windows \"<App>\" --json`，最后再 click/type。"
+            .to_string(),
+    );
+    lines.push("示例：`{\"command\":\"windows \\\"Safari\\\" --json\"}`".to_string());
+    lines.push(
+        "示例：`{\"command\":\"click \\\"Safari\\\" --button \\\"新标签页\\\" --json\"}`"
+            .to_string(),
+    );
+    lines.push(
+        "示例：`{\"command\":\"type \\\"Safari\\\" --text \\\"hello world\\\" --enter --json\"}`"
+            .to_string(),
+    );
+    lines.push(
+        "截图示例：`{\"command\":\"screenshot \\\"Safari\\\" --json\"}`（返回结果会自动包含 base64，可直接给模型）"
+            .to_string(),
+    );
+    lines.push(
+        "网址也可直接：`{\"command\":\"open \\\"https://example.com\\\" --json\"}`（系统会调用默认浏览器打开）。"
+            .to_string(),
+    );
+    lines.push(
+        "兼容写法：`{\"command\":\"cargo run -- click \\\"Safari\\\" --button \\\"新标签页\\\" --json\"}`".to_string(),
+    );
+    lines.push(
+        "对 open/click/type/key/scroll，返回里通常会带 `post_observation`（自动 windows 结果）；先读它，避免重复观察。"
+            .to_string(),
+    );
+    lines.push(
+        "浏览器输入优先：`{\"command\":\"type \\\"Safari\\\" --text \\\"关键词或网址\\\" --enter --json\"}`，系统会返回前后 URL/标题状态用于确认动作是否生效。"
+            .to_string(),
+    );
+    lines.push(
+        "不要连续多轮只调用 windows/screenshot；若两轮观察无新信息，下一轮必须执行动作命令。"
+            .to_string(),
+    );
+
     if !plugin_entries.is_empty() {
         lines.push(String::new());
         let plugin_examples = plugin_entries
@@ -748,9 +809,8 @@ pub async fn resolve_project_runtime(
 mod tests {
     use super::{
         compose_contact_command_system_prompt, compose_contact_system_prompt,
-        ChatRuntimeMetadata,
         parse_contact_command_invocation, parse_implicit_command_selections_from_tools_end,
-        remote_connection_id_from_metadata, CONTACT_COMMAND_READER_TOOL_NAME,
+        remote_connection_id_from_metadata, ChatRuntimeMetadata, CONTACT_COMMAND_READER_TOOL_NAME,
         CONTACT_PLUGIN_READER_TOOL_NAME, CONTACT_SKILL_READER_TOOL_NAME,
     };
     use crate::services::memory_server_client::{

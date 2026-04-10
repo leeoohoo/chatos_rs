@@ -1,0 +1,287 @@
+paths:
+  /api/system-contexts:
+    get:
+      summary: List system contexts
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiSystemContexts
+    post:
+      summary: Create system context
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiSystemContexts
+  /api/system-contexts/{context_id}:
+    get:
+      summary: Get system context
+      parameters:
+      - in: path
+        name: context_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiSystemContextsByContextId
+    patch:
+      summary: Update system context
+      parameters:
+      - in: path
+        name: context_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: patchApiSystemContextsByContextId
+    delete:
+      summary: Delete system context
+      parameters:
+      - in: path
+        name: context_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: deleteApiSystemContextsByContextId
+  /api/system-context/active:
+    get:
+      summary: Get active system context
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiSystemContextActive
+  /api/ui-prompts/pending:
+    get:
+      summary: List pending UI prompts
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiUiPromptsPending
+  /api/ui-prompts/history:
+    get:
+      summary: List UI prompt history
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiUiPromptsHistory
+  /api/ai-model-configs:
+    get:
+      summary: List AI model configs
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiAiModelConfigs
+    post:
+      summary: Create AI model config
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiAiModelConfigs
+  /api/ai-model-configs/{config_id}:
+    put:
+      summary: Update AI model config
+      parameters:
+      - in: path
+        name: config_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: putApiAiModelConfigsByConfigId
+    delete:
+      summary: Delete AI model config
+      parameters:
+      - in: path
+        name: config_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: deleteApiAiModelConfigsByConfigId
+  /api/session-summary-job-config:
+    get:
+      summary: Get session summary job config
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiSessionSummaryJobConfig
+    patch:
+      summary: Patch session summary job config
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: patchApiSessionSummaryJobConfig
+    put:
+      summary: Put session summary job config
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: putApiSessionSummaryJobConfig
+  /api/system-contexts/{context_id}/activate:
+    post:
+      summary: Activate system context
+      parameters:
+      - in: path
+        name: context_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiSystemContextsByContextIdActivate
+  /api/ui-prompts/{prompt_id}/respond:
+    post:
+      summary: Respond to UI prompt
+      parameters:
+      - in: path
+        name: prompt_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiUiPromptsByPromptIdRespond
+  /api/system-contexts/ai/evaluate:
+    post:
+      summary: Evaluate system context by AI
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiSystemContextsAiEvaluate
+  /api/system-contexts/ai/generate:
+    post:
+      summary: Generate system context by AI
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiSystemContextsAiGenerate
+  /api/system-contexts/ai/optimize:
+    post:
+      summary: Optimize system context by AI
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiSystemContextsAiOptimize
+  /api/user-settings:
+    get:
+      summary: Get user settings
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiUserSettings
+    patch:
+      summary: Patch user settings
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: patchApiUserSettings
+    put:
+      summary: Put user settings
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: putApiUserSettings

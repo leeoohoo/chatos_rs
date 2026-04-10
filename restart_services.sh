@@ -158,6 +158,35 @@ check_alive() {
   fi
 }
 
+wait_http_ready() {
+  local name="$1"
+  local url="$2"
+  local timeout_sec="${3:-30}"
+
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "[WARN] 未找到 curl，跳过 $name 健康检查: $url"
+    return 0
+  fi
+
+  local start_ts now_ts elapsed
+  start_ts="$(date +%s)"
+
+  while true; do
+    if curl -fsS --max-time 2 "$url" >/dev/null 2>&1; then
+      echo "[INFO] $name 健康检查通过: $url"
+      return 0
+    fi
+
+    now_ts="$(date +%s)"
+    elapsed="$((now_ts - start_ts))"
+    if (( elapsed >= timeout_sec )); then
+      echo "[ERROR] $name 健康检查超时 (${timeout_sec}s): $url"
+      return 1
+    fi
+    sleep 1
+  done
+}
+
 do_stop() {
   stop_from_pid_file "原项目 backend" "$MAIN_BACKEND_PID_FILE"
   stop_from_pid_file "原项目 frontend" "$MAIN_FRONTEND_PID_FILE"
@@ -215,6 +244,7 @@ prepare
 
 case "$CMD" in
   restart|start)
+    STARTUP_HEALTHCHECK_TIMEOUT_SEC="${STARTUP_HEALTHCHECK_TIMEOUT_SEC:-45}"
     do_stop
     start_main_backend
     start_main_frontend
@@ -225,6 +255,12 @@ case "$CMD" in
     check_alive "原项目 frontend" "$MAIN_FRONTEND_PID_FILE" "$MAIN_FRONTEND_LOG_FILE"
     check_alive "memory backend" "$MEMORY_BACKEND_PID_FILE" "$MEMORY_BACKEND_LOG_FILE"
     check_alive "memory frontend" "$MEMORY_FRONTEND_PID_FILE" "$MEMORY_FRONTEND_LOG_FILE"
+
+    wait_http_ready "原项目 backend" "http://127.0.0.1:$MAIN_BACKEND_PORT/health" "$STARTUP_HEALTHCHECK_TIMEOUT_SEC"
+    wait_http_ready "原项目 frontend" "http://127.0.0.1:$MAIN_FRONTEND_PORT" "$STARTUP_HEALTHCHECK_TIMEOUT_SEC"
+    wait_http_ready "memory backend" "http://127.0.0.1:$MEMORY_BACKEND_PORT/health" "$STARTUP_HEALTHCHECK_TIMEOUT_SEC"
+    wait_http_ready "memory frontend" "http://127.0.0.1:$MEMORY_FRONTEND_PORT" "$STARTUP_HEALTHCHECK_TIMEOUT_SEC"
+
     print_runtime_info
     ;;
   stop)

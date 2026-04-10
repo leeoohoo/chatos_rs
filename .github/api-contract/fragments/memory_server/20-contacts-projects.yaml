@@ -1,0 +1,184 @@
+paths:
+  /api/memory/v1/contacts:
+    get:
+      summary: List memory contacts
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1Contacts
+    post:
+      summary: Create memory contact
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiMemoryV1Contacts
+  /api/memory/v1/contacts/{contact_id}:
+    delete:
+      summary: Delete memory contact
+      parameters:
+      - in: path
+        name: contact_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: deleteApiMemoryV1ContactsByContactId
+  /api/memory/v1/contacts/{contact_id}/projects:
+    get:
+      summary: List projects for memory contact
+      parameters:
+      - in: path
+        name: contact_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1ContactsByContactIdProjects
+  /api/memory/v1/contacts/{contact_id}/project-memories:
+    get:
+      summary: List project memories for memory contact
+      parameters:
+      - in: path
+        name: contact_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1ContactsByContactIdProjectMemories
+  /api/memory/v1/contacts/{contact_id}/project-memories/{project_id}:
+    get:
+      summary: List project memories for memory contact by project
+      parameters:
+      - in: path
+        name: contact_id
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: project_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1ContactsByContactIdProjectMemoriesByProjectId
+  /api/memory/v1/contacts/{contact_id}/projects/{project_id}/summaries:
+    get:
+      summary: List memory summaries for contact project
+      parameters:
+      - in: path
+        name: contact_id
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: project_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1ContactsByContactIdProjectsByProjectIdSummaries
+  /api/memory/v1/contacts/{contact_id}/agent-recalls:
+    get:
+      summary: List memory contact agent recalls
+      parameters:
+      - in: path
+        name: contact_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1ContactsByContactIdAgentRecalls
+  /api/memory/v1/projects:
+    get:
+      summary: List memory projects
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1Projects
+  /api/memory/v1/projects/{project_id}/contacts:
+    get:
+      summary: List contacts in memory project
+      parameters:
+      - in: path
+        name: project_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1ProjectsByProjectIdContacts
+  /api/memory/v1/projects/sync:
+    post:
+      summary: Sync memory project
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiMemoryV1ProjectsSync
+  /api/memory/v1/project-agent-links/sync:
+    post:
+      summary: Sync memory project-agent link
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiMemoryV1ProjectAgentLinksSync

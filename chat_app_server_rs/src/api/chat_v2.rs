@@ -295,7 +295,11 @@ async fn stream_chat_v2(
     if let Err(err) = sync_chat_turn_snapshot(
         &session_id,
         &resolved_turn_id,
-        if result.is_ok() { "completed" } else { "failed" },
+        if result.is_ok() {
+            "completed"
+        } else {
+            "failed"
+        },
         Some(user_message_id.clone()),
         model_runtime.model.as_str(),
         model_runtime.provider.as_str(),

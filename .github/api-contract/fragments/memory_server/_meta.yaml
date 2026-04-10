@@ -1,0 +1,26 @@
+openapi: 3.0.3
+info:
+  title: Chatos Memory Backend API
+  version: 0.1.0-bootstrap
+  description: 'Bootstrap OpenAPI contract for memory_server/backend.
+
+    This is an initial skeleton and will be expanded incrementally.
+
+    '
+servers:
+- url: http://localhost:7080
+components:
+  schemas:
+    StandardResponse:
+      type: object
+      description: Generic API success envelope placeholder.
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        data:
+          description: Domain-specific payload.
+          nullable: true
+      additionalProperties: true
+paths: {}

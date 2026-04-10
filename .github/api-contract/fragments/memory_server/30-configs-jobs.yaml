@@ -1,0 +1,190 @@
+paths:
+  /api/memory/v1/configs/models:
+    get:
+      summary: List memory model configs
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1ConfigsModels
+    post:
+      summary: Create memory model config
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiMemoryV1ConfigsModels
+  /api/memory/v1/configs/models/{model_id}:
+    patch:
+      summary: Update memory model config
+      parameters:
+      - in: path
+        name: model_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: patchApiMemoryV1ConfigsModelsByModelId
+    delete:
+      summary: Delete memory model config
+      parameters:
+      - in: path
+        name: model_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: deleteApiMemoryV1ConfigsModelsByModelId
+  /api/memory/v1/configs/models/{model_id}/test:
+    post:
+      summary: Test memory model config
+      parameters:
+      - in: path
+        name: model_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiMemoryV1ConfigsModelsByModelIdTest
+  /api/memory/v1/configs/summary-job:
+    get:
+      summary: Get summary job config
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1ConfigsSummaryJob
+    put:
+      summary: Put summary job config
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: putApiMemoryV1ConfigsSummaryJob
+  /api/memory/v1/configs/summary-rollup-job:
+    get:
+      summary: Get summary rollup job config
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1ConfigsSummaryRollupJob
+    put:
+      summary: Put summary rollup job config
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: putApiMemoryV1ConfigsSummaryRollupJob
+  /api/memory/v1/configs/agent-memory-job:
+    get:
+      summary: Get agent-memory job config
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1ConfigsAgentMemoryJob
+    put:
+      summary: Put agent-memory job config
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: putApiMemoryV1ConfigsAgentMemoryJob
+  /api/memory/v1/jobs/summary/run-once:
+    post:
+      summary: Run summary job once
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiMemoryV1JobsSummaryRunOnce
+  /api/memory/v1/jobs/summary-rollup/run-once:
+    post:
+      summary: Run summary rollup job once
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiMemoryV1JobsSummaryRollupRunOnce
+  /api/memory/v1/jobs/agent-memory/run-once:
+    post:
+      summary: Run agent-memory job once
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiMemoryV1JobsAgentMemoryRunOnce
+  /api/memory/v1/jobs/runs:
+    get:
+      summary: List memory job runs
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1JobsRuns
+  /api/memory/v1/jobs/stats:
+    get:
+      summary: Get memory job stats
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1JobsStats

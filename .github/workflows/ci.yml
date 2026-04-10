@@ -15,6 +15,150 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  api-surface-contract:
+    name: API Surface Contract
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify API surface baseline
+        run: bash scripts/check_api_surface.sh
+
+      - name: Verify API path baseline
+        run: bash scripts/check_api_path_baseline.sh
+
+      - name: Verify OpenAPI assembly
+        run: bash scripts/check_openapi_contract_assembly.sh
+
+      - name: OpenAPI fragment owner report
+        env:
+          OPENAPI_DIFF_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          OPENAPI_DIFF_HEAD: ${{ github.sha }}
+        run: bash scripts/report_openapi_fragment_owners.sh
+
+      - name: OpenAPI fragment owner policy
+        env:
+          OPENAPI_DIFF_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          OPENAPI_DIFF_HEAD: ${{ github.sha }}
+        run: bash scripts/check_openapi_fragment_owner_policy.sh
+
+      - name: OpenAPI ownership map consistency
+        env:
+          OPENAPI_OWNERSHIP_DISCREPANCY_OUTPUT: ${{ runner.temp }}/openapi-ownership-discrepancy.json
+        run: bash scripts/check_openapi_ownership_map_consistency.sh
+
+      - name: OpenAPI contract advisory
+        run: bash scripts/check_openapi_contract_advisory.sh
+
+      - name: OpenAPI contract gate
+        run: bash scripts/check_openapi_contract_gate.sh
+
+      - name: OpenAPI method contract gate
+        run: bash scripts/check_openapi_method_contract_gate.sh
+
+      - name: OpenAPI quality gate
+        run: bash scripts/check_openapi_contract_quality_gate.sh
+
+      - name: OpenAPI semantic gate
+        run: bash scripts/check_openapi_contract_semantic_gate.sh
+
+      - name: Generate OpenAPI contract change summary
+        if: always()
+        env:
+          OPENAPI_DIFF_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          OPENAPI_DIFF_HEAD: ${{ github.sha }}
+          OPENAPI_CHANGE_SUMMARY_OUTPUT: ${{ runner.temp }}/openapi-contract-change-summary.md
+          OPENAPI_CHANGE_SUMMARY_JSON_OUTPUT: ${{ runner.temp }}/openapi-contract-change-summary.json
+          OPENAPI_PR_COMMENT_BODY_OUTPUT: ${{ runner.temp }}/openapi-contract-pr-comment.md
+        run: bash scripts/generate_openapi_contract_change_summary.sh
+
+      - name: Validate OpenAPI owner report schema
+        if: always()
+        run: bash scripts/check_openapi_owner_report_schema.sh --file "${{ runner.temp }}/openapi-contract-change-summary.json"
+
+      - name: Generate OpenAPI ownership drift trend snapshot
+        if: always()
+        env:
+          OPENAPI_DIFF_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          OPENAPI_DIFF_HEAD: ${{ github.sha }}
+          OPENAPI_OWNERSHIP_DRIFT_TREND_OUTPUT: ${{ runner.temp }}/openapi-ownership-drift-trend.md
+          OPENAPI_OWNERSHIP_DRIFT_TREND_JSON_OUTPUT: ${{ runner.temp }}/openapi-ownership-drift-trend.json
+        run: bash scripts/generate_openapi_ownership_drift_trend.sh
+
+      - name: Generate OpenAPI governance bundle
+        if: always()
+        env:
+          OPENAPI_DIFF_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          OPENAPI_DIFF_HEAD: ${{ github.sha }}
+          OPENAPI_GOVERNANCE_BUNDLE_DIR: ${{ runner.temp }}/openapi-governance-bundle
+          OPENAPI_GOVERNANCE_BUNDLE_REUSE_EXISTING: "true"
+          OPENAPI_CHANGE_SUMMARY_INPUT: ${{ runner.temp }}/openapi-contract-change-summary.md
+          OPENAPI_OWNER_REPORT_INPUT: ${{ runner.temp }}/openapi-contract-change-summary.json
+          OPENAPI_PR_COMMENT_DRAFT_INPUT: ${{ runner.temp }}/openapi-contract-pr-comment.md
+          OPENAPI_OWNERSHIP_DISCREPANCY_INPUT: ${{ runner.temp }}/openapi-ownership-discrepancy.json
+          OPENAPI_OWNERSHIP_DRIFT_TREND_INPUT: ${{ runner.temp }}/openapi-ownership-drift-trend.md
+          OPENAPI_OWNERSHIP_DRIFT_TREND_JSON_INPUT: ${{ runner.temp }}/openapi-ownership-drift-trend.json
+        run: bash scripts/generate_openapi_governance_bundle.sh
+
+      - name: Validate OpenAPI governance bundle integrity
+        if: always()
+        env:
+          OPENAPI_GOVERNANCE_BUNDLE_DIR: ${{ runner.temp }}/openapi-governance-bundle
+        run: bash scripts/check_openapi_governance_bundle_integrity.sh
+
+      - name: Upload OpenAPI contract change summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: openapi-contract-change-summary
+          path: ${{ runner.temp }}/openapi-contract-change-summary.md
+          if-no-files-found: error
+
+      - name: Upload OpenAPI contract change summary JSON
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: openapi-contract-change-summary-json
+          path: ${{ runner.temp }}/openapi-contract-change-summary.json
+          if-no-files-found: error
+
+      - name: Upload OpenAPI ownership discrepancy JSON
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: openapi-ownership-discrepancy
+          path: ${{ runner.temp }}/openapi-ownership-discrepancy.json
+          if-no-files-found: error
+
+      - name: Upload OpenAPI ownership drift trend snapshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: openapi-ownership-drift-trend
+          path: |
+            ${{ runner.temp }}/openapi-ownership-drift-trend.md
+            ${{ runner.temp }}/openapi-ownership-drift-trend.json
+          if-no-files-found: error
+
+      - name: Upload OpenAPI governance bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: openapi-governance-bundle
+          path: ${{ runner.temp }}/openapi-governance-bundle
+          if-no-files-found: error
+
+      - name: Upload OpenAPI PR comment draft
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: openapi-contract-pr-comment-draft
+          path: ${{ runner.temp }}/openapi-contract-pr-comment.md
+          if-no-files-found: error
+
   chat-app-server-rs:
     name: chat_app_server_rs (Rust)
     runs-on: ubuntu-latest
@@ -115,5 +259,32 @@ jobs:
       - name: npm ci
         run: npm ci
 
+      - name: type-check
+        run: npm run type-check
+
       - name: build
         run: npm run build
+
+  openai-codex-gateway:
+    name: openai-codex-gateway (Python)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: openai-codex-gateway
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Gateway unit regression
+        run: make test
+
+      - name: CLI smoke check
+        run: python server.py --help
