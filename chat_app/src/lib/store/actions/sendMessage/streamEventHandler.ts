@@ -33,6 +33,7 @@ import {
   type RawToolResultPayload,
   type StreamEventPayload,
 } from './types';
+import { joinStreamingText, normalizeStreamedText } from './streamText';
 
 export interface HandleStreamEventResult {
   sawCancelled: boolean;
@@ -88,6 +89,23 @@ const markPendingToolCallsCancelled = ({
   });
 };
 
+const syncStreamingPreviewText = (
+  set: ChatStoreSet,
+  sessionId: string,
+  previewText: string,
+) => {
+  set((state) => {
+    const sessionState = state.sessionChatState?.[sessionId];
+    if (!sessionState) {
+      return;
+    }
+    if (sessionState.streamingPreviewText === previewText) {
+      return;
+    }
+    sessionState.streamingPreviewText = previewText;
+  });
+};
+
 export const handleStreamEvent = ({
   parsed,
   set,
@@ -104,7 +122,12 @@ export const handleStreamEvent = ({
 
   if (parsed.type === 'chunk') {
     const contentStr = asTextContent(parsed.content);
-    helpers.appendTextToStreamingMessage(contentStr);
+    if (contentStr) {
+      streamedTextRef.value = normalizeStreamedText(
+        joinStreamingText(streamedTextRef.value, contentStr),
+      );
+      syncStreamingPreviewText(set, currentSessionId, streamedTextRef.value);
+    }
     return {
       ...EMPTY_RESULT,
       sawMeaningfulStreamData: contentStr.trim().length > 0,
@@ -122,7 +145,12 @@ export const handleStreamEvent = ({
 
   if (parsed.type === 'content') {
     const contentStr = asTextContent(parsed.content);
-    helpers.appendTextToStreamingMessage(contentStr);
+    if (contentStr) {
+      streamedTextRef.value = normalizeStreamedText(
+        joinStreamingText(streamedTextRef.value, contentStr),
+      );
+      syncStreamingPreviewText(set, currentSessionId, streamedTextRef.value);
+    }
     return {
       ...EMPTY_RESULT,
       sawMeaningfulStreamData: contentStr.trim().length > 0,

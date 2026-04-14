@@ -138,6 +138,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const chatIsLoading = currentChatState?.isLoading ?? false;
   const chatIsStreaming = currentChatState?.isStreaming ?? false;
   const chatIsStopping = currentChatState?.isStopping ?? false;
+  const chatStreamingPreviewText = currentChatState?.streamingPreviewText || '';
 
   const {
     workspaceRoot: composerWorkspaceRoot,
@@ -314,6 +315,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     chatIsLoading,
     chatIsStreaming,
     chatIsStopping,
+    chatStreamingPreviewText,
     hasMoreMessages,
     onLoadMore: handleLoadMore,
     onToggleTurnProcess: handleToggleTurnProcess,

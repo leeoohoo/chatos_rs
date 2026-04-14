@@ -1,4 +1,5 @@
-import React, { useMemo, useCallback, useEffect, useRef } from 'react';
+import React, { useMemo, useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import './MarkdownRenderer.css';
 
 interface MarkdownRendererProps {
@@ -7,6 +8,165 @@ interface MarkdownRendererProps {
     className?: string;
     onApplyCode?: (code: string, language: string) => void;
 }
+
+interface MermaidNormalizationResult {
+    code: string;
+    changed: boolean;
+    notes: string[];
+}
+
+interface MermaidExportNotice {
+    type: 'success' | 'error';
+    text: string;
+}
+
+const normalizeFlowchartMermaid = (sourceCode: string): MermaidNormalizationResult => {
+    let normalizedCode = sourceCode;
+    const notes: string[] = [];
+    const isFlowchart = /^\s*(flowchart|graph)\b/im.test(sourceCode);
+
+    if (!isFlowchart) {
+        return { code: sourceCode, changed: false, notes };
+    }
+
+    if (normalizedCode.includes('-->>')) {
+        normalizedCode = normalizedCode.replace(/-->>/g, '-->');
+        notes.push('flowchart edge "-->>" normalized to "-->"');
+    }
+
+    // 修复常见的 flowchart 写法：A-->B: 文本 => A -->|文本| B
+    const edgeWithColonPattern = /^(\s*)(.+?)\s*-->\s*(.+?)\s*:\s*(.+?)\s*$/;
+    const rewrittenLines = normalizedCode.split('\n').map((line) => {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('%%')) {
+            return line;
+        }
+
+        const match = line.match(edgeWithColonPattern);
+        if (!match) {
+            return line;
+        }
+
+        const [, indent, from, to, label] = match;
+        const safeLabel = label.trim().replace(/\|/g, '\\|');
+        return `${indent}${from.trim()} -->|${safeLabel}| ${to.trim()}`;
+    });
+    const rewrittenCode = rewrittenLines.join('\n');
+    if (rewrittenCode !== normalizedCode) {
+        notes.push('flowchart edge labels with ":" normalized to "|label|"');
+        normalizedCode = rewrittenCode;
+    }
+
+    return {
+        code: normalizedCode,
+        changed: normalizedCode !== sourceCode,
+        notes,
+    };
+};
+
+const normalizeSequenceMermaid = (sourceCode: string): MermaidNormalizationResult => {
+    const notes: string[] = [];
+    const isSequenceDiagram = /^\s*sequenceDiagram\b/im.test(sourceCode);
+    if (!isSequenceDiagram) {
+        return { code: sourceCode, changed: false, notes };
+    }
+
+    const blockStartPattern = /^\s*(alt|opt|loop|par|critical|break|rect)\b/i;
+    const lines = sourceCode.split('\n');
+    const normalizedLines: string[] = [];
+    let openBlocks = 0;
+    let removedEndCount = 0;
+
+    lines.forEach((line) => {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('%%')) {
+            normalizedLines.push(line);
+            return;
+        }
+        if (blockStartPattern.test(trimmed)) {
+            openBlocks += 1;
+            normalizedLines.push(line);
+            return;
+        }
+        if (/^end$/i.test(trimmed)) {
+            if (openBlocks > 0) {
+                openBlocks -= 1;
+                normalizedLines.push(line);
+            } else {
+                removedEndCount += 1;
+            }
+            return;
+        }
+        normalizedLines.push(line);
+    });
+
+    if (removedEndCount <= 0) {
+        return { code: sourceCode, changed: false, notes };
+    }
+
+    notes.push(`sequenceDiagram removed ${removedEndCount} unmatched "end" lines`);
+    return {
+        code: normalizedLines.join('\n'),
+        changed: true,
+        notes,
+    };
+};
+
+const normalizeMermaidForRetry = (sourceCode: string): MermaidNormalizationResult => {
+    let currentCode = sourceCode;
+    let changed = false;
+    const notes: string[] = [];
+
+    const flowchartNormalized = normalizeFlowchartMermaid(currentCode);
+    if (flowchartNormalized.changed) {
+        currentCode = flowchartNormalized.code;
+        changed = true;
+        notes.push(...flowchartNormalized.notes);
+    }
+
+    const sequenceNormalized = normalizeSequenceMermaid(currentCode);
+    if (sequenceNormalized.changed) {
+        currentCode = sequenceNormalized.code;
+        changed = true;
+        notes.push(...sequenceNormalized.notes);
+    }
+
+    return {
+        code: currentCode,
+        changed,
+        notes,
+    };
+};
+
+const resolveSvgRenderSize = (svgElement: SVGSVGElement): { width: number; height: number } | null => {
+    let width = Number.parseFloat(svgElement.getAttribute('width') || '');
+    let height = Number.parseFloat(svgElement.getAttribute('height') || '');
+
+    if (!(width > 0) || !(height > 0)) {
+        const viewBox = svgElement.getAttribute('viewBox');
+        if (viewBox) {
+            const values = viewBox
+                .split(/[\s,]+/)
+                .map((item) => Number(item))
+                .filter((item) => Number.isFinite(item));
+            if (values.length === 4) {
+                width = values[2];
+                height = values[3];
+            }
+        }
+    }
+
+    if (!(width > 0) || !(height > 0)) {
+        const rect = svgElement.getBoundingClientRect();
+        width = rect.width;
+        height = rect.height;
+    }
+
+    if (!(width > 0) || !(height > 0)) {
+        return null;
+    }
+    return { width, height };
+};
 
 export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
     content,
@@ -19,6 +179,13 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
     const mermaidRenderSeqRef = useRef(0);
     const mermaidApiRef = useRef<any>(null);
     const mermaidThemeRef = useRef<'default' | 'dark' | ''>('');
+    const mermaidPreviewContainerRef = useRef<HTMLDivElement | null>(null);
+    const mermaidExportNoticeTimerRef = useRef<number | null>(null);
+    const [isMermaidPreviewOpen, setIsMermaidPreviewOpen] = useState(false);
+    const [mermaidPreviewCode, setMermaidPreviewCode] = useState('');
+    const [mermaidPreviewStatus, setMermaidPreviewStatus] = useState<'idle' | 'loading' | 'rendered' | 'error'>('idle');
+    const [mermaidPreviewError, setMermaidPreviewError] = useState('');
+    const [mermaidExportNotice, setMermaidExportNotice] = useState<MermaidExportNotice | null>(null);
 
     // 复制代码到剪贴板
     const copyToClipboard = useCallback(async (code: string) => {
@@ -39,6 +206,209 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
             .replace(/</g, '&lt;')
             .replace(/>/g, '&gt;');
     };
+
+    const showMermaidExportNotice = useCallback((type: MermaidExportNotice['type'], text: string) => {
+        setMermaidExportNotice({ type, text });
+        if (mermaidExportNoticeTimerRef.current !== null) {
+            window.clearTimeout(mermaidExportNoticeTimerRef.current);
+        }
+        mermaidExportNoticeTimerRef.current = window.setTimeout(() => {
+            setMermaidExportNotice(null);
+            mermaidExportNoticeTimerRef.current = null;
+        }, 2200);
+    }, []);
+
+    useEffect(() => {
+        return () => {
+            if (mermaidExportNoticeTimerRef.current !== null) {
+                window.clearTimeout(mermaidExportNoticeTimerRef.current);
+                mermaidExportNoticeTimerRef.current = null;
+            }
+        };
+    }, []);
+
+    const getMermaidPreviewSvgSnapshot = useCallback(() => {
+        const previewContainer = mermaidPreviewContainerRef.current;
+        const svgElement = previewContainer?.querySelector('svg');
+        if (!svgElement) {
+            throw new Error('Mermaid svg not found');
+        }
+
+        const size = resolveSvgRenderSize(svgElement as SVGSVGElement);
+        if (!size) {
+            throw new Error('Cannot resolve Mermaid svg size');
+        }
+
+        const exportSvg = (svgElement as SVGSVGElement).cloneNode(true) as SVGSVGElement;
+        const width = Math.max(1, Math.ceil(size.width));
+        const height = Math.max(1, Math.ceil(size.height));
+        exportSvg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+        exportSvg.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
+        exportSvg.setAttribute('width', `${width}`);
+        exportSvg.setAttribute('height', `${height}`);
+        if (!exportSvg.getAttribute('viewBox')) {
+            exportSvg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+        }
+
+        const serializer = new XMLSerializer();
+        const svgText = serializer.serializeToString(exportSvg);
+        return { svgText, width, height };
+    }, []);
+
+    const buildMermaidPreviewSvgBlob = useCallback((): Blob => {
+        const { svgText } = getMermaidPreviewSvgSnapshot();
+        return new Blob([svgText], { type: 'image/svg+xml;charset=utf-8' });
+    }, [getMermaidPreviewSvgSnapshot]);
+
+    const buildMermaidPreviewPngBlob = useCallback(async (): Promise<Blob> => {
+        const { svgText, width, height } = getMermaidPreviewSvgSnapshot();
+        const svgBlob = new Blob([svgText], { type: 'image/svg+xml;charset=utf-8' });
+        const blobUrl = URL.createObjectURL(svgBlob);
+        const dataUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgText)}`;
+
+        const loadImage = (src: string) => new Promise<HTMLImageElement>((resolve, reject) => {
+            const img = new Image();
+            img.onload = () => resolve(img);
+            img.onerror = () => reject(new Error(`Failed to load svg image from ${src.startsWith('blob:') ? 'blob' : 'data'} url`));
+            img.src = src;
+        });
+
+        try {
+            const image = await (async () => {
+                try {
+                    return await loadImage(blobUrl);
+                } catch (blobLoadError) {
+                    console.warn('Failed to load Mermaid svg via blob url, trying data url fallback:', blobLoadError);
+                    return loadImage(dataUrl);
+                }
+            })();
+
+            const scale = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
+            const canvas = document.createElement('canvas');
+            canvas.width = Math.max(1, Math.round(width * scale));
+            canvas.height = Math.max(1, Math.round(height * scale));
+
+            const context = canvas.getContext('2d');
+            if (!context) {
+                throw new Error('Canvas 2d context is unavailable');
+            }
+            context.scale(scale, scale);
+            context.fillStyle = '#ffffff';
+            context.fillRect(0, 0, width, height);
+            context.drawImage(image, 0, 0, width, height);
+
+            const pngBlob = await new Promise<Blob>((resolve, reject) => {
+                if (typeof canvas.toBlob === 'function') {
+                    canvas.toBlob(async (blob) => {
+                        if (blob) {
+                            resolve(blob);
+                            return;
+                        }
+                        try {
+                            const fallbackDataUrl = canvas.toDataURL('image/png');
+                            const fallbackBlob = await fetch(fallbackDataUrl).then((response) => response.blob());
+                            resolve(fallbackBlob);
+                        } catch (fallbackError) {
+                            reject(new Error(`Failed to encode png blob: ${(fallbackError as Error).message}`));
+                        }
+                    }, 'image/png');
+                    return;
+                }
+                try {
+                    const fallbackDataUrl = canvas.toDataURL('image/png');
+                    fetch(fallbackDataUrl)
+                        .then((response) => response.blob())
+                        .then(resolve)
+                        .catch((error) => reject(new Error(`Failed to convert canvas data url to blob: ${(error as Error).message}`)));
+                } catch (error) {
+                    reject(new Error(`Failed to encode png blob: ${(error as Error).message}`));
+                }
+            });
+
+            return pngBlob;
+        } finally {
+            URL.revokeObjectURL(blobUrl);
+        }
+    }, [getMermaidPreviewSvgSnapshot]);
+
+    const downloadBlobToLocal = useCallback((blob: Blob, filename: string) => {
+        const downloadUrl = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = downloadUrl;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(downloadUrl);
+    }, []);
+
+    const copyMermaidPreviewImage = useCallback(async () => {
+        if (mermaidPreviewStatus !== 'rendered') {
+            showMermaidExportNotice('error', '图表尚未渲染完成，暂时无法复制图片');
+            return;
+        }
+
+        try {
+            const clipboardWriter = navigator.clipboard?.write?.bind(navigator.clipboard);
+            const ClipboardItemCtor = (window as any).ClipboardItem;
+            if (clipboardWriter && ClipboardItemCtor) {
+                try {
+                    const pngBlob = await buildMermaidPreviewPngBlob();
+                    await clipboardWriter([new ClipboardItemCtor({ 'image/png': pngBlob })]);
+                    showMermaidExportNotice('success', 'PNG 图片已复制到剪贴板');
+                    return;
+                } catch (pngCopyError) {
+                    console.warn('Failed to copy Mermaid PNG to clipboard, trying SVG fallback:', pngCopyError);
+                }
+
+                try {
+                    const svgBlob = buildMermaidPreviewSvgBlob();
+                    await clipboardWriter([new ClipboardItemCtor({ 'image/svg+xml': svgBlob })]);
+                    showMermaidExportNotice('success', 'SVG 图片已复制到剪贴板');
+                    return;
+                } catch (svgCopyError) {
+                    console.warn('Failed to copy Mermaid SVG to clipboard:', svgCopyError);
+                }
+            }
+
+            const textWriter = navigator.clipboard?.writeText?.bind(navigator.clipboard);
+            if (!textWriter) {
+                throw new Error('Clipboard text write api unavailable');
+            }
+            const { svgText } = getMermaidPreviewSvgSnapshot();
+            await textWriter(svgText);
+            showMermaidExportNotice('success', '当前环境不支持图片写入，已复制 SVG 源码');
+        } catch (error) {
+            console.error('Failed to copy Mermaid preview image:', error);
+            showMermaidExportNotice('error', '复制失败，请先尝试下载');
+        }
+    }, [buildMermaidPreviewPngBlob, buildMermaidPreviewSvgBlob, getMermaidPreviewSvgSnapshot, mermaidPreviewStatus, showMermaidExportNotice]);
+
+    const downloadMermaidPreviewImage = useCallback(async () => {
+        if (mermaidPreviewStatus !== 'rendered') {
+            showMermaidExportNotice('error', '图表尚未渲染完成，暂时无法下载图片');
+            return;
+        }
+
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        try {
+            try {
+                const imageBlob = await buildMermaidPreviewPngBlob();
+                downloadBlobToLocal(imageBlob, `mermaid-preview-${timestamp}.png`);
+                showMermaidExportNotice('success', 'PNG 图片已下载到本地');
+                return;
+            } catch (pngDownloadError) {
+                console.warn('Failed to download Mermaid PNG, trying SVG fallback:', pngDownloadError);
+            }
+
+            const svgBlob = buildMermaidPreviewSvgBlob();
+            downloadBlobToLocal(svgBlob, `mermaid-preview-${timestamp}.svg`);
+            showMermaidExportNotice('success', 'PNG 导出失败，已下载 SVG');
+        } catch (finalError) {
+            console.error('Failed to download Mermaid preview image:', finalError);
+            showMermaidExportNotice('error', '下载失败，请稍后重试');
+        }
+    }, [buildMermaidPreviewPngBlob, buildMermaidPreviewSvgBlob, downloadBlobToLocal, mermaidPreviewStatus, showMermaidExportNotice]);
 
     // 增强的Markdown渲染，支持表格、代码高亮和数学公式
     const renderedHtml = useMemo(() => {
@@ -155,17 +525,20 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
                 return `<div class="mermaid-block" data-mermaid-block-id="${mermaidBlockId}">
                     <div class="mermaid-header">
                         <span class="mermaid-language">mermaid</span>
-                        <button class="code-action-btn copy-btn" data-code="${encodedCode}" title="复制图表源码">
-                            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                                <rect x="9" y="9" width="13" height="13" rx="2"></rect>
-                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                            </svg>
-                        </button>
+                        <div class="code-actions">
+                            <button class="code-action-btn mermaid-open-btn" data-code="${encodedCode}" title="预览图表">
+                                预览
+                            </button>
+                            <button class="code-action-btn copy-btn" data-code="${encodedCode}" title="复制图表源码">
+                                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                    <rect x="9" y="9" width="13" height="13" rx="2"></rect>
+                                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                </svg>
+                            </button>
+                        </div>
                     </div>
-                    <div class="mermaid-content">
-                        <div class="mermaid-loading">● 正在渲染图表...</div>
-                        <div class="mermaid-diagram" data-mermaid-id="${mermaidBlockId}" data-mermaid-code="${encodedCode}"></div>
-                        <pre class="mermaid-fallback"><code>${highlightCode(trimmedCode, lang)}</code></pre>
+                    <div class="mermaid-content mermaid-manual-content">
+                        <pre class="mermaid-source-preview"><code>${highlightCode(trimmedCode, lang)}</code></pre>
                     </div>
                 </div>`;
             }
@@ -273,6 +646,43 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
 
     const hasMermaidBlock = useMemo(() => /```mermaid(?:\s|$)/i.test(content), [content]);
 
+    const closeMermaidPreview = useCallback(() => {
+        setIsMermaidPreviewOpen(false);
+        setMermaidPreviewStatus('idle');
+        setMermaidPreviewError('');
+        setMermaidExportNotice(null);
+        if (mermaidExportNoticeTimerRef.current !== null) {
+            window.clearTimeout(mermaidExportNoticeTimerRef.current);
+            mermaidExportNoticeTimerRef.current = null;
+        }
+    }, []);
+
+    useEffect(() => {
+        if (!isMermaidPreviewOpen) {
+            return;
+        }
+        const handleKeyDown = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') {
+                closeMermaidPreview();
+            }
+        };
+        document.addEventListener('keydown', handleKeyDown);
+        return () => {
+            document.removeEventListener('keydown', handleKeyDown);
+        };
+    }, [closeMermaidPreview, isMermaidPreviewOpen]);
+
+    useEffect(() => {
+        if (!isMermaidPreviewOpen) {
+            return;
+        }
+        const previousOverflow = document.body.style.overflow;
+        document.body.style.overflow = 'hidden';
+        return () => {
+            document.body.style.overflow = previousOverflow;
+        };
+    }, [isMermaidPreviewOpen]);
+
     // 处理按钮点击事件
     const handleClick = useCallback((event: React.MouseEvent) => {
         const target = event.target as HTMLElement;
@@ -283,6 +693,13 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
         if (button.classList.contains('copy-btn')) {
             const code = decodeURIComponent(button.getAttribute('data-code') || '');
             copyToClipboard(code);
+        } else if (button.classList.contains('mermaid-open-btn')) {
+            const code = decodeURIComponent(button.getAttribute('data-code') || '');
+            setMermaidPreviewCode(code);
+            setMermaidPreviewStatus('idle');
+            setMermaidPreviewError('');
+            setMermaidExportNotice(null);
+            setIsMermaidPreviewOpen(true);
         } else if (button.classList.contains('expand-btn')) {
             const codeBlock = button.closest('.code-block');
             if (!codeBlock) {
@@ -298,23 +715,26 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
     }, [copyToClipboard]);
 
     useEffect(() => {
-        if (!hasMermaidBlock || isStreaming) {
+        if (!hasMermaidBlock || isStreaming || !isMermaidPreviewOpen) {
+            return;
+        }
+        if (!mermaidPreviewCode.trim()) {
+            setMermaidPreviewStatus('error');
+            setMermaidPreviewError('Mermaid 内容为空');
             return;
         }
 
         let cancelled = false;
         const root = markdownContainerRef.current;
-        if (!root) {
+        const previewContainer = mermaidPreviewContainerRef.current;
+        if (!root || !previewContainer) {
             return;
         }
-        const mermaidNodes = Array.from(
-            root.querySelectorAll<HTMLElement>('.mermaid-diagram[data-mermaid-code]')
-        );
-        if (mermaidNodes.length === 0) {
-            return;
-        }
+        previewContainer.innerHTML = '';
 
         const renderMermaid = async () => {
+            setMermaidPreviewStatus('loading');
+            setMermaidPreviewError('');
             try {
                 if (!mermaidApiRef.current) {
                     const mermaidModule = await import('mermaid');
@@ -341,66 +761,77 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
                     mermaidThemeRef.current = theme;
                 }
 
-                for (const node of mermaidNodes) {
-                    if (cancelled) {
-                        return;
+                const renderDiagram = async (candidateCode: string) => {
+                    const parseResult = await mermaid.parse(candidateCode, { suppressErrors: true });
+                    if (parseResult === false) {
+                        throw new Error('Mermaid parse returned false');
                     }
 
-                    const block = node.closest('.mermaid-block');
-                    const loading = block?.querySelector<HTMLElement>('.mermaid-loading');
-                    block?.classList.remove('mermaid-rendered');
-                    block?.classList.remove('mermaid-error');
-                    if (loading) {
-                        loading.textContent = '● 正在渲染图表...';
+                    mermaidRenderSeqRef.current += 1;
+                    const renderId = `mermaid-preview-${mermaidRenderSeqRef.current}`;
+                    const { svg, bindFunctions } = await mermaid.render(renderId, candidateCode);
+                    if (typeof svg !== 'string' || !svg.includes('<svg')) {
+                        throw new Error('Mermaid render returned invalid svg content');
                     }
 
-                    const rawCode = node.getAttribute('data-mermaid-code') || '';
-                    let diagramCode = '';
-                    try {
-                        diagramCode = decodeURIComponent(rawCode);
-                    } catch {
-                        diagramCode = rawCode;
+                    const probe = document.createElement('div');
+                    probe.innerHTML = svg;
+                    const svgElement = probe.querySelector('svg');
+                    if (!svgElement) {
+                        throw new Error('Rendered SVG element not found');
+                    }
+                    const viewBox = svgElement.getAttribute('viewBox');
+                    if (viewBox) {
+                        const numbers = viewBox
+                            .split(/\s+/)
+                            .map((item) => Number(item))
+                            .filter((item) => Number.isFinite(item));
+                        if (numbers.length === 4) {
+                            const width = numbers[2];
+                            const height = numbers[3];
+                            if (!(width > 0) || !(height > 0)) {
+                                throw new Error(`Rendered SVG has invalid viewBox: ${viewBox}`);
+                            }
+                        }
                     }
 
-                    if (!diagramCode.trim()) {
-                        block?.classList.add('mermaid-error');
-                        if (loading) {
-                            loading.textContent = 'Mermaid 内容为空';
-                        }
-                        continue;
-                    }
+                    return { svg, bindFunctions };
+                };
 
-                    try {
-                        mermaidRenderSeqRef.current += 1;
-                        const renderId = `mermaid-diagram-${mermaidRenderSeqRef.current}`;
-                        const { svg, bindFunctions } = await mermaid.render(renderId, diagramCode);
-                        if (cancelled) {
-                            return;
-                        }
-                        node.innerHTML = svg;
-                        block?.classList.add('mermaid-rendered');
-                        if (typeof bindFunctions === 'function') {
-                            bindFunctions(node);
-                        }
-                    } catch (error) {
-                        console.error('Mermaid render failed:', error);
-                        node.innerHTML = '';
-                        block?.classList.add('mermaid-error');
-                        if (loading) {
-                            loading.textContent = 'Mermaid 渲染失败，已显示源码';
-                        }
+                const diagramCode = mermaidPreviewCode;
+                let rendered: { svg: string; bindFunctions?: (element: Element) => void };
+                try {
+                    rendered = await renderDiagram(diagramCode);
+                } catch (error) {
+                    const normalization = normalizeMermaidForRetry(diagramCode);
+                    if (!normalization.changed) {
+                        throw error;
                     }
+                    rendered = await renderDiagram(normalization.code);
+                    console.warn('Mermaid preview recovered by normalization', {
+                        notes: normalization.notes,
+                    });
                 }
+
+                if (cancelled) {
+                    return;
+                }
+                previewContainer.innerHTML = rendered.svg;
+                if (typeof rendered.bindFunctions === 'function') {
+                    rendered.bindFunctions(previewContainer);
+                }
+                setMermaidPreviewStatus('rendered');
             } catch (error) {
-                console.error('Failed to load mermaid:', error);
-                mermaidNodes.forEach((node) => {
-                    const block = node.closest('.mermaid-block');
-                    const loading = block?.querySelector<HTMLElement>('.mermaid-loading');
-                    block?.classList.add('mermaid-error');
-                    if (loading) {
-                        loading.textContent = 'Mermaid 组件加载失败，已显示源码';
-                    }
+                console.error('Mermaid preview failed:', {
+                    error,
+                    diagramCode: mermaidPreviewCode,
                 });
+                if (cancelled) {
+                    return;
+                }
+                previewContainer.innerHTML = '';
+                setMermaidPreviewStatus('error');
+                setMermaidPreviewError('Mermaid 渲染失败，已显示源码');
             }
         };
 
@@ -409,7 +840,68 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
         return () => {
             cancelled = true;
         };
-    }, [hasMermaidBlock, isStreaming, renderedHtml]);
+    }, [hasMermaidBlock, isStreaming, isMermaidPreviewOpen, mermaidPreviewCode, renderedHtml]);
+
+    const mermaidPreviewModal = isMermaidPreviewOpen && typeof document !== 'undefined'
+        ? createPortal(
+            <div
+                className="mermaid-preview-overlay"
+                onClick={(event) => {
+                    if (event.target === event.currentTarget) {
+                        closeMermaidPreview();
+                    }
+                }}
+            >
+                <div className="mermaid-preview-dialog" role="dialog" aria-modal="true" aria-label="Mermaid 图表预览">
+                    <div className="mermaid-preview-header">
+                        <span className="mermaid-preview-title">Mermaid 图表预览</span>
+                        <div className="code-actions">
+                            <button
+                                className="code-action-btn mermaid-image-copy-btn"
+                                onClick={copyMermaidPreviewImage}
+                                title="复制图表为图片到剪贴板"
+                                disabled={mermaidPreviewStatus !== 'rendered'}
+                            >
+                                复制图片
+                            </button>
+                            <button
+                                className="code-action-btn mermaid-image-download-btn"
+                                onClick={downloadMermaidPreviewImage}
+                                title="下载图表为图片"
+                                disabled={mermaidPreviewStatus !== 'rendered'}
+                            >
+                                下载图片
+                            </button>
+                            <button className="code-action-btn mermaid-close-btn" onClick={closeMermaidPreview} title="关闭图表弹窗">
+                                关闭
+                            </button>
+                        </div>
+                    </div>
+                    <div className="mermaid-preview-body">
+                        {mermaidExportNotice && (
+                            <div className={`mermaid-preview-notice ${mermaidExportNotice.type}`}>
+                                {mermaidExportNotice.text}
+                            </div>
+                        )}
+                        {mermaidPreviewStatus === 'loading' && (
+                            <div className="mermaid-preview-loading">● 正在渲染图表...</div>
+                        )}
+                        <div
+                            ref={mermaidPreviewContainerRef}
+                            className={`mermaid-preview-diagram ${mermaidPreviewStatus === 'error' ? 'hidden' : ''}`}
+                        />
+                        {mermaidPreviewStatus === 'error' && (
+                            <>
+                                <div className="mermaid-preview-error">{mermaidPreviewError}</div>
+                                <pre className="mermaid-preview-fallback"><code>{mermaidPreviewCode}</code></pre>
+                            </>
+                        )}
+                    </div>
+                </div>
+            </div>,
+            document.body
+        )
+        : null;
 
     return (
         <div ref={markdownContainerRef} className={`markdown-renderer ${className}`} onClick={handleClick}>
@@ -418,6 +910,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
                     __html: renderedHtml
                 }}
             />
+            {mermaidPreviewModal}
             {isStreaming && (
                 <span className="streaming-cursor" />
             )}

@@ -122,6 +122,7 @@ export interface SessionChatState {
   isStopping: boolean;
   streamingMessageId: string | null;
   activeTurnId: string | null;
+  streamingPreviewText: string;
 }
 
 export interface SessionRuntimeGuidanceState {

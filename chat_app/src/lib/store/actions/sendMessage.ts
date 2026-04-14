@@ -246,6 +246,10 @@ export function createSendMessageHandler({
         response,
       });
 
+      if (get().currentSessionId === currentSessionId) {
+        await get().loadMessages(currentSessionId);
+      }
+
       debugLog('✅ 消息发送完成');
     } catch (error) {
       const readableError = rollbackFailedSendMessage({

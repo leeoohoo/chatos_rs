@@ -365,6 +365,7 @@ export interface MessageListProps {
   isLoading?: boolean;
   isStreaming?: boolean;
   isStopping?: boolean;
+  streamingPreviewText?: string;
   hasMore?: boolean;
   onLoadMore?: () => void;
   onToggleTurnProcess?: (userMessageId: string) => void;

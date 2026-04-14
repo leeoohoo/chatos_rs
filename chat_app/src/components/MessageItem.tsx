@@ -155,6 +155,31 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
     return null;
   }
 
+  const hasVisibleTextSegment = renderContentSegments.some((segment) => (
+    segment.type === 'text'
+    && typeof segment.content === 'string'
+    && segment.content.trim().length > 0
+  ));
+  const hasVisibleThinkingSegment = renderContentSegments.some((segment) => (
+    segment.type === 'thinking'
+    && typeof segment.content === 'string'
+    && segment.content.trim().length > 0
+  ));
+  const hasVisibleToolCallSegment = renderContentSegments.some((segment) => segment.type === 'tool_call');
+  const shouldHideEmptyStreamingAssistant = Boolean(
+    isAssistant
+    && isStreaming
+    && message.status === 'streaming'
+    && (!message.content || message.content.trim().length === 0)
+    && !hasVisibleTextSegment
+    && !hasVisibleThinkingSegment
+    && !hasVisibleToolCallSegment
+    && toolCalls.length === 0
+  );
+  if (shouldHideEmptyStreamingAssistant) {
+    return null;
+  }
+
   // 使用自定义渲染器
   if (customRenderer?.renderMessage) {
     return <div>{customRenderer.renderMessage(message)}</div>;
