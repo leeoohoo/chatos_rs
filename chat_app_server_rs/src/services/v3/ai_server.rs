@@ -118,6 +118,7 @@ impl AiServer {
                     max_tokens,
                     reasoning_enabled: Some(reasoning_enabled),
                     supports_responses: options.supports_responses,
+                    supports_images: options.supports_images,
                     provider: Some(provider),
                     thinking_level,
                     system_prompt: None,

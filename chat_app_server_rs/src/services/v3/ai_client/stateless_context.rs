@@ -131,7 +131,6 @@ impl AiClient {
             {
                 continue;
             }
-
             if msg.role == "user"
                 || msg.role == "assistant"
                 || msg.role == "system"

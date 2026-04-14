@@ -1,6 +1,5 @@
 pub mod agent_builder;
 pub mod code_maintainer;
-pub mod computer_use;
 pub mod memory_command_reader;
 pub mod memory_plugin_reader;
 pub mod memory_skill_reader;

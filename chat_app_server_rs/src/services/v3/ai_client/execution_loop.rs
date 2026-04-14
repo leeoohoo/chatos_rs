@@ -4,6 +4,7 @@ use serde_json::{json, Value};
 use tokio::time::sleep;
 use tracing::{info, warn};
 
+use crate::core::mcp_tools::ToolResult;
 use crate::services::ai_common::{
     build_aborted_tool_results, build_tool_stream_callback, completion_failed_error,
 };
@@ -53,6 +54,8 @@ impl AiClient {
         force_text_content: bool,
         prefixed_input_items: Vec<Value>,
         prefer_stateless: bool,
+        _allow_tool_image_input: bool,
+        _use_codex_gateway_mcp_passthrough: bool,
         message_mode: Option<String>,
         message_source: Option<String>,
         request_cwd: Option<String>,
@@ -464,7 +467,9 @@ impl AiClient {
             }
 
             if let Some(cb) = &callbacks.on_tools_end {
-                cb(json!({"tool_results": tool_results.clone()}));
+                cb(json!({
+                    "tool_results": tool_results.clone(),
+                }));
             }
 
             if persist_tool_messages {
@@ -475,17 +480,9 @@ impl AiClient {
                 }
             }
 
-            let tool_outputs: Vec<Value> = expanded_tool_results
-                .iter()
-                .map(|r| {
-                    json!({
-                        "type": "function_call_output",
-                        "call_id": r.tool_call_id,
-                        "output": cap_tool_output_for_input(r.content.as_str())
-                    })
-                })
-                .collect();
-            pending_tool_outputs = Some(tool_outputs.clone());
+            let tool_outputs = build_tool_output_items(expanded_tool_results.as_slice());
+            let turn_tool_input_items = tool_outputs.clone();
+            pending_tool_outputs = Some(turn_tool_input_items.clone());
             pending_tool_calls = Some(tool_call_items.clone());
 
             let assistant_item = if !ai_response.content.is_empty() {
@@ -508,7 +505,7 @@ impl AiClient {
                 }
             }
 
-            let mut next_input = Value::Array(tool_outputs.clone());
+            let mut next_input = Value::Array(turn_tool_input_items.clone());
             let mut next_prev_id = ai_response.response_id.clone();
             let mut next_use_prev_id = should_use_prev_id_for_next_turn(
                 prefer_stateless,
@@ -562,6 +559,7 @@ impl AiClient {
             iteration += 1;
         }
     }
+
 }
 
 fn build_runtime_guidance_input_item(
@@ -602,4 +600,18 @@ fn is_non_terminal_finish_reason(finish_reason: Option<&str>) -> bool {
         normalized.as_deref(),
         Some("in_progress") | Some("queued") | Some("pending") | Some("incomplete")
     )
+}
+
+fn build_tool_output_items(tool_results: &[ToolResult]) -> Vec<Value> {
+    tool_results
+        .iter()
+        .map(|result| {
+            let output_text = cap_tool_output_for_input(result.content.as_str());
+            json!({
+                "type": "function_call_output",
+                "call_id": result.tool_call_id,
+                "output": output_text
+            })
+        })
+        .collect()
 }

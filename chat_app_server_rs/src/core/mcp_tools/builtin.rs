@@ -1,6 +1,5 @@
 use crate::builtin::agent_builder::{AgentBuilderOptions, AgentBuilderService};
 use crate::builtin::code_maintainer::{CodeMaintainerOptions, CodeMaintainerService};
-use crate::builtin::computer_use::{ComputerUseOptions, ComputerUseService};
 use crate::builtin::memory_command_reader::{
     MemoryCommandReaderOptions, MemoryCommandReaderService,
 };
@@ -22,7 +21,6 @@ use super::ToolStreamChunkCallback;
 pub enum BuiltinToolService {
     CodeMaintainer(CodeMaintainerService),
     TerminalController(TerminalControllerService),
-    ComputerUse(ComputerUseService),
     TaskManager(TaskManagerService),
     Notepad(NotepadBuiltinService),
     AgentBuilder(AgentBuilderService),
@@ -38,7 +36,6 @@ impl BuiltinToolService {
         match self {
             Self::CodeMaintainer(service) => service.list_tools(),
             Self::TerminalController(service) => service.list_tools(),
-            Self::ComputerUse(service) => service.list_tools(),
             Self::TaskManager(service) => service.list_tools(),
             Self::Notepad(service) => service.list_tools(),
             Self::AgentBuilder(service) => service.list_tools(),
@@ -61,7 +58,6 @@ impl BuiltinToolService {
         match self {
             Self::CodeMaintainer(service) => service.call_tool(name, args, session_id),
             Self::TerminalController(service) => service.call_tool(name, args, session_id),
-            Self::ComputerUse(service) => service.call_tool(name, args),
             Self::TaskManager(service) => service.call_tool(
                 name,
                 args,
@@ -138,13 +134,6 @@ pub fn build_builtin_tool_service(server: &McpBuiltinServer) -> Result<BuiltinTo
                 max_output_chars: 20_000,
             })?;
             Ok(BuiltinToolService::TerminalController(service))
-        }
-        BuiltinMcpKind::ComputerUse => {
-            let service = ComputerUseService::new(ComputerUseOptions {
-                server_name: server.name.clone(),
-                workspace_dir: server.workspace_dir.clone(),
-            })?;
-            Ok(BuiltinToolService::ComputerUse(service))
         }
         BuiltinMcpKind::TaskManager => {
             let service = TaskManagerService::new(TaskManagerOptions {

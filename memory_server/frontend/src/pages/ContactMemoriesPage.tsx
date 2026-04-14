@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, Button, Card, Empty, Grid, List, Space, Table, Tag, Typography } from 'antd';
+import { Alert, Button, Card, Empty, Grid, List, Modal, Space, Table, Tag, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 
 import { api } from '../api/client';
@@ -62,6 +62,8 @@ export function ContactMemoriesPage({
   const [contactProjects, setContactProjects] = useState<ContactProject[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState<string | undefined>(undefined);
   const [sessionSummaries, setSessionSummaries] = useState<SessionSummary[]>([]);
+  const [selectedSummaryId, setSelectedSummaryId] = useState<string | undefined>(undefined);
+  const [summaryDetailOpen, setSummaryDetailOpen] = useState(false);
   const [agentRecalls, setAgentRecalls] = useState<AgentRecall[]>([]);
   const [selectedRecallId, setSelectedRecallId] = useState<string | undefined>(undefined);
   const [loading, setLoading] = useState(false);
@@ -118,6 +120,13 @@ export function ContactMemoriesPage({
     return recallRows.find((item) => item.id === selectedRecallId) ?? null;
   }, [recallRows, selectedRecallId]);
 
+  const selectedSummary = useMemo(() => {
+    if (!selectedSummaryId) {
+      return null;
+    }
+    return summaryRows.find((item) => item.id === selectedSummaryId) ?? null;
+  }, [summaryRows, selectedSummaryId]);
+
   const loadContacts = async () => {
     const rows = await api.listContacts(scopeUserId, { status: 'active', limit: 500, offset: 0 });
     const normalized = rows.filter((item) => item.status === 'active' || !item.status);
@@ -140,6 +149,7 @@ export function ContactMemoriesPage({
       setSelectedProjectId(undefined);
       setSelectedSessionId(undefined);
       setSessionSummaries([]);
+      setSelectedSummaryId(undefined);
       return;
     }
     const nextProjectId = selectedProjectId && sorted.some((item) => item.project_id === selectedProjectId)
@@ -149,6 +159,7 @@ export function ContactMemoriesPage({
     if (!nextProjectId) {
       setSelectedSessionId(undefined);
       setSessionSummaries([]);
+      setSelectedSummaryId(undefined);
     }
   };
 
@@ -157,11 +168,21 @@ export function ContactMemoriesPage({
     if (!pid) {
       setSelectedSessionId(undefined);
       setSessionSummaries([]);
+      setSelectedSummaryId(undefined);
       return;
     }
     const data = await api.listContactProjectSummaries(contactId, pid);
+    const sorted = sortByCreatedDesc(data.items);
     setSelectedSessionId(data.session_id ?? undefined);
-    setSessionSummaries(sortByCreatedDesc(data.items));
+    setSessionSummaries(sorted);
+    if (sorted.length === 0) {
+      setSelectedSummaryId(undefined);
+      return;
+    }
+    const nextSummaryId = selectedSummaryId && sorted.some((item) => item.id === selectedSummaryId)
+      ? selectedSummaryId
+      : sorted[0].id;
+    setSelectedSummaryId(nextSummaryId);
   };
 
   const loadAgentRecalls = async (contactId: string) => {
@@ -200,6 +221,7 @@ export function ContactMemoriesPage({
       setContactProjects([]);
       setSelectedSessionId(undefined);
       setSessionSummaries([]);
+      setSelectedSummaryId(undefined);
       setAgentRecalls([]);
       setSelectedRecallId(undefined);
       setSelectedProjectId(undefined);
@@ -241,6 +263,10 @@ export function ContactMemoriesPage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, selectedContactId, selectedProjectId]);
 
+  useEffect(() => {
+    setSummaryDetailOpen(false);
+  }, [mode, selectedContactId, selectedProjectId]);
+
   const summaryColumns: ColumnsType<SessionSummary> = [
     {
       title: t('summaryLevels.level'),
@@ -275,12 +301,6 @@ export function ContactMemoriesPage({
       ),
     },
     {
-      title: t('memory.recallKey'),
-      dataIndex: 'trigger_type',
-      key: 'trigger_type',
-      render: (value?: string) => <Text code>{value || '-'}</Text>,
-    },
-    {
       title: t('sessionDetail.sourceCount'),
       dataIndex: 'source_message_count',
       key: 'source_message_count',
@@ -302,6 +322,24 @@ export function ContactMemoriesPage({
       key: 'created_at',
       width: 220,
       render: (value?: string) => formatDateTime(value),
+    },
+    {
+      title: t('common.action'),
+      key: 'actions',
+      width: 120,
+      render: (_value: unknown, record: SessionSummary) => (
+        <Button
+          size="small"
+          type={record.id === selectedSummaryId ? 'primary' : 'default'}
+          onClick={(event) => {
+            event.stopPropagation();
+            setSelectedSummaryId(record.id);
+            setSummaryDetailOpen(true);
+          }}
+        >
+          {t('common.viewDetail')}
+        </Button>
+      ),
     },
   ];
 
@@ -630,6 +668,38 @@ export function ContactMemoriesPage({
           </Card>
         </div>
       )}
+
+      <Modal
+        title={t('memory.summaryDetailTitle')}
+        open={summaryDetailOpen}
+        onCancel={() => setSummaryDetailOpen(false)}
+        footer={(
+          <Button onClick={() => setSummaryDetailOpen(false)}>
+            {t('common.cancel')}
+          </Button>
+        )}
+        width={860}
+      >
+        {selectedSummary ? (
+          <Space direction="vertical" size={12} style={{ width: '100%' }}>
+            <Space size={8} wrap>
+              <Tag color="blue">L{Number(selectedSummary.level) || 0}</Tag>
+              <Tag>{selectedSummary.status || 'pending'}</Tag>
+              <Tag bordered={false}>
+                {t('sessionDetail.sourceCount')}: {Number(selectedSummary.source_message_count) || 0}
+              </Tag>
+              <Tag bordered={false}>
+                {t('memory.updatedAt')}: {formatDateTime(selectedSummary.created_at)}
+              </Tag>
+            </Space>
+            <Paragraph style={{ marginBottom: 0, whiteSpace: 'pre-wrap' }}>
+              {selectedSummary.summary_text || '-'}
+            </Paragraph>
+          </Space>
+        ) : (
+          <Alert type="info" showIcon message={t('memory.selectSummaryHint')} />
+        )}
+      </Modal>
     </Space>
   );
 }

@@ -3,7 +3,7 @@ import { generateId } from '../../lib/utils';
 
 import type { AiModelFormData } from './types';
 
-export const AI_MODEL_PROVIDERS = ['gpt', 'deepseek', 'kimik2'] as const;
+export const AI_MODEL_PROVIDERS = ['gpt', 'deepseek', 'kimik2', 'minimax'] as const;
 
 export const AI_MODEL_THINKING_LEVELS = [
   '',

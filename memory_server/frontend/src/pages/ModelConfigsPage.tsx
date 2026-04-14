@@ -32,7 +32,7 @@ interface ModelConfigsPageProps {
 
 interface ModelFormValues {
   name: string;
-  provider: 'gpt' | 'deepseek' | 'kimik2';
+  provider: 'gpt' | 'deepseek' | 'kimik2' | 'minimax';
   model: string;
   base_url?: string;
   api_key?: string;
@@ -175,7 +175,7 @@ export function ModelConfigsPage({
     setEditing(item);
     form.setFieldsValue({
       name: item.name,
-      provider: (item.provider as 'gpt' | 'deepseek' | 'kimik2') || 'gpt',
+      provider: (item.provider as 'gpt' | 'deepseek' | 'kimik2' | 'minimax') || 'gpt',
       model: item.model,
       base_url: item.base_url || '',
       api_key: item.api_key || '',
@@ -482,6 +482,7 @@ export function ModelConfigsPage({
                 { label: 'gpt', value: 'gpt' },
                 { label: 'deepseek', value: 'deepseek' },
                 { label: 'kimik2', value: 'kimik2' },
+                { label: 'minimax', value: 'minimax' },
               ]}
             />
           </Form.Item>
