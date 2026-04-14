@@ -1,19 +1,16 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import hljs from 'highlight.js';
 
-import type {
-  TerminalDispatchResponse,
-  TerminalLogResponse,
-  TerminalResponse,
-} from '../../lib/api/client/types';
-import type { ChangeLogItem, FsEntry, FsReadResult, ProjectRunTarget } from '../../types';
+import type { ChangeLogItem, FsEntry, FsReadResult } from '../../types';
 import { formatFileSize } from '../../lib/utils';
 import { DiffPanel } from './ChangeLogPanels';
-import { useProjectPreviewRunController } from './useProjectPreviewRunController';
+import type {
+  ProjectRunnerActiveTerminal,
+  ProjectRunnerMember,
+} from './useProjectExplorerRunState';
 import { escapeHtml, getHighlightLanguage } from './utils';
 
 interface ProjectPreviewPaneProps {
-  projectId: string;
   selectedFile: FsReadResult | null;
   selectedPath: string | null;
   selectedEntry: FsEntry | null;
@@ -21,26 +18,33 @@ interface ProjectPreviewPaneProps {
   error: string | null;
   selectedLog: ChangeLogItem | null;
   projectRootPath: string;
-  runCwd: string;
-  onRunCommand: (payload: { cwd: string; command: string }) => Promise<TerminalDispatchResponse>;
-  onInterruptTerminal: (terminalId: string, payload?: { reason?: string }) => Promise<TerminalDispatchResponse>;
-  onGetTerminal: (terminalId: string) => Promise<TerminalResponse>;
-  onListTerminalLogs: (
-    terminalId: string,
-    params?: { limit?: number; offset?: number; before?: string }
-  ) => Promise<TerminalLogResponse[]>;
-  onListTerminals: () => Promise<TerminalResponse[]>;
-  runTargets: ProjectRunTarget[];
   runStatus: string;
   runCatalogLoading: boolean;
   runCatalogError: string | null;
-  selectedRunTargetId: string | null;
-  onSelectRunTarget: (targetId: string | null) => void;
-  onAnalyzeRunTargets: () => void;
+  projectMembers: ProjectRunnerMember[];
+  projectMembersLoading: boolean;
+  projectMembersError: string | null;
+  runnerScriptExists: boolean;
+  runnerScriptChecking: boolean;
+  runnerScriptPath: string;
+  runnerStartCommand: string;
+  runnerStopCommand: string;
+  runnerRestartCommand: string;
+  starting: boolean;
+  stopping: boolean;
+  restarting: boolean;
+  runnerMessage: string | null;
+  runnerError: string | null;
+  activeRun: ProjectRunnerActiveTerminal | null;
+  activeTerminalBusy: boolean;
+  onRunnerStart: () => void;
+  onRunnerStop: () => void;
+  onRunnerRestart: () => void;
+  onRefreshRunnerState: () => void;
+  onGenerateRunnerScriptForContact: (member: ProjectRunnerMember) => Promise<void>;
 }
 
 export const ProjectPreviewPane: React.FC<ProjectPreviewPaneProps> = ({
-  projectId,
   selectedFile,
   selectedPath,
   selectedEntry,
@@ -48,46 +52,41 @@ export const ProjectPreviewPane: React.FC<ProjectPreviewPaneProps> = ({
   error,
   selectedLog,
   projectRootPath,
-  runCwd,
-  onRunCommand,
-  onInterruptTerminal,
-  onGetTerminal,
-  onListTerminalLogs,
-  onListTerminals,
-  runTargets,
   runStatus,
   runCatalogLoading,
   runCatalogError,
-  selectedRunTargetId,
-  onSelectRunTarget,
-  onAnalyzeRunTargets,
+  projectMembers,
+  projectMembersLoading,
+  projectMembersError,
+  runnerScriptExists,
+  runnerScriptChecking,
+  runnerScriptPath,
+  runnerStartCommand,
+  runnerStopCommand,
+  runnerRestartCommand,
+  starting,
+  stopping,
+  restarting,
+  runnerMessage,
+  runnerError,
+  activeRun,
+  activeTerminalBusy,
+  onRunnerStart,
+  onRunnerStop,
+  onRunnerRestart,
+  onRefreshRunnerState,
+  onGenerateRunnerScriptForContact,
 }) => {
-  const {
-    activeRun,
-    activeTerminalBusy,
-    restarting,
-    runCommand,
-    runError,
-    runMessage,
-    runTargetCwd,
-    running,
-    setRunCommand,
-    stopping,
-    handleRestart,
-    handleRun,
-    handleStop,
-  } = useProjectPreviewRunController({
-    projectId,
-    projectRootPath,
-    runCwd,
-    runTargets,
-    selectedRunTargetId,
-    onRunCommand,
-    onInterruptTerminal,
-    onGetTerminal,
-    onListTerminalLogs,
-    onListTerminals,
-  });
+  const [memberPickerOpen, setMemberPickerOpen] = useState(false);
+  const [memberPickerSelectedId, setMemberPickerSelectedId] = useState<string | null>(null);
+  const [generating, setGenerating] = useState(false);
+  const [generationError, setGenerationError] = useState<string | null>(null);
+  const [generationMessage, setGenerationMessage] = useState<string | null>(null);
+
+  const selectedMember = useMemo(
+    () => projectMembers.find((member) => member.contactId === memberPickerSelectedId) || null,
+    [memberPickerSelectedId, projectMembers]
+  );
 
   const preview = useMemo(() => {
     if (loadingFile) {
@@ -163,6 +162,71 @@ export const ProjectPreviewPane: React.FC<ProjectPreviewPaneProps> = ({
     );
   }, [loadingFile, selectedEntry, selectedFile, selectedPath]);
 
+  const runModeLabel = useMemo(() => {
+    if (runStatus === 'loading') return '检查中';
+    if (runStatus === 'no_member') return '缺少团队成员';
+    if (runStatus === 'script_missing') return '缺少启动脚本';
+    if (runStatus === 'ready') return '可运行';
+    if (runStatus === 'error') return '异常';
+    return runStatus || '-';
+  }, [runStatus]);
+
+  const runModeHint = useMemo(() => {
+    if (runStatus === 'no_member') {
+      return '请先在 TEAM 面板为当前项目添加至少一个联系人。';
+    }
+    if (runStatus === 'script_missing') {
+      return '请先点击“生成启动脚本”，由团队成员在项目根目录生成脚本。';
+    }
+    return null;
+  }, [runStatus]);
+
+  const runnerScriptAbsolutePath = useMemo(() => {
+    const root = (projectRootPath || '').trim().replace(/[\\/]+$/, '');
+    if (!root) {
+      return runnerScriptPath;
+    }
+    return `${root}/${runnerScriptPath}`;
+  }, [projectRootPath, runnerScriptPath]);
+
+  const mergeError = runnerError || generationError;
+  const mergeMessage = !mergeError ? (generationMessage || runnerMessage) : null;
+
+  const handleGenerateForMember = async (member: ProjectRunnerMember): Promise<boolean> => {
+    setGenerating(true);
+    setGenerationError(null);
+    setGenerationMessage(null);
+    try {
+      await onGenerateRunnerScriptForContact(member);
+      setGenerationMessage(`已向 ${member.name || member.contactId} 发送脚本生成任务`);
+      await onRefreshRunnerState();
+      return true;
+    } catch (error) {
+      setGenerationError(error instanceof Error ? error.message : '发送脚本生成任务失败');
+      return false;
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const handleGenerateClick = () => {
+    setGenerationError(null);
+    setGenerationMessage(null);
+    if (projectMembersLoading) {
+      return;
+    }
+    if (projectMembers.length === 0) {
+      setGenerationError('当前项目还没有团队成员，请先添加联系人');
+      return;
+    }
+    if (projectMembers.length === 1) {
+      void handleGenerateForMember(projectMembers[0]);
+      return;
+    }
+    setMemberPickerSelectedId(projectMembers[0]?.contactId || null);
+    setMemberPickerOpen(true);
+  };
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       <div className="px-4 py-2 border-b border-border bg-card flex items-center justify-between">
@@ -174,10 +238,16 @@ export const ProjectPreviewPane: React.FC<ProjectPreviewPaneProps> = ({
             {selectedFile?.path || selectedPath || '请选择文件'}
           </div>
           <div className="text-[11px] text-muted-foreground truncate">
-            运行目录：{runTargetCwd || '-'}
+            项目根目录：{projectRootPath || '-'}
           </div>
           <div className="text-[11px] text-muted-foreground truncate">
-            运行目标：{runStatus || '-'} / {runTargets.length}
+            运行模式：脚本托管 / {runModeLabel}
+          </div>
+          <div className="text-[11px] text-muted-foreground truncate">
+            启动脚本：{runnerScriptExists ? `已生成（${runnerScriptAbsolutePath}）` : `未生成（${runnerScriptAbsolutePath}）`}
+          </div>
+          <div className="text-[11px] text-muted-foreground truncate">
+            团队成员：{projectMembersLoading ? '加载中...' : projectMembers.length}
           </div>
           {activeRun && (
             <div className="text-[11px] text-muted-foreground truncate">
@@ -185,69 +255,66 @@ export const ProjectPreviewPane: React.FC<ProjectPreviewPaneProps> = ({
               {' '}终端：{activeRun.terminalName || activeRun.terminalId} / {activeTerminalBusy ? '运行中' : '空闲'}
             </div>
           )}
-          {runCatalogError && (
-            <div className="text-[11px] text-destructive truncate" title={runCatalogError}>
-              {runCatalogError}
+          {runModeHint && (
+            <div className="text-[11px] text-muted-foreground truncate" title={runModeHint}>
+              {runModeHint}
+            </div>
+          )}
+          {(projectMembersError || runCatalogError) && (
+            <div className="text-[11px] text-destructive truncate" title={projectMembersError || runCatalogError || ''}>
+              {projectMembersError || runCatalogError}
             </div>
           )}
         </div>
         <div className="ml-3 flex items-center gap-2">
-          <select
-            value={selectedRunTargetId || ''}
-            onChange={(event) => {
-              const value = event.target.value.trim();
-              onSelectRunTarget(value || null);
-              const target = runTargets.find((item) => item.id === value);
-              if (target) {
-                setRunCommand(target.command || '');
-              }
-            }}
-            className="h-8 max-w-[260px] rounded border border-border bg-background px-2 text-xs text-foreground outline-none focus:ring-1 focus:ring-blue-500"
-          >
-            <option value="">手动命令</option>
-            {runTargets.map((target) => (
-              <option key={target.id} value={target.id}>
-                {target.label}
-              </option>
-            ))}
-          </select>
-          <input
-            value={runCommand}
-            onChange={(event) => setRunCommand(event.target.value)}
-            placeholder="输入命令，例如 npm run dev"
-            className="h-8 w-64 rounded border border-border bg-background px-2 text-xs text-foreground outline-none focus:ring-1 focus:ring-blue-500"
-          />
-          <button
-            type="button"
-            onClick={() => {
-              if (activeRun && activeTerminalBusy) {
-                void handleStop();
-                return;
-              }
-              void handleRun();
-            }}
-            disabled={running || stopping || restarting || !runTargetCwd}
-            className="h-8 rounded border border-emerald-500/40 px-3 text-xs text-emerald-700 hover:bg-emerald-500/10 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {running ? '运行中...' : (activeRun && activeTerminalBusy ? (stopping ? '停止中...' : '停止') : '运行')}
-          </button>
-          {activeRun && (
+          {!runnerScriptExists ? (
             <button
               type="button"
-              onClick={() => { void handleRestart(); }}
-              disabled={running || stopping || restarting}
+              onClick={handleGenerateClick}
+              disabled={generating || projectMembersLoading || runnerScriptChecking}
               className="h-8 rounded border border-border px-3 text-xs hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
+              title="向团队成员发送固定提示词，生成项目启动脚本"
             >
-              {restarting ? '重启中...' : '重启'}
+              {generating ? '生成请求中...' : '生成启动脚本'}
             </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={() => { void onRunnerStart(); }}
+                disabled={runStatus === 'no_member' || starting || stopping || restarting || generating || runnerScriptChecking}
+                className="h-8 rounded border border-emerald-500/40 px-3 text-xs text-emerald-700 hover:bg-emerald-500/10 disabled:opacity-50 disabled:cursor-not-allowed"
+                title={runnerStartCommand}
+              >
+                {starting ? '启动中...' : '启动'}
+              </button>
+              <button
+                type="button"
+                onClick={() => { void onRunnerStop(); }}
+                disabled={runStatus === 'no_member' || starting || stopping || restarting || generating || runnerScriptChecking}
+                className="h-8 rounded border border-rose-500/40 px-3 text-xs text-rose-700 hover:bg-rose-500/10 disabled:opacity-50 disabled:cursor-not-allowed"
+                title={runnerStopCommand}
+              >
+                {stopping ? '停止中...' : '停止'}
+              </button>
+              <button
+                type="button"
+                onClick={() => { void onRunnerRestart(); }}
+                disabled={runStatus === 'no_member' || starting || stopping || restarting || generating || runnerScriptChecking}
+                className="h-8 rounded border border-border px-3 text-xs hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
+                title={runnerRestartCommand}
+              >
+                {restarting ? '重启中...' : '重启'}
+              </button>
+            </>
           )}
           <button
             type="button"
-            onClick={onAnalyzeRunTargets}
-            disabled={runCatalogLoading}
+            onClick={() => { void onRefreshRunnerState(); }}
+            disabled={runCatalogLoading || runnerScriptChecking || projectMembersLoading}
             className="h-8 rounded border border-border px-3 text-xs hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {runCatalogLoading ? '分析中...' : '重扫目标'}
+            {runnerScriptChecking ? '检查中...' : '刷新状态'}
           </button>
           {selectedFile && (
             <div className="text-[11px] text-muted-foreground whitespace-nowrap">
@@ -256,10 +323,10 @@ export const ProjectPreviewPane: React.FC<ProjectPreviewPaneProps> = ({
           )}
         </div>
       </div>
-      {(runMessage || runError) && (
+      {(mergeMessage || mergeError) && (
         <div className="px-4 py-1.5 border-b border-border/70 bg-card">
-          <div className={runError ? 'text-[11px] text-destructive' : 'text-[11px] text-emerald-600'}>
-            {runError || runMessage}
+          <div className={mergeError ? 'text-[11px] text-destructive' : 'text-[11px] text-emerald-600'}>
+            {mergeError || mergeMessage}
           </div>
         </div>
       )}
@@ -273,6 +340,73 @@ export const ProjectPreviewPane: React.FC<ProjectPreviewPaneProps> = ({
           )}
         </div>
       </div>
+
+      {memberPickerOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/50"
+            onClick={() => {
+              if (generating) return;
+              setMemberPickerOpen(false);
+            }}
+            aria-label="关闭成员选择"
+          />
+          <div className="relative w-[520px] max-w-[calc(100vw-24px)] rounded-lg border border-border bg-card p-5 shadow-xl">
+            <div className="mb-1 text-base font-semibold text-foreground">选择执行成员</div>
+            <div className="mb-3 text-xs text-muted-foreground">
+              请选择一个团队成员来生成 `${runnerScriptPath}`。
+            </div>
+            <div className="max-h-72 overflow-y-auto rounded border border-border">
+              {projectMembers.map((member) => {
+                const active = member.contactId === memberPickerSelectedId;
+                return (
+                  <button
+                    key={member.contactId}
+                    type="button"
+                    onClick={() => setMemberPickerSelectedId(member.contactId)}
+                    className={`w-full border-b border-border px-3 py-2 text-left last:border-b-0 ${active ? 'bg-accent' : 'hover:bg-accent/50'}`}
+                  >
+                    <div className="text-sm text-foreground truncate">{member.name || member.contactId}</div>
+                    <div className="text-[11px] text-muted-foreground truncate">{member.agentId}</div>
+                  </button>
+                );
+              })}
+            </div>
+            {generationError && (
+              <div className="mt-3 text-xs text-destructive">{generationError}</div>
+            )}
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  if (generating) return;
+                  setMemberPickerOpen(false);
+                }}
+                disabled={generating}
+                className="h-8 rounded border border-border px-3 text-xs hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!selectedMember) return;
+                  void handleGenerateForMember(selectedMember).then((success) => {
+                    if (success) {
+                      setMemberPickerOpen(false);
+                    }
+                  });
+                }}
+                disabled={!selectedMember || generating}
+                className="h-8 rounded border border-border px-3 text-xs hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {generating ? '提交中...' : '确认并执行'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

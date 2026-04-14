@@ -88,8 +88,8 @@ export const ProjectSection: React.FC<ProjectSectionProps> = ({
                 (() => {
                   const runState = projectRunStateById?.[project.id];
                   const targetCount = runState?.targetCount ?? 0;
-                  const status = String(runState?.status || 'analyzing');
-                  const isAnalyzing = Boolean(runState?.loading) || status === 'analyzing';
+                  const status = String(runState?.status || 'loading');
+                  const isAnalyzing = Boolean(runState?.loading) || status === 'loading';
                   const isReady = status === 'ready' && targetCount > 0;
                   const liveState = projectLiveStateById?.[project.id];
                   const isRunning = Boolean(liveState?.isRunning);
@@ -98,8 +98,8 @@ export const ProjectSection: React.FC<ProjectSectionProps> = ({
                   const runTitle = isRunning
                     ? `运行中：${liveState?.terminalName || '终端'}`
                     : isReady
-                      ? `运行默认目标（${targetCount}）`
-                      : (runState?.error || (isAnalyzing ? '正在分析启动目标' : '未检测到可运行目标'));
+                      ? '启动项目全部服务'
+                      : (runState?.error || (isAnalyzing ? '正在检查脚本状态' : '缺少启动脚本'));
 
                   return (
                     <div

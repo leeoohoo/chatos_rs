@@ -12,14 +12,23 @@ MEMORY_BACKEND_DIR="$MEMORY_ROOT_DIR/backend"
 MEMORY_FRONTEND_DIR="$MEMORY_ROOT_DIR/frontend"
 MEMORY_BACKEND_ENV_FILE="$MEMORY_BACKEND_DIR/.env"
 
-MAIN_BACKEND_PORT=3997
+MAIN_BACKEND_PORT="${MAIN_BACKEND_PORT:-${BACKEND_PORT:-3997}}"
 LEGACY_MAIN_BACKEND_PORT=3001
 MAIN_FRONTEND_PORT="${FRONTEND_PORT:-8088}"
 MEMORY_BACKEND_PORT="${MEMORY_SERVER_BACKEND_PORT:-}"
 MEMORY_FRONTEND_PORT="${MEMORY_SERVER_FRONTEND_PORT:-5176}"
 MEMORY_FRONTEND_HOST="${MEMORY_SERVER_FRONTEND_HOST:-0.0.0.0}"
 
-RUNTIME_DIR="${RUNTIME_DIR:-/tmp/chatos_rs_dev}"
+if command -v shasum >/dev/null 2>&1; then
+  ROOT_HASH="$(printf '%s' "$ROOT_DIR" | shasum | awk '{print substr($1,1,8)}')"
+elif command -v sha1sum >/dev/null 2>&1; then
+  ROOT_HASH="$(printf '%s' "$ROOT_DIR" | sha1sum | awk '{print substr($1,1,8)}')"
+else
+  ROOT_HASH="default"
+fi
+RUNTIME_DIR="${RUNTIME_DIR:-/tmp/chatos_rs_dev_${ROOT_HASH}}"
+LEGACY_RUNTIME_DIR="/tmp/chatos_rs_dev"
+STOP_BY_PORT="${STOP_BY_PORT:-0}"
 MAIN_BACKEND_PID_FILE="$RUNTIME_DIR/backend.pid"
 MAIN_FRONTEND_PID_FILE="$RUNTIME_DIR/frontend.pid"
 MEMORY_BACKEND_PID_FILE="$RUNTIME_DIR/memory_backend.pid"
@@ -28,6 +37,10 @@ MAIN_BACKEND_LOG_FILE="$RUNTIME_DIR/backend.log"
 MAIN_FRONTEND_LOG_FILE="$RUNTIME_DIR/frontend.log"
 MEMORY_BACKEND_LOG_FILE="$RUNTIME_DIR/memory_backend.log"
 MEMORY_FRONTEND_LOG_FILE="$RUNTIME_DIR/memory_frontend.log"
+LEGACY_MAIN_BACKEND_PID_FILE="$LEGACY_RUNTIME_DIR/backend.pid"
+LEGACY_MAIN_FRONTEND_PID_FILE="$LEGACY_RUNTIME_DIR/frontend.pid"
+LEGACY_MEMORY_BACKEND_PID_FILE="$LEGACY_RUNTIME_DIR/memory_backend.pid"
+LEGACY_MEMORY_FRONTEND_PID_FILE="$LEGACY_RUNTIME_DIR/memory_frontend.pid"
 
 need_cmd() {
   local cmd="$1"
@@ -93,6 +106,66 @@ stop_from_port() {
   fi
 }
 
+stop_project_owned_port_processes() {
+  local name="$1"
+  local port="$2"
+
+  if ! command -v lsof >/dev/null 2>&1; then
+    return
+  fi
+
+  local pids
+  pids="$(lsof -ti tcp:"$port" -sTCP:LISTEN 2>/dev/null || true)"
+  if [[ -z "$pids" ]]; then
+    return
+  fi
+
+  local pid cwd_path
+  for pid in $pids; do
+    cwd_path="$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1)"
+    if [[ -z "$cwd_path" ]]; then
+      continue
+    fi
+    if [[ "$cwd_path" == "$ROOT_DIR"* ]]; then
+      echo "[INFO] 停止当前项目残留的 $name 进程 (pid=$pid, port=$port, cwd=$cwd_path)"
+      kill "$pid" >/dev/null 2>&1 || true
+      sleep 1
+      if kill -0 "$pid" >/dev/null 2>&1; then
+        kill -9 "$pid" >/dev/null 2>&1 || true
+      fi
+    fi
+  done
+}
+
+is_port_listening() {
+  local port="$1"
+  if command -v lsof >/dev/null 2>&1; then
+    local pids
+    pids="$(lsof -ti tcp:"$port" -sTCP:LISTEN 2>/dev/null || true)"
+    [[ -n "$pids" ]]
+    return
+  fi
+  if command -v fuser >/dev/null 2>&1; then
+    fuser -n tcp "$port" >/dev/null 2>&1
+    return
+  fi
+  return 1
+}
+
+ensure_port_available() {
+  local name="$1"
+  local port="$2"
+  if is_port_listening "$port"; then
+    echo "[ERROR] $name 端口已被占用: $port"
+    if command -v lsof >/dev/null 2>&1; then
+      echo "[INFO] 当前占用详情："
+      lsof -nP -iTCP:"$port" -sTCP:LISTEN || true
+    fi
+    echo "[HINT] 请改用其它端口（例如 MAIN_BACKEND_PORT/BACKEND_PORT），或先停止占用该端口的服务。"
+    return 1
+  fi
+}
+
 prepare() {
   need_cmd bash
   need_cmd npm
@@ -122,24 +195,28 @@ prepare() {
 }
 
 start_main_backend() {
+  ensure_port_available "原项目 backend" "$MAIN_BACKEND_PORT" || return 1
   echo "[INFO] 启动原项目 backend..."
   nohup bash -lc "cd \"$MAIN_BACKEND_DIR\" && BACKEND_PORT=\"$MAIN_BACKEND_PORT\" cargo run --bin chat_app_server_rs" >"$MAIN_BACKEND_LOG_FILE" 2>&1 &
   echo $! >"$MAIN_BACKEND_PID_FILE"
 }
 
 start_main_frontend() {
+  ensure_port_available "原项目 frontend" "$MAIN_FRONTEND_PORT" || return 1
   echo "[INFO] 启动原项目 frontend..."
   nohup bash -lc "cd \"$MAIN_FRONTEND_DIR\" && npm run dev -- --host 0.0.0.0 --port \"$MAIN_FRONTEND_PORT\"" >"$MAIN_FRONTEND_LOG_FILE" 2>&1 &
   echo $! >"$MAIN_FRONTEND_PID_FILE"
 }
 
 start_memory_backend() {
+  ensure_port_available "memory backend" "$MEMORY_BACKEND_PORT" || return 1
   echo "[INFO] 启动 memory backend..."
   nohup bash -lc "cd \"$MEMORY_BACKEND_DIR\" && if [[ -f .env ]]; then set -a; source .env; set +a; fi; cargo run --bin memory_server" >"$MEMORY_BACKEND_LOG_FILE" 2>&1 &
   echo $! >"$MEMORY_BACKEND_PID_FILE"
 }
 
 start_memory_frontend() {
+  ensure_port_available "memory frontend" "$MEMORY_FRONTEND_PORT" || return 1
   echo "[INFO] 启动 memory frontend..."
   nohup bash -lc "cd \"$MEMORY_FRONTEND_DIR\" && npm run dev -- --host \"$MEMORY_FRONTEND_HOST\" --port \"$MEMORY_FRONTEND_PORT\"" >"$MEMORY_FRONTEND_LOG_FILE" 2>&1 &
   echo $! >"$MEMORY_FRONTEND_PID_FILE"
@@ -154,7 +231,7 @@ check_alive() {
   if [[ -z "$pid" ]] || ! kill -0 "$pid" >/dev/null 2>&1; then
     echo "[ERROR] $name 启动失败，请检查日志: $log_file"
     tail -n 60 "$log_file" 2>/dev/null || true
-    exit 1
+    return 1
   fi
 }
 
@@ -193,13 +270,48 @@ do_stop() {
   stop_from_pid_file "memory backend" "$MEMORY_BACKEND_PID_FILE"
   stop_from_pid_file "memory frontend" "$MEMORY_FRONTEND_PID_FILE"
 
-  stop_from_port "原项目 backend" "$MAIN_BACKEND_PORT"
-  if [[ "$LEGACY_MAIN_BACKEND_PORT" != "$MAIN_BACKEND_PORT" ]]; then
-    stop_from_port "原项目 backend(legacy)" "$LEGACY_MAIN_BACKEND_PORT"
+  # One-time migration cleanup: old runtime dir before hash isolation.
+  if [[ "$LEGACY_RUNTIME_DIR" != "$RUNTIME_DIR" ]]; then
+    stop_from_pid_file "原项目 backend(legacy runtime)" "$LEGACY_MAIN_BACKEND_PID_FILE"
+    stop_from_pid_file "原项目 frontend(legacy runtime)" "$LEGACY_MAIN_FRONTEND_PID_FILE"
+    stop_from_pid_file "memory backend(legacy runtime)" "$LEGACY_MEMORY_BACKEND_PID_FILE"
+    stop_from_pid_file "memory frontend(legacy runtime)" "$LEGACY_MEMORY_FRONTEND_PID_FILE"
   fi
-  stop_from_port "原项目 frontend" "$MAIN_FRONTEND_PORT"
-  stop_from_port "memory backend" "$MEMORY_BACKEND_PORT"
-  stop_from_port "memory frontend" "$MEMORY_FRONTEND_PORT"
+
+  if [[ "$STOP_BY_PORT" == "1" ]]; then
+    stop_from_port "原项目 backend" "$MAIN_BACKEND_PORT"
+    if [[ "$LEGACY_MAIN_BACKEND_PORT" != "$MAIN_BACKEND_PORT" ]]; then
+      stop_from_port "原项目 backend(legacy)" "$LEGACY_MAIN_BACKEND_PORT"
+    fi
+    stop_from_port "原项目 frontend" "$MAIN_FRONTEND_PORT"
+    stop_from_port "memory backend" "$MEMORY_BACKEND_PORT"
+    stop_from_port "memory frontend" "$MEMORY_FRONTEND_PORT"
+  else
+    echo "[INFO] 跳过按端口全局停止 (STOP_BY_PORT=${STOP_BY_PORT})，仅按 PID 文件停止，避免误伤其他项目。"
+    stop_project_owned_port_processes "原项目 backend" "$MAIN_BACKEND_PORT"
+    if [[ "$LEGACY_MAIN_BACKEND_PORT" != "$MAIN_BACKEND_PORT" ]]; then
+      stop_project_owned_port_processes "原项目 backend(legacy)" "$LEGACY_MAIN_BACKEND_PORT"
+    fi
+    stop_project_owned_port_processes "原项目 frontend" "$MAIN_FRONTEND_PORT"
+    stop_project_owned_port_processes "memory backend" "$MEMORY_BACKEND_PORT"
+    stop_project_owned_port_processes "memory frontend" "$MEMORY_FRONTEND_PORT"
+  fi
+}
+
+run_start_sequence() {
+  start_main_backend &&
+    start_main_frontend &&
+    start_memory_backend &&
+    start_memory_frontend &&
+    sleep 2 &&
+    check_alive "原项目 backend" "$MAIN_BACKEND_PID_FILE" "$MAIN_BACKEND_LOG_FILE" &&
+    check_alive "原项目 frontend" "$MAIN_FRONTEND_PID_FILE" "$MAIN_FRONTEND_LOG_FILE" &&
+    check_alive "memory backend" "$MEMORY_BACKEND_PID_FILE" "$MEMORY_BACKEND_LOG_FILE" &&
+    check_alive "memory frontend" "$MEMORY_FRONTEND_PID_FILE" "$MEMORY_FRONTEND_LOG_FILE" &&
+    wait_http_ready "原项目 backend" "http://127.0.0.1:$MAIN_BACKEND_PORT/health" "$STARTUP_HEALTHCHECK_TIMEOUT_SEC" &&
+    wait_http_ready "原项目 frontend" "http://127.0.0.1:$MAIN_FRONTEND_PORT" "$STARTUP_HEALTHCHECK_TIMEOUT_SEC" &&
+    wait_http_ready "memory backend" "http://127.0.0.1:$MEMORY_BACKEND_PORT/health" "$STARTUP_HEALTHCHECK_TIMEOUT_SEC" &&
+    wait_http_ready "memory frontend" "http://127.0.0.1:$MEMORY_FRONTEND_PORT" "$STARTUP_HEALTHCHECK_TIMEOUT_SEC"
 }
 
 print_runtime_info() {
@@ -246,22 +358,13 @@ case "$CMD" in
   restart|start)
     STARTUP_HEALTHCHECK_TIMEOUT_SEC="${STARTUP_HEALTHCHECK_TIMEOUT_SEC:-45}"
     do_stop
-    start_main_backend
-    start_main_frontend
-    start_memory_backend
-    start_memory_frontend
-    sleep 2
-    check_alive "原项目 backend" "$MAIN_BACKEND_PID_FILE" "$MAIN_BACKEND_LOG_FILE"
-    check_alive "原项目 frontend" "$MAIN_FRONTEND_PID_FILE" "$MAIN_FRONTEND_LOG_FILE"
-    check_alive "memory backend" "$MEMORY_BACKEND_PID_FILE" "$MEMORY_BACKEND_LOG_FILE"
-    check_alive "memory frontend" "$MEMORY_FRONTEND_PID_FILE" "$MEMORY_FRONTEND_LOG_FILE"
-
-    wait_http_ready "原项目 backend" "http://127.0.0.1:$MAIN_BACKEND_PORT/health" "$STARTUP_HEALTHCHECK_TIMEOUT_SEC"
-    wait_http_ready "原项目 frontend" "http://127.0.0.1:$MAIN_FRONTEND_PORT" "$STARTUP_HEALTHCHECK_TIMEOUT_SEC"
-    wait_http_ready "memory backend" "http://127.0.0.1:$MEMORY_BACKEND_PORT/health" "$STARTUP_HEALTHCHECK_TIMEOUT_SEC"
-    wait_http_ready "memory frontend" "http://127.0.0.1:$MEMORY_FRONTEND_PORT" "$STARTUP_HEALTHCHECK_TIMEOUT_SEC"
-
-    print_runtime_info
+    if run_start_sequence; then
+      print_runtime_info
+    else
+      echo "[WARN] 启动失败，正在回滚已启动的服务..."
+      do_stop || true
+      exit 1
+    fi
     ;;
   stop)
     do_stop

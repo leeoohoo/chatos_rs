@@ -2,23 +2,21 @@ import { useCallback, useMemo } from 'react';
 import type React from 'react';
 
 import type {
-  TerminalDispatchResponse,
-  TerminalLogResponse,
-  TerminalResponse,
-} from '../../lib/api/client/types';
-import type {
   ChangeLogItem,
   FsEntry,
   FsReadResult,
   Project,
   ProjectChangeSummary,
-  ProjectRunTarget,
 } from '../../types';
 import type { ChangeKind } from './utils';
 import { ProjectPreviewPane } from './PreviewPane';
 import { ProjectTreePane } from './TreePane';
 import type { MoveConflictState } from './Overlays';
 import type { ExplorerContextMenuState } from './useProjectExplorerState';
+import type {
+  ProjectRunnerActiveTerminal,
+  ProjectRunnerMember,
+} from './useProjectExplorerRunState';
 
 interface UseProjectExplorerWorkspaceViewParams {
   project: Project;
@@ -66,14 +64,6 @@ interface UseProjectExplorerWorkspaceViewParams {
   handleConfirmCurrentChanges: () => Promise<void>;
   handleConfirmAllChanges: () => Promise<void>;
   handleMoveEntryByDrop: (sourcePath: string, targetDirPath: string) => Promise<void>;
-  handleDispatchTerminalCommand: (payload: { cwd: string; command: string }) => Promise<TerminalDispatchResponse>;
-  handleInterruptTerminal: (terminalId: string, payload?: { reason?: string }) => Promise<TerminalDispatchResponse>;
-  handleGetTerminal: (terminalId: string) => Promise<TerminalResponse>;
-  handleListTerminalLogs: (
-    terminalId: string,
-    params?: { limit?: number; offset?: number; before?: string },
-  ) => Promise<TerminalLogResponse[]>;
-  handleListTerminals: () => Promise<TerminalResponse[]>;
   canRunFile: (entry: FsEntry) => boolean;
   handleRunFile: (entry: FsEntry) => Promise<void>;
   handleDownloadSelected: (entry: FsEntry) => Promise<void>;
@@ -82,14 +72,30 @@ interface UseProjectExplorerWorkspaceViewParams {
   error: string | null;
   selectedFile: FsReadResult | null;
   selectedLog: ChangeLogItem | null;
-  runCwd: string;
-  runTargets: ProjectRunTarget[];
   runStatus: string;
   runCatalogLoading: boolean;
   runCatalogError: string | null;
-  selectedRunTargetId: string | null;
-  setSelectedRunTargetId: React.Dispatch<React.SetStateAction<string | null>>;
-  handleAnalyzeRunTargets: () => void;
+  projectMembers: ProjectRunnerMember[];
+  projectMembersLoading: boolean;
+  projectMembersError: string | null;
+  runnerScriptExists: boolean;
+  runnerScriptChecking: boolean;
+  runnerScriptPath: string;
+  runnerStartCommand: string;
+  runnerStopCommand: string;
+  runnerRestartCommand: string;
+  starting: boolean;
+  stopping: boolean;
+  restarting: boolean;
+  runnerMessage: string | null;
+  runnerError: string | null;
+  activeRun: ProjectRunnerActiveTerminal | null;
+  activeTerminalBusy: boolean;
+  handleRunnerStart: () => Promise<void>;
+  handleRunnerStop: () => Promise<void>;
+  handleRunnerRestart: () => Promise<void>;
+  refreshRunnerState: () => Promise<void>;
+  handleGenerateRunnerScriptForContact: (member: ProjectRunnerMember) => Promise<void>;
 }
 
 export const useProjectExplorerWorkspaceView = ({
@@ -138,11 +144,6 @@ export const useProjectExplorerWorkspaceView = ({
   handleConfirmCurrentChanges,
   handleConfirmAllChanges,
   handleMoveEntryByDrop,
-  handleDispatchTerminalCommand,
-  handleInterruptTerminal,
-  handleGetTerminal,
-  handleListTerminalLogs,
-  handleListTerminals,
   canRunFile,
   handleRunFile,
   handleDownloadSelected,
@@ -151,14 +152,30 @@ export const useProjectExplorerWorkspaceView = ({
   error,
   selectedFile,
   selectedLog,
-  runCwd,
-  runTargets,
   runStatus,
   runCatalogLoading,
   runCatalogError,
-  selectedRunTargetId,
-  setSelectedRunTargetId,
-  handleAnalyzeRunTargets,
+  projectMembers,
+  projectMembersLoading,
+  projectMembersError,
+  runnerScriptExists,
+  runnerScriptChecking,
+  runnerScriptPath,
+  runnerStartCommand,
+  runnerStopCommand,
+  runnerRestartCommand,
+  starting,
+  stopping,
+  restarting,
+  runnerMessage,
+  runnerError,
+  activeRun,
+  activeTerminalBusy,
+  handleRunnerStart,
+  handleRunnerStop,
+  handleRunnerRestart,
+  refreshRunnerState,
+  handleGenerateRunnerScriptForContact,
 }: UseProjectExplorerWorkspaceViewParams) => {
   const openEntryContextMenu = useCallback((event: React.MouseEvent, entry: FsEntry) => {
     event.preventDefault();
@@ -338,49 +355,77 @@ export const useProjectExplorerWorkspaceView = ({
   ]);
 
   const previewPaneProps: React.ComponentProps<typeof ProjectPreviewPane> = useMemo(() => ({
-    projectId: project.id,
     selectedFile,
     selectedPath,
     selectedEntry,
     loadingFile,
     error,
     selectedLog,
-    runCwd,
     projectRootPath: project.rootPath,
-    onRunCommand: handleDispatchTerminalCommand,
-    onInterruptTerminal: handleInterruptTerminal,
-    onGetTerminal: handleGetTerminal,
-    onListTerminalLogs: handleListTerminalLogs,
-    onListTerminals: handleListTerminals,
-    runTargets,
     runStatus,
     runCatalogLoading,
     runCatalogError,
-    selectedRunTargetId,
-    onSelectRunTarget: setSelectedRunTargetId,
-    onAnalyzeRunTargets: handleAnalyzeRunTargets,
+    projectMembers,
+    projectMembersLoading,
+    projectMembersError,
+    runnerScriptExists,
+    runnerScriptChecking,
+    runnerScriptPath,
+    runnerStartCommand,
+    runnerStopCommand,
+    runnerRestartCommand,
+    starting,
+    stopping,
+    restarting,
+    runnerMessage,
+    runnerError,
+    activeRun,
+    activeTerminalBusy,
+    onRunnerStart: () => {
+      void handleRunnerStart();
+    },
+    onRunnerStop: () => {
+      void handleRunnerStop();
+    },
+    onRunnerRestart: () => {
+      void handleRunnerRestart();
+    },
+    onRefreshRunnerState: () => {
+      void refreshRunnerState();
+    },
+    onGenerateRunnerScriptForContact: handleGenerateRunnerScriptForContact,
   }), [
+    activeRun,
+    activeTerminalBusy,
     error,
-    handleAnalyzeRunTargets,
-    handleDispatchTerminalCommand,
-    handleGetTerminal,
-    handleInterruptTerminal,
-    handleListTerminalLogs,
-    handleListTerminals,
+    handleGenerateRunnerScriptForContact,
+    handleRunnerRestart,
+    handleRunnerStart,
+    handleRunnerStop,
     loadingFile,
-    project.id,
+    projectMembers,
+    projectMembersError,
+    projectMembersLoading,
     project.rootPath,
+    refreshRunnerState,
     runCatalogError,
     runCatalogLoading,
-    runCwd,
     runStatus,
-    runTargets,
+    runnerError,
+    runnerMessage,
+    runnerRestartCommand,
+    runnerScriptChecking,
+    runnerScriptExists,
+    runnerScriptPath,
+    runnerStartCommand,
+    runnerStopCommand,
+    restarting,
     selectedEntry,
     selectedFile,
     selectedLog,
     selectedPath,
-    selectedRunTargetId,
-    setSelectedRunTargetId,
+    starting,
+    stopping,
   ]);
 
   return {
