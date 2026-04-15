@@ -217,7 +217,7 @@ export const fetchSessionMessages = async (
   const limit = options.limit ?? 50;
   const offset = options.offset ?? 0;
 
-  const rawMessages = await client.getSessionMessages(sessionId, {
+  const rawMessages = await client.getConversationMessages(sessionId, {
     limit,
     offset,
     compact: true,
@@ -246,12 +246,12 @@ export const fetchTurnProcessMessages = async (
 
   let rawMessages: any[] = [];
   if (turnId) {
-    rawMessages = await client.getSessionTurnProcessMessagesByTurn(sessionId, turnId);
+    rawMessages = await client.getConversationTurnProcessMessagesByTurn(sessionId, turnId);
     if (rawMessages.length === 0 && userMessageId) {
-      rawMessages = await client.getSessionTurnProcessMessages(sessionId, userMessageId);
+      rawMessages = await client.getConversationTurnProcessMessages(sessionId, userMessageId);
     }
   } else {
-    rawMessages = await client.getSessionTurnProcessMessages(sessionId, userMessageId);
+    rawMessages = await client.getConversationTurnProcessMessages(sessionId, userMessageId);
   }
   const normalized = normalizeRawMessages(rawMessages, sessionId);
 

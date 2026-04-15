@@ -25,6 +25,41 @@ const flattenObject = (obj: any, prefix: string = ''): Record<string, any> => {
   return flattened;
 };
 
+const asRecord = (value: unknown): Record<string, unknown> | null => (
+  value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null
+);
+
+const asString = (value: unknown): string => (
+  typeof value === 'string' ? value : ''
+);
+
+const asBoolean = (value: unknown): boolean | null => (
+  typeof value === 'boolean' ? value : null
+);
+
+const asNumber = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === 'string' && value.trim().length > 0) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return null;
+};
+
+const asArray = (value: unknown): unknown[] => (
+  Array.isArray(value) ? value : []
+);
+
+const triStateLabel = (value: boolean | null): string => (
+  value === null ? 'unknown' : (value ? 'yes' : 'no')
+);
+
 // ===== 树形表格支持：根据 JSON 自动生成层级行 =====
 const inferType = (val: any): string => {
   if (val === null) return 'null';
@@ -180,6 +215,30 @@ interface ToolCallRendererProps {
   className?: string;
 }
 
+interface WebResultSummary {
+  backend: string;
+  fallbackUsed: boolean | null;
+  providerAttempts: number;
+}
+
+interface ExtractSummary {
+  pageCount: number | null;
+  truncatedPageCount: number | null;
+  totalOriginalChars: number | null;
+  totalReturnedChars: number | null;
+  totalOmittedChars: number | null;
+}
+
+interface ProcessResultSummary {
+  terminalId: string;
+  processId: string;
+  status: string;
+  busy: boolean | null;
+  completed: boolean | null;
+  timedOut: boolean | null;
+  processCount: number | null;
+}
+
 export const ToolCallRenderer: React.FC<ToolCallRendererProps> = ({
   toolCall,
   toolResultById,
@@ -191,8 +250,8 @@ export const ToolCallRenderer: React.FC<ToolCallRendererProps> = ({
     return toolResultById?.get(String(toolCall.id));
   }, [toolCall.id, toolResultById]);
 
-  // 优先使用toolCall.result，如果没有则使用tool消息的内容
-  const result = toolCall.result || toolResultMessage?.content;
+  // 优先使用流内结果，其次是最终结果，再次是 tool message 回填
+  const result = toolCall.result ?? (toolCall as any)?.finalResult ?? toolResultMessage?.content;
   const streamLogText = useMemo(() => {
     if (typeof (toolCall as any)?.streamLog === 'string') return (toolCall as any).streamLog;
     return '';
@@ -311,6 +370,79 @@ export const ToolCallRenderer: React.FC<ToolCallRendererProps> = ({
 
   const hasStructuredResult = !!(parsedResult && typeof parsedResult === 'object');
 
+  const webSummary = useMemo<WebResultSummary | null>(() => {
+    if (!showDetails) return null;
+    const record = asRecord(parsedResult);
+    if (!record) return null;
+    const backend = asString(record.backend || record.provider).trim();
+    const fallbackUsed = asBoolean(record.fallback_used ?? record.fallbackUsed);
+    const providerAttempts = asArray(record.provider_attempts ?? record.providerAttempts).length;
+    if (!backend && fallbackUsed === null && providerAttempts === 0) {
+      return null;
+    }
+    return {
+      backend: backend || 'unknown',
+      fallbackUsed,
+      providerAttempts,
+    };
+  }, [parsedResult, showDetails]);
+
+  const extractSummary = useMemo<ExtractSummary | null>(() => {
+    if (!showDetails) return null;
+    const record = asRecord(parsedResult);
+    if (!record) return null;
+    const extract = asRecord(record.extract_summary ?? record.extractSummary);
+    if (!extract) return null;
+    return {
+      pageCount: asNumber(extract.page_count ?? extract.pageCount),
+      truncatedPageCount: asNumber(extract.truncated_page_count ?? extract.truncatedPageCount),
+      totalOriginalChars: asNumber(extract.total_original_chars ?? extract.totalOriginalChars),
+      totalReturnedChars: asNumber(extract.total_returned_chars ?? extract.totalReturnedChars),
+      totalOmittedChars: asNumber(extract.total_omitted_chars ?? extract.totalOmittedChars),
+    };
+  }, [parsedResult, showDetails]);
+
+  const processSummary = useMemo<ProcessResultSummary | null>(() => {
+    if (!showDetails) return null;
+    const record = asRecord(parsedResult);
+    if (!record) return null;
+
+    const terminalId = (
+      asString(record.terminal_id)
+      || asString(record.process_id)
+    ).trim();
+    const processId = (
+      asString(record.process_id)
+      || asString(record.terminal_id)
+    ).trim();
+    const status = (
+      asString(record.wait_status)
+      || asString(record.operation_status)
+      || asString(record.process_status)
+      || asString(record.status)
+    ).trim();
+    const busy = asBoolean(record.busy);
+    const completed = asBoolean(record.completed);
+    const timedOut = asBoolean(record.timed_out ?? record.timedOut);
+    let processCount = asNumber(record.process_count ?? record.processCount);
+    if (processCount === null) {
+      processCount = asArray(record.processes).length || null;
+    }
+
+    if (!terminalId && !processId && !status && busy === null && completed === null && timedOut === null && processCount === null) {
+      return null;
+    }
+    return {
+      terminalId,
+      processId,
+      status: status || 'unknown',
+      busy,
+      completed,
+      timedOut,
+      processCount,
+    };
+  }, [parsedResult, showDetails]);
+
   // 移除未使用的表格格式化方法
 
   const statusText = hasError
@@ -369,6 +501,83 @@ export const ToolCallRenderer: React.FC<ToolCallRendererProps> = ({
           {hasResult && (
             <div>
               <div className="details-title">结果:</div>
+              {(webSummary || extractSummary || processSummary) && (
+                <div className="tool-summary-stack">
+                  {webSummary && (
+                    <div className="tool-summary-card">
+                      <div className="tool-summary-title">Web backend</div>
+                      <div className="tool-summary-row">
+                        <span className="tool-summary-key">provider</span>
+                        <span className="tool-summary-value">{webSummary.backend}</span>
+                      </div>
+                      <div className="tool-summary-row">
+                        <span className="tool-summary-key">fallback</span>
+                        <span className="tool-summary-value">
+                          {webSummary.fallbackUsed === null ? 'unknown' : (webSummary.fallbackUsed ? 'yes' : 'no')}
+                        </span>
+                      </div>
+                      <div className="tool-summary-row">
+                        <span className="tool-summary-key">attempts</span>
+                        <span className="tool-summary-value">{webSummary.providerAttempts}</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {extractSummary && (
+                    <div className="tool-summary-card">
+                      <div className="tool-summary-title">Extract summary</div>
+                      <div className="tool-summary-row">
+                        <span className="tool-summary-key">pages</span>
+                        <span className="tool-summary-value">{extractSummary.pageCount ?? 'n/a'}</span>
+                      </div>
+                      <div className="tool-summary-row">
+                        <span className="tool-summary-key">truncated pages</span>
+                        <span className="tool-summary-value">{extractSummary.truncatedPageCount ?? 'n/a'}</span>
+                      </div>
+                      <div className="tool-summary-row">
+                        <span className="tool-summary-key">omitted chars</span>
+                        <span className="tool-summary-value">{extractSummary.totalOmittedChars ?? 'n/a'}</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {processSummary && (
+                    <div className="tool-summary-card">
+                      <div className="tool-summary-title">Process summary</div>
+                      <div className="tool-summary-row">
+                        <span className="tool-summary-key">status</span>
+                        <span className="tool-summary-value">{processSummary.status}</span>
+                      </div>
+                      <div className="tool-summary-row">
+                        <span className="tool-summary-key">terminal</span>
+                        <span className="tool-summary-value">{processSummary.terminalId || 'n/a'}</span>
+                      </div>
+                      <div className="tool-summary-row">
+                        <span className="tool-summary-key">process id</span>
+                        <span className="tool-summary-value">{processSummary.processId || 'n/a'}</span>
+                      </div>
+                      <div className="tool-summary-row">
+                        <span className="tool-summary-key">busy</span>
+                        <span className="tool-summary-value">{triStateLabel(processSummary.busy)}</span>
+                      </div>
+                      <div className="tool-summary-row">
+                        <span className="tool-summary-key">completed</span>
+                        <span className="tool-summary-value">{triStateLabel(processSummary.completed)}</span>
+                      </div>
+                      <div className="tool-summary-row">
+                        <span className="tool-summary-key">timed out</span>
+                        <span className="tool-summary-value">{triStateLabel(processSummary.timedOut)}</span>
+                      </div>
+                      {processSummary.processCount !== null && (
+                        <div className="tool-summary-row">
+                          <span className="tool-summary-key">processes</span>
+                          <span className="tool-summary-value">{processSummary.processCount}</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
               {hasStructuredResult ? (
                 <TreeTable data={parsedResult} />
               ) : (

@@ -129,7 +129,7 @@ const UserSettingsPanel: React.FC<Props> = ({ onClose }) => {
       try {
         const [settingsResp, summaryResp] = await Promise.allSettled([
           client.getUserSettings(userId),
-          client.getSessionSummaryJobConfig(userId),
+          client.getConversationSummaryJobConfig(userId),
         ]);
         if (!mounted) return;
 
@@ -226,7 +226,7 @@ const UserSettingsPanel: React.FC<Props> = ({ onClose }) => {
 
       const [savedSettings, savedSummary] = await Promise.all([
         client.updateUserSettings(userId, userSettingsPayload),
-        client.updateSessionSummaryJobConfig({
+        client.updateConversationSummaryJobConfig({
           user_id: userId,
           enabled: summaryForm.enabled,
           summary_model_config_id: summaryForm.summary_model_config_id || null,

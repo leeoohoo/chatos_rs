@@ -24,10 +24,10 @@ const DEFAULT_CONTACT_VISION_MAX_OUTPUT_TOKENS: i64 = 700;
 
 pub(super) async fn browser_navigate_with_context(
     ctx: BoundContext,
-    session_id: Option<&str>,
+    conversation_id: Option<&str>,
     url: String,
 ) -> Result<Value, String> {
-    let session = super::context::session_key(session_id);
+    let session = super::context::conversation_key(conversation_id);
     let result = run_browser_command(
         &ctx,
         session.as_str(),
@@ -85,10 +85,10 @@ pub(super) async fn browser_navigate_with_context(
 
 pub(super) async fn browser_snapshot_with_context(
     ctx: BoundContext,
-    session_id: Option<&str>,
+    conversation_id: Option<&str>,
     full: bool,
 ) -> Result<Value, String> {
-    let session = super::context::session_key(session_id);
+    let session = super::context::conversation_key(conversation_id);
     let args = if full { vec![] } else { vec!["-c".to_string()] };
     let result = run_browser_command(
         &ctx,
@@ -115,13 +115,13 @@ pub(super) async fn browser_snapshot_with_context(
 
 pub(super) async fn browser_click_with_context(
     ctx: BoundContext,
-    session_id: Option<&str>,
+    conversation_id: Option<&str>,
     mut reference: String,
 ) -> Result<Value, String> {
     if !reference.starts_with('@') {
         reference = format!("@{}", reference.trim());
     }
-    let session = super::context::session_key(session_id);
+    let session = super::context::conversation_key(conversation_id);
     let result = run_browser_command(
         &ctx,
         session.as_str(),
@@ -145,14 +145,14 @@ pub(super) async fn browser_click_with_context(
 
 pub(super) async fn browser_type_with_context(
     ctx: BoundContext,
-    session_id: Option<&str>,
+    conversation_id: Option<&str>,
     mut reference: String,
     text: String,
 ) -> Result<Value, String> {
     if !reference.starts_with('@') {
         reference = format!("@{}", reference.trim());
     }
-    let session = super::context::session_key(session_id);
+    let session = super::context::conversation_key(conversation_id);
     let result = run_browser_command(
         &ctx,
         session.as_str(),
@@ -177,7 +177,7 @@ pub(super) async fn browser_type_with_context(
 
 pub(super) async fn browser_scroll_with_context(
     ctx: BoundContext,
-    session_id: Option<&str>,
+    conversation_id: Option<&str>,
     direction: String,
 ) -> Result<Value, String> {
     if direction != "up" && direction != "down" {
@@ -186,7 +186,7 @@ pub(super) async fn browser_scroll_with_context(
             "error": format!("Invalid direction '{}'. Use 'up' or 'down'.", direction)
         }));
     }
-    let session = super::context::session_key(session_id);
+    let session = super::context::conversation_key(conversation_id);
     let result = run_browser_command(
         &ctx,
         session.as_str(),
@@ -210,9 +210,9 @@ pub(super) async fn browser_scroll_with_context(
 
 pub(super) async fn browser_back_with_context(
     ctx: BoundContext,
-    session_id: Option<&str>,
+    conversation_id: Option<&str>,
 ) -> Result<Value, String> {
-    let session = super::context::session_key(session_id);
+    let session = super::context::conversation_key(conversation_id);
     let result = run_browser_command(
         &ctx,
         session.as_str(),
@@ -239,10 +239,10 @@ pub(super) async fn browser_back_with_context(
 
 pub(super) async fn browser_press_with_context(
     ctx: BoundContext,
-    session_id: Option<&str>,
+    conversation_id: Option<&str>,
     key: String,
 ) -> Result<Value, String> {
-    let session = super::context::session_key(session_id);
+    let session = super::context::conversation_key(conversation_id);
     let result = run_browser_command(
         &ctx,
         session.as_str(),
@@ -265,11 +265,11 @@ pub(super) async fn browser_press_with_context(
 
 pub(super) async fn browser_console_with_context(
     ctx: BoundContext,
-    session_id: Option<&str>,
+    conversation_id: Option<&str>,
     clear: bool,
     expression: Option<String>,
 ) -> Result<Value, String> {
-    let session = super::context::session_key(session_id);
+    let session = super::context::conversation_key(conversation_id);
     if let Some(expression) = expression {
         let result = run_browser_command(
             &ctx,
@@ -368,9 +368,9 @@ pub(super) async fn browser_console_with_context(
 
 pub(super) async fn browser_get_images_with_context(
     ctx: BoundContext,
-    session_id: Option<&str>,
+    conversation_id: Option<&str>,
 ) -> Result<Value, String> {
-    let session = super::context::session_key(session_id);
+    let session = super::context::conversation_key(conversation_id);
     let js = r#"JSON.stringify(
         [...document.images].map(img => ({
             src: img.src,
@@ -410,11 +410,11 @@ pub(super) async fn browser_get_images_with_context(
 
 pub(super) async fn browser_vision_with_context(
     ctx: BoundContext,
-    session_id: Option<&str>,
+    conversation_id: Option<&str>,
     question: String,
     annotate: bool,
 ) -> Result<Value, String> {
-    let session = super::context::session_key(session_id);
+    let session = super::context::conversation_key(conversation_id);
     let screenshot_dir = ctx
         .workspace_dir
         .join(".chatos")
@@ -454,7 +454,7 @@ pub(super) async fn browser_vision_with_context(
     let (analysis, vision) = match analyze_screenshot_with_current_contact(
         question.as_str(),
         actual_path.as_str(),
-        session_id,
+        conversation_id,
     )
     .await
     {
@@ -469,8 +469,7 @@ pub(super) async fn browser_vision_with_context(
             }),
         ),
         Err(err) => (
-            "Screenshot captured, but contact agent analysis failed. See vision.error."
-                .to_string(),
+            "Screenshot captured, but contact agent analysis failed. See vision.error.".to_string(),
             json!({
                 "enabled": false,
                 "mode": "contact_agent",
@@ -500,14 +499,14 @@ struct ContactVisionOutput {
 async fn analyze_screenshot_with_current_contact(
     question: &str,
     screenshot_path: &str,
-    session_id: Option<&str>,
+    conversation_id: Option<&str>,
 ) -> Result<ContactVisionOutput, String> {
-    let session_id = normalize_non_empty(session_id).ok_or_else(|| {
-        "browser_vision requires an active session_id to resolve current contact".to_string()
+    let conversation_id = normalize_non_empty(conversation_id).ok_or_else(|| {
+        "browser_vision requires an active conversation_id to resolve current contact".to_string()
     })?;
-    let session = memory_server_client::get_session_by_id(session_id.as_str())
+    let session = memory_server_client::get_session_by_id(conversation_id.as_str())
         .await?
-        .ok_or_else(|| format!("session not found: {}", session_id))?;
+        .ok_or_else(|| format!("conversation not found: {}", conversation_id))?;
     let metadata_runtime = ChatRuntimeMetadata::from_metadata(session.metadata.as_ref());
     let contact_agent_id = normalize_non_empty(session.selected_agent_id.as_deref())
         .or_else(|| metadata_runtime.contact_agent_id.clone())
@@ -634,12 +633,12 @@ fn normalize_non_empty(value: Option<&str>) -> Option<String> {
 
 async fn run_browser_command(
     ctx: &BoundContext,
-    session_key: &str,
+    conversation_key: &str,
     command: &str,
     args: Vec<String>,
     timeout_seconds: u64,
 ) -> Result<Value, String> {
-    let session = get_or_create_session(ctx, session_key);
+    let session = get_or_create_session(ctx, conversation_key);
     let (program, prefix) = resolve_agent_browser_cmd()?;
     let mut cmd = Command::new(program);
     cmd.current_dir(&ctx.workspace_dir);
@@ -747,9 +746,9 @@ async fn run_browser_command(
     }))
 }
 
-fn get_or_create_session(ctx: &BoundContext, session_key: &str) -> BrowserSession {
+fn get_or_create_session(ctx: &BoundContext, conversation_key: &str) -> BrowserSession {
     let mut sessions = ctx.sessions.lock();
-    if let Some(existing) = sessions.get(session_key) {
+    if let Some(existing) = sessions.get(conversation_key) {
         return existing.clone();
     }
 
@@ -765,7 +764,7 @@ fn get_or_create_session(ctx: &BoundContext, session_key: &str) -> BrowserSessio
         },
         cdp_url: cdp_override,
     };
-    sessions.insert(session_key.to_string(), session.clone());
+    sessions.insert(conversation_key.to_string(), session.clone());
     session
 }
 
@@ -787,6 +786,10 @@ fn resolve_agent_browser_cmd() -> Result<(String, Vec<String>), String> {
         "agent-browser CLI not found. Install with: npm install -g agent-browser && agent-browser install"
             .to_string(),
     )
+}
+
+pub(super) fn browser_backend_available() -> Result<(), String> {
+    resolve_agent_browser_cmd().map(|_| ())
 }
 
 fn command_exists(program: &str) -> bool {

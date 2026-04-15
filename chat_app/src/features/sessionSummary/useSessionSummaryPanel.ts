@@ -15,12 +15,12 @@ export interface SessionSummaryItem {
 }
 
 interface SessionSummaryApiClient {
-  getSessionSummaries: (
+  getConversationSummaries: (
     sessionId: string,
     options?: { limit?: number; offset?: number },
   ) => Promise<{ items?: any[] }>;
-  deleteSessionSummary: (sessionId: string, summaryId: string) => Promise<any>;
-  clearSessionSummaries: (sessionId: string) => Promise<any>;
+  deleteConversationSummary: (sessionId: string, summaryId: string) => Promise<any>;
+  clearConversationSummaries: (sessionId: string) => Promise<any>;
 }
 
 interface UseSessionSummaryPanelResult {
@@ -107,7 +107,7 @@ export const useSessionSummaryPanel = (
     }
     setSummaryError(null);
     try {
-      const result = await apiClient.getSessionSummaries(sessionId, { limit: 200, offset: 0 });
+      const result = await apiClient.getConversationSummaries(sessionId, { limit: 200, offset: 0 });
       const normalized = (Array.isArray(result?.items) ? result.items : [])
         .map((item: any) => normalizeSessionSummary(item))
         .filter((item: SessionSummaryItem | null): item is SessionSummaryItem => Boolean(item))
@@ -144,7 +144,7 @@ export const useSessionSummaryPanel = (
     setDeletingSummaryId(summaryId);
     setSummaryError(null);
     try {
-      await apiClient.deleteSessionSummary(sessionId, summaryId);
+      await apiClient.deleteConversationSummary(sessionId, summaryId);
       await loadSessionSummaries(sessionId, { silent: true });
     } catch (error) {
       setSummaryError(error instanceof Error ? error.message : '删除总结失败');
@@ -169,7 +169,7 @@ export const useSessionSummaryPanel = (
     setClearingSummaries(true);
     setSummaryError(null);
     try {
-      await apiClient.clearSessionSummaries(sessionId);
+      await apiClient.clearConversationSummaries(sessionId);
       await loadSessionSummaries(sessionId, { silent: true });
     } catch (error) {
       setSummaryError(error instanceof Error ? error.message : '清空总结失败');

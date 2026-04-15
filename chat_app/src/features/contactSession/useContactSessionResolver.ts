@@ -37,7 +37,7 @@ interface SessionResolverApiClient {
     projectId?: string,
     paging?: { limit?: number; offset?: number },
   ) => Promise<unknown[]>;
-  getSessionMessages: (
+  getConversationMessages: (
     sessionId: string,
     params?: { limit?: number; offset?: number; compact?: boolean },
   ) => Promise<unknown[]>;
@@ -193,7 +193,7 @@ export const useContactSessionResolver = ({
         continue;
       }
       try {
-        const previewMessages = await apiClient.getSessionMessages(sessionId, {
+        const previewMessages = await apiClient.getConversationMessages(sessionId, {
           limit: 1,
           offset: 0,
           compact: false,

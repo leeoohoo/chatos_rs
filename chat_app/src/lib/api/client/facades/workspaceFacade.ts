@@ -59,15 +59,15 @@ export interface WorkspaceFacade {
   ): Promise<ContactProjectMemoryResponse[]>;
   getContactProjects(contactId: string, paging?: PagingOptions): Promise<ContactProjectLinkResponse[]>;
   getContactAgentRecalls(contactId: string, paging?: PagingOptions): Promise<ContactAgentRecallResponse[]>;
-  getSessionMessages(
-    sessionId: string,
+  getConversationMessages(
+    conversationId: string,
     params?: { limit?: number; offset?: number; compact?: boolean; strategy?: string },
   ): Promise<SessionMessageResponse[]>;
-  getSessionTurnProcessMessages(sessionId: string, userMessageId: string): Promise<SessionMessageResponse[]>;
-  getSessionTurnProcessMessagesByTurn(sessionId: string, turnId: string): Promise<SessionMessageResponse[]>;
-  getSessionLatestTurnRuntimeContext(sessionId: string): Promise<TurnRuntimeSnapshotLookupResponse>;
-  getSessionTurnRuntimeContextByTurn(
-    sessionId: string,
+  getConversationTurnProcessMessages(conversationId: string, userMessageId: string): Promise<SessionMessageResponse[]>;
+  getConversationTurnProcessMessagesByTurn(conversationId: string, turnId: string): Promise<SessionMessageResponse[]>;
+  getConversationLatestTurnRuntimeContext(conversationId: string): Promise<TurnRuntimeSnapshotLookupResponse>;
+  getConversationTurnRuntimeContextByTurn(
+    conversationId: string,
     turnId: string,
   ): Promise<TurnRuntimeSnapshotLookupResponse>;
   listProjects(userId?: string): Promise<ProjectResponse[]>;
@@ -190,20 +190,20 @@ export const workspaceFacade: WorkspaceFacade & ThisType<ApiClient> = {
   async getContactAgentRecalls(contactId, paging) {
     return workspaceApi.getContactAgentRecalls(this.getRequestFn(), contactId, paging);
   },
-  async getSessionMessages(sessionId, params) {
-    return workspaceApi.getSessionMessages(this.getRequestFn(), sessionId, params);
+  async getConversationMessages(conversationId, params) {
+    return workspaceApi.getConversationMessages(this.getRequestFn(), conversationId, params);
   },
-  async getSessionTurnProcessMessages(sessionId, userMessageId) {
-    return workspaceApi.getSessionTurnProcessMessages(this.getRequestFn(), sessionId, userMessageId);
+  async getConversationTurnProcessMessages(conversationId, userMessageId) {
+    return workspaceApi.getConversationTurnProcessMessages(this.getRequestFn(), conversationId, userMessageId);
   },
-  async getSessionTurnProcessMessagesByTurn(sessionId, turnId) {
-    return workspaceApi.getSessionTurnProcessMessagesByTurn(this.getRequestFn(), sessionId, turnId);
+  async getConversationTurnProcessMessagesByTurn(conversationId, turnId) {
+    return workspaceApi.getConversationTurnProcessMessagesByTurn(this.getRequestFn(), conversationId, turnId);
   },
-  async getSessionLatestTurnRuntimeContext(sessionId) {
-    return workspaceApi.getSessionLatestTurnRuntimeContext(this.getRequestFn(), sessionId);
+  async getConversationLatestTurnRuntimeContext(conversationId) {
+    return workspaceApi.getConversationLatestTurnRuntimeContext(this.getRequestFn(), conversationId);
   },
-  async getSessionTurnRuntimeContextByTurn(sessionId, turnId) {
-    return workspaceApi.getSessionTurnRuntimeContextByTurn(this.getRequestFn(), sessionId, turnId);
+  async getConversationTurnRuntimeContextByTurn(conversationId, turnId) {
+    return workspaceApi.getConversationTurnRuntimeContextByTurn(this.getRequestFn(), conversationId, turnId);
   },
   async listProjects(userId) {
     return workspaceApi.listProjects(this.getRequestFn(), userId);

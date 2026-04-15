@@ -5,6 +5,7 @@ use axum::{
 };
 use serde_json::Value;
 
+use crate::api::conversation_semantics::rewrite_session_keys_to_conversation;
 use crate::core::auth::AuthUser;
 use crate::core::messages::{
     build_message, create_message_and_maybe_rename, MessageOut, NewMessageFields,
@@ -21,10 +22,10 @@ use super::support::list_all_session_messages;
 
 pub(super) async fn get_session_messages(
     auth: AuthUser,
-    Path(session_id): Path<String>,
+    Path(conversation_id): Path<String>,
     Query(query): Query<PageQuery>,
 ) -> (StatusCode, Json<Value>) {
-    if let Err(err) = ensure_owned_session(&session_id, &auth).await {
+    if let Err(err) = ensure_owned_session(&conversation_id, &auth).await {
         return map_session_access_error(err);
     }
 
@@ -42,7 +43,7 @@ pub(super) async fn get_session_messages(
         if compact_recent_strategy {
             let window = limit.unwrap_or(400).max(1).saturating_mul(8).min(5000);
             match crate::services::memory_server_client::list_messages(
-                &session_id,
+                &conversation_id,
                 Some(window),
                 0,
                 false,
@@ -53,26 +54,34 @@ pub(super) async fn get_session_messages(
                     messages.reverse();
                     Ok(compact_messages_for_display(messages, limit, offset))
                 }
-                Err(_) => {
-                    crate::services::memory_server_client::list_messages(&session_id, None, 0, true)
-                        .await
-                        .map(|messages| compact_messages_for_display(messages, limit, offset))
-                }
+                Err(_) => crate::services::memory_server_client::list_messages(
+                    &conversation_id,
+                    None,
+                    0,
+                    true,
+                )
+                .await
+                .map(|messages| compact_messages_for_display(messages, limit, offset)),
             }
         } else {
-            crate::services::memory_server_client::list_messages(&session_id, None, 0, true)
+            crate::services::memory_server_client::list_messages(&conversation_id, None, 0, true)
                 .await
                 .map(|messages| compact_messages_for_display(messages, limit, offset))
         }
     } else if let Some(v) = limit {
-        crate::services::memory_server_client::list_messages(&session_id, Some(v), offset, false)
-            .await
-            .map(|mut messages| {
-                messages.reverse();
-                messages
-            })
+        crate::services::memory_server_client::list_messages(
+            &conversation_id,
+            Some(v),
+            offset,
+            false,
+        )
+        .await
+        .map(|mut messages| {
+            messages.reverse();
+            messages
+        })
     } else {
-        crate::services::memory_server_client::list_messages(&session_id, None, 0, true).await
+        crate::services::memory_server_client::list_messages(&conversation_id, None, 0, true).await
     };
 
     match result {
@@ -87,19 +96,21 @@ pub(super) async fn get_session_messages(
         }
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": "Failed to get session messages", "detail": err})),
+            Json(
+                serde_json::json!({"error": "Failed to get conversation messages", "detail": err}),
+            ),
         ),
     }
 }
 
 pub(super) async fn get_session_turn_process_messages(
     auth: AuthUser,
-    Path((session_id, user_message_id)): Path<(String, String)>,
+    Path((conversation_id, user_message_id)): Path<(String, String)>,
 ) -> (StatusCode, Json<Value>) {
-    if let Err(err) = ensure_owned_session(&session_id, &auth).await {
+    if let Err(err) = ensure_owned_session(&conversation_id, &auth).await {
         return map_session_access_error(err);
     }
-    let result = list_all_session_messages(&session_id).await;
+    let result = list_all_session_messages(&conversation_id).await;
 
     match result {
         Ok(messages) => {
@@ -132,12 +143,12 @@ pub(super) async fn get_session_turn_process_messages(
 
 pub(super) async fn get_session_turn_process_messages_by_turn(
     auth: AuthUser,
-    Path((session_id, turn_id)): Path<(String, String)>,
+    Path((conversation_id, turn_id)): Path<(String, String)>,
 ) -> (StatusCode, Json<Value>) {
-    if let Err(err) = ensure_owned_session(&session_id, &auth).await {
+    if let Err(err) = ensure_owned_session(&conversation_id, &auth).await {
         return map_session_access_error(err);
     }
-    let result = list_all_session_messages(&session_id).await;
+    let result = list_all_session_messages(&conversation_id).await;
 
     match result {
         Ok(messages) => {
@@ -165,17 +176,20 @@ pub(super) async fn get_session_turn_process_messages_by_turn(
 
 pub(super) async fn get_session_turn_runtime_context_latest(
     auth: AuthUser,
-    Path(session_id): Path<String>,
+    Path(conversation_id): Path<String>,
 ) -> (StatusCode, Json<Value>) {
-    if let Err(err) = ensure_owned_session(&session_id, &auth).await {
+    if let Err(err) = ensure_owned_session(&conversation_id, &auth).await {
         return map_session_access_error(err);
     }
 
-    match crate::services::memory_server_client::get_latest_turn_runtime_snapshot(&session_id).await
+    match crate::services::memory_server_client::get_latest_turn_runtime_snapshot(&conversation_id)
+        .await
     {
         Ok(payload) => (
             StatusCode::OK,
-            Json(serde_json::to_value(payload).unwrap_or(Value::Null)),
+            Json(rewrite_session_keys_to_conversation(
+                serde_json::to_value(payload).unwrap_or(Value::Null),
+            )),
         ),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -189,21 +203,23 @@ pub(super) async fn get_session_turn_runtime_context_latest(
 
 pub(super) async fn get_session_turn_runtime_context_by_turn(
     auth: AuthUser,
-    Path((session_id, turn_id)): Path<(String, String)>,
+    Path((conversation_id, turn_id)): Path<(String, String)>,
 ) -> (StatusCode, Json<Value>) {
-    if let Err(err) = ensure_owned_session(&session_id, &auth).await {
+    if let Err(err) = ensure_owned_session(&conversation_id, &auth).await {
         return map_session_access_error(err);
     }
 
     match crate::services::memory_server_client::get_turn_runtime_snapshot_by_turn(
-        &session_id,
+        &conversation_id,
         &turn_id,
     )
     .await
     {
         Ok(payload) => (
             StatusCode::OK,
-            Json(serde_json::to_value(payload).unwrap_or(Value::Null)),
+            Json(rewrite_session_keys_to_conversation(
+                serde_json::to_value(payload).unwrap_or(Value::Null),
+            )),
         ),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -217,14 +233,14 @@ pub(super) async fn get_session_turn_runtime_context_by_turn(
 
 pub(super) async fn create_session_message(
     auth: AuthUser,
-    Path(session_id): Path<String>,
+    Path(conversation_id): Path<String>,
     Json(req): Json<CreateMessageRequest>,
 ) -> (StatusCode, Json<Value>) {
-    if let Err(err) = ensure_owned_session(&session_id, &auth).await {
+    if let Err(err) = ensure_owned_session(&conversation_id, &auth).await {
         return map_session_access_error(err);
     }
     let message = build_message(
-        session_id,
+        conversation_id,
         NewMessageFields {
             role: req.role,
             content: req.content,

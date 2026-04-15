@@ -78,7 +78,7 @@ export const getSessions = (
     include_archiving: paging?.includeArchiving === true ? true : undefined,
   });
   debugLog('🔍 getSessions API调用:', { userId, projectId, query });
-  return request<SessionResponse[]>(`/sessions${query}`);
+  return request<SessionResponse[]>(`/conversations${query}`);
 };
 
 export const createSession = (
@@ -86,14 +86,14 @@ export const createSession = (
   data: { id: string; title: string; user_id: string; project_id?: string; metadata?: any }
 ): Promise<SessionResponse> => {
   debugLog('🔍 createSession API调用:', data);
-  return request<SessionResponse>('/sessions', {
+  return request<SessionResponse>('/conversations', {
     method: 'POST',
     body: JSON.stringify(data),
   });
 };
 
 export const getSession = (request: ApiRequestFn, id: string): Promise<SessionResponse> => {
-  return request<SessionResponse>(`/sessions/${id}`);
+  return request<SessionResponse>(`/conversations/${id}`);
 };
 
 export const updateSession = (
@@ -101,14 +101,14 @@ export const updateSession = (
   id: string,
   data: { title?: string; description?: string; metadata?: any },
 ): Promise<SessionResponse> => {
-  return request<SessionResponse>(`/sessions/${id}`, {
+  return request<SessionResponse>(`/conversations/${id}`, {
     method: 'PUT',
     body: JSON.stringify(data),
   });
 };
 
 export const deleteSession = (request: ApiRequestFn, id: string): Promise<DeleteSuccessResponse> => {
-  return request<DeleteSuccessResponse>(`/sessions/${id}`, {
+  return request<DeleteSuccessResponse>(`/conversations/${id}`, {
     method: 'DELETE',
   });
 };
@@ -188,9 +188,9 @@ export const getContactAgentRecalls = (
   );
 };
 
-export const getSessionMessages = (
+export const getConversationMessages = (
   request: ApiRequestFn,
-  sessionId: string,
+  conversationId: string,
   params?: { limit?: number; offset?: number; compact?: boolean; strategy?: string }
 ): Promise<SessionMessageResponse[]> => {
   const query = buildQuery({
@@ -199,45 +199,45 @@ export const getSessionMessages = (
     compact: params?.compact,
     strategy: params?.strategy,
   });
-  return request<SessionMessageResponse[]>(`/sessions/${sessionId}/messages${query}`);
+  return request<SessionMessageResponse[]>(`/conversations/${conversationId}/messages${query}`);
 };
 
-export const getSessionTurnProcessMessages = (
+export const getConversationTurnProcessMessages = (
   request: ApiRequestFn,
-  sessionId: string,
+  conversationId: string,
   userMessageId: string
 ): Promise<SessionMessageResponse[]> => {
   return request<SessionMessageResponse[]>(
-    `/sessions/${sessionId}/turns/${encodeURIComponent(userMessageId)}/process`,
+    `/conversations/${conversationId}/turns/${encodeURIComponent(userMessageId)}/process`,
   );
 };
 
-export const getSessionTurnProcessMessagesByTurn = (
+export const getConversationTurnProcessMessagesByTurn = (
   request: ApiRequestFn,
-  sessionId: string,
+  conversationId: string,
   turnId: string
 ): Promise<SessionMessageResponse[]> => {
   return request<SessionMessageResponse[]>(
-    `/sessions/${sessionId}/turns/by-turn/${encodeURIComponent(turnId)}/process`,
+    `/conversations/${conversationId}/turns/by-turn/${encodeURIComponent(turnId)}/process`,
   );
 };
 
-export const getSessionLatestTurnRuntimeContext = (
+export const getConversationLatestTurnRuntimeContext = (
   request: ApiRequestFn,
-  sessionId: string,
+  conversationId: string,
 ): Promise<TurnRuntimeSnapshotLookupResponse> => {
   return request<TurnRuntimeSnapshotLookupResponse>(
-    `/sessions/${sessionId}/turns/latest/runtime-context`,
+    `/conversations/${conversationId}/turns/latest/runtime-context`,
   );
 };
 
-export const getSessionTurnRuntimeContextByTurn = (
+export const getConversationTurnRuntimeContextByTurn = (
   request: ApiRequestFn,
-  sessionId: string,
+  conversationId: string,
   turnId: string,
 ): Promise<TurnRuntimeSnapshotLookupResponse> => {
   return request<TurnRuntimeSnapshotLookupResponse>(
-    `/sessions/${sessionId}/turns/by-turn/${encodeURIComponent(turnId)}/runtime-context`,
+    `/conversations/${conversationId}/turns/by-turn/${encodeURIComponent(turnId)}/runtime-context`,
   );
 };
 

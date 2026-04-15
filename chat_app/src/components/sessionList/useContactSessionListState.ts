@@ -39,7 +39,7 @@ interface SessionResolverApiClient {
     projectId?: string,
     paging?: { limit?: number; offset?: number },
   ) => Promise<unknown[]>;
-  getSessionMessages: (
+  getConversationMessages: (
     sessionId: string,
     params?: { limit?: number; offset?: number; compact?: boolean },
   ) => Promise<unknown[]>;

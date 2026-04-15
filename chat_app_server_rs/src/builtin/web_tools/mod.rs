@@ -13,6 +13,7 @@ use crate::core::tool_io::text_result;
 
 use self::actions::{web_extract_with_context, web_search_with_context};
 use self::context::{optional_usize, required_string_array, required_trimmed_string};
+use self::provider::{web_extract_configuration_error, web_search_configuration_error};
 
 const DEFAULT_REQUEST_TIMEOUT_SECONDS: u64 = 30;
 const DEFAULT_SEARCH_LIMIT: usize = 5;
@@ -33,6 +34,7 @@ pub struct WebToolsOptions {
 #[derive(Clone)]
 pub struct WebToolsService {
     tools: HashMap<String, Tool>,
+    unavailable_tools: HashMap<String, String>,
 }
 
 #[derive(Clone)]
@@ -68,6 +70,7 @@ impl WebToolsService {
 
         let mut service = Self {
             tools: HashMap::new(),
+            unavailable_tools: HashMap::new(),
         };
         let bound = BoundContext {
             _server_name: opts.server_name,
@@ -78,8 +81,21 @@ impl WebToolsService {
             max_extract_chars: opts.max_extract_chars.max(1).min(DEFAULT_MAX_EXTRACT_CHARS),
         };
 
-        service.register_web_search(bound.clone());
-        service.register_web_extract(bound);
+        if let Some(reason) = web_search_configuration_error() {
+            service
+                .unavailable_tools
+                .insert("web_search".to_string(), reason);
+        } else {
+            service.register_web_search(bound.clone());
+        }
+
+        if let Some(reason) = web_extract_configuration_error() {
+            service
+                .unavailable_tools
+                .insert("web_extract".to_string(), reason);
+        } else {
+            service.register_web_extract(bound);
+        }
         Ok(service)
     }
 
@@ -104,6 +120,16 @@ impl WebToolsService {
         (tool.handler)(args)
     }
 
+    pub fn unavailable_tools(&self) -> Vec<(String, String)> {
+        let mut pairs: Vec<(String, String)> = self
+            .unavailable_tools
+            .iter()
+            .map(|(name, reason)| (name.clone(), reason.clone()))
+            .collect();
+        pairs.sort_by(|left, right| left.0.cmp(&right.0));
+        pairs
+    }
+
     fn register_tool(
         &mut self,
         name: &str,
@@ -125,7 +151,7 @@ impl WebToolsService {
     fn register_web_search(&mut self, bound: BoundContext) {
         self.register_tool(
             "web_search",
-            "Search the web for information. Requires FIRECRAWL_API_KEY.",
+            "Search the web for information. Firecrawl is primary; optional fallback via WEB_TOOLS_SEARCH_FALLBACK=duckduckgo.",
             json!({
                 "type": "object",
                 "properties": {
@@ -151,7 +177,7 @@ impl WebToolsService {
     fn register_web_extract(&mut self, bound: BoundContext) {
         self.register_tool(
             "web_extract",
-            "Extract markdown-like content from URLs. Requires FIRECRAWL_API_KEY.",
+            "Extract page content from URLs. Firecrawl is primary; optional fallback via WEB_TOOLS_EXTRACT_FALLBACK=direct_http.",
             json!({
                 "type": "object",
                 "properties": {
@@ -206,25 +232,62 @@ mod tests {
                     .map(str::to_string)
             })
             .collect();
-        assert!(names.contains(&"web_search".to_string()));
-        assert!(names.contains(&"web_extract".to_string()));
+        let unavailable = service.unavailable_tools();
+        for tool_name in ["web_search", "web_extract"] {
+            let is_unavailable = unavailable.iter().any(|(name, _)| name == tool_name);
+            if is_unavailable {
+                assert!(
+                    !names.contains(&tool_name.to_string()),
+                    "{} should be hidden when unavailable",
+                    tool_name
+                );
+            } else {
+                assert!(
+                    names.contains(&tool_name.to_string()),
+                    "{} should be listed when available",
+                    tool_name
+                );
+            }
+        }
     }
 
     #[test]
     fn web_search_requires_query_arg() {
         let service = WebToolsService::new(WebToolsOptions::default()).expect("init web tools");
-        let err = service
-            .call_tool("web_search", json!({}))
-            .expect_err("missing query should fail");
-        assert!(err.contains("query"));
+        let search_unavailable = service
+            .unavailable_tools()
+            .iter()
+            .any(|(name, _)| name == "web_search");
+        if !search_unavailable {
+            let err = service
+                .call_tool("web_search", json!({}))
+                .expect_err("missing query should fail");
+            assert!(err.contains("query"));
+        } else {
+            let err = service
+                .call_tool("web_search", json!({}))
+                .expect_err("tool should be hidden without key");
+            assert!(err.contains("Tool not found"));
+        }
     }
 
     #[test]
     fn web_extract_requires_urls_arg() {
         let service = WebToolsService::new(WebToolsOptions::default()).expect("init web tools");
-        let err = service
-            .call_tool("web_extract", json!({}))
-            .expect_err("missing urls should fail");
-        assert!(err.contains("urls"));
+        let extract_unavailable = service
+            .unavailable_tools()
+            .iter()
+            .any(|(name, _)| name == "web_extract");
+        if !extract_unavailable {
+            let err = service
+                .call_tool("web_extract", json!({}))
+                .expect_err("missing urls should fail");
+            assert!(err.contains("urls"));
+        } else {
+            let err = service
+                .call_tool("web_extract", json!({}))
+                .expect_err("tool should be hidden without key");
+            assert!(err.contains("Tool not found"));
+        }
     }
 }

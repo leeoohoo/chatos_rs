@@ -177,7 +177,9 @@ export const extractTaskReviewPanelFromToolStream = (
     return null;
   }
 
-  const payloadSessionId = typeof payload.session_id === 'string' ? payload.session_id.trim() : '';
+  const payloadSessionId = typeof payload.conversation_id === 'string'
+    ? payload.conversation_id.trim()
+    : '';
   const sessionId = payloadSessionId || fallbackSessionId;
 
   const payloadTurnId = typeof payload.conversation_turn_id === 'string'
@@ -228,7 +230,9 @@ export const extractUiPromptPanelFromToolStream = (
     return null;
   }
 
-  const payloadSessionId = typeof payload.session_id === 'string' ? payload.session_id.trim() : '';
+  const payloadSessionId = typeof payload.conversation_id === 'string'
+    ? payload.conversation_id.trim()
+    : '';
   const sessionId = payloadSessionId || fallbackSessionId;
   const payloadTurnId = typeof payload.conversation_turn_id === 'string'
     ? payload.conversation_turn_id.trim()

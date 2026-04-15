@@ -8,10 +8,10 @@ use crate::core::mongo_cursor::collect_documents;
 use crate::core::sql_query::append_limit_offset_clause;
 use crate::repositories::db::with_db;
 
+use super::conversation_meta::{load_conversation_meta_map, normalize_doc};
 use super::path_support::{
     build_normalized_paths, build_path_regexes, normalize_change_kind, path_to_sql_like,
 };
-use super::session_meta::{load_session_meta_map, normalize_doc};
 use super::ChangeLogItem;
 
 pub async fn list_project_change_logs(
@@ -62,29 +62,29 @@ pub async fn list_project_change_logs(
                     .map_err(|e| e.to_string())?;
                 let out_docs = collect_documents(cursor).await?;
 
-                let mut session_ids: HashSet<String> = HashSet::new();
+                let mut conversation_ids: HashSet<String> = HashSet::new();
                 for doc in &out_docs {
-                    if let Ok(sid) = doc.get_str("session_id") {
+                    if let Ok(sid) = doc.get_str("conversation_id") {
                         let sid = sid.trim();
                         if !sid.is_empty() {
-                            session_ids.insert(sid.to_string());
+                            conversation_ids.insert(sid.to_string());
                         }
                     }
                 }
 
-                let mut session_titles: HashMap<String, String> = HashMap::new();
-                if !session_ids.is_empty() {
-                    let session_meta_map = load_session_meta_map(&session_ids).await;
-                    for (session_id, meta) in session_meta_map {
+                let mut conversation_titles: HashMap<String, String> = HashMap::new();
+                if !conversation_ids.is_empty() {
+                    let conversation_meta_map = load_conversation_meta_map(&conversation_ids).await;
+                    for (conversation_id, meta) in conversation_meta_map {
                         if let Some(title) = meta.title {
-                            session_titles.insert(session_id, title);
+                            conversation_titles.insert(conversation_id, title);
                         }
                     }
                 }
 
                 let out = out_docs
                     .iter()
-                    .map(|doc| normalize_doc(doc, &session_titles))
+                    .map(|doc| normalize_doc(doc, &conversation_titles))
                     .collect();
                 Ok(out)
             })
@@ -123,7 +123,7 @@ pub async fn list_project_change_logs(
                 }
 
                 let mut query = format!(
-                    "SELECT c.id, c.server_name, c.project_id, c.path, c.action, c.change_kind, c.bytes, c.sha256, c.diff, c.session_id, c.run_id, c.confirmed, c.confirmed_at, c.confirmed_by, c.created_at \
+                    "SELECT c.id, c.server_name, c.project_id, c.path, c.action, c.change_kind, c.bytes, c.sha256, c.diff, c.conversation_id, c.run_id, c.confirmed, c.confirmed_at, c.confirmed_by, c.created_at \
                     FROM mcp_change_logs c \
                     WHERE {}",
                     where_parts.join(" OR "),
@@ -147,7 +147,7 @@ pub async fn list_project_change_logs(
 
                 let rows = q.fetch_all(pool).await.map_err(|e| e.to_string())?;
                 let mut out = Vec::new();
-                let mut session_ids: HashSet<String> = HashSet::new();
+                let mut conversation_ids: HashSet<String> = HashSet::new();
                 for row in rows {
                     let id: String = row.try_get("id").unwrap_or_default();
                     let server_name: String = row.try_get("server_name").unwrap_or_default();
@@ -160,13 +160,13 @@ pub async fn list_project_change_logs(
                     let bytes: i64 = row.try_get("bytes").unwrap_or(0);
                     let sha256: Option<String> = row.try_get("sha256").ok();
                     let diff: Option<String> = row.try_get("diff").ok();
-                    let session_id = row
-                        .try_get::<Option<String>, _>("session_id")
+                    let conversation_id = row
+                        .try_get::<Option<String>, _>("conversation_id")
                         .unwrap_or(None)
                         .map(|value| value.trim().to_string())
                         .filter(|value| !value.is_empty());
-                    if let Some(sid) = session_id.as_ref() {
-                        session_ids.insert(sid.clone());
+                    if let Some(sid) = conversation_id.as_ref() {
+                        conversation_ids.insert(sid.clone());
                     }
                     let run_id: Option<String> = row.try_get("run_id").ok();
                     let confirmed_raw: Option<i64> = row.try_get("confirmed").ok();
@@ -183,23 +183,23 @@ pub async fn list_project_change_logs(
                         bytes,
                         sha256,
                         diff,
-                        session_id,
+                        conversation_id,
                         run_id,
                         confirmed: confirmed_raw.unwrap_or(0) != 0,
                         confirmed_at,
                         confirmed_by,
                         created_at,
-                        session_title: None,
+                        conversation_title: None,
                     });
                 }
-                if !session_ids.is_empty() {
-                    let session_meta_map = load_session_meta_map(&session_ids).await;
+                if !conversation_ids.is_empty() {
+                    let conversation_meta_map = load_conversation_meta_map(&conversation_ids).await;
                     for item in &mut out {
-                        let Some(session_id) = item.session_id.as_ref() else {
+                        let Some(conversation_id) = item.conversation_id.as_ref() else {
                             continue;
                         };
-                        if let Some(meta) = session_meta_map.get(session_id) {
-                            item.session_title = meta.title.clone();
+                        if let Some(meta) = conversation_meta_map.get(conversation_id) {
+                            item.conversation_title = meta.title.clone();
                         }
                     }
                 }

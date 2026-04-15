@@ -12,10 +12,10 @@ use crate::core::async_bridge::block_on_result;
 use crate::core::tool_io::text_result;
 
 use self::actions::{
-    browser_back_with_context, browser_click_with_context, browser_console_with_context,
-    browser_get_images_with_context, browser_navigate_with_context, browser_press_with_context,
-    browser_scroll_with_context, browser_snapshot_with_context, browser_type_with_context,
-    browser_vision_with_context,
+    browser_back_with_context, browser_backend_available, browser_click_with_context,
+    browser_console_with_context, browser_get_images_with_context, browser_navigate_with_context,
+    browser_press_with_context, browser_scroll_with_context, browser_snapshot_with_context,
+    browser_type_with_context, browser_vision_with_context,
 };
 use self::context::{optional_bool, optional_trimmed_string, required_trimmed_string};
 
@@ -33,6 +33,7 @@ pub struct BrowserToolsOptions {
 #[derive(Clone)]
 pub struct BrowserToolsService {
     tools: HashMap<String, Tool>,
+    unavailable_tools: HashMap<String, String>,
 }
 
 #[derive(Clone)]
@@ -70,6 +71,7 @@ impl BrowserToolsService {
             .unwrap_or_else(|_| opts.workspace_dir.clone());
         let mut service = Self {
             tools: HashMap::new(),
+            unavailable_tools: HashMap::new(),
         };
         let bound = BoundContext {
             _server_name: opts.server_name,
@@ -84,16 +86,35 @@ impl BrowserToolsService {
             sessions: Arc::new(Mutex::new(HashMap::new())),
         };
 
-        service.register_browser_navigate(bound.clone());
-        service.register_browser_snapshot(bound.clone());
-        service.register_browser_click(bound.clone());
-        service.register_browser_type(bound.clone());
-        service.register_browser_scroll(bound.clone());
-        service.register_browser_back(bound.clone());
-        service.register_browser_press(bound.clone());
-        service.register_browser_console(bound.clone());
-        service.register_browser_get_images(bound.clone());
-        service.register_browser_vision(bound);
+        if let Err(reason) = browser_backend_available() {
+            for name in [
+                "browser_navigate",
+                "browser_snapshot",
+                "browser_click",
+                "browser_type",
+                "browser_scroll",
+                "browser_back",
+                "browser_press",
+                "browser_console",
+                "browser_get_images",
+                "browser_vision",
+            ] {
+                service
+                    .unavailable_tools
+                    .insert(name.to_string(), reason.clone());
+            }
+        } else {
+            service.register_browser_navigate(bound.clone());
+            service.register_browser_snapshot(bound.clone());
+            service.register_browser_click(bound.clone());
+            service.register_browser_type(bound.clone());
+            service.register_browser_scroll(bound.clone());
+            service.register_browser_back(bound.clone());
+            service.register_browser_press(bound.clone());
+            service.register_browser_console(bound.clone());
+            service.register_browser_get_images(bound.clone());
+            service.register_browser_vision(bound);
+        }
 
         Ok(service)
     }
@@ -115,13 +136,23 @@ impl BrowserToolsService {
         &self,
         name: &str,
         args: Value,
-        session_id: Option<&str>,
+        conversation_id: Option<&str>,
     ) -> Result<Value, String> {
         let tool = self
             .tools
             .get(name)
             .ok_or_else(|| format!("Tool not found: {name}"))?;
-        (tool.handler)(args, session_id)
+        (tool.handler)(args, conversation_id)
+    }
+
+    pub fn unavailable_tools(&self) -> Vec<(String, String)> {
+        let mut pairs: Vec<(String, String)> = self
+            .unavailable_tools
+            .iter()
+            .map(|(name, reason)| (name.clone(), reason.clone()))
+            .collect();
+        pairs.sort_by(|left, right| left.0.cmp(&right.0));
+        pairs
     }
 
     fn register_tool(
@@ -154,11 +185,11 @@ impl BrowserToolsService {
                 "required": ["url"],
                 "additionalProperties": false
             }),
-            Arc::new(move |args, session_id| {
+            Arc::new(move |args, conversation_id| {
                 let url = required_trimmed_string(&args, "url")?;
                 let ctx = bound.clone();
                 let result = block_on_result(async move {
-                    browser_navigate_with_context(ctx, session_id, url).await
+                    browser_navigate_with_context(ctx, conversation_id, url).await
                 })?;
                 Ok(text_result(result))
             }),
@@ -176,11 +207,11 @@ impl BrowserToolsService {
                 },
                 "additionalProperties": false
             }),
-            Arc::new(move |args, session_id| {
+            Arc::new(move |args, conversation_id| {
                 let full = optional_bool(&args, "full");
                 let ctx = bound.clone();
                 let result = block_on_result(async move {
-                    browser_snapshot_with_context(ctx, session_id, full).await
+                    browser_snapshot_with_context(ctx, conversation_id, full).await
                 })?;
                 Ok(text_result(result))
             }),
@@ -199,11 +230,11 @@ impl BrowserToolsService {
                 "required": ["ref"],
                 "additionalProperties": false
             }),
-            Arc::new(move |args, session_id| {
+            Arc::new(move |args, conversation_id| {
                 let reference = required_trimmed_string(&args, "ref")?;
                 let ctx = bound.clone();
                 let result = block_on_result(async move {
-                    browser_click_with_context(ctx, session_id, reference).await
+                    browser_click_with_context(ctx, conversation_id, reference).await
                 })?;
                 Ok(text_result(result))
             }),
@@ -223,12 +254,12 @@ impl BrowserToolsService {
                 "required": ["ref", "text"],
                 "additionalProperties": false
             }),
-            Arc::new(move |args, session_id| {
+            Arc::new(move |args, conversation_id| {
                 let reference = required_trimmed_string(&args, "ref")?;
                 let text = required_trimmed_string(&args, "text")?;
                 let ctx = bound.clone();
                 let result = block_on_result(async move {
-                    browser_type_with_context(ctx, session_id, reference, text).await
+                    browser_type_with_context(ctx, conversation_id, reference, text).await
                 })?;
                 Ok(text_result(result))
             }),
@@ -247,11 +278,11 @@ impl BrowserToolsService {
                 "required": ["direction"],
                 "additionalProperties": false
             }),
-            Arc::new(move |args, session_id| {
+            Arc::new(move |args, conversation_id| {
                 let direction = required_trimmed_string(&args, "direction")?;
                 let ctx = bound.clone();
                 let result = block_on_result(async move {
-                    browser_scroll_with_context(ctx, session_id, direction).await
+                    browser_scroll_with_context(ctx, conversation_id, direction).await
                 })?;
                 Ok(text_result(result))
             }),
@@ -267,12 +298,11 @@ impl BrowserToolsService {
                 "properties": {},
                 "additionalProperties": false
             }),
-            Arc::new(move |_args, session_id| {
+            Arc::new(move |_args, conversation_id| {
                 let ctx = bound.clone();
-                let result =
-                    block_on_result(
-                        async move { browser_back_with_context(ctx, session_id).await },
-                    )?;
+                let result = block_on_result(async move {
+                    browser_back_with_context(ctx, conversation_id).await
+                })?;
                 Ok(text_result(result))
             }),
         );
@@ -290,11 +320,11 @@ impl BrowserToolsService {
                 "required": ["key"],
                 "additionalProperties": false
             }),
-            Arc::new(move |args, session_id| {
+            Arc::new(move |args, conversation_id| {
                 let key = required_trimmed_string(&args, "key")?;
                 let ctx = bound.clone();
                 let result = block_on_result(async move {
-                    browser_press_with_context(ctx, session_id, key).await
+                    browser_press_with_context(ctx, conversation_id, key).await
                 })?;
                 Ok(text_result(result))
             }),
@@ -313,12 +343,12 @@ impl BrowserToolsService {
                 },
                 "additionalProperties": false
             }),
-            Arc::new(move |args, session_id| {
+            Arc::new(move |args, conversation_id| {
                 let clear = optional_bool(&args, "clear");
                 let expression = optional_trimmed_string(&args, "expression");
                 let ctx = bound.clone();
                 let result = block_on_result(async move {
-                    browser_console_with_context(ctx, session_id, clear, expression).await
+                    browser_console_with_context(ctx, conversation_id, clear, expression).await
                 })?;
                 Ok(text_result(result))
             }),
@@ -334,10 +364,10 @@ impl BrowserToolsService {
                 "properties": {},
                 "additionalProperties": false
             }),
-            Arc::new(move |_args, session_id| {
+            Arc::new(move |_args, conversation_id| {
                 let ctx = bound.clone();
                 let result = block_on_result(async move {
-                    browser_get_images_with_context(ctx, session_id).await
+                    browser_get_images_with_context(ctx, conversation_id).await
                 })?;
                 Ok(text_result(result))
             }),
@@ -357,12 +387,12 @@ impl BrowserToolsService {
                 "required": ["question"],
                 "additionalProperties": false
             }),
-            Arc::new(move |args, session_id| {
+            Arc::new(move |args, conversation_id| {
                 let question = required_trimmed_string(&args, "question")?;
                 let annotate = optional_bool(&args, "annotate");
                 let ctx = bound.clone();
                 let result = block_on_result(async move {
-                    browser_vision_with_context(ctx, session_id, question, annotate).await
+                    browser_vision_with_context(ctx, conversation_id, question, annotate).await
                 })?;
                 Ok(text_result(result))
             }),
@@ -407,8 +437,17 @@ mod tests {
                     .map(str::to_string)
             })
             .collect();
-        assert!(names.contains(&"browser_navigate".to_string()));
-        assert!(names.contains(&"browser_vision".to_string()));
+        let unavailable = service.unavailable_tools();
+        if unavailable.is_empty() {
+            assert!(names.contains(&"browser_navigate".to_string()));
+            assert!(names.contains(&"browser_vision".to_string()));
+        } else {
+            assert!(names.is_empty());
+            assert_eq!(unavailable.len(), 10);
+            assert!(unavailable
+                .iter()
+                .all(|(_, reason)| reason.contains("agent-browser")));
+        }
 
         let _ = std::fs::remove_dir_all(&dir);
     }

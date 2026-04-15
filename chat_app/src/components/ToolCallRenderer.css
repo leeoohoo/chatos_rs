@@ -231,6 +231,47 @@
   word-break: break-word;
 }
 
+.tool-summary-stack {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.5rem;
+  margin-bottom: 0.65rem;
+}
+
+.tool-summary-card {
+  border: 1px solid var(--tool-border);
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.6rem;
+  background: var(--tool-chip-bg);
+}
+
+.tool-summary-title {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--tool-name-color);
+  margin-bottom: 0.35rem;
+}
+
+.tool-summary-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
+.tool-summary-key {
+  color: var(--tool-text-secondary);
+}
+
+.tool-summary-value {
+  color: var(--tool-text);
+  font-weight: 500;
+  text-align: right;
+  word-break: break-word;
+}
+
 /* 响应式设计 */
 @media (max-width: 640px) {
   .param-value {

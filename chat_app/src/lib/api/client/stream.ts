@@ -41,7 +41,7 @@ const buildStreamHttpError = async (response: Response): Promise<Error> => {
 
 export const streamChat = async (
   context: StreamApiContext,
-  sessionId: string,
+  conversationId: string,
   content: string,
   modelConfig: StreamChatModelConfigPayload,
   userId?: string,
@@ -62,7 +62,7 @@ export const streamChat = async (
       ...(context.accessToken ? { Authorization: `Bearer ${context.accessToken}` } : {}),
     },
     body: JSON.stringify({
-      session_id: sessionId,
+      conversation_id: conversationId,
       content,
       user_id: userId,
       attachments: attachments || [],
@@ -104,7 +104,7 @@ export const streamChat = async (
 
 export const stopChat = (
   request: ApiRequestFn,
-  sessionId: string,
+  conversationId: string,
   options?: { useResponses?: boolean }
 ): Promise<StopChatResponse> => {
   const useResponses = options?.useResponses === true;
@@ -112,7 +112,7 @@ export const stopChat = (
   return request<StopChatResponse>(path, {
     method: 'POST',
     body: JSON.stringify({
-      session_id: sessionId,
+      conversation_id: conversationId,
     }),
   });
 };
@@ -124,7 +124,7 @@ export const submitRuntimeGuidance = (
   return request<RuntimeGuidanceSubmitResponse>('/agent_v3/chat/guide', {
     method: 'POST',
     body: JSON.stringify({
-      session_id: payload.sessionId,
+      conversation_id: payload.conversationId,
       turn_id: payload.turnId,
       content: payload.content,
       project_id: payload.projectId,

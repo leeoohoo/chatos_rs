@@ -126,7 +126,7 @@ impl AiClient {
                         if let Some(cb) = &callbacks.on_runtime_guidance_applied {
                             cb(json!({
                                 "guidance_id": applied_item.guidance_id,
-                                "session_id": applied_item.session_id,
+                                "conversation_id": applied_item.session_id,
                                 "turn_id": applied_item.turn_id,
                                 "status": "applied",
                                 "created_at": applied_item.created_at,
@@ -559,7 +559,6 @@ impl AiClient {
             iteration += 1;
         }
     }
-
 }
 
 fn build_runtime_guidance_input_item(

@@ -26,45 +26,48 @@ use self::summary_handlers::{
 
 pub fn router() -> Router {
     Router::new()
-        .route("/api/sessions", get(list_sessions).post(create_session))
         .route(
-            "/api/sessions/:id",
+            "/api/conversations",
+            get(list_sessions).post(create_session),
+        )
+        .route(
+            "/api/conversations/:id",
             get(get_session).put(update_session).delete(delete_session),
         )
         .route(
-            "/api/sessions/:session_id/mcp-servers",
+            "/api/conversations/:conversation_id/mcp-servers",
             get(list_mcp_servers).post(add_mcp_server),
         )
         .route(
-            "/api/sessions/:session_id/mcp-servers/:mcp_config_id",
+            "/api/conversations/:conversation_id/mcp-servers/:mcp_config_id",
             delete(delete_mcp_server),
         )
         .route(
-            "/api/sessions/:session_id/messages",
+            "/api/conversations/:conversation_id/messages",
             get(get_session_messages).post(create_session_message),
         )
         .route(
-            "/api/sessions/:session_id/turns/:user_message_id/process",
+            "/api/conversations/:conversation_id/turns/:user_message_id/process",
             get(get_session_turn_process_messages),
         )
         .route(
-            "/api/sessions/:session_id/turns/by-turn/:turn_id/process",
+            "/api/conversations/:conversation_id/turns/by-turn/:turn_id/process",
             get(get_session_turn_process_messages_by_turn),
         )
         .route(
-            "/api/sessions/:session_id/turns/latest/runtime-context",
+            "/api/conversations/:conversation_id/turns/latest/runtime-context",
             get(get_session_turn_runtime_context_latest),
         )
         .route(
-            "/api/sessions/:session_id/turns/by-turn/:turn_id/runtime-context",
+            "/api/conversations/:conversation_id/turns/by-turn/:turn_id/runtime-context",
             get(get_session_turn_runtime_context_by_turn),
         )
         .route(
-            "/api/sessions/:session_id/summaries",
+            "/api/conversations/:conversation_id/summaries",
             get(list_session_memory_summaries).delete(clear_session_memory_summaries),
         )
         .route(
-            "/api/sessions/:session_id/summaries/:summary_id",
+            "/api/conversations/:conversation_id/summaries/:summary_id",
             delete(delete_session_memory_summary),
         )
 }

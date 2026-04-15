@@ -467,7 +467,7 @@ export interface DatabaseOperations {
   getMessage: (id: string) => Promise<Message | null>;
   updateMessage: (id: string, updates: Partial<Message>) => Promise<void>;
   deleteMessage: (id: string) => Promise<void>;
-  getSessionMessages: (sessionId: string) => Promise<Message[]>;
+  getConversationMessages: (conversationId: string) => Promise<Message[]>;
 }
 
 // 导出所有类型

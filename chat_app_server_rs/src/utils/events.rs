@@ -8,6 +8,7 @@ impl Events {
     pub const TOOLS_START: &'static str = "tools_start";
     pub const TOOLS_STREAM: &'static str = "tools_stream";
     pub const TOOLS_END: &'static str = "tools_end";
+    pub const TOOLS_UNAVAILABLE: &'static str = "tools_unavailable";
     pub const CONTEXT_SUMMARIZED_START: &'static str = "context_summarized_start";
     pub const CONTEXT_SUMMARIZED_STREAM: &'static str = "context_summarized_stream";
     pub const CONTEXT_SUMMARIZED_END: &'static str = "context_summarized_end";

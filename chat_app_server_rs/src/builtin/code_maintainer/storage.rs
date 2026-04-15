@@ -34,7 +34,7 @@ pub struct ChangeRecord {
     pub bytes: i64,
     pub sha256: String,
     pub diff: Option<String>,
-    pub session_id: String,
+    pub conversation_id: String,
     pub run_id: String,
     pub confirmed: bool,
     pub confirmed_at: Option<String>,
@@ -104,7 +104,7 @@ impl ChangeLogStore {
         change_kind: &str,
         bytes: i64,
         sha256: &str,
-        session_id: &str,
+        conversation_id: &str,
         run_id: &str,
         diff: Option<String>,
     ) -> Result<ChangeRecord, String> {
@@ -118,7 +118,7 @@ impl ChangeLogStore {
             bytes,
             sha256: sha256.to_string(),
             diff,
-            session_id: session_id.to_string(),
+            conversation_id: conversation_id.to_string(),
             run_id: run_id.to_string(),
             confirmed: false,
             confirmed_at: None,
@@ -158,7 +158,7 @@ fn default_jsonl_path(server_name: &str) -> PathBuf {
 async fn sqlite_insert(pool: SqlitePool, record: ChangeRecord) -> Result<(), String> {
     sqlx::query(
         r#"INSERT INTO mcp_change_logs
-        (id, server_name, project_id, path, action, change_kind, bytes, sha256, diff, session_id, run_id, confirmed, confirmed_at, confirmed_by, created_at)
+        (id, server_name, project_id, path, action, change_kind, bytes, sha256, diff, conversation_id, run_id, confirmed, confirmed_at, confirmed_by, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
     )
     .bind(&record.id)
@@ -170,7 +170,7 @@ async fn sqlite_insert(pool: SqlitePool, record: ChangeRecord) -> Result<(), Str
     .bind(record.bytes)
     .bind(&record.sha256)
     .bind(&record.diff)
-    .bind(&record.session_id)
+    .bind(&record.conversation_id)
     .bind(&record.run_id)
     .bind(record.confirmed)
     .bind(&record.confirmed_at)
@@ -195,7 +195,7 @@ async fn mongo_insert(db: MongoDatabase, record: ChangeRecord) -> Result<(), Str
         "bytes": record.bytes,
         "sha256": &record.sha256,
         "diff": record.diff.clone(),
-        "session_id": &record.session_id,
+        "conversation_id": &record.conversation_id,
         "run_id": &record.run_id,
         "confirmed": record.confirmed,
         "confirmed_at": record.confirmed_at.clone(),
@@ -223,7 +223,7 @@ fn ensure_sqlite_table(pool: &SqlitePool) -> Result<(), String> {
                 bytes INTEGER NOT NULL,
                 sha256 TEXT,
                 diff TEXT,
-                session_id TEXT,
+                conversation_id TEXT,
                 run_id TEXT,
                 confirmed INTEGER NOT NULL DEFAULT 0,
                 confirmed_at TEXT,
@@ -234,6 +234,8 @@ fn ensure_sqlite_table(pool: &SqlitePool) -> Result<(), String> {
         .execute(&pool)
         .await
         .map_err(|err| err.to_string())?;
+        rename_column_sqlite_if_needed(&pool, "mcp_change_logs", "session_id", "conversation_id")
+            .await?;
         ensure_column_sqlite(&pool, "mcp_change_logs", "project_id", "TEXT").await?;
         ensure_column_sqlite(&pool, "mcp_change_logs", "change_kind", "TEXT").await?;
         ensure_column_sqlite(
@@ -273,10 +275,51 @@ async fn ensure_column_sqlite(
     Ok(())
 }
 
+async fn rename_column_sqlite_if_needed(
+    pool: &SqlitePool,
+    table: &str,
+    from_column: &str,
+    to_column: &str,
+) -> Result<(), String> {
+    let rows = sqlx::query(&format!("PRAGMA table_info({table})"))
+        .fetch_all(pool)
+        .await
+        .map_err(|err| err.to_string())?;
+    let mut has_from = false;
+    let mut has_to = false;
+    for row in rows {
+        let name: String = row.try_get("name").unwrap_or_default();
+        if name == from_column {
+            has_from = true;
+        }
+        if name == to_column {
+            has_to = true;
+        }
+    }
+    if has_from && !has_to {
+        let sql = format!("ALTER TABLE {table} RENAME COLUMN {from_column} TO {to_column}");
+        sqlx::query(&sql)
+            .execute(pool)
+            .await
+            .map_err(|err| err.to_string())?;
+    }
+    Ok(())
+}
+
 fn ensure_mongo_indexes(db: &MongoDatabase) -> Result<(), String> {
     let db = db.clone();
     run_async(async move {
         let collection = db.collection::<mongodb::bson::Document>("mcp_change_logs");
+        let _ = collection
+            .update_many(
+                doc! {
+                    "conversation_id": { "$exists": false },
+                    "session_id": { "$exists": true }
+                },
+                doc! { "$rename": { "session_id": "conversation_id" } },
+                None,
+            )
+            .await;
         let _ = collection
             .create_index(
                 mongodb::IndexModel::builder()
@@ -288,7 +331,7 @@ fn ensure_mongo_indexes(db: &MongoDatabase) -> Result<(), String> {
         let _ = collection
             .create_index(
                 mongodb::IndexModel::builder()
-                    .keys(doc! { "session_id": 1 })
+                    .keys(doc! { "conversation_id": 1 })
                     .build(),
                 None,
             )

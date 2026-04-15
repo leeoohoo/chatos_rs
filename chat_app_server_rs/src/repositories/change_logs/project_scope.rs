@@ -8,11 +8,11 @@ use sqlx::Row;
 use crate::core::mongo_cursor::collect_documents;
 use crate::repositories::db::with_db;
 
+use super::conversation_meta::load_conversation_meta_map;
 use super::path_support::{
     increment_kind_count, is_newer_record, is_unconfirmed_doc, normalize_change_kind,
     normalize_path, resolve_project_path_for_project, should_include_record,
 };
-use super::session_meta::load_session_meta_map;
 use super::{
     ProjectChangeCounts, ProjectChangeMark, ProjectChangeSummary, ProjectScopedChangeRecord,
 };
@@ -43,22 +43,22 @@ pub async fn list_unconfirmed_project_changes(
                     .map_err(|e| e.to_string())?;
                 let docs = collect_documents(cursor).await?;
 
-                let mut session_ids: HashSet<String> = HashSet::new();
+                let mut conversation_ids: HashSet<String> = HashSet::new();
                 for doc in &docs {
-                    if let Ok(session_id) = doc.get_str("session_id") {
-                        let trimmed = session_id.trim();
+                    if let Ok(conversation_id) = doc.get_str("conversation_id") {
+                        let trimmed = conversation_id.trim();
                         if !trimmed.is_empty() {
-                            session_ids.insert(trimmed.to_string());
+                            conversation_ids.insert(trimmed.to_string());
                         }
                     }
                 }
 
-                let mut session_projects: HashMap<String, String> = HashMap::new();
-                if !session_ids.is_empty() {
-                    let session_meta_map = load_session_meta_map(&session_ids).await;
-                    for (session_id, meta) in session_meta_map {
+                let mut conversation_projects: HashMap<String, String> = HashMap::new();
+                if !conversation_ids.is_empty() {
+                    let conversation_meta_map = load_conversation_meta_map(&conversation_ids).await;
+                    for (conversation_id, meta) in conversation_meta_map {
                         if let Some(project_id) = meta.project_id {
-                            session_projects.insert(session_id, project_id);
+                            conversation_projects.insert(conversation_id, project_id);
                         }
                     }
                 }
@@ -81,10 +81,10 @@ pub async fn list_unconfirmed_project_changes(
                     if raw_path.is_empty() {
                         continue;
                     }
-                    let session_id = doc.get_str("session_id").ok().map(|v| v.trim().to_string());
-                    let session_project_id = session_id
+                    let conversation_id = doc.get_str("conversation_id").ok().map(|v| v.trim().to_string());
+                    let conversation_project_id = conversation_id
                         .as_ref()
-                        .and_then(|sid| session_projects.get(sid))
+                        .and_then(|sid| conversation_projects.get(sid))
                         .map(String::as_str);
                     let action = doc.get_str("action").unwrap_or("");
                     let kind_raw = doc.get_str("change_kind").ok();
@@ -93,8 +93,8 @@ pub async fn list_unconfirmed_project_changes(
                     if !should_include_record(
                         &project_id,
                         record_project_id.as_deref(),
-                        session_project_id,
-                        session_id.as_deref(),
+                        conversation_project_id,
+                        conversation_id.as_deref(),
                         &raw_path,
                         &kind,
                         resolved.as_ref(),
@@ -121,7 +121,7 @@ pub async fn list_unconfirmed_project_changes(
             let project_root = project_root.clone();
             Box::pin(async move {
                 let rows = sqlx::query(
-                    r#"SELECT c.id, c.project_id, c.path, c.action, c.change_kind, c.created_at, c.session_id
+                    r#"SELECT c.id, c.project_id, c.path, c.action, c.change_kind, c.created_at, c.conversation_id
                     FROM mcp_change_logs c
                     WHERE COALESCE(c.confirmed, 0) = 0
                     ORDER BY c.created_at DESC"#,
@@ -130,18 +130,18 @@ pub async fn list_unconfirmed_project_changes(
                 .await
                 .map_err(|e| e.to_string())?;
 
-                let mut session_ids: HashSet<String> = HashSet::new();
+                let mut conversation_ids: HashSet<String> = HashSet::new();
                 for row in &rows {
-                    let session_id = row
-                        .try_get::<Option<String>, _>("session_id")
+                    let conversation_id = row
+                        .try_get::<Option<String>, _>("conversation_id")
                         .unwrap_or(None)
                         .map(|value| value.trim().to_string())
                         .filter(|value| !value.is_empty());
-                    if let Some(sid) = session_id {
-                        session_ids.insert(sid);
+                    if let Some(sid) = conversation_id {
+                        conversation_ids.insert(sid);
                     }
                 }
-                let session_meta_map = load_session_meta_map(&session_ids).await;
+                let conversation_meta_map = load_conversation_meta_map(&conversation_ids).await;
 
                 let mut out: Vec<ProjectScopedChangeRecord> = Vec::new();
                 for row in rows {
@@ -157,14 +157,14 @@ pub async fn list_unconfirmed_project_changes(
                     if raw_path.is_empty() {
                         continue;
                     }
-                    let session_id: Option<String> = row
-                        .try_get::<Option<String>, _>("session_id")
+                    let conversation_id: Option<String> = row
+                        .try_get::<Option<String>, _>("conversation_id")
                         .unwrap_or(None)
                         .map(|value| value.trim().to_string())
                         .filter(|value| !value.is_empty());
-                    let session_project_id = session_id
+                    let conversation_project_id = conversation_id
                         .as_ref()
-                        .and_then(|sid| session_meta_map.get(sid))
+                        .and_then(|sid| conversation_meta_map.get(sid))
                         .and_then(|meta| meta.project_id.as_deref());
                     let action: String = row.try_get("action").unwrap_or_default();
                     let kind_raw: Option<String> = row.try_get("change_kind").ok();
@@ -173,8 +173,8 @@ pub async fn list_unconfirmed_project_changes(
                     if !should_include_record(
                         &project_id,
                         record_project_id.as_deref(),
-                        session_project_id,
-                        session_id.as_deref(),
+                        conversation_project_id,
+                        conversation_id.as_deref(),
                         &raw_path,
                         &kind,
                         resolved.as_ref(),

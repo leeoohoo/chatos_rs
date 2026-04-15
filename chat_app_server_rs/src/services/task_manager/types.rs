@@ -41,7 +41,8 @@ pub struct TaskUpdatePatch {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskRecord {
     pub id: String,
-    pub session_id: String,
+    #[serde(rename = "conversation_id")]
+    pub conversation_id: String,
     pub conversation_turn_id: String,
     pub title: String,
     pub details: String,
@@ -56,7 +57,8 @@ pub struct TaskRecord {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskCreateReviewPayload {
     pub review_id: String,
-    pub session_id: String,
+    #[serde(rename = "conversation_id")]
+    pub conversation_id: String,
     pub conversation_turn_id: String,
     pub draft_tasks: Vec<TaskDraft>,
     pub timeout_ms: u64,

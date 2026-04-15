@@ -8,7 +8,7 @@ import type { Session } from '../../../types';
 import type { ContactItem } from './types';
 
 interface RuntimeContextApiClient {
-  getSessionLatestTurnRuntimeContext: (
+  getConversationLatestTurnRuntimeContext: (
     sessionId: string,
   ) => Promise<TurnRuntimeSnapshotLookupResponse>;
 }
@@ -43,7 +43,7 @@ export const useTeamMemberRuntimeContext = ({
     setRuntimeContextLoading(true);
     setRuntimeContextError(null);
     try {
-      const payload = await apiClient.getSessionLatestTurnRuntimeContext(sessionId);
+      const payload = await apiClient.getConversationLatestTurnRuntimeContext(sessionId);
       setRuntimeContextData(payload);
     } catch (error) {
       console.error('Failed to load turn runtime context in team pane:', error);

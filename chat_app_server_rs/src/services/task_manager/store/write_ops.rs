@@ -10,12 +10,12 @@ use crate::services::task_manager::types::{TaskRecord, TaskUpdatePatch, TASK_NOT
 use super::row::TaskRow;
 
 pub async fn update_task_by_id(
-    session_id: &str,
+    conversation_id: &str,
     task_id: &str,
     patch: TaskUpdatePatch,
 ) -> Result<TaskRecord, String> {
-    let session_id = trimmed_non_empty(session_id)
-        .ok_or_else(|| "session_id is required".to_string())?
+    let conversation_id = trimmed_non_empty(conversation_id)
+        .ok_or_else(|| "conversation_id is required".to_string())?
         .to_string();
     let task_id = trimmed_non_empty(task_id)
         .ok_or_else(|| "task_id is required".to_string())?
@@ -28,7 +28,7 @@ pub async fn update_task_by_id(
 
     let updated_at = crate::core::time::now_rfc3339();
 
-    let session_id_for_mongo = session_id.clone();
+    let conversation_id_for_mongo = conversation_id.clone();
     let task_id_for_mongo = task_id.clone();
     let title_for_mongo = patch.title.clone();
     let details_for_mongo = patch.details.clone();
@@ -38,7 +38,7 @@ pub async fn update_task_by_id(
     let due_at_for_mongo = patch.due_at.clone();
     let updated_at_for_mongo = updated_at.clone();
 
-    let session_id_for_sqlite = session_id.clone();
+    let conversation_id_for_sqlite = conversation_id.clone();
     let task_id_for_sqlite = task_id.clone();
     let title_for_sqlite = patch.title.clone();
     let details_for_sqlite = patch.details.clone();
@@ -50,7 +50,7 @@ pub async fn update_task_by_id(
 
     with_db(
         move |db| {
-            let session_id = session_id_for_mongo.clone();
+            let conversation_id = conversation_id_for_mongo.clone();
             let task_id = task_id_for_mongo.clone();
             let title = title_for_mongo.clone();
             let details = details_for_mongo.clone();
@@ -99,7 +99,7 @@ pub async fn update_task_by_id(
                 let updated = db
                     .collection::<Document>("task_manager_tasks")
                     .find_one_and_update(
-                        doc! { "session_id": session_id, "id": task_id },
+                        doc! { "conversation_id": conversation_id, "id": task_id },
                         doc! { "$set": set_doc },
                         options,
                     )
@@ -112,7 +112,7 @@ pub async fn update_task_by_id(
             })
         },
         move |pool| {
-            let session_id = session_id_for_sqlite.clone();
+            let conversation_id = conversation_id_for_sqlite.clone();
             let task_id = task_id_for_sqlite.clone();
             let title = title_for_sqlite.clone();
             let details = details_for_sqlite.clone();
@@ -188,8 +188,8 @@ pub async fn update_task_by_id(
                 qb.push("updated_at = ");
                 qb.push_bind(updated_at);
 
-                qb.push(" WHERE session_id = ");
-                qb.push_bind(&session_id);
+                qb.push(" WHERE conversation_id = ");
+                qb.push_bind(&conversation_id);
                 qb.push(" AND id = ");
                 qb.push_bind(&task_id);
 
@@ -200,9 +200,9 @@ pub async fn update_task_by_id(
                 }
 
                 let row = sqlx::query_as::<_, TaskRow>(
-                    "SELECT id, session_id, conversation_turn_id, title, details, priority, status, tags_json, due_at, created_at, updated_at FROM task_manager_tasks WHERE session_id = ? AND id = ? LIMIT 1",
+                    "SELECT id, conversation_id, conversation_turn_id, title, details, priority, status, tags_json, due_at, created_at, updated_at FROM task_manager_tasks WHERE conversation_id = ? AND id = ? LIMIT 1",
                 )
-                .bind(&session_id)
+                .bind(&conversation_id)
                 .bind(&task_id)
                 .fetch_optional(pool)
                 .await
@@ -216,9 +216,12 @@ pub async fn update_task_by_id(
     .await
 }
 
-pub async fn complete_task_by_id(session_id: &str, task_id: &str) -> Result<TaskRecord, String> {
+pub async fn complete_task_by_id(
+    conversation_id: &str,
+    task_id: &str,
+) -> Result<TaskRecord, String> {
     update_task_by_id(
-        session_id,
+        conversation_id,
         task_id,
         TaskUpdatePatch {
             status: Some("done".to_string()),
@@ -228,43 +231,47 @@ pub async fn complete_task_by_id(session_id: &str, task_id: &str) -> Result<Task
     .await
 }
 
-pub async fn delete_task_by_id(session_id: &str, task_id: &str) -> Result<bool, String> {
-    let session_id = trimmed_non_empty(session_id)
-        .ok_or_else(|| "session_id is required".to_string())?
+pub async fn delete_task_by_id(conversation_id: &str, task_id: &str) -> Result<bool, String> {
+    let conversation_id = trimmed_non_empty(conversation_id)
+        .ok_or_else(|| "conversation_id is required".to_string())?
         .to_string();
     let task_id = trimmed_non_empty(task_id)
         .ok_or_else(|| "task_id is required".to_string())?
         .to_string();
 
-    let session_id_for_mongo = session_id.clone();
+    let conversation_id_for_mongo = conversation_id.clone();
     let task_id_for_mongo = task_id.clone();
-    let session_id_for_sqlite = session_id.clone();
+    let conversation_id_for_sqlite = conversation_id.clone();
     let task_id_for_sqlite = task_id.clone();
 
     with_db(
         move |db| {
-            let session_id = session_id_for_mongo.clone();
+            let conversation_id = conversation_id_for_mongo.clone();
             let task_id = task_id_for_mongo.clone();
             Box::pin(async move {
                 let result = db
                     .collection::<Document>("task_manager_tasks")
-                    .delete_one(doc! { "session_id": session_id, "id": task_id }, None)
+                    .delete_one(
+                        doc! { "conversation_id": conversation_id, "id": task_id },
+                        None,
+                    )
                     .await
                     .map_err(|err| err.to_string())?;
                 Ok(result.deleted_count > 0)
             })
         },
         move |pool| {
-            let session_id = session_id_for_sqlite.clone();
+            let conversation_id = conversation_id_for_sqlite.clone();
             let task_id = task_id_for_sqlite.clone();
             Box::pin(async move {
-                let result =
-                    sqlx::query("DELETE FROM task_manager_tasks WHERE session_id = ? AND id = ?")
-                        .bind(session_id)
-                        .bind(task_id)
-                        .execute(pool)
-                        .await
-                        .map_err(|err| err.to_string())?;
+                let result = sqlx::query(
+                    "DELETE FROM task_manager_tasks WHERE conversation_id = ? AND id = ?",
+                )
+                .bind(conversation_id)
+                .bind(task_id)
+                .execute(pool)
+                .await
+                .map_err(|err| err.to_string())?;
                 Ok(result.rows_affected() > 0)
             })
         },

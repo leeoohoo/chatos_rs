@@ -13,7 +13,7 @@ pub(super) fn ui_prompt_record_to_doc(record: &UiPromptRecord) -> Document {
 
     let mut out = doc! {
         "id": record.id.clone(),
-        "session_id": record.session_id.clone(),
+        "conversation_id": record.conversation_id.clone(),
         "conversation_turn_id": record.conversation_turn_id.clone(),
         "kind": record.kind.clone(),
         "status": record.status.as_str(),
@@ -35,7 +35,7 @@ pub(super) fn ui_prompt_record_to_doc(record: &UiPromptRecord) -> Document {
 
 pub(super) fn ui_prompt_record_from_doc(doc: &Document) -> Option<UiPromptRecord> {
     let id = doc.get_str("id").ok()?.to_string();
-    let session_id = doc.get_str("session_id").ok()?.to_string();
+    let conversation_id = doc.get_str("conversation_id").ok()?.to_string();
     let conversation_turn_id = doc.get_str("conversation_turn_id").ok()?.to_string();
     let kind = doc.get_str("kind").ok().unwrap_or_default().to_string();
     let status = parse_status(doc.get_str("status").ok().unwrap_or("pending"));
@@ -68,7 +68,7 @@ pub(super) fn ui_prompt_record_from_doc(doc: &Document) -> Option<UiPromptRecord
 
     Some(UiPromptRecord {
         id,
-        session_id,
+        conversation_id,
         conversation_turn_id,
         tool_call_id,
         kind,

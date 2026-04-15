@@ -36,6 +36,7 @@ pub struct RemoteConnectionControllerOptions {
 #[derive(Clone)]
 pub struct RemoteConnectionControllerService {
     tools: HashMap<String, Tool>,
+    unavailable_tools: HashMap<String, String>,
 }
 
 #[derive(Clone)]
@@ -63,11 +64,22 @@ impl RemoteConnectionControllerService {
     pub fn new(opts: RemoteConnectionControllerOptions) -> Result<Self, String> {
         let mut service = Self {
             tools: HashMap::new(),
+            unavailable_tools: HashMap::new(),
         };
         let bound = BoundContext {
             server_name: opts.server_name,
-            user_id: opts.user_id,
-            default_remote_connection_id: opts.default_remote_connection_id,
+            user_id: opts
+                .user_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(str::to_string),
+            default_remote_connection_id: opts
+                .default_remote_connection_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(str::to_string),
             command_timeout_seconds: opts
                 .command_timeout_seconds
                 .clamp(1, MAX_COMMAND_TIMEOUT_SECONDS)
@@ -79,11 +91,28 @@ impl RemoteConnectionControllerService {
             max_read_file_bytes: opts.max_read_file_bytes.max(DEFAULT_MAX_READ_FILE_BYTES),
         };
 
+        if bound.user_id.is_none() {
+            let reason = "remote_connection_controller 缺少 user_id 上下文".to_string();
+            for tool_name in [
+                "list_connections",
+                "test_connection",
+                "run_command",
+                "list_directory",
+                "read_file",
+            ] {
+                service
+                    .unavailable_tools
+                    .insert(tool_name.to_string(), reason.clone());
+            }
+            return Ok(service);
+        }
+
+        let require_connection_id = bound.default_remote_connection_id.is_none();
         service.register_list_connections(bound.clone());
-        service.register_test_connection(bound.clone());
-        service.register_run_command(bound.clone());
-        service.register_list_directory(bound.clone());
-        service.register_read_file(bound);
+        service.register_test_connection(bound.clone(), require_connection_id);
+        service.register_run_command(bound.clone(), require_connection_id);
+        service.register_list_directory(bound.clone(), require_connection_id);
+        service.register_read_file(bound, require_connection_id);
 
         Ok(service)
     }
@@ -107,6 +136,16 @@ impl RemoteConnectionControllerService {
             .get(name)
             .ok_or_else(|| format!("Tool not found: {name}"))?;
         (tool.handler)(args)
+    }
+
+    pub fn unavailable_tools(&self) -> Vec<(String, String)> {
+        let mut pairs: Vec<(String, String)> = self
+            .unavailable_tools
+            .iter()
+            .map(|(name, reason)| (name.clone(), reason.clone()))
+            .collect();
+        pairs.sort_by(|left, right| left.0.cmp(&right.0));
+        pairs
     }
 
     fn register_tool(
@@ -144,15 +183,26 @@ impl RemoteConnectionControllerService {
         );
     }
 
-    fn register_test_connection(&mut self, bound: BoundContext) {
+    fn register_test_connection(&mut self, bound: BoundContext, require_connection_id: bool) {
+        let required = if require_connection_id {
+            json!(["connection_id"])
+        } else {
+            json!([])
+        };
+        let description = if require_connection_id {
+            "Test SSH connectivity for a remote connection. connection_id is required because no default connection is bound."
+        } else {
+            "Test SSH connectivity for a remote connection. If connection_id is omitted, use default bound connection from chat runtime."
+        };
         self.register_tool(
             "test_connection",
-            "Test SSH connectivity for a remote connection. If connection_id is omitted, use default bound connection from chat runtime.",
+            description,
             json!({
                 "type": "object",
                 "properties": {
                     "connection_id": { "type": "string" }
                 },
+                "required": required,
                 "additionalProperties": false
             }),
             Arc::new(move |args| {
@@ -166,10 +216,20 @@ impl RemoteConnectionControllerService {
         );
     }
 
-    fn register_run_command(&mut self, bound: BoundContext) {
+    fn register_run_command(&mut self, bound: BoundContext, require_connection_id: bool) {
+        let required = if require_connection_id {
+            json!(["connection_id", "command"])
+        } else {
+            json!(["command"])
+        };
+        let description = if require_connection_id {
+            "Run one SSH command on a remote host. connection_id is required because no default connection is bound. Returns exit_code/stdout/stderr/truncated flags. Dangerous commands are blocked by default unless allow_dangerous=true."
+        } else {
+            "Run one SSH command on a remote host (preferred for all server-side checks/ops). Returns structured result including exit_code/stdout/stderr/truncated flags. Dangerous commands are blocked by default unless allow_dangerous=true."
+        };
         self.register_tool(
             "run_command",
-            "Run one SSH command on a remote host (preferred for all server-side checks/ops). Returns structured result including exit_code/stdout/stderr/truncated flags. Dangerous commands are blocked by default unless allow_dangerous=true.",
+            description,
             json!({
                 "type": "object",
                 "properties": {
@@ -179,7 +239,7 @@ impl RemoteConnectionControllerService {
                     "allow_dangerous": { "type": "boolean" },
                     "max_output_chars": { "type": "integer", "minimum": 128, "maximum": 20000 }
                 },
-                "required": ["command"],
+                "required": required,
                 "additionalProperties": false
             }),
             Arc::new(move |args| {
@@ -205,10 +265,20 @@ impl RemoteConnectionControllerService {
         );
     }
 
-    fn register_list_directory(&mut self, bound: BoundContext) {
+    fn register_list_directory(&mut self, bound: BoundContext, require_connection_id: bool) {
+        let required = if require_connection_id {
+            json!(["connection_id"])
+        } else {
+            json!([])
+        };
+        let description = if require_connection_id {
+            "List entries under a remote directory path. connection_id is required because no default connection is bound."
+        } else {
+            "List entries under a remote directory path on the bound SSH host."
+        };
         self.register_tool(
             "list_directory",
-            "List entries under a remote directory path on the bound SSH host.",
+            description,
             json!({
                 "type": "object",
                 "properties": {
@@ -216,6 +286,7 @@ impl RemoteConnectionControllerService {
                     "path": { "type": "string" },
                     "limit": { "type": "integer", "minimum": 1, "maximum": 1000 }
                 },
+                "required": required,
                 "additionalProperties": false
             }),
             Arc::new(move |args| {
@@ -231,14 +302,27 @@ impl RemoteConnectionControllerService {
         );
     }
 
-    fn register_read_file(&mut self, bound: BoundContext) {
+    fn register_read_file(&mut self, bound: BoundContext, require_connection_id: bool) {
         let server_name = bound.server_name.clone();
-        self.register_tool(
-            "read_file",
-            &format!(
+        let required = if require_connection_id {
+            json!(["connection_id", "path"])
+        } else {
+            json!(["path"])
+        };
+        let description = if require_connection_id {
+            format!(
+                "Read remote file content (up to size limit) on SSH server {}. connection_id is required because no default connection is bound.",
+                server_name
+            )
+        } else {
+            format!(
                 "Read remote file content (up to size limit) on bound SSH server {}.",
                 server_name
-            ),
+            )
+        };
+        self.register_tool(
+            "read_file",
+            &description,
             json!({
                 "type": "object",
                 "properties": {
@@ -246,7 +330,7 @@ impl RemoteConnectionControllerService {
                     "path": { "type": "string" },
                     "max_bytes": { "type": "integer", "minimum": 1, "maximum": 262144 }
                 },
-                "required": ["path"],
+                "required": required,
                 "additionalProperties": false
             }),
             Arc::new(move |args| {
@@ -260,5 +344,108 @@ impl RemoteConnectionControllerService {
                 Ok(text_result(result))
             }),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::Value;
+
+    use super::{RemoteConnectionControllerOptions, RemoteConnectionControllerService};
+
+    fn option_base() -> RemoteConnectionControllerOptions {
+        RemoteConnectionControllerOptions {
+            server_name: "remote_connection_controller".to_string(),
+            user_id: Some("u1".to_string()),
+            default_remote_connection_id: None,
+            command_timeout_seconds: 20,
+            max_command_timeout_seconds: 120,
+            max_output_chars: 20_000,
+            max_read_file_bytes: 256 * 1024,
+        }
+    }
+
+    fn find_required_for_tool(tools: &[Value], name: &str) -> Vec<String> {
+        tools
+            .iter()
+            .find(|tool| tool.get("name").and_then(Value::as_str) == Some(name))
+            .and_then(|tool| tool.get("inputSchema"))
+            .and_then(|schema| schema.get("required"))
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn hides_tools_when_user_context_is_missing() {
+        let mut options = option_base();
+        options.user_id = None;
+
+        let service = RemoteConnectionControllerService::new(options).expect("init");
+        assert!(service.list_tools().is_empty());
+
+        let unavailable = service.unavailable_tools();
+        assert_eq!(unavailable.len(), 5);
+        for name in [
+            "list_connections",
+            "test_connection",
+            "run_command",
+            "list_directory",
+            "read_file",
+        ] {
+            assert!(
+                unavailable.iter().any(|(tool_name, _)| tool_name == name),
+                "missing unavailable tool: {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn requires_connection_id_when_default_connection_is_missing() {
+        let options = option_base();
+        let service = RemoteConnectionControllerService::new(options).expect("init");
+        let tools = service.list_tools();
+
+        let test_required = find_required_for_tool(&tools, "test_connection");
+        assert!(test_required.iter().any(|value| value == "connection_id"));
+
+        let run_required = find_required_for_tool(&tools, "run_command");
+        assert!(run_required.iter().any(|value| value == "connection_id"));
+        assert!(run_required.iter().any(|value| value == "command"));
+
+        let list_required = find_required_for_tool(&tools, "list_directory");
+        assert!(list_required.iter().any(|value| value == "connection_id"));
+
+        let read_required = find_required_for_tool(&tools, "read_file");
+        assert!(read_required.iter().any(|value| value == "connection_id"));
+        assert!(read_required.iter().any(|value| value == "path"));
+    }
+
+    #[test]
+    fn keeps_connection_id_optional_when_default_connection_exists() {
+        let mut options = option_base();
+        options.default_remote_connection_id = Some("conn_default".to_string());
+        let service = RemoteConnectionControllerService::new(options).expect("init");
+        let tools = service.list_tools();
+
+        let test_required = find_required_for_tool(&tools, "test_connection");
+        assert!(!test_required.iter().any(|value| value == "connection_id"));
+
+        let run_required = find_required_for_tool(&tools, "run_command");
+        assert!(run_required.iter().any(|value| value == "command"));
+        assert!(!run_required.iter().any(|value| value == "connection_id"));
+
+        let list_required = find_required_for_tool(&tools, "list_directory");
+        assert!(!list_required.iter().any(|value| value == "connection_id"));
+
+        let read_required = find_required_for_tool(&tools, "read_file");
+        assert!(read_required.iter().any(|value| value == "path"));
+        assert!(!read_required.iter().any(|value| value == "connection_id"));
     }
 }

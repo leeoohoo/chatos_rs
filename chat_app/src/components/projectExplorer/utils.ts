@@ -39,13 +39,13 @@ export const normalizeChangeLog = (raw: any): ChangeLogItem => ({
   bytes: raw?.bytes ?? 0,
   sha256: raw?.sha256 ?? null,
   diff: raw?.diff ?? null,
-  sessionId: raw?.session_id ?? raw?.sessionId ?? null,
+  sessionId: raw?.conversation_id ?? raw?.conversationId ?? null,
   runId: raw?.run_id ?? raw?.runId ?? null,
   confirmed: Boolean(raw?.confirmed),
   confirmedAt: raw?.confirmed_at ?? raw?.confirmedAt ?? null,
   confirmedBy: raw?.confirmed_by ?? raw?.confirmedBy ?? null,
   createdAt: raw?.created_at ?? raw?.createdAt ?? '',
-  sessionTitle: raw?.session_title ?? raw?.sessionTitle ?? null,
+  sessionTitle: raw?.conversation_title ?? raw?.conversationTitle ?? null,
 });
 
 export const normalizeChangeKind = (value: any): ChangeKind => {

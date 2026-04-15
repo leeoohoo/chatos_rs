@@ -1,10 +1,10 @@
 use serde::Serialize;
 
 mod confirm;
+mod conversation_meta;
 mod listing;
 mod path_support;
 mod project_scope;
-mod session_meta;
 
 pub use self::confirm::confirm_change_logs_by_ids;
 pub use self::listing::list_project_change_logs;
@@ -21,13 +21,13 @@ pub struct ChangeLogItem {
     pub bytes: i64,
     pub sha256: Option<String>,
     pub diff: Option<String>,
-    pub session_id: Option<String>,
+    pub conversation_id: Option<String>,
     pub run_id: Option<String>,
     pub confirmed: bool,
     pub confirmed_at: Option<String>,
     pub confirmed_by: Option<String>,
     pub created_at: String,
-    pub session_title: Option<String>,
+    pub conversation_title: Option<String>,
 }
 
 #[derive(Debug, Clone)]

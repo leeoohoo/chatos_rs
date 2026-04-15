@@ -108,8 +108,8 @@ export interface ContactAgentRecallResponse {
 
 export interface SessionMessageResponse {
   id: string;
-  sessionId?: string;
-  session_id?: string;
+  conversationId?: string;
+  conversation_id?: string;
   role: string;
   content: string;
   rawContent?: string;
@@ -215,8 +215,8 @@ export interface ProjectChangeLogResponse {
   bytes?: number;
   sha256?: string | null;
   diff?: string | null;
-  session_id?: string | null;
-  sessionId?: string | null;
+  conversation_id?: string | null;
+  conversationId?: string | null;
   run_id?: string | null;
   runId?: string | null;
   confirmed?: boolean;
@@ -226,8 +226,8 @@ export interface ProjectChangeLogResponse {
   confirmedBy?: string | null;
   created_at?: string;
   createdAt?: string;
-  session_title?: string | null;
-  sessionTitle?: string | null;
+  conversation_title?: string | null;
+  conversationTitle?: string | null;
 }
 
 export interface ProjectChangeMarkResponse {
@@ -471,7 +471,7 @@ export interface FsMoveOptions {
 
 export interface MessageCreatePayload {
   id: string;
-  sessionId: string;
+  conversationId: string;
   role: string;
   content: string;
   metadata?: any;
@@ -855,7 +855,7 @@ export interface McpConfigResourceResponse {
 }
 
 export interface RuntimeGuidanceSubmitPayload {
-  sessionId: string;
+  conversationId: string;
   turnId: string;
   content: string;
   projectId?: string | null;
@@ -908,7 +908,7 @@ export interface TurnRuntimeSnapshotRuntime {
 
 export interface TurnRuntimeSnapshot {
   id: string;
-  session_id: string;
+  conversation_id: string;
   user_id: string;
   turn_id: string;
   user_message_id?: string | null;
@@ -923,7 +923,7 @@ export interface TurnRuntimeSnapshot {
 }
 
 export interface TurnRuntimeSnapshotLookupResponse {
-  session_id: string;
+  conversation_id: string;
   turn_id?: string | null;
   status: string;
   snapshot_source: string;
@@ -978,7 +978,7 @@ export interface UiPromptResponsePayload {
 
 export interface UiPromptItemResponse {
   id: string;
-  session_id?: string;
+  conversation_id?: string;
   conversation_turn_id?: string | null;
   status?: string;
   title?: string | null;
@@ -1096,7 +1096,7 @@ export interface SessionSummaryJobConfigResponse extends SessionSummaryJobConfig
 
 export interface SessionSummaryResponse {
   id: string;
-  session_id?: string;
+  conversation_id?: string;
   summary_text?: string;
   summary_model?: string;
   status?: string;

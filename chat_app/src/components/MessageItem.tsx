@@ -104,6 +104,7 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
     Number(historyProcess?.thinkingCount || 0),
     derivedProcessStats.thinkingCount,
   );
+  const historyUnavailableToolCount = Number(historyProcess?.unavailableToolCount || 0);
 
   const isProcessAssistant = (
     isAssistant
@@ -274,6 +275,11 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
             <span className="px-2 py-0.5 rounded bg-muted text-muted-foreground">
               Thinking: {historyThinkingCount}
             </span>
+            {historyUnavailableToolCount > 0 && (
+              <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-200">
+                Unavailable: {historyUnavailableToolCount}
+              </span>
+            )}
           </div>
         )}
 

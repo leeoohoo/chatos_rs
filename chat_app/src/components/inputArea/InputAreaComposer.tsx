@@ -19,7 +19,7 @@ import {
   InputAreaFloatingModelPicker,
   InputAreaSendButton,
 } from './InlineWidgets';
-import type { SelectableMcpConfig } from './useMcpSelection';
+import type { McpToolsetPreset, SelectableMcpConfig } from './useMcpSelection';
 import {
   InputAreaMcpPicker,
   InputAreaProjectFilePicker,
@@ -103,6 +103,9 @@ interface InputAreaComposerProps {
   availableMcpConfigs: SelectableMcpConfig[];
   builtinMcpConfigs: SelectableMcpConfig[];
   customMcpConfigs: SelectableMcpConfig[];
+  mcpToolsetPresets: McpToolsetPreset[];
+  projectScopeKey: string | null;
+  hasProjectMcpDefault: boolean;
   hasDirectoryContext: boolean;
   hasRemoteContext: boolean;
   isProjectRequiredMcpId: (mcpId: string) => boolean;
@@ -111,6 +114,9 @@ interface InputAreaComposerProps {
   loadAvailableMcpConfigs: () => void | Promise<void>;
   handleSelectAllMcp: () => void;
   handleToggleMcpSelection: (mcpId: string) => void;
+  handleApplyMcpToolsetPreset: (presetId: string) => void;
+  handleSaveProjectMcpDefault: () => void;
+  handleApplyProjectMcpDefault: () => void;
   handleInputChange: (event: ChangeEvent<HTMLTextAreaElement>) => void;
   handleKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
   handlePaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void;
@@ -198,6 +204,9 @@ export default function InputAreaComposer({
   availableMcpConfigs,
   builtinMcpConfigs,
   customMcpConfigs,
+  mcpToolsetPresets,
+  projectScopeKey,
+  hasProjectMcpDefault,
   hasDirectoryContext,
   hasRemoteContext,
   isProjectRequiredMcpId,
@@ -206,6 +215,9 @@ export default function InputAreaComposer({
   loadAvailableMcpConfigs,
   handleSelectAllMcp,
   handleToggleMcpSelection,
+  handleApplyMcpToolsetPreset,
+  handleSaveProjectMcpDefault,
+  handleApplyProjectMcpDefault,
   handleInputChange,
   handleKeyDown,
   handlePaste,
@@ -332,6 +344,9 @@ export default function InputAreaComposer({
         availableMcpConfigs={availableMcpConfigs}
         builtinMcpConfigs={builtinMcpConfigs}
         customMcpConfigs={customMcpConfigs}
+        mcpToolsetPresets={mcpToolsetPresets}
+        projectScopeKey={projectScopeKey}
+        hasProjectMcpDefault={hasProjectMcpDefault}
         hasDirectoryContext={hasDirectoryContext}
         hasRemoteContext={hasRemoteContext}
         isProjectRequiredMcpId={isProjectRequiredMcpId}
@@ -340,6 +355,9 @@ export default function InputAreaComposer({
         onRefreshMcpConfigs={() => { void loadAvailableMcpConfigs(); }}
         onSelectAllMcp={handleSelectAllMcp}
         onToggleMcpSelection={handleToggleMcpSelection}
+        onApplyMcpToolsetPreset={handleApplyMcpToolsetPreset}
+        onSaveProjectMcpDefault={handleSaveProjectMcpDefault}
+        onApplyProjectMcpDefault={handleApplyProjectMcpDefault}
       />
 
       {reasoningSupported && (

@@ -38,7 +38,7 @@ import type ApiClient from '../../client';
 
 export interface RuntimeFacade {
   streamChat(
-    sessionId: string,
+    conversationId: string,
     content: string,
     modelConfig: StreamChatModelConfigPayload,
     userId?: string,
@@ -48,23 +48,23 @@ export interface RuntimeFacade {
   ): Promise<ReadableStream>;
   submitRuntimeGuidance(payload: RuntimeGuidanceSubmitPayload): Promise<RuntimeGuidanceSubmitResponse>;
   getTaskManagerTasks(
-    sessionId: string,
+    conversationId: string,
     options?: { conversationTurnId?: string; includeDone?: boolean; limit?: number },
   ): Promise<TaskManagerTaskResponse[]>;
   updateTaskManagerTask(
-    sessionId: string,
+    conversationId: string,
     taskId: string,
     payload: TaskManagerUpdatePayload,
   ): Promise<TaskManagerTaskResponse>;
-  completeTaskManagerTask(sessionId: string, taskId: string): Promise<TaskManagerTaskResponse>;
-  deleteTaskManagerTask(sessionId: string, taskId: string): Promise<{ success?: boolean }>;
+  completeTaskManagerTask(conversationId: string, taskId: string): Promise<TaskManagerTaskResponse>;
+  deleteTaskManagerTask(conversationId: string, taskId: string): Promise<{ success?: boolean }>;
   submitTaskReviewDecision(
     reviewId: string,
     payload: TaskReviewDecisionPayload,
   ): Promise<{ success?: boolean; status?: string }>;
-  getPendingUiPrompts(sessionId: string, options?: { limit?: number }): Promise<UiPromptItemResponse[]>;
+  getPendingUiPrompts(conversationId: string, options?: { limit?: number }): Promise<UiPromptItemResponse[]>;
   getUiPromptHistory(
-    sessionId: string,
+    conversationId: string,
     options?: { limit?: number; includePending?: boolean },
   ): Promise<UiPromptItemResponse[]>;
   submitUiPromptResponse(
@@ -83,28 +83,28 @@ export interface RuntimeFacade {
   deleteNotepadNote(noteId: string): Promise<NotepadDeleteNoteResponse>;
   listNotepadTags(): Promise<NotepadTagsResponse>;
   searchNotepadNotes(options: NotepadSearchOptions): Promise<NotepadNotesResponse>;
-  getSessionSummaryJobConfig(userId?: string): Promise<SessionSummaryJobConfigResponse>;
-  updateSessionSummaryJobConfig(payload: SessionSummaryJobConfigPayload): Promise<SessionSummaryJobConfigResponse>;
-  patchSessionSummaryJobConfig(payload: SessionSummaryJobConfigPayload): Promise<SessionSummaryJobConfigResponse>;
-  getSessionSummaries(
-    sessionId: string,
+  getConversationSummaryJobConfig(userId?: string): Promise<SessionSummaryJobConfigResponse>;
+  updateConversationSummaryJobConfig(payload: SessionSummaryJobConfigPayload): Promise<SessionSummaryJobConfigResponse>;
+  patchConversationSummaryJobConfig(payload: SessionSummaryJobConfigPayload): Promise<SessionSummaryJobConfigResponse>;
+  getConversationSummaries(
+    conversationId: string,
     options?: { limit?: number; offset?: number },
   ): Promise<SessionSummariesListResponse>;
-  deleteSessionSummary(sessionId: string, summaryId: string): Promise<{ success?: boolean }>;
-  clearSessionSummaries(sessionId: string): Promise<{ success?: boolean }>;
+  deleteConversationSummary(conversationId: string, summaryId: string): Promise<{ success?: boolean }>;
+  clearConversationSummaries(conversationId: string): Promise<{ success?: boolean }>;
   register(data: RegisterPayload): Promise<AuthResponse>;
   login(data: RegisterPayload): Promise<AuthResponse>;
   getMe(): Promise<MeResponse>;
-  stopChat(sessionId: string, options?: { useResponses?: boolean }): Promise<StopChatResponse>;
+  stopChat(conversationId: string, options?: { useResponses?: boolean }): Promise<StopChatResponse>;
   getUserSettings(userId?: string): Promise<UserSettingsResponse>;
   updateUserSettings(userId: string, settings: Record<string, unknown>): Promise<UserSettingsResponse>;
 }
 
 export const runtimeFacade: RuntimeFacade & ThisType<ApiClient> = {
-  async streamChat(sessionId, content, modelConfig, userId, attachments, reasoningEnabled, options) {
+  async streamChat(conversationId, content, modelConfig, userId, attachments, reasoningEnabled, options) {
     return streamApi.streamChat(
       this.getStreamApiContext(),
-      sessionId,
+      conversationId,
       content,
       modelConfig,
       userId,
@@ -116,26 +116,26 @@ export const runtimeFacade: RuntimeFacade & ThisType<ApiClient> = {
   async submitRuntimeGuidance(payload) {
     return streamApi.submitRuntimeGuidance(this.getRequestFn(), payload);
   },
-  async getTaskManagerTasks(sessionId, options) {
-    return tasksApi.getTaskManagerTasks(this.getRequestFn(), sessionId, options);
+  async getTaskManagerTasks(conversationId, options) {
+    return tasksApi.getTaskManagerTasks(this.getRequestFn(), conversationId, options);
   },
-  async updateTaskManagerTask(sessionId, taskId, payload) {
-    return tasksApi.updateTaskManagerTask(this.getRequestFn(), sessionId, taskId, payload);
+  async updateTaskManagerTask(conversationId, taskId, payload) {
+    return tasksApi.updateTaskManagerTask(this.getRequestFn(), conversationId, taskId, payload);
   },
-  async completeTaskManagerTask(sessionId, taskId) {
-    return tasksApi.completeTaskManagerTask(this.getRequestFn(), sessionId, taskId);
+  async completeTaskManagerTask(conversationId, taskId) {
+    return tasksApi.completeTaskManagerTask(this.getRequestFn(), conversationId, taskId);
   },
-  async deleteTaskManagerTask(sessionId, taskId) {
-    return tasksApi.deleteTaskManagerTask(this.getRequestFn(), sessionId, taskId);
+  async deleteTaskManagerTask(conversationId, taskId) {
+    return tasksApi.deleteTaskManagerTask(this.getRequestFn(), conversationId, taskId);
   },
   async submitTaskReviewDecision(reviewId, payload) {
     return tasksApi.submitTaskReviewDecision(this.getRequestFn(), reviewId, payload);
   },
-  async getPendingUiPrompts(sessionId, options) {
-    return tasksApi.getPendingUiPrompts(this.getRequestFn(), sessionId, options);
+  async getPendingUiPrompts(conversationId, options) {
+    return tasksApi.getPendingUiPrompts(this.getRequestFn(), conversationId, options);
   },
-  async getUiPromptHistory(sessionId, options) {
-    return tasksApi.getUiPromptHistory(this.getRequestFn(), sessionId, options);
+  async getUiPromptHistory(conversationId, options) {
+    return tasksApi.getUiPromptHistory(this.getRequestFn(), conversationId, options);
   },
   async submitUiPromptResponse(promptId, payload) {
     return tasksApi.submitUiPromptResponse(this.getRequestFn(), promptId, payload);
@@ -176,23 +176,23 @@ export const runtimeFacade: RuntimeFacade & ThisType<ApiClient> = {
   async searchNotepadNotes(options) {
     return notepadApi.searchNotepadNotes(this.getRequestFn(), options);
   },
-  async getSessionSummaryJobConfig(userId) {
-    return summaryApi.getSessionSummaryJobConfig(this.getRequestFn(), userId);
+  async getConversationSummaryJobConfig(userId) {
+    return summaryApi.getConversationSummaryJobConfig(this.getRequestFn(), userId);
   },
-  async updateSessionSummaryJobConfig(payload) {
-    return summaryApi.updateSessionSummaryJobConfig(this.getRequestFn(), payload);
+  async updateConversationSummaryJobConfig(payload) {
+    return summaryApi.updateConversationSummaryJobConfig(this.getRequestFn(), payload);
   },
-  async patchSessionSummaryJobConfig(payload) {
-    return summaryApi.patchSessionSummaryJobConfig(this.getRequestFn(), payload);
+  async patchConversationSummaryJobConfig(payload) {
+    return summaryApi.patchConversationSummaryJobConfig(this.getRequestFn(), payload);
   },
-  async getSessionSummaries(sessionId, options) {
-    return summaryApi.getSessionSummaries(this.getRequestFn(), sessionId, options);
+  async getConversationSummaries(conversationId, options) {
+    return summaryApi.getConversationSummaries(this.getRequestFn(), conversationId, options);
   },
-  async deleteSessionSummary(sessionId, summaryId) {
-    return summaryApi.deleteSessionSummary(this.getRequestFn(), sessionId, summaryId);
+  async deleteConversationSummary(conversationId, summaryId) {
+    return summaryApi.deleteConversationSummary(this.getRequestFn(), conversationId, summaryId);
   },
-  async clearSessionSummaries(sessionId) {
-    return summaryApi.clearSessionSummaries(this.getRequestFn(), sessionId);
+  async clearConversationSummaries(conversationId) {
+    return summaryApi.clearConversationSummaries(this.getRequestFn(), conversationId);
   },
   async register(data) {
     return accountApi.register(this.getRequestFn(), data);
@@ -203,8 +203,8 @@ export const runtimeFacade: RuntimeFacade & ThisType<ApiClient> = {
   async getMe() {
     return accountApi.getMe(this.getRequestFn());
   },
-  async stopChat(sessionId, options) {
-    return streamApi.stopChat(this.getRequestFn(), sessionId, options);
+  async stopChat(conversationId, options) {
+    return streamApi.stopChat(this.getRequestFn(), conversationId, options);
   },
   async getUserSettings(userId) {
     return accountApi.getUserSettings(this.getRequestFn(), userId);

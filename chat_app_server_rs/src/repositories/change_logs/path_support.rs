@@ -115,8 +115,8 @@ pub(super) fn resolve_project_path_for_project(
 pub(super) fn should_include_record(
     project_id: &str,
     record_project_id: Option<&str>,
-    session_project_id: Option<&str>,
-    session_id: Option<&str>,
+    conversation_project_id: Option<&str>,
+    conversation_id: Option<&str>,
     raw_path: &str,
     kind: &str,
     resolved: Option<&ResolvedProjectPath>,
@@ -131,7 +131,7 @@ pub(super) fn should_include_record(
             return trimmed == project_id;
         }
     }
-    if let Some(pid) = session_project_id {
+    if let Some(pid) = conversation_project_id {
         let trimmed = pid.trim();
         if !trimmed.is_empty() {
             return trimmed == project_id;
@@ -154,7 +154,7 @@ pub(super) fn should_include_record(
             }
         }
     }
-    let _ = session_id;
+    let _ = conversation_id;
     false
 }
 

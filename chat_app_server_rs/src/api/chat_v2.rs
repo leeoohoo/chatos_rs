@@ -11,12 +11,15 @@ use crate::api::chat_stream_common::{
     build_prefixed_messages, resolve_chat_stream_context, sync_chat_turn_snapshot,
     validate_chat_stream_request, wire_implicit_command_tracking, ChatStreamRequest,
 };
+use crate::api::conversation_semantics::extract_conversation_scope_id;
 use crate::config::Config;
 use crate::core::ai_model_config::resolve_chat_model_config;
 use crate::core::ai_settings::chat_max_tokens_from_settings;
 use crate::core::auth::AuthUser;
 use crate::core::chat_context::maybe_spawn_session_title_rename;
-use crate::core::chat_stream::{build_v2_callbacks, handle_chat_result, send_start_event};
+use crate::core::chat_stream::{
+    build_v2_callbacks, handle_chat_result, send_start_event, send_tools_unavailable_event,
+};
 use crate::core::mcp_runtime::{load_mcp_servers_by_selection, McpServerBundle};
 use crate::core::user_scope::{ensure_and_set_user_id, resolve_user_id};
 use crate::services::ai_common::normalize_turn_id;
@@ -43,12 +46,8 @@ pub fn router() -> Router {
         .route("/api/agent_v2/tools", get(agent_tools))
         .route("/api/agent_v2/status", get(agent_status))
         .route(
-            "/api/agent_v2/session/:session_id/reset",
-            post(reset_session),
-        )
-        .route(
-            "/api/agent_v2/session/:session_id/config",
-            get(get_session_config).post(update_session_config),
+            "/api/agent_v2/conversation/:conversation_id/reset",
+            post(reset_conversation),
         )
         .route("/api/chat/stop", post(stop_chat))
 }
@@ -66,9 +65,9 @@ async fn agent_chat_stream(
         return Err(err);
     }
     validate_chat_stream_request(&req, false)?;
-    let session_id = req.session_id.clone().unwrap_or_default();
+    let conversation_id = req.conversation_id.clone().unwrap_or_default();
 
-    abort_registry::reset(&session_id);
+    abort_registry::reset(&conversation_id);
     let (sse, sender) = sse_channel();
 
     memory_server_client::spawn_with_current_access_token(stream_chat_v2(
@@ -97,11 +96,14 @@ async fn agent_tools(auth: AuthUser, Query(query): Query<UserQuery>) -> (StatusC
         );
     }
     let tools = exec.get_available_tools();
+    let unavailable_tools = exec.get_unavailable_tools();
     (
         StatusCode::OK,
         Json(json!({
             "tools": tools,
             "count": tools.len(),
+            "unavailable_tools": unavailable_tools,
+            "unavailable_count": unavailable_tools.len(),
             "servers": { "http": http_servers.len(), "stdio": stdio_servers.len(), "builtin": builtin_servers.len() }
         })),
     )
@@ -120,42 +122,41 @@ async fn agent_status() -> Json<Value> {
     }))
 }
 
-async fn reset_session(Path(session_id): Path<String>) -> Json<Value> {
-    let _ = memory_server_client::delete_messages_by_session(&session_id).await;
-    Json(json!({"success": true, "message": "会话重置成功", "session_id": session_id}))
-}
-
-async fn get_session_config(Path(session_id): Path<String>) -> Json<Value> {
-    Json(
-        json!({"success": true, "config": { "model": "gpt-4", "temperature": 0.7, "session_id": session_id }}),
-    )
-}
-
-async fn update_session_config(
-    Path(_session_id): Path<String>,
-    Json(_req): Json<Value>,
-) -> Json<Value> {
-    Json(json!({"success": true, "message": "会话配置更新成功"}))
+async fn reset_conversation(Path(conversation_id): Path<String>) -> Json<Value> {
+    let _ = memory_server_client::delete_messages_by_session(&conversation_id).await;
+    Json(json!({
+        "success": true,
+        "message": "对话线程重置成功",
+        "conversation_id": conversation_id
+    }))
 }
 
 async fn stop_chat(Json(req): Json<Value>) -> (StatusCode, Json<Value>) {
-    let session_id = req.get("session_id").and_then(|v| v.as_str()).unwrap_or("");
-    if session_id.is_empty() {
+    let conversation_id = extract_conversation_scope_id(&req).unwrap_or_default();
+    if conversation_id.is_empty() {
         return (
             StatusCode::BAD_REQUEST,
-            Json(json!({"success": false, "message": "缺少 session_id"})),
+            Json(json!({"success": false, "message": "缺少 conversation_id"})),
         );
     }
-    let ok = abort_registry::abort(session_id);
+    let ok = abort_registry::abort(conversation_id.as_str());
     if ok {
         return (
             StatusCode::OK,
-            Json(json!({"success": true, "message": "停止中"})),
+            Json(json!({
+                "success": true,
+                "message": "停止中",
+                "conversation_id": conversation_id
+            })),
         );
     }
     (
         StatusCode::OK,
-        Json(json!({"success": false, "message": "未找到可停止的会话或已停止"})),
+        Json(json!({
+            "success": false,
+            "message": "未找到可停止的对话线程或已停止",
+            "conversation_id": conversation_id
+        })),
     )
 }
 
@@ -166,7 +167,7 @@ async fn stream_chat_v2(
     rename_session: bool,
     respect_model_flags: bool,
 ) {
-    let session_id = req.session_id.clone().unwrap_or_default();
+    let session_id = req.conversation_id.clone().unwrap_or_default();
     let content = req.content.clone().unwrap_or_default();
     let cfg = Config::get();
 
@@ -217,6 +218,8 @@ async fn stream_chat_v2(
     if use_tools {
         let _ = mcp_exec.init().await;
     }
+    let unavailable_tools = mcp_exec.get_unavailable_tools();
+    send_tools_unavailable_event(&sender, unavailable_tools.as_slice());
     let mcp_tool_metadata = mcp_exec.tool_metadata.clone();
     ai_server.set_mcp_tool_execute(mcp_exec);
 

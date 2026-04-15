@@ -5,7 +5,7 @@ import type {
 } from './types';
 import type { ApiRequestFn } from './workspace';
 
-export const getSessionSummaryJobConfig = (
+export const getConversationSummaryJobConfig = (
   request: ApiRequestFn,
   userId?: string,
 ): Promise<SessionSummaryJobConfigResponse> => {
@@ -13,7 +13,7 @@ export const getSessionSummaryJobConfig = (
   return request<SessionSummaryJobConfigResponse>(`/session-summary-job-config${params}`);
 };
 
-export const updateSessionSummaryJobConfig = (
+export const updateConversationSummaryJobConfig = (
   request: ApiRequestFn,
   payload: SessionSummaryJobConfigPayload,
 ): Promise<SessionSummaryJobConfigResponse> => {
@@ -23,7 +23,7 @@ export const updateSessionSummaryJobConfig = (
   });
 };
 
-export const patchSessionSummaryJobConfig = (
+export const patchConversationSummaryJobConfig = (
   request: ApiRequestFn,
   payload: SessionSummaryJobConfigPayload,
 ): Promise<SessionSummaryJobConfigResponse> => {
@@ -33,12 +33,12 @@ export const patchSessionSummaryJobConfig = (
   });
 };
 
-export const getSessionSummaries = async (
+export const getConversationSummaries = async (
   request: ApiRequestFn,
-  sessionId: string,
+  conversationId: string,
   options?: { limit?: number; offset?: number }
 ): Promise<SessionSummariesListResponse> => {
-  if (!sessionId) {
+  if (!conversationId) {
     return { items: [], total: 0, has_summary: false };
   }
 
@@ -51,7 +51,7 @@ export const getSessionSummaries = async (
   }
   const query = params.toString();
   const result = await request<Partial<SessionSummariesListResponse>>(
-    `/sessions/${encodeURIComponent(sessionId)}/summaries${query ? `?${query}` : ''}`
+    `/conversations/${encodeURIComponent(conversationId)}/summaries${query ? `?${query}` : ''}`
   );
 
   return {
@@ -61,33 +61,33 @@ export const getSessionSummaries = async (
   };
 };
 
-export const deleteSessionSummary = (
+export const deleteConversationSummary = (
   request: ApiRequestFn,
-  sessionId: string,
+  conversationId: string,
   summaryId: string
 ): Promise<{ success?: boolean }> => {
-  if (!sessionId) {
-    throw new Error('sessionId is required');
+  if (!conversationId) {
+    throw new Error('conversationId is required');
   }
   if (!summaryId) {
     throw new Error('summaryId is required');
   }
 
   return request<{ success?: boolean }>(
-    `/sessions/${encodeURIComponent(sessionId)}/summaries/${encodeURIComponent(summaryId)}`,
+    `/conversations/${encodeURIComponent(conversationId)}/summaries/${encodeURIComponent(summaryId)}`,
     { method: 'DELETE' }
   );
 };
 
-export const clearSessionSummaries = (
+export const clearConversationSummaries = (
   request: ApiRequestFn,
-  sessionId: string,
+  conversationId: string,
 ): Promise<{ success?: boolean }> => {
-  if (!sessionId) {
-    throw new Error('sessionId is required');
+  if (!conversationId) {
+    throw new Error('conversationId is required');
   }
 
-  return request<{ success?: boolean }>(`/sessions/${encodeURIComponent(sessionId)}/summaries`, {
+  return request<{ success?: boolean }>(`/conversations/${encodeURIComponent(conversationId)}/summaries`, {
     method: 'DELETE',
   });
 };

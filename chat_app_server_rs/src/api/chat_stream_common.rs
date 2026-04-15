@@ -27,7 +27,8 @@ use crate::services::memory_server_client::{self, TurnRuntimeSnapshotSelectedCom
 
 #[derive(Debug, Deserialize, Clone)]
 pub(crate) struct ChatStreamRequest {
-    pub session_id: Option<String>,
+    #[serde(rename = "conversation_id", alias = "conversationId")]
+    pub conversation_id: Option<String>,
     pub content: Option<String>,
     pub ai_model_config: Option<Value>,
     pub user_id: Option<String>,
@@ -46,7 +47,7 @@ pub(crate) fn validate_chat_stream_request(
     req: &ChatStreamRequest,
     require_responses: bool,
 ) -> Result<(), (StatusCode, Json<Value>)> {
-    let session_id = req.session_id.as_deref().unwrap_or_default().trim();
+    let conversation_id = req.conversation_id.as_deref().unwrap_or_default().trim();
     let content = req.content.as_deref().unwrap_or_default();
     let has_text_content = !content.trim().is_empty();
     let has_attachments = req
@@ -54,10 +55,12 @@ pub(crate) fn validate_chat_stream_request(
         .as_ref()
         .map(|items| !items.is_empty())
         .unwrap_or(false);
-    if session_id.is_empty() || (!has_text_content && !has_attachments) {
+    if conversation_id.is_empty() || (!has_text_content && !has_attachments) {
         return Err((
             StatusCode::BAD_REQUEST,
-            Json(json!({"error": "session_id 不能为空，且 content 与 attachments 不能同时为空"})),
+            Json(
+                json!({"error": "conversation_id 不能为空，且 content 与 attachments 不能同时为空"}),
+            ),
         ));
     }
     if require_responses

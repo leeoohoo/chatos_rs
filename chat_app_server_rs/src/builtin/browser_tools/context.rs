@@ -26,8 +26,8 @@ pub(super) fn optional_bool(args: &Value, field: &str) -> bool {
         .unwrap_or(false)
 }
 
-pub(super) fn session_key(session_id: Option<&str>) -> String {
-    session_id
+pub(super) fn conversation_key(conversation_id: Option<&str>) -> String {
+    conversation_id
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .unwrap_or("default")

@@ -25,7 +25,7 @@ pub struct UiPrompterOptions {
 #[derive(Clone)]
 pub struct UiPrompterService {
     tools: HashMap<String, Tool>,
-    default_session_id: String,
+    default_conversation_id: String,
     default_turn_id: String,
 }
 
@@ -40,7 +40,7 @@ struct Tool {
 type ToolHandler = Arc<dyn Fn(Value, &ToolContext) -> Result<Value, String> + Send + Sync>;
 
 pub(super) struct ToolContext<'a> {
-    session_id: &'a str,
+    conversation_id: &'a str,
     conversation_turn_id: &'a str,
     on_stream_chunk: Option<ToolStreamChunkCallback>,
 }
@@ -49,7 +49,7 @@ impl UiPrompterService {
     pub fn new(opts: UiPrompterOptions) -> Result<Self, String> {
         let mut service = Self {
             tools: HashMap::new(),
-            default_session_id: format!("session_{}", Uuid::new_v4().simple()),
+            default_conversation_id: format!("conversation_{}", Uuid::new_v4().simple()),
             default_turn_id: format!("turn_{}", Uuid::new_v4().simple()),
         };
 
@@ -99,7 +99,7 @@ impl UiPrompterService {
         &self,
         name: &str,
         args: Value,
-        session_id: Option<&str>,
+        conversation_id: Option<&str>,
         conversation_turn_id: Option<&str>,
         on_stream_chunk: Option<ToolStreamChunkCallback>,
     ) -> Result<Value, String> {
@@ -108,15 +108,15 @@ impl UiPrompterService {
             .get(name)
             .ok_or_else(|| format!("Tool not found: {name}"))?;
 
-        let session = session_id
+        let conversation = conversation_id
             .and_then(trimmed_non_empty)
-            .unwrap_or(self.default_session_id.as_str());
+            .unwrap_or(self.default_conversation_id.as_str());
         let turn = conversation_turn_id
             .and_then(trimmed_non_empty)
             .unwrap_or(self.default_turn_id.as_str());
 
         let ctx = ToolContext {
-            session_id: session,
+            conversation_id: conversation,
             conversation_turn_id: turn,
             on_stream_chunk,
         };

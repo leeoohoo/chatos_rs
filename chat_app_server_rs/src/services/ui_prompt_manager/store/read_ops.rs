@@ -34,7 +34,7 @@ pub async fn get_ui_prompt_record_by_id(prompt_id: &str) -> Result<Option<UiProm
             let prompt_id = prompt_id_for_sqlite.clone();
             Box::pin(async move {
                 let row = sqlx::query_as::<_, UiPromptRow>(
-                    "SELECT id, session_id, conversation_turn_id, tool_call_id, kind, status, prompt_json, response_json, expires_at, created_at, updated_at FROM ui_prompt_requests WHERE id = ? LIMIT 1",
+                    "SELECT id, conversation_id, conversation_turn_id, tool_call_id, kind, status, prompt_json, response_json, expires_at, created_at, updated_at FROM ui_prompt_requests WHERE id = ? LIMIT 1",
                 )
                 .bind(prompt_id)
                 .fetch_optional(pool)
@@ -48,20 +48,20 @@ pub async fn get_ui_prompt_record_by_id(prompt_id: &str) -> Result<Option<UiProm
 }
 
 pub async fn list_pending_ui_prompt_records(
-    session_id: &str,
+    conversation_id: &str,
     limit: usize,
 ) -> Result<Vec<UiPromptRecord>, String> {
-    let session_id = trimmed_non_empty(session_id)
-        .ok_or_else(|| "session_id is required".to_string())?
+    let conversation_id = trimmed_non_empty(conversation_id)
+        .ok_or_else(|| "conversation_id is required".to_string())?
         .to_string();
     let limit = limit.clamp(1, 200) as i64;
 
-    let session_id_for_mongo = session_id.clone();
-    let session_id_for_sqlite = session_id.clone();
+    let conversation_id_for_mongo = conversation_id.clone();
+    let conversation_id_for_sqlite = conversation_id.clone();
 
     with_db(
         move |db| {
-            let session_id = session_id_for_mongo.clone();
+            let conversation_id = conversation_id_for_mongo.clone();
             Box::pin(async move {
                 let options = FindOptions::builder()
                     .sort(doc! { "created_at": 1 })
@@ -71,7 +71,7 @@ pub async fn list_pending_ui_prompt_records(
                     .collection::<Document>("ui_prompt_requests")
                     .find(
                         doc! {
-                            "session_id": session_id,
+                            "conversation_id": conversation_id,
                             "status": UiPromptStatus::Pending.as_str(),
                         },
                         options,
@@ -90,12 +90,12 @@ pub async fn list_pending_ui_prompt_records(
             })
         },
         move |pool| {
-            let session_id = session_id_for_sqlite.clone();
+            let conversation_id = conversation_id_for_sqlite.clone();
             Box::pin(async move {
                 let mut qb = QueryBuilder::<Sqlite>::new(
-                    "SELECT id, session_id, conversation_turn_id, tool_call_id, kind, status, prompt_json, response_json, expires_at, created_at, updated_at FROM ui_prompt_requests WHERE session_id = ",
+                    "SELECT id, conversation_id, conversation_turn_id, tool_call_id, kind, status, prompt_json, response_json, expires_at, created_at, updated_at FROM ui_prompt_requests WHERE conversation_id = ",
                 );
-                qb.push_bind(session_id);
+                qb.push_bind(conversation_id);
                 qb.push(" AND status = ");
                 qb.push_bind(UiPromptStatus::Pending.as_str());
                 qb.push(" ORDER BY created_at ASC LIMIT ");
@@ -115,24 +115,24 @@ pub async fn list_pending_ui_prompt_records(
 }
 
 pub async fn list_ui_prompt_history_records(
-    session_id: &str,
+    conversation_id: &str,
     limit: usize,
     include_pending: bool,
 ) -> Result<Vec<UiPromptRecord>, String> {
-    let session_id = trimmed_non_empty(session_id)
-        .ok_or_else(|| "session_id is required".to_string())?
+    let conversation_id = trimmed_non_empty(conversation_id)
+        .ok_or_else(|| "conversation_id is required".to_string())?
         .to_string();
     let limit = limit.clamp(1, 500) as i64;
 
-    let session_id_for_mongo = session_id.clone();
-    let session_id_for_sqlite = session_id.clone();
+    let conversation_id_for_mongo = conversation_id.clone();
+    let conversation_id_for_sqlite = conversation_id.clone();
 
     with_db(
         move |db| {
-            let session_id = session_id_for_mongo.clone();
+            let conversation_id = conversation_id_for_mongo.clone();
             Box::pin(async move {
                 let mut filter = doc! {
-                    "session_id": session_id,
+                    "conversation_id": conversation_id,
                 };
                 if !include_pending {
                     filter.insert("status", doc! { "$ne": UiPromptStatus::Pending.as_str() });
@@ -159,12 +159,12 @@ pub async fn list_ui_prompt_history_records(
             })
         },
         move |pool| {
-            let session_id = session_id_for_sqlite.clone();
+            let conversation_id = conversation_id_for_sqlite.clone();
             Box::pin(async move {
                 let mut qb = QueryBuilder::<Sqlite>::new(
-                    "SELECT id, session_id, conversation_turn_id, tool_call_id, kind, status, prompt_json, response_json, expires_at, created_at, updated_at FROM ui_prompt_requests WHERE session_id = ",
+                    "SELECT id, conversation_id, conversation_turn_id, tool_call_id, kind, status, prompt_json, response_json, expires_at, created_at, updated_at FROM ui_prompt_requests WHERE conversation_id = ",
                 );
-                qb.push_bind(session_id);
+                qb.push_bind(conversation_id);
                 if !include_pending {
                     qb.push(" AND status != ");
                     qb.push_bind(UiPromptStatus::Pending.as_str());

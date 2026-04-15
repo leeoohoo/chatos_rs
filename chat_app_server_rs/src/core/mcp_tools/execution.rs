@@ -10,7 +10,7 @@ use super::{ToolResult, ToolResultCallback, ToolStreamChunkCallback};
 
 pub async fn execute_tools_stream<F, Fut>(
     tool_calls: &[Value],
-    session_id: Option<&str>,
+    conversation_id: Option<&str>,
     conversation_turn_id: Option<&str>,
     on_tool_result: Option<ToolResultCallback>,
     mut call_tool_once: F,
@@ -26,7 +26,7 @@ where
         .map(|value| value.to_string());
 
     for tc in tool_calls {
-        if is_aborted(session_id) {
+        if is_aborted(conversation_id) {
             break;
         }
 
@@ -55,7 +55,7 @@ where
                     conversation_turn_id: normalized_turn_id.clone(),
                     content: "工具名称不能为空".to_string(),
                 },
-                session_id,
+                conversation_id,
                 on_tool_result.as_ref(),
             );
             continue;
@@ -85,7 +85,7 @@ where
                         conversation_turn_id: normalized_turn_id.clone(),
                         content: format!("参数解析失败: {}", err),
                     },
-                    session_id,
+                    conversation_id,
                     on_tool_result.as_ref(),
                 );
                 continue;
@@ -95,7 +95,7 @@ where
         let stream_turn_id = normalized_turn_id.clone();
         let on_stream_chunk = on_tool_result.as_ref().map(|callback| {
             let callback = Arc::clone(callback);
-            let sid = session_id.map(|value| value.to_string());
+            let sid = conversation_id.map(|value| value.to_string());
             let stream_call_id = call_id.clone();
             let stream_tool_name = tool_name.clone();
             let stream_turn_id = stream_turn_id.clone();
@@ -132,7 +132,7 @@ where
                         conversation_turn_id: normalized_turn_id.clone(),
                         content: text,
                     },
-                    session_id,
+                    conversation_id,
                     on_tool_result.as_ref(),
                 );
             }
@@ -156,7 +156,7 @@ where
                         conversation_turn_id: normalized_turn_id.clone(),
                         content: format!("工具执行失败: {}", err),
                     },
-                    session_id,
+                    conversation_id,
                     on_tool_result.as_ref(),
                 );
             }
@@ -177,7 +177,7 @@ fn parse_tool_args(args_val: Value) -> Result<Value, serde_json::Error> {
 fn push_tool_result(
     results: &mut Vec<ToolResult>,
     result: ToolResult,
-    session_id: Option<&str>,
+    conversation_id: Option<&str>,
     on_tool_result: Option<&ToolResultCallback>,
 ) {
     results.push(result);
@@ -186,7 +186,7 @@ fn push_tool_result(
         return;
     };
 
-    if !is_active(session_id) {
+    if !is_active(conversation_id) {
         return;
     }
 
@@ -195,10 +195,12 @@ fn push_tool_result(
     }
 }
 
-fn is_aborted(session_id: Option<&str>) -> bool {
-    session_id.map(abort_registry::is_aborted).unwrap_or(false)
+fn is_aborted(conversation_id: Option<&str>) -> bool {
+    conversation_id
+        .map(abort_registry::is_aborted)
+        .unwrap_or(false)
 }
 
-fn is_active(session_id: Option<&str>) -> bool {
-    !is_aborted(session_id)
+fn is_active(conversation_id: Option<&str>) -> bool {
+    !is_aborted(conversation_id)
 }

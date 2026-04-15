@@ -144,6 +144,18 @@ export function useInputAreaController({
   const hasRemoteContext = Boolean(
     typeof currentRemoteConnectionId === 'string' && currentRemoteConnectionId.trim().length > 0,
   );
+  const mcpProjectScopeKey = useMemo(() => {
+    const projectId = typeof selectedRuntimeProject?.id === 'string'
+      ? selectedRuntimeProject.id.trim()
+      : '';
+    if (projectId) {
+      return `project:${projectId}`;
+    }
+    if (normalizedWorkspaceRoot) {
+      return `workspace:${normalizedWorkspaceRoot}`;
+    }
+    return null;
+  }, [normalizedWorkspaceRoot, selectedRuntimeProject?.id]);
 
   const {
     mcpPickerOpen,
@@ -153,6 +165,9 @@ export function useInputAreaController({
     mcpConfigsError,
     builtinMcpConfigs,
     customMcpConfigs,
+    mcpToolsetPresets,
+    projectScopeKey,
+    hasProjectMcpDefault,
     selectableMcpIds,
     sanitizedEnabledMcpIds,
     isAllMcpSelected,
@@ -163,10 +178,14 @@ export function useInputAreaController({
     handleToggleMcpPicker,
     handleSelectAllMcp,
     handleToggleMcpSelection,
+    handleApplyMcpToolsetPreset,
+    handleSaveProjectMcpDefault,
+    handleApplyProjectMcpDefault,
   } = useMcpSelection({
     client,
     mcpEnabled,
     enabledMcpIds,
+    projectScopeKey: mcpProjectScopeKey,
     hasDirectoryContext,
     hasRemoteContext,
     disabled,
@@ -399,6 +418,9 @@ export function useInputAreaController({
     mcpConfigsError,
     builtinMcpConfigs,
     customMcpConfigs,
+    mcpToolsetPresets,
+    projectScopeKey,
+    hasProjectMcpDefault,
     selectableMcpIds,
     sanitizedEnabledMcpIds,
     isAllMcpSelected,
@@ -409,6 +431,9 @@ export function useInputAreaController({
     handleToggleMcpPicker,
     handleSelectAllMcp,
     handleToggleMcpSelection,
+    handleApplyMcpToolsetPreset,
+    handleSaveProjectMcpDefault,
+    handleApplyProjectMcpDefault,
     selectedModel,
     enabledModels,
     hasAiOptions,

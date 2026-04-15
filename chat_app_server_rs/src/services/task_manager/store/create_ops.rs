@@ -7,12 +7,12 @@ use crate::services::task_manager::normalizer::{normalize_task_drafts, trimmed_n
 use crate::services::task_manager::types::{TaskDraft, TaskRecord};
 
 pub async fn create_tasks_for_turn(
-    session_id: &str,
+    conversation_id: &str,
     conversation_turn_id: &str,
     draft_tasks: Vec<TaskDraft>,
 ) -> Result<Vec<TaskRecord>, String> {
-    let session_id = trimmed_non_empty(session_id)
-        .ok_or_else(|| "session_id is required".to_string())?
+    let conversation_id = trimmed_non_empty(conversation_id)
+        .ok_or_else(|| "conversation_id is required".to_string())?
         .to_string();
     let conversation_turn_id = trimmed_non_empty(conversation_turn_id)
         .ok_or_else(|| "conversation_turn_id is required".to_string())?
@@ -27,7 +27,7 @@ pub async fn create_tasks_for_turn(
         .into_iter()
         .map(|draft| TaskRecord {
             id: Uuid::new_v4().to_string(),
-            session_id: session_id.clone(),
+            conversation_id: conversation_id.clone(),
             conversation_turn_id: conversation_turn_id.clone(),
             title: draft.title,
             details: draft.details,
@@ -63,10 +63,10 @@ pub async fn create_tasks_for_turn(
                     let tags_json =
                         serde_json::to_string(&task.tags).unwrap_or_else(|_| "[]".to_string());
                     sqlx::query(
-                        "INSERT INTO task_manager_tasks (id, session_id, conversation_turn_id, title, details, priority, status, tags_json, due_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        "INSERT INTO task_manager_tasks (id, conversation_id, conversation_turn_id, title, details, priority, status, tags_json, due_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     )
                     .bind(&task.id)
-                    .bind(&task.session_id)
+                    .bind(&task.conversation_id)
                     .bind(&task.conversation_turn_id)
                     .bind(&task.title)
                     .bind(&task.details)

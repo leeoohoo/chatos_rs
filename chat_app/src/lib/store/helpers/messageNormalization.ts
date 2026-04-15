@@ -154,7 +154,7 @@ export const normalizeRawMessages = (rawMessages: any[], sessionId: string): Mes
 
     return {
       id: message.id,
-      sessionId: message.session_id ?? message.sessionId ?? sessionId,
+      sessionId: message.conversation_id ?? message.conversationId ?? sessionId,
       role: message.role as 'user' | 'assistant' | 'system' | 'tool',
       content: typeof message.content === 'string' ? message.content : String(message.content ?? ''),
       summary: message.summary,

@@ -85,7 +85,7 @@ impl TaskReviewHub {
 static TASK_REVIEW_HUB: Lazy<TaskReviewHub> = Lazy::new(TaskReviewHub::default);
 
 pub async fn create_task_review(
-    session_id: &str,
+    conversation_id: &str,
     conversation_turn_id: &str,
     draft_tasks: Vec<TaskDraft>,
     timeout_ms: u64,
@@ -96,8 +96,8 @@ pub async fn create_task_review(
     ),
     String,
 > {
-    let session_id = trimmed_non_empty(session_id)
-        .ok_or_else(|| "session_id is required for task review".to_string())?
+    let conversation_id = trimmed_non_empty(conversation_id)
+        .ok_or_else(|| "conversation_id is required for task review".to_string())?
         .to_string();
     let conversation_turn_id = trimmed_non_empty(conversation_turn_id)
         .ok_or_else(|| "conversation_turn_id is required for task review".to_string())?
@@ -111,7 +111,7 @@ pub async fn create_task_review(
     let timeout_ms = timeout_ms.clamp(10_000, REVIEW_TIMEOUT_MS_DEFAULT);
     let payload = TaskCreateReviewPayload {
         review_id: format!("rev_{}", Uuid::new_v4().simple()),
-        session_id,
+        conversation_id,
         conversation_turn_id,
         draft_tasks,
         timeout_ms,
