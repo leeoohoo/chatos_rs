@@ -1,4 +1,5 @@
 use crate::builtin::agent_builder::{AgentBuilderOptions, AgentBuilderService};
+use crate::builtin::browser_tools::{BrowserToolsOptions, BrowserToolsService};
 use crate::builtin::code_maintainer::{CodeMaintainerOptions, CodeMaintainerService};
 use crate::builtin::memory_command_reader::{
     MemoryCommandReaderOptions, MemoryCommandReaderService,
@@ -12,6 +13,7 @@ use crate::builtin::remote_connection_controller::{
 use crate::builtin::task_manager::{TaskManagerOptions, TaskManagerService};
 use crate::builtin::terminal_controller::{TerminalControllerOptions, TerminalControllerService};
 use crate::builtin::ui_prompter::{UiPrompterOptions, UiPrompterService};
+use crate::builtin::web_tools::{WebToolsOptions, WebToolsService};
 use crate::services::builtin_mcp::BuiltinMcpKind;
 use crate::services::mcp_loader::McpBuiltinServer;
 
@@ -26,6 +28,8 @@ pub enum BuiltinToolService {
     AgentBuilder(AgentBuilderService),
     UiPrompter(UiPrompterService),
     RemoteConnectionController(RemoteConnectionControllerService),
+    WebTools(WebToolsService),
+    BrowserTools(BrowserToolsService),
     MemorySkillReader(MemorySkillReaderService),
     MemoryCommandReader(MemoryCommandReaderService),
     MemoryPluginReader(MemoryPluginReaderService),
@@ -41,6 +45,8 @@ impl BuiltinToolService {
             Self::AgentBuilder(service) => service.list_tools(),
             Self::UiPrompter(service) => service.list_tools(),
             Self::RemoteConnectionController(service) => service.list_tools(),
+            Self::WebTools(service) => service.list_tools(),
+            Self::BrowserTools(service) => service.list_tools(),
             Self::MemorySkillReader(service) => service.list_tools(),
             Self::MemoryCommandReader(service) => service.list_tools(),
             Self::MemoryPluginReader(service) => service.list_tools(),
@@ -81,6 +87,8 @@ impl BuiltinToolService {
                 on_stream_chunk,
             ),
             Self::RemoteConnectionController(service) => service.call_tool(name, args),
+            Self::WebTools(service) => service.call_tool(name, args),
+            Self::BrowserTools(service) => service.call_tool(name, args, session_id),
             Self::MemorySkillReader(service) => service.call_tool(name, args),
             Self::MemoryCommandReader(service) => service.call_tool(name, args),
             Self::MemoryPluginReader(service) => service.call_tool(name, args),
@@ -175,6 +183,21 @@ pub fn build_builtin_tool_service(server: &McpBuiltinServer) -> Result<BuiltinTo
                     max_read_file_bytes: 256 * 1024,
                 })?;
             Ok(BuiltinToolService::RemoteConnectionController(service))
+        }
+        BuiltinMcpKind::WebTools => {
+            let service = WebToolsService::new(WebToolsOptions {
+                server_name: server.name.clone(),
+                ..Default::default()
+            })?;
+            Ok(BuiltinToolService::WebTools(service))
+        }
+        BuiltinMcpKind::BrowserTools => {
+            let service = BrowserToolsService::new(BrowserToolsOptions {
+                server_name: server.name.clone(),
+                workspace_dir: std::path::PathBuf::from(&server.workspace_dir),
+                ..Default::default()
+            })?;
+            Ok(BuiltinToolService::BrowserTools(service))
         }
         BuiltinMcpKind::MemorySkillReader => {
             let agent_id = server
