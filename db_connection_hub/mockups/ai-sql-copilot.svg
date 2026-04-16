@@ -1,0 +1,75 @@
+<svg width="1440" height="900" viewBox="0 0 1440 900" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#F2F8FF"/>
+      <stop offset="100%" stop-color="#EAF4FF"/>
+    </linearGradient>
+    <linearGradient id="hero" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#0F3D7A"/>
+      <stop offset="100%" stop-color="#1556A8"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1440" height="900" fill="url(#bg)"/>
+
+  <rect x="30" y="24" width="1380" height="80" rx="18" fill="url(#hero)"/>
+  <text x="62" y="72" fill="#E9F2FF" font-size="28" font-family="IBM Plex Sans, Segoe UI, sans-serif" font-weight="700">AI SQL Copilot</text>
+  <text x="1140" y="72" fill="#B8D6FF" font-size="14" font-family="IBM Plex Sans, sans-serif">Datasource: orders-prod</text>
+
+  <rect x="30" y="124" width="550" height="330" rx="20" fill="#FFFFFF" stroke="#C7DBFA"/>
+  <text x="58" y="166" fill="#173C75" font-size="20" font-family="IBM Plex Sans, sans-serif" font-weight="700">1) 业务需求输入</text>
+  <rect x="58" y="186" width="494" height="190" rx="14" fill="#F7FBFF" stroke="#D8E7FD"/>
+  <text x="76" y="224" fill="#3A5E94" font-size="15" font-family="IBM Plex Sans, sans-serif">示例：统计最近 7 天每天订单金额，按日期升序，返回前 1000 行</text>
+  <text x="76" y="254" fill="#6A82AA" font-size="14" font-family="IBM Plex Sans, sans-serif">你可以直接写中文需求，不必手写 SQL</text>
+
+  <rect x="58" y="394" width="150" height="40" rx="10" fill="#1D63C6"/>
+  <text x="91" y="420" fill="#FFFFFF" font-size="14" font-family="IBM Plex Sans, sans-serif" font-weight="700">AI 生成 SQL</text>
+
+  <rect x="600" y="124" width="530" height="330" rx="20" fill="#FFFFFF" stroke="#C7DBFA"/>
+  <text x="628" y="166" fill="#173C75" font-size="20" font-family="IBM Plex Sans, sans-serif" font-weight="700">2) AI 生成结果</text>
+  <rect x="628" y="186" width="474" height="220" rx="14" fill="#0D223B"/>
+  <text x="646" y="220" fill="#8BC4FF" font-size="13" font-family="JetBrains Mono, monospace">SELECT date(created_at) AS d, SUM(amount) AS total_amount</text>
+  <text x="646" y="246" fill="#8BC4FF" font-size="13" font-family="JetBrains Mono, monospace">FROM orders</text>
+  <text x="646" y="272" fill="#8BC4FF" font-size="13" font-family="JetBrains Mono, monospace">WHERE created_at &gt;= now() - interval '7 day'</text>
+  <text x="646" y="298" fill="#8BC4FF" font-size="13" font-family="JetBrains Mono, monospace">GROUP BY d</text>
+  <text x="646" y="324" fill="#8BC4FF" font-size="13" font-family="JetBrains Mono, monospace">ORDER BY d ASC</text>
+  <text x="646" y="350" fill="#8BC4FF" font-size="13" font-family="JetBrains Mono, monospace">LIMIT 1000;</text>
+
+  <rect x="628" y="418" width="220" height="20" rx="10" fill="#E8F2FF"/>
+  <text x="640" y="432" fill="#21559E" font-size="12" font-family="IBM Plex Sans, sans-serif">解释：按日期聚合近 7 天订单金额</text>
+
+  <rect x="1150" y="124" width="260" height="330" rx="20" fill="#FFFFFF" stroke="#C7DBFA"/>
+  <text x="1178" y="166" fill="#173C75" font-size="20" font-family="IBM Plex Sans, sans-serif" font-weight="700">3) 风险控制</text>
+  <rect x="1178" y="188" width="204" height="66" rx="12" fill="#EAF8F0"/>
+  <text x="1196" y="226" fill="#1C7C4A" font-size="14" font-family="IBM Plex Sans, sans-serif" font-weight="700">Risk: LOW (Read Only)</text>
+
+  <rect x="1178" y="270" width="204" height="80" rx="12" fill="#F7FBFF" stroke="#D6E6FD"/>
+  <text x="1196" y="300" fill="#355E95" font-size="13" font-family="IBM Plex Sans, sans-serif">Used Tables:</text>
+  <text x="1196" y="326" fill="#355E95" font-size="13" font-family="IBM Plex Sans, sans-serif">- orders</text>
+
+  <rect x="1178" y="366" width="204" height="40" rx="10" fill="#17A34A"/>
+  <text x="1230" y="392" fill="#FFFFFF" font-size="14" font-family="IBM Plex Sans, sans-serif" font-weight="700">确认执行</text>
+
+  <rect x="30" y="474" width="1380" height="400" rx="20" fill="#FFFFFF" stroke="#C7DBFA"/>
+  <text x="58" y="518" fill="#173C75" font-size="20" font-family="IBM Plex Sans, sans-serif" font-weight="700">4) 执行结果</text>
+
+  <rect x="58" y="540" width="1324" height="44" rx="10" fill="#EAF4FF"/>
+  <text x="86" y="568" fill="#214D89" font-size="13" font-family="IBM Plex Sans, sans-serif" font-weight="700">d</text>
+  <text x="246" y="568" fill="#214D89" font-size="13" font-family="IBM Plex Sans, sans-serif" font-weight="700">total_amount</text>
+  <text x="1198" y="568" fill="#214D89" font-size="13" font-family="IBM Plex Sans, sans-serif" font-weight="700">elapsed: 24ms</text>
+
+  <line x1="58" y1="620" x2="1382" y2="620" stroke="#D9E7FB"/>
+  <text x="86" y="614" fill="#355E95" font-size="13" font-family="IBM Plex Sans, sans-serif">2026-04-09</text>
+  <text x="246" y="614" fill="#355E95" font-size="13" font-family="IBM Plex Sans, sans-serif">28344.10</text>
+
+  <line x1="58" y1="668" x2="1382" y2="668" stroke="#D9E7FB"/>
+  <text x="86" y="662" fill="#355E95" font-size="13" font-family="IBM Plex Sans, sans-serif">2026-04-10</text>
+  <text x="246" y="662" fill="#355E95" font-size="13" font-family="IBM Plex Sans, sans-serif">31889.20</text>
+
+  <line x1="58" y1="716" x2="1382" y2="716" stroke="#D9E7FB"/>
+  <text x="86" y="710" fill="#355E95" font-size="13" font-family="IBM Plex Sans, sans-serif">2026-04-11</text>
+  <text x="246" y="710" fill="#355E95" font-size="13" font-family="IBM Plex Sans, sans-serif">30122.65</text>
+
+  <rect x="1148" y="808" width="234" height="42" rx="10" fill="#1254A7"/>
+  <text x="1218" y="834" fill="#EAF4FF" font-size="13" font-family="IBM Plex Sans, sans-serif" font-weight="700">导出 CSV</text>
+</svg>

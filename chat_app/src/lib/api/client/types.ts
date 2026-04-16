@@ -348,6 +348,8 @@ export interface RemoteConnectionTestResponse {
   status?: string;
   message?: string;
   error?: string;
+  challenge_prompt?: string;
+  challengePrompt?: string;
 }
 
 export interface RemoteSftpEntryResponse {

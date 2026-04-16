@@ -116,22 +116,32 @@ export interface WorkspaceFacade {
   updateRemoteConnection(id: string, data: RemoteConnectionUpdatePayload): Promise<RemoteConnectionResponse>;
   deleteRemoteConnection(id: string): Promise<DeleteSuccessResponse>;
   disconnectRemoteTerminal(id: string): Promise<DeleteSuccessResponse>;
-  testRemoteConnectionDraft(data: RemoteConnectionDraftPayload): Promise<RemoteConnectionTestResponse>;
-  testRemoteConnection(id: string): Promise<RemoteConnectionTestResponse>;
-  listRemoteSftpEntries(connectionId: string, path?: string): Promise<RemoteSftpEntriesResponse>;
+  testRemoteConnectionDraft(
+    data: RemoteConnectionDraftPayload,
+    verificationCode?: string,
+  ): Promise<RemoteConnectionTestResponse>;
+  testRemoteConnection(id: string, verificationCode?: string): Promise<RemoteConnectionTestResponse>;
+  listRemoteSftpEntries(
+    connectionId: string,
+    path?: string,
+    verificationCode?: string,
+  ): Promise<RemoteSftpEntriesResponse>;
   uploadRemoteSftpFile(
     connectionId: string,
     localPath: string,
     remotePath: string,
+    verificationCode?: string,
   ): Promise<RemoteSftpTransferStatusResponse>;
   downloadRemoteSftpFile(
     connectionId: string,
     remotePath: string,
     localPath: string,
+    verificationCode?: string,
   ): Promise<RemoteSftpTransferStatusResponse>;
   startRemoteSftpTransfer(
     connectionId: string,
     data: SftpTransferStartPayload,
+    verificationCode?: string,
   ): Promise<RemoteSftpTransferStatusResponse>;
   getRemoteSftpTransferStatus(
     connectionId: string,
@@ -141,9 +151,24 @@ export interface WorkspaceFacade {
     connectionId: string,
     transferId: string,
   ): Promise<RemoteSftpTransferStatusResponse>;
-  createRemoteSftpDirectory(connectionId: string, parentPath: string, name: string): Promise<FsMutationResponse>;
-  renameRemoteSftpEntry(connectionId: string, fromPath: string, toPath: string): Promise<FsMutationResponse>;
-  deleteRemoteSftpEntry(connectionId: string, path: string, recursive?: boolean): Promise<FsMutationResponse>;
+  createRemoteSftpDirectory(
+    connectionId: string,
+    parentPath: string,
+    name: string,
+    verificationCode?: string,
+  ): Promise<FsMutationResponse>;
+  renameRemoteSftpEntry(
+    connectionId: string,
+    fromPath: string,
+    toPath: string,
+    verificationCode?: string,
+  ): Promise<FsMutationResponse>;
+  deleteRemoteSftpEntry(
+    connectionId: string,
+    path: string,
+    recursive?: boolean,
+    verificationCode?: string,
+  ): Promise<FsMutationResponse>;
   listFsDirectories(path?: string): Promise<FsEntriesResponse>;
   listFsEntries(path?: string): Promise<FsEntriesResponse>;
   searchFsEntries(path: string, query: string, limit?: number): Promise<FsEntriesResponse>;
@@ -289,23 +314,45 @@ export const workspaceFacade: WorkspaceFacade & ThisType<ApiClient> = {
   async disconnectRemoteTerminal(id) {
     return workspaceApi.disconnectRemoteTerminal(this.getRequestFn(), id);
   },
-  async testRemoteConnectionDraft(data) {
-    return workspaceApi.testRemoteConnectionDraft(this.getRequestFn(), data);
+  async testRemoteConnectionDraft(data, verificationCode) {
+    return workspaceApi.testRemoteConnectionDraft(this.getRequestFn(), data, verificationCode);
   },
-  async testRemoteConnection(id) {
-    return workspaceApi.testRemoteConnection(this.getRequestFn(), id);
+  async testRemoteConnection(id, verificationCode) {
+    return workspaceApi.testRemoteConnection(this.getRequestFn(), id, verificationCode);
   },
-  async listRemoteSftpEntries(connectionId, path) {
-    return workspaceApi.listRemoteSftpEntries(this.getRequestFn(), connectionId, path);
+  async listRemoteSftpEntries(connectionId, path, verificationCode) {
+    return workspaceApi.listRemoteSftpEntries(
+      this.getRequestFn(),
+      connectionId,
+      path,
+      verificationCode,
+    );
   },
-  async uploadRemoteSftpFile(connectionId, localPath, remotePath) {
-    return workspaceApi.uploadRemoteSftpFile(this.getRequestFn(), connectionId, localPath, remotePath);
+  async uploadRemoteSftpFile(connectionId, localPath, remotePath, verificationCode) {
+    return workspaceApi.uploadRemoteSftpFile(
+      this.getRequestFn(),
+      connectionId,
+      localPath,
+      remotePath,
+      verificationCode,
+    );
   },
-  async downloadRemoteSftpFile(connectionId, remotePath, localPath) {
-    return workspaceApi.downloadRemoteSftpFile(this.getRequestFn(), connectionId, remotePath, localPath);
+  async downloadRemoteSftpFile(connectionId, remotePath, localPath, verificationCode) {
+    return workspaceApi.downloadRemoteSftpFile(
+      this.getRequestFn(),
+      connectionId,
+      remotePath,
+      localPath,
+      verificationCode,
+    );
   },
-  async startRemoteSftpTransfer(connectionId, data) {
-    return workspaceApi.startRemoteSftpTransfer(this.getRequestFn(), connectionId, data);
+  async startRemoteSftpTransfer(connectionId, data, verificationCode) {
+    return workspaceApi.startRemoteSftpTransfer(
+      this.getRequestFn(),
+      connectionId,
+      data,
+      verificationCode,
+    );
   },
   async getRemoteSftpTransferStatus(connectionId, transferId) {
     return workspaceApi.getRemoteSftpTransferStatus(this.getRequestFn(), connectionId, transferId);
@@ -313,14 +360,32 @@ export const workspaceFacade: WorkspaceFacade & ThisType<ApiClient> = {
   async cancelRemoteSftpTransfer(connectionId, transferId) {
     return workspaceApi.cancelRemoteSftpTransfer(this.getRequestFn(), connectionId, transferId);
   },
-  async createRemoteSftpDirectory(connectionId, parentPath, name) {
-    return workspaceApi.createRemoteSftpDirectory(this.getRequestFn(), connectionId, parentPath, name);
+  async createRemoteSftpDirectory(connectionId, parentPath, name, verificationCode) {
+    return workspaceApi.createRemoteSftpDirectory(
+      this.getRequestFn(),
+      connectionId,
+      parentPath,
+      name,
+      verificationCode,
+    );
   },
-  async renameRemoteSftpEntry(connectionId, fromPath, toPath) {
-    return workspaceApi.renameRemoteSftpEntry(this.getRequestFn(), connectionId, fromPath, toPath);
+  async renameRemoteSftpEntry(connectionId, fromPath, toPath, verificationCode) {
+    return workspaceApi.renameRemoteSftpEntry(
+      this.getRequestFn(),
+      connectionId,
+      fromPath,
+      toPath,
+      verificationCode,
+    );
   },
-  async deleteRemoteSftpEntry(connectionId, path, recursive = false) {
-    return workspaceApi.deleteRemoteSftpEntry(this.getRequestFn(), connectionId, path, recursive);
+  async deleteRemoteSftpEntry(connectionId, path, recursive = false, verificationCode) {
+    return workspaceApi.deleteRemoteSftpEntry(
+      this.getRequestFn(),
+      connectionId,
+      path,
+      recursive,
+      verificationCode,
+    );
   },
   async listFsDirectories(path) {
     return workspaceApi.listFsDirectories(this.getRequestFn(), path);

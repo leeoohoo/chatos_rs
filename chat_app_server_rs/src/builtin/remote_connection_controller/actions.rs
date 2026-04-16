@@ -62,7 +62,7 @@ pub(super) async fn test_connection_with_context(
     explicit_connection_id: Option<String>,
 ) -> Result<Value, String> {
     let connection = resolve_owned_connection(&ctx, explicit_connection_id).await?;
-    let result = run_remote_connectivity_test(&connection).await?;
+    let result = run_remote_connectivity_test(&connection, None).await?;
     let _ = RemoteConnectionService::touch(&connection.id).await;
 
     Ok(json!({

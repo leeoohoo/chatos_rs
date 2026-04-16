@@ -165,6 +165,7 @@ pub(super) fn create_jump_tunnel_stream(
     connection: &RemoteConnection,
     timeout: StdDuration,
     timeout_ms: u32,
+    verification_code: Option<&str>,
 ) -> Result<TcpStream, String> {
     let jump_host = connection
         .jump_host
@@ -191,7 +192,7 @@ pub(super) fn create_jump_tunnel_stream(
         jump_port,
         connection.host_key_policy.as_str(),
     )?;
-    authenticate_jump_session(&jump_session, connection, jump_username)?;
+    authenticate_jump_session(&jump_session, connection, jump_username, verification_code)?;
     if !jump_session.authenticated() {
         return Err("跳板机 SSH 认证失败".to_string());
     }

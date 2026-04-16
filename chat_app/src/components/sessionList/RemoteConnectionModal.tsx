@@ -1,4 +1,5 @@
 import React from 'react';
+import RemoteVerificationModal from '../remote/RemoteVerificationModal';
 
 import type { HostKeyPolicy, KeyFilePickerTarget, RemoteAuthType } from './helpers';
 
@@ -26,6 +27,9 @@ interface RemoteConnectionModalProps {
   remoteSuccess: string | null;
   remoteTesting: boolean;
   remoteSaving: boolean;
+  remoteVerificationModalOpen: boolean;
+  remoteVerificationPrompt: string;
+  remoteVerificationCode: string;
   onClose: () => void;
   onRemoteNameChange: (value: string) => void;
   onRemoteHostChange: (value: string) => void;
@@ -43,6 +47,9 @@ interface RemoteConnectionModalProps {
   onRemoteJumpUsernameChange: (value: string) => void;
   onRemoteJumpPrivateKeyPathChange: (value: string) => void;
   onRemoteJumpPasswordChange: (value: string) => void;
+  onRemoteVerificationCodeChange: (value: string) => void;
+  onRemoteVerificationClose: () => void;
+  onRemoteVerificationSubmit: () => void;
   onOpenKeyFilePicker: (target: KeyFilePickerTarget) => void;
   onTest: () => void;
   onSave: () => void;
@@ -72,6 +79,9 @@ export const RemoteConnectionModal: React.FC<RemoteConnectionModalProps> = ({
   remoteSuccess,
   remoteTesting,
   remoteSaving,
+  remoteVerificationModalOpen,
+  remoteVerificationPrompt,
+  remoteVerificationCode,
   onClose,
   onRemoteNameChange,
   onRemoteHostChange,
@@ -89,6 +99,9 @@ export const RemoteConnectionModal: React.FC<RemoteConnectionModalProps> = ({
   onRemoteJumpUsernameChange,
   onRemoteJumpPrivateKeyPathChange,
   onRemoteJumpPasswordChange,
+  onRemoteVerificationCodeChange,
+  onRemoteVerificationClose,
+  onRemoteVerificationSubmit,
   onOpenKeyFilePicker,
   onTest,
   onSave,
@@ -351,6 +364,15 @@ export const RemoteConnectionModal: React.FC<RemoteConnectionModalProps> = ({
           </button>
         </div>
       </div>
+      <RemoteVerificationModal
+        isOpen={remoteVerificationModalOpen}
+        prompt={remoteVerificationPrompt}
+        code={remoteVerificationCode}
+        submitting={remoteTesting}
+        onCodeChange={onRemoteVerificationCodeChange}
+        onClose={onRemoteVerificationClose}
+        onSubmit={onRemoteVerificationSubmit}
+      />
     </div>
   );
 };

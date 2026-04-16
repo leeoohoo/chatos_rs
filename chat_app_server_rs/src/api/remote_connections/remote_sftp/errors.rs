@@ -4,13 +4,24 @@ use serde_json::Value;
 
 use crate::core::remote_connection_error_codes::remote_sftp_codes;
 
+use super::super::extract_second_factor_required_prompt;
 use super::super::transfer_helpers::{RemoteTransferErrorCode, TransferJobError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum RemoteSftpApiError {
-    BadRequest { code: &'static str, error: String },
-    NotFound { code: &'static str, error: String },
-    RequestTimeout { code: &'static str, error: String },
+    BadRequest {
+        code: &'static str,
+        error: String,
+        challenge_prompt: Option<String>,
+    },
+    NotFound {
+        code: &'static str,
+        error: String,
+    },
+    RequestTimeout {
+        code: &'static str,
+        error: String,
+    },
 }
 
 impl RemoteSftpApiError {
@@ -19,9 +30,18 @@ impl RemoteSftpApiError {
     }
 
     pub(super) fn bad_request_with_code(code: &'static str, error: impl Into<String>) -> Self {
+        Self::bad_request_with_code_and_prompt(code, error, None)
+    }
+
+    pub(super) fn bad_request_with_code_and_prompt(
+        code: &'static str,
+        error: impl Into<String>,
+        challenge_prompt: Option<String>,
+    ) -> Self {
         Self::BadRequest {
             code,
             error: error.into(),
+            challenge_prompt,
         }
     }
 
@@ -40,15 +60,30 @@ impl RemoteSftpApiError {
     }
 
     pub(super) fn remote_error(error: impl Into<String>) -> Self {
-        Self::bad_request_with_code(remote_sftp_codes::REMOTE_ERROR, error)
+        let error_text = error.into();
+        if let Some(prompt) = extract_second_factor_required_prompt(error_text.as_str()) {
+            return Self::bad_request_with_code_and_prompt(
+                remote_sftp_codes::SECOND_FACTOR_REQUIRED,
+                "需要二次验证",
+                Some(prompt),
+            );
+        }
+        Self::bad_request_with_code(remote_sftp_codes::REMOTE_ERROR, error_text)
     }
 
     pub(super) fn into_response(self) -> (StatusCode, Json<Value>) {
         match self {
-            Self::BadRequest { code, error } => (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "error": error, "code": code })),
-            ),
+            Self::BadRequest {
+                code,
+                error,
+                challenge_prompt,
+            } => {
+                let mut payload = serde_json::json!({ "error": error, "code": code });
+                if let Some(prompt) = challenge_prompt {
+                    payload["challenge_prompt"] = serde_json::json!(prompt);
+                }
+                (StatusCode::BAD_REQUEST, Json(payload))
+            }
             Self::NotFound { code, error } => (
                 StatusCode::NOT_FOUND,
                 Json(serde_json::json!({ "error": error, "code": code })),
@@ -74,6 +109,13 @@ impl From<TransferJobError> for RemoteSftpApiError {
                 Self::bad_request_with_code(remote_sftp_codes::LOCAL_IO_ERROR, message)
             }
             TransferJobError::Remote { code, message } => {
+                if code == RemoteTransferErrorCode::SecondFactorRequired {
+                    return Self::bad_request_with_code_and_prompt(
+                        remote_sftp_codes::SECOND_FACTOR_REQUIRED,
+                        "需要二次验证",
+                        extract_second_factor_required_prompt(message.as_str()),
+                    );
+                }
                 if code == RemoteTransferErrorCode::NetworkDisconnected {
                     Self::request_timeout_with_code(code.as_api_code(), message)
                 } else {

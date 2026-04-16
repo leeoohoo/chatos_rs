@@ -39,6 +39,23 @@ export const useRemoteConnectionForm = ({
   const [remoteTesting, setRemoteTesting] = useState(false);
   const [remoteSaving, setRemoteSaving] = useState(false);
   const [editingRemoteConnectionId, setEditingRemoteConnectionId] = useState<string | null>(null);
+  const [remoteVerificationModalOpen, setRemoteVerificationModalOpen] = useState(false);
+  const [remoteVerificationPrompt, setRemoteVerificationPrompt] = useState('');
+  const [remoteVerificationCode, setRemoteVerificationCode] = useState('');
+  const [pendingVerificationDraftPayload, setPendingVerificationDraftPayload] = useState<any | null>(null);
+  const [pendingVerificationConnectionId, setPendingVerificationConnectionId] = useState<string | null>(null);
+
+  const isSecondFactorRequired = useCallback((error: any) => (
+    typeof error?.code === 'string' && error.code === 'second_factor_required'
+  ), []);
+
+  const extractSecondFactorPrompt = useCallback((error: any) => {
+    const prompt = error?.payload?.challenge_prompt;
+    if (typeof prompt === 'string' && prompt.trim()) {
+      return prompt.trim();
+    }
+    return '请输入短信验证码或 OTP';
+  }, []);
 
   const applyRemoteErrorFeedback = useCallback((error: unknown, fallback: string) => {
     const feedback = resolveRemoteConnectionErrorFeedback(error, fallback);
@@ -69,6 +86,11 @@ export const useRemoteConnectionForm = ({
     setRemoteSuccess(null);
     setRemoteTesting(false);
     setRemoteSaving(false);
+    setRemoteVerificationModalOpen(false);
+    setRemoteVerificationPrompt('');
+    setRemoteVerificationCode('');
+    setPendingVerificationDraftPayload(null);
+    setPendingVerificationConnectionId(null);
     setRemoteModalOpen(true);
   }, []);
 
@@ -95,6 +117,11 @@ export const useRemoteConnectionForm = ({
     setRemoteSuccess(null);
     setRemoteTesting(false);
     setRemoteSaving(false);
+    setRemoteVerificationModalOpen(false);
+    setRemoteVerificationPrompt('');
+    setRemoteVerificationCode('');
+    setPendingVerificationDraftPayload(null);
+    setPendingVerificationConnectionId(null);
     setRemoteModalOpen(true);
   }, []);
 
@@ -133,6 +160,16 @@ export const useRemoteConnectionForm = ({
       setRemoteSuccess(`连接测试成功${remoteHostName}`);
       setRemoteErrorAction(null);
     } catch (error) {
+      if (isSecondFactorRequired(error)) {
+        setPendingVerificationDraftPayload(built.payload);
+        setPendingVerificationConnectionId(null);
+        setRemoteVerificationPrompt(extractSecondFactorPrompt(error));
+        setRemoteVerificationCode('');
+        setRemoteVerificationModalOpen(true);
+        setRemoteError(null);
+        setRemoteErrorAction(null);
+        return;
+      }
       applyRemoteErrorFeedback(error, '连接测试失败');
     } finally {
       setRemoteTesting(false);
@@ -140,6 +177,8 @@ export const useRemoteConnectionForm = ({
   }, [
     applyRemoteErrorFeedback,
     apiClient,
+    extractSecondFactorPrompt,
+    isSecondFactorRequired,
     remoteName,
     remoteHost,
     remotePort,
@@ -236,9 +275,66 @@ export const useRemoteConnectionForm = ({
       setRemoteError(null);
       setRemoteErrorAction(null);
     } catch (error) {
+      if (isSecondFactorRequired(error)) {
+        setPendingVerificationDraftPayload(null);
+        setPendingVerificationConnectionId(connection.id);
+        setRemoteVerificationPrompt(extractSecondFactorPrompt(error));
+        setRemoteVerificationCode('');
+        setRemoteVerificationModalOpen(true);
+        setRemoteError(null);
+        setRemoteErrorAction(null);
+        return;
+      }
       applyRemoteErrorFeedback(error, '连接测试失败');
     }
-  }, [apiClient, applyRemoteErrorFeedback]);
+  }, [apiClient, applyRemoteErrorFeedback, extractSecondFactorPrompt, isSecondFactorRequired]);
+
+  const handleSubmitRemoteVerification = useCallback(async () => {
+    const code = remoteVerificationCode.trim();
+    if (!code) {
+      setRemoteError('请输入验证码');
+      return;
+    }
+    setRemoteTesting(true);
+    setRemoteError(null);
+    setRemoteErrorAction(null);
+    setRemoteSuccess(null);
+    try {
+      if (pendingVerificationDraftPayload) {
+        const result = await apiClient.testRemoteConnectionDraft(pendingVerificationDraftPayload, code);
+        const remoteHostName = result?.remote_host ? ` (${result.remote_host})` : '';
+        setRemoteSuccess(`连接测试成功${remoteHostName}`);
+      } else if (pendingVerificationConnectionId) {
+        await apiClient.testRemoteConnection(pendingVerificationConnectionId, code);
+        setRemoteSuccess('连接测试成功');
+      } else {
+        throw new Error('验证码上下文已失效，请重新发起连接测试');
+      }
+      setRemoteVerificationModalOpen(false);
+      setPendingVerificationDraftPayload(null);
+      setPendingVerificationConnectionId(null);
+      setRemoteVerificationCode('');
+      setRemoteVerificationPrompt('');
+    } catch (error) {
+      if (isSecondFactorRequired(error)) {
+        setRemoteVerificationPrompt(extractSecondFactorPrompt(error));
+        setRemoteError('验证码错误或已过期，请重试');
+        return;
+      }
+      applyRemoteErrorFeedback(error, '连接测试失败');
+      setRemoteVerificationModalOpen(false);
+    } finally {
+      setRemoteTesting(false);
+    }
+  }, [
+    apiClient,
+    applyRemoteErrorFeedback,
+    extractSecondFactorPrompt,
+    isSecondFactorRequired,
+    pendingVerificationConnectionId,
+    pendingVerificationDraftPayload,
+    remoteVerificationCode,
+  ]);
 
   return {
     remoteModalOpen,
@@ -287,10 +383,17 @@ export const useRemoteConnectionForm = ({
     setRemoteSaving,
     editingRemoteConnectionId,
     setEditingRemoteConnectionId,
+    remoteVerificationModalOpen,
+    setRemoteVerificationModalOpen,
+    remoteVerificationPrompt,
+    setRemoteVerificationPrompt,
+    remoteVerificationCode,
+    setRemoteVerificationCode,
     openRemoteModal,
     openEditRemoteModal,
     handleTestRemoteConnection,
     handleSaveRemoteConnection,
     handleQuickTestRemoteConnection,
+    handleSubmitRemoteVerification,
   };
 };

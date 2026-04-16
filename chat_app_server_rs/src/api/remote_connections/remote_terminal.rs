@@ -14,7 +14,10 @@ use crate::models::remote_connection::{RemoteConnection, RemoteConnectionService
 use super::terminal_io::{
     is_io_would_block, request_pty_resize_nonblocking, write_channel_nonblocking,
 };
-use super::{connect_ssh2_session, input_triggers_busy, should_use_native_ssh, spawn_remote_shell};
+use super::{
+    connect_ssh2_session_with_verification, input_triggers_busy, is_password_auth,
+    should_use_native_ssh, spawn_remote_shell,
+};
 
 const REMOTE_TERMINAL_SNAPSHOT_LIMIT_BYTES: usize = 512 * 1024;
 const REMOTE_TERMINAL_IDLE_TIMEOUT: StdDuration = StdDuration::from_secs(20 * 60);
@@ -98,6 +101,7 @@ pub(super) struct RemoteTerminalSession {
 impl RemoteTerminalSession {
     fn new(
         connection: &RemoteConnection,
+        verification_code: Option<&str>,
     ) -> Result<
         (
             Arc<Self>,
@@ -105,8 +109,13 @@ impl RemoteTerminalSession {
         ),
         String,
     > {
+        if is_password_auth(connection) {
+            // Keep password/OTP auth in native ssh2 path so second-factor challenges are
+            // surfaced to frontend and can trigger the verification modal.
+            return Self::new_native(connection, verification_code);
+        }
         if should_use_native_ssh(connection) {
-            Self::new_native(connection)
+            Self::new_native(connection, verification_code)
         } else {
             Self::new_legacy(connection)
         }
@@ -175,6 +184,7 @@ impl RemoteTerminalSession {
 
     fn new_native(
         connection: &RemoteConnection,
+        verification_code: Option<&str>,
     ) -> Result<
         (
             Arc<Self>,
@@ -182,7 +192,11 @@ impl RemoteTerminalSession {
         ),
         String,
     > {
-        let connected = connect_ssh2_session(connection, Duration::from_secs(12))?;
+        let connected = connect_ssh2_session_with_verification(
+            connection,
+            Duration::from_secs(12),
+            verification_code,
+        )?;
         let mut channel = connected
             .session
             .channel_session()
@@ -421,6 +435,7 @@ impl RemoteTerminalManager {
     pub(super) async fn ensure_running(
         &self,
         connection: &RemoteConnection,
+        verification_code: Option<&str>,
     ) -> Result<Arc<RemoteTerminalSession>, String> {
         self.close_idle_sessions();
 
@@ -436,7 +451,7 @@ impl RemoteTerminalManager {
             }
         }
 
-        let (session, child) = RemoteTerminalSession::new(connection)?;
+        let (session, child) = RemoteTerminalSession::new(connection, verification_code)?;
         if let Some(mut child) = child {
             let manager = get_remote_terminal_manager();
             let id = connection.id.clone();

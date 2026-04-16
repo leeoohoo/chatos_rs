@@ -1,3 +1,4 @@
+use axum::http::HeaderMap;
 use std::path::Path as FsPath;
 use tokio::time::Duration;
 
@@ -8,6 +9,17 @@ use crate::models::remote_connection::RemoteConnection;
 use super::super::{join_remote_path, normalize_remote_path, shell_quote};
 use super::contracts::RemoteEntry;
 use super::errors::RemoteSftpApiError;
+
+const REMOTE_VERIFICATION_CODE_HEADER: &str = "x-remote-verification-code";
+
+pub(super) fn verification_code_from_headers(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get(REMOTE_VERIFICATION_CODE_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
 
 pub(super) fn require_non_empty_field(
     value: Option<String>,
@@ -48,6 +60,7 @@ pub(super) fn validate_mkdir_name(name: &str) -> Result<(), RemoteSftpApiError> 
 pub(super) async fn fetch_remote_entries(
     connection: &RemoteConnection,
     path: &str,
+    verification_code: Option<&str>,
 ) -> Result<Vec<RemoteEntry>, String> {
     let normalized = normalize_remote_path(path);
     let quoted = shell_quote(normalized.as_str());
@@ -55,8 +68,13 @@ pub(super) async fn fetch_remote_entries(
         "set -e; P={quoted}; if [ ! -d \"$P\" ]; then echo __CHATOS_DIR_NOT_FOUND__; exit 52; fi; cd \"$P\"; find . -mindepth 1 -maxdepth 1 -printf '%P\\t%y\\t%s\\t%T@\\n'"
     );
 
-    let output =
-        super::super::run_ssh_command(connection, script.as_str(), Duration::from_secs(20)).await?;
+    let output = super::super::run_ssh_command_with_verification(
+        connection,
+        script.as_str(),
+        Duration::from_secs(20),
+        verification_code,
+    )
+    .await?;
     if output.contains("__CHATOS_DIR_NOT_FOUND__") {
         return Err("远端目录不存在".to_string());
     }

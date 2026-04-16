@@ -1,6 +1,6 @@
 use axum::{
     extract::{Path, Query},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     Json,
 };
 use serde_json::Value;
@@ -23,11 +23,12 @@ use super::contracts::{
 use super::errors::{map_remote_listing_error, RemoteSftpApiError};
 use super::support::{
     ensure_local_target_parent_dir_exists, fetch_remote_entries, require_non_empty_field,
-    validate_mkdir_name,
+    validate_mkdir_name, verification_code_from_headers,
 };
 
 pub(crate) async fn list_remote_sftp_entries(
     auth: AuthUser,
+    headers: HeaderMap,
     Path(id): Path<String>,
     Query(query): Query<SftpListQuery>,
 ) -> (StatusCode, Json<Value>) {
@@ -39,8 +40,9 @@ pub(crate) async fn list_remote_sftp_entries(
     let path = normalize_non_empty(query.path)
         .or(connection.default_remote_path.clone())
         .unwrap_or_else(|| ".".to_string());
+    let verification_code = verification_code_from_headers(&headers);
 
-    match fetch_remote_entries(&connection, path.as_str()).await {
+    match fetch_remote_entries(&connection, path.as_str(), verification_code.as_deref()).await {
         Ok(entries) => {
             let _ = RemoteConnectionService::touch(&connection.id).await;
             (
@@ -58,6 +60,7 @@ pub(crate) async fn list_remote_sftp_entries(
 
 pub(crate) async fn upload_file_to_remote(
     auth: AuthUser,
+    headers: HeaderMap,
     Path(id): Path<String>,
     Json(req): Json<SftpUploadRequest>,
 ) -> (StatusCode, Json<Value>) {
@@ -74,6 +77,7 @@ pub(crate) async fn upload_file_to_remote(
         Ok(v) => v,
         Err(err) => return err.into_response(),
     };
+    let verification_code = verification_code_from_headers(&headers);
 
     let local = FsPath::new(&local_path);
     if !local.exists() || !local.is_file() {
@@ -84,7 +88,14 @@ pub(crate) async fn upload_file_to_remote(
         .into_response();
     }
 
-    match run_scp_upload_typed(&connection, local_path.as_str(), remote_path.as_str()).await {
+    match run_scp_upload_typed(
+        &connection,
+        local_path.as_str(),
+        remote_path.as_str(),
+        verification_code.as_deref(),
+    )
+    .await
+    {
         Ok(_) => {
             let _ = RemoteConnectionService::touch(&connection.id).await;
             (StatusCode::OK, Json(serde_json::json!({ "success": true })))
@@ -95,6 +106,7 @@ pub(crate) async fn upload_file_to_remote(
 
 pub(crate) async fn download_file_from_remote(
     auth: AuthUser,
+    headers: HeaderMap,
     Path(id): Path<String>,
     Json(req): Json<SftpDownloadRequest>,
 ) -> (StatusCode, Json<Value>) {
@@ -111,12 +123,20 @@ pub(crate) async fn download_file_from_remote(
         Ok(v) => v,
         Err(err) => return err.into_response(),
     };
+    let verification_code = verification_code_from_headers(&headers);
 
     if let Err(err) = ensure_local_target_parent_dir_exists(local_path.as_str()) {
         return err.into_response();
     }
 
-    match run_scp_download_typed(&connection, remote_path.as_str(), local_path.as_str()).await {
+    match run_scp_download_typed(
+        &connection,
+        remote_path.as_str(),
+        local_path.as_str(),
+        verification_code.as_deref(),
+    )
+    .await
+    {
         Ok(_) => {
             let _ = RemoteConnectionService::touch(&connection.id).await;
             (StatusCode::OK, Json(serde_json::json!({ "success": true })))
@@ -127,6 +147,7 @@ pub(crate) async fn download_file_from_remote(
 
 pub(crate) async fn create_remote_directory(
     auth: AuthUser,
+    headers: HeaderMap,
     Path(id): Path<String>,
     Json(req): Json<SftpMkdirRequest>,
 ) -> (StatusCode, Json<Value>) {
@@ -147,7 +168,14 @@ pub(crate) async fn create_remote_directory(
 
     let target_path = join_remote_path(parent.as_str(), name.as_str());
     let script = format!("mkdir -p {}", shell_quote(target_path.as_str()));
-    match super::super::run_ssh_command(&connection, script.as_str(), Duration::from_secs(20)).await
+    let verification_code = verification_code_from_headers(&headers);
+    match super::super::run_ssh_command_with_verification(
+        &connection,
+        script.as_str(),
+        Duration::from_secs(20),
+        verification_code.as_deref(),
+    )
+    .await
     {
         Ok(_) => {
             let _ = RemoteConnectionService::touch(&connection.id).await;
@@ -162,6 +190,7 @@ pub(crate) async fn create_remote_directory(
 
 pub(crate) async fn rename_remote_entry(
     auth: AuthUser,
+    headers: HeaderMap,
     Path(id): Path<String>,
     Json(req): Json<SftpRenameRequest>,
 ) -> (StatusCode, Json<Value>) {
@@ -184,7 +213,14 @@ pub(crate) async fn rename_remote_entry(
         shell_quote(from_path.as_str()),
         shell_quote(to_path.as_str())
     );
-    match super::super::run_ssh_command(&connection, script.as_str(), Duration::from_secs(20)).await
+    let verification_code = verification_code_from_headers(&headers);
+    match super::super::run_ssh_command_with_verification(
+        &connection,
+        script.as_str(),
+        Duration::from_secs(20),
+        verification_code.as_deref(),
+    )
+    .await
     {
         Ok(_) => {
             let _ = RemoteConnectionService::touch(&connection.id).await;
@@ -196,6 +232,7 @@ pub(crate) async fn rename_remote_entry(
 
 pub(crate) async fn delete_remote_entry(
     auth: AuthUser,
+    headers: HeaderMap,
     Path(id): Path<String>,
     Json(req): Json<SftpDeleteRequest>,
 ) -> (StatusCode, Json<Value>) {
@@ -219,8 +256,15 @@ pub(crate) async fn delete_remote_entry(
             p = quoted
         )
     };
+    let verification_code = verification_code_from_headers(&headers);
 
-    match super::super::run_ssh_command(&connection, script.as_str(), Duration::from_secs(20)).await
+    match super::super::run_ssh_command_with_verification(
+        &connection,
+        script.as_str(),
+        Duration::from_secs(20),
+        verification_code.as_deref(),
+    )
+    .await
     {
         Ok(_) => {
             let _ = RemoteConnectionService::touch(&connection.id).await;

@@ -1,8 +1,9 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useChatApiClientFromContext, useChatStoreFromContext } from '../lib/store/ChatStoreContext';
 import { apiClient as globalApiClient } from '../lib/api/client';
 import { resolveRemoteSftpErrorMessage } from '../lib/api/remoteConnectionErrors';
 import { cn } from '../lib/utils';
+import RemoteVerificationModal from './remote/RemoteVerificationModal';
 import { LocalBrowserPane, RemoteBrowserPane } from './remoteSftp/SftpBrowsers';
 import { TransferQueuePanel, TransferStatusBanner } from './remoteSftp/TransferPanels';
 import {
@@ -31,6 +32,44 @@ const RemoteSftpPanel: React.FC<RemoteSftpPanelProps> = ({ className }) => {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [remoteActionLoading, setRemoteActionLoading] = useState(false);
+  const [activeVerificationCode, setActiveVerificationCode] = useState<string | null>(null);
+  const [verificationOpen, setVerificationOpen] = useState(false);
+  const [verificationPrompt, setVerificationPrompt] = useState('');
+  const [verificationCodeInput, setVerificationCodeInput] = useState('');
+  const [verificationSubmitting, setVerificationSubmitting] = useState(false);
+  const pendingVerificationActionRef = useRef<((code: string) => Promise<void>) | null>(null);
+
+  const isSecondFactorRequired = useCallback((err: unknown) => (
+    typeof (err as any)?.code === 'string' && (err as any).code === 'second_factor_required'
+  ), []);
+
+  const extractSecondFactorPrompt = useCallback((err: unknown) => {
+    const prompt = (err as any)?.payload?.challenge_prompt;
+    if (typeof prompt === 'string' && prompt.trim()) {
+      return prompt.trim();
+    }
+    return '请输入短信验证码或 OTP';
+  }, []);
+
+  const handleSecondFactorRequired = useCallback((
+    err: unknown,
+    retryWithCode: (code: string) => Promise<void>,
+  ) => {
+    if (!isSecondFactorRequired(err)) {
+      return false;
+    }
+    pendingVerificationActionRef.current = retryWithCode;
+    setVerificationPrompt(extractSecondFactorPrompt(err));
+    setVerificationCodeInput('');
+    setVerificationOpen(true);
+    setVerificationSubmitting(false);
+    setActiveVerificationCode(null);
+    setError(null);
+    setMessage(null);
+    return true;
+  }, [extractSecondFactorPrompt, isSecondFactorRequired]);
+
+  const getVerificationCode = useCallback(() => activeVerificationCode, [activeVerificationCode]);
   const {
     localPath,
     localParent,
@@ -54,6 +93,8 @@ const RemoteSftpPanel: React.FC<RemoteSftpPanelProps> = ({ className }) => {
     currentRemoteConnectionId,
     currentRemoteDefaultPath,
     setError,
+    getVerificationCode,
+    onSecondFactorRequired: handleSecondFactorRequired,
   });
   const {
     transfering,
@@ -73,6 +114,8 @@ const RemoteSftpPanel: React.FC<RemoteSftpPanelProps> = ({ className }) => {
     localPathRef,
     setMessage,
     setError,
+    getVerificationCode,
+    onSecondFactorRequired: handleSecondFactorRequired,
   });
 
   useEffect(() => {
@@ -80,6 +123,12 @@ const RemoteSftpPanel: React.FC<RemoteSftpPanelProps> = ({ className }) => {
     resetTransferState();
     setMessage(null);
     setError(null);
+    setActiveVerificationCode(null);
+    setVerificationOpen(false);
+    setVerificationPrompt('');
+    setVerificationCodeInput('');
+    setVerificationSubmitting(false);
+    pendingVerificationActionRef.current = null;
   }, [currentRemoteConnectionId, resetTransferState]);
 
   const handleUpload = async () => {
@@ -136,11 +185,28 @@ const RemoteSftpPanel: React.FC<RemoteSftpPanelProps> = ({ className }) => {
     setError(null);
     setMessage(null);
     try {
-      await client.createRemoteSftpDirectory(currentRemoteConnection.id, remotePath, trimmedName);
+      await client.createRemoteSftpDirectory(
+        currentRemoteConnection.id,
+        remotePath,
+        trimmedName,
+        activeVerificationCode || undefined,
+      );
       setMessage(`已创建目录: ${trimmedName}`);
       await loadRemote(remotePath);
-    } catch (error) {
-      setError(resolveRemoteSftpErrorMessage(error, '创建目录失败'));
+    } catch (err) {
+      if (handleSecondFactorRequired(err, async (code) => {
+        await client.createRemoteSftpDirectory(
+          currentRemoteConnection.id,
+          remotePath,
+          trimmedName,
+          code,
+        );
+        setMessage(`已创建目录: ${trimmedName}`);
+        await loadRemote(remotePath, code);
+      })) {
+        return;
+      }
+      setError(resolveRemoteSftpErrorMessage(err, '创建目录失败'));
     } finally {
       setRemoteActionLoading(false);
     }
@@ -172,12 +238,30 @@ const RemoteSftpPanel: React.FC<RemoteSftpPanelProps> = ({ className }) => {
     setError(null);
     setMessage(null);
     try {
-      await client.renameRemoteSftpEntry(currentRemoteConnection.id, selectedRemote.path, targetPath);
+      await client.renameRemoteSftpEntry(
+        currentRemoteConnection.id,
+        selectedRemote.path,
+        targetPath,
+        activeVerificationCode || undefined,
+      );
       setMessage(`已重命名: ${selectedRemote.name} → ${trimmedName}`);
       setSelectedRemote(null);
       await loadRemote(remotePath);
-    } catch (error) {
-      setError(resolveRemoteSftpErrorMessage(error, '重命名失败'));
+    } catch (err) {
+      if (handleSecondFactorRequired(err, async (code) => {
+        await client.renameRemoteSftpEntry(
+          currentRemoteConnection.id,
+          selectedRemote.path,
+          targetPath,
+          code,
+        );
+        setMessage(`已重命名: ${selectedRemote.name} → ${trimmedName}`);
+        setSelectedRemote(null);
+        await loadRemote(remotePath, code);
+      })) {
+        return;
+      }
+      setError(resolveRemoteSftpErrorMessage(err, '重命名失败'));
     } finally {
       setRemoteActionLoading(false);
     }
@@ -202,14 +286,74 @@ const RemoteSftpPanel: React.FC<RemoteSftpPanelProps> = ({ className }) => {
     setError(null);
     setMessage(null);
     try {
-      await client.deleteRemoteSftpEntry(currentRemoteConnection.id, selectedRemote.path, recursive);
+      await client.deleteRemoteSftpEntry(
+        currentRemoteConnection.id,
+        selectedRemote.path,
+        recursive,
+        activeVerificationCode || undefined,
+      );
       setMessage(`已删除: ${selectedRemote.name}`);
       setSelectedRemote(null);
       await loadRemote(remotePath);
-    } catch (error) {
-      setError(resolveRemoteSftpErrorMessage(error, '删除失败'));
+    } catch (err) {
+      if (handleSecondFactorRequired(err, async (code) => {
+        await client.deleteRemoteSftpEntry(
+          currentRemoteConnection.id,
+          selectedRemote.path,
+          recursive,
+          code,
+        );
+        setMessage(`已删除: ${selectedRemote.name}`);
+        setSelectedRemote(null);
+        await loadRemote(remotePath, code);
+      })) {
+        return;
+      }
+      setError(resolveRemoteSftpErrorMessage(err, '删除失败'));
     } finally {
       setRemoteActionLoading(false);
+    }
+  };
+
+  const handleSubmitRemoteVerification = async () => {
+    const code = verificationCodeInput.trim();
+    if (!code) {
+      setError('请输入验证码');
+      return;
+    }
+    const pendingAction = pendingVerificationActionRef.current;
+    if (!pendingAction) {
+      setVerificationOpen(false);
+      setError('验证码上下文已失效，请重试当前操作');
+      return;
+    }
+
+    setVerificationSubmitting(true);
+    setError(null);
+    setMessage(null);
+    try {
+      await pendingAction(code);
+      setActiveVerificationCode(code);
+      setVerificationOpen(false);
+      setVerificationPrompt('');
+      setVerificationCodeInput('');
+      pendingVerificationActionRef.current = null;
+    } catch (err) {
+      if (isSecondFactorRequired(err)) {
+        setActiveVerificationCode(null);
+        setVerificationPrompt(extractSecondFactorPrompt(err));
+        setVerificationCodeInput('');
+        setVerificationOpen(true);
+        setError('验证码错误或已过期，请重试');
+        return;
+      }
+      setVerificationOpen(false);
+      setVerificationPrompt('');
+      setVerificationCodeInput('');
+      pendingVerificationActionRef.current = null;
+      setError(resolveRemoteSftpErrorMessage(err, 'SFTP 操作失败'));
+    } finally {
+      setVerificationSubmitting(false);
     }
   };
 
@@ -327,6 +471,26 @@ const RemoteSftpPanel: React.FC<RemoteSftpPanelProps> = ({ className }) => {
           }}
         />
       </div>
+
+      <RemoteVerificationModal
+        isOpen={verificationOpen}
+        prompt={verificationPrompt}
+        code={verificationCodeInput}
+        submitting={verificationSubmitting}
+        onCodeChange={setVerificationCodeInput}
+        onClose={() => {
+          if (verificationSubmitting) {
+            return;
+          }
+          setVerificationOpen(false);
+          setVerificationPrompt('');
+          setVerificationCodeInput('');
+          pendingVerificationActionRef.current = null;
+        }}
+        onSubmit={() => {
+          void handleSubmitRemoteVerification();
+        }}
+      />
     </div>
   );
 };

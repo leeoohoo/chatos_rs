@@ -503,9 +503,14 @@ export const disconnectRemoteTerminal = (
 export const testRemoteConnectionDraft = (
   request: ApiRequestFn,
   data: RemoteConnectionPayload,
+  verificationCode?: string,
 ): Promise<RemoteConnectionTestResponse> => {
+  const headers = verificationCode?.trim()
+    ? { 'x-remote-verification-code': verificationCode.trim() }
+    : undefined;
   return request<RemoteConnectionTestResponse>('/remote-connections/test', {
     method: 'POST',
+    headers,
     body: JSON.stringify(data),
   });
 };
@@ -513,19 +518,29 @@ export const testRemoteConnectionDraft = (
 export const testRemoteConnection = (
   request: ApiRequestFn,
   id: string,
+  verificationCode?: string,
 ): Promise<RemoteConnectionTestResponse> => {
+  const headers = verificationCode?.trim()
+    ? { 'x-remote-verification-code': verificationCode.trim() }
+    : undefined;
   return request<RemoteConnectionTestResponse>(`/remote-connections/${id}/test`, {
     method: 'POST',
+    headers,
   });
 };
 
 export const listRemoteSftpEntries = (
   request: ApiRequestFn,
   connectionId: string,
-  path?: string
+  path?: string,
+  verificationCode?: string,
 ): Promise<RemoteSftpEntriesResponse> => {
+  const headers = verificationCode?.trim()
+    ? { 'x-remote-verification-code': verificationCode.trim() }
+    : undefined;
   return request<RemoteSftpEntriesResponse>(
     `/remote-connections/${connectionId}/sftp/list${buildQuery({ path })}`,
+    { headers },
   );
 };
 
@@ -533,10 +548,15 @@ export const uploadRemoteSftpFile = (
   request: ApiRequestFn,
   connectionId: string,
   localPath: string,
-  remotePath: string
+  remotePath: string,
+  verificationCode?: string,
 ): Promise<RemoteSftpTransferStatusResponse> => {
+  const headers = verificationCode?.trim()
+    ? { 'x-remote-verification-code': verificationCode.trim() }
+    : undefined;
   return request<RemoteSftpTransferStatusResponse>(`/remote-connections/${connectionId}/sftp/upload`, {
     method: 'POST',
+    headers,
     body: JSON.stringify({
       local_path: localPath,
       remote_path: remotePath,
@@ -548,10 +568,15 @@ export const downloadRemoteSftpFile = (
   request: ApiRequestFn,
   connectionId: string,
   remotePath: string,
-  localPath: string
+  localPath: string,
+  verificationCode?: string,
 ): Promise<RemoteSftpTransferStatusResponse> => {
+  const headers = verificationCode?.trim()
+    ? { 'x-remote-verification-code': verificationCode.trim() }
+    : undefined;
   return request<RemoteSftpTransferStatusResponse>(`/remote-connections/${connectionId}/sftp/download`, {
     method: 'POST',
+    headers,
     body: JSON.stringify({
       remote_path: remotePath,
       local_path: localPath,
@@ -567,9 +592,14 @@ export const startRemoteSftpTransfer = (
     local_path: string;
     remote_path: string;
   },
+  verificationCode?: string,
 ): Promise<RemoteSftpTransferStatusResponse> => {
+  const headers = verificationCode?.trim()
+    ? { 'x-remote-verification-code': verificationCode.trim() }
+    : undefined;
   return request<RemoteSftpTransferStatusResponse>(`/remote-connections/${connectionId}/sftp/transfer/start`, {
     method: 'POST',
+    headers,
     body: JSON.stringify(data),
   });
 };
@@ -601,10 +631,15 @@ export const createRemoteSftpDirectory = (
   request: ApiRequestFn,
   connectionId: string,
   parentPath: string,
-  name: string
+  name: string,
+  verificationCode?: string,
 ): Promise<FsMutationResponse> => {
+  const headers = verificationCode?.trim()
+    ? { 'x-remote-verification-code': verificationCode.trim() }
+    : undefined;
   return request<FsMutationResponse>(`/remote-connections/${connectionId}/sftp/mkdir`, {
     method: 'POST',
+    headers,
     body: JSON.stringify({
       parent_path: parentPath,
       name,
@@ -616,10 +651,15 @@ export const renameRemoteSftpEntry = (
   request: ApiRequestFn,
   connectionId: string,
   fromPath: string,
-  toPath: string
+  toPath: string,
+  verificationCode?: string,
 ): Promise<FsMutationResponse> => {
+  const headers = verificationCode?.trim()
+    ? { 'x-remote-verification-code': verificationCode.trim() }
+    : undefined;
   return request<FsMutationResponse>(`/remote-connections/${connectionId}/sftp/rename`, {
     method: 'POST',
+    headers,
     body: JSON.stringify({
       from_path: fromPath,
       to_path: toPath,
@@ -631,10 +671,15 @@ export const deleteRemoteSftpEntry = (
   request: ApiRequestFn,
   connectionId: string,
   path: string,
-  recursive = false
+  recursive = false,
+  verificationCode?: string,
 ): Promise<FsMutationResponse> => {
+  const headers = verificationCode?.trim()
+    ? { 'x-remote-verification-code': verificationCode.trim() }
+    : undefined;
   return request<FsMutationResponse>(`/remote-connections/${connectionId}/sftp/delete`, {
     method: 'POST',
+    headers,
     body: JSON.stringify({
       path,
       recursive,

@@ -1,4 +1,8 @@
-use axum::{extract::Path, http::StatusCode, Json};
+use axum::{
+    extract::Path,
+    http::{HeaderMap, StatusCode},
+    Json,
+};
 use serde_json::Value;
 use std::path::Path as FsPath;
 
@@ -16,10 +20,13 @@ use super::super::transfer_helpers::{
 use super::super::transfer_manager::get_sftp_transfer_manager;
 use super::contracts::SftpTransferStartRequest;
 use super::errors::RemoteSftpApiError;
-use super::support::{ensure_local_target_parent_dir_exists, require_non_empty_field};
+use super::support::{
+    ensure_local_target_parent_dir_exists, require_non_empty_field, verification_code_from_headers,
+};
 
 pub(crate) async fn start_sftp_transfer(
     auth: AuthUser,
+    headers: HeaderMap,
     Path(id): Path<String>,
     Json(req): Json<SftpTransferStartRequest>,
 ) -> (StatusCode, Json<Value>) {
@@ -47,6 +54,7 @@ pub(crate) async fn start_sftp_transfer(
         Ok(v) => v,
         Err(err) => return err.into_response(),
     };
+    let verification_code = verification_code_from_headers(&headers);
 
     if direction == "upload" {
         let source = FsPath::new(local_path.as_str());
@@ -91,6 +99,7 @@ pub(crate) async fn start_sftp_transfer(
     let direction_for_task = direction.clone();
     let local_for_task = local_path.clone();
     let remote_for_task = remote_path.clone();
+    let verification_code_for_task = verification_code.clone();
     tokio::spawn(async move {
         run_sftp_transfer_task(
             connection_for_task,
@@ -98,6 +107,7 @@ pub(crate) async fn start_sftp_transfer(
             direction_for_task,
             local_for_task,
             remote_for_task,
+            verification_code_for_task,
         )
         .await;
     });
@@ -170,6 +180,7 @@ async fn run_sftp_transfer_task(
     direction: String,
     local_path: String,
     remote_path: String,
+    verification_code: Option<String>,
 ) {
     let transfer_manager = get_sftp_transfer_manager();
     transfer_manager.set_running(transfer_id.as_str());
@@ -179,6 +190,7 @@ async fn run_sftp_transfer_task(
     let direction_for_blocking = direction.clone();
     let local_for_blocking = local_path.clone();
     let remote_for_blocking = remote_path.clone();
+    let verification_code_for_blocking = verification_code.clone();
     let transfer_id_for_blocking = transfer_id.clone();
 
     let result = tokio::task::spawn_blocking(move || {
@@ -188,6 +200,7 @@ async fn run_sftp_transfer_task(
             direction_for_blocking.as_str(),
             local_for_blocking.as_str(),
             remote_for_blocking.as_str(),
+            verification_code_for_blocking.as_deref(),
             transfer_manager_for_blocking.as_ref(),
         )
     })

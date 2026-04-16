@@ -26,6 +26,13 @@ pub(super) fn build_ssh_args(
     args.push("-o".to_string());
     args.push("ConnectTimeout=10".to_string());
 
+    if is_password_auth(connection) {
+        args.push("-o".to_string());
+        args.push("PreferredAuthentications=keyboard-interactive,password".to_string());
+        args.push("-o".to_string());
+        args.push("KbdInteractiveAuthentication=yes".to_string());
+    }
+
     args.push("-o".to_string());
     args.push(format!(
         "StrictHostKeyChecking={}",
@@ -110,6 +117,13 @@ pub(super) fn build_scp_args(connection: &RemoteConnection) -> Vec<String> {
 
     args.push("-o".to_string());
     args.push("ConnectTimeout=15".to_string());
+
+    if is_password_auth(connection) {
+        args.push("-o".to_string());
+        args.push("PreferredAuthentications=keyboard-interactive,password".to_string());
+        args.push("-o".to_string());
+        args.push("KbdInteractiveAuthentication=yes".to_string());
+    }
 
     args.push("-o".to_string());
     args.push(format!(

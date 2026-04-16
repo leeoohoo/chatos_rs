@@ -53,6 +53,18 @@ fn classifies_remote_auth_failed_error_code() {
 }
 
 #[test]
+fn classifies_second_factor_required_error_code() {
+    let err = TransferJobError::remote("__CHATOS_SECOND_FACTOR_REQUIRED__:SMS OTP");
+    assert!(matches!(
+        err,
+        TransferJobError::Remote {
+            code: RemoteTransferErrorCode::SecondFactorRequired,
+            ..
+        }
+    ));
+}
+
+#[test]
 fn classifies_remote_path_not_found_error_code() {
     let err = TransferJobError::remote("No such file");
     assert!(matches!(
@@ -93,6 +105,10 @@ fn maps_remote_transfer_error_codes_to_api_codes() {
     assert_eq!(
         RemoteTransferErrorCode::AuthFailed.as_api_code(),
         remote_sftp_codes::REMOTE_AUTH_FAILED
+    );
+    assert_eq!(
+        RemoteTransferErrorCode::SecondFactorRequired.as_api_code(),
+        remote_sftp_codes::SECOND_FACTOR_REQUIRED
     );
     assert_eq!(
         RemoteTransferErrorCode::PathNotFound.as_api_code(),

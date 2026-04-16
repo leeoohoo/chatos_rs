@@ -28,7 +28,7 @@ else
 fi
 RUNTIME_DIR="${RUNTIME_DIR:-/tmp/chatos_rs_dev_${ROOT_HASH}}"
 LEGACY_RUNTIME_DIR="/tmp/chatos_rs_dev"
-STOP_BY_PORT="${STOP_BY_PORT:-0}"
+STOP_BY_PORT="${STOP_BY_PORT:-1}"
 MAIN_BACKEND_PID_FILE="$RUNTIME_DIR/backend.pid"
 MAIN_FRONTEND_PID_FILE="$RUNTIME_DIR/frontend.pid"
 MEMORY_BACKEND_PID_FILE="$RUNTIME_DIR/memory_backend.pid"

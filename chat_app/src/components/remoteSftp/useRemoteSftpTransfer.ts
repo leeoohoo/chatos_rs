@@ -5,6 +5,18 @@ import { resolveRemoteSftpErrorMessage } from '../../lib/api/remoteConnectionErr
 import { normalizeTransferStatus, type RemoteSftpClient } from './helpers';
 import type { SftpTransferRequest, SftpTransferStatus } from './types';
 
+const SECOND_FACTOR_REQUIRED_ERROR_PREFIX = '__CHATOS_SECOND_FACTOR_REQUIRED__:';
+
+const extractSecondFactorPrompt = (rawError?: string | null): string => {
+  if (typeof rawError !== 'string') {
+    return '';
+  }
+  if (!rawError.startsWith(SECOND_FACTOR_REQUIRED_ERROR_PREFIX)) {
+    return '';
+  }
+  return rawError.slice(SECOND_FACTOR_REQUIRED_ERROR_PREFIX.length).trim();
+};
+
 interface UseRemoteSftpTransferOptions {
   client: RemoteSftpClient;
   currentRemoteConnectionId: string | null;
@@ -14,6 +26,11 @@ interface UseRemoteSftpTransferOptions {
   localPathRef: React.MutableRefObject<string | null>;
   setMessage: (message: string | null) => void;
   setError: (message: string | null) => void;
+  getVerificationCode: () => string | null;
+  onSecondFactorRequired: (
+    error: unknown,
+    retryWithCode: (code: string) => Promise<void>,
+  ) => boolean;
 }
 
 export const useRemoteSftpTransfer = ({
@@ -25,6 +42,8 @@ export const useRemoteSftpTransfer = ({
   localPathRef,
   setMessage,
   setError,
+  getVerificationCode,
+  onSecondFactorRequired,
 }: UseRemoteSftpTransferOptions) => {
   const [transfering, setTransfering] = useState(false);
   const [transferStatus, setTransferStatus] = useState<SftpTransferStatus | null>(null);
@@ -54,6 +73,7 @@ export const useRemoteSftpTransfer = ({
     localSource: string,
     remoteSource: string,
     fallbackSuccess: string,
+    verificationCodeOverride?: string,
   ) => {
     if (!currentRemoteConnectionId) return;
 
@@ -64,12 +84,13 @@ export const useRemoteSftpTransfer = ({
     setMessage(null);
 
     try {
+      const verificationCode = (verificationCodeOverride ?? getVerificationCode() ?? '').trim();
       const started = normalizeTransferStatus(
         await client.startRemoteSftpTransfer(currentRemoteConnectionId, {
           direction,
           local_path: localSource,
           remote_path: remoteSource,
-        }),
+        }, verificationCode || undefined),
       );
       setTransferStatus(started);
 
@@ -98,6 +119,22 @@ export const useRemoteSftpTransfer = ({
           } else if (latest.state === 'error') {
             stopTransferPolling();
             setTransfering(false);
+            const secondFactorPrompt = extractSecondFactorPrompt(latest.error);
+            if (secondFactorPrompt) {
+              const handled = onSecondFactorRequired(
+                {
+                  code: 'second_factor_required',
+                  message: '需要二次验证',
+                  payload: { challenge_prompt: secondFactorPrompt },
+                },
+                async (code) => {
+                  await startTransfer(direction, localSource, remoteSource, fallbackSuccess, code);
+                },
+              );
+              if (handled) {
+                return;
+              }
+            }
             setError(latest.error || '传输失败');
           }
         } catch (error) {
@@ -111,14 +148,24 @@ export const useRemoteSftpTransfer = ({
     } catch (error) {
       setTransfering(false);
       setTransferStatus(null);
+      if ((verificationCodeOverride || '').trim()) {
+        throw error;
+      }
+      if (onSecondFactorRequired(error, async (code) => {
+        await startTransfer(direction, localSource, remoteSource, fallbackSuccess, code);
+      })) {
+        return;
+      }
       setError(resolveRemoteSftpErrorMessage(error, '启动传输失败'));
     }
   }, [
     client,
     currentRemoteConnectionId,
+    getVerificationCode,
     loadLocal,
     loadRemote,
     localPathRef,
+    onSecondFactorRequired,
     remotePathRef,
     setError,
     setMessage,

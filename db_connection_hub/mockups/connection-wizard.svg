@@ -1,0 +1,60 @@
+<svg width="1440" height="900" viewBox="0 0 1440 900" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#FFF7EE"/>
+      <stop offset="100%" stop-color="#FFEFD9"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1440" height="900" fill="url(#bg)"/>
+  <rect x="120" y="70" width="1200" height="760" rx="26" fill="#FFFFFF" stroke="#F4D9B7"/>
+
+  <text x="170" y="130" fill="#573411" font-size="30" font-family="Space Grotesk, Segoe UI, sans-serif" font-weight="700">Create New Connection</text>
+  <text x="170" y="162" fill="#8B6137" font-size="14" font-family="Space Grotesk, sans-serif">配置数据库类型、网络参数和认证方式，并实时测试连接可用性</text>
+
+  <rect x="170" y="196" width="220" height="6" rx="3" fill="#F59E0B"/>
+  <rect x="398" y="196" width="220" height="6" rx="3" fill="#FBD9A5"/>
+  <rect x="626" y="196" width="220" height="6" rx="3" fill="#FBD9A5"/>
+  <rect x="854" y="196" width="220" height="6" rx="3" fill="#FBD9A5"/>
+
+  <text x="170" y="228" fill="#774A1F" font-size="13" font-family="Space Grotesk, sans-serif">Step 1: Basic Info</text>
+  <text x="398" y="228" fill="#B18252" font-size="13" font-family="Space Grotesk, sans-serif">Step 2: Network</text>
+  <text x="626" y="228" fill="#B18252" font-size="13" font-family="Space Grotesk, sans-serif">Step 3: Auth</text>
+  <text x="854" y="228" fill="#B18252" font-size="13" font-family="Space Grotesk, sans-serif">Step 4: Test</text>
+
+  <rect x="170" y="260" width="700" height="500" rx="18" fill="#FFFDFB" stroke="#F5DDBD"/>
+  <text x="204" y="312" fill="#5D3916" font-size="16" font-family="Space Grotesk, sans-serif" font-weight="600">Database Type</text>
+
+  <rect x="204" y="330" width="280" height="48" rx="12" fill="#FFFFFF" stroke="#EECFA6"/>
+  <text x="224" y="360" fill="#6D4922" font-size="14" font-family="Space Grotesk, sans-serif">PostgreSQL</text>
+
+  <text x="204" y="416" fill="#5D3916" font-size="16" font-family="Space Grotesk, sans-serif" font-weight="600">Connection Name</text>
+  <rect x="204" y="434" width="630" height="48" rx="12" fill="#FFFFFF" stroke="#EECFA6"/>
+  <text x="224" y="464" fill="#B18961" font-size="14" font-family="Space Grotesk, sans-serif">e.g. orders-prod-primary</text>
+
+  <text x="204" y="520" fill="#5D3916" font-size="16" font-family="Space Grotesk, sans-serif" font-weight="600">Tags</text>
+  <rect x="204" y="538" width="630" height="48" rx="12" fill="#FFFFFF" stroke="#EECFA6"/>
+  <text x="224" y="568" fill="#B18961" font-size="14" font-family="Space Grotesk, sans-serif">prod, readonly, critical</text>
+
+  <rect x="204" y="670" width="170" height="52" rx="14" fill="#F59E0B"/>
+  <text x="255" y="702" fill="#FFFFFF" font-size="16" font-family="Space Grotesk, sans-serif" font-weight="600">Next</text>
+
+  <rect x="900" y="260" width="370" height="500" rx="18" fill="#2F1F0F"/>
+  <text x="932" y="312" fill="#FFEAD1" font-size="18" font-family="Space Grotesk, sans-serif" font-weight="600">Live Preview</text>
+
+  <rect x="932" y="340" width="306" height="120" rx="12" fill="#43301C"/>
+  <text x="954" y="374" fill="#FFD8AA" font-size="13" font-family="Space Grotesk, sans-serif">Driver</text>
+  <text x="954" y="404" fill="#FFFFFF" font-size="16" font-family="Space Grotesk, sans-serif">postgres://readonly@10.0.1.25:5432/orders</text>
+
+  <rect x="932" y="480" width="306" height="120" rx="12" fill="#43301C"/>
+  <text x="954" y="514" fill="#FFD8AA" font-size="13" font-family="Space Grotesk, sans-serif">Security Policy</text>
+  <text x="954" y="544" fill="#FFFFFF" font-size="15" font-family="Space Grotesk, sans-serif">- SSL Required</text>
+  <text x="954" y="570" fill="#FFFFFF" font-size="15" font-family="Space Grotesk, sans-serif">- Secret Encrypted</text>
+
+  <rect x="932" y="622" width="306" height="108" rx="12" fill="#43301C"/>
+  <text x="954" y="656" fill="#FFD8AA" font-size="13" font-family="Space Grotesk, sans-serif">Pre-check</text>
+  <circle cx="960" cy="684" r="8" fill="#22C55E"/>
+  <text x="980" y="690" fill="#FFFFFF" font-size="14" font-family="Space Grotesk, sans-serif">Host reachable</text>
+  <circle cx="960" cy="712" r="8" fill="#F59E0B"/>
+  <text x="980" y="718" fill="#FFFFFF" font-size="14" font-family="Space Grotesk, sans-serif">Credential pending</text>
+</svg>
