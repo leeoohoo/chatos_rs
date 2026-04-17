@@ -1,4 +1,5 @@
 pub mod agent_builder;
+pub mod browser_runtime;
 pub mod browser_tools;
 pub mod code_maintainer;
 pub mod memory_command_reader;

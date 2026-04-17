@@ -26,6 +26,20 @@ pub(super) fn optional_bool(args: &Value, field: &str) -> bool {
         .unwrap_or(false)
 }
 
+pub(super) fn optional_usize(args: &Value, field: &str) -> Option<usize> {
+    args.get(field).and_then(|value| {
+        value
+            .as_u64()
+            .and_then(|raw| usize::try_from(raw).ok())
+            .or_else(|| {
+                value
+                    .as_i64()
+                    .filter(|raw| *raw >= 0)
+                    .and_then(|raw| usize::try_from(raw).ok())
+            })
+    })
+}
+
 pub(super) fn conversation_key(conversation_id: Option<&str>) -> String {
     conversation_id
         .map(str::trim)

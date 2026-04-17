@@ -9,8 +9,8 @@ use crate::core::mcp_tools::{
     build_builtin_tool_service, build_function_tool_schema,
     execute_tools_stream as execute_tools_stream_common, inject_agent_builder_args,
     jsonrpc_http_call, jsonrpc_stdio_call, list_tools_http, list_tools_stdio,
-    parse_tool_definition, to_text, BuiltinToolService, ToolResultCallback, ToolSchemaFormat,
-    ToolStreamChunkCallback,
+    parse_tool_definition, to_text_and_structured_result, BuiltinToolService, ToolResultCallback,
+    ToolSchemaFormat, ToolStreamChunkCallback,
 };
 use crate::services::mcp_loader::{McpBuiltinServer, McpHttpServer, McpStdioServer};
 use crate::utils::abort_registry;
@@ -54,6 +54,7 @@ const PARALLEL_SAFE_TOOLS: &[&str] = &[
     "search_text",
     "test_connection",
     "web_extract",
+    "web_research",
     "web_search",
 ];
 
@@ -435,6 +436,7 @@ impl McpToolExecute {
                     is_stream: false,
                     conversation_turn_id: normalized_turn_id.clone(),
                     content: "工具名称不能为空".to_string(),
+                    result: None,
                 });
                 continue;
             }
@@ -455,6 +457,7 @@ impl McpToolExecute {
                         is_stream: false,
                         conversation_turn_id: normalized_turn_id.clone(),
                         content: format!("参数解析失败: {}", err),
+                        result: None,
                     });
                     continue;
                 }
@@ -482,6 +485,7 @@ impl McpToolExecute {
                         is_stream: true,
                         conversation_turn_id: stream_turn_id_for_callback.clone(),
                         content: chunk,
+                        result: None,
                     };
                     callback(&event);
                 }) as ToolStreamChunkCallback
@@ -504,7 +508,7 @@ impl McpToolExecute {
                     .await;
 
                 let result = match outcome {
-                    Ok(content) => ToolResult {
+                    Ok((content, structured_result)) => ToolResult {
                         tool_call_id: call_id,
                         name: tool_name,
                         success: true,
@@ -512,6 +516,7 @@ impl McpToolExecute {
                         is_stream: false,
                         conversation_turn_id: stream_turn_id_for_result.clone(),
                         content,
+                        result: structured_result,
                     },
                     Err(err) => ToolResult {
                         tool_call_id: call_id,
@@ -521,6 +526,7 @@ impl McpToolExecute {
                         is_stream: false,
                         conversation_turn_id: stream_turn_id_for_result.clone(),
                         content: format!("工具执行失败: {}", err),
+                        result: None,
                     },
                 };
 
@@ -562,7 +568,7 @@ impl McpToolExecute {
         conversation_turn_id: Option<&str>,
         caller_model: Option<&str>,
         on_stream_chunk: Option<ToolStreamChunkCallback>,
-    ) -> Result<String, String> {
+    ) -> Result<(String, Option<Value>), String> {
         let info = self
             .tool_metadata
             .get(tool_name)
@@ -576,7 +582,7 @@ impl McpToolExecute {
                 json!({"name": info.original_name, "arguments": args}),
             )
             .await?;
-            Ok(to_text(&result))
+            Ok(to_text_and_structured_result(&result))
         } else if info.server_type == "builtin" {
             let service = self
                 .builtin_services
@@ -596,7 +602,7 @@ impl McpToolExecute {
                 conversation_turn_id,
                 on_stream_chunk,
             )?;
-            Ok(to_text(&result))
+            Ok(to_text_and_structured_result(&result))
         } else {
             let config = info.server_config.clone().ok_or("missing server config")?;
             let result = jsonrpc_stdio_call(
@@ -606,7 +612,7 @@ impl McpToolExecute {
                 session_id,
             )
             .await?;
-            Ok(to_text(&result))
+            Ok(to_text_and_structured_result(&result))
         }
     }
 }
@@ -948,6 +954,38 @@ mod tests {
                 "function": {
                     "name": prefixed_tool_name,
                     "arguments": "{\"skill_ref\":\"SK2\"}"
+                }
+            }),
+        ];
+        assert!(exec.should_parallelize_tool_batch(tool_calls.as_slice()));
+    }
+
+    #[tokio::test]
+    async fn parallel_policy_allows_web_research_batch() {
+        let mut exec = build_skill_reader_executor().await;
+        let prefixed_tool_name = exec
+            .tool_metadata
+            .keys()
+            .find(|name| name.starts_with("memory_skill_reader_"))
+            .expect("prefixed tool name")
+            .to_string();
+        exec.tool_metadata
+            .get_mut(prefixed_tool_name.as_str())
+            .expect("tool metadata")
+            .original_name = "web_research".to_string();
+        let tool_calls = vec![
+            json!({
+                "id": "call_1",
+                "function": {
+                    "name": prefixed_tool_name.clone(),
+                    "arguments": "{\"query\":\"hermes agent browser automation\"}"
+                }
+            }),
+            json!({
+                "id": "call_2",
+                "function": {
+                    "name": prefixed_tool_name,
+                    "arguments": "{\"query\":\"chatos web research mcp\"}"
                 }
             }),
         ];

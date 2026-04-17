@@ -55,7 +55,11 @@ fn build_servers_from_configs(
         .filter(|value| !value.is_empty());
 
     for cfg in configs {
-        let server_name = format!("{}_{}", cfg.name, &cfg.id[..8.min(cfg.id.len())]);
+        let server_name = if is_builtin_mcp_id(&cfg.id) {
+            cfg.name.clone()
+        } else {
+            format!("{}_{}", cfg.name, &cfg.id[..8.min(cfg.id.len())])
+        };
         if is_builtin_mcp_id(&cfg.id) {
             let Some(kind) =
                 builtin_kind_by_command(&cfg.command).or_else(|| builtin_kind_by_id(&cfg.id))
@@ -178,4 +182,34 @@ pub async fn load_mcp_configs_for_user(
         user_id,
         normalized_project_id,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_servers_from_configs;
+    use crate::models::mcp_config::McpConfig;
+    use crate::services::builtin_mcp::{
+        BROWSER_TOOLS_COMMAND, BROWSER_TOOLS_MCP_ID, BROWSER_TOOLS_SERVER_NAME,
+    };
+
+    #[test]
+    fn builtin_servers_keep_stable_clean_names() {
+        let cfg = McpConfig {
+            id: BROWSER_TOOLS_MCP_ID.to_string(),
+            name: BROWSER_TOOLS_SERVER_NAME.to_string(),
+            command: BROWSER_TOOLS_COMMAND.to_string(),
+            r#type: "stdio".to_string(),
+            args: None,
+            env: None,
+            cwd: None,
+            user_id: None,
+            enabled: true,
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+
+        let (_http, _stdio, builtin) = build_servers_from_configs(vec![cfg], Some("."), None, None);
+        assert_eq!(builtin.len(), 1);
+        assert_eq!(builtin[0].name, BROWSER_TOOLS_SERVER_NAME);
+    }
 }

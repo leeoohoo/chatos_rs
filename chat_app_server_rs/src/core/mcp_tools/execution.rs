@@ -17,7 +17,7 @@ pub async fn execute_tools_stream<F, Fut>(
 ) -> Vec<ToolResult>
 where
     F: FnMut(String, Value, Option<ToolStreamChunkCallback>) -> Fut,
-    Fut: Future<Output = Result<String, String>>,
+    Fut: Future<Output = Result<(String, Option<Value>), String>>,
 {
     let mut results = Vec::new();
     let normalized_turn_id = conversation_turn_id
@@ -54,6 +54,7 @@ where
                     is_stream: false,
                     conversation_turn_id: normalized_turn_id.clone(),
                     content: "工具名称不能为空".to_string(),
+                    result: None,
                 },
                 conversation_id,
                 on_tool_result.as_ref(),
@@ -84,6 +85,7 @@ where
                         is_stream: false,
                         conversation_turn_id: normalized_turn_id.clone(),
                         content: format!("参数解析失败: {}", err),
+                        result: None,
                     },
                     conversation_id,
                     on_tool_result.as_ref(),
@@ -114,13 +116,14 @@ where
                     is_stream: true,
                     conversation_turn_id: stream_turn_id.clone(),
                     content: chunk,
+                    result: None,
                 };
                 callback(&event);
             }) as ToolStreamChunkCallback
         });
 
         match call_tool_once(tool_name.clone(), args, on_stream_chunk).await {
-            Ok(text) => {
+            Ok((text, structured_result)) => {
                 push_tool_result(
                     &mut results,
                     ToolResult {
@@ -131,6 +134,7 @@ where
                         is_stream: false,
                         conversation_turn_id: normalized_turn_id.clone(),
                         content: text,
+                        result: structured_result,
                     },
                     conversation_id,
                     on_tool_result.as_ref(),
@@ -155,6 +159,7 @@ where
                         is_stream: false,
                         conversation_turn_id: normalized_turn_id.clone(),
                         content: format!("工具执行失败: {}", err),
+                        result: None,
                     },
                     conversation_id,
                     on_tool_result.as_ref(),

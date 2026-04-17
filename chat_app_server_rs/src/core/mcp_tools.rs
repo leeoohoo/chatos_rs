@@ -21,7 +21,7 @@ pub(crate) use self::schema::normalize_json_schema;
 pub use self::schema::{build_function_tool_schema, parse_tool_definition};
 #[cfg(test)]
 pub(crate) use self::text::truncate_tool_text;
-pub use self::text::{inject_agent_builder_args, to_text};
+pub use self::text::{inject_agent_builder_args, to_text_and_structured_result};
 
 #[derive(Debug, Clone)]
 pub struct ToolInfo {
@@ -45,6 +45,8 @@ pub struct ToolResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub conversation_turn_id: Option<String>,
     pub content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<Value>,
 }
 
 pub type ToolResultCallback = Arc<dyn Fn(&ToolResult) + Send + Sync>;

@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import type { Message, ToolCall } from '../../types';
+import { getToolDisplayName } from '../../lib/tools/displayName';
 import { cn } from '../../lib/utils';
 import { ToolCallRenderer } from '../ToolCallRenderer';
 
@@ -61,7 +62,10 @@ export const ToolCallTimeline: React.FC<ToolCallTimelineProps> = ({
   }, [toolCalls, toolResultById]);
 
   const summaryNames = useMemo(() => {
-    const names = toolCalls.map((toolCall) => toolCall?.name).filter(Boolean);
+    const names = toolCalls
+      .map((toolCall) => toolCall?.name)
+      .filter(Boolean)
+      .map((name) => getToolDisplayName(String(name)));
     if (names.length === 0) {
       return '';
     }
@@ -77,43 +81,43 @@ export const ToolCallTimeline: React.FC<ToolCallTimelineProps> = ({
       : 'bg-amber-500';
 
   return (
-    <div className="rounded-md border border-border bg-muted/30">
-      <div className="flex items-center justify-between px-3 py-2">
-        <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+    <div className="space-y-1">
+      <button
+        type="button"
+        onClick={() => setExpanded((prev) => !prev)}
+        className="flex w-full items-center gap-2 px-1 py-1 text-left text-xs text-muted-foreground hover:text-foreground"
+        aria-label={expanded ? '收起工具时间线' : '展开工具时间线'}
+        aria-expanded={expanded}
+      >
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           <span className={`inline-flex h-2 w-2 rounded-full ${statusDotClass}`} />
           <span className="font-medium text-foreground">工具调用</span>
           <span>· {toolCalls.length} 个</span>
           {summaryNames && (
             <span className="hidden truncate sm:inline">{summaryNames}</span>
           )}
+          <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
+            <span>{expanded ? '收起' : '展开'}</span>
+            <svg
+              className={`h-3 w-3 transition-transform ${expanded ? 'rotate-180' : ''}`}
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </span>
         </div>
-        <button
-          type="button"
-          onClick={() => setExpanded((prev) => !prev)}
-          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-          aria-label={expanded ? '收起工具时间线' : '展开工具时间线'}
-          aria-expanded={expanded}
-        >
-          <span>{expanded ? '收起' : '展开'}</span>
-          <svg
-            className={`h-3 w-3 transition-transform ${expanded ? 'rotate-180' : ''}`}
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
-            <polyline points="6 9 12 15 18 9" />
-          </svg>
-        </button>
-      </div>
+      </button>
 
       {expanded && (
         <div
           className={cn(
-            'space-y-2 px-3 pb-3',
+            'space-y-1.5 pl-1',
             shouldClampTimeline && 'max-h-72 overflow-y-auto pr-1',
           )}
         >
@@ -126,14 +130,11 @@ export const ToolCallTimeline: React.FC<ToolCallTimelineProps> = ({
                 : 'bg-amber-500';
 
             return (
-              <div key={toolCall.id || `tool-${index}`} className="flex gap-3">
-                <div className="relative flex flex-col items-center pt-1">
-                  <span className={`h-2.5 w-2.5 rounded-full ${dotClass}`} />
-                  {index < toolCalls.length - 1 && (
-                    <span className="mt-1 w-px flex-1 bg-border" />
-                  )}
+              <div key={toolCall.id || `tool-${index}`} className="flex gap-2.5">
+                <div className="flex pt-2.5">
+                  <span className={`h-1.5 w-1.5 rounded-full ${dotClass}`} />
                 </div>
-                <div className="flex-1">
+                <div className="min-w-0 flex-1">
                   <ToolCallRenderer
                     toolCall={toolCall}
                     toolResultById={toolResultById}

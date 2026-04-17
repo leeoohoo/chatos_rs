@@ -203,10 +203,11 @@ async fn stream_chat_v2(
     if runtime_context.base_system_prompt.is_some() {
         ai_server.set_system_prompt(runtime_context.base_system_prompt.clone());
     }
-    let prefixed_messages = build_prefixed_messages(
+    let prefixed_messages = build_prefixed_messages(&[
         runtime_context.contact_system_prompt.as_deref(),
+        runtime_context.tool_routing_system_prompt.as_deref(),
         runtime_context.command_system_prompt.as_deref(),
-    );
+    ]);
 
     let (http_servers, stdio_servers, builtin_servers) = runtime_context.mcp_server_bundle.clone();
     let use_tools = runtime_context.use_tools;

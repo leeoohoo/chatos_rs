@@ -196,6 +196,7 @@ pub fn build_builtin_tool_service(server: &McpBuiltinServer) -> Result<BuiltinTo
         BuiltinMcpKind::WebTools => {
             let service = WebToolsService::new(WebToolsOptions {
                 server_name: server.name.clone(),
+                workspace_dir: std::path::PathBuf::from(&server.workspace_dir),
                 ..Default::default()
             })?;
             Ok(BuiltinToolService::WebTools(service))

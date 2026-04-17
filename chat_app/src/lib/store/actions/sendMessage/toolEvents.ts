@@ -45,6 +45,31 @@ const toDate = (value: Date | string | undefined): Date => {
   return new Date();
 };
 
+const hasMeaningfulStructuredToolResult = (value: unknown): boolean => (
+  !!value
+  && typeof value === 'object'
+  && Object.prototype.hasOwnProperty.call(value, 'result')
+  && (value as { result?: unknown }).result !== undefined
+);
+
+const shouldTreatToolPayloadAsError = (
+  payload: RawToolResultPayload,
+  hasStructuredResult: boolean,
+): boolean => {
+  if (payload?.is_error === true) {
+    return true;
+  }
+
+  // Some tools return a successful wrapper with a degraded business payload.
+  // When a structured result exists, let the card render that state instead of
+  // collapsing the whole tool call into a hard execution error.
+  if (payload?.success === false && !hasStructuredResult) {
+    return true;
+  }
+
+  return false;
+};
+
 const convertToolCallData = (
   tc: RawToolCallPayload,
   assistantMessageId: string,
@@ -147,16 +172,25 @@ export const applyToolEndResultsToMessage = (
       return;
     }
 
-    const resultContent = normalizeToolResultContent(
-      result?.result || result?.content || result?.output || '',
-    );
-    if (result?.success === false || result?.is_error === true) {
+    const hasStructuredResult = hasMeaningfulStructuredToolResult(result);
+    const rawResult = hasStructuredResult
+      ? result?.result
+      : (result?.content ?? result?.output ?? '');
+    const resultContent = normalizeToolResultContent(rawResult);
+    if (shouldTreatToolPayloadAsError(result, hasStructuredResult)) {
       toolCall.error = result?.error || resultContent || '工具执行失败';
+      if (hasStructuredResult) {
+        toolCall.result = rawResult;
+        toolCall.finalResult = resultContent;
+      }
       toolCall.completed = true;
       return;
     }
 
-    if (typeof resultContent === 'string' && resultContent.length > 0) {
+    if (hasStructuredResult) {
+      toolCall.result = rawResult;
+      toolCall.finalResult = resultContent;
+    } else if (typeof resultContent === 'string' && resultContent.length > 0) {
       toolCall.finalResult = resultContent;
       toolCall.result = resultContent;
     } else if (normalizeToolResultContent(toolCall.result).trim() === '') {
@@ -193,8 +227,9 @@ export const applyToolStreamDataToMessage = (
   const rawChunkContent = data?.content || data?.chunk || data?.data || '';
   const chunkContent = normalizeToolResultContent(rawChunkContent);
   const isDeltaStream = data?.is_stream === true;
+  const hasStructuredResult = hasMeaningfulStructuredToolResult(data);
 
-  if (data?.is_error === true || data?.success !== true) {
+  if (shouldTreatToolPayloadAsError(data, hasStructuredResult)) {
     toolCall.error = chunkContent || '工具执行出错';
     toolCall.completed = true;
     return true;

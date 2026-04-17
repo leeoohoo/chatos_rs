@@ -14,6 +14,7 @@ pub struct BuildTurnRuntimeSnapshotInput<'a> {
     pub status: &'a str,
     pub base_system_prompt: Option<&'a str>,
     pub contact_system_prompt: Option<&'a str>,
+    pub tool_routing_system_prompt: Option<&'a str>,
     pub memory_summary_prompt: Option<&'a str>,
     pub tools: &'a HashMap<String, ToolInfo>,
     pub model: Option<&'a str>,
@@ -43,6 +44,13 @@ pub fn build_turn_runtime_snapshot_payload(
         system_messages.push(TurnRuntimeSnapshotSystemMessageDto {
             id: "contact_system".to_string(),
             source: "contact_runtime_context".to_string(),
+            content,
+        });
+    }
+    if let Some(content) = normalize_optional_text(input.tool_routing_system_prompt) {
+        system_messages.push(TurnRuntimeSnapshotSystemMessageDto {
+            id: "tool_routing".to_string(),
+            source: "tool_routing_policy".to_string(),
             content,
         });
     }
@@ -170,4 +178,40 @@ fn normalize_selected_commands(
         });
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use super::{build_turn_runtime_snapshot_payload, BuildTurnRuntimeSnapshotInput};
+
+    #[test]
+    fn snapshot_payload_includes_tool_routing_system_prompt() {
+        let payload = build_turn_runtime_snapshot_payload(BuildTurnRuntimeSnapshotInput {
+            user_message_id: None,
+            status: "running",
+            base_system_prompt: Some("base prompt"),
+            contact_system_prompt: Some("contact prompt"),
+            tool_routing_system_prompt: Some("routing prompt"),
+            memory_summary_prompt: Some("memory prompt"),
+            tools: &HashMap::new(),
+            model: Some("gpt-5"),
+            provider: Some("openai"),
+            contact_agent_id: None,
+            remote_connection_id: None,
+            project_id: None,
+            project_root: None,
+            workspace_root: None,
+            mcp_enabled: true,
+            enabled_mcp_ids: &[],
+            selected_commands: &[],
+        });
+
+        let system_messages = payload.system_messages.expect("system messages");
+        assert_eq!(system_messages.len(), 4);
+        assert_eq!(system_messages[2].id, "tool_routing");
+        assert_eq!(system_messages[2].source, "tool_routing_policy");
+        assert_eq!(system_messages[2].content, "routing prompt");
+    }
 }
