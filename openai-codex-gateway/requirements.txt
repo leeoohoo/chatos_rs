@@ -6,4 +6,4 @@
 pydantic>=2.7,<3
 
 # Required by test scripts under openai-codex-gateway/tests
-openai>=1.40,<2
+openai>=1.40,<3
