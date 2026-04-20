@@ -108,6 +108,7 @@ interface ProjectPreviewPaneProps {
   canOpenPreviousSearchHit: boolean;
   canOpenNextSearchHit: boolean;
   targetLine: number | null;
+  targetLineRevision: number;
   navCapabilities: CodeNavCapabilities | null;
   navCapabilitiesLoading: boolean;
   navCapabilitiesError: string | null;
@@ -176,6 +177,7 @@ export const ProjectPreviewPane: React.FC<ProjectPreviewPaneProps> = ({
   canOpenPreviousSearchHit,
   canOpenNextSearchHit,
   targetLine,
+  targetLineRevision,
   navCapabilities,
   navCapabilitiesError,
   selectedToken,
@@ -226,26 +228,44 @@ export const ProjectPreviewPane: React.FC<ProjectPreviewPaneProps> = ({
   const [generationMessage, setGenerationMessage] = useState<string | null>(null);
   const [documentSymbolsExpanded, setDocumentSymbolsExpanded] = useState(false);
   const lineRefMap = useRef<Record<number, HTMLDivElement | null>>({});
+  const renderedFilePathRef = useRef<string | null>(null);
+  const selectedFilePath = selectedFile?.path || null;
+
+  if (renderedFilePathRef.current !== selectedFilePath) {
+    lineRefMap.current = {};
+    renderedFilePathRef.current = selectedFilePath;
+  }
 
   useEffect(() => {
-    lineRefMap.current = {};
     setDocumentSymbolsExpanded(false);
-  }, [selectedFile?.path]);
+  }, [selectedFilePath]);
 
   useEffect(() => {
     if (!selectedFile || selectedFile.isBinary || !targetLine || targetLine < 1) {
       return;
     }
-    const target = lineRefMap.current[targetLine];
-    if (!target) {
+    const scrollToTargetLine = () => {
+      const target = lineRefMap.current[targetLine];
+      if (!target) {
+        return;
+      }
+      target.scrollIntoView({
+        block: 'center',
+        inline: 'nearest',
+        behavior: 'smooth',
+      });
+    };
+
+    if (typeof window === 'undefined') {
+      scrollToTargetLine();
       return;
     }
-    target.scrollIntoView({
-      block: 'center',
-      inline: 'nearest',
-      behavior: 'smooth',
-    });
-  }, [selectedFile, targetLine]);
+
+    const frame = window.requestAnimationFrame(scrollToTargetLine);
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [selectedFile, selectedFilePath, targetLine, targetLineRevision]);
 
   const selectedMember = useMemo(
     () => projectMembers.find((member) => member.contactId === memberPickerSelectedId) || null,

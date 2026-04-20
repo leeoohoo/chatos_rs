@@ -55,6 +55,7 @@ interface UseProjectExplorerWorkspaceViewParams {
   activeSearchHitIndex: number;
   totalSearchHits: number;
   previewTargetLine: number | null;
+  previewTargetLineRevision: number;
   navCapabilities: CodeNavCapabilities | null;
   navCapabilitiesLoading: boolean;
   navCapabilitiesError: string | null;
@@ -177,6 +178,7 @@ export const useProjectExplorerWorkspaceView = ({
   activeSearchHitIndex,
   totalSearchHits,
   previewTargetLine,
+  previewTargetLineRevision,
   navCapabilities,
   navCapabilitiesLoading,
   navCapabilitiesError,
@@ -524,6 +526,7 @@ export const useProjectExplorerWorkspaceView = ({
     runnerMessage,
     runnerError,
     targetLine: previewTargetLine,
+    targetLineRevision: previewTargetLineRevision,
     navCapabilities,
     navCapabilitiesLoading,
     navCapabilitiesError,

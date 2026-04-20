@@ -57,6 +57,7 @@
 - 已完成多语言 provider 抽象与 fallback 编排
 - 已完成 code-nav manager 进程内复用，避免每次请求重复构造 provider 列表
 - 已完成公共轻量项目符号索引缓存，Java / Kotlin / C / C++ / C# / Rust / Go / Python 的 definition 可优先走符号索引，未命中再回退文本扫描
+- 已完成符号索引精确失效：缓存不再依赖固定 30 秒 TTL，而是按源码文件 `path + size + mtime` 快照判断是否需要重建，并在项目文件操作 / MCP 写文件时主动失效相关索引
 - 已完成 heuristic 搜索同一行多命中返回，引用查询不再只返回同一行第一处命中
 
 当前语言支持分为两层：
@@ -82,7 +83,6 @@
 - 前端联调与真实项目手工验证
 - 更多语言继续接入，例如 PHP / Ruby / Swift / Dart 等
 - 逐步把 heuristic provider 升级为更强语义能力
-- 继续细化符号索引失效策略，例如按文件 mtime 或文件变更事件精确刷新，而不是仅依赖短 TTL
 
 ## 1. 现在已有文件搜索入口，但不是全文搜索
 
@@ -740,7 +740,8 @@ pub trait CodeNavProvider: Send + Sync {
 
 - code-nav manager 已做进程内静态复用
 - 公共 `symbol_index` 已做 project root + provider 级符号索引缓存，覆盖 basic provider 与 Java / Rust / Go / Python 独立 provider
-- 缓存命中用于 definition 快速定位，缓存项失效或读不到文件时跳过并回退
+- 缓存命中用于 definition 快速定位；每次复用前会对源码文件 `path + size + mtime` 快照做一致性检查，文件集合或内容时间戳变化时自动重建
+- 项目文件操作和 MCP/code maintainer 写入、追加、删除会主动清理受影响项目下的符号索引
 
 建议 manager 层负责：
 

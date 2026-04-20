@@ -34,7 +34,8 @@ interface UseProjectExplorerSearchResult {
   activeSearchHitIndex: number;
   totalSearchHits: number;
   previewTargetLine: number | null;
-  setPreviewTargetLine: Dispatch<SetStateAction<number | null>>;
+  previewTargetLineRevision: number;
+  setPreviewTargetLine: (line: number | null) => void;
   isSearchActive: boolean;
   canOpenPreviousSearchHit: boolean;
   canOpenNextSearchHit: boolean;
@@ -60,6 +61,14 @@ export const useProjectExplorerSearch = ({
   const [searchTruncated, setSearchTruncated] = useState(false);
   const [activeSearchHitId, setActiveSearchHitId] = useState<string | null>(null);
   const [previewTargetLine, setPreviewTargetLine] = useState<number | null>(null);
+  const [previewTargetLineRevision, setPreviewTargetLineRevision] = useState(0);
+
+  const requestPreviewTargetLine = useCallback((line: number | null) => {
+    setPreviewTargetLine(line);
+    if (line !== null && line > 0) {
+      setPreviewTargetLineRevision((revision) => revision + 1);
+    }
+  }, []);
 
   const clearSearchNavigation = useCallback(() => {
     setActiveSearchHitId(null);
@@ -162,13 +171,13 @@ export const useProjectExplorerSearch = ({
       modifiedAt: null,
     });
     setActiveSearchHitId(buildProjectSearchHitId(hit));
-    setPreviewTargetLine(hit.line);
-  }, []);
+    requestPreviewTargetLine(hit.line);
+  }, [requestPreviewTargetLine]);
 
   const activateSearchHit = useCallback((hit: ProjectSearchHit) => {
     setActiveSearchHitId(buildProjectSearchHitId(hit));
-    setPreviewTargetLine(hit.line);
-  }, []);
+    requestPreviewTargetLine(hit.line);
+  }, [requestPreviewTargetLine]);
 
   const openRelativeSearchHit = useCallback(async (
     direction: -1 | 1,
@@ -223,7 +232,8 @@ export const useProjectExplorerSearch = ({
     activeSearchHitIndex,
     totalSearchHits,
     previewTargetLine,
-    setPreviewTargetLine,
+    previewTargetLineRevision,
+    setPreviewTargetLine: requestPreviewTargetLine,
     isSearchActive: searchQuery.trim().length > 0,
     canOpenPreviousSearchHit,
     canOpenNextSearchHit,

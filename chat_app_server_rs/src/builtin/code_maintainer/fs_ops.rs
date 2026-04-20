@@ -1,4 +1,5 @@
 use super::utils::{ensure_path_inside_root, is_binary_buffer, sha256_bytes};
+use crate::services::code_nav::symbol_index::invalidate_project_symbol_indexes_for_path;
 use crate::services::workspace_search::{
     search_text as search_workspace_text, TextSearchRequest, DEFAULT_MAX_VISITS,
 };
@@ -179,6 +180,7 @@ impl FsOps {
             fs::create_dir_all(parent).map_err(|err| err.to_string())?;
         }
         fs::write(&target, buffer).map_err(|err| err.to_string())?;
+        invalidate_project_symbol_indexes_for_path(target.as_path());
         Ok(WriteResult {
             bytes: buffer.len() as i64,
             sha256: sha256_bytes(buffer),
@@ -205,6 +207,7 @@ impl FsOps {
             .open(&target)
             .map_err(|err| err.to_string())?;
         file.write_all(buffer).map_err(|err| err.to_string())?;
+        invalidate_project_symbol_indexes_for_path(target.as_path());
         Ok(WriteResult {
             bytes: buffer.len() as i64,
             sha256: sha256_bytes(buffer),
@@ -219,6 +222,7 @@ impl FsOps {
         let target = self.resolve_path(rel_path)?;
         if target.is_dir() {
             fs::remove_dir_all(&target).map_err(|err| err.to_string())?;
+            invalidate_project_symbol_indexes_for_path(target.as_path());
             return Ok(DeleteResult {
                 path: rel_path.to_string(),
                 deleted: true,
@@ -228,6 +232,7 @@ impl FsOps {
         if let Ok(meta) = fs::symlink_metadata(&target) {
             if meta.file_type().is_symlink() || meta.is_file() {
                 fs::remove_file(&target).map_err(|err| err.to_string())?;
+                invalidate_project_symbol_indexes_for_path(target.as_path());
                 return Ok(DeleteResult {
                     path: rel_path.to_string(),
                     deleted: true,

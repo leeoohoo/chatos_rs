@@ -1,3 +1,4 @@
+use crate::services::code_nav::symbol_index::invalidate_project_symbol_indexes_for_path;
 use axum::http::StatusCode;
 use axum::Json;
 use serde_json::{json, Value};
@@ -80,6 +81,7 @@ pub(super) async fn create_dir(Json(req): Json<FsMkdirRequest>) -> (StatusCode, 
             Json(json!({ "error": err.to_string() })),
         );
     }
+    invalidate_project_symbol_indexes_for_path(target.as_path());
 
     (
         StatusCode::CREATED,
@@ -185,6 +187,7 @@ pub(super) async fn create_file(Json(req): Json<FsCreateFileRequest>) -> (Status
     }
 
     let size = fs::metadata(&target).map(|meta| meta.len()).unwrap_or(0);
+    invalidate_project_symbol_indexes_for_path(target.as_path());
     (
         StatusCode::CREATED,
         Json(json!({
@@ -237,6 +240,7 @@ pub(super) async fn delete_entry(Json(req): Json<FsDeleteRequest>) -> (StatusCod
             Json(json!({ "error": err.to_string() })),
         );
     }
+    invalidate_project_symbol_indexes_for_path(path.as_path());
 
     (
         StatusCode::OK,
@@ -383,6 +387,7 @@ pub(super) async fn move_entry(Json(req): Json<FsMoveRequest>) -> (StatusCode, J
                 Json(json!({ "error": format!("覆盖目标失败: {}", err) })),
             );
         }
+        invalidate_project_symbol_indexes_for_path(target_path.as_path());
         replaced = true;
     }
 
@@ -392,6 +397,8 @@ pub(super) async fn move_entry(Json(req): Json<FsMoveRequest>) -> (StatusCode, J
             Json(json!({ "error": err.to_string() })),
         );
     }
+    invalidate_project_symbol_indexes_for_path(source_path.as_path());
+    invalidate_project_symbol_indexes_for_path(target_path.as_path());
 
     (
         StatusCode::OK,
