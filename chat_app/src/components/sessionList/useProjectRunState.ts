@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type ApiClient from '../../lib/api/client';
 import type { Project, Terminal } from '../../types';
@@ -89,7 +89,10 @@ const hasRunnerScript = async (apiClient: ApiClient, rootPath: string): Promise<
   const rootList = await apiClient.listFsEntries(safeRoot);
   const rootEntries = Array.isArray(rootList?.entries) ? rootList.entries.map(normalizeEntry) : [];
   const runnerDirEntry = rootEntries.find((entry) => entry.isDir && entry.name === RUNNER_SCRIPT_DIR) || null;
-  const runnerDirPath = runnerDirEntry?.path || `${safeRoot}/${RUNNER_SCRIPT_DIR}`;
+  if (!runnerDirEntry?.path) {
+    return false;
+  }
+  const runnerDirPath = runnerDirEntry.path;
   try {
     const runnerList = await apiClient.listFsEntries(runnerDirPath);
     const runnerEntries = Array.isArray(runnerList?.entries) ? runnerList.entries.map(normalizeEntry) : [];
@@ -194,6 +197,8 @@ export const useProjectRunState = ({
   const [projectRunStateById, setProjectRunStateById] = useState<Record<string, ProjectRunViewState>>({});
   const [runningProjectId, setRunningProjectId] = useState<string | null>(null);
   const [projectActionLoadingById, setProjectActionLoadingById] = useState<Record<string, boolean>>({});
+  const projectRunStateRef = useRef<Record<string, ProjectRunViewState>>({});
+  const projectRootPathByIdRef = useRef<Record<string, string>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -202,15 +207,32 @@ export const useProjectRunState = ({
 
     setProjectRunStateById((prev) => {
       const next: Record<string, ProjectRunViewState> = {};
+      const nextRootPathById: Record<string, string> = {};
       (projects || []).forEach((project) => {
-        next[project.id] = prev[project.id] || createInitialProjectRunState();
+        const normalizedRootPath = normalizeRootPath(project.rootPath || '');
+        nextRootPathById[project.id] = normalizedRootPath;
+        const previousRootPath = projectRootPathByIdRef.current[project.id] || '';
+        next[project.id] = previousRootPath === normalizedRootPath
+          ? (prev[project.id] || createInitialProjectRunState())
+          : createInitialProjectRunState();
       });
+      projectRunStateRef.current = next;
+      projectRootPathByIdRef.current = nextRootPathById;
       return next;
     });
 
     const loadProjectRunStates = async () => {
+      const projectsToRefresh = (projects || []).filter((project) => {
+        const currentState = projectRunStateRef.current[project.id];
+        return !currentState || shouldPollProjectRunState(currentState);
+      });
+
+      if (projectsToRefresh.length === 0) {
+        return;
+      }
+
       const updates = await Promise.all(
-        (projects || []).map(async (project) => ({
+        projectsToRefresh.map(async (project) => ({
           projectId: project.id,
           state: await resolveProjectRunState(apiClient, project),
         })),
@@ -230,6 +252,7 @@ export const useProjectRunState = ({
         updates.forEach((item) => {
           next[item.projectId] = item.state;
         });
+        projectRunStateRef.current = next;
         return next;
       });
 
@@ -277,13 +300,15 @@ export const useProjectRunState = ({
       if (!current) {
         return prev;
       }
-      return {
+      const next = {
         ...prev,
         [projectId]: {
           ...current,
           error,
         },
       };
+      projectRunStateRef.current = next;
+      return next;
     });
   }, []);
 

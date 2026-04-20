@@ -84,7 +84,10 @@ const hasRunnerScript = async (client: ApiClient, rootPath: string): Promise<boo
   const rootList = await client.listFsEntries(safeRoot);
   const rootEntries = Array.isArray(rootList?.entries) ? rootList.entries.map(normalizeEntry) : [];
   const runnerDirEntry = rootEntries.find((entry) => entry.isDir && entry.name === RUNNER_SCRIPT_DIR) || null;
-  const runnerDirPath = runnerDirEntry?.path || `${safeRoot}/${RUNNER_SCRIPT_DIR}`;
+  if (!runnerDirEntry?.path) {
+    return false;
+  }
+  const runnerDirPath = runnerDirEntry.path;
   try {
     const runnerList = await client.listFsEntries(runnerDirPath);
     const runnerEntries = Array.isArray(runnerList?.entries) ? runnerList.entries.map(normalizeEntry) : [];
