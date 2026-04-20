@@ -630,6 +630,7 @@ export const useProjectExplorerWorkspaceView = ({
     runnerStopCommand,
     restarting,
     previewTargetLine,
+    previewTargetLineRevision,
     searchCaseSensitive,
     searchQuery,
     searchResults,

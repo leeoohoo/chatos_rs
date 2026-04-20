@@ -3,6 +3,7 @@ pub(crate) mod ai_common;
 pub mod ai_prompt_tool;
 pub mod builtin_mcp;
 pub mod code_nav;
+pub mod git;
 pub mod llm_prompt_runner;
 pub mod mcp_loader;
 pub mod memory_server_client;

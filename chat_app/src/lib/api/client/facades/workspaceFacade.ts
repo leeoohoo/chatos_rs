@@ -16,6 +16,13 @@ import type {
   FsMoveOptions,
   FsMutationResponse,
   FsReadFileResponse,
+  GitActionResponse,
+  GitBranchesResponse,
+  GitClientInfoResponse,
+  GitCompareResponse,
+  GitFileDiffResponse,
+  GitStatusResponse,
+  GitSummaryResponse,
   MessageCreatePayload,
   PagingOptions,
   ProjectChangeLogResponse,
@@ -195,6 +202,21 @@ export interface WorkspaceFacade {
     column: number;
   }): Promise<CodeNavLocationsResponse>;
   getCodeNavDocumentSymbols(projectRoot: string, filePath: string): Promise<CodeNavDocumentSymbolsResponse>;
+  getGitClientInfo(): Promise<GitClientInfoResponse>;
+  getGitSummary(root: string): Promise<GitSummaryResponse>;
+  getGitBranches(root: string): Promise<GitBranchesResponse>;
+  getGitStatus(root: string): Promise<GitStatusResponse>;
+  compareGitBranch(root: string, target: string): Promise<GitCompareResponse>;
+  getGitDiff(data: { root: string; path: string; target?: string; staged?: boolean }): Promise<GitFileDiffResponse>;
+  fetchGit(data: { root: string; remote?: string }): Promise<GitActionResponse>;
+  pullGit(data: { root: string; mode?: 'ff-only' | 'rebase' | string }): Promise<GitActionResponse>;
+  pushGit(data: { root: string; remote?: string; branch?: string; setUpstream?: boolean }): Promise<GitActionResponse>;
+  checkoutGit(data: { root: string; branch?: string; remoteBranch?: string; createTracking?: boolean }): Promise<GitActionResponse>;
+  createGitBranch(data: { root: string; name: string; startPoint?: string; checkout?: boolean }): Promise<GitActionResponse>;
+  mergeGit(data: { root: string; branch: string; mode?: 'default' | 'no-ff' | 'ff-only' | string }): Promise<GitActionResponse>;
+  stageGitPaths(data: { root: string; paths: string[] }): Promise<GitActionResponse>;
+  unstageGitPaths(data: { root: string; paths: string[] }): Promise<GitActionResponse>;
+  commitGit(data: { root: string; message: string; paths?: string[] }): Promise<GitActionResponse>;
   readFsFile(path: string): Promise<FsReadFileResponse>;
   createFsDirectory(parentPath: string, name: string): Promise<FsMutationResponse>;
   createFsFile(parentPath: string, name: string, content?: string): Promise<FsMutationResponse>;
@@ -433,6 +455,51 @@ export const workspaceFacade: WorkspaceFacade & ThisType<ApiClient> = {
   },
   async getCodeNavDocumentSymbols(projectRoot, filePath) {
     return workspaceApi.getCodeNavDocumentSymbols(this.getRequestFn(), projectRoot, filePath);
+  },
+  async getGitClientInfo() {
+    return workspaceApi.getGitClientInfo(this.getRequestFn());
+  },
+  async getGitSummary(root) {
+    return workspaceApi.getGitSummary(this.getRequestFn(), root);
+  },
+  async getGitBranches(root) {
+    return workspaceApi.getGitBranches(this.getRequestFn(), root);
+  },
+  async getGitStatus(root) {
+    return workspaceApi.getGitStatus(this.getRequestFn(), root);
+  },
+  async compareGitBranch(root, target) {
+    return workspaceApi.compareGitBranch(this.getRequestFn(), root, target);
+  },
+  async getGitDiff(data) {
+    return workspaceApi.getGitDiff(this.getRequestFn(), data);
+  },
+  async fetchGit(data) {
+    return workspaceApi.fetchGit(this.getRequestFn(), data);
+  },
+  async pullGit(data) {
+    return workspaceApi.pullGit(this.getRequestFn(), data);
+  },
+  async pushGit(data) {
+    return workspaceApi.pushGit(this.getRequestFn(), data);
+  },
+  async checkoutGit(data) {
+    return workspaceApi.checkoutGit(this.getRequestFn(), data);
+  },
+  async createGitBranch(data) {
+    return workspaceApi.createGitBranch(this.getRequestFn(), data);
+  },
+  async mergeGit(data) {
+    return workspaceApi.mergeGit(this.getRequestFn(), data);
+  },
+  async stageGitPaths(data) {
+    return workspaceApi.stageGitPaths(this.getRequestFn(), data);
+  },
+  async unstageGitPaths(data) {
+    return workspaceApi.unstageGitPaths(this.getRequestFn(), data);
+  },
+  async commitGit(data) {
+    return workspaceApi.commitGit(this.getRequestFn(), data);
   },
   async readFsFile(path) {
     return workspaceApi.readFsFile(this.getRequestFn(), path);

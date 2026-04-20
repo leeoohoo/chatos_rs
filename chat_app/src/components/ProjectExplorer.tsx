@@ -20,6 +20,7 @@ import {
 import { ProjectExplorerFilesWorkspace } from './projectExplorer/ProjectExplorerFilesWorkspace';
 import TeamMembersPane from './projectExplorer/TeamMembersPane';
 import WorkspaceTabs from './projectExplorer/WorkspaceTabs';
+import GitBranchButton from './projectExplorer/git/GitBranchButton';
 import { useProjectTreeActions } from './projectExplorer/useProjectTreeActions';
 import { useProjectExplorerChangeTracking } from './projectExplorer/useProjectExplorerChangeTracking';
 import { useProjectExplorerDnd } from './projectExplorer/useProjectExplorerDnd';
@@ -775,6 +776,28 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     handleGenerateRunnerScriptForContact,
   });
 
+  const handleGitRepositoryChanged = useCallback(async () => {
+    if (!project?.rootPath) return;
+    clearSearch();
+    clearTokenSelection();
+    setSelectedPath(project.rootPath);
+    setSelectedFile(null);
+    setError(null);
+    setEntriesMap({});
+    await loadEntries(project.rootPath);
+    await loadChangeSummary();
+  }, [
+    clearSearch,
+    clearTokenSelection,
+    loadChangeSummary,
+    loadEntries,
+    project?.rootPath,
+    setEntriesMap,
+    setError,
+    setSelectedFile,
+    setSelectedPath,
+  ]);
+
   if (!project) {
     return (
       <div className={cn('flex items-center justify-center h-full text-muted-foreground', className)}>
@@ -788,6 +811,13 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
       <WorkspaceTabs
         activeTab={workspaceTab}
         onChange={setWorkspaceTab}
+        rightActions={(
+          <GitBranchButton
+            client={client}
+            projectRoot={project.rootPath}
+            onRepositoryChanged={handleGitRepositoryChanged}
+          />
+        )}
       />
 
       <div className="flex-1 min-h-0 overflow-hidden">

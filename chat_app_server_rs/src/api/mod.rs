@@ -36,6 +36,7 @@ pub mod configs;
 pub mod contacts;
 mod conversation_semantics;
 pub mod fs;
+pub mod git;
 pub mod memory_agents;
 pub mod messages;
 pub mod notepad;
@@ -135,6 +136,7 @@ pub fn router() -> Router {
         .merge(configs::router())
         .merge(system_contexts::router())
         .merge(fs::router())
+        .merge(git::router())
         .merge(notepad::router())
         .merge(user_settings::router())
         .route_layer(middleware::from_fn(require_auth));
