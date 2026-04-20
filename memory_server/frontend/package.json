@@ -14,11 +14,11 @@
     "antd": "^5.27.4",
     "axios": "^1.8.4",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^19.2.5"
   },
   "devDependencies": {
     "@types/react": "^18.3.12",
-    "@types/react-dom": "^18.3.1",
+    "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^4.4.1",
     "typescript": "^5.8.2",
     "vite": "^5.4.14"
