@@ -17,15 +17,17 @@ interface UseChatInterfaceControllerParams {
   sendMessage: (
     content: string,
     attachments?: File[],
-    runtimeOptions?: {
-      mcpEnabled?: boolean;
-      remoteConnectionId?: string | null;
-      projectId?: string | null;
-      projectRoot?: string | null;
-      workspaceRoot?: string | null;
-      enabledMcpIds?: string[];
-    },
-  ) => Promise<void>;
+	    runtimeOptions?: {
+	      mcpEnabled?: boolean;
+	      remoteConnectionId?: string | null;
+	      projectId?: string | null;
+	      projectRoot?: string | null;
+	      workspaceRoot?: string | null;
+	      enabledMcpIds?: string[];
+	      skillsEnabled?: boolean;
+	      selectedSkillIds?: string[];
+	    },
+	  ) => Promise<void>;
   selectRemoteConnection: (
     connectionId: string | null,
     options?: { activatePanel?: boolean },
@@ -194,15 +196,17 @@ export const useChatInterfaceController = ({
   const handleMessageSend = useCallback(async (
     content: string,
     attachments?: File[],
-    runtimeOptions?: {
-      mcpEnabled?: boolean;
-      remoteConnectionId?: string | null;
-      projectId?: string | null;
-      projectRoot?: string | null;
-      workspaceRoot?: string | null;
-      enabledMcpIds?: string[];
-    },
-  ) => {
+	    runtimeOptions?: {
+	      mcpEnabled?: boolean;
+	      remoteConnectionId?: string | null;
+	      projectId?: string | null;
+	      projectRoot?: string | null;
+	      workspaceRoot?: string | null;
+	      enabledMcpIds?: string[];
+	      skillsEnabled?: boolean;
+	      selectedSkillIds?: string[];
+	    },
+	  ) => {
     try {
       const hasRemoteConnectionIdOverride = Boolean(
         runtimeOptions

@@ -429,6 +429,30 @@ export interface AgentConfig {
   enabled: boolean;
   project_id?: string | null;
   workspace_dir?: string | null;
+  role_definition?: string;
+  skills?: Array<{ id?: string; name?: string; content?: string }>;
+  skill_ids?: string[];
+  default_skill_ids?: string[];
+  runtime_skills?: Array<{
+    id?: string;
+    name?: string;
+    description?: string | null;
+    plugin_source?: string | null;
+    source_type?: string;
+    source_path?: string | null;
+    updated_at?: string | null;
+  }>;
+  plugin_sources?: string[];
+  runtime_plugins?: Array<{
+    source?: string;
+    name?: string;
+    category?: string | null;
+    description?: string | null;
+    content_summary?: string | null;
+    updated_at?: string | null;
+  }>;
+  mcp_policy?: Record<string, unknown> | null;
+  project_policy?: Record<string, unknown> | null;
   createdAt: Date;
   updatedAt: Date;
   // 关联的应用（不选择表示通用）
@@ -529,15 +553,17 @@ export interface InputAreaProps {
   onSend: (
     content: string,
     attachments?: File[],
-    runtimeOptions?: {
-      mcpEnabled?: boolean;
-      remoteConnectionId?: string | null;
-      projectId?: string | null;
-      projectRoot?: string | null;
-      workspaceRoot?: string | null;
-      enabledMcpIds?: string[];
-    },
-  ) => void;
+	    runtimeOptions?: {
+	      mcpEnabled?: boolean;
+	      remoteConnectionId?: string | null;
+	      projectId?: string | null;
+	      projectRoot?: string | null;
+	      workspaceRoot?: string | null;
+	      enabledMcpIds?: string[];
+	      skillsEnabled?: boolean;
+	      selectedSkillIds?: string[];
+	    },
+	  ) => void;
   onGuide?: (content: string) => void | Promise<void>;
   onStop?: () => void;
   disabled?: boolean;
@@ -564,6 +590,7 @@ export interface InputAreaProps {
   workspaceRoot?: string | null;
   onWorkspaceRootChange?: (path: string | null) => void;
   currentRemoteConnectionId?: string | null;
+  currentAgent?: AgentConfig | null;
   availableRemoteConnections?: RemoteConnection[];
   onRemoteConnectionChange?: (connectionId: string | null) => void;
   showWorkspaceRootPicker?: boolean;

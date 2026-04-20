@@ -74,9 +74,11 @@ export const streamChat = async (
         : undefined,
       project_id: options?.projectId || undefined,
       project_root: options?.projectRoot || undefined,
-      mcp_enabled: options?.mcpEnabled,
-      enabled_mcp_ids: options?.enabledMcpIds || [],
-      ai_model_config: {
+	      mcp_enabled: options?.mcpEnabled,
+	      enabled_mcp_ids: options?.enabledMcpIds || [],
+	      skills_enabled: options?.skillsEnabled === true,
+	      selected_skill_ids: options?.selectedSkillIds || [],
+	      ai_model_config: {
         provider: modelConfig.provider,
         model_name: modelConfig.model_name,
         temperature: modelConfig.temperature || 0.7,

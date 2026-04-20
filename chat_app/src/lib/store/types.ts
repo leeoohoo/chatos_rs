@@ -106,6 +106,8 @@ export interface SendMessageRuntimeOptions {
   workspaceRoot?: string | null;
   mcpEnabled?: boolean;
   enabledMcpIds?: string[];
+  skillsEnabled?: boolean;
+  selectedSkillIds?: string[];
 }
 
 export interface SessionSelectOptions {

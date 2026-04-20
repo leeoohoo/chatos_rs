@@ -4,6 +4,7 @@ use serde_json::Value;
 use crate::repositories::projects;
 use crate::services::memory_server_client::{
     MemoryAgentRuntimeCommandSummaryDto, MemoryAgentRuntimeContextDto,
+    MemorySkillPluginCommandDto,
 };
 
 pub const CONTACT_SKILL_READER_TOOL_NAME: &str = "memory_skill_reader_get_skill_detail";
@@ -28,6 +29,46 @@ pub struct ParsedImplicitCommandSelection {
     pub name: Option<String>,
     pub plugin_source: String,
     pub source_path: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ContactSelectedSkillPrompt {
+    pub skill_ref: String,
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub content: String,
+    pub plugin_source: Option<String>,
+    pub source_path: Option<String>,
+    pub source_type: String,
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ContactSelectedPluginPrompt {
+    pub plugin_ref: String,
+    pub source: String,
+    pub name: String,
+    pub category: Option<String>,
+    pub description: Option<String>,
+    pub version: Option<String>,
+    pub repository: Option<String>,
+    pub branch: Option<String>,
+    pub content: Option<String>,
+    pub commands: Vec<MemorySkillPluginCommandDto>,
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub enum ContactSkillPromptMode {
+    Disabled,
+    Summary {
+        force_skill_first: bool,
+    },
+    SelectedFull {
+        skills: Vec<ContactSelectedSkillPrompt>,
+        plugins: Vec<ContactSelectedPluginPrompt>,
+    },
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -208,6 +249,14 @@ pub fn contact_id_from_metadata(metadata: Option<&Value>) -> Option<String> {
 
 pub fn project_id_from_metadata(metadata: Option<&Value>) -> Option<String> {
     ChatRuntimeMetadata::from_metadata(metadata).project_id
+}
+
+pub fn contact_skill_ref(index: usize) -> String {
+    format!("SK{}", index + 1)
+}
+
+pub fn contact_plugin_ref(index: usize) -> String {
+    format!("PL{}", index + 1)
 }
 
 fn normalize_lookup_token(value: &str) -> String {
@@ -418,14 +467,8 @@ pub fn parse_implicit_command_selections_from_tools_end(
 
 pub fn compose_contact_system_prompt(
     runtime_context: Option<&MemoryAgentRuntimeContextDto>,
+    skill_mode: &ContactSkillPromptMode,
 ) -> Option<String> {
-    fn skill_ref(index: usize) -> String {
-        format!("SK{}", index + 1)
-    }
-    fn plugin_ref(index: usize) -> String {
-        format!("PL{}", index + 1)
-    }
-
     #[derive(Clone)]
     struct SkillPromptEntry {
         skill_ref: String,
@@ -466,198 +509,340 @@ pub fn compose_contact_system_prompt(
     lines.push("角色定义：".to_string());
     lines.push(agent.role_definition.trim().to_string());
 
-    lines.push(String::new());
-    lines.push("关联技能（使用 skill_ref，避免长随机ID）：".to_string());
-    let mut skill_entries: Vec<SkillPromptEntry> = Vec::new();
-    if !agent.runtime_skills.is_empty() {
-        for (index, skill) in agent.runtime_skills.iter().enumerate() {
-            let entry = SkillPromptEntry {
-                skill_ref: skill_ref(index),
-                name: normalize_optional_string(Some(skill.name.clone())),
-                plugin_source: skill
-                    .plugin_source
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(ToOwned::to_owned),
-                description: skill
-                    .description
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(ToOwned::to_owned),
-                source_type: skill.source_type.trim().to_string(),
-            };
-            let mut parts = vec![format!("skill_ref={}", entry.skill_ref)];
-            if let Some(name) = entry.name.as_deref() {
-                parts.push(format!("名称={}", name));
-            }
-            if let Some(plugin_source) = entry.plugin_source.as_deref() {
-                parts.push(format!("plugin_source={}", plugin_source));
-            }
-            parts.push(format!(
-                "简介={}",
-                entry.description.as_deref().unwrap_or("未提供")
-            ));
-            parts.push(format!("来源类型={}", entry.source_type));
-            lines.push(format!("{}. {}", index + 1, parts.join(" | ")));
-            skill_entries.push(entry);
-        }
-    } else if !agent.skill_ids.is_empty() {
-        for (index, _skill_id) in agent.skill_ids.iter().enumerate() {
-            let entry = SkillPromptEntry {
-                skill_ref: skill_ref(index),
-                name: None,
-                plugin_source: None,
-                description: None,
-                source_type: "skill_center".to_string(),
-            };
-            lines.push(format!(
-                "{}. skill_ref={} | 简介=未提供 | 来源类型={} | 详情可通过工具查询",
-                index + 1,
-                entry.skill_ref,
-                entry.source_type
-            ));
-            skill_entries.push(entry);
-        }
-    } else {
-        lines.push("无".to_string());
-    }
+    let mut skill_entries: Vec<SkillPromptEntry>;
+    let mut plugin_entries: Vec<PluginPromptEntry>;
 
-    lines.push(String::new());
-    lines.push("关联插件（使用 plugin_ref，仅给简介）：".to_string());
-    let mut plugin_entries: Vec<PluginPromptEntry> = Vec::new();
-    if !agent.runtime_plugins.is_empty() {
-        for (index, plugin) in agent.runtime_plugins.iter().enumerate() {
-            let plugin_source = plugin.source.trim().to_string();
-            let mut parts = vec![
-                format!("plugin_ref={}", plugin_ref(index)),
-                format!("plugin_source={}", plugin_source),
-                format!("名称={}", plugin.name.trim()),
-            ];
-            if let Some(category) = plugin.category.as_deref().map(str::trim) {
-                if !category.is_empty() {
-                    parts.push(format!("分类={}", category));
+    match skill_mode {
+        ContactSkillPromptMode::Disabled => {
+            skill_entries = Vec::new();
+            plugin_entries = Vec::new();
+            lines.push(String::new());
+            lines.push("技能上下文：本轮用户未开启技能，不要假设可用技能/插件内容，也不要为了技能详情调用技能或插件查询工具。".to_string());
+        }
+        ContactSkillPromptMode::Summary { force_skill_first } => {
+            skill_entries = Vec::new();
+            plugin_entries = Vec::new();
+            if *force_skill_first {
+                lines.push(String::new());
+                lines.push("技能优先规则：本轮用户开启了技能但未指定某个技能；你必须先阅读下面的关联技能/插件/命令概览，判断是否有适用技能。只要有适用技能，优先按技能说明执行；只有概览不足以完成任务时，才调用技能/插件/命令 reader 工具获取全文。".to_string());
+            }
+
+            lines.push(String::new());
+            lines.push("关联技能（使用 skill_ref，避免长随机ID）：".to_string());
+            if !agent.runtime_skills.is_empty() {
+                for (index, skill) in agent.runtime_skills.iter().enumerate() {
+                    let entry = SkillPromptEntry {
+                        skill_ref: contact_skill_ref(index),
+                        name: normalize_optional_string(Some(skill.name.clone())),
+                        plugin_source: skill
+                            .plugin_source
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty())
+                            .map(ToOwned::to_owned),
+                        description: skill
+                            .description
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty())
+                            .map(ToOwned::to_owned),
+                        source_type: skill.source_type.trim().to_string(),
+                    };
+                    let mut parts = vec![format!("skill_ref={}", entry.skill_ref)];
+                    if let Some(name) = entry.name.as_deref() {
+                        parts.push(format!("名称={}", name));
+                    }
+                    if let Some(plugin_source) = entry.plugin_source.as_deref() {
+                        parts.push(format!("plugin_source={}", plugin_source));
+                    }
+                    parts.push(format!(
+                        "简介={}",
+                        entry.description.as_deref().unwrap_or("未提供")
+                    ));
+                    parts.push(format!("来源类型={}", entry.source_type));
+                    lines.push(format!("{}. {}", index + 1, parts.join(" | ")));
+                    skill_entries.push(entry);
+                }
+            } else if !agent.skill_ids.is_empty() {
+                for (index, _skill_id) in agent.skill_ids.iter().enumerate() {
+                    let entry = SkillPromptEntry {
+                        skill_ref: contact_skill_ref(index),
+                        name: None,
+                        plugin_source: None,
+                        description: None,
+                        source_type: "skill_center".to_string(),
+                    };
+                    lines.push(format!(
+                        "{}. skill_ref={} | 简介=未提供 | 来源类型={} | 详情可通过工具查询",
+                        index + 1,
+                        entry.skill_ref,
+                        entry.source_type
+                    ));
+                    skill_entries.push(entry);
+                }
+            } else {
+                lines.push("无".to_string());
+            }
+
+            lines.push(String::new());
+            lines.push("关联插件（使用 plugin_ref，仅给简介）：".to_string());
+            if !agent.runtime_plugins.is_empty() {
+                for (index, plugin) in agent.runtime_plugins.iter().enumerate() {
+                    let plugin_source = plugin.source.trim().to_string();
+                    let mut parts = vec![
+                        format!("plugin_ref={}", contact_plugin_ref(index)),
+                        format!("plugin_source={}", plugin_source),
+                        format!("名称={}", plugin.name.trim()),
+                    ];
+                    if let Some(category) = plugin.category.as_deref().map(str::trim) {
+                        if !category.is_empty() {
+                            parts.push(format!("分类={}", category));
+                        }
+                    }
+                    let description = plugin
+                        .description
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .or_else(|| {
+                            plugin
+                                .content_summary
+                                .as_deref()
+                                .map(str::trim)
+                                .filter(|value| !value.is_empty())
+                        })
+                        .unwrap_or("未提供");
+                    parts.push(format!("简介={}", description));
+                    let related_skills = skill_entries
+                        .iter()
+                        .filter(|entry| {
+                            entry
+                                .plugin_source
+                                .as_deref()
+                                .map(str::trim)
+                                .filter(|value| !value.is_empty())
+                                .map(|value| value == plugin_source)
+                                .unwrap_or(false)
+                        })
+                        .map(|entry| {
+                            let skill_name = entry.name.as_deref().unwrap_or("未命名技能");
+                            format!("{}({})", entry.skill_ref, skill_name)
+                        })
+                        .collect::<Vec<_>>();
+                    if !related_skills.is_empty() {
+                        parts.push(format!("覆盖技能={}", related_skills.join(", ")));
+                    }
+                    lines.push(format!("{}. {}", index + 1, parts.join(" | ")));
+                    plugin_entries.push(PluginPromptEntry {
+                        plugin_ref: contact_plugin_ref(index),
+                        name: normalize_optional_string(Some(plugin.name.clone())),
+                    });
+                }
+            } else if !agent.plugin_sources.is_empty() {
+                for (index, source) in agent.plugin_sources.iter().enumerate() {
+                    let source = source.trim().to_string();
+                    let related_skills = skill_entries
+                        .iter()
+                        .filter(|entry| {
+                            entry
+                                .plugin_source
+                                .as_deref()
+                                .map(str::trim)
+                                .filter(|value| !value.is_empty())
+                                .map(|value| value == source)
+                                .unwrap_or(false)
+                        })
+                        .map(|entry| {
+                            let skill_name = entry.name.as_deref().unwrap_or("未命名技能");
+                            format!("{}({})", entry.skill_ref, skill_name)
+                        })
+                        .collect::<Vec<_>>();
+                    let mut parts = vec![
+                        format!("plugin_ref={}", contact_plugin_ref(index)),
+                        format!("plugin_source={}", source),
+                        "简介=未提供".to_string(),
+                    ];
+                    if !related_skills.is_empty() {
+                        parts.push(format!("覆盖技能={}", related_skills.join(", ")));
+                    }
+                    lines.push(format!("{}. {}", index + 1, parts.join(" | ")));
+                    plugin_entries.push(PluginPromptEntry {
+                        plugin_ref: contact_plugin_ref(index),
+                        name: None,
+                    });
+                }
+            } else {
+                lines.push("无".to_string());
+            }
+        }
+        ContactSkillPromptMode::SelectedFull { skills, plugins } => {
+            skill_entries = Vec::with_capacity(skills.len());
+            plugin_entries = Vec::with_capacity(plugins.len());
+            lines.push(String::new());
+            lines.push("技能优先规则：本轮用户已显式选择技能。下面已经包含所选技能及其所属插件的全文；你必须优先按照这些全文执行，不要再调用技能/插件查询工具，也不要使用未列出的技能。".to_string());
+
+            lines.push(String::new());
+            lines.push("已选择技能全文：".to_string());
+            if skills.is_empty() {
+                lines.push("无（用户开启了技能选择，但没有有效选择项）".to_string());
+            } else {
+                for (index, skill) in skills.iter().enumerate() {
+                    let mut parts = vec![
+                        format!("skill_ref={}", skill.skill_ref),
+                        format!("skill_id={}", skill.id),
+                        format!("名称={}", skill.name),
+                        format!("来源类型={}", skill.source_type),
+                    ];
+                    if let Some(plugin_source) = skill.plugin_source.as_deref() {
+                        parts.push(format!("plugin_source={}", plugin_source));
+                    }
+                    if let Some(source_path) = skill.source_path.as_deref() {
+                        parts.push(format!("source_path={}", source_path));
+                    }
+                    if let Some(description) = skill.description.as_deref() {
+                        parts.push(format!("简介={}", description));
+                    }
+                    if let Some(updated_at) = skill.updated_at.as_deref() {
+                        parts.push(format!("updated_at={}", updated_at));
+                    }
+                    lines.push(format!("{}. {}", index + 1, parts.join(" | ")));
+                    lines.push("内容：".to_string());
+                    let content = skill.content.trim();
+                    if content.is_empty() {
+                        lines.push("（空）".to_string());
+                    } else {
+                        for item in content.lines() {
+                            lines.push(item.to_string());
+                        }
+                    }
+                    skill_entries.push(SkillPromptEntry {
+                        skill_ref: skill.skill_ref.clone(),
+                        name: Some(skill.name.clone()),
+                        plugin_source: skill.plugin_source.clone(),
+                        description: skill.description.clone(),
+                        source_type: skill.source_type.clone(),
+                    });
+                    lines.push(String::new());
                 }
             }
-            let description = plugin
-                .description
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .or_else(|| {
-                    plugin
-                        .content_summary
-                        .as_deref()
-                        .map(str::trim)
-                        .filter(|value| !value.is_empty())
-                })
-                .unwrap_or("未提供");
-            parts.push(format!("简介={}", description));
-            let related_skills = skill_entries
-                .iter()
-                .filter(|entry| {
-                    entry
-                        .plugin_source
-                        .as_deref()
-                        .map(str::trim)
-                        .filter(|value| !value.is_empty())
-                        .map(|value| value == plugin_source)
-                        .unwrap_or(false)
-                })
-                .map(|entry| {
-                    let skill_name = entry.name.as_deref().unwrap_or("未命名技能");
-                    format!("{}({})", entry.skill_ref, skill_name)
-                })
-                .collect::<Vec<_>>();
-            if !related_skills.is_empty() {
-                parts.push(format!("覆盖技能={}", related_skills.join(", ")));
-            }
-            lines.push(format!("{}. {}", index + 1, parts.join(" | ")));
-            plugin_entries.push(PluginPromptEntry {
-                plugin_ref: plugin_ref(index),
-                name: normalize_optional_string(Some(plugin.name.clone())),
-            });
-        }
-    } else if !agent.plugin_sources.is_empty() {
-        for (index, source) in agent.plugin_sources.iter().enumerate() {
-            let source = source.trim().to_string();
-            let related_skills = skill_entries
-                .iter()
-                .filter(|entry| {
-                    entry
-                        .plugin_source
-                        .as_deref()
-                        .map(str::trim)
-                        .filter(|value| !value.is_empty())
-                        .map(|value| value == source)
-                        .unwrap_or(false)
-                })
-                .map(|entry| {
-                    let skill_name = entry.name.as_deref().unwrap_or("未命名技能");
-                    format!("{}({})", entry.skill_ref, skill_name)
-                })
-                .collect::<Vec<_>>();
-            let mut parts = vec![
-                format!("plugin_ref={}", plugin_ref(index)),
-                format!("plugin_source={}", source),
-                "简介=未提供".to_string(),
-            ];
-            if !related_skills.is_empty() {
-                parts.push(format!("覆盖技能={}", related_skills.join(", ")));
-            }
-            lines.push(format!("{}. {}", index + 1, parts.join(" | ")));
-            plugin_entries.push(PluginPromptEntry {
-                plugin_ref: plugin_ref(index),
-                name: None,
-            });
-        }
-    } else {
-        lines.push("无".to_string());
-    }
 
-    lines.push(String::new());
-    lines.push("关联命令（使用 command_ref）：".to_string());
-    if !agent.runtime_commands.is_empty() {
-        for (index, command) in agent.runtime_commands.iter().enumerate() {
-            let mut parts = vec![
-                format!("command_ref={}", command.command_ref.trim()),
-                format!("名称={}", command.name.trim()),
-                format!("plugin_source={}", command.plugin_source.trim()),
-            ];
-            parts.push(format!(
-                "简介={}",
-                command
-                    .description
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .unwrap_or("未提供")
-            ));
-            if let Some(argument_hint) = command.argument_hint.as_deref().map(str::trim) {
-                if !argument_hint.is_empty() {
-                    parts.push(format!("参数提示={}", argument_hint));
+            lines.push("所选技能关联插件全文：".to_string());
+            if plugins.is_empty() {
+                lines.push("无".to_string());
+            } else {
+                for (index, plugin) in plugins.iter().enumerate() {
+                    let mut parts = vec![
+                        format!("plugin_ref={}", plugin.plugin_ref),
+                        format!("plugin_source={}", plugin.source),
+                        format!("名称={}", plugin.name),
+                    ];
+                    if let Some(category) = plugin.category.as_deref() {
+                        parts.push(format!("分类={}", category));
+                    }
+                    if let Some(description) = plugin.description.as_deref() {
+                        parts.push(format!("简介={}", description));
+                    }
+                    if let Some(version) = plugin.version.as_deref() {
+                        parts.push(format!("version={}", version));
+                    }
+                    if let Some(repository) = plugin.repository.as_deref() {
+                        parts.push(format!("repository={}", repository));
+                    }
+                    if let Some(branch) = plugin.branch.as_deref() {
+                        parts.push(format!("branch={}", branch));
+                    }
+                    if let Some(updated_at) = plugin.updated_at.as_deref() {
+                        parts.push(format!("updated_at={}", updated_at));
+                    }
+                    lines.push(format!("{}. {}", index + 1, parts.join(" | ")));
+                    let content = plugin.content.as_deref().map(str::trim).unwrap_or("");
+                    if !content.is_empty() {
+                        lines.push("插件内容：".to_string());
+                        for item in content.lines() {
+                            lines.push(item.to_string());
+                        }
+                    }
+                    if !plugin.commands.is_empty() {
+                        lines.push("插件命令：".to_string());
+                        for command in &plugin.commands {
+                            let mut command_parts = vec![
+                                format!("名称={}", command.name.trim()),
+                                format!("source_path={}", command.source_path.trim()),
+                            ];
+                            if let Some(description) = command.description.as_deref().map(str::trim) {
+                                if !description.is_empty() {
+                                    command_parts.push(format!("简介={}", description));
+                                }
+                            }
+                            if let Some(argument_hint) = command.argument_hint.as_deref().map(str::trim) {
+                                if !argument_hint.is_empty() {
+                                    command_parts.push(format!("参数提示={}", argument_hint));
+                                }
+                            }
+                            lines.push(format!("- {}", command_parts.join(" | ")));
+                            let command_content = command.content.trim();
+                            if !command_content.is_empty() {
+                                lines.push("  内容：".to_string());
+                                for item in command_content.lines() {
+                                    lines.push(format!("  {}", item));
+                                }
+                            }
+                        }
+                    }
+                    plugin_entries.push(PluginPromptEntry {
+                        plugin_ref: plugin.plugin_ref.clone(),
+                        name: Some(plugin.name.clone()),
+                    });
+                    lines.push(String::new());
                 }
             }
-            if let Some(source_path) = normalize_optional_string(Some(command.source_path.clone()))
-            {
-                parts.push(format!("source_path={}", source_path));
-            }
-            lines.push(format!("{}. {}", index + 1, parts.join(" | ")));
         }
-    } else {
-        lines.push("无".to_string());
     }
 
-    if !agent.runtime_commands.is_empty() {
+    if matches!(skill_mode, ContactSkillPromptMode::Summary { .. }) {
         lines.push(String::new());
-        lines.push(format!(
-            "如果需要查看某个 command 的完整内容，请调用内置工具 `{}`，仅传 `command_ref`（如 `CMD1`）。",
-            CONTACT_COMMAND_READER_TOOL_NAME
-        ));
+        lines.push("关联命令（使用 command_ref）：".to_string());
+        if !agent.runtime_commands.is_empty() {
+            for (index, command) in agent.runtime_commands.iter().enumerate() {
+                let mut parts = vec![
+                    format!("command_ref={}", command.command_ref.trim()),
+                    format!("名称={}", command.name.trim()),
+                    format!("plugin_source={}", command.plugin_source.trim()),
+                ];
+                parts.push(format!(
+                    "简介={}",
+                    command
+                        .description
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .unwrap_or("未提供")
+                ));
+                if let Some(argument_hint) = command.argument_hint.as_deref().map(str::trim) {
+                    if !argument_hint.is_empty() {
+                        parts.push(format!("参数提示={}", argument_hint));
+                    }
+                }
+                if let Some(source_path) = normalize_optional_string(Some(command.source_path.clone()))
+                {
+                    parts.push(format!("source_path={}", source_path));
+                }
+                lines.push(format!("{}. {}", index + 1, parts.join(" | ")));
+            }
+        } else {
+            lines.push("无".to_string());
+        }
+
+        if !agent.runtime_commands.is_empty() {
+            lines.push(String::new());
+            lines.push(format!(
+                "如果需要查看某个 command 的完整内容，请调用内置工具 `{}`，仅传 `command_ref`（如 `CMD1`）。",
+                CONTACT_COMMAND_READER_TOOL_NAME
+            ));
+        }
     }
 
-    if !plugin_entries.is_empty() {
+    if matches!(skill_mode, ContactSkillPromptMode::Summary { .. }) && !plugin_entries.is_empty() {
         lines.push(String::new());
         let plugin_examples = plugin_entries
             .iter()
@@ -681,7 +866,7 @@ pub fn compose_contact_system_prompt(
         }
     }
 
-    if !skill_entries.is_empty() {
+    if matches!(skill_mode, ContactSkillPromptMode::Summary { .. }) && !skill_entries.is_empty() {
         lines.push(String::new());
         lines.push(format!(
             "如果需要查看某个 skill 的完整内容，请调用内置工具 `{}`，仅传 `skill_ref`（如 `SK1`）。",
@@ -750,6 +935,7 @@ mod tests {
         ChatRuntimeMetadata, CONTACT_COMMAND_READER_TOOL_NAME, CONTACT_PLUGIN_READER_TOOL_NAME,
         CONTACT_SKILL_READER_TOOL_NAME,
     };
+    use super::ContactSkillPromptMode;
     use crate::services::memory_server_client::{
         MemoryAgentRuntimeCommandSummaryDto, MemoryAgentRuntimeContextDto,
         MemoryAgentRuntimePluginSummaryDto, MemoryAgentRuntimeSkillSummaryDto,
@@ -758,46 +944,51 @@ mod tests {
 
     #[test]
     fn builds_contact_prompt_with_plugin_and_skill_summaries() {
-        let prompt = compose_contact_system_prompt(Some(&MemoryAgentRuntimeContextDto {
-            agent_id: "agent_1".to_string(),
-            name: "小林".to_string(),
-            description: Some("负责前端排障".to_string()),
-            category: Some("frontend".to_string()),
-            role_definition: "专注组件与状态问题".to_string(),
-            plugin_sources: vec!["frontend_toolkit".to_string()],
-            runtime_plugins: vec![MemoryAgentRuntimePluginSummaryDto {
-                source: "frontend_toolkit".to_string(),
-                name: "前端工具箱".to_string(),
+        let prompt = compose_contact_system_prompt(
+            Some(&MemoryAgentRuntimeContextDto {
+                agent_id: "agent_1".to_string(),
+                name: "小林".to_string(),
+                description: Some("负责前端排障".to_string()),
                 category: Some("frontend".to_string()),
-                description: Some("用于组件设计和渲染排查".to_string()),
-                content_summary: Some("1. 技能=组件排障 | 内容片段=定位 UI 异常".to_string()),
-                updated_at: Some("2026-03-24T00:00:00Z".to_string()),
-            }],
-            skills: Vec::new(),
-            skill_ids: vec!["skill_a".to_string()],
-            runtime_skills: vec![MemoryAgentRuntimeSkillSummaryDto {
-                id: "skill_a".to_string(),
-                name: "组件排障".to_string(),
-                description: Some("定位 UI 异常".to_string()),
-                plugin_source: Some("frontend_toolkit".to_string()),
-                source_type: "skill_center".to_string(),
-                source_path: Some("skills/ui/SKILL.md".to_string()),
-                updated_at: Some("2026-03-24T00:00:00Z".to_string()),
-            }],
-            runtime_commands: vec![MemoryAgentRuntimeCommandSummaryDto {
-                command_ref: "CMD1".to_string(),
-                name: "team-debug".to_string(),
-                description: Some("并行调试命令".to_string()),
-                argument_hint: Some("<error> [--hypotheses 3]".to_string()),
-                plugin_source: "frontend_toolkit".to_string(),
-                source_path: "commands/team-debug.md".to_string(),
-                content: "# Team Debug".to_string(),
-                updated_at: Some("2026-03-24T00:00:00Z".to_string()),
-            }],
-            mcp_policy: None,
-            project_policy: None,
-            updated_at: "2026-03-24T00:00:00Z".to_string(),
-        }))
+                role_definition: "专注组件与状态问题".to_string(),
+                plugin_sources: vec!["frontend_toolkit".to_string()],
+                runtime_plugins: vec![MemoryAgentRuntimePluginSummaryDto {
+                    source: "frontend_toolkit".to_string(),
+                    name: "前端工具箱".to_string(),
+                    category: Some("frontend".to_string()),
+                    description: Some("用于组件设计和渲染排查".to_string()),
+                    content_summary: Some("1. 技能=组件排障 | 内容片段=定位 UI 异常".to_string()),
+                    updated_at: Some("2026-03-24T00:00:00Z".to_string()),
+                }],
+                skills: Vec::new(),
+                skill_ids: vec!["skill_a".to_string()],
+                runtime_skills: vec![MemoryAgentRuntimeSkillSummaryDto {
+                    id: "skill_a".to_string(),
+                    name: "组件排障".to_string(),
+                    description: Some("定位 UI 异常".to_string()),
+                    plugin_source: Some("frontend_toolkit".to_string()),
+                    source_type: "skill_center".to_string(),
+                    source_path: Some("skills/ui/SKILL.md".to_string()),
+                    updated_at: Some("2026-03-24T00:00:00Z".to_string()),
+                }],
+                runtime_commands: vec![MemoryAgentRuntimeCommandSummaryDto {
+                    command_ref: "CMD1".to_string(),
+                    name: "team-debug".to_string(),
+                    description: Some("并行调试命令".to_string()),
+                    argument_hint: Some("<error> [--hypotheses 3]".to_string()),
+                    plugin_source: "frontend_toolkit".to_string(),
+                    source_path: "commands/team-debug.md".to_string(),
+                    content: "# Team Debug".to_string(),
+                    updated_at: Some("2026-03-24T00:00:00Z".to_string()),
+                }],
+                mcp_policy: None,
+                project_policy: None,
+                updated_at: "2026-03-24T00:00:00Z".to_string(),
+            }),
+            &ContactSkillPromptMode::Summary {
+                force_skill_first: true,
+            },
+        )
         .expect("prompt");
 
         assert!(prompt.contains("联系人名称：小林"));

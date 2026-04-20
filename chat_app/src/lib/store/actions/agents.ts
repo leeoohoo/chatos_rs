@@ -53,9 +53,6 @@ export function createAgentActions({ set, get, client, getUserIdParam }: Deps) {
 
       set((state: any) => {
         state.selectedAgentId = agentId;
-        if (agentId) {
-          state.selectedModelId = null;
-        }
         const sessionId = state.currentSessionId;
         if (sessionId) {
           const nextSelection = {

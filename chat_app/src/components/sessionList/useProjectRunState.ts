@@ -10,6 +10,7 @@ const RUNNER_SCRIPT_REL_PATH = `${RUNNER_SCRIPT_DIR}/${RUNNER_SCRIPT_FILE}`;
 const RUNNER_START_COMMAND = `bash ./${RUNNER_SCRIPT_REL_PATH} start`;
 const RUNNER_STOP_COMMAND = `bash ./${RUNNER_SCRIPT_REL_PATH} stop`;
 const RUNNER_RESTART_COMMAND = `bash ./${RUNNER_SCRIPT_REL_PATH} restart`;
+const FS_PATH_NOT_FOUND_ERROR = '路径不存在';
 
 export interface ProjectRunTargetOption {
   id: string;
@@ -64,6 +65,21 @@ const createInitialProjectRunState = (): ProjectRunViewState => ({
 });
 
 const normalizeRootPath = (value: string): string => value.trim().replace(/[\\/]+$/, '');
+
+const readErrorMessage = (error: unknown): string => (
+  error instanceof Error ? error.message : '运行状态加载失败'
+);
+
+const isPathMissingError = (error: unknown): boolean => (
+  readErrorMessage(error).includes(FS_PATH_NOT_FOUND_ERROR)
+);
+
+const shouldPollProjectRunState = (state: ProjectRunViewState): boolean => {
+  if (state.status === 'ready' || state.status === 'missing_root') {
+    return false;
+  }
+  return true;
+};
 
 const hasRunnerScript = async (apiClient: ApiClient, rootPath: string): Promise<boolean> => {
   const safeRoot = normalizeRootPath(rootPath);
@@ -131,11 +147,20 @@ const resolveProjectRunState = async (
       error: '请先在项目页生成启动脚本',
     };
   } catch (error) {
+    if (isPathMissingError(error)) {
+      return {
+        ...createInitialProjectRunState(),
+        status: 'missing_root',
+        loading: false,
+        error: '项目目录不存在，请检查项目路径',
+      };
+    }
+
     return {
       ...createInitialProjectRunState(),
       status: 'error',
       loading: false,
-      error: error instanceof Error ? error.message : '运行状态加载失败',
+      error: readErrorMessage(error),
     };
   }
 };
@@ -208,7 +233,7 @@ export const useProjectRunState = ({
         return next;
       });
 
-      if (!cancelled && updates.some((item) => item.state.status !== 'ready')) {
+      if (!cancelled && updates.some((item) => shouldPollProjectRunState(item.state))) {
         timer = setTimeout(() => {
           void loadProjectRunStates();
         }, 5000);

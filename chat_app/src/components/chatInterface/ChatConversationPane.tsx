@@ -66,6 +66,8 @@ interface ChatConversationPaneProps {
     projectRoot?: string | null;
     workspaceRoot?: string | null;
     enabledMcpIds?: string[];
+    skillsEnabled?: boolean;
+    selectedSkillIds?: string[];
   }) => void;
   onGuide: (content: string) => void;
   onStop: () => void;
@@ -85,6 +87,7 @@ interface ChatConversationPaneProps {
   workspaceRoot: string | null;
   onWorkspaceRootChange: (path: string | null) => void;
   currentRemoteConnectionId?: string | null;
+  currentAgent?: ChatComposerPanelProps['currentAgent'];
   availableRemoteConnections?: RemoteConnection[];
   onRemoteConnectionChange?: (connectionId: string | null) => void;
   mcpEnabled: boolean;
@@ -274,6 +277,7 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
   workspaceRoot,
   onWorkspaceRootChange,
   currentRemoteConnectionId,
+  currentAgent,
   availableRemoteConnections,
   onRemoteConnectionChange,
   mcpEnabled,
@@ -360,6 +364,7 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
           workspaceRoot={workspaceRoot}
           onWorkspaceRootChange={onWorkspaceRootChange}
           currentRemoteConnectionId={currentRemoteConnectionId}
+          currentAgent={currentAgent}
           availableRemoteConnections={availableRemoteConnections}
           onRemoteConnectionChange={onRemoteConnectionChange}
           showWorkspaceRootPicker={true}

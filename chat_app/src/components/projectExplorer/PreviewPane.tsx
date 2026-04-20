@@ -612,7 +612,7 @@ export const ProjectPreviewPane: React.FC<ProjectPreviewPaneProps> = ({
               <button
                 type="button"
                 onClick={() => { void onRunnerStart(); }}
-                disabled={runStatus === 'no_member' || starting || stopping || restarting || generating || runnerScriptChecking}
+                disabled={runStatus === 'no_member' || runStatus === 'missing_root' || starting || stopping || restarting || generating || runnerScriptChecking}
                 className="h-8 rounded border border-emerald-500/40 px-3 text-xs text-emerald-700 hover:bg-emerald-500/10 disabled:opacity-50 disabled:cursor-not-allowed"
                 title={runnerStartCommand}
               >
@@ -621,7 +621,7 @@ export const ProjectPreviewPane: React.FC<ProjectPreviewPaneProps> = ({
               <button
                 type="button"
                 onClick={() => { void onRunnerStop(); }}
-                disabled={runStatus === 'no_member' || starting || stopping || restarting || generating || runnerScriptChecking}
+                disabled={runStatus === 'no_member' || runStatus === 'missing_root' || starting || stopping || restarting || generating || runnerScriptChecking}
                 className="h-8 rounded border border-rose-500/40 px-3 text-xs text-rose-700 hover:bg-rose-500/10 disabled:opacity-50 disabled:cursor-not-allowed"
                 title={runnerStopCommand}
               >
@@ -630,7 +630,7 @@ export const ProjectPreviewPane: React.FC<ProjectPreviewPaneProps> = ({
               <button
                 type="button"
                 onClick={() => { void onRunnerRestart(); }}
-                disabled={runStatus === 'no_member' || starting || stopping || restarting || generating || runnerScriptChecking}
+                disabled={runStatus === 'no_member' || runStatus === 'missing_root' || starting || stopping || restarting || generating || runnerScriptChecking}
                 className="h-8 rounded border border-border px-3 text-xs hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
                 title={runnerRestartCommand}
               >

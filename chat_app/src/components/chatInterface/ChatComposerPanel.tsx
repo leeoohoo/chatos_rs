@@ -3,7 +3,7 @@ import { InputArea } from '../InputArea';
 import TaskDraftPanel from '../TaskDraftPanel';
 import TaskWorkbar, { type RuntimeGuidanceWorkbarItem, type TaskWorkbarItem } from '../TaskWorkbar';
 import UiPromptPanel from '../UiPromptPanel';
-import type { AiModelConfig, Project, RemoteConnection } from '../../types';
+import type { AgentConfig, AiModelConfig, Project, RemoteConnection } from '../../types';
 import type {
   TaskReviewDraft,
   TaskReviewPanelState,
@@ -38,15 +38,17 @@ interface ChatComposerPanelProps {
   onSend: (
     content: string,
     attachments?: File[],
-    runtimeOptions?: {
-      mcpEnabled?: boolean;
-      remoteConnectionId?: string | null;
-      projectId?: string | null;
-      projectRoot?: string | null;
-      workspaceRoot?: string | null;
-      enabledMcpIds?: string[];
-    },
-  ) => void;
+	    runtimeOptions?: {
+	      mcpEnabled?: boolean;
+	      remoteConnectionId?: string | null;
+	      projectId?: string | null;
+	      projectRoot?: string | null;
+	      workspaceRoot?: string | null;
+	      enabledMcpIds?: string[];
+	      skillsEnabled?: boolean;
+	      selectedSkillIds?: string[];
+	    },
+	  ) => void;
   onGuide: (content: string) => void;
   onStop: () => void;
   inputDisabled: boolean;
@@ -68,6 +70,7 @@ interface ChatComposerPanelProps {
   workspaceRoot?: string | null;
   onWorkspaceRootChange?: (path: string | null) => void;
   currentRemoteConnectionId?: string | null;
+  currentAgent?: AgentConfig | null;
   availableRemoteConnections?: RemoteConnection[];
   onRemoteConnectionChange?: (connectionId: string | null) => void;
   showWorkspaceRootPicker?: boolean;
@@ -127,6 +130,7 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
   workspaceRoot = null,
   onWorkspaceRootChange,
   currentRemoteConnectionId = null,
+  currentAgent = null,
   availableRemoteConnections = [],
   onRemoteConnectionChange,
   showWorkspaceRootPicker = false,
@@ -201,8 +205,9 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
       showProjectFileButton={showProjectFileButton}
       workspaceRoot={workspaceRoot}
       onWorkspaceRootChange={onWorkspaceRootChange}
-      currentRemoteConnectionId={currentRemoteConnectionId}
-      availableRemoteConnections={availableRemoteConnections}
+	      currentRemoteConnectionId={currentRemoteConnectionId}
+	      currentAgent={currentAgent}
+	      availableRemoteConnections={availableRemoteConnections}
       onRemoteConnectionChange={onRemoteConnectionChange}
       showWorkspaceRootPicker={showWorkspaceRootPicker}
       mcpEnabled={mcpEnabled}

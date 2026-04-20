@@ -970,6 +970,8 @@ export interface StreamChatOptions {
   projectRoot?: string | null;
   mcpEnabled?: boolean;
   enabledMcpIds?: string[];
+  skillsEnabled?: boolean;
+  selectedSkillIds?: string[];
 }
 
 export interface StreamChatModelConfigPayload {

@@ -109,6 +109,12 @@ export function createSendMessageHandler({
       effectiveMcpEnabled,
       effectiveEnabledMcpIds,
     } = resolveRuntimeConfig(sessionRuntime, runtimeOptionsWithContactFallback);
+    const effectiveSkillsEnabled = runtimeOptionsWithContactFallback.skillsEnabled === true;
+    const effectiveSelectedSkillIds = Array.isArray(runtimeOptionsWithContactFallback.selectedSkillIds)
+      ? runtimeOptionsWithContactFallback.selectedSkillIds
+        .map((item) => (typeof item === 'string' ? item.trim() : ''))
+        .filter((item, index, arr) => item.length > 0 && arr.indexOf(item) === index)
+      : [];
     const selectedModel = resolveSelectedModelOrThrow(
       effectiveSelectedModelId,
       aiModelConfigs,
@@ -210,6 +216,8 @@ export function createSendMessageHandler({
         projectRoot: effectiveExecutionRoot,
         mcpEnabled: effectiveMcpEnabled,
         enabledMcpIds: effectiveEnabledMcpIds,
+        skillsEnabled: effectiveSkillsEnabled,
+        selectedSkillIds: effectiveSelectedSkillIds,
       });
 
       debugLog('🚀 开始调用后端流式聊天API:', chatRequest);
@@ -229,6 +237,8 @@ export function createSendMessageHandler({
           projectRoot: effectiveExecutionRoot,
           mcpEnabled: effectiveMcpEnabled,
           enabledMcpIds: effectiveEnabledMcpIds,
+          skillsEnabled: effectiveSkillsEnabled,
+          selectedSkillIds: effectiveSelectedSkillIds,
         }),
       );
 

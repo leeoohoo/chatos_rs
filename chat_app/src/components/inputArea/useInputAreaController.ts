@@ -8,6 +8,7 @@ import { useDismissiblePopover } from './useDismissiblePopover';
 import { useMcpSelection } from './useMcpSelection';
 import { useProjectFilePicker } from './useProjectFilePicker';
 import { useWorkspaceDirectoryPicker } from './useWorkspaceDirectoryPicker';
+import type { AgentConfig } from '../../types';
 
 type UseInputAreaControllerParams = Pick<
   InputAreaProps,
@@ -29,6 +30,7 @@ type UseInputAreaControllerParams = Pick<
   | 'workspaceRoot'
   | 'onWorkspaceRootChange'
   | 'currentRemoteConnectionId'
+  | 'currentAgent'
   | 'mcpEnabled'
   | 'enabledMcpIds'
   | 'onMcpEnabledChange'
@@ -62,6 +64,7 @@ export function useInputAreaController({
   workspaceRoot = null,
   onWorkspaceRootChange,
   currentRemoteConnectionId = null,
+  currentAgent = null,
   mcpEnabled = true,
   enabledMcpIds = [],
   onMcpEnabledChange,
@@ -72,8 +75,113 @@ export function useInputAreaController({
 
   const [message, setMessage] = useState('');
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [skillsEnabled, setSkillsEnabled] = useState(false);
+  const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const apiClientFromContext = useChatApiClientFromContext();
+  const client = useMemo(() => apiClientFromContext || globalApiClient, [apiClientFromContext]);
+
+  const currentAgentForSkills = useMemo<AgentConfig | null>(
+    () => (currentAgent && typeof currentAgent === 'object' ? currentAgent : null),
+    [currentAgent],
+  );
+  const [resolvedAgentForSkills, setResolvedAgentForSkills] = useState<AgentConfig | null>(null);
+  const [skillsLoading, setSkillsLoading] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const baseAgent = currentAgentForSkills;
+    const agentId = typeof baseAgent?.id === 'string' ? baseAgent.id.trim() : '';
+    if (!baseAgent || !agentId) {
+      setResolvedAgentForSkills(null);
+      setSkillsLoading(false);
+      return undefined;
+    }
+    const hasRuntimeSkills = Array.isArray(baseAgent.runtime_skills)
+      && baseAgent.runtime_skills.length > 0;
+    const hasInlineSkills = Array.isArray(baseAgent.skills)
+      && baseAgent.skills.length > 0;
+    if (hasRuntimeSkills || hasInlineSkills) {
+      setResolvedAgentForSkills(baseAgent);
+      setSkillsLoading(false);
+      return undefined;
+    }
+
+    setResolvedAgentForSkills(baseAgent);
+    setSkillsLoading(true);
+    void client.getMemoryAgentRuntimeContext(agentId)
+      .then((runtime) => {
+        if (cancelled) {
+          return;
+        }
+        setResolvedAgentForSkills({
+          ...baseAgent,
+          runtime_skills: Array.isArray(runtime?.runtime_skills) ? runtime.runtime_skills as any : [],
+          runtime_plugins: Array.isArray(runtime?.runtime_plugins) ? runtime.runtime_plugins as any : [],
+          plugin_sources: Array.isArray(runtime?.plugin_sources) ? runtime.plugin_sources as any : baseAgent.plugin_sources,
+          skills: Array.isArray(runtime?.skills) ? runtime.skills as any : baseAgent.skills,
+          skill_ids: Array.isArray(runtime?.skill_ids) ? runtime.skill_ids as any : baseAgent.skill_ids,
+        });
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setResolvedAgentForSkills(baseAgent);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setSkillsLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [client, currentAgentForSkills]);
+
+  const availableSkillOptions = useMemo(() => {
+    const byId = new Map<string, { id: string; name: string; description?: string | null }>();
+    const runtimeSkills = Array.isArray(resolvedAgentForSkills?.runtime_skills)
+      ? resolvedAgentForSkills.runtime_skills
+      : [];
+    runtimeSkills.forEach((skill) => {
+      const id = typeof skill?.id === 'string' ? skill.id.trim() : '';
+      if (!id || byId.has(id)) return;
+      const name = typeof skill?.name === 'string' && skill.name.trim().length > 0
+        ? skill.name.trim()
+        : id;
+      const description = typeof skill?.description === 'string' ? skill.description.trim() : '';
+      byId.set(id, {
+        id,
+        name,
+        description: description || null,
+      });
+    });
+    const inlineSkills = Array.isArray(resolvedAgentForSkills?.skills)
+      ? resolvedAgentForSkills.skills
+      : [];
+    inlineSkills.forEach((skill) => {
+      const id = typeof skill?.id === 'string' ? skill.id.trim() : '';
+      if (!id || byId.has(id)) return;
+      const name = typeof skill?.name === 'string' && skill.name.trim().length > 0
+        ? skill.name.trim()
+        : id;
+      byId.set(id, { id, name, description: null });
+    });
+    return Array.from(byId.values());
+  }, [resolvedAgentForSkills]);
+
+  useEffect(() => {
+    setSelectedSkillIds((prev) => prev.filter((id) => availableSkillOptions.some((item) => item.id === id)));
+  }, [availableSkillOptions]);
+
+  useEffect(() => {
+    if (!resolvedAgentForSkills) {
+      setSkillsEnabled(false);
+      setSelectedSkillIds([]);
+    }
+  }, [resolvedAgentForSkills]);
 
   const {
     attachments,
@@ -93,9 +201,6 @@ export function useInputAreaController({
     supportedFileTypes,
     fileInputRef,
   });
-
-  const apiClientFromContext = useChatApiClientFromContext();
-  const client = useMemo(() => apiClientFromContext || globalApiClient, [apiClientFromContext]);
 
   const normalizePath = useCallback((value: string) => {
     const normalized = value.replace(/\\/g, '/').replace(/\/+/g, '/');
@@ -350,6 +455,8 @@ export function useInputAreaController({
       projectId: runtimeProjectId,
       projectRoot: runtimeProjectRoot,
       workspaceRoot: runtimeWorkspaceRoot,
+      skillsEnabled,
+      selectedSkillIds: skillsEnabled ? selectedSkillIds : [],
     });
     resetComposer();
   }, [
@@ -365,9 +472,12 @@ export function useInputAreaController({
     onSend,
     resetComposer,
     sanitizedEnabledMcpIds,
+    selectedSkillIds,
     selectedModelId,
     selectedRuntimeProject,
     showModelSelector,
+    skillsEnabled,
+    resolvedAgentForSkills,
   ]);
 
   const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -434,6 +544,24 @@ export function useInputAreaController({
     handleApplyMcpToolsetPreset,
     handleSaveProjectMcpDefault,
     handleApplyProjectMcpDefault,
+    currentAgentForSkills: resolvedAgentForSkills,
+    skillsEnabled,
+    setSkillsEnabled,
+    skillsLoading,
+    availableSkillOptions,
+    selectedSkillIds,
+    handleToggleSelectedSkill: (skillId: string) => {
+      const normalized = typeof skillId === 'string' ? skillId.trim() : '';
+      if (!normalized) return;
+      setSelectedSkillIds((prev) => (
+        prev.includes(normalized)
+          ? prev.filter((item) => item !== normalized)
+          : [...prev, normalized]
+      ));
+    },
+    handleClearSelectedSkills: () => {
+      setSelectedSkillIds([]);
+    },
     selectedModel,
     enabledModels,
     hasAiOptions,

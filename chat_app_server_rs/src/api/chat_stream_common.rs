@@ -9,9 +9,11 @@ use tracing::warn;
 
 use crate::core::chat_context::{resolve_effective_user_id, resolve_system_prompt};
 use crate::core::chat_runtime::{
-    compose_contact_command_system_prompt, compose_contact_system_prompt, normalize_id,
-    parse_contact_command_invocation, parse_implicit_command_selections_from_tools_end,
-    resolve_project_runtime, ChatRuntimeMetadata,
+    compose_contact_command_system_prompt, compose_contact_system_prompt, contact_plugin_ref,
+    contact_skill_ref, normalize_id, parse_contact_command_invocation,
+    parse_implicit_command_selections_from_tools_end, resolve_project_runtime,
+    ChatRuntimeMetadata, ContactSelectedPluginPrompt, ContactSelectedSkillPrompt,
+    ContactSkillPromptMode,
 };
 use crate::core::mcp_runtime::{
     contact_agent_command_reader_server, contact_agent_plugin_reader_server,
@@ -45,6 +47,8 @@ pub(crate) struct ChatStreamRequest {
     pub remote_connection_id: Option<String>,
     pub mcp_enabled: Option<bool>,
     pub enabled_mcp_ids: Option<Vec<String>>,
+    pub skills_enabled: Option<bool>,
+    pub selected_skill_ids: Option<Vec<String>>,
 }
 
 pub(crate) fn validate_chat_stream_request(
@@ -178,7 +182,20 @@ pub(crate) async fn resolve_chat_stream_context(
         effective_user_id.clone(),
     )
     .await;
-    let contact_system_prompt = compose_contact_system_prompt(contact_runtime_context.as_ref());
+    let requested_skill_ids = normalize_string_list(req.selected_skill_ids.as_deref().unwrap_or(&[]));
+    let skills_enabled = req.skills_enabled.unwrap_or(false);
+    let skill_prompt_mode = build_contact_skill_prompt_mode(
+        contact_runtime_context.as_ref(),
+        skills_enabled,
+        requested_skill_ids.as_slice(),
+    )
+    .await;
+    let should_attach_contact_reader_tools = matches!(
+        skill_prompt_mode,
+        ContactSkillPromptMode::Summary { .. }
+    );
+    let contact_system_prompt =
+        compose_contact_system_prompt(contact_runtime_context.as_ref(), &skill_prompt_mode);
     let selected_command =
         parse_contact_command_invocation(content, contact_runtime_context.as_ref());
     let command_system_prompt = compose_contact_command_system_prompt(selected_command.as_ref());
@@ -230,30 +247,32 @@ pub(crate) async fn resolve_chat_stream_context(
     };
     let tool_routing_system_prompt = compose_tool_routing_system_prompt(builtin_servers.as_slice());
 
-    if let Some(agent_id) = contact_runtime_context
-        .as_ref()
-        .map(|context| context.agent_id.as_str())
-    {
-        if let Some(server) = contact_agent_skill_reader_server(
-            effective_user_id.clone(),
-            resolved_project_id.clone(),
-            agent_id,
-        ) {
-            builtin_servers.push(server);
-        }
-        if let Some(server) = contact_agent_command_reader_server(
-            effective_user_id.clone(),
-            resolved_project_id.clone(),
-            agent_id,
-        ) {
-            builtin_servers.push(server);
-        }
-        if let Some(server) = contact_agent_plugin_reader_server(
-            effective_user_id.clone(),
-            resolved_project_id.clone(),
-            agent_id,
-        ) {
-            builtin_servers.push(server);
+    if should_attach_contact_reader_tools {
+        if let Some(agent_id) = contact_runtime_context
+            .as_ref()
+            .map(|context| context.agent_id.as_str())
+        {
+            if let Some(server) = contact_agent_skill_reader_server(
+                effective_user_id.clone(),
+                resolved_project_id.clone(),
+                agent_id,
+            ) {
+                builtin_servers.push(server);
+            }
+            if let Some(server) = contact_agent_command_reader_server(
+                effective_user_id.clone(),
+                resolved_project_id.clone(),
+                agent_id,
+            ) {
+                builtin_servers.push(server);
+            }
+            if let Some(server) = contact_agent_plugin_reader_server(
+                effective_user_id.clone(),
+                resolved_project_id.clone(),
+                agent_id,
+            ) {
+                builtin_servers.push(server);
+            }
         }
     }
     for server in &mut builtin_servers {
@@ -284,6 +303,176 @@ pub(crate) async fn resolve_chat_stream_context(
         mcp_server_bundle: (http_servers, stdio_servers, builtin_servers),
         use_tools,
         memory_summary_prompt,
+    }
+}
+
+async fn build_contact_skill_prompt_mode(
+    runtime_context: Option<&memory_server_client::MemoryAgentRuntimeContextDto>,
+    skills_enabled: bool,
+    selected_skill_ids: &[String],
+) -> ContactSkillPromptMode {
+    let Some(agent) = runtime_context else {
+        return ContactSkillPromptMode::Disabled;
+    };
+    if !skills_enabled {
+        return ContactSkillPromptMode::Disabled;
+    }
+    if selected_skill_ids.is_empty() {
+        return ContactSkillPromptMode::Summary {
+            force_skill_first: true,
+        };
+    }
+
+    let selected_set = selected_skill_ids
+        .iter()
+        .map(|item| item.trim())
+        .filter(|item| !item.is_empty())
+        .collect::<std::collections::HashSet<_>>();
+    let mut selected_skills = Vec::new();
+    let mut selected_plugin_sources = Vec::new();
+
+    for (index, runtime_skill) in agent.runtime_skills.iter().enumerate() {
+        let skill_id = runtime_skill.id.trim();
+        if skill_id.is_empty() || !selected_set.contains(skill_id) {
+            continue;
+        }
+        let prompt_skill = if runtime_skill.source_type.trim() == "inline" {
+            agent
+                .skills
+                .iter()
+                .find(|item| item.id.trim() == skill_id)
+                .map(|inline_skill| ContactSelectedSkillPrompt {
+                    skill_ref: contact_skill_ref(index),
+                    id: inline_skill.id.clone(),
+                    name: inline_skill.name.clone(),
+                    description: runtime_skill.description.clone(),
+                    content: inline_skill.content.clone(),
+                    plugin_source: runtime_skill.plugin_source.clone(),
+                    source_path: runtime_skill.source_path.clone(),
+                    source_type: runtime_skill.source_type.clone(),
+                    updated_at: runtime_skill.updated_at.clone(),
+                })
+        } else {
+            match memory_server_client::get_memory_skill(skill_id).await {
+                Ok(Some(full_skill)) => Some(ContactSelectedSkillPrompt {
+                    skill_ref: contact_skill_ref(index),
+                    id: full_skill.id,
+                    name: full_skill.name,
+                    description: full_skill.description.or_else(|| runtime_skill.description.clone()),
+                    content: full_skill.content,
+                    plugin_source: runtime_skill
+                        .plugin_source
+                        .clone()
+                        .or_else(|| Some(full_skill.plugin_source.clone())),
+                    source_path: runtime_skill
+                        .source_path
+                        .clone()
+                        .or_else(|| Some(full_skill.source_path.clone())),
+                    source_type: runtime_skill.source_type.clone(),
+                    updated_at: runtime_skill
+                        .updated_at
+                        .clone()
+                        .or_else(|| Some(full_skill.updated_at.clone())),
+                }),
+                Ok(None) => None,
+                Err(err) => {
+                    warn!(
+                        "load selected contact skill failed: agent_id={} skill_id={} detail={}",
+                        agent.agent_id, skill_id, err
+                    );
+                    None
+                }
+            }
+        };
+
+        if let Some(prompt_skill) = prompt_skill {
+            if let Some(plugin_source) = prompt_skill
+                .plugin_source
+                .as_deref()
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+            {
+                if !selected_plugin_sources.iter().any(|item: &String| item == plugin_source) {
+                    selected_plugin_sources.push(plugin_source.to_string());
+                }
+            }
+            selected_skills.push(prompt_skill);
+        }
+    }
+
+    for (index, inline_skill) in agent.skills.iter().enumerate() {
+        let skill_id = inline_skill.id.trim();
+        if skill_id.is_empty()
+            || !selected_set.contains(skill_id)
+            || selected_skills.iter().any(|item| item.id.trim() == skill_id)
+        {
+            continue;
+        }
+        selected_skills.push(ContactSelectedSkillPrompt {
+            skill_ref: contact_skill_ref(index),
+            id: inline_skill.id.clone(),
+            name: inline_skill.name.clone(),
+            description: None,
+            content: inline_skill.content.clone(),
+            plugin_source: None,
+            source_path: None,
+            source_type: "inline".to_string(),
+            updated_at: Some(agent.updated_at.clone()),
+        });
+    }
+
+    if selected_skills.is_empty() {
+        return ContactSkillPromptMode::Summary {
+            force_skill_first: true,
+        };
+    }
+
+    let mut selected_plugins = Vec::new();
+    for plugin_source in selected_plugin_sources {
+        match memory_server_client::get_memory_skill_plugin(plugin_source.as_str()).await {
+            Ok(Some(plugin)) => {
+                let runtime_plugin_index = agent
+                    .runtime_plugins
+                    .iter()
+                    .position(|item| item.source.trim() == plugin_source.as_str())
+                    .unwrap_or(selected_plugins.len());
+                let runtime_plugin = agent
+                    .runtime_plugins
+                    .iter()
+                    .find(|item| item.source.trim() == plugin_source.as_str());
+                selected_plugins.push(ContactSelectedPluginPrompt {
+                    plugin_ref: contact_plugin_ref(runtime_plugin_index),
+                    source: plugin.source,
+                    name: plugin.name,
+                    category: runtime_plugin
+                        .and_then(|item| item.category.clone())
+                        .or(plugin.category),
+                    description: runtime_plugin
+                        .and_then(|item| item.description.clone())
+                        .or(plugin.description),
+                    version: plugin.version,
+                    repository: plugin.repository,
+                    branch: plugin.branch,
+                    content: plugin.content,
+                    commands: plugin.commands,
+                    updated_at: runtime_plugin
+                        .and_then(|item| item.updated_at.clone())
+                        .or(Some(plugin.updated_at)),
+                });
+            }
+            Ok(None) => {}
+            Err(err) => {
+                warn!(
+                    "load selected contact skill plugin failed: agent_id={} plugin_source={} detail={}",
+                    agent.agent_id, plugin_source, err
+                );
+            }
+        }
+    }
+
+    ContactSkillPromptMode::SelectedFull {
+        skills: selected_skills,
+        plugins: selected_plugins,
     }
 }
 
@@ -412,6 +601,18 @@ fn normalize_optional_text(value: Option<&str>) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
+}
+
+fn normalize_string_list(values: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    for value in values {
+        let trimmed = value.trim();
+        if trimmed.is_empty() || out.iter().any(|item: &String| item == trimmed) {
+            continue;
+        }
+        out.push(trimmed.to_string());
+    }
+    out
 }
 
 fn compose_tool_routing_system_prompt(builtin_servers: &[McpBuiltinServer]) -> Option<String> {

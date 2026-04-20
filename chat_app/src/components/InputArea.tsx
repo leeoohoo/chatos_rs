@@ -46,6 +46,7 @@ export const InputArea: React.FC<InputAreaProps> = ({
   workspaceRoot = null,
   onWorkspaceRootChange,
   currentRemoteConnectionId = null,
+  currentAgent = null,
   availableRemoteConnections = [],
   onRemoteConnectionChange,
   showWorkspaceRootPicker = false,
@@ -111,6 +112,14 @@ export const InputArea: React.FC<InputAreaProps> = ({
     handleSaveProjectMcpDefault,
     handleApplyProjectMcpDefault,
     enabledModels,
+    currentAgentForSkills,
+    skillsEnabled,
+    setSkillsEnabled,
+    skillsLoading,
+    availableSkillOptions,
+    selectedSkillIds,
+    handleToggleSelectedSkill,
+    handleClearSelectedSkills,
     hasAiOptions,
     projectForFilePicker,
     showProjectFilePicker,
@@ -154,6 +163,7 @@ export const InputArea: React.FC<InputAreaProps> = ({
     workspaceRoot,
     onWorkspaceRootChange,
     currentRemoteConnectionId,
+    currentAgent,
     mcpEnabled,
     enabledMcpIds,
     onMcpEnabledChange,
@@ -187,6 +197,7 @@ export const InputArea: React.FC<InputAreaProps> = ({
         showProjectSelector={showProjectSelector}
         showWorkspaceRootPicker={showWorkspaceRootPicker}
         currentRemoteConnectionId={currentRemoteConnectionId}
+        currentAgent={currentAgentForSkills}
         availableRemoteConnections={availableRemoteConnections}
         onRemoteConnectionChange={onRemoteConnectionChange}
         mcpEnabled={mcpEnabled}
@@ -260,8 +271,15 @@ export const InputArea: React.FC<InputAreaProps> = ({
         handleToggleMcpSelection={handleToggleMcpSelection}
         handleApplyMcpToolsetPreset={handleApplyMcpToolsetPreset}
         handleSaveProjectMcpDefault={handleSaveProjectMcpDefault}
-        handleApplyProjectMcpDefault={handleApplyProjectMcpDefault}
-        handleInputChange={handleInputChange}
+	    handleApplyProjectMcpDefault={handleApplyProjectMcpDefault}
+        skillsEnabled={skillsEnabled}
+        onSkillsEnabledChange={setSkillsEnabled}
+        skillsLoading={skillsLoading}
+        availableSkillOptions={availableSkillOptions}
+        selectedSkillIds={selectedSkillIds}
+        onToggleSelectedSkill={handleToggleSelectedSkill}
+        onClearSelectedSkills={handleClearSelectedSkills}
+	    handleInputChange={handleInputChange}
         handleKeyDown={handleKeyDown}
         handlePaste={handlePaste}
         onStop={onStop}

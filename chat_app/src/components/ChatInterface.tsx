@@ -16,12 +16,13 @@ import { useSessionHeaderMeta } from './chatInterface/useSessionHeaderMeta';
 import { useSessionWorkbarPanels } from './chatInterface/useSessionWorkbarPanels';
 import { apiClient as globalApiClient } from '../lib/api/client';
 import { cn } from '../lib/utils';
-import type { ChatInterfaceProps } from '../types';
+import type { AgentConfig, ChatInterfaceProps } from '../types';
 import { useAuthStore } from '../lib/auth/authStore';
 import { useSessionRuntimeSettings } from '../features/sessionRuntime/useSessionRuntimeSettings';
 import { useContactMemoryContext } from './chatInterface/useContactMemoryContext';
 import { useUiPromptHistory } from './chatInterface/useUiPromptHistory';
 import { useContactProjectScope } from './chatInterface/useContactProjectScope';
+import { readSessionRuntimeFromMetadata } from '../lib/store/helpers/sessionRuntime';
 
 export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   className,
@@ -50,7 +51,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     sidebarOpen,
     toggleSidebar,
     aiModelConfigs,
+    agents,
     selectedModelId,
+    selectedAgentId,
     setSelectedModel,
     loadAiModelConfigs,
     loadAgents,
@@ -90,7 +93,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     sidebarOpen: state.sidebarOpen,
     toggleSidebar: state.toggleSidebar,
     aiModelConfigs: state.aiModelConfigs,
+    agents: state.agents,
     selectedModelId: state.selectedModelId,
+    selectedAgentId: state.selectedAgentId,
     setSelectedModel: state.setSelectedModel,
     loadAiModelConfigs: state.loadAiModelConfigs,
     loadAgents: state.loadAgents,
@@ -123,6 +128,58 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const currentChatState = useMemo(() => (
     currentSession ? sessionChatState[currentSession.id] : undefined
   ), [currentSession, sessionChatState]);
+  const currentAgent = useMemo(() => {
+    const runtime = readSessionRuntimeFromMetadata(currentSession?.metadata);
+    const runtimeContactId = typeof runtime?.contactId === 'string' ? runtime.contactId.trim() : '';
+    const runtimeAgentId = typeof runtime?.contactAgentId === 'string' ? runtime.contactAgentId.trim() : '';
+    const sessionTitle = typeof currentSession?.title === 'string' ? currentSession.title.trim() : '';
+    const matchedContact = Array.isArray(contacts)
+      ? contacts.find((contact: any) => {
+        const contactId = typeof contact?.id === 'string' ? contact.id.trim() : '';
+        const contactAgentId = typeof contact?.agentId === 'string' ? contact.agentId.trim() : '';
+        const contactName = typeof contact?.name === 'string' ? contact.name.trim() : '';
+        if (runtimeContactId && contactId === runtimeContactId) {
+          return true;
+        }
+        if (runtimeAgentId && contactAgentId === runtimeAgentId) {
+          return true;
+        }
+        return !runtimeAgentId && !runtimeContactId && sessionTitle && contactName === sessionTitle;
+      })
+      : null;
+    const matchedContactAgentId = typeof matchedContact?.agentId === 'string' ? matchedContact.agentId.trim() : '';
+    const matchedContactName = typeof matchedContact?.name === 'string' ? matchedContact.name.trim() : '';
+    const agentId = selectedAgentId || runtimeAgentId || matchedContactAgentId || null;
+    if (!agentId) {
+      return null;
+    }
+    const matched = Array.isArray(agents)
+      ? (agents.find((agent: any) => agent?.id === agentId) || null)
+      : null;
+    if (matched) {
+      return matched;
+    }
+
+    const now = new Date();
+    return {
+      id: agentId,
+      name: matchedContactName || sessionTitle || '当前智能体',
+      description: '',
+      ai_model_config_id: '',
+      enabled: true,
+      role_definition: '',
+      skills: [],
+      skill_ids: [],
+      default_skill_ids: [],
+      plugin_sources: [],
+      runtime_plugins: [],
+      runtime_skills: [],
+      mcp_policy: null,
+      project_policy: null,
+      createdAt: now,
+      updatedAt: now,
+    } satisfies AgentConfig;
+  }, [agents, contacts, currentSession?.metadata, currentSession?.title, selectedAgentId]);
   const {
     currentContactName,
     currentContactId,
@@ -366,6 +423,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     reasoningEnabled: chatConfig?.reasoningEnabled === true,
     onReasoningToggle: (enabled: boolean) => updateChatConfig({ reasoningEnabled: enabled }),
     selectedModelId,
+    currentAgent,
     availableModels: aiModelConfigs,
     onModelChange: setSelectedModel,
     availableProjects: composerAvailableProjects,

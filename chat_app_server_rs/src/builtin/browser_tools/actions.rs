@@ -1242,7 +1242,13 @@ async fn prepare_browser_vision_context(
         {
             Ok(Some(runtime)) => {
                 context.contact_system_prompt =
-                    normalize_non_empty(compose_contact_system_prompt(Some(&runtime)).as_deref());
+                    normalize_non_empty(
+                        compose_contact_system_prompt(
+                            Some(&runtime),
+                            &crate::core::chat_runtime::ContactSkillPromptMode::Disabled,
+                        )
+                        .as_deref(),
+                    );
             }
             Ok(None) => context.warnings.push(format!(
                 "contact runtime context not found for agent {}",

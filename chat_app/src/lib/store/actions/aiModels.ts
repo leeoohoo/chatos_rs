@@ -115,9 +115,6 @@ export function createAiModelActions({ set, get, client, getUserIdParam }: Deps)
 
       set((state) => {
         state.selectedModelId = modelId;
-        if (modelId) {
-          state.selectedAgentId = null;
-        }
         const sessionId = state.currentSessionId;
         if (sessionId) {
           const nextSelection = {

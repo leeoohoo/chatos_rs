@@ -15,6 +15,7 @@ const RUNNER_SCRIPT_REL_PATH = `${RUNNER_SCRIPT_DIR}/${RUNNER_SCRIPT_FILE}`;
 const RUNNER_START_COMMAND = `bash ./${RUNNER_SCRIPT_REL_PATH} start`;
 const RUNNER_STOP_COMMAND = `bash ./${RUNNER_SCRIPT_REL_PATH} stop`;
 const RUNNER_RESTART_COMMAND = `bash ./${RUNNER_SCRIPT_REL_PATH} restart`;
+const FS_PATH_NOT_FOUND_ERROR = '路径不存在';
 
 interface UseProjectExplorerRunStateParams {
   client: ApiClient;
@@ -67,6 +68,14 @@ const normalizeProjectMembers = (value: unknown): ProjectRunnerMember[] => {
 
 const normalizeRootPath = (value: string): string => value.trim().replace(/[\\/]+$/, '');
 
+const readErrorMessage = (error: unknown): string => (
+  error instanceof Error ? error.message : '检查启动脚本失败'
+);
+
+const isPathMissingError = (error: unknown): boolean => (
+  readErrorMessage(error).includes(FS_PATH_NOT_FOUND_ERROR)
+);
+
 const hasRunnerScript = async (client: ApiClient, rootPath: string): Promise<boolean> => {
   const safeRoot = normalizeRootPath(rootPath);
   if (!safeRoot) {
@@ -101,6 +110,7 @@ export const useProjectExplorerRunState = ({
   const [runnerScriptExists, setRunnerScriptExists] = useState(false);
   const [runnerScriptChecking, setRunnerScriptChecking] = useState(false);
   const [runnerScriptError, setRunnerScriptError] = useState<string | null>(null);
+  const [runnerRootMissing, setRunnerRootMissing] = useState(false);
   const [starting, setStarting] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [restarting, setRestarting] = useState(false);
@@ -179,6 +189,7 @@ export const useProjectExplorerRunState = ({
       setRunnerScriptExists(false);
       setRunnerScriptChecking(false);
       setRunnerScriptError(null);
+      setRunnerRootMissing(false);
       return;
     }
     setRunnerScriptChecking(true);
@@ -186,9 +197,16 @@ export const useProjectExplorerRunState = ({
     try {
       const exists = await hasRunnerScript(client, project.rootPath);
       setRunnerScriptExists(exists);
+      setRunnerRootMissing(false);
     } catch (error) {
       setRunnerScriptExists(false);
-      setRunnerScriptError(error instanceof Error ? error.message : '检查启动脚本失败');
+      if (isPathMissingError(error)) {
+        setRunnerRootMissing(true);
+        setRunnerScriptError('项目目录不存在，请检查项目路径');
+      } else {
+        setRunnerRootMissing(false);
+        setRunnerScriptError(readErrorMessage(error));
+      }
     } finally {
       setRunnerScriptChecking(false);
     }
@@ -206,6 +224,7 @@ export const useProjectExplorerRunState = ({
     setProjectMembersError(null);
     setRunnerScriptExists(false);
     setRunnerScriptError(null);
+    setRunnerRootMissing(false);
     setRunnerMessage(null);
     setRunnerError(null);
     setActiveRun(null);
@@ -369,7 +388,7 @@ export const useProjectExplorerRunState = ({
   }, [client, project?.id, project?.rootPath]);
 
   useEffect(() => {
-    if (!project?.id || runnerScriptExists) {
+    if (!project?.id || runnerScriptExists || runnerRootMissing) {
       return;
     }
     let disposed = false;
@@ -392,7 +411,7 @@ export const useProjectExplorerRunState = ({
         clearTimeout(timer);
       }
     };
-  }, [loadRunnerScriptState, project?.id, runnerScriptExists]);
+  }, [loadRunnerScriptState, project?.id, runnerRootMissing, runnerScriptExists]);
 
   useEffect(() => {
     if (!activeRun?.terminalId) {
@@ -433,6 +452,9 @@ export const useProjectExplorerRunState = ({
     if (!project?.id) {
       return 'idle';
     }
+    if (runnerRootMissing) {
+      return 'missing_root';
+    }
     if (runnerScriptChecking || projectMembersLoading) {
       return 'loading';
     }
@@ -451,6 +473,7 @@ export const useProjectExplorerRunState = ({
     projectMembers.length,
     projectMembersError,
     projectMembersLoading,
+    runnerRootMissing,
     runnerScriptChecking,
     runnerScriptError,
     runnerScriptExists,
