@@ -93,6 +93,13 @@ export const mergeMessagesWithStreamingDraft = (
 ): Message[] => {
   const chatState = state.sessionChatState?.[sessionId];
   const draftMessage = state.sessionStreamingMessageDrafts?.[sessionId];
+  if (!chatState?.isStreaming) {
+    if (state.sessionStreamingMessageDrafts) {
+      state.sessionStreamingMessageDrafts[sessionId] = null;
+    }
+    return messages;
+  }
+
   let nextMessages = messages;
 
   if (chatState?.isStreaming && chatState.streamingMessageId) {
@@ -139,10 +146,6 @@ export const mergeMessagesWithStreamingDraft = (
           ...draftClone,
         };
       }
-    }
-
-    if (!chatState?.isStreaming && state.sessionStreamingMessageDrafts) {
-      state.sessionStreamingMessageDrafts[sessionId] = null;
     }
   }
 

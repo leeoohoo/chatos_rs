@@ -1,10 +1,37 @@
-import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { MessageItem } from './MessageItem';
-import { LoadingSpinner } from './LoadingSpinner';
 // import { cn } from '../lib/utils';
 import type { MessageListProps } from '../types';
 import { useMessageListDerivedState } from './messageList/useMessageListDerivedState';
 import { useMessageListWindowing } from './messageList/useMessageListWindowing';
+
+const buildPreviewSentenceQueue = (value: string): string[] => {
+  const input = typeof value === 'string' ? value : '';
+  const normalized = input.replace(/\r/g, '\n').trim();
+  if (!normalized) {
+    return [];
+  }
+
+  const parts = normalized
+    .split(/\n+/)
+    .flatMap((line) => line.split(/(?<=[。！？!?；;])/g))
+    .map((part) => part.replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+
+  if (parts.length === 0) {
+    return [];
+  }
+
+  const deduped: string[] = [];
+  parts.forEach((part) => {
+    const clipped = part.length > 220 ? `${part.slice(0, 220)}…` : part;
+    if (deduped.length === 0 || deduped[deduped.length - 1] !== clipped) {
+      deduped.push(clipped);
+    }
+  });
+
+  return deduped.slice(-8);
+};
 
 const MessageListComponent: React.FC<MessageListProps> = ({
   sessionId,
@@ -12,6 +39,7 @@ const MessageListComponent: React.FC<MessageListProps> = ({
   isLoading = false,
   isStreaming = false,
   isStopping = false,
+  streamingPreviewText = '',
   hasMore = false,
   onLoadMore,
   onToggleTurnProcess,
@@ -47,6 +75,31 @@ const MessageListComponent: React.FC<MessageListProps> = ({
     hasMore,
     isStreaming,
   });
+  const previewSentenceQueue = useMemo(
+    () => buildPreviewSentenceQueue(streamingPreviewText),
+    [streamingPreviewText],
+  );
+  const hasPreviewSentence = previewSentenceQueue.length > 0;
+  const [previewSentenceIndex, setPreviewSentenceIndex] = useState(0);
+  const activePreviewSentence = previewSentenceQueue[previewSentenceIndex] || '';
+
+  useEffect(() => {
+    setPreviewSentenceIndex(0);
+  }, [sessionId, previewSentenceQueue.length]);
+
+  useEffect(() => {
+    if (!isLoading || previewSentenceQueue.length <= 1) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      setPreviewSentenceIndex((current) => (
+        previewSentenceQueue.length > 0
+          ? (current + 1) % previewSentenceQueue.length
+          : 0
+      ));
+    }, 1600);
+    return () => window.clearInterval(timer);
+  }, [isLoading, previewSentenceQueue]);
 
   if (dedupedVisibleMessages.length === 0 && !isLoading && !hasMore) {
     return (
@@ -123,9 +176,22 @@ const MessageListComponent: React.FC<MessageListProps> = ({
         
         {isLoading && (
           <div className="flex justify-start">
-            <div className="flex items-center space-x-2 bg-muted px-4 py-3 rounded-lg max-w-xs">
-              <LoadingSpinner size="sm" />
-              <span className="text-sm text-muted-foreground">{isStopping ? 'AI is stopping...' : 'AI is thinking...'}</span>
+            <div className="w-fit min-w-[16rem] max-w-[78vw] rounded-lg border border-border bg-muted/40 px-3 py-3">
+              <span className="block text-[11px] text-muted-foreground">
+                {isStopping ? 'AI is stopping...' : 'AI is thinking...'}
+              </span>
+              {hasPreviewSentence ? (
+                <div
+                  className="mt-1 min-h-[22px] text-sm leading-6 text-foreground/85 whitespace-nowrap overflow-hidden text-ellipsis"
+                  title={activePreviewSentence}
+                >
+                  {activePreviewSentence}
+                </div>
+              ) : (
+                <div className="mt-2 thinking-marquee-track">
+                  <div className="thinking-marquee-bar" />
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -158,6 +224,7 @@ const areMessageListPropsEqual = (prevProps: MessageListProps, nextProps: Messag
   && (prevProps.isLoading ?? false) === (nextProps.isLoading ?? false)
   && (prevProps.isStreaming ?? false) === (nextProps.isStreaming ?? false)
   && (prevProps.isStopping ?? false) === (nextProps.isStopping ?? false)
+  && (prevProps.streamingPreviewText ?? '') === (nextProps.streamingPreviewText ?? '')
   && (prevProps.hasMore ?? false) === (nextProps.hasMore ?? false)
   && prevProps.onLoadMore === nextProps.onLoadMore
   && prevProps.onToggleTurnProcess === nextProps.onToggleTurnProcess

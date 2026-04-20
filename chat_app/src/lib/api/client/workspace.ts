@@ -2,15 +2,26 @@ import { debugLog } from '@/lib/utils';
 
 import { buildQuery } from './shared';
 import type {
+  CodeNavCapabilitiesResponse,
+  CodeNavDocumentSymbolsResponse,
+  CodeNavLocationsResponse,
   ContactAgentRecallResponse,
   ContactCreateResponse,
   ContactProjectLinkResponse,
   ContactProjectMemoryResponse,
   ContactResponse,
   DeleteSuccessResponse,
+  FsContentSearchResponse,
   FsEntriesResponse,
   FsMutationResponse,
   FsReadFileResponse,
+  GitActionResponse,
+  GitBranchesResponse,
+  GitClientInfoResponse,
+  GitCompareResponse,
+  GitFileDiffResponse,
+  GitStatusResponse,
+  GitSummaryResponse,
   ProjectChangeLogResponse,
   ProjectChangeSummaryResponse,
   ProjectContactLinkResponse,
@@ -78,7 +89,7 @@ export const getSessions = (
     include_archiving: paging?.includeArchiving === true ? true : undefined,
   });
   debugLog('🔍 getSessions API调用:', { userId, projectId, query });
-  return request<SessionResponse[]>(`/sessions${query}`);
+  return request<SessionResponse[]>(`/conversations${query}`);
 };
 
 export const createSession = (
@@ -86,14 +97,14 @@ export const createSession = (
   data: { id: string; title: string; user_id: string; project_id?: string; metadata?: any }
 ): Promise<SessionResponse> => {
   debugLog('🔍 createSession API调用:', data);
-  return request<SessionResponse>('/sessions', {
+  return request<SessionResponse>('/conversations', {
     method: 'POST',
     body: JSON.stringify(data),
   });
 };
 
 export const getSession = (request: ApiRequestFn, id: string): Promise<SessionResponse> => {
-  return request<SessionResponse>(`/sessions/${id}`);
+  return request<SessionResponse>(`/conversations/${id}`);
 };
 
 export const updateSession = (
@@ -101,14 +112,14 @@ export const updateSession = (
   id: string,
   data: { title?: string; description?: string; metadata?: any },
 ): Promise<SessionResponse> => {
-  return request<SessionResponse>(`/sessions/${id}`, {
+  return request<SessionResponse>(`/conversations/${id}`, {
     method: 'PUT',
     body: JSON.stringify(data),
   });
 };
 
 export const deleteSession = (request: ApiRequestFn, id: string): Promise<DeleteSuccessResponse> => {
-  return request<DeleteSuccessResponse>(`/sessions/${id}`, {
+  return request<DeleteSuccessResponse>(`/conversations/${id}`, {
     method: 'DELETE',
   });
 };
@@ -188,9 +199,9 @@ export const getContactAgentRecalls = (
   );
 };
 
-export const getSessionMessages = (
+export const getConversationMessages = (
   request: ApiRequestFn,
-  sessionId: string,
+  conversationId: string,
   params?: { limit?: number; offset?: number; compact?: boolean; strategy?: string }
 ): Promise<SessionMessageResponse[]> => {
   const query = buildQuery({
@@ -199,45 +210,45 @@ export const getSessionMessages = (
     compact: params?.compact,
     strategy: params?.strategy,
   });
-  return request<SessionMessageResponse[]>(`/sessions/${sessionId}/messages${query}`);
+  return request<SessionMessageResponse[]>(`/conversations/${conversationId}/messages${query}`);
 };
 
-export const getSessionTurnProcessMessages = (
+export const getConversationTurnProcessMessages = (
   request: ApiRequestFn,
-  sessionId: string,
+  conversationId: string,
   userMessageId: string
 ): Promise<SessionMessageResponse[]> => {
   return request<SessionMessageResponse[]>(
-    `/sessions/${sessionId}/turns/${encodeURIComponent(userMessageId)}/process`,
+    `/conversations/${conversationId}/turns/${encodeURIComponent(userMessageId)}/process`,
   );
 };
 
-export const getSessionTurnProcessMessagesByTurn = (
+export const getConversationTurnProcessMessagesByTurn = (
   request: ApiRequestFn,
-  sessionId: string,
+  conversationId: string,
   turnId: string
 ): Promise<SessionMessageResponse[]> => {
   return request<SessionMessageResponse[]>(
-    `/sessions/${sessionId}/turns/by-turn/${encodeURIComponent(turnId)}/process`,
+    `/conversations/${conversationId}/turns/by-turn/${encodeURIComponent(turnId)}/process`,
   );
 };
 
-export const getSessionLatestTurnRuntimeContext = (
+export const getConversationLatestTurnRuntimeContext = (
   request: ApiRequestFn,
-  sessionId: string,
+  conversationId: string,
 ): Promise<TurnRuntimeSnapshotLookupResponse> => {
   return request<TurnRuntimeSnapshotLookupResponse>(
-    `/sessions/${sessionId}/turns/latest/runtime-context`,
+    `/conversations/${conversationId}/turns/latest/runtime-context`,
   );
 };
 
-export const getSessionTurnRuntimeContextByTurn = (
+export const getConversationTurnRuntimeContextByTurn = (
   request: ApiRequestFn,
-  sessionId: string,
+  conversationId: string,
   turnId: string,
 ): Promise<TurnRuntimeSnapshotLookupResponse> => {
   return request<TurnRuntimeSnapshotLookupResponse>(
-    `/sessions/${sessionId}/turns/by-turn/${encodeURIComponent(turnId)}/runtime-context`,
+    `/conversations/${conversationId}/turns/by-turn/${encodeURIComponent(turnId)}/runtime-context`,
   );
 };
 
@@ -503,9 +514,14 @@ export const disconnectRemoteTerminal = (
 export const testRemoteConnectionDraft = (
   request: ApiRequestFn,
   data: RemoteConnectionPayload,
+  verificationCode?: string,
 ): Promise<RemoteConnectionTestResponse> => {
+  const headers = verificationCode?.trim()
+    ? { 'x-remote-verification-code': verificationCode.trim() }
+    : undefined;
   return request<RemoteConnectionTestResponse>('/remote-connections/test', {
     method: 'POST',
+    headers,
     body: JSON.stringify(data),
   });
 };
@@ -513,19 +529,29 @@ export const testRemoteConnectionDraft = (
 export const testRemoteConnection = (
   request: ApiRequestFn,
   id: string,
+  verificationCode?: string,
 ): Promise<RemoteConnectionTestResponse> => {
+  const headers = verificationCode?.trim()
+    ? { 'x-remote-verification-code': verificationCode.trim() }
+    : undefined;
   return request<RemoteConnectionTestResponse>(`/remote-connections/${id}/test`, {
     method: 'POST',
+    headers,
   });
 };
 
 export const listRemoteSftpEntries = (
   request: ApiRequestFn,
   connectionId: string,
-  path?: string
+  path?: string,
+  verificationCode?: string,
 ): Promise<RemoteSftpEntriesResponse> => {
+  const headers = verificationCode?.trim()
+    ? { 'x-remote-verification-code': verificationCode.trim() }
+    : undefined;
   return request<RemoteSftpEntriesResponse>(
     `/remote-connections/${connectionId}/sftp/list${buildQuery({ path })}`,
+    { headers },
   );
 };
 
@@ -533,10 +559,15 @@ export const uploadRemoteSftpFile = (
   request: ApiRequestFn,
   connectionId: string,
   localPath: string,
-  remotePath: string
+  remotePath: string,
+  verificationCode?: string,
 ): Promise<RemoteSftpTransferStatusResponse> => {
+  const headers = verificationCode?.trim()
+    ? { 'x-remote-verification-code': verificationCode.trim() }
+    : undefined;
   return request<RemoteSftpTransferStatusResponse>(`/remote-connections/${connectionId}/sftp/upload`, {
     method: 'POST',
+    headers,
     body: JSON.stringify({
       local_path: localPath,
       remote_path: remotePath,
@@ -548,10 +579,15 @@ export const downloadRemoteSftpFile = (
   request: ApiRequestFn,
   connectionId: string,
   remotePath: string,
-  localPath: string
+  localPath: string,
+  verificationCode?: string,
 ): Promise<RemoteSftpTransferStatusResponse> => {
+  const headers = verificationCode?.trim()
+    ? { 'x-remote-verification-code': verificationCode.trim() }
+    : undefined;
   return request<RemoteSftpTransferStatusResponse>(`/remote-connections/${connectionId}/sftp/download`, {
     method: 'POST',
+    headers,
     body: JSON.stringify({
       remote_path: remotePath,
       local_path: localPath,
@@ -567,9 +603,14 @@ export const startRemoteSftpTransfer = (
     local_path: string;
     remote_path: string;
   },
+  verificationCode?: string,
 ): Promise<RemoteSftpTransferStatusResponse> => {
+  const headers = verificationCode?.trim()
+    ? { 'x-remote-verification-code': verificationCode.trim() }
+    : undefined;
   return request<RemoteSftpTransferStatusResponse>(`/remote-connections/${connectionId}/sftp/transfer/start`, {
     method: 'POST',
+    headers,
     body: JSON.stringify(data),
   });
 };
@@ -601,10 +642,15 @@ export const createRemoteSftpDirectory = (
   request: ApiRequestFn,
   connectionId: string,
   parentPath: string,
-  name: string
+  name: string,
+  verificationCode?: string,
 ): Promise<FsMutationResponse> => {
+  const headers = verificationCode?.trim()
+    ? { 'x-remote-verification-code': verificationCode.trim() }
+    : undefined;
   return request<FsMutationResponse>(`/remote-connections/${connectionId}/sftp/mkdir`, {
     method: 'POST',
+    headers,
     body: JSON.stringify({
       parent_path: parentPath,
       name,
@@ -616,10 +662,15 @@ export const renameRemoteSftpEntry = (
   request: ApiRequestFn,
   connectionId: string,
   fromPath: string,
-  toPath: string
+  toPath: string,
+  verificationCode?: string,
 ): Promise<FsMutationResponse> => {
+  const headers = verificationCode?.trim()
+    ? { 'x-remote-verification-code': verificationCode.trim() }
+    : undefined;
   return request<FsMutationResponse>(`/remote-connections/${connectionId}/sftp/rename`, {
     method: 'POST',
+    headers,
     body: JSON.stringify({
       from_path: fromPath,
       to_path: toPath,
@@ -631,10 +682,15 @@ export const deleteRemoteSftpEntry = (
   request: ApiRequestFn,
   connectionId: string,
   path: string,
-  recursive = false
+  recursive = false,
+  verificationCode?: string,
 ): Promise<FsMutationResponse> => {
+  const headers = verificationCode?.trim()
+    ? { 'x-remote-verification-code': verificationCode.trim() }
+    : undefined;
   return request<FsMutationResponse>(`/remote-connections/${connectionId}/sftp/delete`, {
     method: 'POST',
+    headers,
     body: JSON.stringify({
       path,
       recursive,
@@ -657,6 +713,255 @@ export const searchFsEntries = (
   limit?: number
 ): Promise<FsEntriesResponse> => {
   return request<FsEntriesResponse>(`/fs/search${buildQuery({ path, q: query, limit })}`);
+};
+
+export const searchFsContent = (
+  request: ApiRequestFn,
+  path: string,
+  query: string,
+  options?: {
+    limit?: number;
+    caseSensitive?: boolean;
+    wholeWord?: boolean;
+  }
+): Promise<FsContentSearchResponse> => {
+  return request<FsContentSearchResponse>(`/fs/search-content${buildQuery({
+    path,
+    q: query,
+    limit: options?.limit,
+    case_sensitive: options?.caseSensitive,
+    whole_word: options?.wholeWord,
+  })}`);
+};
+
+export const getCodeNavCapabilities = (
+  request: ApiRequestFn,
+  projectRoot: string,
+  filePath: string,
+): Promise<CodeNavCapabilitiesResponse> => {
+  return request<CodeNavCapabilitiesResponse>('/code-nav/capabilities', {
+    method: 'POST',
+    body: JSON.stringify({
+      project_root: projectRoot,
+      file_path: filePath,
+    }),
+  });
+};
+
+export const getCodeNavDefinition = (
+  request: ApiRequestFn,
+  data: { projectRoot: string; filePath: string; line: number; column: number },
+): Promise<CodeNavLocationsResponse> => {
+  return request<CodeNavLocationsResponse>('/code-nav/definition', {
+    method: 'POST',
+    body: JSON.stringify({
+      project_root: data.projectRoot,
+      file_path: data.filePath,
+      line: data.line,
+      column: data.column,
+    }),
+  });
+};
+
+export const getCodeNavReferences = (
+  request: ApiRequestFn,
+  data: { projectRoot: string; filePath: string; line: number; column: number },
+): Promise<CodeNavLocationsResponse> => {
+  return request<CodeNavLocationsResponse>('/code-nav/references', {
+    method: 'POST',
+    body: JSON.stringify({
+      project_root: data.projectRoot,
+      file_path: data.filePath,
+      line: data.line,
+      column: data.column,
+    }),
+  });
+};
+
+export const getCodeNavDocumentSymbols = (
+  request: ApiRequestFn,
+  projectRoot: string,
+  filePath: string,
+): Promise<CodeNavDocumentSymbolsResponse> => {
+  return request<CodeNavDocumentSymbolsResponse>('/code-nav/document-symbols', {
+    method: 'POST',
+    body: JSON.stringify({
+      project_root: projectRoot,
+      file_path: filePath,
+    }),
+  });
+};
+
+export const getGitSummary = (
+  request: ApiRequestFn,
+  root: string,
+): Promise<GitSummaryResponse> => {
+  return request<GitSummaryResponse>(`/git/summary${buildQuery({ root })}`);
+};
+
+export const getGitClientInfo = (
+  request: ApiRequestFn,
+): Promise<GitClientInfoResponse> => {
+  return request<GitClientInfoResponse>('/git/client');
+};
+
+export const getGitBranches = (
+  request: ApiRequestFn,
+  root: string,
+): Promise<GitBranchesResponse> => {
+  return request<GitBranchesResponse>(`/git/branches${buildQuery({ root })}`);
+};
+
+export const getGitStatus = (
+  request: ApiRequestFn,
+  root: string,
+): Promise<GitStatusResponse> => {
+  return request<GitStatusResponse>(`/git/status${buildQuery({ root })}`);
+};
+
+export const compareGitBranch = (
+  request: ApiRequestFn,
+  root: string,
+  target: string,
+): Promise<GitCompareResponse> => {
+  return request<GitCompareResponse>(`/git/compare${buildQuery({ root, target })}`);
+};
+
+export const getGitDiff = (
+  request: ApiRequestFn,
+  data: { root: string; path: string; target?: string; staged?: boolean },
+): Promise<GitFileDiffResponse> => {
+  return request<GitFileDiffResponse>(`/git/diff${buildQuery({
+    root: data.root,
+    path: data.path,
+    target: data.target,
+    staged: data.staged,
+  })}`);
+};
+
+export const fetchGit = (
+  request: ApiRequestFn,
+  data: { root: string; remote?: string },
+): Promise<GitActionResponse> => {
+  return request<GitActionResponse>('/git/fetch', {
+    method: 'POST',
+    body: JSON.stringify({
+      root: data.root,
+      remote: data.remote,
+    }),
+  });
+};
+
+export const pullGit = (
+  request: ApiRequestFn,
+  data: { root: string; mode?: 'ff-only' | 'rebase' | string },
+): Promise<GitActionResponse> => {
+  return request<GitActionResponse>('/git/pull', {
+    method: 'POST',
+    body: JSON.stringify({
+      root: data.root,
+      mode: data.mode,
+    }),
+  });
+};
+
+export const pushGit = (
+  request: ApiRequestFn,
+  data: { root: string; remote?: string; branch?: string; setUpstream?: boolean },
+): Promise<GitActionResponse> => {
+  return request<GitActionResponse>('/git/push', {
+    method: 'POST',
+    body: JSON.stringify({
+      root: data.root,
+      remote: data.remote,
+      branch: data.branch,
+      set_upstream: data.setUpstream,
+    }),
+  });
+};
+
+export const checkoutGit = (
+  request: ApiRequestFn,
+  data: { root: string; branch?: string; remoteBranch?: string; createTracking?: boolean },
+): Promise<GitActionResponse> => {
+  return request<GitActionResponse>('/git/checkout', {
+    method: 'POST',
+    body: JSON.stringify({
+      root: data.root,
+      branch: data.branch,
+      remote_branch: data.remoteBranch,
+      create_tracking: data.createTracking,
+    }),
+  });
+};
+
+export const createGitBranch = (
+  request: ApiRequestFn,
+  data: { root: string; name: string; startPoint?: string; checkout?: boolean },
+): Promise<GitActionResponse> => {
+  return request<GitActionResponse>('/git/branch', {
+    method: 'POST',
+    body: JSON.stringify({
+      root: data.root,
+      name: data.name,
+      start_point: data.startPoint,
+      checkout: data.checkout,
+    }),
+  });
+};
+
+export const mergeGit = (
+  request: ApiRequestFn,
+  data: { root: string; branch: string; mode?: 'default' | 'no-ff' | 'ff-only' | string },
+): Promise<GitActionResponse> => {
+  return request<GitActionResponse>('/git/merge', {
+    method: 'POST',
+    body: JSON.stringify({
+      root: data.root,
+      branch: data.branch,
+      mode: data.mode,
+    }),
+  });
+};
+
+export const stageGitPaths = (
+  request: ApiRequestFn,
+  data: { root: string; paths: string[] },
+): Promise<GitActionResponse> => {
+  return request<GitActionResponse>('/git/stage', {
+    method: 'POST',
+    body: JSON.stringify({
+      root: data.root,
+      paths: data.paths,
+    }),
+  });
+};
+
+export const unstageGitPaths = (
+  request: ApiRequestFn,
+  data: { root: string; paths: string[] },
+): Promise<GitActionResponse> => {
+  return request<GitActionResponse>('/git/unstage', {
+    method: 'POST',
+    body: JSON.stringify({
+      root: data.root,
+      paths: data.paths,
+    }),
+  });
+};
+
+export const commitGit = (
+  request: ApiRequestFn,
+  data: { root: string; message: string; paths?: string[] },
+): Promise<GitActionResponse> => {
+  return request<GitActionResponse>('/git/commit', {
+    method: 'POST',
+    body: JSON.stringify({
+      root: data.root,
+      message: data.message,
+      paths: data.paths,
+    }),
+  });
 };
 
 export const readFsFile = (request: ApiRequestFn, path: string): Promise<FsReadFileResponse> => {

@@ -6,6 +6,11 @@ pub(super) struct RemoteConnectionQuery {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct RemoteTerminalWsQuery {
+    pub(super) verification_code: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct CreateRemoteConnectionRequest {
     pub(super) name: Option<String>,
     pub(super) host: Option<String>,
@@ -71,7 +76,12 @@ pub(super) enum WsOutput {
     #[serde(rename = "state")]
     State { busy: bool },
     #[serde(rename = "error")]
-    Error { error: String, code: String },
+    Error {
+        error: String,
+        code: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        challenge_prompt: Option<String>,
+    },
     #[serde(rename = "pong")]
     Pong { timestamp: String },
 }

@@ -13,13 +13,16 @@ mod roots;
 mod search;
 
 use self::mutate_handlers::{create_dir, create_file, delete_entry, move_entry};
-use self::query_handlers::{download_entry, list_dirs, list_entries, read_file, search_entries};
+use self::query_handlers::{
+    download_entry, list_dirs, list_entries, read_file, search_content, search_entries,
+};
 
 pub fn router() -> Router {
     Router::new()
         .route("/api/fs/list", get(list_dirs))
         .route("/api/fs/entries", get(list_entries))
         .route("/api/fs/search", get(search_entries))
+        .route("/api/fs/search-content", get(search_content))
         .route("/api/fs/mkdir", post(create_dir))
         .route("/api/fs/touch", post(create_file))
         .route("/api/fs/delete", post(delete_entry))

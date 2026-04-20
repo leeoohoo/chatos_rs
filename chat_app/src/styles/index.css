@@ -191,6 +191,33 @@
   @apply animate-bounce;
 }
 
+@keyframes thinking-marquee-slide {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
+
+.thinking-marquee-track {
+  position: relative;
+  height: 6px;
+  width: 100%;
+  overflow: hidden;
+  border-radius: 9999px;
+  background: hsl(var(--border) / 0.55);
+}
+
+.thinking-marquee-bar {
+  position: absolute;
+  inset-block: 0;
+  width: 35%;
+  border-radius: 9999px;
+  background: linear-gradient(90deg, transparent 0%, hsl(var(--primary) / 0.7) 45%, transparent 100%);
+  animation: thinking-marquee-slide 1.1s linear infinite;
+}
+
 /* 优化的呼吸边框动画：更克制，更简洁 */
 @keyframes breathing-border {
   0%, 100% {

@@ -5,6 +5,7 @@ use crate::core::remote_connection_error_codes::remote_sftp_codes;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RemoteTransferErrorCode {
     AuthFailed,
+    SecondFactorRequired,
     PathNotFound,
     PermissionDenied,
     NetworkDisconnected,
@@ -15,6 +16,7 @@ impl RemoteTransferErrorCode {
     pub(crate) fn as_api_code(self) -> &'static str {
         match self {
             Self::AuthFailed => remote_sftp_codes::REMOTE_AUTH_FAILED,
+            Self::SecondFactorRequired => remote_sftp_codes::SECOND_FACTOR_REQUIRED,
             Self::PathNotFound => remote_sftp_codes::REMOTE_PATH_NOT_FOUND,
             Self::PermissionDenied => remote_sftp_codes::REMOTE_PERMISSION_DENIED,
             Self::NetworkDisconnected => remote_sftp_codes::REMOTE_NETWORK_DISCONNECTED,
@@ -74,6 +76,10 @@ impl Display for TransferJobError {
 }
 
 fn classify_remote_transfer_error_code(message: &str) -> RemoteTransferErrorCode {
+    if message.starts_with("__CHATOS_SECOND_FACTOR_REQUIRED__:") {
+        return RemoteTransferErrorCode::SecondFactorRequired;
+    }
+
     let normalized = message.to_lowercase();
     if normalized.contains("authentication")
         || normalized.contains("auth fail")

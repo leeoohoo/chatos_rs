@@ -18,6 +18,15 @@ pub(super) struct FsSearchQuery {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct FsContentSearchQuery {
+    pub(super) path: Option<String>,
+    pub(super) q: Option<String>,
+    pub(super) limit: Option<usize>,
+    pub(super) case_sensitive: Option<bool>,
+    pub(super) whole_word: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct FsMkdirRequest {
     pub(super) parent_path: Option<String>,
     pub(super) name: Option<String>,

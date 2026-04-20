@@ -1,5 +1,5 @@
 import React from 'react';
-import { MarkdownRenderer } from '../MarkdownRenderer';
+import { LazyMarkdownRenderer } from '../LazyMarkdownRenderer';
 export type NotepadViewMode = 'edit' | 'preview' | 'split';
 
 interface NotepadEditorProps {
@@ -151,7 +151,7 @@ export const NotepadEditor: React.FC<NotepadEditorProps> = ({
             <div className={`min-h-0 rounded border border-input bg-background p-3 overflow-y-auto ${
               viewMode === 'split' ? 'h-full w-full' : 'flex-1 w-full'
             }`}>
-              <MarkdownRenderer content={content || '（空内容）'} />
+              <LazyMarkdownRenderer content={content || '（空内容）'} />
             </div>
           )}
         </div>

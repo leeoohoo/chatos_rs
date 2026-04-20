@@ -15,8 +15,8 @@ pub async fn create_ui_prompt_record(payload: &UiPromptPayload) -> Result<UiProm
     let id = trimmed_non_empty(payload.prompt_id.as_str())
         .ok_or_else(|| "prompt_id is required".to_string())?
         .to_string();
-    let session_id = trimmed_non_empty(payload.session_id.as_str())
-        .ok_or_else(|| "session_id is required".to_string())?
+    let conversation_id = trimmed_non_empty(payload.conversation_id.as_str())
+        .ok_or_else(|| "conversation_id is required".to_string())?
         .to_string();
     let conversation_turn_id = trimmed_non_empty(payload.conversation_turn_id.as_str())
         .ok_or_else(|| "conversation_turn_id is required".to_string())?
@@ -34,7 +34,7 @@ pub async fn create_ui_prompt_record(payload: &UiPromptPayload) -> Result<UiProm
 
     let record = UiPromptRecord {
         id,
-        session_id,
+        conversation_id,
         conversation_turn_id,
         tool_call_id: payload
             .tool_call_id
@@ -76,10 +76,10 @@ pub async fn create_ui_prompt_record(payload: &UiPromptPayload) -> Result<UiProm
                     serde_json::to_string(&record.prompt).unwrap_or_else(|_| "{}".to_string());
 
                 sqlx::query(
-                    "INSERT INTO ui_prompt_requests (id, session_id, conversation_turn_id, tool_call_id, kind, status, prompt_json, response_json, expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET session_id = excluded.session_id, conversation_turn_id = excluded.conversation_turn_id, tool_call_id = excluded.tool_call_id, kind = excluded.kind, status = excluded.status, prompt_json = excluded.prompt_json, response_json = excluded.response_json, expires_at = excluded.expires_at, updated_at = excluded.updated_at",
+                    "INSERT INTO ui_prompt_requests (id, conversation_id, conversation_turn_id, tool_call_id, kind, status, prompt_json, response_json, expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET conversation_id = excluded.conversation_id, conversation_turn_id = excluded.conversation_turn_id, tool_call_id = excluded.tool_call_id, kind = excluded.kind, status = excluded.status, prompt_json = excluded.prompt_json, response_json = excluded.response_json, expires_at = excluded.expires_at, updated_at = excluded.updated_at",
                 )
                 .bind(&record.id)
-                .bind(&record.session_id)
+                .bind(&record.conversation_id)
                 .bind(&record.conversation_turn_id)
                 .bind(&record.tool_call_id)
                 .bind(&record.kind)
@@ -184,7 +184,7 @@ pub async fn update_ui_prompt_response(
                 }
 
                 let row = sqlx::query_as::<_, UiPromptRow>(
-                    "SELECT id, session_id, conversation_turn_id, tool_call_id, kind, status, prompt_json, response_json, expires_at, created_at, updated_at FROM ui_prompt_requests WHERE id = ? LIMIT 1",
+                    "SELECT id, conversation_id, conversation_turn_id, tool_call_id, kind, status, prompt_json, response_json, expires_at, created_at, updated_at FROM ui_prompt_requests WHERE id = ? LIMIT 1",
                 )
                 .bind(&prompt_id)
                 .fetch_optional(pool)

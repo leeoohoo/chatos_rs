@@ -25,10 +25,23 @@ pub fn send_fallback_chunk_if_needed(
     }
 }
 
-pub fn send_start_event(sender: &SseSender, session_id: &str) {
+pub fn send_start_event(sender: &SseSender, conversation_id: &str) {
     sender.send_json(
-        &json!({ "type": Events::START, "timestamp": crate::core::time::now_rfc3339(), "session_id": session_id }),
+        &json!({ "type": Events::START, "timestamp": crate::core::time::now_rfc3339(), "conversation_id": conversation_id }),
     );
+}
+
+pub fn send_tools_unavailable_event(sender: &SseSender, unavailable_tools: &[Value]) {
+    if unavailable_tools.is_empty() {
+        return;
+    }
+    sender.send_json(&json!({
+        "type": Events::TOOLS_UNAVAILABLE,
+        "timestamp": crate::core::time::now_rfc3339(),
+        "data": {
+            "unavailable_tools": unavailable_tools
+        }
+    }));
 }
 
 pub fn send_complete_event(sender: &SseSender, result: &Value) {

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState, memo } from 'react';
-import { MarkdownRenderer } from './MarkdownRenderer';
+import { LazyMarkdownRenderer } from './LazyMarkdownRenderer';
 import { AttachmentRenderer } from './AttachmentRenderer';
 import { cn, formatTime } from '../lib/utils';
 import type { Message, Attachment, ToolCall } from '../types';
@@ -104,6 +104,7 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
     Number(historyProcess?.thinkingCount || 0),
     derivedProcessStats.thinkingCount,
   );
+  const historyUnavailableToolCount = Number(historyProcess?.unavailableToolCount || 0);
 
   const isProcessAssistant = (
     isAssistant
@@ -132,8 +133,51 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
     && renderContext !== 'process_drawer'
   );
 
+  const attachments = message.metadata?.attachments || [];
+  // 获取工具调用数据 - 同时检查顶层和metadata中的toolCalls（兼容不同的数据格式）
+  const toolCalls = (message as any).toolCalls || message.metadata?.toolCalls || [];
+  const renderContentSegments = useMemo(
+    () => normalizeContentSegmentsForRender(Array.isArray(message.metadata?.contentSegments) ? message.metadata.contentSegments : []),
+    [message.metadata?.contentSegments],
+  );
+  const toolCallsById = useMemo(() => {
+    if (!toolCalls || toolCalls.length === 0) return new Map<string, any>();
+    const map = new Map<string, any>();
+    for (const tc of toolCalls) {
+      if (tc && tc.id) {
+        map.set(tc.id, tc);
+      }
+    }
+    return map;
+  }, [toolCalls]);
+
   // 隐藏tool角色的消息，因为它们应该作为工具调用的结果显示
   if (isTool) {
+    return null;
+  }
+
+  const hasVisibleTextSegment = renderContentSegments.some((segment) => (
+    segment.type === 'text'
+    && typeof segment.content === 'string'
+    && segment.content.trim().length > 0
+  ));
+  const hasVisibleThinkingSegment = renderContentSegments.some((segment) => (
+    segment.type === 'thinking'
+    && typeof segment.content === 'string'
+    && segment.content.trim().length > 0
+  ));
+  const hasVisibleToolCallSegment = renderContentSegments.some((segment) => segment.type === 'tool_call');
+  const shouldHideEmptyStreamingAssistant = Boolean(
+    isAssistant
+    && isStreaming
+    && message.status === 'streaming'
+    && (!message.content || message.content.trim().length === 0)
+    && !hasVisibleTextSegment
+    && !hasVisibleThinkingSegment
+    && !hasVisibleToolCallSegment
+    && toolCalls.length === 0
+  );
+  if (shouldHideEmptyStreamingAssistant) {
     return null;
   }
 
@@ -161,24 +205,6 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
       console.error('Failed to copy message:', error);
     }
   };
-
-  const attachments = message.metadata?.attachments || [];
-  // 获取工具调用数据 - 同时检查顶层和metadata中的toolCalls（兼容不同的数据格式）
-  const toolCalls = (message as any).toolCalls || message.metadata?.toolCalls || [];
-  const renderContentSegments = useMemo(
-    () => normalizeContentSegmentsForRender(Array.isArray(message.metadata?.contentSegments) ? message.metadata.contentSegments : []),
-    [message.metadata?.contentSegments],
-  );
-  const toolCallsById = useMemo(() => {
-    if (!toolCalls || toolCalls.length === 0) return new Map<string, any>();
-    const map = new Map<string, any>();
-    for (const tc of toolCalls) {
-      if (tc && tc.id) {
-        map.set(tc.id, tc);
-      }
-    }
-    return map;
-  }, [toolCalls, toolCalls?.length]);
 
   return (
     <div
@@ -249,6 +275,11 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
             <span className="px-2 py-0.5 rounded bg-muted text-muted-foreground">
               Thinking: {historyThinkingCount}
             </span>
+            {historyUnavailableToolCount > 0 && (
+              <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-200">
+                Unavailable: {historyUnavailableToolCount}
+              </span>
+            )}
           </div>
         )}
 
@@ -262,7 +293,7 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
                 查看摘要内容
               </summary>
               <div className="mt-2 prose prose-sm max-w-none">
-                <MarkdownRenderer
+                <LazyMarkdownRenderer
                   content={(message.rawContent || message.metadata?.summary || '').toString()}
                   isStreaming={false}
                   onApplyCode={() => {}}

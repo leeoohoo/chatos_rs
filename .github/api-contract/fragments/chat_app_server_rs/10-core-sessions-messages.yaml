@@ -1,0 +1,346 @@
+paths:
+  /health:
+    get:
+      summary: Health check
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getHealth
+  /api/sessions:
+    get:
+      summary: List sessions
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiSessions
+    post:
+      summary: Create session
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiSessions
+  /api/sessions/{id}:
+    get:
+      summary: Get session
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiSessionsById
+    patch:
+      summary: Update session
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: patchApiSessionsById
+    delete:
+      summary: Delete session
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: deleteApiSessionsById
+  /api/messages:
+    get:
+      summary: List messages
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMessages
+    post:
+      summary: Create message
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiMessages
+  /api/messages/{id}:
+    get:
+      summary: Get message
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMessagesById
+  /api/sessions/{session_id}/messages:
+    get:
+      summary: List messages in session
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiSessionsBySessionIdMessages
+    post:
+      summary: Create message in session
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiSessionsBySessionIdMessages
+  /api/sessions/{session_id}/summaries:
+    get:
+      summary: List session summaries
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiSessionsBySessionIdSummaries
+    delete:
+      summary: Delete session summaries
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: deleteApiSessionsBySessionIdSummaries
+  /api/sessions/{session_id}/mcp-servers:
+    get:
+      summary: List MCP servers in session
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiSessionsBySessionIdMcpServers
+    post:
+      summary: Attach MCP server to session
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiSessionsBySessionIdMcpServers
+  /api/sessions/{session_id}/mcp-servers/{mcp_config_id}:
+    delete:
+      summary: Detach MCP server from session
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: mcp_config_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: deleteApiSessionsBySessionIdMcpServersByMcpConfigId
+  /api/sessions/{session_id}/summaries/{summary_id}:
+    delete:
+      summary: Delete session summary
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: summary_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: deleteApiSessionsBySessionIdSummariesBySummaryId
+  /api/sessions/{session_id}/turns/{user_message_id}/process:
+    get:
+      summary: Get process state by user message id
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: user_message_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiSessionsBySessionIdTurnsByUserMessageIdProcess
+  /api/sessions/{session_id}/turns/by-turn/{turn_id}/process:
+    get:
+      summary: Get process state by turn id
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: turn_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiSessionsBySessionIdTurnsByTurnByTurnIdProcess
+  /api/sessions/{session_id}/turns/by-turn/{turn_id}/runtime-context:
+    get:
+      summary: Get runtime context by turn id
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: turn_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiSessionsBySessionIdTurnsByTurnByTurnIdRuntimeContext
+  /api/sessions/{session_id}/turns/latest/runtime-context:
+    get:
+      summary: Get latest runtime context
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiSessionsBySessionIdTurnsLatestRuntimeContext

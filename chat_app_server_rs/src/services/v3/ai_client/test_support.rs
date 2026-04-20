@@ -1,6 +1,6 @@
-use std::sync::Once;
 use std::collections::VecDeque;
 use std::sync::Arc;
+use std::sync::Once;
 
 use axum::{
     extract::State,
@@ -166,6 +166,7 @@ pub(super) struct RunProcessWithToolsArgs {
     pub history_limit: i64,
     pub stable_prefix_mode: bool,
     pub prefer_stateless: bool,
+    pub allow_tool_image_input: bool,
     pub request_cwd: Option<String>,
 }
 
@@ -185,6 +186,7 @@ impl Default for RunProcessWithToolsArgs {
             history_limit: 8,
             stable_prefix_mode: false,
             prefer_stateless: false,
+            allow_tool_image_input: true,
             request_cwd: None,
         }
     }
@@ -220,6 +222,8 @@ pub(super) async fn run_process_with_tools(
             false,
             args.prefixed_input_items,
             args.prefer_stateless,
+            args.allow_tool_image_input,
+            false,
             None,
             None,
             args.request_cwd,

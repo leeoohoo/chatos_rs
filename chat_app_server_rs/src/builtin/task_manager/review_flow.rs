@@ -25,7 +25,7 @@ pub(super) fn handle_add_task(
     let timeout_ms = default_timeout_ms;
 
     let (review_payload, receiver) = block_on_result(create_task_review(
-        ctx.session_id,
+        ctx.conversation_id,
         ctx.conversation_turn_id,
         draft_tasks,
         timeout_ms,
@@ -48,7 +48,7 @@ pub(super) fn handle_add_task(
     match decision.action {
         TaskReviewAction::Confirm => {
             let tasks = block_on_result(create_tasks_for_turn(
-                ctx.session_id,
+                ctx.conversation_id,
                 ctx.conversation_turn_id,
                 decision.tasks,
             ))?;
@@ -57,7 +57,7 @@ pub(super) fn handle_add_task(
                 "cancelled": false,
                 "created_count": tasks.len(),
                 "tasks": tasks,
-                "session_id": ctx.session_id,
+                "conversation_id": ctx.conversation_id,
                 "conversation_turn_id": ctx.conversation_turn_id,
             })))
         }

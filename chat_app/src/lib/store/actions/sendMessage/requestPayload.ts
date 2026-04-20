@@ -55,7 +55,7 @@ export const buildChatRequestLogPayload = ({
   mcpEnabled: boolean;
   enabledMcpIds: string[];
 }): StreamChatLogPayload => ({
-  session_id: sessionId,
+  conversation_id: sessionId,
   turn_id: turnId,
   message: content,
   model_config: {

@@ -108,8 +108,8 @@ export interface ContactAgentRecallResponse {
 
 export interface SessionMessageResponse {
   id: string;
-  sessionId?: string;
-  session_id?: string;
+  conversationId?: string;
+  conversation_id?: string;
   role: string;
   content: string;
   rawContent?: string;
@@ -215,8 +215,8 @@ export interface ProjectChangeLogResponse {
   bytes?: number;
   sha256?: string | null;
   diff?: string | null;
-  session_id?: string | null;
-  sessionId?: string | null;
+  conversation_id?: string | null;
+  conversationId?: string | null;
   run_id?: string | null;
   runId?: string | null;
   confirmed?: boolean;
@@ -226,8 +226,8 @@ export interface ProjectChangeLogResponse {
   confirmedBy?: string | null;
   created_at?: string;
   createdAt?: string;
-  session_title?: string | null;
-  sessionTitle?: string | null;
+  conversation_title?: string | null;
+  conversationTitle?: string | null;
 }
 
 export interface ProjectChangeMarkResponse {
@@ -348,6 +348,8 @@ export interface RemoteConnectionTestResponse {
   status?: string;
   message?: string;
   error?: string;
+  challenge_prompt?: string;
+  challengePrompt?: string;
 }
 
 export interface RemoteSftpEntryResponse {
@@ -412,6 +414,184 @@ export interface FsReadFileResponse {
   content?: string;
 }
 
+export interface FsContentSearchEntryResponse {
+  path?: string;
+  relative_path?: string;
+  relativePath?: string;
+  line?: number;
+  column?: number;
+  text?: string;
+}
+
+export interface FsContentSearchResponse {
+  path?: string | null;
+  query?: string | null;
+  entries?: FsContentSearchEntryResponse[];
+  truncated?: boolean;
+  visited_dirs?: number;
+  visitedDirs?: number;
+}
+
+export interface CodeNavCapabilitiesResponse {
+  language?: string;
+  provider?: string;
+  supports_definition?: boolean;
+  supportsDefinition?: boolean;
+  supports_references?: boolean;
+  supportsReferences?: boolean;
+  supports_document_symbols?: boolean;
+  supportsDocumentSymbols?: boolean;
+  fallback_available?: boolean;
+  fallbackAvailable?: boolean;
+}
+
+export interface CodeNavLocationResponse {
+  path?: string;
+  relative_path?: string;
+  relativePath?: string;
+  line?: number;
+  column?: number;
+  end_line?: number;
+  endLine?: number;
+  end_column?: number;
+  endColumn?: number;
+  preview?: string;
+  score?: number;
+}
+
+export interface CodeNavLocationsResponse {
+  provider?: string;
+  language?: string;
+  mode?: string;
+  token?: string | null;
+  locations?: CodeNavLocationResponse[];
+}
+
+export interface CodeNavDocumentSymbolResponse {
+  name?: string;
+  kind?: string;
+  line?: number;
+  column?: number;
+  end_line?: number;
+  endLine?: number;
+  end_column?: number;
+  endColumn?: number;
+}
+
+export interface CodeNavDocumentSymbolsResponse {
+  provider?: string;
+  language?: string;
+  mode?: string;
+  symbols?: CodeNavDocumentSymbolResponse[];
+}
+
+export interface GitChangeCountsResponse {
+  staged?: number;
+  unstaged?: number;
+  untracked?: number;
+  conflicted?: number;
+}
+
+export interface GitSummaryResponse {
+  is_repo?: boolean;
+  isRepo?: boolean;
+  root?: string | null;
+  worktree_root?: string | null;
+  worktreeRoot?: string | null;
+  head?: string | null;
+  current_branch?: string | null;
+  currentBranch?: string | null;
+  detached?: boolean;
+  upstream?: string | null;
+  ahead?: number;
+  behind?: number;
+  dirty?: boolean;
+  operation_state?: string | null;
+  operationState?: string | null;
+  changes?: GitChangeCountsResponse;
+}
+
+export interface GitClientInfoResponse {
+  available?: boolean;
+  source?: string;
+  path?: string;
+  version?: string | null;
+  error?: string | null;
+  bundled_candidates?: string[];
+  bundledCandidates?: string[];
+}
+
+export interface GitBranchInfoResponse {
+  name?: string;
+  short_name?: string | null;
+  shortName?: string | null;
+  current?: boolean;
+  upstream?: string | null;
+  remote?: string | null;
+  tracked_by?: string | null;
+  trackedBy?: string | null;
+  ahead?: number;
+  behind?: number;
+  last_commit?: string | null;
+  lastCommit?: string | null;
+  last_commit_subject?: string | null;
+  lastCommitSubject?: string | null;
+}
+
+export interface GitBranchesResponse {
+  current?: string | null;
+  locals?: GitBranchInfoResponse[];
+  remotes?: GitBranchInfoResponse[];
+}
+
+export interface GitStatusFileResponse {
+  path?: string;
+  old_path?: string | null;
+  oldPath?: string | null;
+  status?: string;
+  staged?: boolean;
+  unstaged?: boolean;
+  conflicted?: boolean;
+}
+
+export interface GitStatusResponse {
+  files?: GitStatusFileResponse[];
+}
+
+export interface GitDiffFileResponse {
+  path?: string;
+  old_path?: string | null;
+  oldPath?: string | null;
+  status?: string;
+}
+
+export interface GitCompareCommitResponse {
+  side?: string;
+  hash?: string;
+  subject?: string;
+}
+
+export interface GitCompareResponse {
+  current?: string;
+  target?: string;
+  files?: GitDiffFileResponse[];
+  commits?: GitCompareCommitResponse[];
+}
+
+export interface GitFileDiffResponse {
+  path?: string;
+  target?: string | null;
+  staged?: boolean;
+  patch?: string;
+}
+
+export interface GitActionResponse {
+  success?: boolean;
+  summary?: GitSummaryResponse;
+  stdout?: string | null;
+  stderr?: string | null;
+}
+
 export interface FsMutationResponse {
   success?: boolean;
   path?: string;
@@ -471,7 +651,7 @@ export interface FsMoveOptions {
 
 export interface MessageCreatePayload {
   id: string;
-  sessionId: string;
+  conversationId: string;
   role: string;
   content: string;
   metadata?: any;
@@ -855,7 +1035,7 @@ export interface McpConfigResourceResponse {
 }
 
 export interface RuntimeGuidanceSubmitPayload {
-  sessionId: string;
+  conversationId: string;
   turnId: string;
   content: string;
   projectId?: string | null;
@@ -908,7 +1088,7 @@ export interface TurnRuntimeSnapshotRuntime {
 
 export interface TurnRuntimeSnapshot {
   id: string;
-  session_id: string;
+  conversation_id: string;
   user_id: string;
   turn_id: string;
   user_message_id?: string | null;
@@ -923,7 +1103,7 @@ export interface TurnRuntimeSnapshot {
 }
 
 export interface TurnRuntimeSnapshotLookupResponse {
-  session_id: string;
+  conversation_id: string;
   turn_id?: string | null;
   status: string;
   snapshot_source: string;
@@ -978,7 +1158,7 @@ export interface UiPromptResponsePayload {
 
 export interface UiPromptItemResponse {
   id: string;
-  session_id?: string;
+  conversation_id?: string;
   conversation_turn_id?: string | null;
   status?: string;
   title?: string | null;
@@ -1096,7 +1276,7 @@ export interface SessionSummaryJobConfigResponse extends SessionSummaryJobConfig
 
 export interface SessionSummaryResponse {
   id: string;
-  session_id?: string;
+  conversation_id?: string;
   summary_text?: string;
   summary_model?: string;
   status?: string;

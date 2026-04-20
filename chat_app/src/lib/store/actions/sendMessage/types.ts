@@ -10,6 +10,7 @@ export interface MessageHistoryProcessState {
   hasProcess: boolean;
   toolCallCount: number;
   thinkingCount: number;
+  unavailableToolCount?: number;
   processMessageCount: number;
   userMessageId: string;
   turnId: string;
@@ -17,6 +18,14 @@ export interface MessageHistoryProcessState {
   expanded: boolean;
   loaded: boolean;
   loading: boolean;
+}
+
+export interface UnavailableToolEntry {
+  id: string;
+  serverName: string;
+  toolName: string;
+  reason: string;
+  createdAt: string;
 }
 
 export interface DraftUserMessageSnapshot {
@@ -45,6 +54,7 @@ export type StreamingContentSegment = ContentSegment;
 export interface StreamingMessageMetadata extends Record<string, unknown> {
   attachments?: Attachment[];
   toolCalls?: StreamingToolCall[];
+  unavailableTools?: UnavailableToolEntry[];
   contentSegments?: StreamingContentSegment[];
   currentSegmentIndex?: number;
   model?: string;
@@ -72,7 +82,7 @@ export interface ApiAttachmentPayload {
 }
 
 export interface StreamChatLogPayload {
-  session_id: string;
+  conversation_id: string;
   turn_id: string;
   message: string;
   model_config: {
@@ -176,6 +186,15 @@ export const ensureStreamingToolCalls = (
   return metadata.toolCalls as StreamingToolCall[];
 };
 
+export const ensureUnavailableTools = (
+  metadata: StreamingMessageMetadata,
+): UnavailableToolEntry[] => {
+  if (!Array.isArray(metadata.unavailableTools)) {
+    metadata.unavailableTools = [];
+  }
+  return metadata.unavailableTools as UnavailableToolEntry[];
+};
+
 export const ensureContentSegments = (
   metadata: StreamingMessageMetadata,
 ): StreamingContentSegment[] => {
@@ -201,6 +220,7 @@ export const createDefaultHistoryProcessState = ({
   hasProcess: false,
   toolCallCount: 0,
   thinkingCount: 0,
+  unavailableToolCount: 0,
   processMessageCount: 0,
   userMessageId,
   turnId,

@@ -15,7 +15,8 @@ use crate::services::terminal_manager::get_terminal_manager;
 
 use super::contracts::InterruptTerminalRequest;
 use super::{
-    attach_busy, derive_terminal_name, CreateTerminalRequest, DispatchTerminalCommandRequest, TerminalQuery,
+    attach_busy, derive_terminal_name, CreateTerminalRequest, DispatchTerminalCommandRequest,
+    TerminalQuery,
 };
 
 pub(super) async fn list_terminals(
@@ -182,7 +183,10 @@ pub(super) async fn dispatch_terminal_command(
         }
     };
     if let Err(err) = validate_command_preflight(command.as_str(), cwd.as_str()) {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": err })));
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": err })),
+        );
     }
     let normalized_project_id = normalize_non_empty(project_id);
     let allow_create = create_if_missing.unwrap_or(true);
@@ -260,11 +264,7 @@ pub(super) async fn dispatch_terminal_command(
         );
     }
 
-    let cmd_log = TerminalLog::new(
-        terminal.id.clone(),
-        "command".to_string(),
-        command.clone(),
-    );
+    let cmd_log = TerminalLog::new(terminal.id.clone(), "command".to_string(), command.clone());
     let input_log = TerminalLog::new(terminal.id.clone(), "input".to_string(), input.clone());
     let _ = TerminalLogService::create(cmd_log).await;
     let _ = TerminalLogService::create(input_log).await;

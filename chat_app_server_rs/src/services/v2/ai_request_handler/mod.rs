@@ -202,13 +202,12 @@ impl AiRequestHandler {
 
         if persist_messages {
             if let Some(session_id) = session_id {
-                let meta_val =
-                    build_assistant_message_metadata(
-                        tool_calls.as_ref(),
-                        None,
-                        turn_id.as_deref(),
-                        finish_reason.as_deref(),
-                    );
+                let meta_val = build_assistant_message_metadata(
+                    tool_calls.as_ref(),
+                    None,
+                    turn_id.as_deref(),
+                    finish_reason.as_deref(),
+                );
                 if let Err(err) = self
                     .message_manager
                     .save_assistant_message(
@@ -309,13 +308,12 @@ impl AiRequestHandler {
 
         if persist_messages {
             if let Some(session_id) = session_id {
-                let meta_val =
-                    build_assistant_message_metadata(
-                        tool_calls.as_ref(),
-                        None,
-                        turn_id.as_deref(),
-                        stream_state.finish_reason.as_deref(),
-                    );
+                let meta_val = build_assistant_message_metadata(
+                    tool_calls.as_ref(),
+                    None,
+                    turn_id.as_deref(),
+                    stream_state.finish_reason.as_deref(),
+                );
                 if let Err(err) = self
                     .message_manager
                     .save_assistant_message(

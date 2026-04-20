@@ -19,7 +19,7 @@ export const getConversationDetails = async (
   conversationId: string,
 ): Promise<ConversationDetailsResponse> => {
   try {
-    const session = await request<SessionResponse>(`/sessions/${conversationId}`);
+    const session = await request<SessionResponse>(`/conversations/${conversationId}`);
     const createdAt = session.created_at || session.createdAt || new Date().toISOString();
     const updatedAt = session.updated_at || session.updatedAt || createdAt;
     return {
@@ -165,7 +165,7 @@ export const saveMessage = async (
       method: 'POST',
       body: JSON.stringify({
         id: messageId,
-        sessionId: conversationId,
+        conversationId,
         role: message.role,
         content: message.content,
         toolCalls: message.tool_calls || null,
@@ -210,7 +210,7 @@ export const getMessages = async (
   try {
     const query = buildQuery({ limit: params.limit, offset: params.offset });
     const messages = await request<SessionMessageResponse[]>(
-      `/sessions/${conversationId}/messages${query}`,
+      `/conversations/${conversationId}/messages${query}`,
     );
     return {
       data: {

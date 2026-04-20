@@ -24,6 +24,7 @@ export function createStreamingActions({ set, get, client }: Deps) {
             isStreaming: true,
             isStopping: false,
             streamingMessageId: messageId,
+            streamingPreviewText: '',
           };
         }
         state.isStreaming = true;
@@ -54,6 +55,7 @@ export function createStreamingActions({ set, get, client }: Deps) {
             isStopping: false,
             streamingMessageId: null,
             activeTurnId: null,
+            streamingPreviewText: '',
           };
         }
         state.isStreaming = false;

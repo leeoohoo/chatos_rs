@@ -138,6 +138,9 @@ pub(crate) fn build_tool_result_metadata(result: &ToolResult) -> Value {
     map.insert("toolName".to_string(), Value::String(result.name.clone()));
     map.insert("success".to_string(), Value::Bool(result.success));
     map.insert("isError".to_string(), Value::Bool(result.is_error));
+    if let Some(structured_result) = result.result.clone() {
+        map.insert("structured_result".to_string(), structured_result);
+    }
     if let Some(turn_id) = result
         .conversation_turn_id
         .as_deref()
@@ -207,6 +210,7 @@ pub(crate) fn build_aborted_tool_results(
             is_stream: false,
             conversation_turn_id: None,
             content: "aborted".to_string(),
+            result: None,
         });
     }
 

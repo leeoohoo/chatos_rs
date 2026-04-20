@@ -15,6 +15,11 @@ interface UseRemoteSftpBrowsersOptions {
   currentRemoteConnectionId: string | null;
   currentRemoteDefaultPath: string;
   setError: (message: string | null) => void;
+  getVerificationCode: () => string | null;
+  onSecondFactorRequired: (
+    error: unknown,
+    retryWithCode: (code: string) => Promise<void>,
+  ) => boolean;
 }
 
 export const useRemoteSftpBrowsers = ({
@@ -22,6 +27,8 @@ export const useRemoteSftpBrowsers = ({
   currentRemoteConnectionId,
   currentRemoteDefaultPath,
   setError,
+  getVerificationCode,
+  onSecondFactorRequired,
 }: UseRemoteSftpBrowsersOptions) => {
   const [localPath, setLocalPath] = useState<string | null>(null);
   const [localParent, setLocalParent] = useState<string | null>(null);
@@ -55,23 +62,42 @@ export const useRemoteSftpBrowsers = ({
     }
   }, [client, setError]);
 
-  const loadRemote = useCallback(async (path?: string) => {
+  const loadRemote = useCallback(async (path?: string, verificationCodeOverride?: string) => {
     if (!currentRemoteConnectionId) return;
     setLoadingRemote(true);
     setError(null);
     try {
+      const verificationCode = (verificationCodeOverride ?? getVerificationCode() ?? '').trim();
       const normalized = normalizeRemoteEntriesResponse(
-        await client.listRemoteSftpEntries(currentRemoteConnectionId, path),
+        await client.listRemoteSftpEntries(
+          currentRemoteConnectionId,
+          path,
+          verificationCode || undefined,
+        ),
       );
       setRemotePath(normalized.path);
       setRemoteParent(normalized.parent);
       setRemoteEntries(normalized.entries);
     } catch (error) {
+      if ((verificationCodeOverride || '').trim()) {
+        throw error;
+      }
+      if (onSecondFactorRequired(error, async (code) => {
+        await loadRemote(path, code);
+      })) {
+        return;
+      }
       setError(resolveRemoteSftpErrorMessage(error, '读取远端目录失败'));
     } finally {
       setLoadingRemote(false);
     }
-  }, [client, currentRemoteConnectionId, setError]);
+  }, [
+    client,
+    currentRemoteConnectionId,
+    getVerificationCode,
+    onSecondFactorRequired,
+    setError,
+  ]);
 
   useEffect(() => {
     remotePathRef.current = remotePath;

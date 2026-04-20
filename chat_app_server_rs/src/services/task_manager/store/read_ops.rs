@@ -10,29 +10,29 @@ use crate::services::task_manager::types::TaskRecord;
 use super::row::TaskRow;
 
 pub async fn list_tasks_for_context(
-    session_id: &str,
+    conversation_id: &str,
     conversation_turn_id: Option<&str>,
     include_done: bool,
     limit: usize,
 ) -> Result<Vec<TaskRecord>, String> {
-    let session_id = trimmed_non_empty(session_id)
-        .ok_or_else(|| "session_id is required".to_string())?
+    let conversation_id = trimmed_non_empty(conversation_id)
+        .ok_or_else(|| "conversation_id is required".to_string())?
         .to_string();
     let conversation_turn_id = conversation_turn_id
         .and_then(trimmed_non_empty)
         .map(|value| value.to_string());
     let limit = limit.clamp(1, 200) as i64;
-    let session_id_for_mongo = session_id.clone();
+    let conversation_id_for_mongo = conversation_id.clone();
     let conversation_turn_id_for_mongo = conversation_turn_id.clone();
-    let session_id_for_sqlite = session_id.clone();
+    let conversation_id_for_sqlite = conversation_id.clone();
     let conversation_turn_id_for_sqlite = conversation_turn_id.clone();
 
     with_db(
         move |db| {
-            let session_id = session_id_for_mongo.clone();
+            let conversation_id = conversation_id_for_mongo.clone();
             let conversation_turn_id = conversation_turn_id_for_mongo.clone();
             Box::pin(async move {
-                let mut filter = doc! { "session_id": session_id };
+                let mut filter = doc! { "conversation_id": conversation_id };
                 if let Some(turn_id) = conversation_turn_id {
                     filter.insert("conversation_turn_id", Bson::String(turn_id));
                 }
@@ -61,13 +61,13 @@ pub async fn list_tasks_for_context(
             })
         },
         move |pool| {
-            let session_id = session_id_for_sqlite.clone();
+            let conversation_id = conversation_id_for_sqlite.clone();
             let conversation_turn_id = conversation_turn_id_for_sqlite.clone();
             Box::pin(async move {
                 let mut qb = QueryBuilder::<Sqlite>::new(
-                    "SELECT id, session_id, conversation_turn_id, title, details, priority, status, tags_json, due_at, created_at, updated_at FROM task_manager_tasks WHERE session_id = ",
+                    "SELECT id, conversation_id, conversation_turn_id, title, details, priority, status, tags_json, due_at, created_at, updated_at FROM task_manager_tasks WHERE conversation_id = ",
                 );
-                qb.push_bind(session_id);
+                qb.push_bind(conversation_id);
                 if let Some(turn_id) = conversation_turn_id {
                     qb.push(" AND conversation_turn_id = ");
                     qb.push_bind(turn_id);

@@ -140,7 +140,7 @@ NODE_ENV=development
 
 ## API 概览 API Overview
 
-- Sessions: `/api/sessions` CRUD, messages: `/api/sessions/:id/messages`
+- Conversations: `/api/conversations` CRUD, messages: `/api/conversations/:id/messages`
 - Agents: `/api/agents` CRUD, stream: `/api/agents/chat/stream`
 - MCP: `/api/mcp-configs` CRUD, resource reading
 - AI Model Configs: `/api/ai-model-configs` CRUD

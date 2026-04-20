@@ -106,6 +106,7 @@ fn build_tool_result_metadata_keeps_tool_flags() {
         is_stream: false,
         conversation_turn_id: Some("turn_abc".to_string()),
         content: "ok".to_string(),
+        result: Some(serde_json::json!({"answer": 42})),
     };
 
     let metadata = build_tool_result_metadata(&result);
@@ -128,6 +129,13 @@ fn build_tool_result_metadata_keeps_tool_flags() {
             .and_then(|value| value.as_str()),
         Some("turn_abc")
     );
+    assert_eq!(
+        metadata
+            .get("structured_result")
+            .and_then(|value| value.get("answer"))
+            .and_then(|value| value.as_i64()),
+        Some(42)
+    );
 }
 
 #[test]
@@ -146,6 +154,7 @@ fn build_aborted_tool_results_only_adds_missing_calls() {
         is_stream: false,
         conversation_turn_id: None,
         content: "done".to_string(),
+        result: None,
     }];
 
     let merged = build_aborted_tool_results(&tool_calls, Some(existing.as_slice()));
@@ -183,6 +192,7 @@ fn build_tool_stream_callback_emits_result_when_not_aborted() {
         is_stream: false,
         conversation_turn_id: None,
         content: "ok".to_string(),
+        result: None,
     });
 
     let events = captured.lock().expect("lock poisoned");
@@ -222,6 +232,7 @@ fn build_tool_stream_callback_skips_result_when_aborted() {
         is_stream: false,
         conversation_turn_id: None,
         content: "ok".to_string(),
+        result: None,
     });
 
     assert!(captured.lock().expect("lock poisoned").is_empty());

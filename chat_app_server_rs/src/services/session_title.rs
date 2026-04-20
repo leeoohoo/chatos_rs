@@ -2,7 +2,10 @@ use crate::services::memory_server_client;
 
 fn is_default_title(title: &str) -> bool {
     let t = title.trim().to_lowercase();
-    matches!(t.as_str(), "new chat" | "untitled" | "new session") || t.is_empty()
+    matches!(
+        t.as_str(),
+        "new chat" | "untitled" | "new session" | "new conversation" | "新对话" | "新会话"
+    ) || t.is_empty()
 }
 
 fn derive_title_from_content(text: &str, max_len: usize) -> String {
@@ -15,7 +18,7 @@ fn derive_title_from_content(text: &str, max_len: usize) -> String {
         first_line = first_line.trim_start_matches('>').trim_start().to_string();
     }
     if first_line.is_empty() {
-        return "New Chat".to_string();
+        return "New Conversation".to_string();
     }
 
     // String slicing uses byte offsets; char_indices yields safe UTF-8 boundaries.

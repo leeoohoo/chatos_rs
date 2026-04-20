@@ -1,5 +1,9 @@
 use serde_json::Value;
 
+use crate::core::chat_runtime::{
+    contact_agent_id_from_metadata as runtime_contact_agent_id_from_metadata,
+    contact_id_from_metadata as runtime_contact_id_from_metadata,
+};
 use crate::models::message::Message;
 use crate::services::memory_server_client;
 
@@ -45,28 +49,10 @@ pub(super) fn normalize_project_scope(project_id: Option<&str>) -> String {
     normalize_optional_text(project_id).unwrap_or_else(|| "0".to_string())
 }
 
-fn metadata_string(metadata: Option<&Value>, path: &[&str]) -> Option<String> {
-    let mut cursor = metadata?;
-    for key in path {
-        cursor = cursor.get(*key)?;
-    }
-    normalize_optional_text(cursor.as_str())
-}
-
 pub(super) fn contact_id_from_metadata(metadata: Option<&Value>) -> Option<String> {
-    metadata_string(metadata, &["contact", "contact_id"])
-        .or_else(|| metadata_string(metadata, &["contact", "contactId"]))
-        .or_else(|| metadata_string(metadata, &["ui_contact", "contact_id"]))
-        .or_else(|| metadata_string(metadata, &["ui_contact", "contactId"]))
+    runtime_contact_id_from_metadata(metadata)
 }
 
 pub(super) fn contact_agent_id_from_metadata(metadata: Option<&Value>) -> Option<String> {
-    metadata_string(metadata, &["contact", "agent_id"])
-        .or_else(|| metadata_string(metadata, &["contact", "agentId"]))
-        .or_else(|| metadata_string(metadata, &["ui_contact", "agent_id"]))
-        .or_else(|| metadata_string(metadata, &["ui_contact", "agentId"]))
-        .or_else(|| metadata_string(metadata, &["ui_chat_selection", "selected_agent_id"]))
-        .or_else(|| metadata_string(metadata, &["ui_chat_selection", "selectedAgentId"]))
-        .or_else(|| metadata_string(metadata, &["chat_runtime", "contact_agent_id"]))
-        .or_else(|| metadata_string(metadata, &["chat_runtime", "contactAgentId"]))
+    runtime_contact_agent_id_from_metadata(metadata)
 }

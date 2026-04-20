@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chatos-rs.local/openapi/ownership/owner-report.schema.json",
+  "title": "OpenAPI Fragment Owner Report",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "diff_range",
+    "codeowners_file",
+    "ownership_manifest_file",
+    "changed_fragment_count",
+    "fragments",
+    "footprint_summary",
+    "policy"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "openapi.owner_report.v1"
+    },
+    "diff_range": {
+      "type": "object",
+      "required": ["base_ref", "head_ref"],
+      "properties": {
+        "base_ref": { "type": "string" },
+        "head_ref": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "codeowners_file": { "type": "string" },
+    "ownership_manifest_file": { "type": "string" },
+    "changed_fragment_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "fragments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "file",
+          "owner_hint",
+          "owner_footprint",
+          "codeowners_footprint"
+        ],
+        "properties": {
+          "file": { "type": "string" },
+          "owner_hint": { "type": "string" },
+          "owner_footprint": {
+            "type": "string",
+            "enum": ["mapped", "fallback"]
+          },
+          "codeowners_footprint": {
+            "type": "string",
+            "enum": ["mapped", "missing_entry", "missing_file"]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "footprint_summary": {
+      "type": "object",
+      "required": ["owner_mapped", "owner_fallback", "codeowners"],
+      "properties": {
+        "owner_mapped": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "owner_fallback": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "codeowners": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "policy": {
+      "type": "object",
+      "required": ["strict_mode", "status", "error_count", "errors"],
+      "properties": {
+        "strict_mode": { "type": "boolean" },
+        "status": {
+          "type": "string",
+          "enum": ["not_checked", "passed", "failed"]
+        },
+        "error_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "errors": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

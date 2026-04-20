@@ -102,7 +102,8 @@ pub fn metadata_string_list(metadata: Option<&Value>, path: &[&str]) -> Vec<Stri
 }
 
 fn metadata_string_aliases(metadata: Option<&Value>, paths: &[&[&str]]) -> Option<String> {
-    paths.iter()
+    paths
+        .iter()
         .find_map(|path| metadata_string(metadata, path))
 }
 
@@ -111,10 +112,15 @@ fn metadata_bool_aliases(metadata: Option<&Value>, paths: &[&[&str]]) -> Option<
 }
 
 fn metadata_string_list_aliases(metadata: Option<&Value>, paths: &[&[&str]]) -> Vec<String> {
-    paths.iter()
+    paths
+        .iter()
         .find_map(|path| {
             let values = metadata_string_list(metadata, path);
-            if values.is_empty() { None } else { Some(values) }
+            if values.is_empty() {
+                None
+            } else {
+                Some(values)
+            }
         })
         .unwrap_or_default()
 }
@@ -148,15 +154,24 @@ impl ChatRuntimeMetadata {
             ),
             project_id: metadata_string_aliases(
                 metadata,
-                &[&["chat_runtime", "project_id"], &["chat_runtime", "projectId"]],
+                &[
+                    &["chat_runtime", "project_id"],
+                    &["chat_runtime", "projectId"],
+                ],
             ),
             project_root: metadata_string_aliases(
                 metadata,
-                &[&["chat_runtime", "project_root"], &["chat_runtime", "projectRoot"]],
+                &[
+                    &["chat_runtime", "project_root"],
+                    &["chat_runtime", "projectRoot"],
+                ],
             ),
             workspace_root: metadata_string_aliases(
                 metadata,
-                &[&["chat_runtime", "workspace_root"], &["chat_runtime", "workspaceRoot"]],
+                &[
+                    &["chat_runtime", "workspace_root"],
+                    &["chat_runtime", "workspaceRoot"],
+                ],
             ),
             remote_connection_id: metadata_string_aliases(
                 metadata,
@@ -167,7 +182,10 @@ impl ChatRuntimeMetadata {
             ),
             mcp_enabled: metadata_bool_aliases(
                 metadata,
-                &[&["chat_runtime", "mcp_enabled"], &["chat_runtime", "mcpEnabled"]],
+                &[
+                    &["chat_runtime", "mcp_enabled"],
+                    &["chat_runtime", "mcpEnabled"],
+                ],
             ),
             enabled_mcp_ids: metadata_string_list_aliases(
                 metadata,
@@ -190,26 +208,6 @@ pub fn contact_id_from_metadata(metadata: Option<&Value>) -> Option<String> {
 
 pub fn project_id_from_metadata(metadata: Option<&Value>) -> Option<String> {
     ChatRuntimeMetadata::from_metadata(metadata).project_id
-}
-
-pub fn project_root_from_metadata(metadata: Option<&Value>) -> Option<String> {
-    ChatRuntimeMetadata::from_metadata(metadata).project_root
-}
-
-pub fn workspace_root_from_metadata(metadata: Option<&Value>) -> Option<String> {
-    ChatRuntimeMetadata::from_metadata(metadata).workspace_root
-}
-
-pub fn remote_connection_id_from_metadata(metadata: Option<&Value>) -> Option<String> {
-    ChatRuntimeMetadata::from_metadata(metadata).remote_connection_id
-}
-
-pub fn mcp_enabled_from_metadata(metadata: Option<&Value>) -> Option<bool> {
-    ChatRuntimeMetadata::from_metadata(metadata).mcp_enabled
-}
-
-pub fn enabled_mcp_ids_from_metadata(metadata: Option<&Value>) -> Vec<String> {
-    ChatRuntimeMetadata::from_metadata(metadata).enabled_mcp_ids
 }
 
 fn normalize_lookup_token(value: &str) -> String {
@@ -748,10 +746,9 @@ pub async fn resolve_project_runtime(
 mod tests {
     use super::{
         compose_contact_command_system_prompt, compose_contact_system_prompt,
-        ChatRuntimeMetadata,
         parse_contact_command_invocation, parse_implicit_command_selections_from_tools_end,
-        remote_connection_id_from_metadata, CONTACT_COMMAND_READER_TOOL_NAME,
-        CONTACT_PLUGIN_READER_TOOL_NAME, CONTACT_SKILL_READER_TOOL_NAME,
+        ChatRuntimeMetadata, CONTACT_COMMAND_READER_TOOL_NAME, CONTACT_PLUGIN_READER_TOOL_NAME,
+        CONTACT_SKILL_READER_TOOL_NAME,
     };
     use crate::services::memory_server_client::{
         MemoryAgentRuntimeCommandSummaryDto, MemoryAgentRuntimeContextDto,
@@ -862,7 +859,7 @@ mod tests {
             }
         });
         assert_eq!(
-            remote_connection_id_from_metadata(Some(&metadata)),
+            ChatRuntimeMetadata::from_metadata(Some(&metadata)).remote_connection_id,
             Some("conn_1".to_string())
         );
 
@@ -872,7 +869,7 @@ mod tests {
             }
         });
         assert_eq!(
-            remote_connection_id_from_metadata(Some(&metadata)),
+            ChatRuntimeMetadata::from_metadata(Some(&metadata)).remote_connection_id,
             Some("conn_2".to_string())
         );
     }

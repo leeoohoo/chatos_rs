@@ -1,12 +1,13 @@
 import React, { useMemo } from 'react';
 
-import type { FsEntry, Project, ProjectChangeSummary } from '../../types';
+import type { FsEntry, Project, ProjectChangeSummary, ProjectSearchHit } from '../../types';
 import { cn, formatFileSize } from '../../lib/utils';
 import {
   CHANGE_KIND_COLOR_CLASS,
   CHANGE_KIND_LABEL,
   CHANGE_KIND_ROW_CLASS,
   CHANGE_KIND_TEXT_CLASS,
+  splitTextByQuery,
 } from './utils';
 import type { ChangeKind } from './utils';
 
@@ -30,6 +31,18 @@ interface ProjectTreePaneProps {
   summaryError: string | null;
   actionMessage: string | null;
   actionError: string | null;
+  searchQuery: string;
+  searchCaseSensitive: boolean;
+  searchWholeWord: boolean;
+  searchResults: ProjectSearchHit[];
+  searchLoading: boolean;
+  searchError: string | null;
+  searchTruncated: boolean;
+  activeSearchHitId: string | null;
+  activeSearchHitIndex: number;
+  totalSearchHits: number;
+  canOpenPreviousSearchHit: boolean;
+  canOpenNextSearchHit: boolean;
   aggregatedChangeKindByPath: Map<string, ChangeKind>;
   normalizePath: (value: string) => string;
   toExpandedKey: (path: string) => string;
@@ -41,7 +54,14 @@ interface ProjectTreePaneProps {
   onRefresh: () => void;
   onConfirmCurrent: () => void;
   onConfirmAll: () => void;
+  onSearchQueryChange: (value: string) => void;
+  onToggleSearchCaseSensitive: () => void;
+  onToggleSearchWholeWord: () => void;
+  onClearSearch: () => void;
+  onOpenPreviousSearchHit: () => void;
+  onOpenNextSearchHit: () => void;
   onOpenContextMenu: (event: React.MouseEvent, entry: FsEntry) => void;
+  onOpenSearchHit: (hit: ProjectSearchHit) => void;
   onSelectDeletedPath: (path: string) => void;
   onSelectMarkedPath: (path: string) => void;
   onToggleDir: (entry: FsEntry) => void;
@@ -78,6 +98,18 @@ export const ProjectTreePane: React.FC<ProjectTreePaneProps> = ({
   summaryError,
   actionMessage,
   actionError,
+  searchQuery,
+  searchCaseSensitive,
+  searchWholeWord,
+  searchResults,
+  searchLoading,
+  searchError,
+  searchTruncated,
+  activeSearchHitId,
+  activeSearchHitIndex,
+  totalSearchHits,
+  canOpenPreviousSearchHit,
+  canOpenNextSearchHit,
   aggregatedChangeKindByPath,
   normalizePath,
   toExpandedKey,
@@ -89,7 +121,14 @@ export const ProjectTreePane: React.FC<ProjectTreePaneProps> = ({
   onRefresh,
   onConfirmCurrent,
   onConfirmAll,
+  onSearchQueryChange,
+  onToggleSearchCaseSensitive,
+  onToggleSearchWholeWord,
+  onClearSearch,
+  onOpenPreviousSearchHit,
+  onOpenNextSearchHit,
   onOpenContextMenu,
+  onOpenSearchHit,
   onSelectDeletedPath,
   onSelectMarkedPath,
   onToggleDir,
@@ -105,6 +144,55 @@ export const ProjectTreePane: React.FC<ProjectTreePaneProps> = ({
   onStartDragAutoScroll,
   onClearDragAutoScroll,
 }) => {
+  const renderHighlightedText = (text: string, query: string): React.ReactNode => (
+    splitTextByQuery(text, query, {
+      caseSensitive: searchCaseSensitive,
+      wholeWord: searchWholeWord,
+    }).map((segment, index) => (
+      segment.matched ? (
+        <mark
+          key={`${segment.text}-${index}`}
+          className="rounded bg-amber-300/60 px-0.5 text-inherit"
+        >
+          {segment.text}
+        </mark>
+      ) : (
+        <React.Fragment key={`${segment.text}-${index}`}>
+          {segment.text}
+        </React.Fragment>
+      )
+    ))
+  );
+
+  const activeSearchOptionLabels = useMemo(
+    () => [
+      searchCaseSensitive ? '区分大小写' : null,
+      searchWholeWord ? '全词匹配' : null,
+    ].filter((value): value is string => Boolean(value)),
+    [searchCaseSensitive, searchWholeWord]
+  );
+  const activeSearchPositionLabel = useMemo(() => {
+    if (totalSearchHits <= 0) {
+      return null;
+    }
+    const currentIndex = activeSearchHitIndex >= 0 ? activeSearchHitIndex + 1 : 0;
+    return `${currentIndex} / ${totalSearchHits}`;
+  }, [activeSearchHitIndex, totalSearchHits]);
+  const handleSearchInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.nativeEvent.isComposing) {
+      return;
+    }
+    if (event.key !== 'Enter' || searchQuery.trim().length === 0 || totalSearchHits <= 0) {
+      return;
+    }
+    event.preventDefault();
+    if (event.shiftKey) {
+      onOpenPreviousSearchHit();
+      return;
+    }
+    onOpenNextSearchHit();
+  };
+
   const projectRootEntry = useMemo<FsEntry>(() => ({
     name: project.name || project.rootPath,
     path: project.rootPath,
@@ -243,6 +331,48 @@ export const ProjectTreePane: React.FC<ProjectTreePaneProps> = ({
           </button>
           {entry.isDir && expandedPaths.has(entryKey) && renderEntries(entry.path, depth + 1)}
         </div>
+      );
+    });
+  };
+
+  const renderSearchResults = (): React.ReactNode => {
+    const keyword = searchQuery.trim();
+    if (searchLoading) {
+      return <div className="px-3 py-2 text-xs text-muted-foreground">全文搜索中...</div>;
+    }
+    if (searchError) {
+      return <div className="px-3 py-2 text-xs text-destructive">{searchError}</div>;
+    }
+    if (searchResults.length === 0) {
+      return <div className="px-3 py-2 text-xs text-muted-foreground">没有找到匹配内容</div>;
+    }
+
+    return searchResults.map((hit) => {
+      const hitId = `${hit.path}:${hit.line}:${hit.column}`;
+      const isActiveHit = activeSearchHitId === hitId;
+      return (
+        <button
+          key={hitId}
+          type="button"
+          onClick={() => onOpenSearchHit(hit)}
+          className={cn(
+            'w-full border-b border-border/60 px-3 py-2 text-left hover:bg-accent transition-colors',
+            isActiveHit && 'bg-accent'
+          )}
+          title={`${hit.relativePath}:${hit.line}:${hit.column}`}
+        >
+          <div className="flex items-center justify-between gap-2 text-[11px]">
+            <span className="min-w-0 truncate text-foreground">
+              {renderHighlightedText(hit.relativePath, keyword)}
+            </span>
+            <span className="shrink-0 text-muted-foreground">L{hit.line}:C{hit.column}</span>
+          </div>
+          <div className="mt-1 whitespace-pre-wrap break-all font-mono text-xs text-muted-foreground">
+            {hit.text
+              ? renderHighlightedText(hit.text, keyword)
+              : '(空行)'}
+          </div>
+        </button>
       );
     });
   };
@@ -389,6 +519,88 @@ export const ProjectTreePane: React.FC<ProjectTreePaneProps> = ({
         <div className="text-[11px] text-muted-foreground">
           目录/文件的新建、下载、删除请右键对应项操作
         </div>
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(event) => onSearchQueryChange(event.target.value)}
+              onKeyDown={handleSearchInputKeyDown}
+              placeholder="全文搜索注释、符号、字符串"
+              className="h-8 flex-1 rounded border border-border bg-background px-2 text-xs outline-none focus:border-primary"
+            />
+            {searchQuery.trim().length > 0 && (
+              <button
+                type="button"
+                onClick={onClearSearch}
+                className="h-8 shrink-0 rounded border border-border px-2 text-[11px] hover:bg-accent"
+              >
+                清空
+              </button>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-1">
+            <button
+              type="button"
+              onClick={onToggleSearchCaseSensitive}
+              className={cn(
+                'rounded border px-2 py-1 text-[11px] transition-colors',
+                searchCaseSensitive
+                  ? 'border-amber-500/50 bg-amber-500/10 text-amber-700 hover:bg-amber-500/20'
+                  : 'border-border hover:bg-accent'
+              )}
+            >
+              区分大小写
+            </button>
+            <button
+              type="button"
+              onClick={onToggleSearchWholeWord}
+              className={cn(
+                'rounded border px-2 py-1 text-[11px] transition-colors',
+                searchWholeWord
+                  ? 'border-amber-500/50 bg-amber-500/10 text-amber-700 hover:bg-amber-500/20'
+                  : 'border-border hover:bg-accent'
+              )}
+            >
+              全词匹配
+            </button>
+          </div>
+          {searchQuery.trim().length > 0 && totalSearchHits > 0 && (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={onOpenPreviousSearchHit}
+                disabled={!canOpenPreviousSearchHit}
+                className="rounded border border-border px-2 py-1 text-[11px] hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                上一处
+              </button>
+              <button
+                type="button"
+                onClick={onOpenNextSearchHit}
+                disabled={!canOpenNextSearchHit}
+                className="rounded border border-border px-2 py-1 text-[11px] hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                下一处
+              </button>
+              <span className="text-[11px] text-muted-foreground">
+                当前命中 {activeSearchPositionLabel}
+              </span>
+            </div>
+          )}
+          <div className="text-[11px] text-muted-foreground">
+            {searchQuery.trim().length > 0
+              ? `全文搜索结果 ${searchResults.length}${searchTruncated ? '+' : ''}${activeSearchOptionLabels.length > 0 ? ` · ${activeSearchOptionLabels.join(' · ')}` : ''}`
+              : activeSearchOptionLabels.length > 0
+                ? `支持跨文件全文搜索 · ${activeSearchOptionLabels.join(' · ')}`
+                : '支持跨文件全文搜索'}
+          </div>
+          {searchQuery.trim().length > 0 && (
+            <div className="text-[11px] text-muted-foreground">
+              快捷键：Enter 下一处 / Shift+Enter 上一处
+            </div>
+          )}
+        </div>
         {loadingSummary && (
           <div className="text-[11px] text-muted-foreground">正在加载变更标记...</div>
         )}
@@ -445,8 +657,12 @@ export const ProjectTreePane: React.FC<ProjectTreePaneProps> = ({
           onClearDragAutoScroll();
         }}
       >
-        {renderEntries(project.rootPath, 0)}
-        {changeSummary.deletedMarks.length > 0 && (
+        {searchQuery.trim().length > 0 ? (
+          renderSearchResults()
+        ) : (
+          <>
+            {renderEntries(project.rootPath, 0)}
+            {changeSummary.deletedMarks.length > 0 && (
           <div className="mt-2 border-t border-border/70">
             <div className="px-3 py-2 text-[11px] font-medium text-rose-600 dark:text-rose-400">
               已删除（未确认）
@@ -478,8 +694,8 @@ export const ProjectTreePane: React.FC<ProjectTreePaneProps> = ({
               })}
             </div>
           </div>
-        )}
-        {showOnlyChanged && hiddenFileMarks.length > 0 && (
+            )}
+            {showOnlyChanged && hiddenFileMarks.length > 0 && (
           <div className="mt-2 border-t border-border/70">
             <div className="px-3 py-2 text-[11px] font-medium text-amber-600 dark:text-amber-400">
               未在当前目录树显示（未确认）
@@ -511,11 +727,11 @@ export const ProjectTreePane: React.FC<ProjectTreePaneProps> = ({
               })}
             </div>
           </div>
-        )}
-        {loadingPaths.has(project.rootPath) && (
+            )}
+            {loadingPaths.has(project.rootPath) && (
           <div className="px-3 py-2 text-xs text-muted-foreground">加载中...</div>
-        )}
-        {!loadingPaths.has(project.rootPath) && visibleRootEntryCount === 0 && (
+            )}
+            {!loadingPaths.has(project.rootPath) && visibleRootEntryCount === 0 && (
           <div className="px-3 py-2 text-xs text-muted-foreground">
             {showOnlyChanged
               ? (changeSummary.counts.total > 0
@@ -523,6 +739,8 @@ export const ProjectTreePane: React.FC<ProjectTreePaneProps> = ({
                 : '暂无未确认变更文件')
               : '目录为空'}
           </div>
+            )}
+          </>
         )}
       </div>
     </div>

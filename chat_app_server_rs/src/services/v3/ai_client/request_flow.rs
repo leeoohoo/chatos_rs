@@ -174,6 +174,8 @@ impl AiClient {
             force_text_content,
             prefixed_input_items,
             prefer_stateless,
+            false,
+            false,
             message_mode,
             message_source,
             request_cwd,

@@ -1,0 +1,71 @@
+paths:
+  /:
+    get:
+      summary: Get launch page
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: get
+    post:
+      summary: Create application launch record
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: post
+  /{application_id}:
+    get:
+      summary: Get application by id
+      parameters:
+      - in: path
+        name: application_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getByApplicationId
+    put:
+      summary: Update application by id
+      parameters:
+      - in: path
+        name: application_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: putByApplicationId
+    delete:
+      summary: Delete application by id
+      parameters:
+      - in: path
+        name: application_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: deleteByApplicationId

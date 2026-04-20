@@ -54,6 +54,7 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
         "mcp_configs",
         "mcp_change_logs",
         "task_manager_tasks",
+        "ui_prompt_requests",
         "mcp_config_profiles",
         "ai_model_configs",
         "system_contexts",
@@ -94,6 +95,17 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
         .await;
     let _ = db
         .collection::<mongodb::bson::Document>("mcp_change_logs")
+        .update_many(
+            doc! {
+                "conversation_id": { "$exists": false },
+                "session_id": { "$exists": true }
+            },
+            doc! { "$rename": { "session_id": "conversation_id" } },
+            None,
+        )
+        .await;
+    let _ = db
+        .collection::<mongodb::bson::Document>("mcp_change_logs")
         .create_index(
             IndexModel::builder()
                 .keys(doc! { "server_name": 1 })
@@ -104,7 +116,9 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
     let _ = db
         .collection::<mongodb::bson::Document>("mcp_change_logs")
         .create_index(
-            IndexModel::builder().keys(doc! { "session_id": 1 }).build(),
+            IndexModel::builder()
+                .keys(doc! { "conversation_id": 1 })
+                .build(),
             None,
         )
         .await;
@@ -139,7 +153,7 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
         .collection::<mongodb::bson::Document>("task_manager_tasks")
         .create_index(
             IndexModel::builder()
-                .keys(doc! { "session_id": 1, "conversation_turn_id": 1 })
+                .keys(doc! { "conversation_id": 1, "conversation_turn_id": 1 })
                 .build(),
             None,
         )
@@ -148,13 +162,31 @@ pub(super) async fn init_mongodb(cfg: &MongoConfig) -> Result<Database, String> 
         .collection::<mongodb::bson::Document>("task_manager_tasks")
         .create_index(
             IndexModel::builder()
-                .keys(doc! { "session_id": 1, "created_at": -1 })
+                .keys(doc! { "conversation_id": 1, "created_at": -1 })
                 .build(),
             None,
         )
         .await;
     let _ = db
         .collection::<mongodb::bson::Document>("task_manager_tasks")
+        .create_index(
+            IndexModel::builder()
+                .keys(doc! { "conversation_turn_id": 1, "created_at": -1 })
+                .build(),
+            None,
+        )
+        .await;
+    let _ = db
+        .collection::<mongodb::bson::Document>("ui_prompt_requests")
+        .create_index(
+            IndexModel::builder()
+                .keys(doc! { "conversation_id": 1, "status": 1, "updated_at": -1 })
+                .build(),
+            None,
+        )
+        .await;
+    let _ = db
+        .collection::<mongodb::bson::Document>("ui_prompt_requests")
         .create_index(
             IndexModel::builder()
                 .keys(doc! { "conversation_turn_id": 1, "created_at": -1 })

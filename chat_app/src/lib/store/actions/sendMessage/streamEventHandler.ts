@@ -28,11 +28,14 @@ import {
 } from './toolEvents';
 import {
   ensureStreamingMetadata,
+  ensureUnavailableTools,
   ensureStreamingToolCalls,
   touchStreamingMessage,
+  type UnavailableToolEntry,
   type RawToolResultPayload,
   type StreamEventPayload,
 } from './types';
+import { joinStreamingText, normalizeStreamedText } from './streamText';
 
 export interface HandleStreamEventResult {
   sawCancelled: boolean;
@@ -59,6 +62,65 @@ const EMPTY_RESULT: HandleStreamEventResult = {
 const asTextContent = (value: unknown): string => (
   typeof value === 'string' ? value : ''
 );
+
+interface RawUnavailableToolPayload {
+  server_name?: string;
+  serverName?: string;
+  tool_name?: string;
+  toolName?: string;
+  reason?: string;
+}
+
+const normalizeUnavailableEntry = (
+  value: RawUnavailableToolPayload,
+  index: number,
+): UnavailableToolEntry => {
+  const serverName = (
+    typeof value.server_name === 'string' && value.server_name.trim().length > 0
+      ? value.server_name.trim()
+      : (typeof value.serverName === 'string' && value.serverName.trim().length > 0
+        ? value.serverName.trim()
+        : 'unknown_server')
+  );
+  const toolName = (
+    typeof value.tool_name === 'string' && value.tool_name.trim().length > 0
+      ? value.tool_name.trim()
+      : (typeof value.toolName === 'string' && value.toolName.trim().length > 0
+        ? value.toolName.trim()
+        : 'unknown_tool')
+  );
+  const reason = (
+    typeof value.reason === 'string' && value.reason.trim().length > 0
+      ? value.reason.trim()
+      : '工具当前不可用'
+  );
+  const createdAt = new Date().toISOString();
+  return {
+    id: `unavailable_tool_${Date.now()}_${index}`,
+    serverName,
+    toolName,
+    reason,
+    createdAt,
+  };
+};
+
+const unavailableEntryKey = (entry: UnavailableToolEntry): string => (
+  `${entry.serverName}::${entry.toolName}::${entry.reason}`
+);
+
+const extractUnavailableToolsFromPayload = (
+  data: unknown,
+): RawUnavailableToolPayload[] => {
+  const rawUnavailableTools = (
+    data && typeof data === 'object' && 'unavailable_tools' in data
+      ? (data as { unavailable_tools?: unknown }).unavailable_tools
+      : data
+  );
+  if (Array.isArray(rawUnavailableTools)) {
+    return rawUnavailableTools as RawUnavailableToolPayload[];
+  }
+  return rawUnavailableTools ? [rawUnavailableTools as RawUnavailableToolPayload] : [];
+};
 
 const markPendingToolCallsCancelled = ({
   set,
@@ -88,6 +150,23 @@ const markPendingToolCallsCancelled = ({
   });
 };
 
+const syncStreamingPreviewText = (
+  set: ChatStoreSet,
+  sessionId: string,
+  previewText: string,
+) => {
+  set((state) => {
+    const sessionState = state.sessionChatState?.[sessionId];
+    if (!sessionState) {
+      return;
+    }
+    if (sessionState.streamingPreviewText === previewText) {
+      return;
+    }
+    sessionState.streamingPreviewText = previewText;
+  });
+};
+
 export const handleStreamEvent = ({
   parsed,
   set,
@@ -104,7 +183,12 @@ export const handleStreamEvent = ({
 
   if (parsed.type === 'chunk') {
     const contentStr = asTextContent(parsed.content);
-    helpers.appendTextToStreamingMessage(contentStr);
+    if (contentStr) {
+      streamedTextRef.value = normalizeStreamedText(
+        joinStreamingText(streamedTextRef.value, contentStr),
+      );
+      syncStreamingPreviewText(set, currentSessionId, streamedTextRef.value);
+    }
     return {
       ...EMPTY_RESULT,
       sawMeaningfulStreamData: contentStr.trim().length > 0,
@@ -122,7 +206,12 @@ export const handleStreamEvent = ({
 
   if (parsed.type === 'content') {
     const contentStr = asTextContent(parsed.content);
-    helpers.appendTextToStreamingMessage(contentStr);
+    if (contentStr) {
+      streamedTextRef.value = normalizeStreamedText(
+        joinStreamingText(streamedTextRef.value, contentStr),
+      );
+      syncStreamingPreviewText(set, currentSessionId, streamedTextRef.value);
+    }
     return {
       ...EMPTY_RESULT,
       sawMeaningfulStreamData: contentStr.trim().length > 0,
@@ -148,6 +237,50 @@ export const handleStreamEvent = ({
       helpers.updateTurnHistoryProcess(state, (current) => ({
         hasProcess: true,
         toolCallCount: Number(current.toolCallCount || 0) + addedCount,
+        processMessageCount: Number(current.processMessageCount || 0) + addedCount,
+      }));
+
+      touchStreamingMessage(message);
+      helpers.persistStreamingMessageDraft(state, message);
+    });
+
+    return {
+      ...EMPTY_RESULT,
+      sawMeaningfulStreamData: true,
+    };
+  }
+
+  if (parsed.type === 'tools_unavailable') {
+    const unavailableTools = extractUnavailableToolsFromPayload(parsed.data);
+    if (unavailableTools.length === 0) {
+      return EMPTY_RESULT;
+    }
+
+    set((state) => {
+      const message = helpers.ensureStreamingMessage(state);
+      if (!message) {
+        return;
+      }
+
+      const metadata = ensureStreamingMetadata(message);
+      const items = ensureUnavailableTools(metadata);
+      const existingKeys = new Set(items.map(unavailableEntryKey));
+      let addedCount = 0;
+      unavailableTools.forEach((tool, index) => {
+        const normalized = normalizeUnavailableEntry(tool, index);
+        const key = unavailableEntryKey(normalized);
+        if (existingKeys.has(key)) {
+          return;
+        }
+        items.push(normalized);
+        existingKeys.add(key);
+        addedCount += 1;
+      });
+      metadata.unavailableTools = items;
+
+      helpers.updateTurnHistoryProcess(state, (current) => ({
+        hasProcess: true,
+        unavailableToolCount: Number(current.unavailableToolCount || 0) + addedCount,
         processMessageCount: Number(current.processMessageCount || 0) + addedCount,
       }));
 

@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use crate::core::remote_connection_error_codes::remote_connection_codes;
 
-use super::WsOutput;
+use super::{extract_second_factor_required_prompt, WsOutput};
 
 pub(super) fn error_payload(error: impl Into<String>, code: &'static str) -> Json<Value> {
     Json(serde_json::json!({ "error": error.into(), "code": code }))
@@ -21,6 +21,12 @@ pub(super) fn internal_error_response(
 }
 
 pub(super) fn remote_connectivity_error_status_and_code(error: &str) -> (StatusCode, &'static str) {
+    if extract_second_factor_required_prompt(error).is_some() {
+        return (
+            StatusCode::BAD_REQUEST,
+            remote_connection_codes::SECOND_FACTOR_REQUIRED,
+        );
+    }
     let normalized = error.to_lowercase();
 
     if normalized.contains("主机指纹与 known_hosts 记录不匹配") {
@@ -90,11 +96,24 @@ pub(super) fn remote_connectivity_error_status_and_code(error: &str) -> (StatusC
 }
 
 pub(super) fn remote_connectivity_error_response(error: String) -> (StatusCode, Json<Value>) {
+    if let Some(prompt) = extract_second_factor_required_prompt(error.as_str()) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "需要二次验证",
+                "code": remote_connection_codes::SECOND_FACTOR_REQUIRED,
+                "challenge_prompt": prompt,
+            })),
+        );
+    }
     let (status, code) = remote_connectivity_error_status_and_code(error.as_str());
     (status, error_payload(error, code))
 }
 
 pub(super) fn remote_terminal_error_code(error: &str) -> &'static str {
+    if extract_second_factor_required_prompt(error).is_some() {
+        return remote_connection_codes::SECOND_FACTOR_REQUIRED;
+    }
     let normalized = error.to_lowercase();
 
     if normalized.contains("主机指纹与 known_hosts 记录不匹配") {
@@ -162,8 +181,15 @@ pub(super) fn remote_terminal_error_code(error: &str) -> &'static str {
 
 pub(super) fn ws_error_output(error: impl Into<String>) -> WsOutput {
     let error = error.into();
+    let challenge_prompt = extract_second_factor_required_prompt(error.as_str());
+    let message = if challenge_prompt.is_some() {
+        "需要二次验证".to_string()
+    } else {
+        error.clone()
+    };
     WsOutput::Error {
         code: remote_terminal_error_code(error.as_str()).to_string(),
-        error,
+        error: message,
+        challenge_prompt,
     }
 }

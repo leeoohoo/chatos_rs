@@ -31,9 +31,12 @@ pub mod auth;
 mod chat_stream_common;
 pub mod chat_v2;
 pub mod chat_v3;
+pub mod code_nav;
 pub mod configs;
 pub mod contacts;
+mod conversation_semantics;
 pub mod fs;
+pub mod git;
 pub mod memory_agents;
 pub mod messages;
 pub mod notepad;
@@ -60,7 +63,7 @@ pub fn router() -> Router {
         HeaderName::from_static("x-openai-key"),
         HeaderName::from_static("x-user-id"),
         HeaderName::from_static("x-project-id"),
-        HeaderName::from_static("x-session-id"),
+        HeaderName::from_static("x-conversation-id"),
         HeaderName::from_static("x-request-id"),
     ];
 
@@ -90,7 +93,7 @@ pub fn router() -> Router {
             let request_id = header_value(req, &REQUEST_ID_HEADER);
             let user_id = header_value(req, &HeaderName::from_static("x-user-id"));
             let project_id = header_value(req, &HeaderName::from_static("x-project-id"));
-            let session_id = header_value(req, &HeaderName::from_static("x-session-id"));
+            let conversation_id = header_value(req, &HeaderName::from_static("x-conversation-id"));
             info_span!(
                 "http.request",
                 method = %req.method(),
@@ -99,7 +102,7 @@ pub fn router() -> Router {
                 request_id = %request_id,
                 user_id = %user_id,
                 project_id = %project_id,
-                session_id = %session_id
+                conversation_id = %conversation_id
             )
         })
         .on_request(|_req: &Request<Body>, _span: &tracing::Span| {
@@ -122,6 +125,7 @@ pub fn router() -> Router {
         .merge(agent_builder::router())
         .merge(chat_v2::router())
         .merge(chat_v3::router())
+        .merge(code_nav::router())
         .nest("/api/applications", applications::router())
         .merge(projects::router())
         .merge(remote_connections::router())
@@ -132,6 +136,7 @@ pub fn router() -> Router {
         .merge(configs::router())
         .merge(system_contexts::router())
         .merge(fs::router())
+        .merge(git::router())
         .merge(notepad::router())
         .merge(user_settings::router())
         .route_layer(middleware::from_fn(require_auth));
@@ -167,7 +172,7 @@ async fn root() -> axum::Json<serde_json::Value> {
         "description": "Node.js 聊天应用服务器 - 完全复刻自 Python FastAPI 版本",
         "endpoints": {
             "health": "/health",
-            "sessions": "/api/sessions",
+            "conversations": "/api/conversations",
             "messages": "/api/messages"
         }
     }))

@@ -221,8 +221,8 @@ fn normalize_provider_input(provider: Option<String>) -> Result<String, String> 
     let p = raw.trim().to_lowercase();
     let p = if p == "openai" { "gpt".to_string() } else { p };
     match p.as_str() {
-        "gpt" | "deepseek" | "kimik2" => Ok(p),
-        _ => Err("provider 仅支持 gpt / deepseek / kimik2".to_string()),
+        "gpt" | "deepseek" | "kimik2" | "minimax" => Ok(p),
+        _ => Err("provider 仅支持 gpt / deepseek / kimik2 / minimax".to_string()),
     }
 }
 

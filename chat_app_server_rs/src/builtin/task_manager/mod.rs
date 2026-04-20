@@ -29,7 +29,7 @@ pub struct TaskManagerOptions {
 #[derive(Clone)]
 pub struct TaskManagerService {
     tools: HashMap<String, Tool>,
-    default_session_id: String,
+    default_conversation_id: String,
     default_turn_id: String,
 }
 
@@ -44,7 +44,7 @@ struct Tool {
 type ToolHandler = Arc<dyn Fn(Value, &ToolContext) -> Result<Value, String> + Send + Sync>;
 
 pub(super) struct ToolContext<'a> {
-    session_id: &'a str,
+    conversation_id: &'a str,
     conversation_turn_id: &'a str,
     on_stream_chunk: Option<ToolStreamChunkCallback>,
 }
@@ -53,7 +53,7 @@ impl TaskManagerService {
     pub fn new(opts: TaskManagerOptions) -> Result<Self, String> {
         let mut service = Self {
             tools: HashMap::new(),
-            default_session_id: format!("session_{}", Uuid::new_v4().simple()),
+            default_conversation_id: format!("conversation_{}", Uuid::new_v4().simple()),
             default_turn_id: format!("turn_{}", Uuid::new_v4().simple()),
         };
 
@@ -86,7 +86,7 @@ impl TaskManagerService {
         &self,
         name: &str,
         args: Value,
-        session_id: Option<&str>,
+        conversation_id: Option<&str>,
         conversation_turn_id: Option<&str>,
         on_stream_chunk: Option<ToolStreamChunkCallback>,
     ) -> Result<Value, String> {
@@ -95,15 +95,15 @@ impl TaskManagerService {
             .get(name)
             .ok_or_else(|| format!("Tool not found: {name}"))?;
 
-        let session = session_id
+        let conversation = conversation_id
             .and_then(trimmed_non_empty)
-            .unwrap_or(self.default_session_id.as_str());
+            .unwrap_or(self.default_conversation_id.as_str());
         let turn = conversation_turn_id
             .and_then(trimmed_non_empty)
             .unwrap_or(self.default_turn_id.as_str());
 
         let ctx = ToolContext {
-            session_id: session,
+            conversation_id: conversation,
             conversation_turn_id: turn,
             on_stream_chunk,
         };
@@ -169,7 +169,7 @@ impl TaskManagerService {
     fn register_list_tasks(&mut self) {
         self.register_tool(
             "list_tasks",
-            "List tasks in the current session. Optionally scope to the current conversation turn.",
+            "List tasks in the current conversation. Optionally scope to the current conversation turn.",
             json!({
                 "type": "object",
                 "properties": {
@@ -201,14 +201,14 @@ impl TaskManagerService {
                 };
 
                 let tasks = block_on_result(list_tasks_for_context(
-                    ctx.session_id,
+                    ctx.conversation_id,
                     turn_scope,
                     include_done,
                     limit,
                 ))?;
 
                 Ok(text_result(json!({
-                    "session_id": ctx.session_id,
+                    "conversation_id": ctx.conversation_id,
                     "conversation_turn_id": if current_turn_only {
                         Value::String(ctx.conversation_turn_id.to_string())
                     } else {
@@ -224,7 +224,7 @@ impl TaskManagerService {
     fn register_update_task(&mut self) {
         self.register_tool(
             "update_task",
-            "Update a task in current session by task_id. Provide changes as a JSON string (example: {\"status\":\"doing\"}).",
+            "Update a task in current conversation by task_id. Provide changes as a JSON string (example: {\"status\":\"doing\"}).",
             json!({
                 "type": "object",
                 "properties": {
@@ -244,11 +244,11 @@ impl TaskManagerService {
                     .ok_or_else(|| "changes is required".to_string())?;
                 let patch = parse_update_patch(changes)?;
                 let task =
-                    block_on_result(update_task_by_id(ctx.session_id, task_id.as_str(), patch))?;
+                    block_on_result(update_task_by_id(ctx.conversation_id, task_id.as_str(), patch))?;
                 Ok(text_result(json!({
                     "updated": true,
                     "task": task,
-                    "session_id": ctx.session_id,
+                    "conversation_id": ctx.conversation_id,
                 })))
             }),
         );
@@ -257,7 +257,7 @@ impl TaskManagerService {
     fn register_complete_task(&mut self) {
         self.register_tool(
             "complete_task",
-            "Mark a task as done in current session by task_id.",
+            "Mark a task as done in current conversation by task_id.",
             json!({
                 "type": "object",
                 "properties": {
@@ -268,11 +268,12 @@ impl TaskManagerService {
             }),
             Arc::new(move |args, ctx| {
                 let task_id = required_string_arg(&args, "task_id")?;
-                let task = block_on_result(complete_task_by_id(ctx.session_id, task_id.as_str()))?;
+                let task =
+                    block_on_result(complete_task_by_id(ctx.conversation_id, task_id.as_str()))?;
                 Ok(text_result(json!({
                     "completed": true,
                     "task": task,
-                    "session_id": ctx.session_id,
+                    "conversation_id": ctx.conversation_id,
                 })))
             }),
         );
@@ -281,7 +282,7 @@ impl TaskManagerService {
     fn register_delete_task(&mut self) {
         self.register_tool(
             "delete_task",
-            "Delete a task in current session by task_id.",
+            "Delete a task in current conversation by task_id.",
             json!({
                 "type": "object",
                 "properties": {
@@ -292,7 +293,8 @@ impl TaskManagerService {
             }),
             Arc::new(move |args, ctx| {
                 let task_id = required_string_arg(&args, "task_id")?;
-                let deleted = block_on_result(delete_task_by_id(ctx.session_id, task_id.as_str()))?;
+                let deleted =
+                    block_on_result(delete_task_by_id(ctx.conversation_id, task_id.as_str()))?;
                 Ok(text_result(json!({
                     "deleted": deleted,
                     "task_id": task_id,
@@ -301,7 +303,7 @@ impl TaskManagerService {
                     } else {
                         Value::String(crate::services::task_manager::TASK_NOT_FOUND_ERR.to_string())
                     },
-                    "session_id": ctx.session_id,
+                    "conversation_id": ctx.conversation_id,
                 })))
             }),
         );

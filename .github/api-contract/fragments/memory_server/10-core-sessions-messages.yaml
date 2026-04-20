@@ -1,0 +1,148 @@
+paths:
+  /health:
+    get:
+      summary: Health check
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getHealth
+  /api/memory/v1/sessions:
+    get:
+      summary: List memory sessions
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1Sessions
+    post:
+      summary: Create memory session
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiMemoryV1Sessions
+  /api/memory/v1/sessions/{session_id}:
+    get:
+      summary: Get memory session
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1SessionsBySessionId
+    patch:
+      summary: Update memory session
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: patchApiMemoryV1SessionsBySessionId
+    delete:
+      summary: Delete memory session
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: deleteApiMemoryV1SessionsBySessionId
+  /api/memory/v1/sessions/{session_id}/messages:
+    get:
+      summary: List memory messages in a session
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1SessionsBySessionIdMessages
+    post:
+      summary: Create memory message in a session
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiMemoryV1SessionsBySessionIdMessages
+    delete:
+      summary: Clear memory messages in a session
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: deleteApiMemoryV1SessionsBySessionIdMessages
+  /api/memory/v1/messages/{message_id}:
+    get:
+      summary: Get memory message
+      parameters:
+      - in: path
+        name: message_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1MessagesByMessageId

@@ -38,7 +38,8 @@ impl UiPromptStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiPromptPayload {
     pub prompt_id: String,
-    pub session_id: String,
+    #[serde(rename = "conversation_id")]
+    pub conversation_id: String,
     pub conversation_turn_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
@@ -75,7 +76,8 @@ pub struct UiPromptDecision {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiPromptRecord {
     pub id: String,
-    pub session_id: String,
+    #[serde(rename = "conversation_id")]
+    pub conversation_id: String,
     pub conversation_turn_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,

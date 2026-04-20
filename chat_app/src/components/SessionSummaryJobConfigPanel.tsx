@@ -129,7 +129,7 @@ const SessionSummaryJobConfigPanel: React.FC<Props> = ({ onClose }) => {
     (async () => {
       try {
         setLoading(true);
-        const config = await client.getSessionSummaryJobConfig(effectiveUserId);
+        const config = await client.getConversationSummaryJobConfig(effectiveUserId);
         const loadedLimits = parseLimits(config);
 
         if (!mounted) {
@@ -217,7 +217,7 @@ const SessionSummaryJobConfigPanel: React.FC<Props> = ({ onClose }) => {
         clampedFields.push(`任务间隔(${rangeText(limits.job_interval_seconds)})`);
       }
 
-      const saved = await client.updateSessionSummaryJobConfig({
+      const saved = await client.updateConversationSummaryJobConfig({
         user_id: effectiveUserId,
         enabled: form.enabled,
         summary_model_config_id: form.summary_model_config_id || null,

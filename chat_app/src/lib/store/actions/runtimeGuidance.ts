@@ -23,16 +23,16 @@ export function createRuntimeGuidanceActions({
   return {
     submitRuntimeGuidance: async (
       content: string,
-      options: { sessionId: string; turnId: string; projectId?: string | null },
+      options: { conversationId: string; turnId: string; projectId?: string | null },
     ) => {
-      const sessionId = String(options?.sessionId || '').trim();
+      const conversationId = String(options?.conversationId || '').trim();
       const turnId = String(options?.turnId || '').trim();
       const trimmedContent = String(content || '').trim();
       const projectId = typeof options?.projectId === 'string'
         ? options.projectId.trim()
         : '';
 
-      if (!sessionId || !turnId || !trimmedContent) {
+      if (!conversationId || !turnId || !trimmedContent) {
         throw new Error('缺少运行时引导参数');
       }
 
@@ -41,7 +41,7 @@ export function createRuntimeGuidanceActions({
 
       set((state) => {
         queueOptimisticRuntimeGuidance(state, {
-          sessionId,
+          sessionId: conversationId,
           turnId,
           guidanceId: optimisticGuidanceId,
           content: trimmedContent,
@@ -51,7 +51,7 @@ export function createRuntimeGuidanceActions({
 
       try {
         const response = await client.submitRuntimeGuidance({
-          sessionId,
+          conversationId,
           turnId,
           content: trimmedContent,
           projectId: projectId || undefined,
@@ -64,7 +64,7 @@ export function createRuntimeGuidanceActions({
           const nextGuidanceId = String(response?.guidance_id || '').trim() || optimisticGuidanceId;
 
           reconcileSubmittedRuntimeGuidance(state, {
-            sessionId,
+            sessionId: conversationId,
             turnId,
             optimisticGuidanceId,
             responseGuidanceId: nextGuidanceId,
@@ -74,7 +74,7 @@ export function createRuntimeGuidanceActions({
             pendingCount: pendingFromResponse,
           });
 
-          if (state.currentSessionId === sessionId && Array.isArray(state.messages)) {
+          if (state.currentSessionId === conversationId && Array.isArray(state.messages)) {
             const guidanceMessageIndex = state.messages.findIndex((message) => (
               message?.id === optimisticGuidanceId
               || message?.id === nextGuidanceId
@@ -99,7 +99,7 @@ export function createRuntimeGuidanceActions({
       } catch (error) {
         set((state) => {
           rollbackRuntimeGuidanceSubmission(state, {
-            sessionId,
+            sessionId: conversationId,
             guidanceId: optimisticGuidanceId,
           });
         });

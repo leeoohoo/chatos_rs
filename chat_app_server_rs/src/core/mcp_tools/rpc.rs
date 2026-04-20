@@ -54,7 +54,7 @@ pub async fn jsonrpc_stdio_call(
     cfg: &McpStdioServer,
     method: &str,
     params: Value,
-    session_id: Option<&str>,
+    conversation_id: Option<&str>,
 ) -> Result<Value, String> {
     let id = Uuid::new_v4().to_string();
     let payload = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
@@ -87,7 +87,7 @@ pub async fn jsonrpc_stdio_call(
     let mut reader = BufReader::new(stdout).lines();
 
     loop {
-        if session_id
+        if conversation_id
             .map(crate::utils::abort_registry::is_aborted)
             .unwrap_or(false)
         {

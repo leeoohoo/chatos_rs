@@ -47,7 +47,13 @@ pub fn router() -> Router {
             post(confirm_project_changes),
         )
         .route("/api/projects/:id/run/analyze", post(analyze_project_run))
-        .route("/api/projects/:id/run/catalog", get(get_project_run_catalog))
+        .route(
+            "/api/projects/:id/run/catalog",
+            get(get_project_run_catalog),
+        )
         .route("/api/projects/:id/run/execute", post(execute_project_run))
-        .route("/api/projects/:id/run/default", post(set_project_run_default))
+        .route(
+            "/api/projects/:id/run/default",
+            post(set_project_run_default),
+        )
 }

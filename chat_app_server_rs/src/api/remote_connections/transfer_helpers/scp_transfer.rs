@@ -5,8 +5,9 @@ use tokio::time::{timeout, Duration};
 use crate::models::remote_connection::RemoteConnection;
 
 use super::super::{
-    build_scp_args, build_scp_process_command, connect_ssh2_session, is_password_auth,
-    map_command_spawn_error, shell_quote, should_use_native_ssh,
+    build_scp_args, build_scp_process_command, connect_ssh2_session_with_verification,
+    encode_second_factor_required_error, is_password_auth, map_command_spawn_error, shell_quote,
+    should_use_native_ssh,
 };
 use super::errors::TransferJobError;
 use ssh2::{OpenFlags, OpenType};
@@ -15,14 +16,23 @@ pub(crate) async fn run_scp_upload_typed(
     connection: &RemoteConnection,
     local_path: &str,
     remote_path: &str,
+    verification_code: Option<&str>,
 ) -> Result<(), TransferJobError> {
     if should_use_native_ssh(connection) {
         let connection = connection.clone();
         let local = local_path.to_string();
         let remote = remote_path.to_string();
+        let verification_code_owned = verification_code
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(ToOwned::to_owned);
         return tokio::task::spawn_blocking(move || {
-            let connected = connect_ssh2_session(&connection, Duration::from_secs(15))
-                .map_err(TransferJobError::remote)?;
+            let connected = connect_ssh2_session_with_verification(
+                &connection,
+                Duration::from_secs(15),
+                verification_code_owned.as_deref(),
+            )
+            .map_err(TransferJobError::remote)?;
             let sftp = connected
                 .session
                 .sftp()
@@ -69,23 +79,46 @@ pub(crate) async fn run_scp_upload_typed(
         return Ok(());
     }
 
-    Err(TransferJobError::remote(
-        String::from_utf8_lossy(&output.stderr).trim().to_string(),
-    ))
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if password_auth && verification_code.map(str::trim).unwrap_or("").is_empty() {
+        let stderr_lower = stderr.to_lowercase();
+        if stderr_lower.contains("verification code")
+            || stderr_lower.contains("one-time")
+            || stderr_lower.contains("otp")
+            || stderr_lower.contains("验证码")
+            || stderr_lower.contains("mfa")
+            || stderr_lower.contains("2fa")
+        {
+            return Err(TransferJobError::remote(
+                encode_second_factor_required_error("Verification code / OTP"),
+            ));
+        }
+    }
+
+    Err(TransferJobError::remote(stderr))
 }
 
 pub(crate) async fn run_scp_download_typed(
     connection: &RemoteConnection,
     remote_path: &str,
     local_path: &str,
+    verification_code: Option<&str>,
 ) -> Result<(), TransferJobError> {
     if should_use_native_ssh(connection) {
         let connection = connection.clone();
         let local = local_path.to_string();
         let remote = remote_path.to_string();
+        let verification_code_owned = verification_code
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(ToOwned::to_owned);
         return tokio::task::spawn_blocking(move || {
-            let connected = connect_ssh2_session(&connection, Duration::from_secs(15))
-                .map_err(TransferJobError::remote)?;
+            let connected = connect_ssh2_session_with_verification(
+                &connection,
+                Duration::from_secs(15),
+                verification_code_owned.as_deref(),
+            )
+            .map_err(TransferJobError::remote)?;
             let sftp = connected
                 .session
                 .sftp()
@@ -127,7 +160,21 @@ pub(crate) async fn run_scp_download_typed(
         return Ok(());
     }
 
-    Err(TransferJobError::remote(
-        String::from_utf8_lossy(&output.stderr).trim().to_string(),
-    ))
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if password_auth && verification_code.map(str::trim).unwrap_or("").is_empty() {
+        let stderr_lower = stderr.to_lowercase();
+        if stderr_lower.contains("verification code")
+            || stderr_lower.contains("one-time")
+            || stderr_lower.contains("otp")
+            || stderr_lower.contains("验证码")
+            || stderr_lower.contains("mfa")
+            || stderr_lower.contains("2fa")
+        {
+            return Err(TransferJobError::remote(
+                encode_second_factor_required_error("Verification code / OTP"),
+            ));
+        }
+    }
+
+    Err(TransferJobError::remote(stderr))
 }

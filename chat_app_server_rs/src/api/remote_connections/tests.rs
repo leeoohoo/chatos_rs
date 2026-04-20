@@ -44,12 +44,26 @@ fn maps_remote_terminal_invalid_ws_message_code() {
 fn emits_ws_error_payload_with_code() {
     let payload = ws_error_output("write failed: broken pipe");
     match payload {
-        WsOutput::Error { error, code } => {
+        WsOutput::Error {
+            error,
+            code,
+            challenge_prompt,
+        } => {
             assert_eq!(code, remote_connection_codes::TERMINAL_INPUT_FAILED);
             assert_eq!(error, "write failed: broken pipe");
+            assert!(challenge_prompt.is_none());
         }
         _ => panic!("expected ws error payload"),
     }
+}
+
+#[test]
+fn maps_second_factor_required_error_code() {
+    let (status, code) = remote_connectivity_error_status_and_code(
+        "__CHATOS_SECOND_FACTOR_REQUIRED__:SMS verification code",
+    );
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(code, remote_connection_codes::SECOND_FACTOR_REQUIRED);
 }
 
 #[test]

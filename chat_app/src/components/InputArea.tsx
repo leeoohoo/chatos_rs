@@ -94,6 +94,9 @@ export const InputArea: React.FC<InputAreaProps> = ({
     mcpConfigsError,
     builtinMcpConfigs,
     customMcpConfigs,
+    mcpToolsetPresets,
+    projectScopeKey,
+    hasProjectMcpDefault,
     selectableMcpIds,
     sanitizedEnabledMcpIds,
     isAllMcpSelected,
@@ -104,6 +107,9 @@ export const InputArea: React.FC<InputAreaProps> = ({
     handleToggleMcpPicker,
     handleSelectAllMcp,
     handleToggleMcpSelection,
+    handleApplyMcpToolsetPreset,
+    handleSaveProjectMcpDefault,
+    handleApplyProjectMcpDefault,
     enabledModels,
     hasAiOptions,
     projectForFilePicker,
@@ -241,6 +247,9 @@ export const InputArea: React.FC<InputAreaProps> = ({
         availableMcpConfigs={availableMcpConfigs}
         builtinMcpConfigs={builtinMcpConfigs}
         customMcpConfigs={customMcpConfigs}
+        mcpToolsetPresets={mcpToolsetPresets}
+        projectScopeKey={projectScopeKey}
+        hasProjectMcpDefault={hasProjectMcpDefault}
         hasDirectoryContext={hasDirectoryContext}
         hasRemoteContext={hasRemoteContext}
         isProjectRequiredMcpId={isProjectRequiredMcpId}
@@ -249,6 +258,9 @@ export const InputArea: React.FC<InputAreaProps> = ({
         loadAvailableMcpConfigs={loadAvailableMcpConfigs}
         handleSelectAllMcp={handleSelectAllMcp}
         handleToggleMcpSelection={handleToggleMcpSelection}
+        handleApplyMcpToolsetPreset={handleApplyMcpToolsetPreset}
+        handleSaveProjectMcpDefault={handleSaveProjectMcpDefault}
+        handleApplyProjectMcpDefault={handleApplyProjectMcpDefault}
         handleInputChange={handleInputChange}
         handleKeyDown={handleKeyDown}
         handlePaste={handlePaste}

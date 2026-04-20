@@ -8,14 +8,14 @@ fn tool_output_item_max_chars() -> usize {
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .filter(|value| *value > 0)
-        .unwrap_or(8_000)
+        .unwrap_or(12_000)
 }
 
 pub(super) fn cap_tool_output_for_input(raw: &str) -> String {
-    truncate_text_with_tail(raw, tool_output_item_max_chars())
+    truncate_text_preserve_head_and_tail(raw, tool_output_item_max_chars())
 }
 
-fn truncate_text_with_tail(raw: &str, max_chars: usize) -> String {
+fn truncate_text_preserve_head_and_tail(raw: &str, max_chars: usize) -> String {
     if max_chars == 0 {
         return String::new();
     }
@@ -25,20 +25,16 @@ fn truncate_text_with_tail(raw: &str, max_chars: usize) -> String {
         return raw.to_string();
     }
 
-    let marker = format!("[...truncated {} chars...]\n", total - max_chars);
+    let marker = format!("\n[...truncated {} chars...]\n", total - max_chars);
     let marker_chars = marker.chars().count();
     if marker_chars >= max_chars {
-        return raw
-            .chars()
-            .rev()
-            .take(max_chars)
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect();
+        return raw.chars().take(max_chars).collect();
     }
 
-    let keep_tail = max_chars - marker_chars;
+    let keep_chars = max_chars - marker_chars;
+    let keep_head = ((keep_chars * 2) / 5).max(1);
+    let keep_tail = keep_chars.saturating_sub(keep_head);
+    let head: String = raw.chars().take(keep_head).collect();
     let tail: String = raw
         .chars()
         .rev()
@@ -47,7 +43,7 @@ fn truncate_text_with_tail(raw: &str, max_chars: usize) -> String {
         .into_iter()
         .rev()
         .collect();
-    format!("{}{}", marker, tail)
+    format!("{}{}{}", head, marker, tail)
 }
 
 pub(super) fn truncate_function_call_outputs_in_input(input: &Value) -> Option<Value> {

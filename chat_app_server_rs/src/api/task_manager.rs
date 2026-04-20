@@ -24,7 +24,8 @@ struct ReviewDecisionRequest {
 
 #[derive(Debug, Deserialize)]
 struct TaskListQuery {
-    session_id: String,
+    #[serde(rename = "conversation_id", alias = "conversationId")]
+    conversation_id: String,
     conversation_turn_id: Option<String>,
     include_done: Option<bool>,
     limit: Option<usize>,
@@ -32,7 +33,8 @@ struct TaskListQuery {
 
 #[derive(Debug, Deserialize)]
 struct SessionScopeQuery {
-    session_id: String,
+    #[serde(rename = "conversation_id", alias = "conversationId")]
+    conversation_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -69,13 +71,13 @@ async fn list_tasks(
     auth: AuthUser,
     Query(query): Query<TaskListQuery>,
 ) -> (StatusCode, Json<Value>) {
-    if query.session_id.trim().is_empty() {
+    if query.conversation_id.trim().is_empty() {
         return (
             StatusCode::BAD_REQUEST,
-            Json(json!({ "success": false, "error": "session_id is required" })),
+            Json(json!({ "success": false, "error": "conversation_id is required" })),
         );
     }
-    if let Err(err) = ensure_owned_session(query.session_id.as_str(), &auth).await {
+    if let Err(err) = ensure_owned_session(query.conversation_id.as_str(), &auth).await {
         return map_session_access_error_with_success(err);
     }
 
@@ -83,21 +85,23 @@ async fn list_tasks(
     let limit = query.limit.unwrap_or(50).clamp(1, 200);
 
     match list_tasks_for_context(
-        query.session_id.as_str(),
+        query.conversation_id.as_str(),
         query.conversation_turn_id.as_deref(),
         include_done,
         limit,
     )
     .await
     {
-        Ok(tasks) => (
-            StatusCode::OK,
-            Json(json!({
+        Ok(tasks) => {
+            let payload = json!({
                 "success": true,
+                "conversation_id": query.conversation_id,
+                "conversationId": query.conversation_id,
                 "count": tasks.len(),
                 "tasks": tasks,
-            })),
-        ),
+            });
+            (StatusCode::OK, Json(payload))
+        }
         Err(err) => (
             StatusCode::BAD_REQUEST,
             Json(json!({ "success": false, "error": err })),
@@ -111,10 +115,10 @@ async fn update_task(
     Query(scope): Query<SessionScopeQuery>,
     Json(req): Json<UpdateTaskRequest>,
 ) -> (StatusCode, Json<Value>) {
-    if scope.session_id.trim().is_empty() {
+    if scope.conversation_id.trim().is_empty() {
         return (
             StatusCode::BAD_REQUEST,
-            Json(json!({ "success": false, "error": "session_id is required" })),
+            Json(json!({ "success": false, "error": "conversation_id is required" })),
         );
     }
     if task_id.trim().is_empty() {
@@ -123,7 +127,7 @@ async fn update_task(
             Json(json!({ "success": false, "error": "task_id is required" })),
         );
     }
-    if let Err(err) = ensure_owned_session(scope.session_id.as_str(), &auth).await {
+    if let Err(err) = ensure_owned_session(scope.conversation_id.as_str(), &auth).await {
         return map_session_access_error_with_success(err);
     }
 
@@ -149,14 +153,16 @@ async fn update_task(
         );
     }
 
-    match update_task_by_id(scope.session_id.as_str(), task_id.as_str(), patch).await {
-        Ok(task) => (
-            StatusCode::OK,
-            Json(json!({
+    match update_task_by_id(scope.conversation_id.as_str(), task_id.as_str(), patch).await {
+        Ok(task) => {
+            let payload = json!({
                 "success": true,
+                "conversation_id": scope.conversation_id,
+                "conversationId": scope.conversation_id,
                 "task": task,
-            })),
-        ),
+            });
+            (StatusCode::OK, Json(payload))
+        }
         Err(err) if err == TASK_NOT_FOUND_ERR => (
             StatusCode::NOT_FOUND,
             Json(json!({ "success": false, "error": err })),
@@ -173,10 +179,10 @@ async fn complete_task(
     Path(task_id): Path<String>,
     Query(scope): Query<SessionScopeQuery>,
 ) -> (StatusCode, Json<Value>) {
-    if scope.session_id.trim().is_empty() {
+    if scope.conversation_id.trim().is_empty() {
         return (
             StatusCode::BAD_REQUEST,
-            Json(json!({ "success": false, "error": "session_id is required" })),
+            Json(json!({ "success": false, "error": "conversation_id is required" })),
         );
     }
     if task_id.trim().is_empty() {
@@ -185,18 +191,20 @@ async fn complete_task(
             Json(json!({ "success": false, "error": "task_id is required" })),
         );
     }
-    if let Err(err) = ensure_owned_session(scope.session_id.as_str(), &auth).await {
+    if let Err(err) = ensure_owned_session(scope.conversation_id.as_str(), &auth).await {
         return map_session_access_error_with_success(err);
     }
 
-    match complete_task_by_id(scope.session_id.as_str(), task_id.as_str()).await {
-        Ok(task) => (
-            StatusCode::OK,
-            Json(json!({
+    match complete_task_by_id(scope.conversation_id.as_str(), task_id.as_str()).await {
+        Ok(task) => {
+            let payload = json!({
                 "success": true,
+                "conversation_id": scope.conversation_id,
+                "conversationId": scope.conversation_id,
                 "task": task,
-            })),
-        ),
+            });
+            (StatusCode::OK, Json(payload))
+        }
         Err(err) if err == TASK_NOT_FOUND_ERR => (
             StatusCode::NOT_FOUND,
             Json(json!({ "success": false, "error": err })),
@@ -213,10 +221,10 @@ async fn delete_task(
     Path(task_id): Path<String>,
     Query(scope): Query<SessionScopeQuery>,
 ) -> (StatusCode, Json<Value>) {
-    if scope.session_id.trim().is_empty() {
+    if scope.conversation_id.trim().is_empty() {
         return (
             StatusCode::BAD_REQUEST,
-            Json(json!({ "success": false, "error": "session_id is required" })),
+            Json(json!({ "success": false, "error": "conversation_id is required" })),
         );
     }
     if task_id.trim().is_empty() {
@@ -225,15 +233,20 @@ async fn delete_task(
             Json(json!({ "success": false, "error": "task_id is required" })),
         );
     }
-    if let Err(err) = ensure_owned_session(scope.session_id.as_str(), &auth).await {
+    if let Err(err) = ensure_owned_session(scope.conversation_id.as_str(), &auth).await {
         return map_session_access_error_with_success(err);
     }
 
-    match delete_task_by_id(scope.session_id.as_str(), task_id.as_str()).await {
-        Ok(true) => (
-            StatusCode::OK,
-            Json(json!({ "success": true, "deleted": true })),
-        ),
+    match delete_task_by_id(scope.conversation_id.as_str(), task_id.as_str()).await {
+        Ok(true) => {
+            let payload = json!({
+                "success": true,
+                "conversation_id": scope.conversation_id,
+                "conversationId": scope.conversation_id,
+                "deleted": true
+            });
+            (StatusCode::OK, Json(payload))
+        }
         Ok(false) => (
             StatusCode::NOT_FOUND,
             Json(json!({ "success": false, "deleted": false, "error": TASK_NOT_FOUND_ERR })),
@@ -266,7 +279,7 @@ async fn submit_review_decision(
             )
         }
     };
-    if let Err(err) = ensure_owned_session(review_payload.session_id.as_str(), &auth).await {
+    if let Err(err) = ensure_owned_session(review_payload.conversation_id.as_str(), &auth).await {
         return map_session_access_error_with_success(err);
     }
 
@@ -285,16 +298,17 @@ async fn submit_review_decision(
     }
 
     match submit_task_review_decision(review_id.as_str(), req.action, req.tasks, req.reason).await {
-        Ok(payload) => (
-            StatusCode::OK,
-            Json(json!({
+        Ok(payload) => {
+            let response = json!({
                 "success": true,
                 "review_id": payload.review_id,
-                "session_id": payload.session_id,
+                "conversation_id": payload.conversation_id,
+                "conversationId": payload.conversation_id,
                 "conversation_turn_id": payload.conversation_turn_id,
                 "action": req.action.as_str(),
-            })),
-        ),
+            });
+            (StatusCode::OK, Json(response))
+        }
         Err(err) if err == REVIEW_NOT_FOUND_ERR => (
             StatusCode::NOT_FOUND,
             Json(json!({ "success": false, "error": err })),

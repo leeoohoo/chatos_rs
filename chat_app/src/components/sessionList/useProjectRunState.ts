@@ -1,7 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+
 import type ApiClient from '../../lib/api/client';
 import type { Project, Terminal } from '../../types';
-import { normalizeProjectRunCatalog } from '../projectExplorer/utils';
+import { normalizeEntry } from '../projectExplorer/utils';
+
+const RUNNER_SCRIPT_DIR = '.chatos';
+const RUNNER_SCRIPT_FILE = 'project_runner.sh';
+const RUNNER_SCRIPT_REL_PATH = `${RUNNER_SCRIPT_DIR}/${RUNNER_SCRIPT_FILE}`;
+const RUNNER_START_COMMAND = `bash ./${RUNNER_SCRIPT_REL_PATH} start`;
+const RUNNER_STOP_COMMAND = `bash ./${RUNNER_SCRIPT_REL_PATH} stop`;
+const RUNNER_RESTART_COMMAND = `bash ./${RUNNER_SCRIPT_REL_PATH} restart`;
 
 export interface ProjectRunTargetOption {
   id: string;
@@ -42,7 +50,7 @@ interface UseProjectRunStateParams {
 }
 
 const createInitialProjectRunState = (): ProjectRunViewState => ({
-  status: 'analyzing',
+  status: 'loading',
   loading: true,
   targetCount: 0,
   defaultTargetId: null,
@@ -55,43 +63,79 @@ const createInitialProjectRunState = (): ProjectRunViewState => ({
   error: null,
 });
 
+const normalizeRootPath = (value: string): string => value.trim().replace(/[\\/]+$/, '');
+
+const hasRunnerScript = async (apiClient: ApiClient, rootPath: string): Promise<boolean> => {
+  const safeRoot = normalizeRootPath(rootPath);
+  if (!safeRoot) {
+    return false;
+  }
+  const rootList = await apiClient.listFsEntries(safeRoot);
+  const rootEntries = Array.isArray(rootList?.entries) ? rootList.entries.map(normalizeEntry) : [];
+  const runnerDirEntry = rootEntries.find((entry) => entry.isDir && entry.name === RUNNER_SCRIPT_DIR) || null;
+  const runnerDirPath = runnerDirEntry?.path || `${safeRoot}/${RUNNER_SCRIPT_DIR}`;
+  try {
+    const runnerList = await apiClient.listFsEntries(runnerDirPath);
+    const runnerEntries = Array.isArray(runnerList?.entries) ? runnerList.entries.map(normalizeEntry) : [];
+    return runnerEntries.some((entry) => !entry.isDir && entry.name === RUNNER_SCRIPT_FILE);
+  } catch {
+    return false;
+  }
+};
+
 const resolveProjectRunState = async (
   apiClient: ApiClient,
-  projectId: string,
+  project: Project,
 ): Promise<ProjectRunViewState> => {
   try {
-    const raw = await apiClient.getProjectRunCatalog(projectId);
-    const catalog = normalizeProjectRunCatalog(raw);
-    const fallbackTarget = catalog.targets[0] || null;
-    const defaultTarget = catalog.defaultTargetId
-      ? catalog.targets.find((item) => item.id === catalog.defaultTargetId) || null
-      : (catalog.targets.find((item) => item.isDefault) || null);
-    const targetCount = catalog.targets.length;
-
+    const [members, scriptExists] = await Promise.all([
+      apiClient.listProjectContacts(project.id, { limit: 500, offset: 0 }),
+      hasRunnerScript(apiClient, project.rootPath),
+    ]);
+    const memberCount = Array.isArray(members) ? members.length : 0;
+    if (scriptExists) {
+      const target: ProjectRunTargetOption = {
+        id: 'project_runner_start',
+        label: 'project_runner.sh start',
+        cwd: project.rootPath,
+        command: RUNNER_START_COMMAND,
+      };
+      return {
+        status: 'ready',
+        loading: false,
+        targetCount: 1,
+        defaultTargetId: target.id,
+        fallbackTargetId: target.id,
+        defaultCommand: target.command,
+        defaultCwd: target.cwd,
+        fallbackCommand: target.command,
+        fallbackCwd: target.cwd,
+        targets: [target],
+        error: null,
+      };
+    }
+    if (memberCount <= 0) {
+      return {
+        ...createInitialProjectRunState(),
+        status: 'no_member',
+        loading: false,
+        error: '请先添加一个联系人',
+      };
+    }
     return {
-      status: targetCount > 0 ? 'ready' : (catalog.status || 'empty'),
+      ...createInitialProjectRunState(),
+      status: 'script_missing',
       loading: false,
-      targetCount,
-      defaultTargetId: catalog.defaultTargetId ? String(catalog.defaultTargetId) : null,
-      fallbackTargetId: fallbackTarget?.id ? String(fallbackTarget.id) : null,
-      defaultCommand: defaultTarget?.command ? String(defaultTarget.command) : null,
-      defaultCwd: defaultTarget?.cwd ? String(defaultTarget.cwd) : null,
-      fallbackCommand: fallbackTarget?.command ? String(fallbackTarget.command) : null,
-      fallbackCwd: fallbackTarget?.cwd ? String(fallbackTarget.cwd) : null,
-      targets: (catalog.targets || []).map((target) => ({
-        id: String(target.id || ''),
-        label: String(target.label || target.command || '未命名目标'),
-        cwd: String(target.cwd || ''),
-        command: String(target.command || ''),
-      })),
-      error: catalog.errorMessage ? String(catalog.errorMessage) : null,
+      defaultCwd: project.rootPath,
+      fallbackCwd: project.rootPath,
+      error: '请先在项目页生成启动脚本',
     };
   } catch (error) {
     return {
       ...createInitialProjectRunState(),
       status: 'error',
       loading: false,
-      error: error instanceof Error ? error.message : '运行目标加载失败',
+      error: error instanceof Error ? error.message : '运行状态加载失败',
     };
   }
 };
@@ -128,6 +172,7 @@ export const useProjectRunState = ({
 
   useEffect(() => {
     let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
     const projectIds = new Set((projects || []).map((project) => String(project.id || '')));
 
     setProjectRunStateById((prev) => {
@@ -142,7 +187,7 @@ export const useProjectRunState = ({
       const updates = await Promise.all(
         (projects || []).map(async (project) => ({
           projectId: project.id,
-          state: await resolveProjectRunState(apiClient, project.id),
+          state: await resolveProjectRunState(apiClient, project),
         })),
       );
 
@@ -162,12 +207,21 @@ export const useProjectRunState = ({
         });
         return next;
       });
+
+      if (!cancelled && updates.some((item) => item.state.status !== 'ready')) {
+        timer = setTimeout(() => {
+          void loadProjectRunStates();
+        }, 5000);
+      }
     };
 
     void loadProjectRunStates();
 
     return () => {
       cancelled = true;
+      if (timer) {
+        clearTimeout(timer);
+      }
     };
   }, [apiClient, projects]);
 
@@ -215,15 +269,15 @@ export const useProjectRunState = ({
     }));
   }, []);
 
-  const handleRunProject = useCallback(async (projectId: string, chosenTargetId?: string) => {
+  const handleRunProject = useCallback(async (projectId: string, _chosenTargetId?: string) => {
     const project = (projects || []).find((item) => item.id === projectId);
     const runState = projectRunStateById[projectId];
+    const cwd = (runState?.defaultCwd || runState?.fallbackCwd || project?.rootPath || '').trim();
     if (!project || !runState) {
       return;
     }
-
-    const targetId = (chosenTargetId || '').trim() || runState.defaultTargetId || runState.fallbackTargetId;
-    if (!targetId) {
+    if (!cwd || runState.status !== 'ready') {
+      setProjectRunError(projectId, runState.error || '请先在项目页生成启动脚本');
       return;
     }
 
@@ -232,8 +286,10 @@ export const useProjectRunState = ({
     setProjectRunError(projectId, null);
 
     try {
-      const result = await apiClient.executeProjectRun(projectId, {
-        target_id: targetId,
+      const result = await apiClient.dispatchTerminalCommand({
+        cwd,
+        command: RUNNER_START_COMMAND,
+        project_id: project.id,
         create_if_missing: true,
       });
       const terminalId = String((result as { terminal_id?: string | null })?.terminal_id || '').trim();
@@ -251,8 +307,10 @@ export const useProjectRunState = ({
   }, [apiClient, handleSelectTerminal, loadTerminals, projectRunStateById, projects, setActivePanel, setProjectActionLoading, setProjectRunError]);
 
   const handleStopProject = useCallback(async (projectId: string) => {
-    const live = projectLiveStateById[projectId];
-    if (!live?.terminalId) {
+    const project = (projects || []).find((item) => item.id === projectId);
+    const runState = projectRunStateById[projectId];
+    const cwd = (runState?.defaultCwd || runState?.fallbackCwd || project?.rootPath || '').trim();
+    if (!project || !cwd) {
       return;
     }
 
@@ -260,7 +318,16 @@ export const useProjectRunState = ({
     setProjectRunError(projectId, null);
 
     try {
-      await apiClient.interruptTerminal(live.terminalId, { reason: 'project_list_stop' });
+      const result = await apiClient.dispatchTerminalCommand({
+        cwd,
+        command: RUNNER_STOP_COMMAND,
+        project_id: project.id,
+        create_if_missing: true,
+      });
+      const terminalId = String((result as { terminal_id?: string | null })?.terminal_id || '').trim();
+      if (terminalId) {
+        await handleSelectTerminal(terminalId);
+      }
       await loadTerminals();
       setActivePanel('terminal');
     } catch (error) {
@@ -268,21 +335,14 @@ export const useProjectRunState = ({
     } finally {
       setProjectActionLoading(projectId, false);
     }
-  }, [apiClient, loadTerminals, projectLiveStateById, setActivePanel, setProjectActionLoading, setProjectRunError]);
+  }, [apiClient, handleSelectTerminal, loadTerminals, projectRunStateById, projects, setActivePanel, setProjectActionLoading, setProjectRunError]);
 
   const handleRestartProject = useCallback(async (projectId: string) => {
     const project = (projects || []).find((item) => item.id === projectId);
-    const live = projectLiveStateById[projectId];
     const runState = projectRunStateById[projectId];
-    const command = runState?.defaultCommand || runState?.fallbackCommand;
-    const fallbackTerminalCwd = (terminals || []).find((terminal) => terminal.id === live?.terminalId)?.cwd || '';
-    const cwd = (runState?.defaultCwd || runState?.fallbackCwd || fallbackTerminalCwd || '').trim();
+    const cwd = (runState?.defaultCwd || runState?.fallbackCwd || project?.rootPath || '').trim();
 
-    if (!project) {
-      return;
-    }
-    if (!command || !cwd) {
-      setProjectRunError(projectId, '未找到可重启命令，请先重扫目标');
+    if (!project || !cwd) {
       return;
     }
 
@@ -290,13 +350,9 @@ export const useProjectRunState = ({
     setProjectRunError(projectId, null);
 
     try {
-      if (live?.terminalId && live.isRunning) {
-        await apiClient.interruptTerminal(live.terminalId, { reason: 'project_list_restart' });
-        await new Promise((resolve) => setTimeout(resolve, 180));
-      }
       const result = await apiClient.dispatchTerminalCommand({
         cwd,
-        command,
+        command: RUNNER_RESTART_COMMAND,
         project_id: project.id,
         create_if_missing: true,
       });
@@ -311,7 +367,7 @@ export const useProjectRunState = ({
     } finally {
       setProjectActionLoading(projectId, false);
     }
-  }, [apiClient, handleSelectTerminal, loadTerminals, projectLiveStateById, projectRunStateById, projects, setActivePanel, setProjectActionLoading, setProjectRunError, terminals]);
+  }, [apiClient, handleSelectTerminal, loadTerminals, projectRunStateById, projects, setActivePanel, setProjectActionLoading, setProjectRunError]);
 
   return {
     projectRunStateById,

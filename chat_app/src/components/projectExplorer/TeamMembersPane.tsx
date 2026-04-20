@@ -371,7 +371,11 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
       return;
     }
     try {
-      await submitRuntimeGuidance(content, { sessionId, turnId, projectId: normalizedProjectId });
+      await submitRuntimeGuidance(content, {
+        conversationId: sessionId,
+        turnId,
+        projectId: normalizedProjectId,
+      });
     } catch (error) {
       console.error('Failed to submit runtime guidance in team pane:', error);
     }

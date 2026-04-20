@@ -1,0 +1,150 @@
+version: 1
+
+defaults:
+  owner_hint: Repository/platform maintainers
+  owner_footprint: fallback
+
+fragments:
+  - file: .github/api-contract/fragments/chat_app_server_rs/10-core-sessions-messages.yaml
+    owner_hint: Chat runtime/session domain
+    owner_footprint: mapped
+    codeowners:
+      - "@chatos-rs/main-chat-runtime"
+    ownership_map_rules:
+      - path_prefix: /api/sessions*
+        owner_scope: Chat runtime/session domain
+      - path_prefix: /api/messages*
+        owner_scope: Chat runtime/session domain
+      - path_prefix: /api/chat/*
+        owner_scope: Chat runtime/session domain
+
+  - file: .github/api-contract/fragments/chat_app_server_rs/20-projects-contacts.yaml
+    owner_hint: Project/contact collaboration domain
+    owner_footprint: mapped
+    codeowners:
+      - "@chatos-rs/main-projects-contacts"
+    ownership_map_rules:
+      - path_prefix: /api/projects*
+        owner_scope: Project/contact collaboration domain
+      - path_prefix: /api/contacts*
+        owner_scope: Project/contact collaboration domain
+
+  - file: .github/api-contract/fragments/chat_app_server_rs/30-agents-auth-chat.yaml
+    owner_hint: Auth & user identity flows; Agent orchestration domain; Chat runtime/session domain
+    owner_footprint: mapped
+    codeowners:
+      - "@chatos-rs/main-agents-auth"
+    ownership_map_rules:
+      - path_prefix: /api/auth/*
+        owner_scope: Auth & user identity flows
+      - path_prefix: /api/agent_v2/*
+        owner_scope: Agent orchestration domain
+      - path_prefix: /api/agent_v3/*
+        owner_scope: Agent orchestration domain
+      - path_prefix: /api/memory-agents*
+        owner_scope: Agent orchestration domain
+
+  - file: .github/api-contract/fragments/chat_app_server_rs/40-terminal-task.yaml
+    owner_hint: Terminal/task execution domain
+    owner_footprint: mapped
+    codeowners:
+      - "@chatos-rs/main-terminal-task"
+    ownership_map_rules:
+      - path_prefix: /api/terminals*
+        owner_scope: Terminal/task execution domain
+      - path_prefix: /api/task-manager/*
+        owner_scope: Terminal/task execution domain
+
+  - file: .github/api-contract/fragments/chat_app_server_rs/50-notepad-fs-remote-mcp.yaml
+    owner_hint: Remote I/O and file operations domain; Main backend maintainers (notepad/mcp)
+    owner_footprint: mapped
+    codeowners:
+      - "@chatos-rs/main-io-notepad-mcp"
+    ownership_map_rules:
+      - path_prefix: /api/remote-connections*
+        owner_scope: Remote I/O and file operations
+      - path_prefix: /api/fs/*
+        owner_scope: Remote I/O and file operations
+
+  - file: .github/api-contract/fragments/chat_app_server_rs/60-system-config-ui.yaml
+    owner_hint: System context & prompt UX domain
+    owner_footprint: mapped
+    codeowners:
+      - "@chatos-rs/main-system-config-ui"
+    ownership_map_rules:
+      - path_prefix: /api/system-context*
+        owner_scope: System context & prompt UX domain
+      - path_prefix: /api/ui-prompts/*
+        owner_scope: System context & prompt UX domain
+
+  - file: .github/api-contract/fragments/chat_app_server_rs/70-entrypoints.yaml
+    owner_hint: Main backend maintainers; Repository/platform maintainers
+    owner_footprint: mapped
+    codeowners:
+      - "@chatos-rs/platform-maintainers"
+
+  - file: .github/api-contract/fragments/chat_app_server_rs/_meta.yaml
+    owner_hint: Main backend contract maintainers; Repository/platform maintainers
+    owner_footprint: mapped
+    codeowners:
+      - "@chatos-rs/platform-maintainers"
+
+  - file: .github/api-contract/fragments/memory_server/10-core-sessions-messages.yaml
+    owner_hint: Memory chat/session lifecycle domain
+    owner_footprint: mapped
+    codeowners:
+      - "@chatos-rs/memory-sessions"
+    ownership_map_rules:
+      - path_prefix: /api/memory/v1/sessions*
+        owner_scope: Memory chat/session lifecycle
+      - path_prefix: /api/memory/v1/messages*
+        owner_scope: Memory chat/session lifecycle
+
+  - file: .github/api-contract/fragments/memory_server/20-contacts-projects.yaml
+    owner_hint: Contact/project memory topology domain
+    owner_footprint: mapped
+    codeowners:
+      - "@chatos-rs/memory-contacts-projects"
+    ownership_map_rules:
+      - path_prefix: /api/memory/v1/contacts*
+        owner_scope: Contact/project memory topology
+      - path_prefix: /api/memory/v1/projects*
+        owner_scope: Contact/project memory topology
+      - path_prefix: /api/memory/v1/project-agent-links/*
+        owner_scope: Contact/project memory topology
+
+  - file: .github/api-contract/fragments/memory_server/30-configs-jobs.yaml
+    owner_hint: Model/job configuration domain; Background memory jobs domain
+    owner_footprint: mapped
+    codeowners:
+      - "@chatos-rs/memory-configs-jobs"
+    ownership_map_rules:
+      - path_prefix: /api/memory/v1/configs/*
+        owner_scope: Model/job configuration
+      - path_prefix: /api/memory/v1/jobs/*
+        owner_scope: Background memory jobs
+
+  - file: .github/api-contract/fragments/memory_server/40-agents-auth-skills.yaml
+    owner_hint: Memory auth/user management; Memory agent runtime; Skills/plugin management
+    owner_footprint: mapped
+    codeowners:
+      - "@chatos-rs/memory-agents-auth-skills"
+    ownership_map_rules:
+      - path_prefix: /api/memory/v1/auth/*
+        owner_scope: Memory auth & user management
+      - path_prefix: /api/memory/v1/agents*
+        owner_scope: Memory agent runtime domain
+      - path_prefix: /api/memory/v1/skills*
+        owner_scope: Skills & plugin management
+
+  - file: .github/api-contract/fragments/memory_server/50-runtime-sync.yaml
+    owner_hint: Memory chat/session lifecycle domain
+    owner_footprint: mapped
+    codeowners:
+      - "@chatos-rs/memory-sessions"
+
+  - file: .github/api-contract/fragments/memory_server/_meta.yaml
+    owner_hint: Memory backend contract maintainers; Repository/platform maintainers
+    owner_footprint: mapped
+    codeowners:
+      - "@chatos-rs/platform-maintainers"

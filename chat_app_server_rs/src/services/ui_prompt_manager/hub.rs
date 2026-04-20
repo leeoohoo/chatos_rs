@@ -74,8 +74,8 @@ pub async fn create_ui_prompt_request(
     let prompt_id = trimmed_non_empty(payload.prompt_id.as_str())
         .ok_or_else(|| "prompt_id is required".to_string())?
         .to_string();
-    let session_id = trimmed_non_empty(payload.session_id.as_str())
-        .ok_or_else(|| "session_id is required".to_string())?
+    let conversation_id = trimmed_non_empty(payload.conversation_id.as_str())
+        .ok_or_else(|| "conversation_id is required".to_string())?
         .to_string();
     let conversation_turn_id = trimmed_non_empty(payload.conversation_turn_id.as_str())
         .ok_or_else(|| "conversation_turn_id is required".to_string())?
@@ -83,7 +83,7 @@ pub async fn create_ui_prompt_request(
 
     let mut normalized_payload = payload;
     normalized_payload.prompt_id = prompt_id;
-    normalized_payload.session_id = session_id;
+    normalized_payload.conversation_id = conversation_id;
     normalized_payload.conversation_turn_id = conversation_turn_id;
     normalized_payload.timeout_ms = normalized_payload
         .timeout_ms

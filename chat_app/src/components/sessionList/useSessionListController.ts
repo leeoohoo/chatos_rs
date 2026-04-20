@@ -2,7 +2,10 @@ import { useEffect, useMemo, useState } from 'react';
 
 import { useConfirmDialog } from '../../hooks/useConfirmDialog';
 import { apiClient as globalApiClient } from '../../lib/api/client';
-import { useChatApiClientFromContext, useChatStoreContext } from '../../lib/store/ChatStoreContext';
+import {
+  useChatApiClientFromContext,
+  useOptionalChatStoreContext,
+} from '../../lib/store/ChatStoreContext';
 import { useChatStore } from '../../lib/store';
 import {
   useContactSessionCreator,
@@ -36,17 +39,8 @@ export const useSessionListController = ({
   onOpenSessionRuntimeContext,
   isCollapsed,
 }: SessionListControllerParams) => {
-  let contextStoreHook: typeof useChatStore | null = null;
-  try {
-    contextStoreHook = useChatStoreContext();
-  } catch {
-    contextStoreHook = null;
-  }
-
-  const storeToUse = store || contextStoreHook;
-  if (!storeToUse) {
-    throw new Error('SessionList must be used within a ChatStoreProvider or receive a store prop');
-  }
+  const contextStoreHook = useOptionalChatStoreContext();
+  const storeToUse = store || contextStoreHook || useChatStore;
 
   const {
     sessions,

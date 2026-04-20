@@ -82,6 +82,10 @@ const normalizeToolCallId = (value: any): string => {
   return String(value).trim();
 };
 
+const extractStructuredToolResult = (metadata: any): any => (
+  metadata?.structured_result ?? metadata?.structuredResult
+);
+
 export const isMeaningfulReasoning = (value: unknown): value is string => {
   if (!isNonEmptyString(value)) {
     return false;
@@ -154,7 +158,7 @@ export const normalizeRawMessages = (rawMessages: any[], sessionId: string): Mes
 
     return {
       id: message.id,
-      sessionId: message.session_id ?? message.sessionId ?? sessionId,
+      sessionId: message.conversation_id ?? message.conversationId ?? sessionId,
       role: message.role as 'user' | 'assistant' | 'system' | 'tool',
       content: typeof message.content === 'string' ? message.content : String(message.content ?? ''),
       summary: message.summary,
@@ -166,7 +170,7 @@ export const normalizeRawMessages = (rawMessages: any[], sessionId: string): Mes
     };
   });
 
-  const toolResultsMap = new Map<string, { content: string; error?: string }>();
+  const toolResultsMap = new Map<string, { content: any; error?: string }>();
   parsedMessages.forEach((message) => {
     const toolCallId = normalizeToolCallId(message.toolCallId);
     if (message.role !== 'tool' || !toolCallId) {
@@ -174,8 +178,9 @@ export const normalizeRawMessages = (rawMessages: any[], sessionId: string): Mes
     }
 
     const isError = message.metadata?.isError || message.metadata?.is_error || false;
+    const structuredResult = extractStructuredToolResult(message.metadata);
     toolResultsMap.set(toolCallId, {
-      content: message.content,
+      content: structuredResult !== undefined ? structuredResult : message.content,
       error: isError ? message.content : undefined,
     });
   });

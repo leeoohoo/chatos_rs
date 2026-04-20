@@ -75,7 +75,7 @@ impl AgentBuilderService {
         &self,
         name: &str,
         args: Value,
-        _session_id: Option<&str>,
+        _conversation_id: Option<&str>,
         _conversation_turn_id: Option<&str>,
         _on_stream_chunk: Option<crate::core::mcp_tools::ToolStreamChunkCallback>,
     ) -> Result<Value, String> {

@@ -95,7 +95,7 @@ pub(super) async fn create_session(
     let Some(title) = normalize_non_empty(title) else {
         return (
             StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({"error": "会话标题不能为空"})),
+            Json(serde_json::json!({"error": "对话线程标题不能为空"})),
         );
     };
 
@@ -233,11 +233,11 @@ pub(super) async fn delete_session(
     match memory_server_client::delete_session(&id).await {
         Ok(true) => (
             StatusCode::OK,
-            Json(serde_json::json!({"success": true, "message": "会话已归档"})),
+            Json(serde_json::json!({"success": true, "message": "对话线程已归档"})),
         ),
         Ok(false) => (
             StatusCode::NOT_FOUND,
-            Json(serde_json::json!({"error": "会话不存在"})),
+            Json(serde_json::json!({"error": "对话线程不存在"})),
         ),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,

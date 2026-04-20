@@ -7,7 +7,7 @@ use super::codec::{parse_json_or_default, parse_status};
 #[derive(Debug, Clone, FromRow)]
 pub(super) struct UiPromptRow {
     pub(super) id: String,
-    pub(super) session_id: String,
+    pub(super) conversation_id: String,
     pub(super) conversation_turn_id: String,
     pub(super) tool_call_id: Option<String>,
     pub(super) kind: String,
@@ -23,7 +23,7 @@ impl UiPromptRow {
     pub(super) fn into_record(self) -> UiPromptRecord {
         UiPromptRecord {
             id: self.id,
-            session_id: self.session_id,
+            conversation_id: self.conversation_id,
             conversation_turn_id: self.conversation_turn_id,
             tool_call_id: self.tool_call_id,
             kind: self.kind,

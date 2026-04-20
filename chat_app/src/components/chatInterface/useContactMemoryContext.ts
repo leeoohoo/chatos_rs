@@ -20,7 +20,7 @@ export interface ContactAgentRecall {
 }
 
 interface MemoryApiClient {
-  getSessionSummaries: (
+  getConversationSummaries: (
     sessionId: string,
     params?: { limit?: number; offset?: number },
   ) => Promise<{ items?: unknown[] }>;
@@ -196,7 +196,7 @@ export const useContactMemoryContext = ({
     setMemoryError(null);
     try {
       const [summaryRows, recallRows] = await Promise.all([
-        apiClient.getSessionSummaries(sessionId, { limit: 300, offset: 0 }),
+        apiClient.getConversationSummaries(sessionId, { limit: 300, offset: 0 }),
         apiClient.getContactAgentRecalls(normalizedContactId, { limit: 200, offset: 0 }),
       ]);
 

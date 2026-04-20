@@ -394,44 +394,239 @@
     background: var(--md-bg);
 }
 
+.markdown-renderer .mermaid-manual-content {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
 .markdown-renderer .mermaid-loading {
-    margin-bottom: 8px;
     font-size: 12px;
     color: var(--md-secondary-text);
     animation: pulse 2s infinite;
 }
 
-.markdown-renderer .mermaid-diagram {
-    overflow-x: auto;
-    padding: 8px;
+.markdown-renderer .mermaid-source-preview {
+    margin-top: 0;
+    max-height: 180px;
+    overflow: auto;
     border: 1px solid var(--md-border);
     border-radius: 6px;
     background: var(--md-secondary-bg);
-    min-height: 48px;
 }
 
-.markdown-renderer .mermaid-diagram svg {
+.markdown-renderer .mermaid-open-btn {
+    font-weight: 600;
+    min-width: 72px;
+}
+
+.markdown-renderer .mermaid-open-btn:hover {
+    background-color: rgba(14, 116, 144, 0.14);
+    color: #0e7490;
+}
+
+.dark .markdown-renderer .mermaid-open-btn:hover {
+    background-color: rgba(34, 211, 238, 0.2);
+    color: #67e8f9;
+}
+
+.mermaid-preview-overlay {
+    --md-bg: #ffffff;
+    --md-secondary-bg: #f8fafc;
+    --md-text: #1e293b;
+    --md-secondary-text: #64748b;
+    --md-border: #e2e8f0;
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    background: rgba(15, 23, 42, 0.55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+}
+
+.dark .mermaid-preview-overlay {
+    --md-bg: #1e1e1e;
+    --md-secondary-bg: #2d2d2d;
+    --md-text: #e6edf3;
+    --md-secondary-text: #8b949e;
+    --md-border: #3d3d3d;
+}
+
+.mermaid-preview-dialog {
+    width: min(960px, 96vw);
+    max-height: min(82vh, 920px);
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--md-border);
+    border-radius: 10px;
+    overflow: hidden;
+    background: var(--md-bg);
+    box-shadow: 0 24px 48px rgba(0, 0, 0, 0.28);
+}
+
+.mermaid-preview-header {
+    background: var(--md-secondary-bg);
+    border-bottom: 1px solid var(--md-border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 10px 12px;
+}
+
+.mermaid-preview-header .code-actions {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+
+.mermaid-preview-header .code-action-btn {
+    padding: 4px 8px;
+    background: rgba(0, 0, 0, 0.08);
+    border: 1px solid rgba(0, 0, 0, 0.16);
+    border-radius: 4px;
+    color: var(--md-text);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    height: 24px;
+}
+
+.dark .mermaid-preview-header .code-action-btn {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.mermaid-preview-header .code-action-btn:hover {
+    background: rgba(0, 0, 0, 0.14);
+}
+
+.dark .mermaid-preview-header .code-action-btn:hover {
+    background: rgba(255, 255, 255, 0.14);
+}
+
+.mermaid-preview-header .code-action-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.mermaid-preview-header .code-action-btn:disabled:hover {
+    background: rgba(0, 0, 0, 0.08);
+}
+
+.dark .mermaid-preview-header .code-action-btn:disabled:hover {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.mermaid-preview-header .code-action-btn .icon {
+    width: 14px;
+    height: 14px;
+    display: inline-flex;
+}
+
+.mermaid-preview-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--md-text);
+}
+
+.mermaid-preview-body {
+    padding: 12px;
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.mermaid-preview-notice {
+    font-size: 12px;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    padding: 6px 8px;
+}
+
+.mermaid-preview-notice.success {
+    color: #166534;
+    background: #ecfdf3;
+    border-color: #bbf7d0;
+}
+
+.dark .mermaid-preview-notice.success {
+    color: #bbf7d0;
+    background: rgba(22, 101, 52, 0.2);
+    border-color: rgba(34, 197, 94, 0.5);
+}
+
+.mermaid-preview-notice.error {
+    color: #b91c1c;
+    background: #fef2f2;
+    border-color: #fecaca;
+}
+
+.dark .mermaid-preview-notice.error {
+    color: #fecaca;
+    background: rgba(127, 29, 29, 0.22);
+    border-color: rgba(248, 113, 113, 0.5);
+}
+
+.mermaid-preview-loading {
+    font-size: 12px;
+    color: var(--md-secondary-text);
+}
+
+.mermaid-preview-diagram {
+    overflow: auto;
+    padding: 10px;
+    border: 1px solid var(--md-border);
+    border-radius: 8px;
+    background: var(--md-secondary-bg);
+    min-height: 180px;
+}
+
+.mermaid-preview-diagram.hidden {
+    display: none;
+}
+
+.mermaid-preview-diagram svg {
     display: block;
     height: auto;
     max-width: 100%;
     margin: 0 auto;
 }
 
-.markdown-renderer .mermaid-fallback {
-    display: none;
-    margin-top: 8px;
+.mermaid-preview-error {
+    color: #b91c1c;
+    font-size: 12px;
 }
 
-.markdown-renderer .mermaid-block.mermaid-rendered .mermaid-loading {
-    display: none;
+.dark .mermaid-preview-error {
+    color: #fca5a5;
 }
 
-.markdown-renderer .mermaid-block.mermaid-error .mermaid-diagram {
-    display: none;
+.mermaid-preview-fallback {
+    margin-top: 0;
+    max-height: 260px;
+    overflow: auto;
 }
 
-.markdown-renderer .mermaid-block.mermaid-error .mermaid-fallback {
-    display: block;
+.mermaid-close-btn {
+    min-width: 56px;
+}
+
+@media (max-width: 768px) {
+    .mermaid-preview-dialog {
+        width: 96vw;
+        max-height: 88vh;
+    }
+    .mermaid-preview-body {
+        padding: 10px;
+    }
 }
 
 /* ===== 引用样式 ===== */

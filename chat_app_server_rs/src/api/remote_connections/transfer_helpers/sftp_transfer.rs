@@ -7,8 +7,8 @@ use walkdir::WalkDir;
 use crate::models::remote_connection::RemoteConnection;
 
 use super::super::{
-    connect_ssh2_session, join_remote_path, normalize_remote_path, remote_parent_path,
-    SftpTransferManager,
+    connect_ssh2_session_with_verification, join_remote_path, normalize_remote_path,
+    remote_parent_path, SftpTransferManager,
 };
 use super::errors::TransferJobError;
 
@@ -341,11 +341,16 @@ pub(crate) fn run_sftp_transfer_job_typed(
     direction: &str,
     local_path: &str,
     remote_path: &str,
+    verification_code: Option<&str>,
     transfer_manager: &SftpTransferManager,
 ) -> Result<String, TransferJobError> {
     check_transfer_not_cancelled(transfer_id, transfer_manager)?;
-    let connected = connect_ssh2_session(connection, Duration::from_secs(20))
-        .map_err(TransferJobError::remote)?;
+    let connected = connect_ssh2_session_with_verification(
+        connection,
+        Duration::from_secs(20),
+        verification_code,
+    )
+    .map_err(TransferJobError::remote)?;
     let sftp = connected
         .session
         .sftp()

@@ -35,12 +35,13 @@ pub async fn ensure_owned_session(
 
 pub fn map_session_access_error(err: SessionAccessError) -> (StatusCode, Json<Value>) {
     match err {
-        SessionAccessError::NotFound => {
-            (StatusCode::NOT_FOUND, Json(json!({"error": "会话不存在"})))
-        }
+        SessionAccessError::NotFound => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "对话线程不存在"})),
+        ),
         SessionAccessError::Forbidden => (
             StatusCode::FORBIDDEN,
-            Json(json!({"error": "无权访问该会话"})),
+            Json(json!({"error": "无权访问该对话线程"})),
         ),
         SessionAccessError::Internal(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -53,11 +54,11 @@ pub fn map_session_access_error_with_success(err: SessionAccessError) -> (Status
     match err {
         SessionAccessError::NotFound => (
             StatusCode::NOT_FOUND,
-            Json(json!({"success": false, "error": "会话不存在"})),
+            Json(json!({"success": false, "error": "对话线程不存在"})),
         ),
         SessionAccessError::Forbidden => (
             StatusCode::FORBIDDEN,
-            Json(json!({"success": false, "error": "无权访问该会话"})),
+            Json(json!({"success": false, "error": "无权访问该对话线程"})),
         ),
         SessionAccessError::Internal(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,

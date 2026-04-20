@@ -1,0 +1,1009 @@
+openapi: 3.0.3
+info:
+  title: Chatos Memory Backend API
+  version: 0.1.0-bootstrap
+  description: 'Bootstrap OpenAPI contract for memory_server/backend.
+
+    This is an initial skeleton and will be expanded incrementally.
+
+    '
+servers:
+- url: http://localhost:7080
+components:
+  schemas:
+    StandardResponse:
+      type: object
+      description: Generic API success envelope placeholder.
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        data:
+          description: Domain-specific payload.
+          nullable: true
+      additionalProperties: true
+paths:
+  /health:
+    get:
+      summary: Health check
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getHealth
+  /api/memory/v1/sessions:
+    get:
+      summary: List memory sessions
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1Sessions
+    post:
+      summary: Create memory session
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiMemoryV1Sessions
+  /api/memory/v1/sessions/{session_id}:
+    get:
+      summary: Get memory session
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1SessionsBySessionId
+    patch:
+      summary: Update memory session
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: patchApiMemoryV1SessionsBySessionId
+    delete:
+      summary: Delete memory session
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: deleteApiMemoryV1SessionsBySessionId
+  /api/memory/v1/sessions/{session_id}/messages:
+    get:
+      summary: List memory messages in a session
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1SessionsBySessionIdMessages
+    post:
+      summary: Create memory message in a session
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiMemoryV1SessionsBySessionIdMessages
+    delete:
+      summary: Clear memory messages in a session
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: deleteApiMemoryV1SessionsBySessionIdMessages
+  /api/memory/v1/messages/{message_id}:
+    get:
+      summary: Get memory message
+      parameters:
+      - in: path
+        name: message_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1MessagesByMessageId
+  /api/memory/v1/contacts:
+    get:
+      summary: List memory contacts
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1Contacts
+    post:
+      summary: Create memory contact
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiMemoryV1Contacts
+  /api/memory/v1/contacts/{contact_id}:
+    delete:
+      summary: Delete memory contact
+      parameters:
+      - in: path
+        name: contact_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: deleteApiMemoryV1ContactsByContactId
+  /api/memory/v1/contacts/{contact_id}/projects:
+    get:
+      summary: List projects for memory contact
+      parameters:
+      - in: path
+        name: contact_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1ContactsByContactIdProjects
+  /api/memory/v1/contacts/{contact_id}/project-memories:
+    get:
+      summary: List project memories for memory contact
+      parameters:
+      - in: path
+        name: contact_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1ContactsByContactIdProjectMemories
+  /api/memory/v1/contacts/{contact_id}/project-memories/{project_id}:
+    get:
+      summary: List project memories for memory contact by project
+      parameters:
+      - in: path
+        name: contact_id
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: project_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1ContactsByContactIdProjectMemoriesByProjectId
+  /api/memory/v1/contacts/{contact_id}/projects/{project_id}/summaries:
+    get:
+      summary: List memory summaries for contact project
+      parameters:
+      - in: path
+        name: contact_id
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: project_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1ContactsByContactIdProjectsByProjectIdSummaries
+  /api/memory/v1/contacts/{contact_id}/agent-recalls:
+    get:
+      summary: List memory contact agent recalls
+      parameters:
+      - in: path
+        name: contact_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1ContactsByContactIdAgentRecalls
+  /api/memory/v1/projects:
+    get:
+      summary: List memory projects
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1Projects
+  /api/memory/v1/projects/{project_id}/contacts:
+    get:
+      summary: List contacts in memory project
+      parameters:
+      - in: path
+        name: project_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1ProjectsByProjectIdContacts
+  /api/memory/v1/projects/sync:
+    post:
+      summary: Sync memory project
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiMemoryV1ProjectsSync
+  /api/memory/v1/project-agent-links/sync:
+    post:
+      summary: Sync memory project-agent link
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiMemoryV1ProjectAgentLinksSync
+  /api/memory/v1/configs/models:
+    get:
+      summary: List memory model configs
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1ConfigsModels
+    post:
+      summary: Create memory model config
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiMemoryV1ConfigsModels
+  /api/memory/v1/configs/models/{model_id}:
+    patch:
+      summary: Update memory model config
+      parameters:
+      - in: path
+        name: model_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: patchApiMemoryV1ConfigsModelsByModelId
+    delete:
+      summary: Delete memory model config
+      parameters:
+      - in: path
+        name: model_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: deleteApiMemoryV1ConfigsModelsByModelId
+  /api/memory/v1/configs/models/{model_id}/test:
+    post:
+      summary: Test memory model config
+      parameters:
+      - in: path
+        name: model_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiMemoryV1ConfigsModelsByModelIdTest
+  /api/memory/v1/configs/summary-job:
+    get:
+      summary: Get summary job config
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1ConfigsSummaryJob
+    put:
+      summary: Put summary job config
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: putApiMemoryV1ConfigsSummaryJob
+  /api/memory/v1/configs/summary-rollup-job:
+    get:
+      summary: Get summary rollup job config
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1ConfigsSummaryRollupJob
+    put:
+      summary: Put summary rollup job config
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: putApiMemoryV1ConfigsSummaryRollupJob
+  /api/memory/v1/configs/agent-memory-job:
+    get:
+      summary: Get agent-memory job config
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1ConfigsAgentMemoryJob
+    put:
+      summary: Put agent-memory job config
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: putApiMemoryV1ConfigsAgentMemoryJob
+  /api/memory/v1/jobs/summary/run-once:
+    post:
+      summary: Run summary job once
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiMemoryV1JobsSummaryRunOnce
+  /api/memory/v1/jobs/summary-rollup/run-once:
+    post:
+      summary: Run summary rollup job once
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiMemoryV1JobsSummaryRollupRunOnce
+  /api/memory/v1/jobs/agent-memory/run-once:
+    post:
+      summary: Run agent-memory job once
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiMemoryV1JobsAgentMemoryRunOnce
+  /api/memory/v1/jobs/runs:
+    get:
+      summary: List memory job runs
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1JobsRuns
+  /api/memory/v1/jobs/stats:
+    get:
+      summary: Get memory job stats
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1JobsStats
+  /api/memory/v1/auth/login:
+    post:
+      summary: Login for memory API
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiMemoryV1AuthLogin
+  /api/memory/v1/auth/me:
+    get:
+      summary: Current memory API user
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1AuthMe
+  /api/memory/v1/skills/plugins/install:
+    post:
+      summary: Install skill plugin
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiMemoryV1SkillsPluginsInstall
+  /api/memory/v1/agents:
+    get:
+      summary: List memory agents
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1Agents
+    post:
+      summary: Create memory agent
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiMemoryV1Agents
+  /api/memory/v1/agents/{agent_id}:
+    get:
+      summary: Get memory agent
+      parameters:
+      - in: path
+        name: agent_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1AgentsByAgentId
+    patch:
+      summary: Update memory agent
+      parameters:
+      - in: path
+        name: agent_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: patchApiMemoryV1AgentsByAgentId
+    delete:
+      summary: Delete memory agent
+      parameters:
+      - in: path
+        name: agent_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: deleteApiMemoryV1AgentsByAgentId
+  /api/memory/v1/agents/{agent_id}/runtime-context:
+    get:
+      summary: Get memory agent runtime context
+      parameters:
+      - in: path
+        name: agent_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1AgentsByAgentIdRuntimeContext
+  /api/memory/v1/agents/{agent_id}/sessions:
+    get:
+      summary: List sessions for memory agent
+      parameters:
+      - in: path
+        name: agent_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1AgentsByAgentIdSessions
+  /api/memory/v1/auth/users:
+    get:
+      summary: List memory API users
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1AuthUsers
+    post:
+      summary: Create memory API user
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiMemoryV1AuthUsers
+  /api/memory/v1/auth/users/{username}:
+    patch:
+      summary: Update memory API user
+      parameters:
+      - in: path
+        name: username
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: patchApiMemoryV1AuthUsersByUsername
+    delete:
+      summary: Delete memory API user
+      parameters:
+      - in: path
+        name: username
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: deleteApiMemoryV1AuthUsersByUsername
+  /api/memory/v1/skills:
+    get:
+      summary: List memory skills
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1Skills
+  /api/memory/v1/skills/{skill_id}:
+    get:
+      summary: Get memory skill
+      parameters:
+      - in: path
+        name: skill_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1SkillsBySkillId
+  /api/memory/v1/skills/plugins:
+    get:
+      summary: List available skill plugins
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1SkillsPlugins
+  /api/memory/v1/skills/plugins/detail:
+    get:
+      summary: Get skill plugin detail
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1SkillsPluginsDetail
+  /api/memory/v1/skills/import-git:
+    post:
+      summary: Import skill from git
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiMemoryV1SkillsImportGit
+  /api/memory/v1/agents/ai-create:
+    post:
+      summary: AI create memory agent
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiMemoryV1AgentsAiCreate
+  /api/memory/v1/context/compose:
+    post:
+      summary: Compose runtime context
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiMemoryV1ContextCompose
+  /api/memory/v1/sessions/{session_id}/messages/batch:
+    post:
+      summary: Batch create session messages
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiMemoryV1SessionsBySessionIdMessagesBatch
+  /api/memory/v1/sessions/{session_id}/messages/{message_id}/sync:
+    put:
+      summary: Sync a session message
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: message_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: putApiMemoryV1SessionsBySessionIdMessagesByMessageIdSync
+  /api/memory/v1/sessions/{session_id}/summaries:
+    get:
+      summary: List session summaries
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1SessionsBySessionIdSummaries
+  /api/memory/v1/sessions/{session_id}/summaries/{summary_id}:
+    delete:
+      summary: Delete session summary
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: summary_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: deleteApiMemoryV1SessionsBySessionIdSummariesBySummaryId
+  /api/memory/v1/sessions/{session_id}/summaries/graph:
+    get:
+      summary: Get session summary graph
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1SessionsBySessionIdSummariesGraph
+  /api/memory/v1/sessions/{session_id}/summaries/levels:
+    get:
+      summary: Get session summary levels
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1SessionsBySessionIdSummariesLevels
+  /api/memory/v1/sessions/{session_id}/sync:
+    put:
+      summary: Sync memory session
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: putApiMemoryV1SessionsBySessionIdSync
+  /api/memory/v1/sessions/{session_id}/turn-runtime-snapshots/by-turn/{turn_id}:
+    get:
+      summary: Get turn runtime snapshot by turn id
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: turn_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1SessionsBySessionIdTurnRuntimeSnapshotsByTurnByTurnId
+  /api/memory/v1/sessions/{session_id}/turn-runtime-snapshots/latest:
+    get:
+      summary: Get latest turn runtime snapshot
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1SessionsBySessionIdTurnRuntimeSnapshotsLatest
+  /api/memory/v1/sessions/{session_id}/turn-runtime-snapshots/{turn_id}/sync:
+    put:
+      summary: Sync turn runtime snapshot
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: turn_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: putApiMemoryV1SessionsBySessionIdTurnRuntimeSnapshotsByTurnIdSync

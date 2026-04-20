@@ -91,11 +91,19 @@ fn ensure_tool_call_entry<'a>(
         .entry(index)
         .or_insert(json!({"id":"","type":"function","function":{"name":"","arguments":""}}));
 
-    let resolved_id = call_id
-        .filter(|value| !value.trim().is_empty())
-        .or_else(|| id.filter(|value| !value.trim().is_empty()));
-    if let Some(value) = resolved_id {
+    let preferred_call_id = call_id.filter(|value| !value.trim().is_empty());
+    let fallback_item_id = id.filter(|value| !value.trim().is_empty());
+    let current_id = entry
+        .get("id")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .unwrap_or("");
+    if let Some(value) = preferred_call_id {
         entry["id"] = Value::String(value.to_string());
+    } else if current_id.is_empty() {
+        if let Some(value) = fallback_item_id {
+            entry["id"] = Value::String(value.to_string());
+        }
     }
     entry
 }
@@ -725,7 +733,9 @@ pub(super) fn apply_stream_event(state: &mut StreamState, event: &Value) -> Stre
         if state.response_obj.is_none()
             && (event.get("output").is_some()
                 || event.get("output_text").is_some()
-                || event.get("text").is_some())
+                || event.get("text").is_some()
+                || event.get("status").is_some()
+                || event.get("error").is_some())
         {
             state.response_obj = Some(event.clone());
         }
@@ -737,6 +747,15 @@ pub(super) fn apply_stream_event(state: &mut StreamState, event: &Value) -> Stre
                     join_stream_text(state.full_content.as_str(), extracted.as_str());
                 state.sent_any_chunk = true;
                 payload.chunk = Some(extracted);
+            }
+        }
+
+        if state.finish_reason.is_none() {
+            if let Some(status) = event.get("status").and_then(|value| value.as_str()) {
+                let normalized = status.trim();
+                if !normalized.is_empty() {
+                    state.finish_reason = Some(normalized.to_string());
+                }
             }
         }
     }

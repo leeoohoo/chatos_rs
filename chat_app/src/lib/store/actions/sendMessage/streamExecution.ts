@@ -79,6 +79,13 @@ export const runStreamingAssistantTurn = async ({
       }),
     });
     sawDone = streamResult.sawDone;
+
+    const bufferedText = typeof streamedTextRef.value === 'string'
+      ? streamedTextRef.value
+      : '';
+    if (bufferedText.trim().length > 0) {
+      applyCompleteContent(bufferedText);
+    }
   } finally {
     set((state) => {
       finalizeStreamingSessionState(state, {

@@ -16,6 +16,7 @@ pub mod remote_connection_codes {
     pub const HOST_KEY_UNTRUSTED: &str = "host_key_untrusted";
     pub const HOST_KEY_VERIFICATION_FAILED: &str = "host_key_verification_failed";
     pub const AUTH_FAILED: &str = "auth_failed";
+    pub const SECOND_FACTOR_REQUIRED: &str = "second_factor_required";
     pub const DNS_RESOLVE_FAILED: &str = "dns_resolve_failed";
     pub const NETWORK_TIMEOUT: &str = "network_timeout";
     pub const NETWORK_UNREACHABLE: &str = "network_unreachable";
@@ -40,6 +41,7 @@ pub mod remote_connection_codes {
         HOST_KEY_UNTRUSTED,
         HOST_KEY_VERIFICATION_FAILED,
         AUTH_FAILED,
+        SECOND_FACTOR_REQUIRED,
         DNS_RESOLVE_FAILED,
         NETWORK_TIMEOUT,
         NETWORK_UNREACHABLE,
@@ -57,6 +59,7 @@ pub mod remote_sftp_codes {
     pub const INVALID_ARGUMENT: &str = "invalid_argument";
     pub const INVALID_PATH: &str = "invalid_path";
     pub const INVALID_DIRECTORY_NAME: &str = "invalid_directory_name";
+    pub const SECOND_FACTOR_REQUIRED: &str = "second_factor_required";
     pub const TRANSFER_NOT_FOUND: &str = "transfer_not_found";
     pub const TRANSFER_NOT_ACTIVE: &str = "transfer_not_active";
     pub const TRANSFER_CANCELLED: &str = "transfer_cancelled";
@@ -73,6 +76,7 @@ pub mod remote_sftp_codes {
         INVALID_ARGUMENT,
         INVALID_PATH,
         INVALID_DIRECTORY_NAME,
+        SECOND_FACTOR_REQUIRED,
         TRANSFER_NOT_FOUND,
         TRANSFER_NOT_ACTIVE,
         TRANSFER_CANCELLED,

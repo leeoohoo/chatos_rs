@@ -1,6 +1,6 @@
 import React from 'react';
 import { MessageList } from '../MessageList';
-import { MarkdownRenderer } from '../MarkdownRenderer';
+import { LazyMarkdownRenderer } from '../LazyMarkdownRenderer';
 import type { ChatInterfaceProps, Message } from '../../types';
 
 interface SessionSummaryViewItem {
@@ -42,6 +42,7 @@ interface SummaryPaneProps {
   isLoading: boolean;
   isStreaming: boolean;
   isStopping: boolean;
+  streamingPreviewText?: string;
   hasMore: boolean;
   onLoadMore: () => void;
   onToggleTurnProcess: (userMessageId: string) => void;
@@ -75,6 +76,7 @@ const SummaryPane: React.FC<SummaryPaneProps> = ({
   isLoading,
   isStreaming,
   isStopping,
+  streamingPreviewText = '',
   hasMore,
   onLoadMore,
   onToggleTurnProcess,
@@ -172,7 +174,7 @@ const SummaryPane: React.FC<SummaryPaneProps> = ({
                     <span>{formatTextDate(item.time)}</span>
                   </div>
                   <div className="mt-1 text-sm leading-6">
-                    <MarkdownRenderer content={item.text} />
+                    <LazyMarkdownRenderer content={item.text} />
                   </div>
                 </div>
               ))}
@@ -193,6 +195,7 @@ const SummaryPane: React.FC<SummaryPaneProps> = ({
         isLoading={isLoading}
         isStreaming={isStreaming}
         isStopping={isStopping}
+        streamingPreviewText={streamingPreviewText}
         hasMore={hasMore}
         onLoadMore={onLoadMore}
         onToggleTurnProcess={onToggleTurnProcess}

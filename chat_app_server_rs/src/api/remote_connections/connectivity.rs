@@ -15,6 +15,7 @@ use super::build_ssh_process_command;
 use super::configure_stream_timeout;
 use super::connect_tcp_stream;
 use super::create_jump_tunnel_stream;
+use super::encode_second_factor_required_error;
 use super::is_password_auth;
 use super::map_command_spawn_error;
 
@@ -26,14 +27,15 @@ pub(super) fn should_use_native_ssh(_connection: &RemoteConnection) -> bool {
     true
 }
 
-pub(super) fn connect_ssh2_session(
+pub(super) fn connect_ssh2_session_with_verification(
     connection: &RemoteConnection,
     timeout_duration: Duration,
+    verification_code: Option<&str>,
 ) -> Result<ConnectedSshSession, String> {
     let timeout = StdDuration::from_millis(timeout_duration.as_millis().max(1) as u64);
     let timeout_ms = timeout_duration.as_millis().clamp(1000, u32::MAX as u128) as u32;
     let stream = if connection.jump_enabled {
-        create_jump_tunnel_stream(connection, timeout, timeout_ms)?
+        create_jump_tunnel_stream(connection, timeout, timeout_ms, verification_code)?
     } else {
         let stream =
             connect_tcp_stream(connection.host.as_str(), connection.port, timeout, "远端")?;
@@ -53,7 +55,7 @@ pub(super) fn connect_ssh2_session(
         connection.port,
         connection.host_key_policy.as_str(),
     )?;
-    authenticate_target_session(&session, connection)?;
+    authenticate_target_session(&session, connection, verification_code)?;
 
     if !session.authenticated() {
         return Err("SSH 认证失败".to_string());
@@ -66,19 +68,7 @@ pub(super) fn spawn_remote_shell(
     connection: &RemoteConnection,
     slave: Box<dyn portable_pty::SlavePty + Send>,
 ) -> Result<Box<dyn portable_pty::Child + Send + Sync>, String> {
-    let mut cmd = if is_password_auth(connection) {
-        let password = connection
-            .password
-            .as_ref()
-            .ok_or_else(|| "password 模式需要提供 password".to_string())?;
-        let mut builder = CommandBuilder::new("sshpass");
-        builder.arg("-p");
-        builder.arg(password.as_str());
-        builder.arg("ssh");
-        builder
-    } else {
-        CommandBuilder::new("ssh")
-    };
+    let mut cmd = CommandBuilder::new("ssh");
     let args = build_ssh_args(connection, true, connection.default_remote_path.as_deref());
     for arg in args {
         cmd.arg(arg);
@@ -86,14 +76,9 @@ pub(super) fn spawn_remote_shell(
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
 
-    slave.spawn_command(cmd).map_err(|e| {
-        let text = e.to_string();
-        if is_password_auth(connection) && text.contains("No such file") {
-            "ssh spawn failed: 未找到 sshpass，请先安装 sshpass 后再使用密码登录".to_string()
-        } else {
-            format!("ssh spawn failed: {e}")
-        }
-    })
+    slave
+        .spawn_command(cmd)
+        .map_err(|e| format!("ssh spawn failed: {e}"))
 }
 
 pub(crate) async fn run_ssh_command(
@@ -101,12 +86,29 @@ pub(crate) async fn run_ssh_command(
     remote_command: &str,
     timeout_duration: Duration,
 ) -> Result<String, String> {
+    run_ssh_command_with_verification(connection, remote_command, timeout_duration, None).await
+}
+
+pub(crate) async fn run_ssh_command_with_verification(
+    connection: &RemoteConnection,
+    remote_command: &str,
+    timeout_duration: Duration,
+    verification_code: Option<&str>,
+) -> Result<String, String> {
     if should_use_native_ssh(connection) {
         let connection = connection.clone();
         let command = remote_command.to_string();
         let timeout_duration_copy = timeout_duration;
+        let verification_code_owned = verification_code
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(ToOwned::to_owned);
         return tokio::task::spawn_blocking(move || {
-            let connected = connect_ssh2_session(&connection, timeout_duration_copy)?;
+            let connected = connect_ssh2_session_with_verification(
+                &connection,
+                timeout_duration_copy,
+                verification_code_owned.as_deref(),
+            )?;
             let mut channel = connected
                 .session
                 .channel_session()
@@ -157,6 +159,21 @@ pub(crate) async fn run_ssh_command(
         .map_err(|_| "SSH 命令执行超时".to_string())?
         .map_err(|e| map_command_spawn_error("SSH 命令执行失败", e, password_auth))?;
 
+    if password_auth && verification_code.map(str::trim).unwrap_or("").is_empty() {
+        let stderr_preview = String::from_utf8_lossy(&output.stderr).to_lowercase();
+        if stderr_preview.contains("verification code")
+            || stderr_preview.contains("one-time")
+            || stderr_preview.contains("otp")
+            || stderr_preview.contains("验证码")
+            || stderr_preview.contains("mfa")
+            || stderr_preview.contains("2fa")
+        {
+            return Err(encode_second_factor_required_error(
+                "Verification code / OTP",
+            ));
+        }
+    }
+
     if output.status.success() {
         return Ok(String::from_utf8_lossy(&output.stdout).to_string());
     }
@@ -171,9 +188,16 @@ pub(crate) async fn run_ssh_command(
 
 pub(crate) async fn run_remote_connectivity_test(
     connection: &RemoteConnection,
+    verification_code: Option<&str>,
 ) -> Result<Value, String> {
     let script = "printf '__CHATOS_OK__\\n'; uname -n 2>/dev/null || hostname";
-    let output = run_ssh_command(connection, script, Duration::from_secs(12)).await?;
+    let output = run_ssh_command_with_verification(
+        connection,
+        script,
+        Duration::from_secs(12),
+        verification_code,
+    )
+    .await?;
     if !output.contains("__CHATOS_OK__") {
         return Err("远端未返回预期握手标识".to_string());
     }

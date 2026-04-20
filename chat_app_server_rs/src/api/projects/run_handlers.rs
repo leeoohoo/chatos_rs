@@ -1,12 +1,10 @@
-use axum::{
-    extract::Path,
-    http::StatusCode,
-    Json,
-};
+use axum::{extract::Path, http::StatusCode, Json};
 use serde_json::{json, Value};
 
 use crate::core::auth::AuthUser;
 use crate::core::project_access::{ensure_owned_project, map_project_access_error};
+use crate::core::time::now_rfc3339;
+use crate::models::project_run::ProjectRunCatalog;
 use crate::repositories::project_run_catalogs;
 use crate::services::project_run::{
     analyze_project, apply_default_target, dispatch_command, resolve_execution, RunExecutionInput,
@@ -17,12 +15,21 @@ use super::contracts::{ProjectRunDefaultRequest, ProjectRunExecuteRequest};
 async fn load_or_analyze_catalog(
     project: &crate::models::project::Project,
 ) -> Result<crate::models::project_run::ProjectRunCatalog, String> {
-    if let Some(cached) = project_run_catalogs::get_catalog_by_project_id(project.id.as_str()).await? {
+    if let Some(cached) =
+        project_run_catalogs::get_catalog_by_project_id(project.id.as_str()).await?
+    {
         return Ok(cached);
     }
-    let analyzed = analyze_project(project).await;
-    project_run_catalogs::upsert_catalog(&analyzed).await?;
-    Ok(analyzed)
+    Ok(ProjectRunCatalog {
+        project_id: project.id.clone(),
+        user_id: project.user_id.clone(),
+        status: "empty".to_string(),
+        default_target_id: None,
+        targets: vec![],
+        error_message: None,
+        analyzed_at: None,
+        updated_at: now_rfc3339(),
+    })
 }
 
 pub(super) async fn analyze_project_run(

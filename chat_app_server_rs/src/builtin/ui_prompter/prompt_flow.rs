@@ -26,7 +26,7 @@ pub(super) fn handle_prompt_key_values(
     let fields = normalize_kv_fields(args.get("fields"), 50)?;
     let payload = UiPromptPayload {
         prompt_id: make_prompt_id(),
-        session_id: ctx.session_id.to_string(),
+        conversation_id: ctx.conversation_id.to_string(),
         conversation_turn_id: ctx.conversation_turn_id.to_string(),
         tool_call_id: None,
         kind: "kv".to_string(),
@@ -73,7 +73,7 @@ pub(super) fn handle_prompt_choices(
 
     let payload = UiPromptPayload {
         prompt_id: make_prompt_id(),
-        session_id: ctx.session_id.to_string(),
+        conversation_id: ctx.conversation_id.to_string(),
         conversation_turn_id: ctx.conversation_turn_id.to_string(),
         tool_call_id: None,
         kind: "choice".to_string(),
@@ -116,7 +116,7 @@ pub(super) fn handle_prompt_mixed_form(
 
     let payload = UiPromptPayload {
         prompt_id: make_prompt_id(),
-        session_id: ctx.session_id.to_string(),
+        conversation_id: ctx.conversation_id.to_string(),
         conversation_turn_id: ctx.conversation_turn_id.to_string(),
         tool_call_id: None,
         kind: "mixed".to_string(),

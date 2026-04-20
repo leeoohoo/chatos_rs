@@ -9,15 +9,15 @@ import type { ApiRequestFn } from './workspace';
 
 export const getTaskManagerTasks = async (
   request: ApiRequestFn,
-  sessionId: string,
+  conversationId: string,
   options?: { conversationTurnId?: string; includeDone?: boolean; limit?: number }
 ): Promise<TaskManagerTaskResponse[]> => {
-  if (!sessionId) {
+  if (!conversationId) {
     return [];
   }
 
   const params = new URLSearchParams();
-  params.set('session_id', sessionId);
+  params.set('conversation_id', conversationId);
   if (options?.conversationTurnId) {
     params.set('conversation_turn_id', options.conversationTurnId);
   }
@@ -39,19 +39,19 @@ export const getTaskManagerTasks = async (
 
 export const updateTaskManagerTask = (
   request: ApiRequestFn,
-  sessionId: string,
+  conversationId: string,
   taskId: string,
   payload: TaskManagerUpdatePayload,
 ): Promise<TaskManagerTaskResponse> => {
-  if (!sessionId) {
-    throw new Error('sessionId is required');
+  if (!conversationId) {
+    throw new Error('conversationId is required');
   }
   if (!taskId) {
     throw new Error('taskId is required');
   }
 
   const params = new URLSearchParams();
-  params.set('session_id', sessionId);
+  params.set('conversation_id', conversationId);
   return request<TaskManagerTaskResponse>(
     '/task-manager/tasks/' + encodeURIComponent(taskId) + '?' + params.toString(),
     {
@@ -63,18 +63,18 @@ export const updateTaskManagerTask = (
 
 export const completeTaskManagerTask = (
   request: ApiRequestFn,
-  sessionId: string,
+  conversationId: string,
   taskId: string
 ): Promise<TaskManagerTaskResponse> => {
-  if (!sessionId) {
-    throw new Error('sessionId is required');
+  if (!conversationId) {
+    throw new Error('conversationId is required');
   }
   if (!taskId) {
     throw new Error('taskId is required');
   }
 
   const params = new URLSearchParams();
-  params.set('session_id', sessionId);
+  params.set('conversation_id', conversationId);
   return request<TaskManagerTaskResponse>(
     '/task-manager/tasks/' + encodeURIComponent(taskId) + '/complete?' + params.toString(),
     {
@@ -86,18 +86,18 @@ export const completeTaskManagerTask = (
 
 export const deleteTaskManagerTask = (
   request: ApiRequestFn,
-  sessionId: string,
+  conversationId: string,
   taskId: string
 ): Promise<{ success?: boolean }> => {
-  if (!sessionId) {
-    throw new Error('sessionId is required');
+  if (!conversationId) {
+    throw new Error('conversationId is required');
   }
   if (!taskId) {
     throw new Error('taskId is required');
   }
 
   const params = new URLSearchParams();
-  params.set('session_id', sessionId);
+  params.set('conversation_id', conversationId);
   return request<{ success?: boolean }>(
     '/task-manager/tasks/' + encodeURIComponent(taskId) + '?' + params.toString(),
     {
@@ -126,15 +126,15 @@ export const submitTaskReviewDecision = (
 
 export const getPendingUiPrompts = async (
   request: ApiRequestFn,
-  sessionId: string,
+  conversationId: string,
   options?: { limit?: number }
 ): Promise<UiPromptItemResponse[]> => {
-  if (!sessionId) {
+  if (!conversationId) {
     return [];
   }
 
   const params = new URLSearchParams();
-  params.set('session_id', sessionId);
+  params.set('conversation_id', conversationId);
   if (typeof options?.limit === 'number') {
     params.set('limit', String(options.limit));
   }
@@ -150,15 +150,15 @@ export const getPendingUiPrompts = async (
 
 export const getUiPromptHistory = async (
   request: ApiRequestFn,
-  sessionId: string,
+  conversationId: string,
   options?: { limit?: number; includePending?: boolean }
 ): Promise<UiPromptItemResponse[]> => {
-  if (!sessionId) {
+  if (!conversationId) {
     return [];
   }
 
   const params = new URLSearchParams();
-  params.set('session_id', sessionId);
+  params.set('conversation_id', conversationId);
   if (typeof options?.limit === 'number') {
     params.set('limit', String(options.limit));
   }

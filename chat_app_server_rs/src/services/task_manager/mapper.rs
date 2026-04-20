@@ -15,7 +15,7 @@ pub(super) fn task_record_to_doc(task: &TaskRecord) -> Document {
 
     let mut doc = doc! {
         "id": task.id.clone(),
-        "session_id": task.session_id.clone(),
+        "conversation_id": task.conversation_id.clone(),
         "conversation_turn_id": task.conversation_turn_id.clone(),
         "title": task.title.clone(),
         "details": task.details.clone(),
@@ -33,7 +33,7 @@ pub(super) fn task_record_to_doc(task: &TaskRecord) -> Document {
 
 pub(super) fn task_record_from_doc(doc: &Document) -> Option<TaskRecord> {
     let id = doc.get_str("id").ok()?.to_string();
-    let session_id = doc.get_str("session_id").ok()?.to_string();
+    let conversation_id = doc.get_str("conversation_id").ok()?.to_string();
     let conversation_turn_id = doc.get_str("conversation_turn_id").ok()?.to_string();
     let title = doc.get_str("title").ok()?.to_string();
     let details = doc.get_str("details").ok().unwrap_or_default().to_string();
@@ -67,7 +67,7 @@ pub(super) fn task_record_from_doc(doc: &Document) -> Option<TaskRecord> {
 
     Some(TaskRecord {
         id,
-        session_id,
+        conversation_id,
         conversation_turn_id,
         title,
         details,

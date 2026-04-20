@@ -6,7 +6,7 @@ use crate::services::task_manager::types::TaskRecord;
 #[derive(Debug, Clone, FromRow)]
 pub(super) struct TaskRow {
     pub(super) id: String,
-    pub(super) session_id: String,
+    pub(super) conversation_id: String,
     pub(super) conversation_turn_id: String,
     pub(super) title: String,
     pub(super) details: String,
@@ -22,7 +22,7 @@ impl TaskRow {
     pub(super) fn into_record(self) -> TaskRecord {
         TaskRecord {
             id: self.id,
-            session_id: self.session_id,
+            conversation_id: self.conversation_id,
             conversation_turn_id: self.conversation_turn_id,
             title: self.title,
             details: self.details,

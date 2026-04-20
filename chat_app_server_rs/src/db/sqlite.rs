@@ -97,8 +97,7 @@ fn repo_runtime_root() -> PathBuf {
 }
 
 fn migrate_legacy_sqlite_files_if_needed(target: &Path) -> Result<(), String> {
-    let legacy_db = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join(LEGACY_SQLITE_DB_PATH);
+    let legacy_db = Path::new(env!("CARGO_MANIFEST_DIR")).join(LEGACY_SQLITE_DB_PATH);
     if target == legacy_db.as_path() || target.exists() || !legacy_db.exists() {
         return Ok(());
     }
@@ -167,7 +166,7 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
             bytes INTEGER NOT NULL,
             sha256 TEXT,
             diff TEXT,
-            session_id TEXT,
+            conversation_id TEXT,
             run_id TEXT,
             confirmed INTEGER NOT NULL DEFAULT 0,
             confirmed_at TEXT,
@@ -176,7 +175,7 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
         )"#,
         r#"CREATE TABLE IF NOT EXISTS task_manager_tasks (
             id TEXT PRIMARY KEY,
-            session_id TEXT NOT NULL,
+            conversation_id TEXT NOT NULL,
             conversation_turn_id TEXT NOT NULL,
             title TEXT NOT NULL,
             details TEXT NOT NULL,
@@ -186,11 +185,11 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
             due_at TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+            FOREIGN KEY (conversation_id) REFERENCES sessions(id) ON DELETE CASCADE
         )"#,
         r#"CREATE TABLE IF NOT EXISTS ui_prompt_requests (
             id TEXT PRIMARY KEY,
-            session_id TEXT NOT NULL,
+            conversation_id TEXT NOT NULL,
             conversation_turn_id TEXT NOT NULL,
             tool_call_id TEXT,
             kind TEXT NOT NULL,
@@ -200,7 +199,7 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
             expires_at TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+            FOREIGN KEY (conversation_id) REFERENCES sessions(id) ON DELETE CASCADE
         )"#,
         r#"CREATE TABLE IF NOT EXISTS mcp_config_profiles (
             id TEXT PRIMARY KEY,
@@ -410,20 +409,33 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
     ensure_column(pool, "mcp_change_logs", "confirmed_by", "TEXT")
         .await
         .ok();
+    rename_column_if_needed(pool, "mcp_change_logs", "session_id", "conversation_id")
+        .await
+        .ok();
+    rename_column_if_needed(pool, "task_manager_tasks", "session_id", "conversation_id")
+        .await
+        .ok();
+    rename_column_if_needed(pool, "ui_prompt_requests", "session_id", "conversation_id")
+        .await
+        .ok();
+    sqlx::query("DROP INDEX IF EXISTS idx_mcp_change_logs_session_id")
+        .execute(pool)
+        .await
+        .ok();
 
     let indexes = vec![
         "CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status)",
         "CREATE INDEX IF NOT EXISTS idx_sessions_user_status_created_at ON sessions(user_id, status, created_at)",
         "CREATE INDEX IF NOT EXISTS idx_mcp_change_logs_server_name ON mcp_change_logs(server_name)",
         "CREATE INDEX IF NOT EXISTS idx_mcp_change_logs_project_id ON mcp_change_logs(project_id)",
-        "CREATE INDEX IF NOT EXISTS idx_mcp_change_logs_session_id ON mcp_change_logs(session_id)",
+        "CREATE INDEX IF NOT EXISTS idx_mcp_change_logs_conversation_id ON mcp_change_logs(conversation_id)",
         "CREATE INDEX IF NOT EXISTS idx_mcp_change_logs_created_at ON mcp_change_logs(created_at)",
         "CREATE INDEX IF NOT EXISTS idx_mcp_change_logs_confirmed_created_at ON mcp_change_logs(confirmed, created_at)",
         "CREATE INDEX IF NOT EXISTS idx_mcp_change_logs_path ON mcp_change_logs(path)",
-        "CREATE INDEX IF NOT EXISTS idx_task_manager_tasks_session_turn ON task_manager_tasks(session_id, conversation_turn_id)",
-        "CREATE INDEX IF NOT EXISTS idx_task_manager_tasks_session_created_at ON task_manager_tasks(session_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_task_manager_tasks_conversation_turn ON task_manager_tasks(conversation_id, conversation_turn_id)",
+        "CREATE INDEX IF NOT EXISTS idx_task_manager_tasks_conversation_created_at ON task_manager_tasks(conversation_id, created_at)",
         "CREATE INDEX IF NOT EXISTS idx_task_manager_tasks_turn_created_at ON task_manager_tasks(conversation_turn_id, created_at)",
-        "CREATE INDEX IF NOT EXISTS idx_ui_prompt_requests_session_status_updated_at ON ui_prompt_requests(session_id, status, updated_at)",
+        "CREATE INDEX IF NOT EXISTS idx_ui_prompt_requests_conversation_status_updated_at ON ui_prompt_requests(conversation_id, status, updated_at)",
         "CREATE INDEX IF NOT EXISTS idx_ui_prompt_requests_turn_created_at ON ui_prompt_requests(conversation_turn_id, created_at)",
         "CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)",
         "CREATE INDEX IF NOT EXISTS idx_sessions_project_id ON sessions(project_id)",
@@ -501,5 +513,42 @@ async fn ensure_column(
             .await
             .map_err(|e| e.to_string())?;
     }
+    Ok(())
+}
+
+async fn rename_column_if_needed(
+    pool: &SqlitePool,
+    table: &str,
+    from_column: &str,
+    to_column: &str,
+) -> Result<(), String> {
+    let rows = sqlx::query(&format!("PRAGMA table_info({})", table))
+        .fetch_all(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut from_exists = false;
+    let mut to_exists = false;
+    for row in rows {
+        let name: String = row.try_get("name").unwrap_or_default();
+        if name == from_column {
+            from_exists = true;
+        }
+        if name == to_column {
+            to_exists = true;
+        }
+    }
+
+    if from_exists && !to_exists {
+        let sql = format!(
+            "ALTER TABLE {} RENAME COLUMN {} TO {}",
+            table, from_column, to_column
+        );
+        sqlx::query(&sql)
+            .execute(pool)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+
     Ok(())
 }

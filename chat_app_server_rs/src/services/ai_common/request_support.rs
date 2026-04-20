@@ -213,7 +213,10 @@ pub(crate) fn build_assistant_message_metadata(
     if let Some(id) = response_id.map(str::trim).filter(|value| !value.is_empty()) {
         map.insert("response_id".to_string(), Value::String(id.to_string()));
     }
-    if let Some(status) = response_status.map(str::trim).filter(|value| !value.is_empty()) {
+    if let Some(status) = response_status
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         map.insert(
             "response_status".to_string(),
             Value::String(status.to_string()),

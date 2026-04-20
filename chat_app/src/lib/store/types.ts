@@ -122,6 +122,7 @@ export interface SessionChatState {
   isStopping: boolean;
   streamingMessageId: string | null;
   activeTurnId: string | null;
+  streamingPreviewText: string;
 }
 
 export interface SessionRuntimeGuidanceState {
@@ -298,7 +299,7 @@ export interface ChatActions {
     runtimeOptions?: SendMessageRuntimeOptions,
   ) => Promise<void>;
   submitRuntimeGuidance: (content: string, options: {
-    sessionId: string;
+    conversationId: string;
     turnId: string;
     projectId?: string | null;
   }) => Promise<{

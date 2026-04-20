@@ -9,7 +9,7 @@ export const createMessage = (
     ...data,
     createdAt: data.createdAt ? data.createdAt.toISOString() : undefined,
   };
-  return request<SessionMessageResponse>(`/sessions/${data.sessionId}/messages`, {
+  return request<SessionMessageResponse>(`/conversations/${data.conversationId}/messages`, {
     method: 'POST',
     body: JSON.stringify(requestData),
   });

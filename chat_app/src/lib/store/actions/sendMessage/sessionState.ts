@@ -15,6 +15,7 @@ export const createDefaultSessionChatState = (): SessionChatState => ({
   isStopping: false,
   streamingMessageId: null,
   activeTurnId: null,
+  streamingPreviewText: '',
 });
 
 const resolveSessionChatState = (
@@ -72,6 +73,7 @@ export const beginUserTurnInState = (
     isStreaming: true,
     isStopping: false,
     activeTurnId: conversationTurnId,
+    streamingPreviewText: '',
   };
   state.sessionRuntimeGuidanceState[sessionId] = createEmptySessionRuntimeGuidanceState();
 
@@ -112,6 +114,7 @@ export const beginAssistantDraftInState = (
     isStopping: false,
     streamingMessageId: assistantMessage.id,
     activeTurnId: conversationTurnId,
+    streamingPreviewText: '',
   };
 
   if (!state.sessionStreamingMessageDrafts) {
@@ -137,31 +140,24 @@ export const finalizeStreamingSessionState = (
   },
 ) => {
   const currentDraft = state.sessionStreamingMessageDrafts?.[sessionId];
-  let backgroundFinalizedDraft: Message | null = null;
 
   if (currentDraft) {
     const finalizedDraft = cloneStreamingMessageDraft(currentDraft);
     finalizedDraft.status = sawDone ? 'completed' : 'error';
 
     const existingIndex = state.messages.findIndex((message) => message.id === assistantMessageId);
-    const shouldWriteToCurrentMessages = (
-      existingIndex !== -1 || state.currentSessionId === sessionId
-    );
-
     if (existingIndex !== -1) {
       state.messages[existingIndex] = {
         ...state.messages[existingIndex],
         ...finalizedDraft,
       };
-    } else if (shouldWriteToCurrentMessages) {
+    } else if (state.currentSessionId === sessionId) {
       state.messages.push(finalizedDraft);
-    } else {
-      backgroundFinalizedDraft = finalizedDraft;
     }
   }
 
   if (state.sessionStreamingMessageDrafts) {
-    state.sessionStreamingMessageDrafts[sessionId] = backgroundFinalizedDraft;
+    state.sessionStreamingMessageDrafts[sessionId] = null;
   }
 
   const prev = resolveSessionChatState(state, sessionId);
@@ -172,6 +168,7 @@ export const finalizeStreamingSessionState = (
     isStopping: false,
     streamingMessageId: null,
     activeTurnId: null,
+    streamingPreviewText: '',
   };
   resetRuntimeGuidancePendingCount(state, sessionId);
 
@@ -252,6 +249,7 @@ export const failSendMessageState = (
     isStopping: false,
     streamingMessageId: null,
     activeTurnId: null,
+    streamingPreviewText: '',
   };
   resetRuntimeGuidancePendingCount(state, sessionId);
 

@@ -1,0 +1,372 @@
+paths:
+  /api/projects:
+    get:
+      summary: List projects
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiProjects
+    post:
+      summary: Create project
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiProjects
+  /api/projects/{id}:
+    get:
+      summary: Get project
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiProjectsById
+    patch:
+      summary: Update project
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: patchApiProjectsById
+    delete:
+      summary: Delete project
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: deleteApiProjectsById
+  /api/projects/{id}/contacts:
+    get:
+      summary: List project contacts
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiProjectsByIdContacts
+    post:
+      summary: Attach contact to project
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiProjectsByIdContacts
+  /api/projects/{id}/contacts/{contact_id}:
+    delete:
+      summary: Detach contact from project
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: contact_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: deleteApiProjectsByIdContactsByContactId
+  /api/projects/{id}/changes:
+    get:
+      summary: List project changes
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiProjectsByIdChanges
+  /api/projects/{id}/changes/summary:
+    get:
+      summary: Get project change summary
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiProjectsByIdChangesSummary
+  /api/projects/{id}/run/catalog:
+    get:
+      summary: Get project run catalog
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiProjectsByIdRunCatalog
+  /api/projects/{id}/run/analyze:
+    post:
+      summary: Analyze project run
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiProjectsByIdRunAnalyze
+  /api/projects/{id}/run/execute:
+    post:
+      summary: Execute project run
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiProjectsByIdRunExecute
+  /api/projects/{id}/run/default:
+    post:
+      summary: Set default project run
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiProjectsByIdRunDefault
+  /api/contacts:
+    get:
+      summary: List contacts
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiContacts
+    post:
+      summary: Create contact
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiContacts
+  /api/contacts/{contact_id}:
+    patch:
+      summary: Update contact
+      parameters:
+      - in: path
+        name: contact_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: patchApiContactsByContactId
+    delete:
+      summary: Delete contact
+      parameters:
+      - in: path
+        name: contact_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: deleteApiContactsByContactId
+  /api/contacts/{contact_id}/projects:
+    get:
+      summary: List projects for contact
+      parameters:
+      - in: path
+        name: contact_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiContactsByContactIdProjects
+  /api/contacts/{contact_id}/project-memories:
+    get:
+      summary: List project memories for contact
+      parameters:
+      - in: path
+        name: contact_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiContactsByContactIdProjectMemories
+  /api/contacts/{contact_id}/project-memories/{project_id}:
+    get:
+      summary: List project memories for contact by project
+      parameters:
+      - in: path
+        name: contact_id
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: project_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiContactsByContactIdProjectMemoriesByProjectId
+  /api/contacts/{contact_id}/agent-recalls:
+    get:
+      summary: List agent recalls for contact
+      parameters:
+      - in: path
+        name: contact_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiContactsByContactIdAgentRecalls
+  /api/projects/{id}/changes/confirm:
+    post:
+      summary: Confirm project changes
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiProjectsByIdChangesConfirm

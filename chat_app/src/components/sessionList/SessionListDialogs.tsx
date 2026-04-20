@@ -56,6 +56,9 @@ interface SessionListDialogsProps {
   remoteSuccess: string | null;
   remoteTesting: boolean;
   remoteSaving: boolean;
+  remoteVerificationModalOpen: boolean;
+  remoteVerificationPrompt: string;
+  remoteVerificationCode: string;
   setRemoteModalOpen: (value: boolean) => void;
   setRemoteName: (value: string) => void;
   setRemoteHost: (value: string) => void;
@@ -73,9 +76,12 @@ interface SessionListDialogsProps {
   setRemoteJumpUsername: (value: string) => void;
   setRemoteJumpPrivateKeyPath: (value: string) => void;
   setRemoteJumpPassword: (value: string) => void;
+  setRemoteVerificationCode: (value: string) => void;
+  setRemoteVerificationModalOpen: (value: boolean) => void;
   openKeyFilePicker: (target: any) => void;
   handleTestRemoteConnection: () => Promise<void> | void;
   handleSaveRemoteConnection: () => Promise<void> | void;
+  handleSubmitRemoteVerification: () => Promise<void> | void;
 
   keyFilePickerOpen: boolean;
   keyFilePickerTitle: string;
@@ -160,6 +166,9 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
   remoteSuccess,
   remoteTesting,
   remoteSaving,
+  remoteVerificationModalOpen,
+  remoteVerificationPrompt,
+  remoteVerificationCode,
   setRemoteModalOpen,
   setRemoteName,
   setRemoteHost,
@@ -177,9 +186,12 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
   setRemoteJumpUsername,
   setRemoteJumpPrivateKeyPath,
   setRemoteJumpPassword,
+  setRemoteVerificationCode,
+  setRemoteVerificationModalOpen,
   openKeyFilePicker,
   handleTestRemoteConnection,
   handleSaveRemoteConnection,
+  handleSubmitRemoteVerification,
   keyFilePickerOpen,
   keyFilePickerTitle,
   keyFilePickerPath,
@@ -278,6 +290,9 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
       remoteSuccess={remoteSuccess}
       remoteTesting={remoteTesting}
       remoteSaving={remoteSaving}
+      remoteVerificationModalOpen={remoteVerificationModalOpen}
+      remoteVerificationPrompt={remoteVerificationPrompt}
+      remoteVerificationCode={remoteVerificationCode}
       onClose={() => setRemoteModalOpen(false)}
       onRemoteNameChange={setRemoteName}
       onRemoteHostChange={setRemoteHost}
@@ -295,6 +310,9 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
       onRemoteJumpUsernameChange={setRemoteJumpUsername}
       onRemoteJumpPrivateKeyPathChange={setRemoteJumpPrivateKeyPath}
       onRemoteJumpPasswordChange={setRemoteJumpPassword}
+      onRemoteVerificationCodeChange={setRemoteVerificationCode}
+      onRemoteVerificationClose={() => setRemoteVerificationModalOpen(false)}
+      onRemoteVerificationSubmit={handleSubmitRemoteVerification}
       onOpenKeyFilePicker={openKeyFilePicker}
       onTest={handleTestRemoteConnection}
       onSave={handleSaveRemoteConnection}

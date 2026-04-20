@@ -114,7 +114,7 @@ export const applySelectSessionState = ({
     }
   }
 
-  if (draftMessage && typeof draftMessage === 'object') {
+  if (chatState?.isStreaming && draftMessage && typeof draftMessage === 'object') {
     const draftClone = cloneStreamingMessageDraft(draftMessage);
     const draftId = typeof (draftClone as any)?.id === 'string' ? (draftClone as any).id : '';
     const draftIndex = draftId
@@ -146,10 +146,8 @@ export const applySelectSessionState = ({
         };
       }
     }
-
-    if (!chatState?.isStreaming && state.sessionStreamingMessageDrafts) {
-      state.sessionStreamingMessageDrafts[sessionId] = null;
-    }
+  } else if (state.sessionStreamingMessageDrafts) {
+    state.sessionStreamingMessageDrafts[sessionId] = null;
   }
 
   ensureSessionTurnMaps(state, sessionId);

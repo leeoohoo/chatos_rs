@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chatos-rs.local/openapi/ownership/governance-bundle-index.schema.json",
+  "title": "OpenAPI Governance Bundle Index",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "generated_at",
+    "diff_range",
+    "aggregate",
+    "artifacts"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "openapi.governance_bundle_index.v1"
+    },
+    "generated_at": {
+      "type": "string"
+    },
+    "diff_range": {
+      "type": "object",
+      "required": ["base_ref", "head_ref"],
+      "properties": {
+        "base_ref": { "type": "string" },
+        "head_ref": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "aggregate": {
+      "type": "object",
+      "required": [
+        "owner_policy_status",
+        "discrepancy_status",
+        "discrepancy_check_status",
+        "drift_head_status",
+        "drift_delta"
+      ],
+      "properties": {
+        "owner_policy_status": { "type": ["string", "null"] },
+        "discrepancy_status": { "type": ["string", "null"] },
+        "discrepancy_check_status": { "type": ["string", "null"] },
+        "drift_head_status": { "type": ["string", "null"] },
+        "drift_delta": { "type": ["integer", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "artifacts": {
+      "type": "object",
+      "required": [
+        "contract_change_summary",
+        "owner_report",
+        "ownership_discrepancy",
+        "ownership_drift_trend_markdown",
+        "ownership_drift_trend",
+        "pr_comment_draft"
+      ],
+      "properties": {
+        "contract_change_summary": { "$ref": "#/$defs/artifact" },
+        "owner_report": { "$ref": "#/$defs/artifact" },
+        "ownership_discrepancy": { "$ref": "#/$defs/artifact" },
+        "ownership_drift_trend_markdown": { "$ref": "#/$defs/artifact" },
+        "ownership_drift_trend": { "$ref": "#/$defs/artifact" },
+        "pr_comment_draft": { "$ref": "#/$defs/artifact" }
+      },
+      "additionalProperties": true
+    }
+  },
+  "$defs": {
+    "artifact": {
+      "type": "object",
+      "required": ["file", "exists", "bytes", "media_type"],
+      "properties": {
+        "file": { "type": "string" },
+        "exists": { "type": "boolean" },
+        "bytes": { "type": ["integer", "null"], "minimum": 0 },
+        "media_type": { "type": "string" },
+        "schema_version": { "type": ["string", "null"] }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

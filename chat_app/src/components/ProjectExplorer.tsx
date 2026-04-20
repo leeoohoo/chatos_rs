@@ -1,11 +1,18 @@
 import React, { useCallback, useMemo } from 'react';
+import { shallow } from 'zustand/shallow';
+
 import { apiClient as globalApiClient } from '../lib/api/client';
-import { useChatApiClientFromContext } from '../lib/store/ChatStoreContext';
+import {
+  useChatApiClientFromContext,
+  useChatStoreSelector,
+} from '../lib/store/ChatStoreContext';
 import type {
+  CodeNavLocation,
   Project,
   FsEntry,
 } from '../types';
 import { cn } from '../lib/utils';
+import { useContactSessionResolver } from '../features/contactSession/useContactSessionResolver';
 import {
   EMPTY_CHANGE_SUMMARY,
   normalizeFile,
@@ -13,6 +20,7 @@ import {
 import { ProjectExplorerFilesWorkspace } from './projectExplorer/ProjectExplorerFilesWorkspace';
 import TeamMembersPane from './projectExplorer/TeamMembersPane';
 import WorkspaceTabs from './projectExplorer/WorkspaceTabs';
+import GitBranchButton from './projectExplorer/git/GitBranchButton';
 import { useProjectTreeActions } from './projectExplorer/useProjectTreeActions';
 import { useProjectExplorerChangeTracking } from './projectExplorer/useProjectExplorerChangeTracking';
 import { useProjectExplorerDnd } from './projectExplorer/useProjectExplorerDnd';
@@ -26,7 +34,12 @@ import {
 import {
   useProjectExplorerState,
 } from './projectExplorer/useProjectExplorerState';
-import { useProjectExplorerRunState } from './projectExplorer/useProjectExplorerRunState';
+import { useProjectExplorerSearch } from './projectExplorer/useProjectExplorerSearch';
+import { useProjectExplorerCodeNav } from './projectExplorer/useProjectExplorerCodeNav';
+import {
+  useProjectExplorerRunState,
+  type ProjectRunnerMember,
+} from './projectExplorer/useProjectExplorerRunState';
 import { useProjectExplorerUiPersistence } from './projectExplorer/useProjectExplorerUiPersistence';
 import { useProjectExplorerWorkspaceView } from './projectExplorer/useProjectExplorerWorkspaceView';
 
@@ -35,9 +48,39 @@ interface ProjectExplorerProps {
   className?: string;
 }
 
+const RUNNER_SCRIPT_REL_PATH = '.chatos/project_runner.sh';
+const RUNNER_LOG_DIR_REL_PATH = 'project_runner/logs';
+const RUNNER_GENERATION_MCP_IDS = [
+  'builtin_code_maintainer_read',
+  'builtin_code_maintainer_write',
+  'builtin_terminal_controller',
+];
+
 export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, className }) => {
   const apiClientFromContext = useChatApiClientFromContext();
   const client = useMemo(() => apiClientFromContext || globalApiClient, [apiClientFromContext]);
+  const {
+    currentSession,
+    sessions,
+    createSession,
+    selectSession,
+    sendMessage,
+    selectedModelId,
+  } = useChatStoreSelector((state) => ({
+    currentSession: state.currentSession,
+    sessions: state.sessions,
+    createSession: state.createSession,
+    selectSession: state.selectSession,
+    sendMessage: state.sendMessage,
+    selectedModelId: state.selectedModelId,
+  }), shallow);
+  const { ensureContactSession } = useContactSessionResolver({
+    sessions: sessions || [],
+    currentSession,
+    createSession,
+    apiClient: client,
+    defaultProjectId: project?.id || null,
+  });
   const {
     containerRef,
     treeScrollRef,
@@ -97,6 +140,36 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     keyToPath,
     getParentPath,
   } = useProjectExplorerPathHelpers(project?.rootPath);
+  const {
+    searchQuery,
+    setSearchQuery,
+    searchCaseSensitive,
+    setSearchCaseSensitive,
+    searchWholeWord,
+    setSearchWholeWord,
+    searchResults,
+    searchLoading,
+    searchError,
+    searchTruncated,
+    activeSearchHitId,
+    activeSearchHitIndex,
+    totalSearchHits,
+    previewTargetLine,
+    previewTargetLineRevision,
+    setPreviewTargetLine,
+    canOpenPreviousSearchHit,
+    canOpenNextSearchHit,
+    runSearchQuery,
+    clearSearch,
+    clearSearchNavigation,
+    activateSearchHit,
+    handleOpenSearchHit,
+    openPreviousSearchHit,
+    openNextSearchHit,
+  } = useProjectExplorerSearch({
+    client,
+    projectRootPath: project?.rootPath,
+  });
   const resolveParentPath = useCallback(
     (path: string | null | undefined) => getParentPath(path || '') || '',
     [getParentPath],
@@ -150,6 +223,7 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
   }, [entriesMap, loadEntries, toExpandedKey]);
 
   const openFile = useCallback(async (entry: FsEntry) => {
+    clearSearchNavigation();
     setActionError(null);
     setSelectedPath(entry.path);
     setSelectedFile(null);
@@ -163,7 +237,18 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     } finally {
       setLoadingFile(false);
     }
-  }, [client]);
+  }, [clearSearchNavigation, client]);
+
+  const openCodeNavLocation = useCallback(async (location: CodeNavLocation) => {
+    await openFile({
+      name: location.relativePath.split('/').filter(Boolean).pop() || location.path.split(/[\\/]/).pop() || location.path,
+      path: location.path,
+      isDir: false,
+      size: null,
+      modifiedAt: null,
+    });
+    setPreviewTargetLine(location.line);
+  }, [openFile, setPreviewTargetLine]);
 
   const projectRootEntry = useMemo<FsEntry | null>(() => {
     if (!project?.rootPath) return null;
@@ -199,21 +284,31 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     [selectedEntry]
   );
   const {
-    runCwd,
     runStatus,
-    runTargets,
     runCatalogLoading,
     runCatalogError,
-    selectedRunTargetId,
-    setSelectedRunTargetId,
-    handleDispatchTerminalCommand,
-    handleInterruptTerminal,
-    handleGetTerminal,
-    handleListTerminalLogs,
-    handleListTerminals,
-    handleAnalyzeRunTargets,
     canRunFile,
     handleRunFile,
+    projectMembers,
+    projectMembersLoading,
+    projectMembersError,
+    runnerScriptExists,
+    runnerScriptChecking,
+    runnerScriptPath,
+    runnerStartCommand,
+    runnerStopCommand,
+    runnerRestartCommand,
+    starting,
+    stopping,
+    restarting,
+    runnerMessage,
+    runnerError,
+    activeRun,
+    activeTerminalBusy,
+    handleRunnerStart,
+    handleRunnerStop,
+    handleRunnerRestart,
+    refreshRunnerState,
   } = useProjectExplorerRunState({
     client,
     project,
@@ -224,6 +319,115 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     setActionLoading,
     setActionMessage,
   });
+  const {
+    navCapabilities,
+    navCapabilitiesLoading,
+    navCapabilitiesError,
+    selectedToken,
+    selectedTokenLine,
+    selectedTokenColumn,
+    navResult,
+    navRequestKind,
+    navLoading,
+    navError,
+    activeNavLocationId,
+    documentSymbols,
+    documentSymbolsLoading,
+    documentSymbolsError,
+    handleTokenSelection,
+    clearTokenSelection,
+    requestDefinition,
+    requestReferences,
+    handleOpenNavLocation,
+  } = useProjectExplorerCodeNav({
+    client,
+    projectRootPath: project?.rootPath,
+    selectedFilePath: selectedFile?.path || null,
+    openLocation: openCodeNavLocation,
+  });
+  const handlePreviewTokenSelection = useCallback((selection: {
+    token: string;
+    line: number;
+    column: number;
+  } | null) => {
+    handleTokenSelection(selection);
+    if (selection?.line) {
+      setPreviewTargetLine(selection.line);
+    }
+  }, [handleTokenSelection, setPreviewTargetLine]);
+  const handleOpenDocumentSymbol = useCallback((line: number) => {
+    setPreviewTargetLine(line);
+  }, [setPreviewTargetLine]);
+
+  const handleGenerateRunnerScriptForContact = useCallback(async (member: ProjectRunnerMember) => {
+    if (!project?.id || !project?.rootPath) {
+      throw new Error('当前项目不存在或根目录为空');
+    }
+    const contactId = typeof member?.contactId === 'string' ? member.contactId.trim() : '';
+    const contactAgentId = typeof member?.agentId === 'string' ? member.agentId.trim() : '';
+    if (!contactId || !contactAgentId) {
+      throw new Error('联系人信息不完整，无法生成启动脚本');
+    }
+    const sessionId = await ensureContactSession({
+      id: contactId,
+      agentId: contactAgentId,
+      name: member.name,
+    }, {
+      projectId: project.id,
+      title: member.name || '项目运行助手',
+      selectedModelId: selectedModelId ?? null,
+      projectRoot: project.rootPath,
+      mcpEnabled: true,
+      enabledMcpIds: RUNNER_GENERATION_MCP_IDS,
+      createSessionOptions: { keepActivePanel: true },
+    });
+    if (!sessionId) {
+      throw new Error('未能创建或定位联系人会话');
+    }
+    if (currentSession?.id !== sessionId) {
+      await selectSession(sessionId, { keepActivePanel: true });
+    }
+
+    const prompt = [
+      `你是项目运行脚本生成助手。请在项目根目录 ${project.rootPath} 下创建文件 ${RUNNER_SCRIPT_REL_PATH}。`,
+      '',
+      '目标：',
+      '1) 生成一个 bash 脚本，支持参数 start / stop / restart。',
+      '2) start: 启动当前项目下所有可启动服务（前端、后端、worker 等都包含，能启动的都要启动）。',
+      '3) stop: 停止 start 启动的全部进程（优先使用 pid 文件，避免误杀非本脚本启动进程）。',
+      '4) restart: 等价于 stop + start。',
+      `5) 所有服务日志必须写入 ${project.rootPath}/${RUNNER_LOG_DIR_REL_PATH}/。`,
+      '',
+      '强制要求：',
+      '1) 先读取项目关键文件（如 package.json / pyproject.toml / Cargo.toml / go.mod / pom.xml 等）再决策。',
+      '2) 可使用终端工具做必要探测（如命令是否存在）。',
+      '3) 脚本必须可执行（#!/usr/bin/env bash，set -euo pipefail）。',
+      `4) 必须创建日志目录 ${project.rootPath}/${RUNNER_LOG_DIR_REL_PATH}/，并按服务拆分日志文件（例如 frontend.log、backend.log）。`,
+      '5) 若无法确定某服务启动命令，要在注释与日志里明确标记该服务待人工补充，但其他可启动服务仍需正常启动。',
+      '6) 禁止把后端端口写死为 3997 或其它固定值；每个服务启动前必须检测端口是否可用，不可用时自动选择可用端口。',
+      '7) 必须把实际使用端口写入 project_runner/runtime/ports.env，重启时优先复用该文件中的端口配置。',
+      '8) stop 只能按本脚本维护的 pid 文件停止，不允许按端口全局 kill，避免误伤其他项目服务。',
+      `9) 完成后请回复：脚本已生成: ${RUNNER_SCRIPT_REL_PATH}`,
+    ].join('\n');
+
+    await sendMessage(prompt, [], {
+      mcpEnabled: true,
+      enabledMcpIds: RUNNER_GENERATION_MCP_IDS,
+      contactAgentId,
+      contactId,
+      projectId: project.id,
+      projectRoot: project.rootPath,
+      workspaceRoot: null,
+    });
+  }, [
+    currentSession?.id,
+    ensureContactSession,
+    project?.id,
+    project?.rootPath,
+    selectSession,
+    selectedModelId,
+    sendMessage,
+  ]);
 
   const actionReloadPath = useMemo(() => {
     if (!selectedEntry) return project?.rootPath || null;
@@ -430,13 +634,14 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     loadChangeSummary,
   });
 
-  if (!project) {
-    return (
-      <div className={cn('flex items-center justify-center h-full text-muted-foreground', className)}>
-        请选择一个项目查看文件
-      </div>
-    );
-  }
+  const effectiveProject: Project = project ?? {
+    id: '__placeholder__',
+    name: '',
+    rootPath: '',
+    createdAt: new Date(0),
+    updatedAt: new Date(0),
+  };
+
   const {
     treePaneProps,
     previewPaneProps,
@@ -449,7 +654,7 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     handleDownloadSelected: workspaceHandleDownloadSelected,
     handleDeleteSelected: workspaceHandleDeleteSelected,
   } = useProjectExplorerWorkspaceView({
-    project,
+    project: effectiveProject,
     treeWidth,
     treeScrollRef,
     entriesMap,
@@ -469,6 +674,32 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     summaryError,
     actionMessage,
     actionError,
+    searchQuery,
+    searchCaseSensitive,
+    searchWholeWord,
+    searchResults,
+    searchLoading,
+    searchError,
+    searchTruncated,
+    activeSearchHitId,
+    activeSearchHitIndex,
+    totalSearchHits,
+    previewTargetLine,
+    previewTargetLineRevision,
+    navCapabilities,
+    navCapabilitiesLoading,
+    navCapabilitiesError,
+    selectedToken,
+    selectedTokenLine,
+    selectedTokenColumn,
+    navResult,
+    navRequestKind,
+    navLoading,
+    navError,
+    activeNavLocationId,
+    documentSymbols,
+    documentSymbolsLoading,
+    documentSymbolsError,
     aggregatedChangeKindByPath,
     normalizePath,
     toExpandedKey,
@@ -493,12 +724,24 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     handleRefresh,
     handleConfirmCurrentChanges,
     handleConfirmAllChanges,
+    handleSearchQueryChange: setSearchQuery,
+    handleSearchCaseSensitiveChange: setSearchCaseSensitive,
+    handleSearchWholeWordChange: setSearchWholeWord,
+    handleSearchInProject: runSearchQuery,
+    canOpenPreviousSearchHit,
+    canOpenNextSearchHit,
+    handleClearSearch: clearSearch,
+    handleActivateSearchHit: activateSearchHit,
+    handleOpenSearchHit: (hit) => handleOpenSearchHit(hit, openFile),
+    handleOpenPreviousSearchHit: () => openPreviousSearchHit(openFile),
+    handleOpenNextSearchHit: () => openNextSearchHit(openFile),
+    handleTokenSelection: handlePreviewTokenSelection,
+    clearTokenSelection,
+    requestDefinition,
+    requestReferences,
+    handleOpenNavLocation,
+    handleOpenDocumentSymbol,
     handleMoveEntryByDrop,
-    handleDispatchTerminalCommand,
-    handleInterruptTerminal,
-    handleGetTerminal,
-    handleListTerminalLogs,
-    handleListTerminals,
     canRunFile,
     handleRunFile,
     handleDownloadSelected,
@@ -507,21 +750,74 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     error,
     selectedFile,
     selectedLog,
-    runCwd,
-    runTargets,
     runStatus,
     runCatalogLoading,
     runCatalogError,
-    selectedRunTargetId,
-    setSelectedRunTargetId,
-    handleAnalyzeRunTargets,
+    projectMembers,
+    projectMembersLoading,
+    projectMembersError,
+    runnerScriptExists,
+    runnerScriptChecking,
+    runnerScriptPath,
+    runnerStartCommand,
+    runnerStopCommand,
+    runnerRestartCommand,
+    starting,
+    stopping,
+    restarting,
+    runnerMessage,
+    runnerError,
+    activeRun,
+    activeTerminalBusy,
+    handleRunnerStart,
+    handleRunnerStop,
+    handleRunnerRestart,
+    refreshRunnerState,
+    handleGenerateRunnerScriptForContact,
   });
+
+  const handleGitRepositoryChanged = useCallback(async () => {
+    if (!project?.rootPath) return;
+    clearSearch();
+    clearTokenSelection();
+    setSelectedPath(project.rootPath);
+    setSelectedFile(null);
+    setError(null);
+    setEntriesMap({});
+    await loadEntries(project.rootPath);
+    await loadChangeSummary();
+  }, [
+    clearSearch,
+    clearTokenSelection,
+    loadChangeSummary,
+    loadEntries,
+    project?.rootPath,
+    setEntriesMap,
+    setError,
+    setSelectedFile,
+    setSelectedPath,
+  ]);
+
+  if (!project) {
+    return (
+      <div className={cn('flex items-center justify-center h-full text-muted-foreground', className)}>
+        请选择一个项目查看文件
+      </div>
+    );
+  }
 
   return (
     <div ref={containerRef} className={cn('flex h-full flex-col overflow-hidden', className)}>
       <WorkspaceTabs
         activeTab={workspaceTab}
         onChange={setWorkspaceTab}
+        rightActions={(
+          <GitBranchButton
+            client={client}
+            projectRoot={project.rootPath}
+            onRepositoryChanged={handleGitRepositoryChanged}
+          />
+        )}
       />
 
       <div className="flex-1 min-h-0 overflow-hidden">

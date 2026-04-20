@@ -20,8 +20,9 @@ pub struct NewMessageFields {
 #[derive(Debug, Serialize)]
 pub struct MessageOut {
     pub id: String,
-    #[serde(rename = "sessionId")]
-    pub session_id: String,
+    pub conversation_id: String,
+    #[serde(rename = "conversationId")]
+    pub conversation_id_camel: String,
     pub role: String,
     pub content: String,
     pub message_mode: Option<String>,
@@ -39,7 +40,8 @@ impl From<Message> for MessageOut {
     fn from(msg: Message) -> Self {
         MessageOut {
             id: msg.id,
-            session_id: msg.session_id,
+            conversation_id: msg.session_id.clone(),
+            conversation_id_camel: msg.session_id,
             role: msg.role,
             content: msg.content,
             message_mode: msg.message_mode,

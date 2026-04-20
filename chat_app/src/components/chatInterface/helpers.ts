@@ -13,7 +13,7 @@ interface UiPromptRecordLike {
   title?: string;
   message?: string;
   prompt_id?: string;
-  session_id?: string;
+  conversation_id?: string;
   conversation_turn_id?: string;
   tool_call_id?: string;
   allow_cancel?: boolean;
@@ -54,7 +54,9 @@ export const toUiPromptPanelFromRecord = (record: unknown): UiPromptPanelState |
     ? normalizedRecord.prompt
     : normalizedRecord;
   const promptId = typeof source?.prompt_id === 'string' ? source.prompt_id.trim() : '';
-  const sessionId = typeof source?.session_id === 'string' ? source.session_id.trim() : '';
+  const sessionId = typeof source?.conversation_id === 'string'
+    ? source.conversation_id.trim()
+    : '';
   const conversationTurnId = typeof source?.conversation_turn_id === 'string'
     ? source.conversation_turn_id.trim()
     : '';
@@ -94,7 +96,9 @@ export const normalizeUiPromptHistoryItem = (raw: unknown): UiPromptHistoryItem 
 
   const record = raw as UiPromptRecordLike;
   const promptId = typeof record.id === 'string' ? record.id.trim() : '';
-  const sessionId = typeof record.session_id === 'string' ? record.session_id.trim() : '';
+  const sessionId = typeof record.conversation_id === 'string'
+    ? record.conversation_id.trim()
+    : '';
   const conversationTurnId = typeof record.conversation_turn_id === 'string'
     ? record.conversation_turn_id.trim()
     : '';

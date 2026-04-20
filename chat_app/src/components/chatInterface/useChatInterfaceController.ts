@@ -32,7 +32,7 @@ interface UseChatInterfaceControllerParams {
   ) => Promise<void>;
   submitRuntimeGuidance: (
     content: string,
-    options: { sessionId: string; turnId: string; projectId?: string | null },
+    options: { conversationId: string; turnId: string; projectId?: string | null },
   ) => Promise<unknown>;
   loadMoreMessages: (sessionId: string) => Promise<void>;
   toggleTurnProcess: (
@@ -241,7 +241,7 @@ export const useChatInterfaceController = ({
       return;
     }
     try {
-      await submitRuntimeGuidance(content, { sessionId, turnId, projectId });
+      await submitRuntimeGuidance(content, { conversationId: sessionId, turnId, projectId });
     } catch (error) {
       console.error('Failed to submit runtime guidance:', error);
     }
@@ -292,7 +292,7 @@ export const useChatInterfaceController = ({
     setRuntimeContextLoading(true);
     setRuntimeContextError(null);
     try {
-      const payload = await apiClient.getSessionLatestTurnRuntimeContext(sessionId);
+      const payload = await apiClient.getConversationLatestTurnRuntimeContext(sessionId);
       setRuntimeContextData(payload);
     } catch (error) {
       console.error('Failed to load turn runtime context:', error);

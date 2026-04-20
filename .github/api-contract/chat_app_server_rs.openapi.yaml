@@ -1,0 +1,2202 @@
+openapi: 3.0.3
+info:
+  title: Chatos Main Backend API
+  version: 0.1.0-bootstrap
+  description: 'Bootstrap OpenAPI contract for chat_app_server_rs.
+
+    This is an initial skeleton and will be expanded incrementally.
+
+    '
+servers:
+- url: http://localhost:3997
+components:
+  schemas:
+    StandardResponse:
+      type: object
+      description: Generic API success envelope placeholder.
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        data:
+          description: Domain-specific payload.
+          nullable: true
+      additionalProperties: true
+paths:
+  /health:
+    get:
+      summary: Health check
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getHealth
+  /api/sessions:
+    get:
+      summary: List sessions
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiSessions
+    post:
+      summary: Create session
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiSessions
+  /api/sessions/{id}:
+    get:
+      summary: Get session
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiSessionsById
+    patch:
+      summary: Update session
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: patchApiSessionsById
+    delete:
+      summary: Delete session
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: deleteApiSessionsById
+  /api/messages:
+    get:
+      summary: List messages
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMessages
+    post:
+      summary: Create message
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiMessages
+  /api/messages/{id}:
+    get:
+      summary: Get message
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMessagesById
+  /api/sessions/{session_id}/messages:
+    get:
+      summary: List messages in session
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiSessionsBySessionIdMessages
+    post:
+      summary: Create message in session
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiSessionsBySessionIdMessages
+  /api/sessions/{session_id}/summaries:
+    get:
+      summary: List session summaries
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiSessionsBySessionIdSummaries
+    delete:
+      summary: Delete session summaries
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: deleteApiSessionsBySessionIdSummaries
+  /api/sessions/{session_id}/mcp-servers:
+    get:
+      summary: List MCP servers in session
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiSessionsBySessionIdMcpServers
+    post:
+      summary: Attach MCP server to session
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiSessionsBySessionIdMcpServers
+  /api/sessions/{session_id}/mcp-servers/{mcp_config_id}:
+    delete:
+      summary: Detach MCP server from session
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: mcp_config_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: deleteApiSessionsBySessionIdMcpServersByMcpConfigId
+  /api/sessions/{session_id}/summaries/{summary_id}:
+    delete:
+      summary: Delete session summary
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: summary_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: deleteApiSessionsBySessionIdSummariesBySummaryId
+  /api/sessions/{session_id}/turns/{user_message_id}/process:
+    get:
+      summary: Get process state by user message id
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: user_message_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiSessionsBySessionIdTurnsByUserMessageIdProcess
+  /api/sessions/{session_id}/turns/by-turn/{turn_id}/process:
+    get:
+      summary: Get process state by turn id
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: turn_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiSessionsBySessionIdTurnsByTurnByTurnIdProcess
+  /api/sessions/{session_id}/turns/by-turn/{turn_id}/runtime-context:
+    get:
+      summary: Get runtime context by turn id
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: turn_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiSessionsBySessionIdTurnsByTurnByTurnIdRuntimeContext
+  /api/sessions/{session_id}/turns/latest/runtime-context:
+    get:
+      summary: Get latest runtime context
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiSessionsBySessionIdTurnsLatestRuntimeContext
+  /api/projects:
+    get:
+      summary: List projects
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiProjects
+    post:
+      summary: Create project
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiProjects
+  /api/projects/{id}:
+    get:
+      summary: Get project
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiProjectsById
+    patch:
+      summary: Update project
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: patchApiProjectsById
+    delete:
+      summary: Delete project
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: deleteApiProjectsById
+  /api/projects/{id}/contacts:
+    get:
+      summary: List project contacts
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiProjectsByIdContacts
+    post:
+      summary: Attach contact to project
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiProjectsByIdContacts
+  /api/projects/{id}/contacts/{contact_id}:
+    delete:
+      summary: Detach contact from project
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: contact_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: deleteApiProjectsByIdContactsByContactId
+  /api/projects/{id}/changes:
+    get:
+      summary: List project changes
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiProjectsByIdChanges
+  /api/projects/{id}/changes/summary:
+    get:
+      summary: Get project change summary
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiProjectsByIdChangesSummary
+  /api/projects/{id}/run/catalog:
+    get:
+      summary: Get project run catalog
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiProjectsByIdRunCatalog
+  /api/projects/{id}/run/analyze:
+    post:
+      summary: Analyze project run
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiProjectsByIdRunAnalyze
+  /api/projects/{id}/run/execute:
+    post:
+      summary: Execute project run
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiProjectsByIdRunExecute
+  /api/projects/{id}/run/default:
+    post:
+      summary: Set default project run
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiProjectsByIdRunDefault
+  /api/contacts:
+    get:
+      summary: List contacts
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiContacts
+    post:
+      summary: Create contact
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiContacts
+  /api/contacts/{contact_id}:
+    patch:
+      summary: Update contact
+      parameters:
+      - in: path
+        name: contact_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: patchApiContactsByContactId
+    delete:
+      summary: Delete contact
+      parameters:
+      - in: path
+        name: contact_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: deleteApiContactsByContactId
+  /api/contacts/{contact_id}/projects:
+    get:
+      summary: List projects for contact
+      parameters:
+      - in: path
+        name: contact_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiContactsByContactIdProjects
+  /api/contacts/{contact_id}/project-memories:
+    get:
+      summary: List project memories for contact
+      parameters:
+      - in: path
+        name: contact_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiContactsByContactIdProjectMemories
+  /api/contacts/{contact_id}/project-memories/{project_id}:
+    get:
+      summary: List project memories for contact by project
+      parameters:
+      - in: path
+        name: contact_id
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: project_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiContactsByContactIdProjectMemoriesByProjectId
+  /api/contacts/{contact_id}/agent-recalls:
+    get:
+      summary: List agent recalls for contact
+      parameters:
+      - in: path
+        name: contact_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiContactsByContactIdAgentRecalls
+  /api/projects/{id}/changes/confirm:
+    post:
+      summary: Confirm project changes
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiProjectsByIdChangesConfirm
+  /api/agent_v3/chat/stream:
+    post:
+      summary: Stream agent v3 chat
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiAgentV3ChatStream
+  /api/agent_v3/chat/stop:
+    post:
+      summary: Stop agent v3 chat
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiAgentV3ChatStop
+  /api/agent_v3/chat/guide:
+    post:
+      summary: Submit runtime guidance
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiAgentV3ChatGuide
+  /api/agent_v3/tools:
+    get:
+      summary: List agent v3 tools
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiAgentV3Tools
+  /api/agent_v3/status:
+    get:
+      summary: Get agent v3 status
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiAgentV3Status
+  /api/agent_v3/session/{session_id}/reset:
+    post:
+      summary: Reset agent v3 session
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiAgentV3SessionBySessionIdReset
+  /api/auth/login:
+    post:
+      summary: Login
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiAuthLogin
+  /api/auth/register:
+    post:
+      summary: Register
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiAuthRegister
+  /api/auth/me:
+    get:
+      summary: Current user
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiAuthMe
+  /api/agent_v2/chat/stream:
+    post:
+      summary: Stream agent v2 chat
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiAgentV2ChatStream
+  /api/agent_v2/tools:
+    get:
+      summary: List agent v2 tools
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiAgentV2Tools
+  /api/agent_v2/status:
+    get:
+      summary: Get agent v2 status
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiAgentV2Status
+  /api/agent_v2/session/{session_id}/config:
+    get:
+      summary: Get agent v2 session config
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiAgentV2SessionBySessionIdConfig
+    post:
+      summary: Set agent v2 session config
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiAgentV2SessionBySessionIdConfig
+  /api/agent_v2/session/{session_id}/reset:
+    post:
+      summary: Reset agent v2 session
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiAgentV2SessionBySessionIdReset
+  /api/chat/stop:
+    post:
+      summary: Stop chat (legacy endpoint)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiChatStop
+  /api/memory-agents:
+    get:
+      summary: List memory agents
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryAgents
+    post:
+      summary: Create memory agent
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiMemoryAgents
+  /api/memory-agents/{agent_id}:
+    get:
+      summary: Get memory agent
+      parameters:
+      - in: path
+        name: agent_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryAgentsByAgentId
+    patch:
+      summary: Update memory agent
+      parameters:
+      - in: path
+        name: agent_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: patchApiMemoryAgentsByAgentId
+    delete:
+      summary: Delete memory agent
+      parameters:
+      - in: path
+        name: agent_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: deleteApiMemoryAgentsByAgentId
+  /api/memory-agents/{agent_id}/runtime-context:
+    get:
+      summary: Get memory agent runtime context
+      parameters:
+      - in: path
+        name: agent_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryAgentsByAgentIdRuntimeContext
+  /api/agent-builder/ai-create:
+    post:
+      summary: AI create agent blueprint
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiAgentBuilderAiCreate
+  /api/terminals:
+    get:
+      summary: List terminals
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiTerminals
+    post:
+      summary: Create terminal
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiTerminals
+  /api/terminals/dispatch-command:
+    post:
+      summary: Dispatch terminal command
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiTerminalsDispatchCommand
+  /api/terminals/{id}:
+    get:
+      summary: Get terminal
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiTerminalsById
+    delete:
+      summary: Delete terminal
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: deleteApiTerminalsById
+  /api/terminals/{id}/interrupt:
+    post:
+      summary: Interrupt terminal command
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiTerminalsByIdInterrupt
+  /api/terminals/{id}/history:
+    get:
+      summary: Get terminal history
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiTerminalsByIdHistory
+  /api/terminals/{id}/ws:
+    get:
+      summary: Terminal websocket
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '101':
+          description: Switching Protocols
+      operationId: getApiTerminalsByIdWs
+  /api/task-manager/tasks:
+    get:
+      summary: List tasks
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiTaskManagerTasks
+  /api/task-manager/tasks/{task_id}:
+    patch:
+      summary: Update task
+      parameters:
+      - in: path
+        name: task_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: patchApiTaskManagerTasksByTaskId
+  /api/task-manager/tasks/{task_id}/events:
+    get:
+      summary: List task events
+      parameters:
+      - in: path
+        name: task_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiTaskManagerTasksByTaskIdEvents
+  /api/task-manager/tasks/{task_id}/complete:
+    post:
+      summary: Complete task
+      parameters:
+      - in: path
+        name: task_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiTaskManagerTasksByTaskIdComplete
+  /api/task-manager/reviews/{review_id}/decision:
+    post:
+      summary: Submit task review decision
+      parameters:
+      - in: path
+        name: review_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiTaskManagerReviewsByReviewIdDecision
+  /api/mcp-configs:
+    get:
+      summary: List MCP configs
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMcpConfigs
+    post:
+      summary: Create MCP config
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiMcpConfigs
+  /api/mcp-configs/{config_id}:
+    put:
+      summary: Update MCP config
+      parameters:
+      - in: path
+        name: config_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: putApiMcpConfigsByConfigId
+    delete:
+      summary: Delete MCP config
+      parameters:
+      - in: path
+        name: config_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: deleteApiMcpConfigsByConfigId
+  /api/notepad/init:
+    get:
+      summary: Initialize notepad context
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiNotepadInit
+  /api/notepad/folders:
+    get:
+      summary: List notepad folders
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiNotepadFolders
+    post:
+      summary: Create notepad folder
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiNotepadFolders
+    patch:
+      summary: Update notepad folder
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: patchApiNotepadFolders
+    delete:
+      summary: Delete notepad folder
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: deleteApiNotepadFolders
+  /api/notepad/notes:
+    get:
+      summary: List notepad notes
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiNotepadNotes
+    post:
+      summary: Create notepad note
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiNotepadNotes
+  /api/notepad/notes/{note_id}:
+    get:
+      summary: Get notepad note
+      parameters:
+      - in: path
+        name: note_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiNotepadNotesByNoteId
+    patch:
+      summary: Update notepad note
+      parameters:
+      - in: path
+        name: note_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: patchApiNotepadNotesByNoteId
+    delete:
+      summary: Delete notepad note
+      parameters:
+      - in: path
+        name: note_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: deleteApiNotepadNotesByNoteId
+  /api/notepad/search:
+    get:
+      summary: Search notepad notes
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiNotepadSearch
+  /api/notepad/tags:
+    get:
+      summary: List notepad tags
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiNotepadTags
+  /api/fs/list:
+    get:
+      summary: List file system entries
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiFsList
+  /api/fs/entries:
+    get:
+      summary: Get file system entry metadata
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiFsEntries
+  /api/fs/read:
+    get:
+      summary: Read file
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiFsRead
+  /api/fs/search:
+    get:
+      summary: Search files
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiFsSearch
+  /api/remote-connections:
+    get:
+      summary: List remote connections
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiRemoteConnections
+    post:
+      summary: Create remote connection
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiRemoteConnections
+  /api/remote-connections/{id}:
+    get:
+      summary: Get remote connection
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiRemoteConnectionsById
+    put:
+      summary: Update remote connection
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: putApiRemoteConnectionsById
+    delete:
+      summary: Delete remote connection
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: deleteApiRemoteConnectionsById
+  /api/remote-connections/test:
+    post:
+      summary: Test remote connection request body
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiRemoteConnectionsTest
+  /api/remote-connections/{id}/test:
+    post:
+      summary: Test remote connection
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiRemoteConnectionsByIdTest
+  /api/remote-connections/{id}/disconnect:
+    post:
+      summary: Disconnect remote connection
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiRemoteConnectionsByIdDisconnect
+  /api/fs/download:
+    get:
+      summary: Download file
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiFsDownload
+  /api/fs/delete:
+    post:
+      summary: Delete file or directory
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiFsDelete
+  /api/fs/mkdir:
+    post:
+      summary: Create directory
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiFsMkdir
+  /api/fs/move:
+    post:
+      summary: Move file or directory
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiFsMove
+  /api/fs/touch:
+    post:
+      summary: Create empty file
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiFsTouch
+  /api/mcp-configs/resource/config:
+    post:
+      summary: Create MCP resource config
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiMcpConfigsResourceConfig
+  /api/mcp-configs/{config_id}/resource/config:
+    get:
+      summary: Get MCP resource config
+      parameters:
+      - in: path
+        name: config_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMcpConfigsByConfigIdResourceConfig
+  /api/remote-connections/{id}/sftp/list:
+    get:
+      summary: List remote SFTP entries
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiRemoteConnectionsByIdSftpList
+  /api/remote-connections/{id}/sftp/transfer/{transfer_id}:
+    get:
+      summary: Get remote SFTP transfer
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: transfer_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiRemoteConnectionsByIdSftpTransferByTransferId
+  /api/remote-connections/{id}/sftp/transfer/start:
+    post:
+      summary: Start remote SFTP transfer
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiRemoteConnectionsByIdSftpTransferStart
+  /api/remote-connections/{id}/sftp/transfer/{transfer_id}/cancel:
+    post:
+      summary: Cancel remote SFTP transfer
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: transfer_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiRemoteConnectionsByIdSftpTransferByTransferIdCancel
+  /api/remote-connections/{id}/sftp/download:
+    post:
+      summary: Download via remote SFTP
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiRemoteConnectionsByIdSftpDownload
+  /api/remote-connections/{id}/sftp/upload:
+    post:
+      summary: Upload via remote SFTP
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiRemoteConnectionsByIdSftpUpload
+  /api/remote-connections/{id}/sftp/delete:
+    post:
+      summary: Delete remote SFTP entry
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiRemoteConnectionsByIdSftpDelete
+  /api/remote-connections/{id}/sftp/mkdir:
+    post:
+      summary: Create remote SFTP directory
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiRemoteConnectionsByIdSftpMkdir
+  /api/remote-connections/{id}/sftp/rename:
+    post:
+      summary: Rename remote SFTP entry
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiRemoteConnectionsByIdSftpRename
+  /api/remote-connections/{id}/ws:
+    get:
+      summary: Open remote connection websocket
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '101':
+          description: Switching Protocols
+      operationId: getApiRemoteConnectionsByIdWs
+  /api/system-contexts:
+    get:
+      summary: List system contexts
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiSystemContexts
+    post:
+      summary: Create system context
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiSystemContexts
+  /api/system-contexts/{context_id}:
+    get:
+      summary: Get system context
+      parameters:
+      - in: path
+        name: context_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiSystemContextsByContextId
+    patch:
+      summary: Update system context
+      parameters:
+      - in: path
+        name: context_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: patchApiSystemContextsByContextId
+    delete:
+      summary: Delete system context
+      parameters:
+      - in: path
+        name: context_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: deleteApiSystemContextsByContextId
+  /api/system-context/active:
+    get:
+      summary: Get active system context
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiSystemContextActive
+  /api/ui-prompts/pending:
+    get:
+      summary: List pending UI prompts
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiUiPromptsPending
+  /api/ui-prompts/history:
+    get:
+      summary: List UI prompt history
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiUiPromptsHistory
+  /api/ai-model-configs:
+    get:
+      summary: List AI model configs
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiAiModelConfigs
+    post:
+      summary: Create AI model config
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiAiModelConfigs
+  /api/ai-model-configs/{config_id}:
+    put:
+      summary: Update AI model config
+      parameters:
+      - in: path
+        name: config_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: putApiAiModelConfigsByConfigId
+    delete:
+      summary: Delete AI model config
+      parameters:
+      - in: path
+        name: config_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: deleteApiAiModelConfigsByConfigId
+  /api/session-summary-job-config:
+    get:
+      summary: Get session summary job config
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiSessionSummaryJobConfig
+    patch:
+      summary: Patch session summary job config
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: patchApiSessionSummaryJobConfig
+    put:
+      summary: Put session summary job config
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: putApiSessionSummaryJobConfig
+  /api/system-contexts/{context_id}/activate:
+    post:
+      summary: Activate system context
+      parameters:
+      - in: path
+        name: context_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiSystemContextsByContextIdActivate
+  /api/ui-prompts/{prompt_id}/respond:
+    post:
+      summary: Respond to UI prompt
+      parameters:
+      - in: path
+        name: prompt_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiUiPromptsByPromptIdRespond
+  /api/system-contexts/ai/evaluate:
+    post:
+      summary: Evaluate system context by AI
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiSystemContextsAiEvaluate
+  /api/system-contexts/ai/generate:
+    post:
+      summary: Generate system context by AI
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiSystemContextsAiGenerate
+  /api/system-contexts/ai/optimize:
+    post:
+      summary: Optimize system context by AI
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiSystemContextsAiOptimize
+  /api/user-settings:
+    get:
+      summary: Get user settings
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiUserSettings
+    patch:
+      summary: Patch user settings
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: patchApiUserSettings
+    put:
+      summary: Put user settings
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: putApiUserSettings
+  /:
+    get:
+      summary: Get launch page
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: get
+    post:
+      summary: Create application launch record
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: post
+  /{application_id}:
+    get:
+      summary: Get application by id
+      parameters:
+      - in: path
+        name: application_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getByApplicationId
+    put:
+      summary: Update application by id
+      parameters:
+      - in: path
+        name: application_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: putByApplicationId
+    delete:
+      summary: Delete application by id
+      parameters:
+      - in: path
+        name: application_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: deleteByApplicationId

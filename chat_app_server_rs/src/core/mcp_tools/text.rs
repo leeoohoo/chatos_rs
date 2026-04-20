@@ -1,6 +1,7 @@
 use serde_json::Value;
 
-pub fn to_text(result: &Value) -> String {
+pub fn to_text_and_structured_result(result: &Value) -> (String, Option<Value>) {
+    let structured_result = result.get("_structured_result").cloned();
     let raw = if let Some(text) = result.as_str() {
         text.to_string()
     } else if let Some(content) = result.get("content").and_then(|value| value.as_array()) {
@@ -27,7 +28,10 @@ pub fn to_text(result: &Value) -> String {
         result.to_string()
     };
 
-    truncate_tool_text(raw.as_str(), tool_result_text_max_chars())
+    (
+        truncate_tool_text(raw.as_str(), tool_result_text_max_chars()),
+        structured_result,
+    )
 }
 
 pub fn inject_agent_builder_args(args: Value, caller_model: Option<&str>) -> Value {

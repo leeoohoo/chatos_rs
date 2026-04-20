@@ -20,11 +20,15 @@ mod tests;
 mod transfer_helpers;
 mod transfer_manager;
 
-use self::connectivity::{connect_ssh2_session, should_use_native_ssh, spawn_remote_shell};
-pub(crate) use self::connectivity::{run_remote_connectivity_test, run_ssh_command};
+use self::connectivity::{
+    connect_ssh2_session_with_verification, should_use_native_ssh, spawn_remote_shell,
+};
+pub(crate) use self::connectivity::{
+    run_remote_connectivity_test, run_ssh_command, run_ssh_command_with_verification,
+};
 use self::contracts::{
-    CreateRemoteConnectionRequest, RemoteConnectionQuery, SftpTransferStatus,
-    UpdateRemoteConnectionRequest, WsInput, WsOutput,
+    CreateRemoteConnectionRequest, RemoteConnectionQuery, RemoteTerminalWsQuery,
+    SftpTransferStatus, UpdateRemoteConnectionRequest, WsInput, WsOutput,
 };
 use self::error_support::{
     error_payload, internal_error_response, remote_connectivity_error_response, ws_error_output,
@@ -47,7 +51,10 @@ use self::remote_sftp::{
 };
 use self::remote_terminal::{get_remote_terminal_manager, DisconnectReason, RemoteTerminalEvent};
 use self::request_normalize::{normalize_create_request, normalize_update_request};
-use self::ssh_auth::{authenticate_jump_session, authenticate_target_session};
+use self::ssh_auth::{
+    authenticate_jump_session, authenticate_target_session, encode_second_factor_required_error,
+    extract_second_factor_required_prompt,
+};
 use self::ssh_command::{
     build_scp_args, build_scp_process_command, build_ssh_args, build_ssh_process_command,
     is_password_auth, map_command_spawn_error,

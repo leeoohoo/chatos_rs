@@ -1,0 +1,191 @@
+paths:
+  /api/memory/v1/sessions/{session_id}/messages/batch:
+    post:
+      summary: Batch create session messages
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: postApiMemoryV1SessionsBySessionIdMessagesBatch
+  /api/memory/v1/sessions/{session_id}/messages/{message_id}/sync:
+    put:
+      summary: Sync a session message
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: message_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: putApiMemoryV1SessionsBySessionIdMessagesByMessageIdSync
+  /api/memory/v1/sessions/{session_id}/summaries:
+    get:
+      summary: List session summaries
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1SessionsBySessionIdSummaries
+  /api/memory/v1/sessions/{session_id}/summaries/{summary_id}:
+    delete:
+      summary: Delete session summary
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: summary_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: deleteApiMemoryV1SessionsBySessionIdSummariesBySummaryId
+  /api/memory/v1/sessions/{session_id}/summaries/graph:
+    get:
+      summary: Get session summary graph
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1SessionsBySessionIdSummariesGraph
+  /api/memory/v1/sessions/{session_id}/summaries/levels:
+    get:
+      summary: Get session summary levels
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1SessionsBySessionIdSummariesLevels
+  /api/memory/v1/sessions/{session_id}/sync:
+    put:
+      summary: Sync memory session
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: putApiMemoryV1SessionsBySessionIdSync
+  /api/memory/v1/sessions/{session_id}/turn-runtime-snapshots/by-turn/{turn_id}:
+    get:
+      summary: Get turn runtime snapshot by turn id
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: turn_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1SessionsBySessionIdTurnRuntimeSnapshotsByTurnByTurnId
+  /api/memory/v1/sessions/{session_id}/turn-runtime-snapshots/latest:
+    get:
+      summary: Get latest turn runtime snapshot
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: getApiMemoryV1SessionsBySessionIdTurnRuntimeSnapshotsLatest
+  /api/memory/v1/sessions/{session_id}/turn-runtime-snapshots/{turn_id}/sync:
+    put:
+      summary: Sync turn runtime snapshot
+      parameters:
+      - in: path
+        name: session_id
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: turn_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardResponse'
+      operationId: putApiMemoryV1SessionsBySessionIdTurnRuntimeSnapshotsByTurnIdSync

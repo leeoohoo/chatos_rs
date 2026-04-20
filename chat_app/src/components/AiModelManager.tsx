@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
 
 import { useConfirmDialog } from '../hooks/useConfirmDialog';
-import { useChatStoreFromContext } from '../lib/store/ChatStoreContext';
-import { useChatStore } from '../lib/store';
+import { useChatStoreResolved } from '../lib/store/ChatStoreContext';
 import type { AiModelConfig } from '../types';
 import ConfirmDialog from './ui/ConfirmDialog';
 import AiModelList from './aiModelManager/AiModelList';
@@ -21,16 +20,8 @@ type AiModelManagerWindow = Window & {
 };
 
 const AiModelManager: React.FC<AiModelManagerProps> = ({ onClose, store: externalStore }) => {
-  let storeData;
-  if (externalStore) {
-    storeData = externalStore();
-  } else {
-    try {
-      storeData = useChatStoreFromContext();
-    } catch {
-      storeData = useChatStore();
-    }
-  }
+  const internalStoreData = useChatStoreResolved();
+  const storeData = externalStore ? externalStore() : internalStoreData;
 
   const { aiModelConfigs, loadAiModelConfigs, updateAiModelConfig, deleteAiModelConfig } = storeData;
   const [showAddForm, setShowAddForm] = useState(false);

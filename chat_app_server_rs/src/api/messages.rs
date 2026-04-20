@@ -17,15 +17,16 @@ use crate::services::memory_server_client;
 
 #[derive(Debug, Deserialize)]
 struct MessagesQuery {
-    session_id: Option<String>,
+    #[serde(rename = "conversation_id", alias = "conversationId")]
+    conversation_id: Option<String>,
     limit: Option<String>,
     offset: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct CreateMessageRequest {
-    #[serde(rename = "sessionId")]
-    session_id: Option<String>,
+    #[serde(rename = "conversation_id", alias = "conversationId")]
+    conversation_id: Option<String>,
     role: Option<String>,
     content: Option<String>,
     #[serde(alias = "messageMode")]
@@ -49,18 +50,18 @@ async fn list_messages(
     auth: AuthUser,
     Query(query): Query<MessagesQuery>,
 ) -> (StatusCode, Json<Value>) {
-    let Some(session_id) = query.session_id else {
+    let Some(conversation_id) = query.conversation_id else {
         return (
             StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({"error": "必须提供 session_id"})),
+            Json(serde_json::json!({"error": "必须提供 conversation_id"})),
         );
     };
-    if let Err(err) = ensure_owned_session(&session_id, &auth).await {
+    if let Err(err) = ensure_owned_session(&conversation_id, &auth).await {
         return map_session_access_error(err);
     }
     let limit = parse_positive_limit(query.limit);
     let offset = parse_non_negative_offset(query.offset);
-    let result = memory_server_client::list_messages(&session_id, limit, offset, true).await;
+    let result = memory_server_client::list_messages(&conversation_id, limit, offset, true).await;
     match result {
         Ok(messages) => {
             let out: Vec<Value> = messages
@@ -80,20 +81,20 @@ async fn create_message(
     auth: AuthUser,
     Json(req): Json<CreateMessageRequest>,
 ) -> (StatusCode, Json<Value>) {
-    let session_id = req.session_id.unwrap_or_default();
+    let conversation_id = req.conversation_id.unwrap_or_default();
     let role = req.role.unwrap_or_default();
     let content = req.content.unwrap_or_default();
-    if session_id.is_empty() || role.is_empty() || content.is_empty() {
+    if conversation_id.is_empty() || role.is_empty() || content.is_empty() {
         return (
             StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({"error": "sessionId, role 和 content 不能为空"})),
+            Json(serde_json::json!({"error": "conversationId, role 和 content 不能为空"})),
         );
     }
-    if let Err(err) = ensure_owned_session(&session_id, &auth).await {
+    if let Err(err) = ensure_owned_session(&conversation_id, &auth).await {
         return map_session_access_error(err);
     }
     let message = build_message(
-        session_id,
+        conversation_id,
         NewMessageFields {
             role: Some(role),
             content: Some(content),
@@ -112,7 +113,7 @@ async fn create_message(
         Err(err) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": "创建消息失败", "detail": err})),
+                Json(serde_json::json!({"error": "创建对话消息失败", "detail": err})),
             )
         }
     };

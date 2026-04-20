@@ -1,0 +1,64 @@
+<svg width="1440" height="900" viewBox="0 0 1440 900" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg2" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#EDF9F4"/>
+      <stop offset="100%" stop-color="#DDF3EA"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1440" height="900" fill="url(#bg2)"/>
+  <rect x="28" y="24" width="1384" height="852" rx="22" fill="#FFFFFF" stroke="#C8E9D9"/>
+
+  <rect x="28" y="24" width="1384" height="64" rx="22" fill="#0A3C2D"/>
+  <text x="64" y="64" fill="#E4FFF4" font-size="24" font-family="JetBrains Mono, Segoe UI, monospace" font-weight="700">SQL Workbench</text>
+  <text x="1220" y="64" fill="#A8E9CC" font-size="14" font-family="JetBrains Mono, monospace">orders-prod</text>
+
+  <rect x="54" y="110" width="280" height="740" rx="16" fill="#F2FBF7" stroke="#D1EEE1"/>
+  <text x="76" y="146" fill="#114433" font-size="16" font-family="JetBrains Mono, monospace" font-weight="700">Schema Explorer</text>
+
+  <text x="76" y="184" fill="#1E5C47" font-size="14" font-family="JetBrains Mono, monospace">public</text>
+  <text x="96" y="214" fill="#346C59" font-size="13" font-family="JetBrains Mono, monospace">orders</text>
+  <text x="96" y="240" fill="#346C59" font-size="13" font-family="JetBrains Mono, monospace">order_items</text>
+  <text x="96" y="266" fill="#346C59" font-size="13" font-family="JetBrains Mono, monospace">customers</text>
+  <text x="76" y="306" fill="#1E5C47" font-size="14" font-family="JetBrains Mono, monospace">analytics</text>
+  <text x="96" y="334" fill="#346C59" font-size="13" font-family="JetBrains Mono, monospace">daily_kpi</text>
+
+  <rect x="354" y="110" width="1032" height="330" rx="16" fill="#0E2A21"/>
+  <text x="382" y="146" fill="#8AD2B3" font-size="14" font-family="JetBrains Mono, monospace">query.sql</text>
+  <text x="382" y="188" fill="#7CF0C6" font-size="16" font-family="JetBrains Mono, monospace">SELECT id, amount, created_at</text>
+  <text x="382" y="216" fill="#7CF0C6" font-size="16" font-family="JetBrains Mono, monospace">FROM orders</text>
+  <text x="382" y="244" fill="#7CF0C6" font-size="16" font-family="JetBrains Mono, monospace">WHERE created_at &gt;= now() - interval '7 day'</text>
+  <text x="382" y="272" fill="#7CF0C6" font-size="16" font-family="JetBrains Mono, monospace">ORDER BY created_at DESC</text>
+  <text x="382" y="300" fill="#7CF0C6" font-size="16" font-family="JetBrains Mono, monospace">LIMIT 200;</text>
+
+  <rect x="1160" y="124" width="94" height="38" rx="10" fill="#16A34A"/>
+  <text x="1188" y="148" fill="#FFFFFF" font-size="13" font-family="JetBrains Mono, monospace" font-weight="700">Run</text>
+  <rect x="1266" y="124" width="94" height="38" rx="10" fill="#374151"/>
+  <text x="1284" y="148" fill="#D5DAE3" font-size="13" font-family="JetBrains Mono, monospace" font-weight="700">Cancel</text>
+
+  <rect x="354" y="460" width="1032" height="390" rx="16" fill="#F7FFFB" stroke="#D1EEE1"/>
+  <text x="382" y="498" fill="#114433" font-size="16" font-family="JetBrains Mono, monospace" font-weight="700">Result Set</text>
+
+  <rect x="382" y="520" width="976" height="44" rx="8" fill="#DDF6EA"/>
+  <text x="406" y="547" fill="#0A3A2C" font-size="13" font-family="JetBrains Mono, monospace" font-weight="700">id</text>
+  <text x="506" y="547" fill="#0A3A2C" font-size="13" font-family="JetBrains Mono, monospace" font-weight="700">amount</text>
+  <text x="656" y="547" fill="#0A3A2C" font-size="13" font-family="JetBrains Mono, monospace" font-weight="700">created_at</text>
+
+  <line x1="382" y1="588" x2="1358" y2="588" stroke="#D8EEE4"/>
+  <text x="406" y="612" fill="#245345" font-size="13" font-family="JetBrains Mono, monospace">100021</text>
+  <text x="506" y="612" fill="#245345" font-size="13" font-family="JetBrains Mono, monospace">88.50</text>
+  <text x="656" y="612" fill="#245345" font-size="13" font-family="JetBrains Mono, monospace">2026-04-15 17:01:08</text>
+
+  <line x1="382" y1="636" x2="1358" y2="636" stroke="#D8EEE4"/>
+  <text x="406" y="660" fill="#245345" font-size="13" font-family="JetBrains Mono, monospace">100020</text>
+  <text x="506" y="660" fill="#245345" font-size="13" font-family="JetBrains Mono, monospace">54.90</text>
+  <text x="656" y="660" fill="#245345" font-size="13" font-family="JetBrains Mono, monospace">2026-04-15 16:56:43</text>
+
+  <line x1="382" y1="684" x2="1358" y2="684" stroke="#D8EEE4"/>
+  <text x="406" y="708" fill="#245345" font-size="13" font-family="JetBrains Mono, monospace">100019</text>
+  <text x="506" y="708" fill="#245345" font-size="13" font-family="JetBrains Mono, monospace">12.00</text>
+  <text x="656" y="708" fill="#245345" font-size="13" font-family="JetBrains Mono, monospace">2026-04-15 16:52:27</text>
+
+  <rect x="1186" y="790" width="172" height="42" rx="10" fill="#0F766E"/>
+  <text x="1230" y="816" fill="#ECFEFF" font-size="13" font-family="JetBrains Mono, monospace" font-weight="700">Export CSV</text>
+</svg>

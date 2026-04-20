@@ -223,6 +223,9 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
         remoteSuccess={controller.remoteForm.remoteSuccess}
         remoteTesting={controller.remoteForm.remoteTesting}
         remoteSaving={controller.remoteForm.remoteSaving}
+        remoteVerificationModalOpen={controller.remoteForm.remoteVerificationModalOpen}
+        remoteVerificationPrompt={controller.remoteForm.remoteVerificationPrompt}
+        remoteVerificationCode={controller.remoteForm.remoteVerificationCode}
         setRemoteModalOpen={controller.remoteForm.setRemoteModalOpen}
         setRemoteName={controller.remoteForm.setRemoteName}
         setRemoteHost={controller.remoteForm.setRemoteHost}
@@ -240,9 +243,12 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
         setRemoteJumpUsername={controller.remoteForm.setRemoteJumpUsername}
         setRemoteJumpPrivateKeyPath={controller.remoteForm.setRemoteJumpPrivateKeyPath}
         setRemoteJumpPassword={controller.remoteForm.setRemoteJumpPassword}
+        setRemoteVerificationCode={controller.remoteForm.setRemoteVerificationCode}
+        setRemoteVerificationModalOpen={controller.remoteForm.setRemoteVerificationModalOpen}
         openKeyFilePicker={controller.localFsPickers.openKeyFilePicker}
         handleTestRemoteConnection={controller.remoteForm.handleTestRemoteConnection}
         handleSaveRemoteConnection={controller.remoteForm.handleSaveRemoteConnection}
+        handleSubmitRemoteVerification={controller.remoteForm.handleSubmitRemoteVerification}
         keyFilePickerOpen={controller.localFsPickers.keyFilePickerOpen}
         keyFilePickerTitle={controller.localFsPickers.keyFilePickerTitle}
         keyFilePickerPath={controller.localFsPickers.keyFilePickerPath}

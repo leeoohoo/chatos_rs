@@ -137,8 +137,8 @@ fn normalize_provider_input(raw: &str) -> Result<String, String> {
     };
 
     match provider.as_str() {
-        "gpt" | "deepseek" | "kimik2" => Ok(provider),
-        _ => Err("provider only supports gpt/deepseek/kimik2".to_string()),
+        "gpt" | "deepseek" | "kimik2" | "minimax" => Ok(provider),
+        _ => Err("provider only supports gpt/deepseek/kimik2/minimax".to_string()),
     }
 }
 

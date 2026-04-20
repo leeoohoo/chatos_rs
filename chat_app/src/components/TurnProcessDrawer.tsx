@@ -33,6 +33,27 @@ const normalizeMetaId = (value: unknown): string => (
   typeof value === 'string' ? value.trim() : ''
 );
 
+interface UnavailableToolViewItem {
+  id: string;
+  serverName: string;
+  toolName: string;
+  reason: string;
+  createdAt?: string;
+}
+
+const extractUnavailableTools = (metadata: Message['metadata']): UnavailableToolViewItem[] => {
+  const raw = Array.isArray(metadata?.unavailableTools) ? metadata?.unavailableTools : [];
+  return raw
+    .map((item: any, index) => ({
+      id: normalizeMetaId(item?.id) || `unavailable_${index}`,
+      serverName: normalizeMetaId(item?.serverName || item?.server_name) || 'unknown_server',
+      toolName: normalizeMetaId(item?.toolName || item?.tool_name) || 'unknown_tool',
+      reason: normalizeMetaId(item?.reason) || '工具当前不可用',
+      createdAt: normalizeMetaId(item?.createdAt || item?.created_at) || undefined,
+    }))
+    .filter((item) => item.serverName || item.toolName);
+};
+
 const buildFallbackProcessMessage = (
   finalAssistantMessage: Message | null,
   userMessageId: string,
@@ -44,12 +65,13 @@ const buildFallbackProcessMessage = (
 
   const metadata = finalAssistantMessage.metadata || {};
   const toolCalls = Array.isArray(metadata.toolCalls) ? metadata.toolCalls : [];
+  const unavailableTools = extractUnavailableTools(metadata as any);
   const segments = Array.isArray(metadata.contentSegments) ? metadata.contentSegments : [];
   const processSegments = segments.filter((segment: any) => (
     segment?.type === 'thinking' || segment?.type === 'tool_call'
   ));
 
-  const hasProcessContent = processSegments.length > 0 || toolCalls.length > 0;
+  const hasProcessContent = processSegments.length > 0 || toolCalls.length > 0 || unavailableTools.length > 0;
   if (!hasProcessContent) {
     return null;
   }
@@ -79,6 +101,7 @@ const buildFallbackProcessMessage = (
       ...(turnId ? { historyProcessTurnId: turnId } : {}),
       historyProcessLoaded: true,
       historyProcessPlaceholder: false,
+      ...(unavailableTools.length > 0 ? { unavailableTools } : {}),
     },
   };
 };
@@ -341,9 +364,27 @@ export const TurnProcessDrawer: React.FC<TurnProcessDrawerProps> = ({
     return map;
   }, [messages]);
 
+  const assistantUnavailableTools = useMemo(() => {
+    const deduped = new Map<string, UnavailableToolViewItem>();
+    for (const message of assistantProcessMessages) {
+      const items = extractUnavailableTools(message.metadata);
+      items.forEach((item) => {
+        const key = `${item.serverName}::${item.toolName}::${item.reason}`;
+        if (!deduped.has(key)) {
+          deduped.set(key, item);
+        }
+      });
+    }
+    return Array.from(deduped.values());
+  }, [assistantProcessMessages]);
+
   const historyProcess = userMessage?.metadata?.historyProcess as any;
   const historyToolCount = Number(historyProcess?.toolCallCount || 0);
   const historyThinkingCount = Number(historyProcess?.thinkingCount || 0);
+  const historyUnavailableCount = Math.max(
+    Number(historyProcess?.unavailableToolCount || 0),
+    assistantUnavailableTools.length,
+  );
 
   return (
     <aside
@@ -366,7 +407,7 @@ export const TurnProcessDrawer: React.FC<TurnProcessDrawerProps> = ({
               <div className="min-w-0">
                 <h2 className="text-sm font-semibold text-foreground truncate">过程详情</h2>
                 <p className="text-xs text-muted-foreground mt-0.5 truncate">
-                  Tools: {historyToolCount} · Thinking: {historyThinkingCount}
+                  Tools: {historyToolCount} · Thinking: {historyThinkingCount} · Unavailable: {historyUnavailableCount}
                 </p>
               </div>
 
@@ -391,8 +432,31 @@ export const TurnProcessDrawer: React.FC<TurnProcessDrawerProps> = ({
                 <div className="text-sm text-muted-foreground">未找到对应的用户消息。</div>
               )}
 
-              {!isLoading && userMessage && assistantProcessMessages.length === 0 && (
+              {!isLoading && userMessage && assistantProcessMessages.length === 0 && assistantUnavailableTools.length === 0 && (
                 <div className="text-sm text-muted-foreground">当前轮次暂无可展示的过程内容。</div>
+              )}
+
+              {assistantUnavailableTools.length > 0 && (
+                <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-800/60 dark:bg-amber-950/30">
+                  <div className="text-xs font-medium text-amber-900 dark:text-amber-200">
+                    Unavailable tools ({assistantUnavailableTools.length})
+                  </div>
+                  <div className="mt-2 space-y-2">
+                    {assistantUnavailableTools.map((item) => (
+                      <div
+                        key={item.id}
+                        className="rounded border border-amber-200/80 bg-white/60 px-2 py-1.5 text-xs dark:border-amber-800/60 dark:bg-black/20"
+                      >
+                        <div className="font-medium text-amber-900 dark:text-amber-200">
+                          @{item.serverName}_{item.toolName}
+                        </div>
+                        <div className="mt-0.5 text-amber-800 dark:text-amber-300">
+                          {item.reason}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               )}
 
               {assistantProcessMessages.map((message) => (

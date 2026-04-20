@@ -2,16 +2,27 @@ import * as fsApi from '../fs';
 import * as messagesApi from '../messages';
 import * as workspaceApi from '../workspace';
 import type {
+  CodeNavCapabilitiesResponse,
+  CodeNavDocumentSymbolsResponse,
+  CodeNavLocationsResponse,
   ContactAgentRecallResponse,
   ContactCreateResponse,
   ContactProjectLinkResponse,
   ContactProjectMemoryResponse,
   ContactResponse,
   DeleteSuccessResponse,
+  FsContentSearchResponse,
   FsEntriesResponse,
   FsMoveOptions,
   FsMutationResponse,
   FsReadFileResponse,
+  GitActionResponse,
+  GitBranchesResponse,
+  GitClientInfoResponse,
+  GitCompareResponse,
+  GitFileDiffResponse,
+  GitStatusResponse,
+  GitSummaryResponse,
   MessageCreatePayload,
   PagingOptions,
   ProjectChangeLogResponse,
@@ -59,15 +70,15 @@ export interface WorkspaceFacade {
   ): Promise<ContactProjectMemoryResponse[]>;
   getContactProjects(contactId: string, paging?: PagingOptions): Promise<ContactProjectLinkResponse[]>;
   getContactAgentRecalls(contactId: string, paging?: PagingOptions): Promise<ContactAgentRecallResponse[]>;
-  getSessionMessages(
-    sessionId: string,
+  getConversationMessages(
+    conversationId: string,
     params?: { limit?: number; offset?: number; compact?: boolean; strategy?: string },
   ): Promise<SessionMessageResponse[]>;
-  getSessionTurnProcessMessages(sessionId: string, userMessageId: string): Promise<SessionMessageResponse[]>;
-  getSessionTurnProcessMessagesByTurn(sessionId: string, turnId: string): Promise<SessionMessageResponse[]>;
-  getSessionLatestTurnRuntimeContext(sessionId: string): Promise<TurnRuntimeSnapshotLookupResponse>;
-  getSessionTurnRuntimeContextByTurn(
-    sessionId: string,
+  getConversationTurnProcessMessages(conversationId: string, userMessageId: string): Promise<SessionMessageResponse[]>;
+  getConversationTurnProcessMessagesByTurn(conversationId: string, turnId: string): Promise<SessionMessageResponse[]>;
+  getConversationLatestTurnRuntimeContext(conversationId: string): Promise<TurnRuntimeSnapshotLookupResponse>;
+  getConversationTurnRuntimeContextByTurn(
+    conversationId: string,
     turnId: string,
   ): Promise<TurnRuntimeSnapshotLookupResponse>;
   listProjects(userId?: string): Promise<ProjectResponse[]>;
@@ -116,22 +127,32 @@ export interface WorkspaceFacade {
   updateRemoteConnection(id: string, data: RemoteConnectionUpdatePayload): Promise<RemoteConnectionResponse>;
   deleteRemoteConnection(id: string): Promise<DeleteSuccessResponse>;
   disconnectRemoteTerminal(id: string): Promise<DeleteSuccessResponse>;
-  testRemoteConnectionDraft(data: RemoteConnectionDraftPayload): Promise<RemoteConnectionTestResponse>;
-  testRemoteConnection(id: string): Promise<RemoteConnectionTestResponse>;
-  listRemoteSftpEntries(connectionId: string, path?: string): Promise<RemoteSftpEntriesResponse>;
+  testRemoteConnectionDraft(
+    data: RemoteConnectionDraftPayload,
+    verificationCode?: string,
+  ): Promise<RemoteConnectionTestResponse>;
+  testRemoteConnection(id: string, verificationCode?: string): Promise<RemoteConnectionTestResponse>;
+  listRemoteSftpEntries(
+    connectionId: string,
+    path?: string,
+    verificationCode?: string,
+  ): Promise<RemoteSftpEntriesResponse>;
   uploadRemoteSftpFile(
     connectionId: string,
     localPath: string,
     remotePath: string,
+    verificationCode?: string,
   ): Promise<RemoteSftpTransferStatusResponse>;
   downloadRemoteSftpFile(
     connectionId: string,
     remotePath: string,
     localPath: string,
+    verificationCode?: string,
   ): Promise<RemoteSftpTransferStatusResponse>;
   startRemoteSftpTransfer(
     connectionId: string,
     data: SftpTransferStartPayload,
+    verificationCode?: string,
   ): Promise<RemoteSftpTransferStatusResponse>;
   getRemoteSftpTransferStatus(
     connectionId: string,
@@ -141,12 +162,61 @@ export interface WorkspaceFacade {
     connectionId: string,
     transferId: string,
   ): Promise<RemoteSftpTransferStatusResponse>;
-  createRemoteSftpDirectory(connectionId: string, parentPath: string, name: string): Promise<FsMutationResponse>;
-  renameRemoteSftpEntry(connectionId: string, fromPath: string, toPath: string): Promise<FsMutationResponse>;
-  deleteRemoteSftpEntry(connectionId: string, path: string, recursive?: boolean): Promise<FsMutationResponse>;
+  createRemoteSftpDirectory(
+    connectionId: string,
+    parentPath: string,
+    name: string,
+    verificationCode?: string,
+  ): Promise<FsMutationResponse>;
+  renameRemoteSftpEntry(
+    connectionId: string,
+    fromPath: string,
+    toPath: string,
+    verificationCode?: string,
+  ): Promise<FsMutationResponse>;
+  deleteRemoteSftpEntry(
+    connectionId: string,
+    path: string,
+    recursive?: boolean,
+    verificationCode?: string,
+  ): Promise<FsMutationResponse>;
   listFsDirectories(path?: string): Promise<FsEntriesResponse>;
   listFsEntries(path?: string): Promise<FsEntriesResponse>;
   searchFsEntries(path: string, query: string, limit?: number): Promise<FsEntriesResponse>;
+  searchFsContent(
+    path: string,
+    query: string,
+    options?: { limit?: number; caseSensitive?: boolean; wholeWord?: boolean },
+  ): Promise<FsContentSearchResponse>;
+  getCodeNavCapabilities(projectRoot: string, filePath: string): Promise<CodeNavCapabilitiesResponse>;
+  getCodeNavDefinition(data: {
+    projectRoot: string;
+    filePath: string;
+    line: number;
+    column: number;
+  }): Promise<CodeNavLocationsResponse>;
+  getCodeNavReferences(data: {
+    projectRoot: string;
+    filePath: string;
+    line: number;
+    column: number;
+  }): Promise<CodeNavLocationsResponse>;
+  getCodeNavDocumentSymbols(projectRoot: string, filePath: string): Promise<CodeNavDocumentSymbolsResponse>;
+  getGitClientInfo(): Promise<GitClientInfoResponse>;
+  getGitSummary(root: string): Promise<GitSummaryResponse>;
+  getGitBranches(root: string): Promise<GitBranchesResponse>;
+  getGitStatus(root: string): Promise<GitStatusResponse>;
+  compareGitBranch(root: string, target: string): Promise<GitCompareResponse>;
+  getGitDiff(data: { root: string; path: string; target?: string; staged?: boolean }): Promise<GitFileDiffResponse>;
+  fetchGit(data: { root: string; remote?: string }): Promise<GitActionResponse>;
+  pullGit(data: { root: string; mode?: 'ff-only' | 'rebase' | string }): Promise<GitActionResponse>;
+  pushGit(data: { root: string; remote?: string; branch?: string; setUpstream?: boolean }): Promise<GitActionResponse>;
+  checkoutGit(data: { root: string; branch?: string; remoteBranch?: string; createTracking?: boolean }): Promise<GitActionResponse>;
+  createGitBranch(data: { root: string; name: string; startPoint?: string; checkout?: boolean }): Promise<GitActionResponse>;
+  mergeGit(data: { root: string; branch: string; mode?: 'default' | 'no-ff' | 'ff-only' | string }): Promise<GitActionResponse>;
+  stageGitPaths(data: { root: string; paths: string[] }): Promise<GitActionResponse>;
+  unstageGitPaths(data: { root: string; paths: string[] }): Promise<GitActionResponse>;
+  commitGit(data: { root: string; message: string; paths?: string[] }): Promise<GitActionResponse>;
   readFsFile(path: string): Promise<FsReadFileResponse>;
   createFsDirectory(parentPath: string, name: string): Promise<FsMutationResponse>;
   createFsFile(parentPath: string, name: string, content?: string): Promise<FsMutationResponse>;
@@ -190,20 +260,20 @@ export const workspaceFacade: WorkspaceFacade & ThisType<ApiClient> = {
   async getContactAgentRecalls(contactId, paging) {
     return workspaceApi.getContactAgentRecalls(this.getRequestFn(), contactId, paging);
   },
-  async getSessionMessages(sessionId, params) {
-    return workspaceApi.getSessionMessages(this.getRequestFn(), sessionId, params);
+  async getConversationMessages(conversationId, params) {
+    return workspaceApi.getConversationMessages(this.getRequestFn(), conversationId, params);
   },
-  async getSessionTurnProcessMessages(sessionId, userMessageId) {
-    return workspaceApi.getSessionTurnProcessMessages(this.getRequestFn(), sessionId, userMessageId);
+  async getConversationTurnProcessMessages(conversationId, userMessageId) {
+    return workspaceApi.getConversationTurnProcessMessages(this.getRequestFn(), conversationId, userMessageId);
   },
-  async getSessionTurnProcessMessagesByTurn(sessionId, turnId) {
-    return workspaceApi.getSessionTurnProcessMessagesByTurn(this.getRequestFn(), sessionId, turnId);
+  async getConversationTurnProcessMessagesByTurn(conversationId, turnId) {
+    return workspaceApi.getConversationTurnProcessMessagesByTurn(this.getRequestFn(), conversationId, turnId);
   },
-  async getSessionLatestTurnRuntimeContext(sessionId) {
-    return workspaceApi.getSessionLatestTurnRuntimeContext(this.getRequestFn(), sessionId);
+  async getConversationLatestTurnRuntimeContext(conversationId) {
+    return workspaceApi.getConversationLatestTurnRuntimeContext(this.getRequestFn(), conversationId);
   },
-  async getSessionTurnRuntimeContextByTurn(sessionId, turnId) {
-    return workspaceApi.getSessionTurnRuntimeContextByTurn(this.getRequestFn(), sessionId, turnId);
+  async getConversationTurnRuntimeContextByTurn(conversationId, turnId) {
+    return workspaceApi.getConversationTurnRuntimeContextByTurn(this.getRequestFn(), conversationId, turnId);
   },
   async listProjects(userId) {
     return workspaceApi.listProjects(this.getRequestFn(), userId);
@@ -289,23 +359,45 @@ export const workspaceFacade: WorkspaceFacade & ThisType<ApiClient> = {
   async disconnectRemoteTerminal(id) {
     return workspaceApi.disconnectRemoteTerminal(this.getRequestFn(), id);
   },
-  async testRemoteConnectionDraft(data) {
-    return workspaceApi.testRemoteConnectionDraft(this.getRequestFn(), data);
+  async testRemoteConnectionDraft(data, verificationCode) {
+    return workspaceApi.testRemoteConnectionDraft(this.getRequestFn(), data, verificationCode);
   },
-  async testRemoteConnection(id) {
-    return workspaceApi.testRemoteConnection(this.getRequestFn(), id);
+  async testRemoteConnection(id, verificationCode) {
+    return workspaceApi.testRemoteConnection(this.getRequestFn(), id, verificationCode);
   },
-  async listRemoteSftpEntries(connectionId, path) {
-    return workspaceApi.listRemoteSftpEntries(this.getRequestFn(), connectionId, path);
+  async listRemoteSftpEntries(connectionId, path, verificationCode) {
+    return workspaceApi.listRemoteSftpEntries(
+      this.getRequestFn(),
+      connectionId,
+      path,
+      verificationCode,
+    );
   },
-  async uploadRemoteSftpFile(connectionId, localPath, remotePath) {
-    return workspaceApi.uploadRemoteSftpFile(this.getRequestFn(), connectionId, localPath, remotePath);
+  async uploadRemoteSftpFile(connectionId, localPath, remotePath, verificationCode) {
+    return workspaceApi.uploadRemoteSftpFile(
+      this.getRequestFn(),
+      connectionId,
+      localPath,
+      remotePath,
+      verificationCode,
+    );
   },
-  async downloadRemoteSftpFile(connectionId, remotePath, localPath) {
-    return workspaceApi.downloadRemoteSftpFile(this.getRequestFn(), connectionId, remotePath, localPath);
+  async downloadRemoteSftpFile(connectionId, remotePath, localPath, verificationCode) {
+    return workspaceApi.downloadRemoteSftpFile(
+      this.getRequestFn(),
+      connectionId,
+      remotePath,
+      localPath,
+      verificationCode,
+    );
   },
-  async startRemoteSftpTransfer(connectionId, data) {
-    return workspaceApi.startRemoteSftpTransfer(this.getRequestFn(), connectionId, data);
+  async startRemoteSftpTransfer(connectionId, data, verificationCode) {
+    return workspaceApi.startRemoteSftpTransfer(
+      this.getRequestFn(),
+      connectionId,
+      data,
+      verificationCode,
+    );
   },
   async getRemoteSftpTransferStatus(connectionId, transferId) {
     return workspaceApi.getRemoteSftpTransferStatus(this.getRequestFn(), connectionId, transferId);
@@ -313,14 +405,32 @@ export const workspaceFacade: WorkspaceFacade & ThisType<ApiClient> = {
   async cancelRemoteSftpTransfer(connectionId, transferId) {
     return workspaceApi.cancelRemoteSftpTransfer(this.getRequestFn(), connectionId, transferId);
   },
-  async createRemoteSftpDirectory(connectionId, parentPath, name) {
-    return workspaceApi.createRemoteSftpDirectory(this.getRequestFn(), connectionId, parentPath, name);
+  async createRemoteSftpDirectory(connectionId, parentPath, name, verificationCode) {
+    return workspaceApi.createRemoteSftpDirectory(
+      this.getRequestFn(),
+      connectionId,
+      parentPath,
+      name,
+      verificationCode,
+    );
   },
-  async renameRemoteSftpEntry(connectionId, fromPath, toPath) {
-    return workspaceApi.renameRemoteSftpEntry(this.getRequestFn(), connectionId, fromPath, toPath);
+  async renameRemoteSftpEntry(connectionId, fromPath, toPath, verificationCode) {
+    return workspaceApi.renameRemoteSftpEntry(
+      this.getRequestFn(),
+      connectionId,
+      fromPath,
+      toPath,
+      verificationCode,
+    );
   },
-  async deleteRemoteSftpEntry(connectionId, path, recursive = false) {
-    return workspaceApi.deleteRemoteSftpEntry(this.getRequestFn(), connectionId, path, recursive);
+  async deleteRemoteSftpEntry(connectionId, path, recursive = false, verificationCode) {
+    return workspaceApi.deleteRemoteSftpEntry(
+      this.getRequestFn(),
+      connectionId,
+      path,
+      recursive,
+      verificationCode,
+    );
   },
   async listFsDirectories(path) {
     return workspaceApi.listFsDirectories(this.getRequestFn(), path);
@@ -330,6 +440,66 @@ export const workspaceFacade: WorkspaceFacade & ThisType<ApiClient> = {
   },
   async searchFsEntries(path, query, limit) {
     return workspaceApi.searchFsEntries(this.getRequestFn(), path, query, limit);
+  },
+  async searchFsContent(path, query, options) {
+    return workspaceApi.searchFsContent(this.getRequestFn(), path, query, options);
+  },
+  async getCodeNavCapabilities(projectRoot, filePath) {
+    return workspaceApi.getCodeNavCapabilities(this.getRequestFn(), projectRoot, filePath);
+  },
+  async getCodeNavDefinition(data) {
+    return workspaceApi.getCodeNavDefinition(this.getRequestFn(), data);
+  },
+  async getCodeNavReferences(data) {
+    return workspaceApi.getCodeNavReferences(this.getRequestFn(), data);
+  },
+  async getCodeNavDocumentSymbols(projectRoot, filePath) {
+    return workspaceApi.getCodeNavDocumentSymbols(this.getRequestFn(), projectRoot, filePath);
+  },
+  async getGitClientInfo() {
+    return workspaceApi.getGitClientInfo(this.getRequestFn());
+  },
+  async getGitSummary(root) {
+    return workspaceApi.getGitSummary(this.getRequestFn(), root);
+  },
+  async getGitBranches(root) {
+    return workspaceApi.getGitBranches(this.getRequestFn(), root);
+  },
+  async getGitStatus(root) {
+    return workspaceApi.getGitStatus(this.getRequestFn(), root);
+  },
+  async compareGitBranch(root, target) {
+    return workspaceApi.compareGitBranch(this.getRequestFn(), root, target);
+  },
+  async getGitDiff(data) {
+    return workspaceApi.getGitDiff(this.getRequestFn(), data);
+  },
+  async fetchGit(data) {
+    return workspaceApi.fetchGit(this.getRequestFn(), data);
+  },
+  async pullGit(data) {
+    return workspaceApi.pullGit(this.getRequestFn(), data);
+  },
+  async pushGit(data) {
+    return workspaceApi.pushGit(this.getRequestFn(), data);
+  },
+  async checkoutGit(data) {
+    return workspaceApi.checkoutGit(this.getRequestFn(), data);
+  },
+  async createGitBranch(data) {
+    return workspaceApi.createGitBranch(this.getRequestFn(), data);
+  },
+  async mergeGit(data) {
+    return workspaceApi.mergeGit(this.getRequestFn(), data);
+  },
+  async stageGitPaths(data) {
+    return workspaceApi.stageGitPaths(this.getRequestFn(), data);
+  },
+  async unstageGitPaths(data) {
+    return workspaceApi.unstageGitPaths(this.getRequestFn(), data);
+  },
+  async commitGit(data) {
+    return workspaceApi.commitGit(this.getRequestFn(), data);
   },
   async readFsFile(path) {
     return workspaceApi.readFsFile(this.getRequestFn(), path);

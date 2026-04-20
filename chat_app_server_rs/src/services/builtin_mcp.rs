@@ -46,6 +46,16 @@ pub const REMOTE_CONNECTION_CONTROLLER_DISPLAY_NAME: &str =
 pub const REMOTE_CONNECTION_CONTROLLER_SERVER_NAME: &str = "remote_connection_controller";
 pub const REMOTE_CONNECTION_CONTROLLER_COMMAND: &str = "builtin:remote_connection_controller";
 
+pub const WEB_TOOLS_MCP_ID: &str = "builtin_web_tools";
+pub const WEB_TOOLS_DISPLAY_NAME: &str = "Web Tools (Builtin)";
+pub const WEB_TOOLS_SERVER_NAME: &str = "web_tools";
+pub const WEB_TOOLS_COMMAND: &str = "builtin:web_tools";
+
+pub const BROWSER_TOOLS_MCP_ID: &str = "builtin_browser_tools";
+pub const BROWSER_TOOLS_DISPLAY_NAME: &str = "Browser Tools (Builtin)";
+pub const BROWSER_TOOLS_SERVER_NAME: &str = "browser_tools";
+pub const BROWSER_TOOLS_COMMAND: &str = "builtin:browser_tools";
+
 pub const MEMORY_SKILL_READER_SERVER_NAME: &str = "memory_skill_reader";
 pub const MEMORY_COMMAND_READER_SERVER_NAME: &str = "memory_command_reader";
 pub const MEMORY_PLUGIN_READER_SERVER_NAME: &str = "memory_plugin_reader";
@@ -60,6 +70,8 @@ pub enum BuiltinMcpKind {
     AgentBuilder,
     UiPrompter,
     RemoteConnectionController,
+    WebTools,
+    BrowserTools,
     MemorySkillReader,
     MemoryCommandReader,
     MemoryPluginReader,
@@ -77,6 +89,8 @@ pub fn builtin_kind_by_id(id: &str) -> Option<BuiltinMcpKind> {
         AGENT_BUILDER_MCP_ID => Some(BuiltinMcpKind::AgentBuilder),
         UI_PROMPTER_MCP_ID => Some(BuiltinMcpKind::UiPrompter),
         REMOTE_CONNECTION_CONTROLLER_MCP_ID => Some(BuiltinMcpKind::RemoteConnectionController),
+        WEB_TOOLS_MCP_ID => Some(BuiltinMcpKind::WebTools),
+        BROWSER_TOOLS_MCP_ID => Some(BuiltinMcpKind::BrowserTools),
         _ => None,
     }
 }
@@ -93,6 +107,8 @@ pub fn builtin_kind_by_command(command: &str) -> Option<BuiltinMcpKind> {
         AGENT_BUILDER_COMMAND => Some(BuiltinMcpKind::AgentBuilder),
         UI_PROMPTER_COMMAND => Some(BuiltinMcpKind::UiPrompter),
         REMOTE_CONNECTION_CONTROLLER_COMMAND => Some(BuiltinMcpKind::RemoteConnectionController),
+        WEB_TOOLS_COMMAND => Some(BuiltinMcpKind::WebTools),
+        BROWSER_TOOLS_COMMAND => Some(BuiltinMcpKind::BrowserTools),
         _ => None,
     }
 }
@@ -107,6 +123,8 @@ pub fn get_builtin_mcp_config(id: &str) -> Option<McpConfig> {
         CODE_MAINTAINER_WRITE_MCP_ID => Some(code_maintainer_write_config()),
         LEGACY_CODE_MAINTAINER_MCP_ID => Some(legacy_code_maintainer_write_config()),
         AGENT_BUILDER_MCP_ID => Some(agent_builder_config()),
+        WEB_TOOLS_MCP_ID => Some(web_tools_config()),
+        BROWSER_TOOLS_MCP_ID => Some(browser_tools_config()),
         _ => match builtin_kind_by_id(id) {
             Some(BuiltinMcpKind::TerminalController) => Some(terminal_controller_config()),
             Some(BuiltinMcpKind::TaskManager) => Some(task_manager_config()),
@@ -116,6 +134,8 @@ pub fn get_builtin_mcp_config(id: &str) -> Option<McpConfig> {
             Some(BuiltinMcpKind::RemoteConnectionController) => {
                 Some(remote_connection_controller_config())
             }
+            Some(BuiltinMcpKind::WebTools) => Some(web_tools_config()),
+            Some(BuiltinMcpKind::BrowserTools) => Some(browser_tools_config()),
             _ => None,
         },
     }
@@ -131,6 +151,8 @@ pub fn list_builtin_mcp_configs() -> Vec<McpConfig> {
         agent_builder_config(),
         ui_prompter_config(),
         remote_connection_controller_config(),
+        web_tools_config(),
+        browser_tools_config(),
     ]
 }
 
@@ -146,6 +168,8 @@ pub fn builtin_display_name(id: &str) -> Option<&'static str> {
         AGENT_BUILDER_MCP_ID => Some(AGENT_BUILDER_DISPLAY_NAME),
         UI_PROMPTER_MCP_ID => Some(UI_PROMPTER_DISPLAY_NAME),
         REMOTE_CONNECTION_CONTROLLER_MCP_ID => Some(REMOTE_CONNECTION_CONTROLLER_DISPLAY_NAME),
+        WEB_TOOLS_MCP_ID => Some(WEB_TOOLS_DISPLAY_NAME),
+        BROWSER_TOOLS_MCP_ID => Some(BROWSER_TOOLS_DISPLAY_NAME),
         _ => None,
     }
 }
@@ -300,5 +324,74 @@ fn remote_connection_controller_config() -> McpConfig {
         enabled: true,
         created_at: now.clone(),
         updated_at: now,
+    }
+}
+
+fn web_tools_config() -> McpConfig {
+    let now = crate::core::time::now_rfc3339();
+    McpConfig {
+        id: WEB_TOOLS_MCP_ID.to_string(),
+        name: WEB_TOOLS_SERVER_NAME.to_string(),
+        command: WEB_TOOLS_COMMAND.to_string(),
+        r#type: "stdio".to_string(),
+        args: Some(json!(["--name", WEB_TOOLS_SERVER_NAME])),
+        env: None,
+        cwd: None,
+        user_id: None,
+        enabled: true,
+        created_at: now.clone(),
+        updated_at: now,
+    }
+}
+
+fn browser_tools_config() -> McpConfig {
+    let now = crate::core::time::now_rfc3339();
+    McpConfig {
+        id: BROWSER_TOOLS_MCP_ID.to_string(),
+        name: BROWSER_TOOLS_SERVER_NAME.to_string(),
+        command: BROWSER_TOOLS_COMMAND.to_string(),
+        r#type: "stdio".to_string(),
+        args: Some(json!(["--name", BROWSER_TOOLS_SERVER_NAME])),
+        env: None,
+        cwd: None,
+        user_id: None,
+        enabled: true,
+        created_at: now.clone(),
+        updated_at: now,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn web_and_browser_builtin_are_registered() {
+        assert_eq!(
+            builtin_kind_by_id(WEB_TOOLS_MCP_ID),
+            Some(BuiltinMcpKind::WebTools)
+        );
+        assert_eq!(
+            builtin_kind_by_command(WEB_TOOLS_COMMAND),
+            Some(BuiltinMcpKind::WebTools)
+        );
+        assert_eq!(
+            builtin_kind_by_id(BROWSER_TOOLS_MCP_ID),
+            Some(BuiltinMcpKind::BrowserTools)
+        );
+        assert_eq!(
+            builtin_kind_by_command(BROWSER_TOOLS_COMMAND),
+            Some(BuiltinMcpKind::BrowserTools)
+        );
+    }
+
+    #[test]
+    fn builtin_mcp_config_list_contains_web_and_browser() {
+        let ids: Vec<String> = list_builtin_mcp_configs()
+            .into_iter()
+            .map(|cfg| cfg.id)
+            .collect();
+        assert!(ids.contains(&WEB_TOOLS_MCP_ID.to_string()));
+        assert!(ids.contains(&BROWSER_TOOLS_MCP_ID.to_string()));
     }
 }

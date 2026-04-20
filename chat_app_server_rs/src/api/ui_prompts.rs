@@ -19,13 +19,15 @@ use crate::services::ui_prompt_manager::{
 
 #[derive(Debug, Deserialize)]
 struct PendingUiPromptQuery {
-    session_id: String,
+    #[serde(rename = "conversation_id", alias = "conversationId")]
+    conversation_id: String,
     limit: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
 struct UiPromptHistoryQuery {
-    session_id: String,
+    #[serde(rename = "conversation_id", alias = "conversationId")]
+    conversation_id: String,
     limit: Option<usize>,
     include_pending: Option<bool>,
 }
@@ -44,26 +46,28 @@ async fn list_pending_ui_prompts(
     auth: AuthUser,
     Query(query): Query<PendingUiPromptQuery>,
 ) -> (StatusCode, Json<Value>) {
-    if query.session_id.trim().is_empty() {
+    if query.conversation_id.trim().is_empty() {
         return (
             StatusCode::BAD_REQUEST,
-            Json(json!({ "success": false, "error": "session_id is required" })),
+            Json(json!({ "success": false, "error": "conversation_id is required" })),
         );
     }
-    if let Err(err) = ensure_owned_session(query.session_id.as_str(), &auth).await {
+    if let Err(err) = ensure_owned_session(query.conversation_id.as_str(), &auth).await {
         return map_session_access_error_with_success(err);
     }
 
     let limit = query.limit.unwrap_or(20).clamp(1, 200);
-    match list_pending_ui_prompt_records(query.session_id.as_str(), limit).await {
-        Ok(records) => (
-            StatusCode::OK,
-            Json(json!({
+    match list_pending_ui_prompt_records(query.conversation_id.as_str(), limit).await {
+        Ok(records) => {
+            let payload = json!({
                 "success": true,
+                "conversation_id": query.conversation_id,
+                "conversationId": query.conversation_id,
                 "count": records.len(),
                 "prompts": records,
-            })),
-        ),
+            });
+            (StatusCode::OK, Json(payload))
+        }
         Err(err) => (
             StatusCode::BAD_REQUEST,
             Json(json!({ "success": false, "error": err })),
@@ -75,27 +79,31 @@ async fn list_ui_prompt_history(
     auth: AuthUser,
     Query(query): Query<UiPromptHistoryQuery>,
 ) -> (StatusCode, Json<Value>) {
-    if query.session_id.trim().is_empty() {
+    if query.conversation_id.trim().is_empty() {
         return (
             StatusCode::BAD_REQUEST,
-            Json(json!({ "success": false, "error": "session_id is required" })),
+            Json(json!({ "success": false, "error": "conversation_id is required" })),
         );
     }
-    if let Err(err) = ensure_owned_session(query.session_id.as_str(), &auth).await {
+    if let Err(err) = ensure_owned_session(query.conversation_id.as_str(), &auth).await {
         return map_session_access_error_with_success(err);
     }
 
     let limit = query.limit.unwrap_or(100).clamp(1, 500);
     let include_pending = query.include_pending.unwrap_or(false);
-    match list_ui_prompt_history_records(query.session_id.as_str(), limit, include_pending).await {
-        Ok(records) => (
-            StatusCode::OK,
-            Json(json!({
+    match list_ui_prompt_history_records(query.conversation_id.as_str(), limit, include_pending)
+        .await
+    {
+        Ok(records) => {
+            let payload = json!({
                 "success": true,
+                "conversation_id": query.conversation_id,
+                "conversationId": query.conversation_id,
                 "count": records.len(),
                 "prompts": records,
-            })),
-        ),
+            });
+            (StatusCode::OK, Json(payload))
+        }
         Err(err) => (
             StatusCode::BAD_REQUEST,
             Json(json!({ "success": false, "error": err })),
@@ -139,7 +147,7 @@ async fn submit_ui_prompt_response_route(
             let mut payload = serde_json::from_value::<UiPromptPayload>(record_prompt.clone())
                 .unwrap_or_else(|_| UiPromptPayload {
                     prompt_id: record.id.clone(),
-                    session_id: record.session_id.clone(),
+                    conversation_id: record.conversation_id.clone(),
                     conversation_turn_id: record.conversation_turn_id.clone(),
                     tool_call_id: record.tool_call_id.clone(),
                     kind: record.kind.clone(),
@@ -177,8 +185,8 @@ async fn submit_ui_prompt_response_route(
             if payload.prompt_id.trim().is_empty() {
                 payload.prompt_id = record.id.clone();
             }
-            if payload.session_id.trim().is_empty() {
-                payload.session_id = record.session_id.clone();
+            if payload.conversation_id.trim().is_empty() {
+                payload.conversation_id = record.conversation_id.clone();
             }
             if payload.conversation_turn_id.trim().is_empty() {
                 payload.conversation_turn_id = record.conversation_turn_id.clone();
@@ -191,7 +199,7 @@ async fn submit_ui_prompt_response_route(
         }
     };
 
-    if let Err(err) = ensure_owned_session(prompt_payload.session_id.as_str(), &auth).await {
+    if let Err(err) = ensure_owned_session(prompt_payload.conversation_id.as_str(), &auth).await {
         return map_session_access_error_with_success(err);
     }
 
@@ -230,10 +238,14 @@ async fn submit_ui_prompt_response_route(
         Json(json!({
             "success": true,
             "prompt_id": prompt_id,
-            "session_id": resolved
+            "conversation_id": resolved
                 .as_ref()
-                .map(|payload| payload.session_id.clone())
-                .unwrap_or_else(|| prompt_payload.session_id.clone()),
+                .map(|payload| payload.conversation_id.clone())
+                .unwrap_or_else(|| prompt_payload.conversation_id.clone()),
+            "conversationId": resolved
+                .as_ref()
+                .map(|payload| payload.conversation_id.clone())
+                .unwrap_or_else(|| prompt_payload.conversation_id.clone()),
             "conversation_turn_id": resolved
                 .as_ref()
                 .map(|payload| payload.conversation_turn_id.clone())

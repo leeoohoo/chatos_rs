@@ -25,6 +25,7 @@ interface ChatConversationPaneProps {
   chatIsLoading: boolean;
   chatIsStreaming: boolean;
   chatIsStopping: boolean;
+  chatStreamingPreviewText: string;
   hasMoreMessages: boolean;
   onLoadMore: () => void;
   onToggleTurnProcess: (userMessageId: string) => void;
@@ -106,6 +107,7 @@ interface ChatMessagesPaneProps {
   chatIsLoading: boolean;
   chatIsStreaming: boolean;
   chatIsStopping: boolean;
+  chatStreamingPreviewText: string;
   hasMoreMessages: boolean;
   onLoadMore: () => void;
   onToggleTurnProcess: (userMessageId: string) => void;
@@ -129,6 +131,7 @@ const ChatMessagesPane: React.FC<ChatMessagesPaneProps> = React.memo(({
   chatIsLoading,
   chatIsStreaming,
   chatIsStopping,
+  chatStreamingPreviewText,
   hasMoreMessages,
   onLoadMore,
   onToggleTurnProcess,
@@ -174,6 +177,7 @@ const ChatMessagesPane: React.FC<ChatMessagesPaneProps> = React.memo(({
         isLoading={chatIsLoading}
         isStreaming={chatIsStreaming}
         isStopping={chatIsStopping}
+        streamingPreviewText={chatStreamingPreviewText}
         hasMore={hasMoreMessages}
         onLoadMore={onLoadMore}
         onToggleTurnProcess={onToggleTurnProcess}
@@ -196,6 +200,7 @@ const ChatMessagesPane: React.FC<ChatMessagesPaneProps> = React.memo(({
       isLoading={chatIsLoading}
       isStreaming={chatIsStreaming}
       isStopping={chatIsStopping}
+      streamingPreviewText={chatStreamingPreviewText}
       hasMore={hasMoreMessages}
       onLoadMore={onLoadMore}
       onToggleTurnProcess={onToggleTurnProcess}
@@ -216,6 +221,7 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
   chatIsLoading,
   chatIsStreaming,
   chatIsStopping,
+  chatStreamingPreviewText,
   hasMoreMessages,
   onLoadMore,
   onToggleTurnProcess,
@@ -288,11 +294,12 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
           currentContactName={currentContactName}
           currentProjectNameForMemory={currentProjectNameForMemory}
           currentProjectIdForMemory={currentProjectIdForMemory}
-          messages={messages}
-          chatIsLoading={chatIsLoading}
-          chatIsStreaming={chatIsStreaming}
-          chatIsStopping={chatIsStopping}
-          hasMoreMessages={hasMoreMessages}
+        messages={messages}
+        chatIsLoading={chatIsLoading}
+        chatIsStreaming={chatIsStreaming}
+        chatIsStopping={chatIsStopping}
+        chatStreamingPreviewText={chatStreamingPreviewText}
+        hasMoreMessages={hasMoreMessages}
           onLoadMore={onLoadMore}
           onToggleTurnProcess={onToggleTurnProcess}
           customRenderer={customRenderer}

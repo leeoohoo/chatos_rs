@@ -33,6 +33,7 @@ pub struct ProcessOptions {
     pub max_tokens: Option<i64>,
     pub reasoning_enabled: Option<bool>,
     pub supports_responses: Option<bool>,
+    pub supports_images: Option<bool>,
     pub system_prompt: Option<String>,
     pub history_limit: Option<i64>,
     pub purpose: Option<String>,

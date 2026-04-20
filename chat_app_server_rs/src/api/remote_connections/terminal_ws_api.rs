@@ -1,6 +1,6 @@
 use axum::{
     extract::ws::{Message, WebSocket},
-    extract::{Path, WebSocketUpgrade},
+    extract::{Path, Query, WebSocketUpgrade},
     response::IntoResponse,
 };
 use futures::{SinkExt, StreamExt};
@@ -12,11 +12,15 @@ use crate::core::remote_connection_access::{
 };
 use crate::models::remote_connection::{RemoteConnection, RemoteConnectionService};
 
-use super::{get_remote_terminal_manager, ws_error_output, RemoteTerminalEvent, WsInput, WsOutput};
+use super::{
+    get_remote_terminal_manager, ws_error_output, RemoteTerminalEvent, RemoteTerminalWsQuery,
+    WsInput, WsOutput,
+};
 
 pub(super) async fn remote_terminal_ws(
     auth: AuthUser,
     Path(id): Path<String>,
+    Query(query): Query<RemoteTerminalWsQuery>,
     ws: WebSocketUpgrade,
 ) -> impl IntoResponse {
     let connection = match ensure_owned_remote_connection(&id, &auth).await {
@@ -24,12 +28,22 @@ pub(super) async fn remote_terminal_ws(
         Err(err) => return map_remote_connection_access_error(err).into_response(),
     };
 
-    ws.on_upgrade(move |socket| handle_remote_terminal_socket(connection, socket))
+    let verification_code = query.verification_code;
+    ws.on_upgrade(move |socket| {
+        handle_remote_terminal_socket(connection, verification_code.clone(), socket)
+    })
 }
 
-async fn handle_remote_terminal_socket(connection: RemoteConnection, socket: WebSocket) {
+async fn handle_remote_terminal_socket(
+    connection: RemoteConnection,
+    verification_code: Option<String>,
+    socket: WebSocket,
+) {
     let manager = get_remote_terminal_manager();
-    let session = match manager.ensure_running(&connection).await {
+    let session = match manager
+        .ensure_running(&connection, verification_code.as_deref())
+        .await
+    {
         Ok(session) => session,
         Err(err) => {
             let mut socket = socket;

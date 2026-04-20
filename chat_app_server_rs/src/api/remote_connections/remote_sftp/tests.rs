@@ -141,6 +141,24 @@ fn maps_remote_transfer_protocol_to_remote_error_code() {
 }
 
 #[test]
+fn maps_second_factor_required_to_structured_payload() {
+    let (status, body) = RemoteSftpApiError::from(TransferJobError::Remote {
+        code: RemoteTransferErrorCode::SecondFactorRequired,
+        message: "__CHATOS_SECOND_FACTOR_REQUIRED__:SMS verification code".to_string(),
+    })
+    .into_response();
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        body.0,
+        json!({
+            "error": "需要二次验证",
+            "code": remote_sftp_codes::SECOND_FACTOR_REQUIRED,
+            "challenge_prompt": "SMS verification code"
+        })
+    );
+}
+
+#[test]
 fn rejects_empty_local_path_input() {
     let err = require_non_empty_field(Some("   ".to_string()), "local_path").unwrap_err();
     let (status, body) = err.into_response();

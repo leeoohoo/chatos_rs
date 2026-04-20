@@ -29,7 +29,7 @@ pub struct CodeMaintainerOptions {
     pub search_limit: usize,
     pub enable_read_tools: bool,
     pub enable_write_tools: bool,
-    pub session_id: Option<String>,
+    pub conversation_id: Option<String>,
     pub run_id: Option<String>,
     pub db_path: Option<String>,
 }
@@ -37,7 +37,7 @@ pub struct CodeMaintainerOptions {
 #[derive(Clone)]
 pub struct CodeMaintainerService {
     tools: HashMap<String, Tool>,
-    default_session_id: String,
+    default_conversation_id: String,
     default_run_id: String,
 }
 
@@ -52,7 +52,7 @@ struct Tool {
 type ToolHandler = Arc<dyn Fn(Value, &ToolContext) -> Result<Value, String> + Send + Sync>;
 
 struct ToolContext<'a> {
-    session_id: &'a str,
+    conversation_id: &'a str,
     run_id: &'a str,
 }
 
@@ -75,15 +75,15 @@ impl CodeMaintainerService {
             opts.search_limit,
         );
 
-        let default_session_id = opts
-            .session_id
+        let default_conversation_id = opts
+            .conversation_id
             .filter(|v| !v.trim().is_empty())
-            .unwrap_or_else(|| generate_id("session"));
+            .unwrap_or_else(|| generate_id("conversation"));
         let default_run_id = opts.run_id.unwrap_or_default();
 
         let mut service = Self {
             tools: HashMap::new(),
-            default_session_id,
+            default_conversation_id,
             default_run_id,
         };
 
@@ -323,7 +323,7 @@ impl CodeMaintainerService {
                             if existed_before { "edit" } else { "create" },
                             result.bytes,
                             &result.sha256,
-                            ctx.session_id,
+                            ctx.conversation_id,
                             ctx.run_id,
                             diff,
                         )?;
@@ -413,7 +413,7 @@ impl CodeMaintainerService {
                             "edit",
                             write_result.bytes,
                             &write_result.sha256,
-                            ctx.session_id,
+                            ctx.conversation_id,
                             ctx.run_id,
                             diff,
                         )?;
@@ -477,7 +477,7 @@ impl CodeMaintainerService {
                             if existed_before { "edit" } else { "create" },
                             result.bytes,
                             &result.sha256,
-                            ctx.session_id,
+                            ctx.conversation_id,
                             ctx.run_id,
                             diff,
                         )?;
@@ -547,7 +547,7 @@ impl CodeMaintainerService {
                             "delete",
                             0,
                             "",
-                            ctx.session_id,
+                            ctx.conversation_id,
                             ctx.run_id,
                             diff,
                         )?;
@@ -632,7 +632,7 @@ impl CodeMaintainerService {
                                 change_kind,
                                 content.len() as i64,
                                 &hash,
-                                ctx.session_id,
+                                ctx.conversation_id,
                                 ctx.run_id,
                                 diff,
                             )?;
@@ -659,7 +659,7 @@ impl CodeMaintainerService {
                                 "create",
                                 content.len() as i64,
                                 &hash,
-                                ctx.session_id,
+                                ctx.conversation_id,
                                 ctx.run_id,
                                 diff,
                             )?;
@@ -679,7 +679,7 @@ impl CodeMaintainerService {
                                 "delete",
                                 0,
                                 "",
-                                ctx.session_id,
+                                ctx.conversation_id,
                                 ctx.run_id,
                                 diff,
                             )?;
@@ -695,7 +695,8 @@ impl CodeMaintainerService {
     }
 
     pub fn list_tools(&self) -> Vec<Value> {
-        self.tools
+        let mut tools: Vec<Value> = self
+            .tools
             .values()
             .map(|tool| {
                 json!({
@@ -704,31 +705,158 @@ impl CodeMaintainerService {
                     "inputSchema": tool.input_schema
                 })
             })
-            .collect()
+            .collect();
+
+        if self.tools.contains_key("read_file_raw") {
+            tools.push(json!({
+                "name": "read_file",
+                "description": "Hermes-compatible alias. Read full file by default; when start_line + end_line are both provided, read a line range.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string" },
+                        "start_line": { "type": "integer", "minimum": 1 },
+                        "end_line": { "type": "integer", "minimum": 1 },
+                        "with_line_numbers": { "type": "boolean", "default": true }
+                    },
+                    "additionalProperties": false,
+                    "required": ["path"]
+                }
+            }));
+        }
+
+        if self.tools.contains_key("search_text") {
+            tools.push(json!({
+                "name": "search_files",
+                "description": "Hermes-compatible alias of search_text. query maps to search_text.pattern.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "query": { "type": "string", "minLength": 1 },
+                        "path": { "type": "string" },
+                        "max_results": { "type": "integer", "minimum": 1, "maximum": 500 }
+                    },
+                    "additionalProperties": false,
+                    "required": ["query"]
+                }
+            }));
+        }
+
+        if self.tools.contains_key("apply_patch") {
+            tools.push(json!({
+                "name": "patch",
+                "description": "Hermes-compatible alias of apply_patch.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "patch": { "type": "string", "minLength": 1 }
+                    },
+                    "additionalProperties": false,
+                    "required": ["patch"]
+                }
+            }));
+        }
+
+        tools
     }
 
     pub fn call_tool(
         &self,
         name: &str,
         args: Value,
-        session_id: Option<&str>,
+        conversation_id: Option<&str>,
     ) -> Result<Value, String> {
-        let tool = self
-            .tools
-            .get(name)
-            .ok_or_else(|| format!("Tool not found: {name}"))?;
-        let session = session_id
+        let conversation = conversation_id
             .filter(|s| !s.trim().is_empty())
-            .unwrap_or(self.default_session_id.as_str());
+            .unwrap_or(self.default_conversation_id.as_str());
         let run = if self.default_run_id.trim().is_empty() {
-            session
+            conversation
         } else {
             self.default_run_id.as_str()
         };
         let ctx = ToolContext {
-            session_id: session,
+            conversation_id: conversation,
             run_id: run,
         };
+
+        if name == "read_file" {
+            let path = args
+                .get("path")
+                .and_then(|v| v.as_str())
+                .ok_or("path is required".to_string())?;
+            let start_line = args
+                .get("start_line")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize);
+            let end_line = args
+                .get("end_line")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize);
+            let with_line_numbers = args
+                .get("with_line_numbers")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+
+            let mapped = match (start_line, end_line) {
+                (Some(start_line), Some(end_line)) => {
+                    let range_tool = self
+                        .tools
+                        .get("read_file_range")
+                        .ok_or_else(|| "Tool not found: read_file_range".to_string())?;
+                    let mapped_args = json!({
+                        "path": path,
+                        "start_line": start_line,
+                        "end_line": end_line,
+                        "with_line_numbers": with_line_numbers
+                    });
+                    return (range_tool.handler)(mapped_args, &ctx);
+                }
+                (None, None) => json!({
+                    "path": path,
+                    "with_line_numbers": with_line_numbers
+                }),
+                _ => {
+                    return Err(
+                        "start_line and end_line must be provided together for read_file"
+                            .to_string(),
+                    );
+                }
+            };
+            let raw_tool = self
+                .tools
+                .get("read_file_raw")
+                .ok_or_else(|| "Tool not found: read_file_raw".to_string())?;
+            return (raw_tool.handler)(mapped, &ctx);
+        }
+
+        if name == "search_files" {
+            let query = args
+                .get("query")
+                .or_else(|| args.get("pattern"))
+                .and_then(|v| v.as_str())
+                .ok_or("query is required".to_string())?;
+            let search_tool = self
+                .tools
+                .get("search_text")
+                .ok_or_else(|| "Tool not found: search_text".to_string())?;
+
+            let mut mapped = json!({
+                "pattern": query
+            });
+            if let Some(path) = args.get("path").and_then(|v| v.as_str()) {
+                mapped["path"] = json!(path);
+            }
+            if let Some(max_results) = args.get("max_results").and_then(|v| v.as_u64()) {
+                mapped["max_results"] = json!(max_results);
+            }
+            return (search_tool.handler)(mapped, &ctx);
+        }
+
+        let mapped_name = if name == "patch" { "apply_patch" } else { name };
+        let tool = self
+            .tools
+            .get(mapped_name)
+            .ok_or_else(|| format!("Tool not found: {name}"))?;
         (tool.handler)(args, &ctx)
     }
 
@@ -748,5 +876,136 @@ impl CodeMaintainerService {
                 handler,
             },
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use serde_json::json;
+
+    use super::{CodeMaintainerOptions, CodeMaintainerService};
+
+    fn unique_temp_dir(prefix: &str) -> PathBuf {
+        let mut path = std::env::temp_dir();
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("unix epoch")
+            .as_nanos();
+        path.push(format!("{prefix}_{nonce}"));
+        path
+    }
+
+    fn build_service(enable_write_tools: bool) -> (CodeMaintainerService, PathBuf) {
+        let root = unique_temp_dir("code_maintainer_alias_workspace");
+        let db_path = unique_temp_dir("code_maintainer_alias_db")
+            .join("changes.jsonl")
+            .to_string_lossy()
+            .to_string();
+        let service = CodeMaintainerService::new(CodeMaintainerOptions {
+            server_name: "code_maintainer_alias_test".to_string(),
+            root: root.clone(),
+            project_id: Some("project_alias".to_string()),
+            allow_writes: enable_write_tools,
+            max_file_bytes: 256 * 1024,
+            max_write_bytes: 1024 * 1024,
+            search_limit: 40,
+            enable_read_tools: true,
+            enable_write_tools,
+            conversation_id: Some("conversation_alias".to_string()),
+            run_id: Some("run_alias".to_string()),
+            db_path: Some(db_path),
+        })
+        .expect("build code maintainer service");
+        (service, root)
+    }
+
+    fn response_text(value: &serde_json::Value) -> String {
+        value
+            .get("content")
+            .and_then(|v| v.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|first| first.get("text"))
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string()
+    }
+
+    #[test]
+    fn list_tools_contains_hermes_compat_aliases() {
+        let (service, _root) = build_service(true);
+        let tools = service.list_tools();
+        let names: Vec<String> = tools
+            .iter()
+            .filter_map(|tool| {
+                tool.get("name")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
+            .collect();
+
+        assert!(names.iter().any(|name| name == "read_file"));
+        assert!(names.iter().any(|name| name == "search_files"));
+        assert!(names.iter().any(|name| name == "patch"));
+    }
+
+    #[test]
+    fn read_file_alias_supports_full_and_range_modes() {
+        let (service, root) = build_service(false);
+        let file_path = root.join("src").join("lib.rs");
+        fs::create_dir_all(file_path.parent().expect("parent")).expect("create parent");
+        fs::write(&file_path, "line1\nline2\nline3\n").expect("write source file");
+
+        let full = service
+            .call_tool("read_file", json!({ "path": "src/lib.rs" }), None)
+            .expect("read full");
+        let full_text = response_text(&full);
+        assert!(full_text.contains("\"line_count\": 4"));
+
+        let range = service
+            .call_tool(
+                "read_file",
+                json!({ "path": "src/lib.rs", "start_line": 2, "end_line": 3 }),
+                None,
+            )
+            .expect("read range");
+        let range_text = response_text(&range);
+        assert!(range_text.contains("\"start_line\": 2"));
+        assert!(range_text.contains("line2"));
+    }
+
+    #[test]
+    fn search_files_alias_maps_query_to_search_text_pattern() {
+        let (service, root) = build_service(false);
+        let file_path = root.join("README.md");
+        fs::write(&file_path, "Hermes-compatible alias smoke test").expect("write readme");
+
+        let result = service
+            .call_tool(
+                "search_files",
+                json!({ "query": "alias", "path": "." }),
+                None,
+            )
+            .expect("search files");
+        let text = response_text(&result);
+        assert!(text.contains("\"count\": 1"));
+        assert!(text.contains("README.md"));
+    }
+
+    #[test]
+    fn patch_alias_maps_to_apply_patch() {
+        let (service, root) = build_service(true);
+        let patch_text =
+            "*** Begin Patch\n*** Add File: alias_patch.txt\n+hello from alias\n*** End Patch\n";
+        service
+            .call_tool("patch", json!({ "patch": patch_text }), None)
+            .expect("apply patch via alias");
+
+        let created = root.join("alias_patch.txt");
+        let content = fs::read_to_string(created).expect("read created file");
+        assert_eq!(content.trim(), "hello from alias");
     }
 }

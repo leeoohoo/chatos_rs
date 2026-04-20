@@ -2,23 +2,26 @@ import { useCallback, useMemo } from 'react';
 import type React from 'react';
 
 import type {
-  TerminalDispatchResponse,
-  TerminalLogResponse,
-  TerminalResponse,
-} from '../../lib/api/client/types';
-import type {
+  CodeNavCapabilities,
+  CodeNavDocumentSymbolsResult,
+  CodeNavLocation,
+  CodeNavLocationsResult,
   ChangeLogItem,
   FsEntry,
   FsReadResult,
   Project,
   ProjectChangeSummary,
-  ProjectRunTarget,
+  ProjectSearchHit,
 } from '../../types';
 import type { ChangeKind } from './utils';
 import { ProjectPreviewPane } from './PreviewPane';
 import { ProjectTreePane } from './TreePane';
 import type { MoveConflictState } from './Overlays';
 import type { ExplorerContextMenuState } from './useProjectExplorerState';
+import type {
+  ProjectRunnerActiveTerminal,
+  ProjectRunnerMember,
+} from './useProjectExplorerRunState';
 
 interface UseProjectExplorerWorkspaceViewParams {
   project: Project;
@@ -41,6 +44,32 @@ interface UseProjectExplorerWorkspaceViewParams {
   summaryError: string | null;
   actionMessage: string | null;
   actionError: string | null;
+  searchQuery: string;
+  searchCaseSensitive: boolean;
+  searchWholeWord: boolean;
+  searchResults: ProjectSearchHit[];
+  searchLoading: boolean;
+  searchError: string | null;
+  searchTruncated: boolean;
+  activeSearchHitId: string | null;
+  activeSearchHitIndex: number;
+  totalSearchHits: number;
+  previewTargetLine: number | null;
+  previewTargetLineRevision: number;
+  navCapabilities: CodeNavCapabilities | null;
+  navCapabilitiesLoading: boolean;
+  navCapabilitiesError: string | null;
+  selectedToken: string | null;
+  selectedTokenLine: number | null;
+  selectedTokenColumn: number | null;
+  navResult: CodeNavLocationsResult | null;
+  navRequestKind: 'definition' | 'references' | null;
+  navLoading: boolean;
+  navError: string | null;
+  activeNavLocationId: string | null;
+  documentSymbols: CodeNavDocumentSymbolsResult | null;
+  documentSymbolsLoading: boolean;
+  documentSymbolsError: string | null;
   aggregatedChangeKindByPath: Map<string, ChangeKind>;
   normalizePath: (value: string) => string;
   toExpandedKey: (path: string) => string;
@@ -65,15 +94,24 @@ interface UseProjectExplorerWorkspaceViewParams {
   handleRefresh: () => Promise<void>;
   handleConfirmCurrentChanges: () => Promise<void>;
   handleConfirmAllChanges: () => Promise<void>;
+  handleSearchQueryChange: (value: string) => void;
+  handleSearchCaseSensitiveChange: React.Dispatch<React.SetStateAction<boolean>>;
+  handleSearchWholeWordChange: React.Dispatch<React.SetStateAction<boolean>>;
+  handleSearchInProject: (query: string) => void;
+  canOpenPreviousSearchHit: boolean;
+  canOpenNextSearchHit: boolean;
+  handleClearSearch: () => void;
+  handleActivateSearchHit: (hit: ProjectSearchHit) => void;
+  handleOpenSearchHit: (hit: ProjectSearchHit) => Promise<void>;
+  handleOpenPreviousSearchHit: () => Promise<void>;
+  handleOpenNextSearchHit: () => Promise<void>;
+  handleTokenSelection: (selection: { token: string; line: number; column: number } | null) => void;
+  clearTokenSelection: () => void;
+  requestDefinition: () => Promise<void>;
+  requestReferences: () => Promise<void>;
+  handleOpenNavLocation: (location: CodeNavLocation) => Promise<void>;
+  handleOpenDocumentSymbol: (line: number) => void;
   handleMoveEntryByDrop: (sourcePath: string, targetDirPath: string) => Promise<void>;
-  handleDispatchTerminalCommand: (payload: { cwd: string; command: string }) => Promise<TerminalDispatchResponse>;
-  handleInterruptTerminal: (terminalId: string, payload?: { reason?: string }) => Promise<TerminalDispatchResponse>;
-  handleGetTerminal: (terminalId: string) => Promise<TerminalResponse>;
-  handleListTerminalLogs: (
-    terminalId: string,
-    params?: { limit?: number; offset?: number; before?: string },
-  ) => Promise<TerminalLogResponse[]>;
-  handleListTerminals: () => Promise<TerminalResponse[]>;
   canRunFile: (entry: FsEntry) => boolean;
   handleRunFile: (entry: FsEntry) => Promise<void>;
   handleDownloadSelected: (entry: FsEntry) => Promise<void>;
@@ -82,14 +120,30 @@ interface UseProjectExplorerWorkspaceViewParams {
   error: string | null;
   selectedFile: FsReadResult | null;
   selectedLog: ChangeLogItem | null;
-  runCwd: string;
-  runTargets: ProjectRunTarget[];
   runStatus: string;
   runCatalogLoading: boolean;
   runCatalogError: string | null;
-  selectedRunTargetId: string | null;
-  setSelectedRunTargetId: React.Dispatch<React.SetStateAction<string | null>>;
-  handleAnalyzeRunTargets: () => void;
+  projectMembers: ProjectRunnerMember[];
+  projectMembersLoading: boolean;
+  projectMembersError: string | null;
+  runnerScriptExists: boolean;
+  runnerScriptChecking: boolean;
+  runnerScriptPath: string;
+  runnerStartCommand: string;
+  runnerStopCommand: string;
+  runnerRestartCommand: string;
+  starting: boolean;
+  stopping: boolean;
+  restarting: boolean;
+  runnerMessage: string | null;
+  runnerError: string | null;
+  activeRun: ProjectRunnerActiveTerminal | null;
+  activeTerminalBusy: boolean;
+  handleRunnerStart: () => Promise<void>;
+  handleRunnerStop: () => Promise<void>;
+  handleRunnerRestart: () => Promise<void>;
+  refreshRunnerState: () => Promise<void>;
+  handleGenerateRunnerScriptForContact: (member: ProjectRunnerMember) => Promise<void>;
 }
 
 export const useProjectExplorerWorkspaceView = ({
@@ -113,6 +167,32 @@ export const useProjectExplorerWorkspaceView = ({
   summaryError,
   actionMessage,
   actionError,
+  searchQuery,
+  searchCaseSensitive,
+  searchWholeWord,
+  searchResults,
+  searchLoading,
+  searchError,
+  searchTruncated,
+  activeSearchHitId,
+  activeSearchHitIndex,
+  totalSearchHits,
+  previewTargetLine,
+  previewTargetLineRevision,
+  navCapabilities,
+  navCapabilitiesLoading,
+  navCapabilitiesError,
+  selectedToken,
+  selectedTokenLine,
+  selectedTokenColumn,
+  navResult,
+  navRequestKind,
+  navLoading,
+  navError,
+  activeNavLocationId,
+  documentSymbols,
+  documentSymbolsLoading,
+  documentSymbolsError,
   aggregatedChangeKindByPath,
   normalizePath,
   toExpandedKey,
@@ -137,12 +217,24 @@ export const useProjectExplorerWorkspaceView = ({
   handleRefresh,
   handleConfirmCurrentChanges,
   handleConfirmAllChanges,
+  handleSearchQueryChange,
+  handleSearchCaseSensitiveChange,
+  handleSearchWholeWordChange,
+  handleSearchInProject,
+  canOpenPreviousSearchHit,
+  canOpenNextSearchHit,
+  handleClearSearch,
+  handleActivateSearchHit,
+  handleOpenSearchHit,
+  handleOpenPreviousSearchHit,
+  handleOpenNextSearchHit,
+  handleTokenSelection,
+  clearTokenSelection,
+  requestDefinition,
+  requestReferences,
+  handleOpenNavLocation,
+  handleOpenDocumentSymbol,
   handleMoveEntryByDrop,
-  handleDispatchTerminalCommand,
-  handleInterruptTerminal,
-  handleGetTerminal,
-  handleListTerminalLogs,
-  handleListTerminals,
   canRunFile,
   handleRunFile,
   handleDownloadSelected,
@@ -151,14 +243,30 @@ export const useProjectExplorerWorkspaceView = ({
   error,
   selectedFile,
   selectedLog,
-  runCwd,
-  runTargets,
   runStatus,
   runCatalogLoading,
   runCatalogError,
-  selectedRunTargetId,
-  setSelectedRunTargetId,
-  handleAnalyzeRunTargets,
+  projectMembers,
+  projectMembersLoading,
+  projectMembersError,
+  runnerScriptExists,
+  runnerScriptChecking,
+  runnerScriptPath,
+  runnerStartCommand,
+  runnerStopCommand,
+  runnerRestartCommand,
+  starting,
+  stopping,
+  restarting,
+  runnerMessage,
+  runnerError,
+  activeRun,
+  activeTerminalBusy,
+  handleRunnerStart,
+  handleRunnerStop,
+  handleRunnerRestart,
+  refreshRunnerState,
+  handleGenerateRunnerScriptForContact,
 }: UseProjectExplorerWorkspaceViewParams) => {
   const openEntryContextMenu = useCallback((event: React.MouseEvent, entry: FsEntry) => {
     event.preventDefault();
@@ -239,6 +347,18 @@ export const useProjectExplorerWorkspaceView = ({
     summaryError,
     actionMessage,
     actionError,
+    searchQuery,
+    searchCaseSensitive,
+    searchWholeWord,
+    searchResults,
+    searchLoading,
+    searchError,
+    searchTruncated,
+    activeSearchHitId,
+    activeSearchHitIndex,
+    totalSearchHits,
+    canOpenPreviousSearchHit,
+    canOpenNextSearchHit,
     aggregatedChangeKindByPath,
     normalizePath,
     toExpandedKey,
@@ -264,7 +384,24 @@ export const useProjectExplorerWorkspaceView = ({
     onConfirmAll: () => {
       void handleConfirmAllChanges();
     },
+    onSearchQueryChange: handleSearchQueryChange,
+    onToggleSearchCaseSensitive: () => {
+      handleSearchCaseSensitiveChange((prev) => !prev);
+    },
+    onToggleSearchWholeWord: () => {
+      handleSearchWholeWordChange((prev) => !prev);
+    },
+    onClearSearch: handleClearSearch,
+    onOpenPreviousSearchHit: () => {
+      void handleOpenPreviousSearchHit();
+    },
+    onOpenNextSearchHit: () => {
+      void handleOpenNextSearchHit();
+    },
     onOpenContextMenu: openEntryContextMenu,
+    onOpenSearchHit: (hit) => {
+      void handleOpenSearchHit(hit);
+    },
     onSelectDeletedPath: (path) => {
       setSelectedPath(path);
       setSelectedFile(null);
@@ -296,7 +433,11 @@ export const useProjectExplorerWorkspaceView = ({
     actionLoading,
     actionMessage,
     actionReloadPath,
+    activeSearchHitId,
+    activeSearchHitIndex,
     aggregatedChangeKindByPath,
+    canOpenNextSearchHit,
+    canOpenPreviousSearchHit,
     canConfirmCurrent,
     canDropToDirectory,
     cancelDragExpandIfMatches,
@@ -311,14 +452,29 @@ export const useProjectExplorerWorkspaceView = ({
     handleConfirmCurrentChanges,
     handleCreateDirectory,
     handleCreateFile,
+    handleClearSearch,
     handleMoveEntryByDrop,
+    handleOpenNextSearchHit,
+    handleOpenSearchHit,
+    handleOpenPreviousSearchHit,
     handleRefresh,
+    handleSearchCaseSensitiveChange,
+    handleSearchQueryChange,
+    handleSearchWholeWordChange,
     loadingPaths,
     loadingSummary,
     normalizePath,
     openEntryContextMenu,
     openFile,
     project,
+    searchError,
+    searchLoading,
+    searchCaseSensitive,
+    searchQuery,
+    searchResults,
+    searchWholeWord,
+    searchTruncated,
+    totalSearchHits,
     scheduleDragExpand,
     selectProjectRoot,
     selectedEntry,
@@ -338,49 +494,159 @@ export const useProjectExplorerWorkspaceView = ({
   ]);
 
   const previewPaneProps: React.ComponentProps<typeof ProjectPreviewPane> = useMemo(() => ({
-    projectId: project.id,
     selectedFile,
     selectedPath,
     selectedEntry,
     loadingFile,
     error,
+    searchQuery,
+    searchCaseSensitive,
+    searchWholeWord,
+    activeSearchHitIndex,
+    totalSearchHits,
+    canOpenPreviousSearchHit,
+    canOpenNextSearchHit,
     selectedLog,
-    runCwd,
     projectRootPath: project.rootPath,
-    onRunCommand: handleDispatchTerminalCommand,
-    onInterruptTerminal: handleInterruptTerminal,
-    onGetTerminal: handleGetTerminal,
-    onListTerminalLogs: handleListTerminalLogs,
-    onListTerminals: handleListTerminals,
-    runTargets,
     runStatus,
     runCatalogLoading,
     runCatalogError,
-    selectedRunTargetId,
-    onSelectRunTarget: setSelectedRunTargetId,
-    onAnalyzeRunTargets: handleAnalyzeRunTargets,
+    projectMembers,
+    projectMembersLoading,
+    projectMembersError,
+    runnerScriptExists,
+    runnerScriptChecking,
+    runnerScriptPath,
+    runnerStartCommand,
+    runnerStopCommand,
+    runnerRestartCommand,
+    starting,
+    stopping,
+    restarting,
+    runnerMessage,
+    runnerError,
+    targetLine: previewTargetLine,
+    targetLineRevision: previewTargetLineRevision,
+    navCapabilities,
+    navCapabilitiesLoading,
+    navCapabilitiesError,
+    searchResults,
+    activeSearchHitId,
+    selectedToken,
+    selectedTokenLine,
+    selectedTokenColumn,
+    navResult,
+    navRequestKind,
+    navLoading,
+    navError,
+    activeNavLocationId,
+    documentSymbols,
+    documentSymbolsLoading,
+    documentSymbolsError,
+    activeRun,
+    activeTerminalBusy,
+    onTokenSelection: handleTokenSelection,
+    onClearTokenSelection: clearTokenSelection,
+    onRequestDefinition: () => {
+      void requestDefinition();
+    },
+    onRequestReferences: () => {
+      void requestReferences();
+    },
+    onSearchInProject: handleSearchInProject,
+    onOpenPreviousSearchHit: () => {
+      void handleOpenPreviousSearchHit();
+    },
+    onOpenNextSearchHit: () => {
+      void handleOpenNextSearchHit();
+    },
+    onActivateSearchHit: handleActivateSearchHit,
+    onOpenNavLocation: (location) => {
+      void handleOpenNavLocation(location);
+    },
+    onOpenDocumentSymbol: handleOpenDocumentSymbol,
+    onRunnerStart: () => {
+      void handleRunnerStart();
+    },
+    onRunnerStop: () => {
+      void handleRunnerStop();
+    },
+    onRunnerRestart: () => {
+      void handleRunnerRestart();
+    },
+    onRefreshRunnerState: () => {
+      void refreshRunnerState();
+    },
+    onGenerateRunnerScriptForContact: handleGenerateRunnerScriptForContact,
   }), [
+    activeRun,
+    activeTerminalBusy,
+    activeSearchHitId,
+    activeSearchHitIndex,
+    canOpenNextSearchHit,
+    canOpenPreviousSearchHit,
     error,
-    handleAnalyzeRunTargets,
-    handleDispatchTerminalCommand,
-    handleGetTerminal,
-    handleInterruptTerminal,
-    handleListTerminalLogs,
-    handleListTerminals,
+    handleActivateSearchHit,
+    handleGenerateRunnerScriptForContact,
+    handleOpenDocumentSymbol,
+    handleOpenNextSearchHit,
+    handleOpenNavLocation,
+    handleOpenPreviousSearchHit,
+    handleRunnerRestart,
+    handleRunnerStart,
+    handleRunnerStop,
+    handleSearchCaseSensitiveChange,
+    handleSearchInProject,
+    handleSearchWholeWordChange,
+    handleTokenSelection,
     loadingFile,
-    project.id,
+    navCapabilities,
+    navCapabilitiesError,
+    navCapabilitiesLoading,
+    documentSymbols,
+    documentSymbolsError,
+    documentSymbolsLoading,
+    navError,
+    navLoading,
+    navResult,
+    navRequestKind,
+    projectMembers,
+    projectMembersError,
+    projectMembersLoading,
     project.rootPath,
+    requestDefinition,
+    requestReferences,
+    refreshRunnerState,
     runCatalogError,
     runCatalogLoading,
-    runCwd,
     runStatus,
-    runTargets,
+    runnerError,
+    runnerMessage,
+    runnerRestartCommand,
+    runnerScriptChecking,
+    runnerScriptExists,
+    runnerScriptPath,
+    runnerStartCommand,
+    runnerStopCommand,
+    restarting,
+    previewTargetLine,
+    previewTargetLineRevision,
+    searchCaseSensitive,
+    searchQuery,
+    searchResults,
+    selectedToken,
+    selectedTokenColumn,
+    selectedTokenLine,
+    searchWholeWord,
     selectedEntry,
     selectedFile,
     selectedLog,
     selectedPath,
-    selectedRunTargetId,
-    setSelectedRunTargetId,
+    starting,
+    stopping,
+    activeNavLocationId,
+    clearTokenSelection,
+    totalSearchHits,
   ]);
 
   return {

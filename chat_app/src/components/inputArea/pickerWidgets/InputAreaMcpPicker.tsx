@@ -1,7 +1,7 @@
 import React from 'react';
 
 import { cn } from '../../../lib/utils';
-import type { SelectableMcpConfig } from '../useMcpSelection';
+import type { McpToolsetPreset, SelectableMcpConfig } from '../useMcpSelection';
 
 interface InputAreaMcpPickerProps {
   mcpPickerRef: React.RefObject<HTMLDivElement>;
@@ -20,6 +20,9 @@ interface InputAreaMcpPickerProps {
   availableMcpConfigs: SelectableMcpConfig[];
   builtinMcpConfigs: SelectableMcpConfig[];
   customMcpConfigs: SelectableMcpConfig[];
+  mcpToolsetPresets: McpToolsetPreset[];
+  projectScopeKey: string | null;
+  hasProjectMcpDefault: boolean;
   hasDirectoryContext: boolean;
   hasRemoteContext: boolean;
   isProjectRequiredMcpId: (id: string) => boolean;
@@ -28,6 +31,9 @@ interface InputAreaMcpPickerProps {
   onRefreshMcpConfigs: () => void;
   onSelectAllMcp: () => void;
   onToggleMcpSelection: (mcpId: string) => void;
+  onApplyMcpToolsetPreset: (presetId: string) => void;
+  onSaveProjectMcpDefault: () => void;
+  onApplyProjectMcpDefault: () => void;
 }
 
 export const InputAreaMcpPicker: React.FC<InputAreaMcpPickerProps> = ({
@@ -47,6 +53,9 @@ export const InputAreaMcpPicker: React.FC<InputAreaMcpPickerProps> = ({
   availableMcpConfigs,
   builtinMcpConfigs,
   customMcpConfigs,
+  mcpToolsetPresets,
+  projectScopeKey,
+  hasProjectMcpDefault,
   hasDirectoryContext,
   hasRemoteContext,
   isProjectRequiredMcpId,
@@ -55,6 +64,9 @@ export const InputAreaMcpPicker: React.FC<InputAreaMcpPickerProps> = ({
   onRefreshMcpConfigs,
   onSelectAllMcp,
   onToggleMcpSelection,
+  onApplyMcpToolsetPreset,
+  onSaveProjectMcpDefault,
+  onApplyProjectMcpDefault,
 }) => (
   <div className="relative flex-shrink-0" ref={mcpPickerRef}>
     <div className="flex items-center gap-1">
@@ -120,6 +132,65 @@ export const InputAreaMcpPicker: React.FC<InputAreaMcpPickerProps> = ({
             <div className="px-3 py-3 text-xs text-muted-foreground">暂无可用 MCP</div>
           ) : (
             <>
+              {mcpToolsetPresets.length > 0 && (
+                <div className="px-3 pt-2 pb-2 border-b">
+                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">工具集预设</div>
+                  <div className="mt-2 grid grid-cols-2 gap-1.5">
+                    {mcpToolsetPresets.map((preset) => (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        onClick={() => onApplyMcpToolsetPreset(preset.id)}
+                        disabled={disabled || isStreaming || isStopping || preset.disabled}
+                        className={cn(
+                          'px-2 py-1 rounded border text-[11px] text-left transition-colors',
+                          'hover:bg-accent hover:text-foreground',
+                          'disabled:opacity-50 disabled:cursor-not-allowed',
+                        )}
+                        title={preset.description}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="truncate">{preset.label}</span>
+                          <span className="text-[10px] text-muted-foreground">{preset.targetIds.length}</span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="px-3 py-2 border-b">
+                <div className="text-[11px] uppercase tracking-wide text-muted-foreground">项目默认</div>
+                <div className="mt-2 flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={onSaveProjectMcpDefault}
+                    disabled={disabled || isStreaming || isStopping || !projectScopeKey}
+                    className={cn(
+                      'px-2 py-1 rounded border text-[11px] transition-colors',
+                      'hover:bg-accent hover:text-foreground',
+                      'disabled:opacity-50 disabled:cursor-not-allowed',
+                    )}
+                    title={projectScopeKey ? '将当前 MCP 选择保存为项目默认' : '需先选择项目或工作目录'}
+                  >
+                    设为默认
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onApplyProjectMcpDefault}
+                    disabled={disabled || isStreaming || isStopping || !hasProjectMcpDefault}
+                    className={cn(
+                      'px-2 py-1 rounded border text-[11px] transition-colors',
+                      'hover:bg-accent hover:text-foreground',
+                      'disabled:opacity-50 disabled:cursor-not-allowed',
+                    )}
+                    title={hasProjectMcpDefault ? '套用已保存的项目默认 MCP 选择' : '当前项目还没有默认配置'}
+                  >
+                    套用默认
+                  </button>
+                </div>
+              </div>
+
               <label className="w-full px-3 py-2 text-sm flex items-center gap-2 border-b">
                 <input
                   type="checkbox"

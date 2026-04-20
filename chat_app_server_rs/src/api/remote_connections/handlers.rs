@@ -1,6 +1,6 @@
 use axum::{
     extract::{Path, Query},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     Json,
 };
 use serde_json::Value;
@@ -19,6 +19,17 @@ use super::{
     CreateRemoteConnectionRequest, DisconnectReason, RemoteConnectionQuery,
     UpdateRemoteConnectionRequest,
 };
+
+const REMOTE_VERIFICATION_CODE_HEADER: &str = "x-remote-verification-code";
+
+fn verification_code_from_headers(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get(REMOTE_VERIFICATION_CODE_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
 
 pub(super) async fn list_remote_connections(
     auth: AuthUser,
@@ -81,6 +92,7 @@ pub(super) async fn create_remote_connection(
 
 pub(super) async fn test_remote_connection_draft(
     auth: AuthUser,
+    headers: HeaderMap,
     Json(req): Json<CreateRemoteConnectionRequest>,
 ) -> (StatusCode, Json<Value>) {
     let user_id = match resolve_user_id(req.user_id.clone(), &auth) {
@@ -98,7 +110,9 @@ pub(super) async fn test_remote_connection_draft(
         }
     };
 
-    match run_remote_connectivity_test(&connection).await {
+    let verification_code = verification_code_from_headers(&headers);
+
+    match run_remote_connectivity_test(&connection, verification_code.as_deref()).await {
         Ok(result) => (StatusCode::OK, Json(result)),
         Err(err) => remote_connectivity_error_response(err),
     }
@@ -207,6 +221,7 @@ pub(super) async fn disconnect_remote_terminal(
 
 pub(super) async fn test_remote_connection_saved(
     auth: AuthUser,
+    headers: HeaderMap,
     Path(id): Path<String>,
 ) -> (StatusCode, Json<Value>) {
     let connection = match ensure_owned_remote_connection(&id, &auth).await {
@@ -214,7 +229,9 @@ pub(super) async fn test_remote_connection_saved(
         Err(err) => return map_remote_connection_access_error(err),
     };
 
-    match run_remote_connectivity_test(&connection).await {
+    let verification_code = verification_code_from_headers(&headers);
+
+    match run_remote_connectivity_test(&connection, verification_code.as_deref()).await {
         Ok(result) => {
             let _ = RemoteConnectionService::touch(&connection.id).await;
             (StatusCode::OK, Json(result))
