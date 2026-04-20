@@ -35,7 +35,7 @@
     "highlight.js": "^11.9.0",
     "immer": "^10.0.0",
     "katex": "^0.16.0",
-    "lucide-react": "^0.400.0",
+    "lucide-react": "^1.8.0",
     "mermaid": "^11.13.0",
     "openai": "^4.20.0",
     "react": ">=18.0.0",
