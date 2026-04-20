@@ -2,11 +2,16 @@ import { useCallback, useMemo } from 'react';
 import type React from 'react';
 
 import type {
+  CodeNavCapabilities,
+  CodeNavDocumentSymbolsResult,
+  CodeNavLocation,
+  CodeNavLocationsResult,
   ChangeLogItem,
   FsEntry,
   FsReadResult,
   Project,
   ProjectChangeSummary,
+  ProjectSearchHit,
 } from '../../types';
 import type { ChangeKind } from './utils';
 import { ProjectPreviewPane } from './PreviewPane';
@@ -39,6 +44,31 @@ interface UseProjectExplorerWorkspaceViewParams {
   summaryError: string | null;
   actionMessage: string | null;
   actionError: string | null;
+  searchQuery: string;
+  searchCaseSensitive: boolean;
+  searchWholeWord: boolean;
+  searchResults: ProjectSearchHit[];
+  searchLoading: boolean;
+  searchError: string | null;
+  searchTruncated: boolean;
+  activeSearchHitId: string | null;
+  activeSearchHitIndex: number;
+  totalSearchHits: number;
+  previewTargetLine: number | null;
+  navCapabilities: CodeNavCapabilities | null;
+  navCapabilitiesLoading: boolean;
+  navCapabilitiesError: string | null;
+  selectedToken: string | null;
+  selectedTokenLine: number | null;
+  selectedTokenColumn: number | null;
+  navResult: CodeNavLocationsResult | null;
+  navRequestKind: 'definition' | 'references' | null;
+  navLoading: boolean;
+  navError: string | null;
+  activeNavLocationId: string | null;
+  documentSymbols: CodeNavDocumentSymbolsResult | null;
+  documentSymbolsLoading: boolean;
+  documentSymbolsError: string | null;
   aggregatedChangeKindByPath: Map<string, ChangeKind>;
   normalizePath: (value: string) => string;
   toExpandedKey: (path: string) => string;
@@ -63,6 +93,23 @@ interface UseProjectExplorerWorkspaceViewParams {
   handleRefresh: () => Promise<void>;
   handleConfirmCurrentChanges: () => Promise<void>;
   handleConfirmAllChanges: () => Promise<void>;
+  handleSearchQueryChange: (value: string) => void;
+  handleSearchCaseSensitiveChange: React.Dispatch<React.SetStateAction<boolean>>;
+  handleSearchWholeWordChange: React.Dispatch<React.SetStateAction<boolean>>;
+  handleSearchInProject: (query: string) => void;
+  canOpenPreviousSearchHit: boolean;
+  canOpenNextSearchHit: boolean;
+  handleClearSearch: () => void;
+  handleActivateSearchHit: (hit: ProjectSearchHit) => void;
+  handleOpenSearchHit: (hit: ProjectSearchHit) => Promise<void>;
+  handleOpenPreviousSearchHit: () => Promise<void>;
+  handleOpenNextSearchHit: () => Promise<void>;
+  handleTokenSelection: (selection: { token: string; line: number; column: number } | null) => void;
+  clearTokenSelection: () => void;
+  requestDefinition: () => Promise<void>;
+  requestReferences: () => Promise<void>;
+  handleOpenNavLocation: (location: CodeNavLocation) => Promise<void>;
+  handleOpenDocumentSymbol: (line: number) => void;
   handleMoveEntryByDrop: (sourcePath: string, targetDirPath: string) => Promise<void>;
   canRunFile: (entry: FsEntry) => boolean;
   handleRunFile: (entry: FsEntry) => Promise<void>;
@@ -119,6 +166,31 @@ export const useProjectExplorerWorkspaceView = ({
   summaryError,
   actionMessage,
   actionError,
+  searchQuery,
+  searchCaseSensitive,
+  searchWholeWord,
+  searchResults,
+  searchLoading,
+  searchError,
+  searchTruncated,
+  activeSearchHitId,
+  activeSearchHitIndex,
+  totalSearchHits,
+  previewTargetLine,
+  navCapabilities,
+  navCapabilitiesLoading,
+  navCapabilitiesError,
+  selectedToken,
+  selectedTokenLine,
+  selectedTokenColumn,
+  navResult,
+  navRequestKind,
+  navLoading,
+  navError,
+  activeNavLocationId,
+  documentSymbols,
+  documentSymbolsLoading,
+  documentSymbolsError,
   aggregatedChangeKindByPath,
   normalizePath,
   toExpandedKey,
@@ -143,6 +215,23 @@ export const useProjectExplorerWorkspaceView = ({
   handleRefresh,
   handleConfirmCurrentChanges,
   handleConfirmAllChanges,
+  handleSearchQueryChange,
+  handleSearchCaseSensitiveChange,
+  handleSearchWholeWordChange,
+  handleSearchInProject,
+  canOpenPreviousSearchHit,
+  canOpenNextSearchHit,
+  handleClearSearch,
+  handleActivateSearchHit,
+  handleOpenSearchHit,
+  handleOpenPreviousSearchHit,
+  handleOpenNextSearchHit,
+  handleTokenSelection,
+  clearTokenSelection,
+  requestDefinition,
+  requestReferences,
+  handleOpenNavLocation,
+  handleOpenDocumentSymbol,
   handleMoveEntryByDrop,
   canRunFile,
   handleRunFile,
@@ -256,6 +345,18 @@ export const useProjectExplorerWorkspaceView = ({
     summaryError,
     actionMessage,
     actionError,
+    searchQuery,
+    searchCaseSensitive,
+    searchWholeWord,
+    searchResults,
+    searchLoading,
+    searchError,
+    searchTruncated,
+    activeSearchHitId,
+    activeSearchHitIndex,
+    totalSearchHits,
+    canOpenPreviousSearchHit,
+    canOpenNextSearchHit,
     aggregatedChangeKindByPath,
     normalizePath,
     toExpandedKey,
@@ -281,7 +382,24 @@ export const useProjectExplorerWorkspaceView = ({
     onConfirmAll: () => {
       void handleConfirmAllChanges();
     },
+    onSearchQueryChange: handleSearchQueryChange,
+    onToggleSearchCaseSensitive: () => {
+      handleSearchCaseSensitiveChange((prev) => !prev);
+    },
+    onToggleSearchWholeWord: () => {
+      handleSearchWholeWordChange((prev) => !prev);
+    },
+    onClearSearch: handleClearSearch,
+    onOpenPreviousSearchHit: () => {
+      void handleOpenPreviousSearchHit();
+    },
+    onOpenNextSearchHit: () => {
+      void handleOpenNextSearchHit();
+    },
     onOpenContextMenu: openEntryContextMenu,
+    onOpenSearchHit: (hit) => {
+      void handleOpenSearchHit(hit);
+    },
     onSelectDeletedPath: (path) => {
       setSelectedPath(path);
       setSelectedFile(null);
@@ -313,7 +431,11 @@ export const useProjectExplorerWorkspaceView = ({
     actionLoading,
     actionMessage,
     actionReloadPath,
+    activeSearchHitId,
+    activeSearchHitIndex,
     aggregatedChangeKindByPath,
+    canOpenNextSearchHit,
+    canOpenPreviousSearchHit,
     canConfirmCurrent,
     canDropToDirectory,
     cancelDragExpandIfMatches,
@@ -328,14 +450,29 @@ export const useProjectExplorerWorkspaceView = ({
     handleConfirmCurrentChanges,
     handleCreateDirectory,
     handleCreateFile,
+    handleClearSearch,
     handleMoveEntryByDrop,
+    handleOpenNextSearchHit,
+    handleOpenSearchHit,
+    handleOpenPreviousSearchHit,
     handleRefresh,
+    handleSearchCaseSensitiveChange,
+    handleSearchQueryChange,
+    handleSearchWholeWordChange,
     loadingPaths,
     loadingSummary,
     normalizePath,
     openEntryContextMenu,
     openFile,
     project,
+    searchError,
+    searchLoading,
+    searchCaseSensitive,
+    searchQuery,
+    searchResults,
+    searchWholeWord,
+    searchTruncated,
+    totalSearchHits,
     scheduleDragExpand,
     selectProjectRoot,
     selectedEntry,
@@ -360,6 +497,13 @@ export const useProjectExplorerWorkspaceView = ({
     selectedEntry,
     loadingFile,
     error,
+    searchQuery,
+    searchCaseSensitive,
+    searchWholeWord,
+    activeSearchHitIndex,
+    totalSearchHits,
+    canOpenPreviousSearchHit,
+    canOpenNextSearchHit,
     selectedLog,
     projectRootPath: project.rootPath,
     runStatus,
@@ -379,8 +523,45 @@ export const useProjectExplorerWorkspaceView = ({
     restarting,
     runnerMessage,
     runnerError,
+    targetLine: previewTargetLine,
+    navCapabilities,
+    navCapabilitiesLoading,
+    navCapabilitiesError,
+    searchResults,
+    activeSearchHitId,
+    selectedToken,
+    selectedTokenLine,
+    selectedTokenColumn,
+    navResult,
+    navRequestKind,
+    navLoading,
+    navError,
+    activeNavLocationId,
+    documentSymbols,
+    documentSymbolsLoading,
+    documentSymbolsError,
     activeRun,
     activeTerminalBusy,
+    onTokenSelection: handleTokenSelection,
+    onClearTokenSelection: clearTokenSelection,
+    onRequestDefinition: () => {
+      void requestDefinition();
+    },
+    onRequestReferences: () => {
+      void requestReferences();
+    },
+    onSearchInProject: handleSearchInProject,
+    onOpenPreviousSearchHit: () => {
+      void handleOpenPreviousSearchHit();
+    },
+    onOpenNextSearchHit: () => {
+      void handleOpenNextSearchHit();
+    },
+    onActivateSearchHit: handleActivateSearchHit,
+    onOpenNavLocation: (location) => {
+      void handleOpenNavLocation(location);
+    },
+    onOpenDocumentSymbol: handleOpenDocumentSymbol,
     onRunnerStart: () => {
       void handleRunnerStart();
     },
@@ -397,16 +578,41 @@ export const useProjectExplorerWorkspaceView = ({
   }), [
     activeRun,
     activeTerminalBusy,
+    activeSearchHitId,
+    activeSearchHitIndex,
+    canOpenNextSearchHit,
+    canOpenPreviousSearchHit,
     error,
+    handleActivateSearchHit,
     handleGenerateRunnerScriptForContact,
+    handleOpenDocumentSymbol,
+    handleOpenNextSearchHit,
+    handleOpenNavLocation,
+    handleOpenPreviousSearchHit,
     handleRunnerRestart,
     handleRunnerStart,
     handleRunnerStop,
+    handleSearchCaseSensitiveChange,
+    handleSearchInProject,
+    handleSearchWholeWordChange,
+    handleTokenSelection,
     loadingFile,
+    navCapabilities,
+    navCapabilitiesError,
+    navCapabilitiesLoading,
+    documentSymbols,
+    documentSymbolsError,
+    documentSymbolsLoading,
+    navError,
+    navLoading,
+    navResult,
+    navRequestKind,
     projectMembers,
     projectMembersError,
     projectMembersLoading,
     project.rootPath,
+    requestDefinition,
+    requestReferences,
     refreshRunnerState,
     runCatalogError,
     runCatalogLoading,
@@ -420,12 +626,23 @@ export const useProjectExplorerWorkspaceView = ({
     runnerStartCommand,
     runnerStopCommand,
     restarting,
+    previewTargetLine,
+    searchCaseSensitive,
+    searchQuery,
+    searchResults,
+    selectedToken,
+    selectedTokenColumn,
+    selectedTokenLine,
+    searchWholeWord,
     selectedEntry,
     selectedFile,
     selectedLog,
     selectedPath,
     starting,
     stopping,
+    activeNavLocationId,
+    clearTokenSelection,
+    totalSearchHits,
   ]);
 
   return {

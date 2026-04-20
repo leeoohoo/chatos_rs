@@ -6,12 +6,18 @@ use serde_json::{json, Value};
 use std::fs;
 use std::path::PathBuf;
 
-use super::contracts::{FsDownloadQuery, FsQuery, FsReadQuery, FsSearchQuery};
+use super::contracts::{
+    FsContentSearchQuery, FsDownloadQuery, FsQuery, FsReadQuery, FsSearchQuery,
+};
 use super::helpers::{format_system_time, infer_download_name, read_dir_entries, zip_directory};
 use super::read_mode::should_render_text;
 use super::response::{binary_download_response, json_error_response};
 use super::roots::list_roots;
 use super::search::{is_search_match, normalize_search_keyword};
+use crate::services::workspace_search::{
+    search_text as search_workspace_text, TextSearchRequest, DEFAULT_MAX_FILE_BYTES,
+    DEFAULT_MAX_VISITS,
+};
 
 const MAX_PREVIEW_BYTES: u64 = 2 * 1024 * 1024;
 const DEFAULT_SEARCH_LIMIT: usize = 200;
@@ -308,6 +314,69 @@ pub(super) async fn search_entries(
             "visited_dirs": visited_dirs
         })),
     )
+}
+
+pub(super) async fn search_content(
+    Query(query): Query<FsContentSearchQuery>,
+) -> (StatusCode, Json<Value>) {
+    let raw_path = query
+        .path
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    if raw_path.is_none() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "搜索路径不能为空" })),
+        );
+    }
+
+    let raw_keyword = query
+        .q
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    if raw_keyword.is_none() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "搜索关键字不能为空" })),
+        );
+    }
+
+    let path = PathBuf::from(raw_path.unwrap());
+    let query_text = raw_keyword.unwrap();
+    let limit = query
+        .limit
+        .unwrap_or(DEFAULT_SEARCH_LIMIT)
+        .clamp(1, MAX_SEARCH_LIMIT);
+
+    match search_workspace_text(&TextSearchRequest {
+        root: path.clone(),
+        query: query_text.clone(),
+        max_results: limit,
+        max_file_bytes: DEFAULT_MAX_FILE_BYTES,
+        max_visits: DEFAULT_MAX_VISITS,
+        case_sensitive: query.case_sensitive.unwrap_or(false),
+        whole_word: query.whole_word.unwrap_or(false),
+    }) {
+        Ok(result) => (
+            StatusCode::OK,
+            Json(json!({
+                "path": path.to_string_lossy(),
+                "query": query_text,
+                "entries": result.entries,
+                "truncated": result.truncated,
+                "visited_dirs": result.visited_dirs
+            })),
+        ),
+        Err(message) if message == "路径不存在" || message == "路径不是目录" => {
+            (StatusCode::BAD_REQUEST, Json(json!({ "error": message })))
+        }
+        Err(message) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": message })),
+        ),
+    }
 }
 
 pub(super) async fn read_file(Query(query): Query<FsReadQuery>) -> (StatusCode, Json<Value>) {

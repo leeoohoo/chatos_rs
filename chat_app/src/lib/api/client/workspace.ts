@@ -2,12 +2,16 @@ import { debugLog } from '@/lib/utils';
 
 import { buildQuery } from './shared';
 import type {
+  CodeNavCapabilitiesResponse,
+  CodeNavDocumentSymbolsResponse,
+  CodeNavLocationsResponse,
   ContactAgentRecallResponse,
   ContactCreateResponse,
   ContactProjectLinkResponse,
   ContactProjectMemoryResponse,
   ContactResponse,
   DeleteSuccessResponse,
+  FsContentSearchResponse,
   FsEntriesResponse,
   FsMutationResponse,
   FsReadFileResponse,
@@ -702,6 +706,83 @@ export const searchFsEntries = (
   limit?: number
 ): Promise<FsEntriesResponse> => {
   return request<FsEntriesResponse>(`/fs/search${buildQuery({ path, q: query, limit })}`);
+};
+
+export const searchFsContent = (
+  request: ApiRequestFn,
+  path: string,
+  query: string,
+  options?: {
+    limit?: number;
+    caseSensitive?: boolean;
+    wholeWord?: boolean;
+  }
+): Promise<FsContentSearchResponse> => {
+  return request<FsContentSearchResponse>(`/fs/search-content${buildQuery({
+    path,
+    q: query,
+    limit: options?.limit,
+    case_sensitive: options?.caseSensitive,
+    whole_word: options?.wholeWord,
+  })}`);
+};
+
+export const getCodeNavCapabilities = (
+  request: ApiRequestFn,
+  projectRoot: string,
+  filePath: string,
+): Promise<CodeNavCapabilitiesResponse> => {
+  return request<CodeNavCapabilitiesResponse>('/code-nav/capabilities', {
+    method: 'POST',
+    body: JSON.stringify({
+      project_root: projectRoot,
+      file_path: filePath,
+    }),
+  });
+};
+
+export const getCodeNavDefinition = (
+  request: ApiRequestFn,
+  data: { projectRoot: string; filePath: string; line: number; column: number },
+): Promise<CodeNavLocationsResponse> => {
+  return request<CodeNavLocationsResponse>('/code-nav/definition', {
+    method: 'POST',
+    body: JSON.stringify({
+      project_root: data.projectRoot,
+      file_path: data.filePath,
+      line: data.line,
+      column: data.column,
+    }),
+  });
+};
+
+export const getCodeNavReferences = (
+  request: ApiRequestFn,
+  data: { projectRoot: string; filePath: string; line: number; column: number },
+): Promise<CodeNavLocationsResponse> => {
+  return request<CodeNavLocationsResponse>('/code-nav/references', {
+    method: 'POST',
+    body: JSON.stringify({
+      project_root: data.projectRoot,
+      file_path: data.filePath,
+      line: data.line,
+      column: data.column,
+    }),
+  });
+};
+
+export const getCodeNavDocumentSymbols = (
+  request: ApiRequestFn,
+  projectRoot: string,
+  filePath: string,
+): Promise<CodeNavDocumentSymbolsResponse> => {
+  return request<CodeNavDocumentSymbolsResponse>('/code-nav/document-symbols', {
+    method: 'POST',
+    body: JSON.stringify({
+      project_root: projectRoot,
+      file_path: filePath,
+    }),
+  });
 };
 
 export const readFsFile = (request: ApiRequestFn, path: string): Promise<FsReadFileResponse> => {

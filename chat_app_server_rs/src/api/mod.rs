@@ -31,6 +31,7 @@ pub mod auth;
 mod chat_stream_common;
 pub mod chat_v2;
 pub mod chat_v3;
+pub mod code_nav;
 pub mod configs;
 pub mod contacts;
 mod conversation_semantics;
@@ -123,6 +124,7 @@ pub fn router() -> Router {
         .merge(agent_builder::router())
         .merge(chat_v2::router())
         .merge(chat_v3::router())
+        .merge(code_nav::router())
         .nest("/api/applications", applications::router())
         .merge(projects::router())
         .merge(remote_connections::router())

@@ -48,7 +48,7 @@ describe('toolEvents', () => {
 
     applyToolEndResultsToMessage(message, [payload]);
 
-    const toolCall = (message.metadata?.toolCalls || [])[0] as Record<string, unknown>;
+    const toolCall = (message.metadata?.toolCalls || [])[0] as unknown as Record<string, unknown>;
     expect(toolCall.error).toBeUndefined();
     expect(toolCall.completed).toBe(true);
     expect(toolCall.result).toEqual(payload.result);
@@ -70,7 +70,7 @@ describe('toolEvents', () => {
 
     const handled = applyToolStreamDataToMessage(message, payload);
 
-    const toolCall = (message.metadata?.toolCalls || [])[0] as Record<string, unknown>;
+    const toolCall = (message.metadata?.toolCalls || [])[0] as unknown as Record<string, unknown>;
     expect(handled).toBe(true);
     expect(toolCall.error).toBeUndefined();
     expect(toolCall.result).toBe('Search providers were unavailable, returning fallback bundle.');
@@ -88,7 +88,7 @@ describe('toolEvents', () => {
 
     applyToolEndResultsToMessage(message, [payload]);
 
-    const toolCall = (message.metadata?.toolCalls || [])[0] as Record<string, unknown>;
+    const toolCall = (message.metadata?.toolCalls || [])[0] as unknown as Record<string, unknown>;
     expect(toolCall.error).toBe('工具执行失败: request timed out');
     expect(toolCall.completed).toBe(true);
   });

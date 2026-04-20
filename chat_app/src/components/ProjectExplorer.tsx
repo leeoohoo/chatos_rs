@@ -7,6 +7,7 @@ import {
   useChatStoreSelector,
 } from '../lib/store/ChatStoreContext';
 import type {
+  CodeNavLocation,
   Project,
   FsEntry,
 } from '../types';
@@ -32,6 +33,8 @@ import {
 import {
   useProjectExplorerState,
 } from './projectExplorer/useProjectExplorerState';
+import { useProjectExplorerSearch } from './projectExplorer/useProjectExplorerSearch';
+import { useProjectExplorerCodeNav } from './projectExplorer/useProjectExplorerCodeNav';
 import {
   useProjectExplorerRunState,
   type ProjectRunnerMember,
@@ -136,6 +139,35 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     keyToPath,
     getParentPath,
   } = useProjectExplorerPathHelpers(project?.rootPath);
+  const {
+    searchQuery,
+    setSearchQuery,
+    searchCaseSensitive,
+    setSearchCaseSensitive,
+    searchWholeWord,
+    setSearchWholeWord,
+    searchResults,
+    searchLoading,
+    searchError,
+    searchTruncated,
+    activeSearchHitId,
+    activeSearchHitIndex,
+    totalSearchHits,
+    previewTargetLine,
+    setPreviewTargetLine,
+    canOpenPreviousSearchHit,
+    canOpenNextSearchHit,
+    runSearchQuery,
+    clearSearch,
+    clearSearchNavigation,
+    activateSearchHit,
+    handleOpenSearchHit,
+    openPreviousSearchHit,
+    openNextSearchHit,
+  } = useProjectExplorerSearch({
+    client,
+    projectRootPath: project?.rootPath,
+  });
   const resolveParentPath = useCallback(
     (path: string | null | undefined) => getParentPath(path || '') || '',
     [getParentPath],
@@ -189,6 +221,7 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
   }, [entriesMap, loadEntries, toExpandedKey]);
 
   const openFile = useCallback(async (entry: FsEntry) => {
+    clearSearchNavigation();
     setActionError(null);
     setSelectedPath(entry.path);
     setSelectedFile(null);
@@ -202,7 +235,18 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     } finally {
       setLoadingFile(false);
     }
-  }, [client]);
+  }, [clearSearchNavigation, client]);
+
+  const openCodeNavLocation = useCallback(async (location: CodeNavLocation) => {
+    await openFile({
+      name: location.relativePath.split('/').filter(Boolean).pop() || location.path.split(/[\\/]/).pop() || location.path,
+      path: location.path,
+      isDir: false,
+      size: null,
+      modifiedAt: null,
+    });
+    setPreviewTargetLine(location.line);
+  }, [openFile, setPreviewTargetLine]);
 
   const projectRootEntry = useMemo<FsEntry | null>(() => {
     if (!project?.rootPath) return null;
@@ -273,6 +317,45 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     setActionLoading,
     setActionMessage,
   });
+  const {
+    navCapabilities,
+    navCapabilitiesLoading,
+    navCapabilitiesError,
+    selectedToken,
+    selectedTokenLine,
+    selectedTokenColumn,
+    navResult,
+    navRequestKind,
+    navLoading,
+    navError,
+    activeNavLocationId,
+    documentSymbols,
+    documentSymbolsLoading,
+    documentSymbolsError,
+    handleTokenSelection,
+    clearTokenSelection,
+    requestDefinition,
+    requestReferences,
+    handleOpenNavLocation,
+  } = useProjectExplorerCodeNav({
+    client,
+    projectRootPath: project?.rootPath,
+    selectedFilePath: selectedFile?.path || null,
+    openLocation: openCodeNavLocation,
+  });
+  const handlePreviewTokenSelection = useCallback((selection: {
+    token: string;
+    line: number;
+    column: number;
+  } | null) => {
+    handleTokenSelection(selection);
+    if (selection?.line) {
+      setPreviewTargetLine(selection.line);
+    }
+  }, [handleTokenSelection, setPreviewTargetLine]);
+  const handleOpenDocumentSymbol = useCallback((line: number) => {
+    setPreviewTargetLine(line);
+  }, [setPreviewTargetLine]);
 
   const handleGenerateRunnerScriptForContact = useCallback(async (member: ProjectRunnerMember) => {
     if (!project?.id || !project?.rootPath) {
@@ -589,6 +672,31 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     summaryError,
     actionMessage,
     actionError,
+    searchQuery,
+    searchCaseSensitive,
+    searchWholeWord,
+    searchResults,
+    searchLoading,
+    searchError,
+    searchTruncated,
+    activeSearchHitId,
+    activeSearchHitIndex,
+    totalSearchHits,
+    previewTargetLine,
+    navCapabilities,
+    navCapabilitiesLoading,
+    navCapabilitiesError,
+    selectedToken,
+    selectedTokenLine,
+    selectedTokenColumn,
+    navResult,
+    navRequestKind,
+    navLoading,
+    navError,
+    activeNavLocationId,
+    documentSymbols,
+    documentSymbolsLoading,
+    documentSymbolsError,
     aggregatedChangeKindByPath,
     normalizePath,
     toExpandedKey,
@@ -613,6 +721,23 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
     handleRefresh,
     handleConfirmCurrentChanges,
     handleConfirmAllChanges,
+    handleSearchQueryChange: setSearchQuery,
+    handleSearchCaseSensitiveChange: setSearchCaseSensitive,
+    handleSearchWholeWordChange: setSearchWholeWord,
+    handleSearchInProject: runSearchQuery,
+    canOpenPreviousSearchHit,
+    canOpenNextSearchHit,
+    handleClearSearch: clearSearch,
+    handleActivateSearchHit: activateSearchHit,
+    handleOpenSearchHit: (hit) => handleOpenSearchHit(hit, openFile),
+    handleOpenPreviousSearchHit: () => openPreviousSearchHit(openFile),
+    handleOpenNextSearchHit: () => openNextSearchHit(openFile),
+    handleTokenSelection: handlePreviewTokenSelection,
+    clearTokenSelection,
+    requestDefinition,
+    requestReferences,
+    handleOpenNavLocation,
+    handleOpenDocumentSymbol,
     handleMoveEntryByDrop,
     canRunFile,
     handleRunFile,

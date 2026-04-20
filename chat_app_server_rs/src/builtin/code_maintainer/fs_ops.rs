@@ -1,7 +1,9 @@
 use super::utils::{ensure_path_inside_root, is_binary_buffer, sha256_bytes};
+use crate::services::workspace_search::{
+    search_text as search_workspace_text, TextSearchRequest, DEFAULT_MAX_VISITS,
+};
 use std::fs;
 use std::path::{Path, PathBuf};
-use walkdir::WalkDir;
 
 #[derive(Clone, Debug)]
 pub struct FsOps {
@@ -144,53 +146,24 @@ impl FsOps {
         max_results: Option<usize>,
     ) -> Result<Vec<SearchResult>, String> {
         let root = self.resolve_path(rel_path)?;
-        let limit = max_results.unwrap_or(self.search_limit);
-        let mut results: Vec<SearchResult> = Vec::new();
-        let walker = WalkDir::new(root).into_iter().filter_entry(|entry| {
-            if entry.file_type().is_dir() {
-                let name = entry.file_name().to_string_lossy();
-                return name != "node_modules" && name != ".git" && name != "dist";
-            }
-            true
-        });
-        for entry in walker.filter_map(|e| e.ok()) {
-            if results.len() >= limit {
-                break;
-            }
-            if !entry.file_type().is_file() {
-                continue;
-            }
-            let metadata = entry.metadata().map_err(|err| err.to_string())?;
-            if metadata.len() as i64 > self.max_file_bytes {
-                continue;
-            }
-            let buffer = fs::read(entry.path()).map_err(|err| err.to_string())?;
-            if is_binary_buffer(&buffer) {
-                continue;
-            }
-            let content = String::from_utf8_lossy(&buffer);
-            for (idx, line) in content.split('\n').enumerate() {
-                if results.len() >= limit {
-                    break;
-                }
-                if line.contains(pattern) {
-                    let trimmed = line.trim();
-                    let snippet = if trimmed.len() > 400 {
-                        trimmed[..400].to_string()
-                    } else {
-                        trimmed.to_string()
-                    };
-                    let rel = pathdiff::diff_paths(entry.path(), &self.root)
-                        .unwrap_or_else(|| entry.path().to_path_buf());
-                    results.push(SearchResult {
-                        path: rel.to_string_lossy().to_string(),
-                        line: idx + 1,
-                        text: snippet,
-                    });
-                }
-            }
-        }
-        Ok(results)
+        let outcome = search_workspace_text(&TextSearchRequest {
+            root,
+            query: pattern.to_string(),
+            max_results: max_results.unwrap_or(self.search_limit),
+            max_file_bytes: self.max_file_bytes.max(0) as u64,
+            max_visits: DEFAULT_MAX_VISITS,
+            case_sensitive: true,
+            whole_word: false,
+        })?;
+        Ok(outcome
+            .entries
+            .into_iter()
+            .map(|entry| SearchResult {
+                path: entry.relative_path,
+                line: entry.line,
+                text: entry.text,
+            })
+            .collect())
     }
 
     pub fn write_file(&self, rel_path: &str, content: &str) -> Result<WriteResult, String> {

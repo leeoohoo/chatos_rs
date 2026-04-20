@@ -15,7 +15,9 @@ use super::directory_guard::{
 use super::io_runtime::{spawn_shell, spawn_terminal_output_persist, spawn_terminal_touch};
 use super::output_history::{OutputHistory, SNAPSHOT_MAX_LINES};
 use super::path_utils::{canonicalize_path, path_is_within_root};
-use super::prompt_parser::{extract_prompt_cwd, infer_prompt_cwd_from_context, strip_ansi};
+use super::prompt_parser::{
+    extract_prompt_cwd, infer_prompt_cwd_from_context, is_prompt_line, strip_ansi,
+};
 use super::{input_triggers_busy, now_millis, TerminalEvent};
 
 pub struct TerminalSession {
@@ -321,7 +323,7 @@ impl TerminalSession {
         });
 
         let Some(parsed_cwd) = parsed_cwd else {
-            return false;
+            return is_prompt_line(line);
         };
 
         if !path_is_within_root(parsed_cwd.as_path(), self.root_cwd.as_path()) {

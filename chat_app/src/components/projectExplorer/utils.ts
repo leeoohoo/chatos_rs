@@ -1,11 +1,17 @@
 import hljs from 'highlight.js';
 
 import type {
+  CodeNavCapabilities,
+  CodeNavDocumentSymbol,
+  CodeNavDocumentSymbolsResult,
+  CodeNavLocation,
+  CodeNavLocationsResult,
   ChangeLogItem,
   FsEntry,
   FsReadResult,
   ProjectChangeMark,
   ProjectChangeSummary,
+  ProjectSearchHit,
   ProjectRunCatalog,
   ProjectRunTarget,
 } from '../../types';
@@ -29,6 +35,145 @@ export const normalizeFile = (raw: any): FsReadResult => ({
   modifiedAt: raw?.modified_at ?? raw?.modifiedAt ?? null,
   content: raw?.content ?? '',
 });
+
+export const normalizeProjectSearchHit = (raw: any): ProjectSearchHit => ({
+  path: raw?.path ?? '',
+  relativePath: raw?.relative_path ?? raw?.relativePath ?? raw?.path ?? '',
+  line: Number.isFinite(Number(raw?.line)) ? Number(raw?.line) : 1,
+  column: Number.isFinite(Number(raw?.column)) ? Number(raw?.column) : 1,
+  text: raw?.text ?? '',
+});
+
+export const buildProjectSearchHitId = (hit: ProjectSearchHit): string => (
+  `${hit.path}:${hit.line}:${hit.column}`
+);
+
+export interface TextMatchSegment {
+  text: string;
+  matched: boolean;
+}
+
+interface SplitTextByQueryOptions {
+  caseSensitive?: boolean;
+  wholeWord?: boolean;
+}
+
+const escapeForRegex = (value: string): string => (
+  value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+);
+
+export const splitTextByQuery = (
+  text: string,
+  query: string,
+  options?: SplitTextByQueryOptions,
+): TextMatchSegment[] => {
+  if (!text) {
+    return [{ text: '', matched: false }];
+  }
+
+  const keyword = query.trim();
+  if (!keyword) {
+    return [{ text, matched: false }];
+  }
+
+  const segments: TextMatchSegment[] = [];
+  const pattern = options?.wholeWord
+    ? `\\b${escapeForRegex(keyword)}\\b`
+    : escapeForRegex(keyword);
+  const flags = options?.caseSensitive ? 'gu' : 'giu';
+  const matcher = new RegExp(pattern, flags);
+
+  let cursor = 0;
+  let hasMatch = false;
+  for (const match of text.matchAll(matcher)) {
+    const matchedText = match[0] ?? '';
+    const startIndex = match.index ?? -1;
+    if (startIndex < 0 || !matchedText) {
+      continue;
+    }
+    hasMatch = true;
+    if (startIndex > cursor) {
+      segments.push({
+        text: text.slice(cursor, startIndex),
+        matched: false,
+      });
+    }
+    segments.push({
+      text: matchedText,
+      matched: true,
+    });
+    cursor = startIndex + matchedText.length;
+  }
+
+  if (!hasMatch) {
+    return [{ text, matched: false }];
+  }
+
+  if (cursor < text.length) {
+    segments.push({
+      text: text.slice(cursor),
+      matched: false,
+    });
+  }
+
+  return segments;
+};
+
+export const normalizeCodeNavCapabilities = (raw: any): CodeNavCapabilities => ({
+  language: raw?.language ?? 'unknown',
+  provider: raw?.provider ?? 'fallback',
+  supportsDefinition: Boolean(raw?.supports_definition ?? raw?.supportsDefinition),
+  supportsReferences: Boolean(raw?.supports_references ?? raw?.supportsReferences),
+  supportsDocumentSymbols: Boolean(raw?.supports_document_symbols ?? raw?.supportsDocumentSymbols),
+  fallbackAvailable: Boolean(raw?.fallback_available ?? raw?.fallbackAvailable ?? true),
+});
+
+export const normalizeCodeNavLocation = (raw: any): CodeNavLocation => ({
+  path: raw?.path ?? '',
+  relativePath: raw?.relative_path ?? raw?.relativePath ?? raw?.path ?? '',
+  line: Number.isFinite(Number(raw?.line)) ? Number(raw?.line) : 1,
+  column: Number.isFinite(Number(raw?.column)) ? Number(raw?.column) : 1,
+  endLine: Number.isFinite(Number(raw?.end_line ?? raw?.endLine))
+    ? Number(raw?.end_line ?? raw?.endLine)
+    : Number.isFinite(Number(raw?.line)) ? Number(raw?.line) : 1,
+  endColumn: Number.isFinite(Number(raw?.end_column ?? raw?.endColumn))
+    ? Number(raw?.end_column ?? raw?.endColumn)
+    : Number.isFinite(Number(raw?.column)) ? Number(raw?.column) : 1,
+  preview: raw?.preview ?? '',
+  score: Number.isFinite(Number(raw?.score)) ? Number(raw?.score) : 0,
+});
+
+export const normalizeCodeNavLocationsResult = (raw: any): CodeNavLocationsResult => ({
+  provider: raw?.provider ?? 'fallback',
+  language: raw?.language ?? 'unknown',
+  mode: raw?.mode ?? 'unknown',
+  token: raw?.token ?? null,
+  locations: Array.isArray(raw?.locations) ? raw.locations.map(normalizeCodeNavLocation) : [],
+});
+
+export const normalizeCodeNavDocumentSymbol = (raw: any): CodeNavDocumentSymbol => ({
+  name: raw?.name ?? '',
+  kind: raw?.kind ?? 'symbol',
+  line: Number.isFinite(Number(raw?.line)) ? Number(raw?.line) : 1,
+  column: Number.isFinite(Number(raw?.column)) ? Number(raw?.column) : 1,
+  endLine: Number.isFinite(Number(raw?.end_line ?? raw?.endLine))
+    ? Number(raw?.end_line ?? raw?.endLine)
+    : Number.isFinite(Number(raw?.line)) ? Number(raw?.line) : 1,
+  endColumn: Number.isFinite(Number(raw?.end_column ?? raw?.endColumn))
+    ? Number(raw?.end_column ?? raw?.endColumn)
+    : Number.isFinite(Number(raw?.column)) ? Number(raw?.column) : 1,
+});
+
+export const normalizeCodeNavDocumentSymbolsResult = (raw: any): CodeNavDocumentSymbolsResult => ({
+  provider: raw?.provider ?? 'fallback',
+  language: raw?.language ?? 'unknown',
+  mode: raw?.mode ?? 'unknown',
+  symbols: Array.isArray(raw?.symbols) ? raw.symbols.map(normalizeCodeNavDocumentSymbol) : [],
+});
+
+export const buildCodeNavLocationId = (item: CodeNavLocation): string => (
+  `${item.path}:${item.line}:${item.column}:${item.endLine}:${item.endColumn}`
+);
 
 export const normalizeChangeLog = (raw: any): ChangeLogItem => ({
   id: raw?.id ?? '',

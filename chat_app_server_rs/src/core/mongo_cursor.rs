@@ -48,21 +48,6 @@ where
     Ok(items)
 }
 
-#[cfg(test)]
-pub async fn collect_map_sorted_asc<T, N, K>(
-    cursor: Cursor<Document>,
-    normalize: N,
-    key: K,
-) -> Result<Vec<T>, String>
-where
-    N: FnMut(&Document) -> Option<T>,
-    K: Fn(&T) -> &str,
-{
-    let mut items = collect_and_map(cursor, normalize).await?;
-    sort_by_str_key_asc(&mut items, key);
-    Ok(items)
-}
-
 pub fn sort_by_str_key_desc<T, F>(items: &mut [T], key: F)
 where
     F: Fn(&T) -> &str,

@@ -2,12 +2,16 @@ import * as fsApi from '../fs';
 import * as messagesApi from '../messages';
 import * as workspaceApi from '../workspace';
 import type {
+  CodeNavCapabilitiesResponse,
+  CodeNavDocumentSymbolsResponse,
+  CodeNavLocationsResponse,
   ContactAgentRecallResponse,
   ContactCreateResponse,
   ContactProjectLinkResponse,
   ContactProjectMemoryResponse,
   ContactResponse,
   DeleteSuccessResponse,
+  FsContentSearchResponse,
   FsEntriesResponse,
   FsMoveOptions,
   FsMutationResponse,
@@ -172,6 +176,25 @@ export interface WorkspaceFacade {
   listFsDirectories(path?: string): Promise<FsEntriesResponse>;
   listFsEntries(path?: string): Promise<FsEntriesResponse>;
   searchFsEntries(path: string, query: string, limit?: number): Promise<FsEntriesResponse>;
+  searchFsContent(
+    path: string,
+    query: string,
+    options?: { limit?: number; caseSensitive?: boolean; wholeWord?: boolean },
+  ): Promise<FsContentSearchResponse>;
+  getCodeNavCapabilities(projectRoot: string, filePath: string): Promise<CodeNavCapabilitiesResponse>;
+  getCodeNavDefinition(data: {
+    projectRoot: string;
+    filePath: string;
+    line: number;
+    column: number;
+  }): Promise<CodeNavLocationsResponse>;
+  getCodeNavReferences(data: {
+    projectRoot: string;
+    filePath: string;
+    line: number;
+    column: number;
+  }): Promise<CodeNavLocationsResponse>;
+  getCodeNavDocumentSymbols(projectRoot: string, filePath: string): Promise<CodeNavDocumentSymbolsResponse>;
   readFsFile(path: string): Promise<FsReadFileResponse>;
   createFsDirectory(parentPath: string, name: string): Promise<FsMutationResponse>;
   createFsFile(parentPath: string, name: string, content?: string): Promise<FsMutationResponse>;
@@ -395,6 +418,21 @@ export const workspaceFacade: WorkspaceFacade & ThisType<ApiClient> = {
   },
   async searchFsEntries(path, query, limit) {
     return workspaceApi.searchFsEntries(this.getRequestFn(), path, query, limit);
+  },
+  async searchFsContent(path, query, options) {
+    return workspaceApi.searchFsContent(this.getRequestFn(), path, query, options);
+  },
+  async getCodeNavCapabilities(projectRoot, filePath) {
+    return workspaceApi.getCodeNavCapabilities(this.getRequestFn(), projectRoot, filePath);
+  },
+  async getCodeNavDefinition(data) {
+    return workspaceApi.getCodeNavDefinition(this.getRequestFn(), data);
+  },
+  async getCodeNavReferences(data) {
+    return workspaceApi.getCodeNavReferences(this.getRequestFn(), data);
+  },
+  async getCodeNavDocumentSymbols(projectRoot, filePath) {
+    return workspaceApi.getCodeNavDocumentSymbols(this.getRequestFn(), projectRoot, filePath);
   },
   async readFsFile(path) {
     return workspaceApi.readFsFile(this.getRequestFn(), path);

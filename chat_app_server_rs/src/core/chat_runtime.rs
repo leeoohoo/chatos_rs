@@ -210,26 +210,6 @@ pub fn project_id_from_metadata(metadata: Option<&Value>) -> Option<String> {
     ChatRuntimeMetadata::from_metadata(metadata).project_id
 }
 
-pub fn project_root_from_metadata(metadata: Option<&Value>) -> Option<String> {
-    ChatRuntimeMetadata::from_metadata(metadata).project_root
-}
-
-pub fn workspace_root_from_metadata(metadata: Option<&Value>) -> Option<String> {
-    ChatRuntimeMetadata::from_metadata(metadata).workspace_root
-}
-
-pub fn remote_connection_id_from_metadata(metadata: Option<&Value>) -> Option<String> {
-    ChatRuntimeMetadata::from_metadata(metadata).remote_connection_id
-}
-
-pub fn mcp_enabled_from_metadata(metadata: Option<&Value>) -> Option<bool> {
-    ChatRuntimeMetadata::from_metadata(metadata).mcp_enabled
-}
-
-pub fn enabled_mcp_ids_from_metadata(metadata: Option<&Value>) -> Vec<String> {
-    ChatRuntimeMetadata::from_metadata(metadata).enabled_mcp_ids
-}
-
 fn normalize_lookup_token(value: &str) -> String {
     value.trim().to_ascii_lowercase()
 }
@@ -767,8 +747,8 @@ mod tests {
     use super::{
         compose_contact_command_system_prompt, compose_contact_system_prompt,
         parse_contact_command_invocation, parse_implicit_command_selections_from_tools_end,
-        remote_connection_id_from_metadata, ChatRuntimeMetadata, CONTACT_COMMAND_READER_TOOL_NAME,
-        CONTACT_PLUGIN_READER_TOOL_NAME, CONTACT_SKILL_READER_TOOL_NAME,
+        ChatRuntimeMetadata, CONTACT_COMMAND_READER_TOOL_NAME, CONTACT_PLUGIN_READER_TOOL_NAME,
+        CONTACT_SKILL_READER_TOOL_NAME,
     };
     use crate::services::memory_server_client::{
         MemoryAgentRuntimeCommandSummaryDto, MemoryAgentRuntimeContextDto,
@@ -879,7 +859,7 @@ mod tests {
             }
         });
         assert_eq!(
-            remote_connection_id_from_metadata(Some(&metadata)),
+            ChatRuntimeMetadata::from_metadata(Some(&metadata)).remote_connection_id,
             Some("conn_1".to_string())
         );
 
@@ -889,7 +869,7 @@ mod tests {
             }
         });
         assert_eq!(
-            remote_connection_id_from_metadata(Some(&metadata)),
+            ChatRuntimeMetadata::from_metadata(Some(&metadata)).remote_connection_id,
             Some("conn_2".to_string())
         );
     }

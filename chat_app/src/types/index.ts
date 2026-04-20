@@ -148,6 +148,58 @@ export interface FsReadResult {
   content: string;
 }
 
+export interface ProjectSearchHit {
+  path: string;
+  relativePath: string;
+  line: number;
+  column: number;
+  text: string;
+}
+
+export interface CodeNavCapabilities {
+  language: string;
+  provider: string;
+  supportsDefinition: boolean;
+  supportsReferences: boolean;
+  supportsDocumentSymbols: boolean;
+  fallbackAvailable: boolean;
+}
+
+export interface CodeNavLocation {
+  path: string;
+  relativePath: string;
+  line: number;
+  column: number;
+  endLine: number;
+  endColumn: number;
+  preview: string;
+  score: number;
+}
+
+export interface CodeNavLocationsResult {
+  provider: string;
+  language: string;
+  mode: string;
+  token?: string | null;
+  locations: CodeNavLocation[];
+}
+
+export interface CodeNavDocumentSymbol {
+  name: string;
+  kind: string;
+  line: number;
+  column: number;
+  endLine: number;
+  endColumn: number;
+}
+
+export interface CodeNavDocumentSymbolsResult {
+  provider: string;
+  language: string;
+  mode: string;
+  symbols: CodeNavDocumentSymbol[];
+}
+
 export interface ChangeLogItem {
   id: string;
   serverName: string;
