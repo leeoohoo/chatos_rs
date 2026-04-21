@@ -1,5 +1,6 @@
 use serde_json::{json, Value};
 use std::time::Duration;
+use std::sync::{Arc, Mutex};
 use tokio::time::sleep;
 use tracing::info;
 use tracing::warn;
@@ -41,6 +42,16 @@ pub struct AiClient {
     history_limit: i64,
     system_prompt: Option<String>,
     max_context_tokens: i64,
+    task_board_refresh_context: Arc<Mutex<Option<TaskBoardRefreshContext>>>,
+}
+
+#[derive(Clone)]
+struct TaskBoardRefreshContext {
+    session_id: String,
+    turn_id: Option<String>,
+    contact_system_prompt: Option<String>,
+    builtin_mcp_system_prompt: Option<String>,
+    command_system_prompt: Option<String>,
 }
 
 impl AiClient {
@@ -58,6 +69,7 @@ impl AiClient {
             history_limit: 2,
             system_prompt: None,
             max_context_tokens: cfg.summary_max_context_tokens,
+            task_board_refresh_context: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -67,6 +79,30 @@ impl AiClient {
 
     pub fn set_mcp_tool_execute(&mut self, mcp_tool_execute: McpToolExecute) {
         self.mcp_tool_execute = mcp_tool_execute;
+    }
+
+    pub fn set_task_board_refresh_context(
+        &mut self,
+        session_id: Option<String>,
+        turn_id: Option<String>,
+        contact_system_prompt: Option<String>,
+        builtin_mcp_system_prompt: Option<String>,
+        command_system_prompt: Option<String>,
+    ) {
+        if let Ok(mut slot) = self.task_board_refresh_context.lock() {
+            *slot = session_id
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .map(|value| TaskBoardRefreshContext {
+                    session_id: value,
+                    turn_id: turn_id
+                        .map(|value| value.trim().to_string())
+                        .filter(|value| !value.is_empty()),
+                    contact_system_prompt,
+                    builtin_mcp_system_prompt,
+                    command_system_prompt,
+                });
+        }
     }
 
     pub async fn process_request(
@@ -154,7 +190,6 @@ impl AiClient {
         let mut iteration = iteration;
         let purpose = purpose.unwrap_or_else(|| "chat".to_string());
         let persist_tool_messages = purpose != "agent_builder";
-
         loop {
             if let Some(sid) = session_id.as_ref() {
                 if abort_registry::is_aborted(sid) {

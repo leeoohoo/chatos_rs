@@ -6,6 +6,8 @@ import type {
   ContactItem,
   ProjectContactRow,
   SessionChatStateMap,
+  TaskReviewPanelsBySessionMap,
+  UiPromptPanelsBySessionMap,
 } from './types';
 
 interface TeamMembersSidebarProps {
@@ -22,6 +24,8 @@ interface TeamMembersSidebarProps {
   openingRuntimeContextContactId: string | null;
   removingContactId: string | null;
   sessionChatState?: SessionChatStateMap;
+  taskReviewPanelsBySession?: TaskReviewPanelsBySessionMap;
+  uiPromptPanelsBySession?: UiPromptPanelsBySessionMap;
   onOpenAddMember: () => void;
   onSelectContact: (contactId: string) => void;
   onOpenSummary: (contact: ContactItem) => void;
@@ -43,6 +47,8 @@ const TeamMembersSidebar: React.FC<TeamMembersSidebarProps> = ({
   openingRuntimeContextContactId,
   removingContactId,
   sessionChatState,
+  taskReviewPanelsBySession = {},
+  uiPromptPanelsBySession = {},
   onOpenAddMember,
   onSelectContact,
   onOpenSummary,
@@ -85,6 +91,14 @@ const TeamMembersSidebar: React.FC<TeamMembersSidebarProps> = ({
             const switching = switchingContactId === contact.id;
             const chatState = session?.id ? sessionChatState?.[session.id] : undefined;
             const isBusy = Boolean(chatState?.isLoading || chatState?.isStreaming);
+            const runtimeSessionId = session?.id || '';
+            const taskReviewCount = runtimeSessionId && Array.isArray(taskReviewPanelsBySession?.[runtimeSessionId])
+              ? taskReviewPanelsBySession[runtimeSessionId]?.length || 0
+              : 0;
+            const uiPromptCount = runtimeSessionId && Array.isArray(uiPromptPanelsBySession?.[runtimeSessionId])
+              ? uiPromptPanelsBySession[runtimeSessionId]?.length || 0
+              : 0;
+            const pendingCount = taskReviewCount + uiPromptCount;
             return (
               <div
                 key={contact.id}
@@ -160,6 +174,12 @@ const TeamMembersSidebar: React.FC<TeamMembersSidebarProps> = ({
                       <span>{`会话: ${session?.title || '未创建'}`}</span>
                       {session?.id ? (
                         <SessionBusyBadge busy={isBusy} />
+                      ) : null}
+                      {pendingCount > 0 ? (
+                        <span className="inline-flex items-center gap-1 text-blue-600">
+                          <span className="inline-block w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+                          {`待处理 ${pendingCount}`}
+                        </span>
                       ) : null}
                     </span>
                   )}

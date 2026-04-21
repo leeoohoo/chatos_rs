@@ -5,7 +5,7 @@ import { ProjectContactPickerModal } from '../sessionList/ProjectContactPickerMo
 import { apiClient as globalApiClient } from '../../lib/api/client';
 import { useChatApiClientFromContext, useChatStoreSelector } from '../../lib/store/ChatStoreContext';
 import { cn } from '../../lib/utils';
-import type { Project, Session } from '../../types';
+import type { AgentConfig, Project, Session } from '../../types';
 import {
   findLatestMatchedSession,
   normalizeProjectScopeId,
@@ -39,6 +39,7 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
     currentSession,
     sessions,
     contacts,
+    agents,
     remoteConnections,
     currentRemoteConnection,
     loadContacts,
@@ -70,6 +71,7 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
     currentSession: state.currentSession,
     sessions: state.sessions,
     contacts: state.contacts,
+    agents: state.agents,
     remoteConnections: state.remoteConnections,
     currentRemoteConnection: state.currentRemoteConnection,
     loadContacts: state.loadContacts,
@@ -253,6 +255,13 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
     toggleTurnProcess,
     loadMoreMessages,
   });
+  const selectedContactAgent = useMemo<AgentConfig | null>(() => {
+    const agentId = typeof selectedContact?.agentId === 'string' ? selectedContact.agentId.trim() : '';
+    if (!agentId) {
+      return null;
+    }
+    return (agents || []).find((agent) => agent?.id === agentId) || null;
+  }, [agents, selectedContact?.agentId]);
 
   const selectedSessionActiveTurnId = useMemo(() => {
     if (!selectedProjectSession?.id) {
@@ -261,6 +270,12 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
     const raw = sessionChatState?.[selectedProjectSession.id]?.activeTurnId;
     const normalized = typeof raw === 'string' ? raw.trim() : '';
     return normalized || null;
+  }, [selectedProjectSession?.id, sessionChatState]);
+  const runtimeContextRefreshNonce = useMemo(() => {
+    if (!selectedProjectSession?.id) {
+      return 0;
+    }
+    return sessionChatState?.[selectedProjectSession.id]?.runtimeContextRefreshNonce || 0;
   }, [selectedProjectSession?.id, sessionChatState]);
 
   const runtimeSourceSession = selectedProjectSession || currentSession;
@@ -353,6 +368,7 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
     apiClient,
     sessions: sessions || [],
     normalizedProjectId,
+    runtimeContextRefreshNonce,
     ensureContactSession,
     setSelectedContactId,
   });
@@ -437,6 +453,8 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
         openingRuntimeContextContactId={openingRuntimeContextContactId}
         removingContactId={removingContactId}
         sessionChatState={sessionChatState}
+        taskReviewPanelsBySession={taskReviewPanelsBySession}
+        uiPromptPanelsBySession={uiPromptPanelsBySession}
         onOpenAddMember={() => { void handleOpenAddMember(); }}
         onSelectContact={(contactId) => { void handleSelectContact(contactId); }}
         onOpenSummary={(contact) => { void handleOpenSummary(contact); }}
@@ -447,6 +465,7 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
       <TeamMemberWorkspace
         project={project}
         selectedContact={selectedContact}
+        currentAgent={selectedContactAgent}
         selectedProjectSession={selectedProjectSession}
         isSelectedSessionActive={isSelectedSessionActive}
         sessionSummaryPaneVisible={sessionSummaryPaneVisible}

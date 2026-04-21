@@ -2,11 +2,13 @@ use std::collections::HashMap;
 
 use serde_json::Value;
 
+use crate::core::builtin_mcp_prompt::BuiltinMcpPromptBuildResult;
 use crate::core::mcp_tools::ToolInfo;
 use crate::services::memory_server_client::{
-    SyncTurnRuntimeSnapshotRequestDto, TurnRuntimeSnapshotRuntimeDto,
-    TurnRuntimeSnapshotSelectedCommandDto, TurnRuntimeSnapshotSystemMessageDto,
-    TurnRuntimeSnapshotToolDto,
+    SyncTurnRuntimeSnapshotRequestDto, TurnRuntimeSnapshotBuiltinMcpPromptDto,
+    TurnRuntimeSnapshotRuntimeDto, TurnRuntimeSnapshotSelectedCommandDto,
+    TurnRuntimeSnapshotSystemMessageDto, TurnRuntimeSnapshotToolDto,
+    TurnRuntimeSnapshotUnavailableToolDto,
 };
 
 pub struct BuildTurnRuntimeSnapshotInput<'a> {
@@ -14,7 +16,8 @@ pub struct BuildTurnRuntimeSnapshotInput<'a> {
     pub status: &'a str,
     pub base_system_prompt: Option<&'a str>,
     pub contact_system_prompt: Option<&'a str>,
-    pub tool_routing_system_prompt: Option<&'a str>,
+    pub task_board_prompt: Option<&'a str>,
+    pub builtin_mcp_system_prompt: Option<&'a str>,
     pub memory_summary_prompt: Option<&'a str>,
     pub tools: &'a HashMap<String, ToolInfo>,
     pub model: Option<&'a str>,
@@ -27,6 +30,8 @@ pub struct BuildTurnRuntimeSnapshotInput<'a> {
     pub mcp_enabled: bool,
     pub enabled_mcp_ids: &'a [String],
     pub selected_commands: &'a [TurnRuntimeSnapshotSelectedCommandDto],
+    pub unavailable_builtin_tools: &'a [Value],
+    pub builtin_mcp_prompt_debug: Option<&'a BuiltinMcpPromptBuildResult>,
 }
 
 pub fn build_turn_runtime_snapshot_payload(
@@ -47,10 +52,17 @@ pub fn build_turn_runtime_snapshot_payload(
             content,
         });
     }
-    if let Some(content) = normalize_optional_text(input.tool_routing_system_prompt) {
+    if let Some(content) = normalize_optional_text(input.task_board_prompt) {
         system_messages.push(TurnRuntimeSnapshotSystemMessageDto {
-            id: "tool_routing".to_string(),
-            source: "tool_routing_policy".to_string(),
+            id: "task_board".to_string(),
+            source: "task_runtime_board".to_string(),
+            content,
+        });
+    }
+    if let Some(content) = normalize_optional_text(input.builtin_mcp_system_prompt) {
+        system_messages.push(TurnRuntimeSnapshotSystemMessageDto {
+            id: "builtin_mcp".to_string(),
+            source: "builtin_mcp_policy".to_string(),
             content,
         });
     }
@@ -93,6 +105,10 @@ pub fn build_turn_runtime_snapshot_payload(
             mcp_enabled: Some(input.mcp_enabled),
             enabled_mcp_ids: normalize_string_list(input.enabled_mcp_ids),
             selected_commands: normalize_selected_commands(input.selected_commands),
+            unavailable_builtin_tools: normalize_unavailable_builtin_tools(
+                input.unavailable_builtin_tools,
+            ),
+            builtin_mcp_prompt: normalize_builtin_mcp_prompt(input.builtin_mcp_prompt_debug),
         }),
     }
 }
@@ -180,20 +196,96 @@ fn normalize_selected_commands(
     out
 }
 
+fn normalize_unavailable_builtin_tools(
+    unavailable_tools: &[Value],
+) -> Vec<TurnRuntimeSnapshotUnavailableToolDto> {
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    for item in unavailable_tools {
+        let Some(server_name) = item
+            .get("server_name")
+            .and_then(Value::as_str)
+            .and_then(|value| normalize_optional_text(Some(value)))
+        else {
+            continue;
+        };
+        let Some(tool_name) = item
+            .get("tool_name")
+            .and_then(Value::as_str)
+            .and_then(|value| normalize_optional_text(Some(value)))
+        else {
+            continue;
+        };
+        let reason = item
+            .get("reason")
+            .and_then(Value::as_str)
+            .and_then(|value| normalize_optional_text(Some(value)));
+        let dedup_key = format!(
+            "{}::{}::{}",
+            server_name,
+            tool_name,
+            reason.as_deref().unwrap_or_default()
+        );
+        if !seen.insert(dedup_key) {
+            continue;
+        }
+        out.push(TurnRuntimeSnapshotUnavailableToolDto {
+            server_name,
+            tool_name,
+            reason,
+        });
+    }
+
+    out
+}
+
+fn normalize_builtin_mcp_prompt(
+    prompt: Option<&BuiltinMcpPromptBuildResult>,
+) -> Option<TurnRuntimeSnapshotBuiltinMcpPromptDto> {
+    let Some(prompt) = prompt else {
+        return None;
+    };
+
+    Some(TurnRuntimeSnapshotBuiltinMcpPromptDto {
+        prompt_source_path: normalize_optional_text(Some(
+            crate::core::builtin_mcp_prompt::builtin_mcp_prompt_source_path(),
+        )),
+        all_section_ids: normalize_string_list(
+            crate::core::builtin_mcp_prompt::builtin_mcp_prompt_section_ids().as_slice(),
+        ),
+        selected_section_ids: normalize_string_list(prompt.selected_section_ids.as_slice()),
+        omitted_section_ids: normalize_string_list(prompt.omitted_section_ids.as_slice()),
+        requested_builtin_server_names: normalize_string_list(
+            prompt.requested_builtin_server_names.as_slice(),
+        ),
+        active_builtin_server_names: normalize_string_list(
+            prompt.active_builtin_server_names.as_slice(),
+        ),
+        omitted_builtin_server_names: normalize_string_list(
+            prompt.omitted_builtin_server_names.as_slice(),
+        ),
+        runtime_limitations: normalize_optional_text(prompt.runtime_limitations.as_deref()),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use serde_json::json;
 
     use super::{build_turn_runtime_snapshot_payload, BuildTurnRuntimeSnapshotInput};
+    use crate::core::builtin_mcp_prompt::BuiltinMcpPromptBuildResult;
 
     #[test]
-    fn snapshot_payload_includes_tool_routing_system_prompt() {
+    fn snapshot_payload_includes_builtin_mcp_system_prompt() {
         let payload = build_turn_runtime_snapshot_payload(BuildTurnRuntimeSnapshotInput {
             user_message_id: None,
             status: "running",
             base_system_prompt: Some("base prompt"),
             contact_system_prompt: Some("contact prompt"),
-            tool_routing_system_prompt: Some("routing prompt"),
+            task_board_prompt: Some("task board prompt"),
+            builtin_mcp_system_prompt: Some("builtin mcp prompt"),
             memory_summary_prompt: Some("memory prompt"),
             tools: &HashMap::new(),
             model: Some("gpt-5"),
@@ -206,12 +298,99 @@ mod tests {
             mcp_enabled: true,
             enabled_mcp_ids: &[],
             selected_commands: &[],
+            unavailable_builtin_tools: &[],
+            builtin_mcp_prompt_debug: None,
         });
 
         let system_messages = payload.system_messages.expect("system messages");
-        assert_eq!(system_messages.len(), 4);
-        assert_eq!(system_messages[2].id, "tool_routing");
-        assert_eq!(system_messages[2].source, "tool_routing_policy");
-        assert_eq!(system_messages[2].content, "routing prompt");
+        assert_eq!(system_messages.len(), 5);
+        assert_eq!(system_messages[2].id, "task_board");
+        assert_eq!(system_messages[2].source, "task_runtime_board");
+        assert_eq!(system_messages[2].content, "task board prompt");
+        assert_eq!(system_messages[3].id, "builtin_mcp");
+        assert_eq!(system_messages[3].source, "builtin_mcp_policy");
+        assert_eq!(system_messages[3].content, "builtin mcp prompt");
+    }
+
+    #[test]
+    fn snapshot_payload_includes_unavailable_builtin_tools() {
+        let payload = build_turn_runtime_snapshot_payload(BuildTurnRuntimeSnapshotInput {
+            user_message_id: None,
+            status: "running",
+            base_system_prompt: None,
+            contact_system_prompt: None,
+            task_board_prompt: None,
+            builtin_mcp_system_prompt: None,
+            memory_summary_prompt: None,
+            tools: &HashMap::new(),
+            model: None,
+            provider: None,
+            contact_agent_id: None,
+            remote_connection_id: None,
+            project_id: None,
+            project_root: None,
+            workspace_root: None,
+            mcp_enabled: true,
+            enabled_mcp_ids: &[],
+            selected_commands: &[],
+            unavailable_builtin_tools: &[json!({
+                "server_name": "browser_tools",
+                "tool_name": "browser_inspect",
+                "reason": "agent-browser unavailable"
+            })],
+            builtin_mcp_prompt_debug: None,
+        });
+
+        let runtime = payload.runtime.expect("runtime");
+        assert_eq!(runtime.unavailable_builtin_tools.len(), 1);
+        assert_eq!(runtime.unavailable_builtin_tools[0].server_name, "browser_tools");
+        assert_eq!(runtime.unavailable_builtin_tools[0].tool_name, "browser_inspect");
+        assert_eq!(
+            runtime.unavailable_builtin_tools[0].reason.as_deref(),
+            Some("agent-browser unavailable")
+        );
+    }
+
+    #[test]
+    fn snapshot_payload_includes_builtin_mcp_prompt_debug() {
+        let payload = build_turn_runtime_snapshot_payload(BuildTurnRuntimeSnapshotInput {
+            user_message_id: None,
+            status: "running",
+            base_system_prompt: None,
+            contact_system_prompt: None,
+            task_board_prompt: None,
+            builtin_mcp_system_prompt: Some("builtin mcp prompt"),
+            memory_summary_prompt: None,
+            tools: &HashMap::new(),
+            model: None,
+            provider: None,
+            contact_agent_id: None,
+            remote_connection_id: None,
+            project_id: None,
+            project_root: None,
+            workspace_root: None,
+            mcp_enabled: true,
+            enabled_mcp_ids: &[],
+            selected_commands: &[],
+            unavailable_builtin_tools: &[],
+            builtin_mcp_prompt_debug: Some(&BuiltinMcpPromptBuildResult {
+                prompt: Some("builtin mcp prompt".to_string()),
+                selected_section_ids: vec!["global".to_string(), "builtin_task_manager".to_string()],
+                omitted_section_ids: vec!["builtin_browser_tools".to_string()],
+                requested_builtin_server_names: vec!["task_manager".to_string(), "browser_tools".to_string()],
+                active_builtin_server_names: vec!["task_manager".to_string()],
+                omitted_builtin_server_names: vec!["browser_tools".to_string()],
+                runtime_limitations: Some("当前运行时限制：\n- 当前不要依赖以下内置 MCP 工具：`browser_tools_browser_inspect`。".to_string()),
+            }),
+        });
+
+        let runtime = payload.runtime.expect("runtime");
+        let builtin = runtime.builtin_mcp_prompt.expect("builtin prompt debug");
+        assert_eq!(builtin.prompt_source_path.as_deref(), Some("BUILTIN_MCP_PROMPT.md"));
+        assert!(builtin.all_section_ids.iter().any(|item| item == "global"));
+        assert_eq!(builtin.selected_section_ids, vec!["global", "builtin_task_manager"]);
+        assert_eq!(builtin.omitted_section_ids, vec!["builtin_browser_tools"]);
+        assert_eq!(builtin.active_builtin_server_names, vec!["task_manager"]);
+        assert_eq!(builtin.omitted_builtin_server_names, vec!["browser_tools"]);
     }
 }

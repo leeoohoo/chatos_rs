@@ -3,6 +3,7 @@ use mongodb::bson::{doc, Bson, Document};
 use mongodb::options::{FindOneAndUpdateOptions, ReturnDocument, UpdateOptions};
 
 use crate::repositories::db::with_db;
+use crate::services::session_mirror::ensure_sqlite_session_present;
 use crate::services::ui_prompt_manager::normalizer::{redact_prompt_payload, trimmed_non_empty};
 use crate::services::ui_prompt_manager::types::{
     UiPromptPayload, UiPromptRecord, UiPromptStatus, UI_PROMPT_NOT_FOUND_ERR,
@@ -72,6 +73,7 @@ pub async fn create_ui_prompt_record(payload: &UiPromptPayload) -> Result<UiProm
         move |pool| {
             let record = sqlite_record.clone();
             Box::pin(async move {
+                ensure_sqlite_session_present(pool, &record.conversation_id).await?;
                 let prompt_json =
                     serde_json::to_string(&record.prompt).unwrap_or_else(|_| "{}".to_string());
 

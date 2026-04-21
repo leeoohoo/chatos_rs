@@ -11,6 +11,7 @@ import {
 } from './runtimeGuidanceState';
 import type { StreamingMessageStateHelpers } from './streamingState';
 import {
+  extractTaskBoardUpdatedEvent,
   extractTaskReviewPanelFromToolStream,
   extractUiPromptPanelFromToolStream,
 } from './toolPanels';
@@ -318,6 +319,24 @@ export const handleStreamEvent = ({
   if (parsed.type === 'tools_stream') {
     debugLog('🔧 收到工具流式数据:', parsed.data);
     const data = parsed.data as RawToolResultPayload;
+    const taskBoardUpdated = extractTaskBoardUpdatedEvent(data);
+    if (taskBoardUpdated) {
+      set((state) => {
+        const prev = state.sessionChatState?.[taskBoardUpdated.sessionId];
+        if (!prev) {
+          return;
+        }
+        state.sessionChatState[taskBoardUpdated.sessionId] = {
+          ...prev,
+          runtimeContextRefreshNonce: (prev.runtimeContextRefreshNonce || 0) + 1,
+        };
+      });
+      return {
+        ...EMPTY_RESULT,
+        sawMeaningfulStreamData: true,
+      };
+    }
+
     const reviewPanel = extractTaskReviewPanelFromToolStream(
       data,
       currentSessionId,

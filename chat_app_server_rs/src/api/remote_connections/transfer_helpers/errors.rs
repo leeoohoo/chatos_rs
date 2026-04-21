@@ -2,6 +2,8 @@ use std::fmt::{Display, Formatter};
 
 use crate::core::remote_connection_error_codes::remote_sftp_codes;
 
+use super::super::extract_second_factor_required_prompt;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RemoteTransferErrorCode {
     AuthFailed,
@@ -76,7 +78,7 @@ impl Display for TransferJobError {
 }
 
 fn classify_remote_transfer_error_code(message: &str) -> RemoteTransferErrorCode {
-    if message.starts_with("__CHATOS_SECOND_FACTOR_REQUIRED__:") {
+    if extract_second_factor_required_prompt(message).is_some() {
         return RemoteTransferErrorCode::SecondFactorRequired;
     }
 

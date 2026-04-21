@@ -2,6 +2,7 @@ use mongodb::bson::Document;
 use uuid::Uuid;
 
 use crate::repositories::db::with_db;
+use crate::services::session_mirror::ensure_sqlite_session_present;
 use crate::services::task_manager::mapper::task_record_to_doc;
 use crate::services::task_manager::normalizer::{normalize_task_drafts, trimmed_non_empty};
 use crate::services::task_manager::types::{TaskDraft, TaskRecord};
@@ -42,6 +43,7 @@ pub async fn create_tasks_for_turn(
 
     let mongo_records = records.clone();
     let sqlite_records = records.clone();
+    let sqlite_conversation_id = conversation_id.clone();
 
     with_db(
         move |db| {
@@ -57,7 +59,9 @@ pub async fn create_tasks_for_turn(
         },
         move |pool| {
             let records = sqlite_records.clone();
+            let conversation_id = sqlite_conversation_id.clone();
             Box::pin(async move {
+                ensure_sqlite_session_present(pool, &conversation_id).await?;
                 let mut tx = pool.begin().await.map_err(|err| err.to_string())?;
                 for task in &records {
                     let tags_json =

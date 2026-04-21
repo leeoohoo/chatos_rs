@@ -109,7 +109,11 @@ impl AiClient {
 
             info!("AI_V3 request iteration {}", iteration);
 
-            let mut effective_prefixed_input_items = prefixed_input_items.clone();
+            let mut effective_prefixed_input_items = self
+                .load_runtime_prefixed_input_items()
+                .await
+                .filter(|items| !items.is_empty())
+                .unwrap_or_else(|| prefixed_input_items.clone());
             if let (Some(sid), Some(tid)) = (session_id.as_deref(), turn_id.as_deref()) {
                 let drained_guidance =
                     runtime_guidance_manager().drain_guidance(sid, tid, DEFAULT_DRAIN_LIMIT);

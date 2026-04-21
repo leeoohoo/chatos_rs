@@ -8,11 +8,13 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::api::chat_stream_common::{
-    build_prefixed_messages, resolve_chat_stream_context, sync_chat_turn_snapshot,
+    build_builtin_mcp_debug_payload, resolve_chat_stream_context,
+    sync_chat_turn_snapshot,
     validate_chat_stream_request, wire_implicit_command_tracking, ChatStreamRequest,
 };
 use crate::api::conversation_semantics::extract_conversation_scope_id;
 use crate::config::Config;
+use crate::core::builtin_mcp_prompt::compose_effective_builtin_mcp_system_prompt;
 use crate::core::ai_model_config::resolve_chat_model_config;
 use crate::core::ai_settings::chat_max_tokens_from_settings;
 use crate::core::auth::AuthUser;
@@ -21,9 +23,11 @@ use crate::core::chat_stream::{
     build_v2_callbacks, handle_chat_result, send_start_event, send_tools_unavailable_event,
 };
 use crate::core::mcp_runtime::{load_mcp_servers_by_selection, McpServerBundle};
+use crate::core::mcp_tools::ToolInfo;
 use crate::core::user_scope::{ensure_and_set_user_id, resolve_user_id};
 use crate::services::ai_common::normalize_turn_id;
 use crate::services::memory_server_client;
+use crate::services::task_board_prompt::build_runtime_prefixed_messages;
 use crate::services::runtime_guidance_manager::runtime_guidance_manager;
 use crate::services::user_settings::{apply_settings_to_ai_client, get_effective_user_settings};
 use crate::services::v2::ai_server::{AiServer, ChatOptions};
@@ -97,6 +101,20 @@ async fn agent_tools(auth: AuthUser, Query(query): Query<UserQuery>) -> (StatusC
     }
     let tools = exec.get_available_tools();
     let unavailable_tools = exec.get_unavailable_tools();
+    let builtin_prompt_debug = build_builtin_mcp_debug_payload(
+        builtin_servers.as_slice(),
+        &exec.tool_metadata,
+        unavailable_tools.as_slice(),
+        Some(
+            compose_effective_builtin_mcp_system_prompt(
+                builtin_servers.as_slice(),
+                &exec.tool_metadata,
+                unavailable_tools.as_slice(),
+            )
+            .unwrap_or_default()
+            .as_str(),
+        ),
+    );
     (
         StatusCode::OK,
         Json(json!({
@@ -104,13 +122,23 @@ async fn agent_tools(auth: AuthUser, Query(query): Query<UserQuery>) -> (StatusC
             "count": tools.len(),
             "unavailable_tools": unavailable_tools,
             "unavailable_count": unavailable_tools.len(),
-            "servers": { "http": http_servers.len(), "stdio": stdio_servers.len(), "builtin": builtin_servers.len() }
+            "servers": { "http": http_servers.len(), "stdio": stdio_servers.len(), "builtin": builtin_servers.len() },
+            "builtin_mcp_prompt_debug": builtin_prompt_debug,
         })),
     )
 }
 
-async fn agent_status() -> Json<Value> {
+async fn agent_status(auth: AuthUser, Query(query): Query<UserQuery>) -> Json<Value> {
     let cfg = Config::get();
+    let user_id = resolve_user_id(query.user_id, &auth).ok();
+    let (http_servers, stdio_servers, builtin_servers): McpServerBundle =
+        load_mcp_servers_by_selection(user_id, false, Vec::new(), None, None).await;
+    let builtin_prompt_debug = build_builtin_mcp_debug_payload(
+        builtin_servers.as_slice(),
+        &std::collections::HashMap::<String, ToolInfo>::new(),
+        &[],
+        None,
+    );
     Json(json!({
         "status": "ok",
         "version": "2.0.0",
@@ -118,7 +146,9 @@ async fn agent_status() -> Json<Value> {
         "openai": {
             "configured": !cfg.openai_api_key.is_empty(),
             "base_url": cfg.openai_base_url.clone()
-        }
+        },
+        "servers": { "http": http_servers.len(), "stdio": stdio_servers.len(), "builtin": builtin_servers.len() },
+        "builtin_mcp_prompt_debug": builtin_prompt_debug,
     }))
 }
 
@@ -192,7 +222,7 @@ async fn stream_chat_v2(
         model_runtime.temperature,
         McpToolExecute::new(Vec::new(), Vec::new(), Vec::new()),
     );
-    let runtime_context = resolve_chat_stream_context(
+    let mut runtime_context = resolve_chat_stream_context(
         &session_id,
         &content,
         &req,
@@ -203,11 +233,6 @@ async fn stream_chat_v2(
     if runtime_context.base_system_prompt.is_some() {
         ai_server.set_system_prompt(runtime_context.base_system_prompt.clone());
     }
-    let prefixed_messages = build_prefixed_messages(&[
-        runtime_context.contact_system_prompt.as_deref(),
-        runtime_context.tool_routing_system_prompt.as_deref(),
-        runtime_context.command_system_prompt.as_deref(),
-    ]);
 
     let (http_servers, stdio_servers, builtin_servers) = runtime_context.mcp_server_bundle.clone();
     let use_tools = runtime_context.use_tools;
@@ -219,10 +244,35 @@ async fn stream_chat_v2(
     if use_tools {
         let _ = mcp_exec.init().await;
     }
+    let attachments_list = req.attachments.unwrap_or_default();
+    let att = attachments::parse_attachments(&attachments_list);
+    let user_message_id = Uuid::new_v4().to_string();
+    let resolved_turn_id =
+        normalize_turn_id(req.turn_id.as_deref()).unwrap_or_else(|| user_message_id.clone());
     let unavailable_tools = mcp_exec.get_unavailable_tools();
+    runtime_context.builtin_mcp_system_prompt = compose_effective_builtin_mcp_system_prompt(
+        builtin_servers.as_slice(),
+        &mcp_exec.tool_metadata,
+        unavailable_tools.as_slice(),
+    );
+    let prefixed_messages = build_runtime_prefixed_messages(
+        &session_id,
+        Some(resolved_turn_id.as_str()),
+        runtime_context.contact_system_prompt.as_deref(),
+        runtime_context.builtin_mcp_system_prompt.as_deref(),
+        runtime_context.command_system_prompt.as_deref(),
+    )
+    .await;
     send_tools_unavailable_event(&sender, unavailable_tools.as_slice());
     let mcp_tool_metadata = mcp_exec.tool_metadata.clone();
     ai_server.set_mcp_tool_execute(mcp_exec);
+    ai_server.ai_client.set_task_board_refresh_context(
+        Some(session_id.clone()),
+        Some(resolved_turn_id.clone()),
+        runtime_context.contact_system_prompt.clone(),
+        runtime_context.builtin_mcp_system_prompt.clone(),
+        runtime_context.command_system_prompt.clone(),
+    );
 
     let effective_settings = get_effective_user_settings(runtime_context.effective_user_id.clone())
         .await
@@ -247,12 +297,6 @@ async fn stream_chat_v2(
         runtime_context.selected_commands_for_snapshot.clone(),
     );
     let chunk_sent = callback_bundle.chunk_sent;
-
-    let attachments_list = req.attachments.unwrap_or_default();
-    let att = attachments::parse_attachments(&attachments_list);
-    let user_message_id = Uuid::new_v4().to_string();
-    let resolved_turn_id =
-        normalize_turn_id(req.turn_id.as_deref()).unwrap_or_else(|| user_message_id.clone());
     runtime_guidance_manager().register_active_turn(&session_id, &resolved_turn_id);
     if let Err(err) = sync_chat_turn_snapshot(
         &session_id,
@@ -262,6 +306,7 @@ async fn stream_chat_v2(
         model_runtime.model.as_str(),
         model_runtime.provider.as_str(),
         &mcp_tool_metadata,
+        unavailable_tools.as_slice(),
         &runtime_context,
     )
     .await
@@ -308,6 +353,7 @@ async fn stream_chat_v2(
         model_runtime.model.as_str(),
         model_runtime.provider.as_str(),
         &mcp_tool_metadata,
+        unavailable_tools.as_slice(),
         &runtime_context,
     )
     .await

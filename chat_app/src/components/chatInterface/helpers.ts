@@ -381,11 +381,11 @@ export const selectLatestTurnTasks = (tasks: TaskWorkbarItem[]): TaskWorkbarItem
     return [];
   }
 
-  const latestTaskWithTurn = tasks.find((task) => task.conversationTurnId.trim().length > 0);
-  if (!latestTaskWithTurn) {
+  const earliestTaskWithTurn = tasks.find((task) => task.conversationTurnId.trim().length > 0);
+  if (!earliestTaskWithTurn) {
     return tasks.slice(0, 8);
   }
 
-  const latestTurnId = latestTaskWithTurn.conversationTurnId.trim();
-  return tasks.filter((task) => task.conversationTurnId.trim() === latestTurnId);
+  const currentTurnId = earliestTaskWithTurn.conversationTurnId.trim();
+  return tasks.filter((task) => task.conversationTurnId.trim() === currentTurnId);
 };

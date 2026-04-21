@@ -4,6 +4,7 @@ pub mod ai_settings;
 pub mod application_access;
 pub mod async_bridge;
 pub mod auth;
+pub mod builtin_mcp_prompt;
 pub mod chat_context;
 pub mod chat_runtime;
 pub mod chat_stream;

@@ -119,8 +119,11 @@ pub(super) fn encode_second_factor_required_error(prompt: &str) -> String {
 }
 
 pub(super) fn extract_second_factor_required_prompt(error: &str) -> Option<String> {
-    error
-        .strip_prefix(SECOND_FACTOR_REQUIRED_ERROR_PREFIX)
+    let marker_index = error.find(SECOND_FACTOR_REQUIRED_ERROR_PREFIX)?;
+    let prompt_with_context = &error[marker_index + SECOND_FACTOR_REQUIRED_ERROR_PREFIX.len()..];
+    prompt_with_context
+        .split(['；', ';', '。', '\n', '\r'])
+        .next()
         .map(str::trim)
         .filter(|v| !v.is_empty())
         .map(ToOwned::to_owned)
@@ -227,7 +230,12 @@ pub(super) fn authenticate_jump_session(
             "jump_password 认证",
         ) {
             Ok(_) => return Ok(()),
-            Err(err) => failures.push(format!("jump_password 认证失败: {err}")),
+            Err(err) => {
+                if extract_second_factor_required_prompt(err.as_str()).is_some() {
+                    return Err(err);
+                }
+                failures.push(format!("jump_password 认证失败: {err}"));
+            }
         }
     }
 
@@ -260,7 +268,12 @@ pub(super) fn authenticate_jump_session(
             "复用目标密码认证",
         ) {
             Ok(_) => return Ok(()),
-            Err(err) => failures.push(format!("使用同密码认证失败: {err}")),
+            Err(err) => {
+                if extract_second_factor_required_prompt(err.as_str()).is_some() {
+                    return Err(err);
+                }
+                failures.push(format!("使用同密码认证失败: {err}"));
+            }
         }
     }
 
@@ -317,6 +330,14 @@ mod tests {
     fn encodes_and_extracts_second_factor_required_error() {
         let encoded = encode_second_factor_required_error("SMS verification code");
         let parsed = extract_second_factor_required_prompt(encoded.as_str());
+        assert_eq!(parsed.as_deref(), Some("SMS verification code"));
+    }
+
+    #[test]
+    fn extracts_second_factor_prompt_from_wrapped_error() {
+        let encoded = encode_second_factor_required_error("SMS verification code");
+        let wrapped = format!("跳板机认证失败：jump_password 认证失败: {encoded}。请检查配置");
+        let parsed = extract_second_factor_required_prompt(wrapped.as_str());
         assert_eq!(parsed.as_deref(), Some("SMS verification code"));
     }
 }

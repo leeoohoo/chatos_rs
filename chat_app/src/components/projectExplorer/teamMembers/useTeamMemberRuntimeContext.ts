@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import {
   resolveSessionProjectScopeId,
@@ -17,6 +17,7 @@ interface UseTeamMemberRuntimeContextOptions {
   apiClient: RuntimeContextApiClient;
   sessions: Session[];
   normalizedProjectId: string;
+  runtimeContextRefreshNonce: number;
   ensureContactSession: (contact: ContactItem) => Promise<string | null>;
   setSelectedContactId: (contactId: string | null) => void;
 }
@@ -25,6 +26,7 @@ export const useTeamMemberRuntimeContext = ({
   apiClient,
   sessions,
   normalizedProjectId,
+  runtimeContextRefreshNonce,
   ensureContactSession,
   setSelectedContactId,
 }: UseTeamMemberRuntimeContextOptions) => {
@@ -94,6 +96,18 @@ export const useTeamMemberRuntimeContext = ({
     }
     void loadLatestRuntimeContext(runtimeContextSessionId);
   }, [loadLatestRuntimeContext, runtimeContextSessionId]);
+
+  useEffect(() => {
+    if (!runtimeContextOpen || !runtimeContextSessionId) {
+      return;
+    }
+    void loadLatestRuntimeContext(runtimeContextSessionId);
+  }, [
+    loadLatestRuntimeContext,
+    runtimeContextOpen,
+    runtimeContextRefreshNonce,
+    runtimeContextSessionId,
+  ]);
 
   return {
     runtimeContextOpen,

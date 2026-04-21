@@ -1,8 +1,11 @@
 use serde_json::{json, Value};
 
-use crate::core::async_bridge::block_on_result;
+use crate::core::async_bridge::{block_on_option, block_on_result};
 use crate::core::mcp_tools::ToolStreamChunkCallback;
 use crate::core::tool_io::text_result;
+use crate::services::task_board_prompt::{
+    build_task_board_updated_event_payload, enqueue_task_board_refresh,
+};
 use crate::services::task_manager::{
     create_task_review, create_tasks_for_turn, wait_for_task_review_decision,
     TaskCreateReviewPayload, TaskReviewAction, REVIEW_TIMEOUT_ERR,
@@ -52,6 +55,7 @@ pub(super) fn handle_add_task(
                 ctx.conversation_turn_id,
                 decision.tasks,
             ))?;
+            emit_task_board_updated_event(ctx);
             Ok(text_result(json!({
                 "confirmed": true,
                 "cancelled": false,
@@ -94,4 +98,26 @@ fn cancelled_result(reason: &str) -> Value {
         "cancelled": true,
         "reason": reason,
     }))
+}
+
+fn emit_task_board_updated_event(ctx: &ToolContext) {
+    let Some(task_board_prompt) = block_on_option(enqueue_task_board_refresh(
+        ctx.conversation_id,
+        ctx.conversation_turn_id,
+    ))
+    else {
+        return;
+    };
+
+    let Some(callback) = ctx.on_stream_chunk.as_ref() else {
+        return;
+    };
+    let event_payload = build_task_board_updated_event_payload(
+        ctx.conversation_id,
+        ctx.conversation_turn_id,
+        task_board_prompt.as_str(),
+    );
+    if let Ok(serialized) = serde_json::to_string(&event_payload) {
+        callback(serialized);
+    }
 }

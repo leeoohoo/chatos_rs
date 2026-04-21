@@ -125,6 +125,7 @@ export interface SessionChatState {
   streamingMessageId: string | null;
   activeTurnId: string | null;
   streamingPreviewText: string;
+  runtimeContextRefreshNonce?: number;
 }
 
 export interface SessionRuntimeGuidanceState {

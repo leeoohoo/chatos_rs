@@ -196,6 +196,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const chatIsStreaming = currentChatState?.isStreaming ?? false;
   const chatIsStopping = currentChatState?.isStopping ?? false;
   const chatStreamingPreviewText = currentChatState?.streamingPreviewText || '';
+  const runtimeContextRefreshNonce = currentChatState?.runtimeContextRefreshNonce || 0;
 
   const {
     workspaceRoot: composerWorkspaceRoot,
@@ -329,6 +330,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     apiClient,
     activePanel,
     currentSession,
+    runtimeContextRefreshNonce,
     currentChatStateActiveTurnId: currentChatState?.activeTurnId,
     activeConversationTurnId,
     currentRemoteConnectionId: currentRemoteConnection?.id || null,

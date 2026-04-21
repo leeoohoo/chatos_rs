@@ -1,11 +1,29 @@
 use serde_json::{json, Value};
 use tracing::info;
 
+use crate::services::task_board_prompt::build_runtime_prefixed_messages;
+
 use super::history_tools::ensure_tool_responses;
 use super::runtime_support::cap_tool_content_for_input;
 use super::AiClient;
 
 impl AiClient {
+    pub(super) async fn load_runtime_prefixed_messages(&self) -> Option<Vec<Value>> {
+        let context = self
+            .task_board_refresh_context
+            .lock()
+            .ok()
+            .and_then(|slot| slot.clone())?;
+        build_runtime_prefixed_messages(
+            &context.session_id,
+            context.turn_id.as_deref(),
+            context.contact_system_prompt.as_deref(),
+            context.builtin_mcp_system_prompt.as_deref(),
+            context.command_system_prompt.as_deref(),
+        )
+        .await
+    }
+
     pub(super) async fn load_memory_context_messages_for_scope(
         &self,
         session_id: Option<&str>,
@@ -99,6 +117,9 @@ impl AiClient {
         let mut refreshed = Vec::new();
         if let Some(prompt) = self.system_prompt.clone() {
             refreshed.push(json!({"role": "system", "content": prompt}));
+        }
+        if let Some(items) = self.load_runtime_prefixed_messages().await {
+            refreshed.extend(items);
         }
         let mapped = self
             .load_memory_context_messages_for_scope(session_id, include_reasoning)

@@ -7,6 +7,12 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use tracing::warn;
 
+use crate::core::builtin_mcp_prompt::{
+    builtin_mcp_prompt_section_ids, builtin_mcp_prompt_source_path,
+    BuiltinMcpPromptBuildResult,
+    compose_builtin_mcp_system_prompt, inspect_builtin_mcp_system_prompt,
+    inspect_effective_builtin_mcp_system_prompt,
+};
 use crate::core::chat_context::{resolve_effective_user_id, resolve_system_prompt};
 use crate::core::chat_runtime::{
     compose_contact_command_system_prompt, compose_contact_system_prompt, contact_plugin_ref,
@@ -25,11 +31,8 @@ use crate::core::turn_runtime_snapshot::{
     build_turn_runtime_snapshot_payload, BuildTurnRuntimeSnapshotInput,
 };
 use crate::services::ai_client_common::AiClientCallbacks;
-use crate::services::builtin_mcp::{
-    BuiltinMcpKind, BROWSER_TOOLS_SERVER_NAME, WEB_TOOLS_SERVER_NAME,
-};
-use crate::services::mcp_loader::McpBuiltinServer;
 use crate::services::memory_server_client::{self, TurnRuntimeSnapshotSelectedCommandDto};
+use crate::services::task_board_prompt::build_task_board_prompt;
 
 #[derive(Debug, Deserialize, Clone)]
 pub(crate) struct ChatStreamRequest {
@@ -92,7 +95,7 @@ pub(crate) struct ResolvedChatStreamContext {
     pub contact_agent_id: Option<String>,
     pub base_system_prompt: Option<String>,
     pub contact_system_prompt: Option<String>,
-    pub tool_routing_system_prompt: Option<String>,
+    pub builtin_mcp_system_prompt: Option<String>,
     pub command_system_prompt: Option<String>,
     pub selected_commands_for_snapshot: Arc<Mutex<Vec<TurnRuntimeSnapshotSelectedCommandDto>>>,
     pub resolved_project_id: Option<String>,
@@ -245,7 +248,6 @@ pub(crate) async fn resolve_chat_stream_context(
     } else {
         empty_mcp_server_bundle()
     };
-    let tool_routing_system_prompt = compose_tool_routing_system_prompt(builtin_servers.as_slice());
 
     if should_attach_contact_reader_tools {
         if let Some(agent_id) = contact_runtime_context
@@ -279,6 +281,7 @@ pub(crate) async fn resolve_chat_stream_context(
         server.remote_connection_id = default_remote_connection_id.clone();
     }
 
+    let builtin_mcp_system_prompt = compose_builtin_mcp_system_prompt(builtin_servers.as_slice());
     let use_tools = has_any_mcp_server(&http_servers, &stdio_servers, &builtin_servers);
     let memory_summary_prompt = memory_server_client::compose_context(session_id, 2)
         .await
@@ -291,7 +294,7 @@ pub(crate) async fn resolve_chat_stream_context(
         contact_agent_id,
         base_system_prompt,
         contact_system_prompt,
-        tool_routing_system_prompt,
+        builtin_mcp_system_prompt,
         command_system_prompt,
         selected_commands_for_snapshot,
         resolved_project_id,
@@ -476,43 +479,6 @@ async fn build_contact_skill_prompt_mode(
     }
 }
 
-pub(crate) fn build_prefixed_messages(system_prompts: &[Option<&str>]) -> Option<Vec<Value>> {
-    let mut prefixed_messages_items = Vec::new();
-    for prompt in system_prompts
-        .iter()
-        .filter_map(|item| normalize_optional_text(*item))
-    {
-        prefixed_messages_items.push(json!({
-            "role": "system",
-            "content": prompt,
-        }));
-    }
-    if prefixed_messages_items.is_empty() {
-        None
-    } else {
-        Some(prefixed_messages_items)
-    }
-}
-
-pub(crate) fn build_prefixed_input_items(system_prompts: &[Option<&str>]) -> Option<Vec<Value>> {
-    let mut prefixed_input_items = Vec::new();
-    for prompt in system_prompts
-        .iter()
-        .filter_map(|item| normalize_optional_text(*item))
-    {
-        prefixed_input_items.push(json!({
-            "type": "message",
-            "role": "system",
-            "content": [{ "type": "input_text", "text": prompt }],
-        }));
-    }
-    if prefixed_input_items.is_empty() {
-        None
-    } else {
-        Some(prefixed_input_items)
-    }
-}
-
 pub(crate) fn wire_implicit_command_tracking(
     callbacks: &mut AiClientCallbacks,
     selected_commands_for_snapshot: Arc<Mutex<Vec<TurnRuntimeSnapshotSelectedCommandDto>>>,
@@ -548,6 +514,7 @@ pub(crate) async fn sync_chat_turn_snapshot(
     model: &str,
     provider: &str,
     tool_metadata: &HashMap<String, ToolInfo>,
+    unavailable_builtin_tools: &[Value],
     context: &ResolvedChatStreamContext,
 ) -> Result<(), String> {
     let selected_commands = context
@@ -555,12 +522,19 @@ pub(crate) async fn sync_chat_turn_snapshot(
         .lock()
         .map(|items| items.clone())
         .unwrap_or_default();
+    let task_board_prompt = build_task_board_prompt(session_id, Some(turn_id)).await;
+    let builtin_prompt_debug = inspect_builtin_mcp_prompt_for_runtime(
+        context.mcp_server_bundle.2.as_slice(),
+        tool_metadata,
+        unavailable_builtin_tools,
+    );
     let payload = build_turn_runtime_snapshot_payload(BuildTurnRuntimeSnapshotInput {
         user_message_id,
         status,
         base_system_prompt: context.base_system_prompt.as_deref(),
         contact_system_prompt: context.contact_system_prompt.as_deref(),
-        tool_routing_system_prompt: context.tool_routing_system_prompt.as_deref(),
+        task_board_prompt: task_board_prompt.as_deref(),
+        builtin_mcp_system_prompt: context.builtin_mcp_system_prompt.as_deref(),
         memory_summary_prompt: context.memory_summary_prompt.as_deref(),
         tools: tool_metadata,
         model: Some(model),
@@ -573,10 +547,54 @@ pub(crate) async fn sync_chat_turn_snapshot(
         mcp_enabled: context.mcp_enabled,
         enabled_mcp_ids: &context.enabled_mcp_ids_for_snapshot,
         selected_commands: selected_commands.as_slice(),
+        unavailable_builtin_tools,
+        builtin_mcp_prompt_debug: Some(&builtin_prompt_debug),
     });
     memory_server_client::sync_turn_runtime_snapshot(session_id, turn_id, &payload)
         .await
         .map(|_| ())
+}
+
+pub(crate) fn inspect_builtin_mcp_prompt_for_runtime(
+    builtin_servers: &[crate::services::mcp_loader::McpBuiltinServer],
+    tool_metadata: &HashMap<String, ToolInfo>,
+    unavailable_builtin_tools: &[Value],
+) -> BuiltinMcpPromptBuildResult {
+    if tool_metadata.is_empty() && unavailable_builtin_tools.is_empty() {
+        inspect_builtin_mcp_system_prompt(builtin_servers)
+    } else {
+        inspect_effective_builtin_mcp_system_prompt(
+            builtin_servers,
+            tool_metadata,
+            unavailable_builtin_tools,
+        )
+    }
+}
+
+pub(crate) fn build_builtin_mcp_debug_payload(
+    builtin_servers: &[crate::services::mcp_loader::McpBuiltinServer],
+    tool_metadata: &HashMap<String, ToolInfo>,
+    unavailable_builtin_tools: &[Value],
+    builtin_mcp_system_prompt: Option<&str>,
+) -> Value {
+    let inspected =
+        inspect_builtin_mcp_prompt_for_runtime(builtin_servers, tool_metadata, unavailable_builtin_tools);
+
+    json!({
+        "prompt_source_path": builtin_mcp_prompt_source_path(),
+        "all_section_ids": builtin_mcp_prompt_section_ids(),
+        "selected_section_ids": inspected.selected_section_ids,
+        "omitted_section_ids": inspected.omitted_section_ids,
+        "requested_builtin_server_names": inspected.requested_builtin_server_names,
+        "active_builtin_server_names": inspected.active_builtin_server_names,
+        "omitted_builtin_server_names": inspected.omitted_builtin_server_names,
+        "runtime_limitations": inspected.runtime_limitations,
+        "composed_prompt": builtin_mcp_system_prompt
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+            .or(inspected.prompt),
+    })
 }
 
 fn seed_selected_commands(
@@ -615,101 +633,14 @@ fn normalize_string_list(values: &[String]) -> Vec<String> {
     out
 }
 
-fn compose_tool_routing_system_prompt(builtin_servers: &[McpBuiltinServer]) -> Option<String> {
-    let has_browser = builtin_servers
-        .iter()
-        .any(|server| matches!(server.kind, BuiltinMcpKind::BrowserTools));
-    let has_web = builtin_servers
-        .iter()
-        .any(|server| matches!(server.kind, BuiltinMcpKind::WebTools));
-
-    if !has_browser && !has_web {
-        return None;
-    }
-
-    let browser_inspect = prefixed_builtin_tool_name(BROWSER_TOOLS_SERVER_NAME, "browser_inspect");
-    let browser_research =
-        prefixed_builtin_tool_name(BROWSER_TOOLS_SERVER_NAME, "browser_research");
-    let browser_snapshot =
-        prefixed_builtin_tool_name(BROWSER_TOOLS_SERVER_NAME, "browser_snapshot");
-    let browser_click = prefixed_builtin_tool_name(BROWSER_TOOLS_SERVER_NAME, "browser_click");
-    let browser_type = prefixed_builtin_tool_name(BROWSER_TOOLS_SERVER_NAME, "browser_type");
-    let browser_console = prefixed_builtin_tool_name(BROWSER_TOOLS_SERVER_NAME, "browser_console");
-    let browser_vision = prefixed_builtin_tool_name(BROWSER_TOOLS_SERVER_NAME, "browser_vision");
-    let web_research = prefixed_builtin_tool_name(WEB_TOOLS_SERVER_NAME, "web_research");
-    let web_search = prefixed_builtin_tool_name(WEB_TOOLS_SERVER_NAME, "web_search");
-    let web_extract = prefixed_builtin_tool_name(WEB_TOOLS_SERVER_NAME, "web_extract");
-
-    let mut lines = Vec::new();
-    if has_browser && has_web {
-        lines.push("工具路由偏好（浏览器 / 公网研究）：".to_string());
-        lines.push(format!(
-            "1. 只要问题和当前浏览器页有关，默认先调用 `{}` 观察页面；需要视觉判断时优先给它传 `question`，不要一开始就直接交互或外网搜索。",
-            browser_inspect
-        ));
-        lines.push(format!(
-            "2. 只有在确实需要原始 refs 或完整快照时，再调用 `{}`；需要交互时使用 inspect/snapshot 返回的 refs 配合 `{}` 或 `{}`，页面明显变化后先重新 inspect/snapshot 刷新 refs。",
-            browser_snapshot, browser_click, browser_type
-        ));
-        lines.push(format!(
-            "3. 只有在需要控制台错误、JavaScript 求值时才调用 `{}`；只有在截图布局细节是关键且不需要 refs/console 时，才直接调用 `{}`。",
-            browser_console, browser_vision
-        ));
-        lines.push(format!(
-            "4. 如果问题同时依赖当前页内容和外部公开来源，优先用 `{}` 一次完成页内观察+外网研究；否则先页内观察，再按需转向 Web 工具。",
-            browser_research
-        ));
-        lines.push(format!(
-            "5. 只有在当前页信息不足、用户明确要公网/最新/外部来源、或需要交叉验证时，再转向纯 Web 工具；这时优先用 `{}` 做搜索+抽取一体化研究。",
-            web_research
-        ));
-        lines.push(format!(
-            "6. 只需要搜索结果或 URL 时用 `{}`；已经有明确 URL 时再用 `{}`。除非用户明确要求，否则不要把页内问题直接变成公网搜索。",
-            web_search, web_extract
-        ));
-    } else if has_browser {
-        lines.push("工具路由偏好（浏览器）：".to_string());
-        lines.push(format!(
-            "1. 涉及当前浏览器页时，默认先调用 `{}` 观察页面；需要视觉判断时优先给它传 `question`。",
-            browser_inspect
-        ));
-        lines.push(format!(
-            "2. 只有在需要原始 refs 或完整快照时，再调用 `{}`；需要交互时使用 inspect/snapshot 返回的 refs 配合 `{}` 或 `{}`，页面变化后先刷新 refs。",
-            browser_snapshot, browser_click, browser_type
-        ));
-        lines.push(format!(
-            "3. 只有在需要控制台错误、JavaScript 求值时才调用 `{}`；只有在截图布局细节是关键且不需要 refs/console 时，才直接调用 `{}`。",
-            browser_console, browser_vision
-        ));
-    } else {
-        lines.push("工具路由偏好（公网研究）：".to_string());
-        lines.push(format!(
-            "1. 需要外部公开网页资料、来源支撑或最新信息时，默认优先 `{}`，因为它会把搜索和抽取合并成一轮研究结果。",
-            web_research
-        ));
-        lines.push(format!(
-            "2. 只需要先找到候选链接或来源时使用 `{}`；已有明确 URL，或上一步已经拿到 URL 时再用 `{}`。",
-            web_search, web_extract
-        ));
-        lines.push("3. 如果问题只涉及当前对话上下文或本地项目，不要无谓发起公网研究。".to_string());
-    }
-
-    Some(lines.join("\n"))
-}
-
-fn prefixed_builtin_tool_name(server_name: &str, tool_name: &str) -> String {
-    format!("{}_{}", server_name, tool_name)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{
-        build_prefixed_input_items, build_prefixed_messages, compose_tool_routing_system_prompt,
-    };
-    use crate::services::builtin_mcp::{
-        BuiltinMcpKind, BROWSER_TOOLS_SERVER_NAME, WEB_TOOLS_SERVER_NAME,
-    };
+    use crate::core::builtin_mcp_prompt::compose_builtin_mcp_system_prompt;
+    use crate::services::builtin_mcp::BuiltinMcpKind;
     use crate::services::mcp_loader::McpBuiltinServer;
+    use crate::services::task_board_prompt::{
+        build_runtime_prefixed_input_items, build_runtime_prefixed_messages,
+    };
 
     fn build_builtin_server(kind: BuiltinMcpKind) -> McpBuiltinServer {
         McpBuiltinServer {
@@ -728,51 +659,63 @@ mod tests {
     }
 
     #[test]
-    fn tool_routing_prompt_prefers_inspect_before_web_research() {
-        let prompt = compose_tool_routing_system_prompt(&[
+    fn builtin_mcp_prompt_includes_browser_and_web_guidance() {
+        let prompt = compose_builtin_mcp_system_prompt(&[
             build_builtin_server(BuiltinMcpKind::BrowserTools),
             build_builtin_server(BuiltinMcpKind::WebTools),
         ])
         .expect("prompt");
 
-        assert!(prompt.contains("工具路由偏好（浏览器 / 公网研究）"));
-        assert!(prompt.contains(format!("{}_browser_inspect", BROWSER_TOOLS_SERVER_NAME).as_str()));
-        assert!(prompt.contains(format!("{}_browser_research", BROWSER_TOOLS_SERVER_NAME).as_str()));
-        assert!(prompt.contains(format!("{}_web_research", WEB_TOOLS_SERVER_NAME).as_str()));
+        assert!(prompt.contains("`browser_tools_browser_inspect`"));
+        assert!(prompt.contains("`browser_tools_browser_research`"));
+        assert!(prompt.contains("`web_tools_web_research`"));
         assert!(prompt.contains("不要把页内问题直接变成公网搜索"));
     }
 
-    #[test]
-    fn build_prefixed_messages_keeps_all_non_empty_prompts_in_order() {
-        let items = build_prefixed_messages(&[
+    #[tokio::test]
+    async fn build_prefixed_messages_keeps_all_non_empty_prompts_in_order() {
+        let items = build_runtime_prefixed_messages(
+            "session_test",
+            Some("turn_test"),
             Some("contact prompt"),
             Some("routing prompt"),
             Some("command prompt"),
-        ])
+        )
+        .await
         .expect("messages");
 
         assert_eq!(items.len(), 3);
         assert_eq!(items[0]["content"].as_str(), Some("contact prompt"));
-        assert_eq!(items[1]["content"].as_str(), Some("routing prompt"));
-        assert_eq!(items[2]["content"].as_str(), Some("command prompt"));
+        assert!(items[1]["content"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("[Task Board]"));
+        assert_eq!(items[2]["content"].as_str(), Some("routing prompt"));
     }
 
-    #[test]
-    fn build_prefixed_input_items_skips_empty_prompts() {
-        let items = build_prefixed_input_items(&[
+    #[tokio::test]
+    async fn build_prefixed_input_items_skips_empty_prompts() {
+        let items = build_runtime_prefixed_input_items(
+            "session_test",
+            Some("turn_test"),
             Some("contact prompt"),
             Some("   "),
             Some("routing prompt"),
-        ])
+        )
+        .await
         .expect("input items");
 
-        assert_eq!(items.len(), 2);
+        assert_eq!(items.len(), 3);
         assert_eq!(
             items[0]["content"][0]["text"].as_str(),
             Some("contact prompt")
         );
+        assert!(items[1]["content"][0]["text"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("[Task Board]"));
         assert_eq!(
-            items[1]["content"][0]["text"].as_str(),
+            items[2]["content"][0]["text"].as_str(),
             Some("routing prompt")
         );
     }

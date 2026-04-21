@@ -10,6 +10,7 @@ interface UseChatInterfaceControllerParams {
   apiClient: ApiClient;
   activePanel: string;
   currentSession: Session | null;
+  runtimeContextRefreshNonce: number;
   currentChatStateActiveTurnId: string | null | undefined;
   activeConversationTurnId: string | null | undefined;
   currentRemoteConnectionId: string | null;
@@ -64,6 +65,7 @@ export const useChatInterfaceController = ({
   apiClient,
   activePanel,
   currentSession,
+  runtimeContextRefreshNonce,
   currentChatStateActiveTurnId,
   activeConversationTurnId,
   currentRemoteConnectionId,
@@ -322,6 +324,22 @@ export const useChatInterfaceController = ({
     }
     void loadLatestRuntimeContext(runtimeContextSessionId);
   }, [loadLatestRuntimeContext, runtimeContextSessionId]);
+
+  useEffect(() => {
+    if (!runtimeContextOpen || !runtimeContextSessionId) {
+      return;
+    }
+    if (currentSession?.id !== runtimeContextSessionId) {
+      return;
+    }
+    void loadLatestRuntimeContext(runtimeContextSessionId);
+  }, [
+    currentSession?.id,
+    loadLatestRuntimeContext,
+    runtimeContextOpen,
+    runtimeContextRefreshNonce,
+    runtimeContextSessionId,
+  ]);
 
   return {
     showMcpManager,

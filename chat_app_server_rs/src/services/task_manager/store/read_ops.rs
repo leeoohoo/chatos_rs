@@ -41,7 +41,7 @@ pub async fn list_tasks_for_context(
                 }
 
                 let find_options = FindOptions::builder()
-                    .sort(doc! { "created_at": -1 })
+                    .sort(doc! { "created_at": 1 })
                     .limit(limit)
                     .build();
                 let mut cursor = db
@@ -76,7 +76,7 @@ pub async fn list_tasks_for_context(
                     qb.push(" AND status != ");
                     qb.push_bind("done");
                 }
-                qb.push(" ORDER BY created_at DESC LIMIT ");
+                qb.push(" ORDER BY created_at ASC LIMIT ");
                 qb.push_bind(limit);
 
                 let rows: Vec<TaskRow> = qb

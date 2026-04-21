@@ -10,9 +10,12 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use crate::core::async_bridge::block_on_result;
+use crate::core::async_bridge::{block_on_option, block_on_result};
 use crate::core::mcp_tools::ToolStreamChunkCallback;
 use crate::core::tool_io::text_result;
+use crate::services::task_board_prompt::{
+    build_task_board_updated_event_payload, enqueue_task_board_refresh,
+};
 use crate::services::task_manager::{
     complete_task_by_id, delete_task_by_id, list_tasks_for_context, update_task_by_id,
 };
@@ -245,6 +248,7 @@ impl TaskManagerService {
                 let patch = parse_update_patch(changes)?;
                 let task =
                     block_on_result(update_task_by_id(ctx.conversation_id, task_id.as_str(), patch))?;
+                emit_task_board_refresh(ctx);
                 Ok(text_result(json!({
                     "updated": true,
                     "task": task,
@@ -270,6 +274,7 @@ impl TaskManagerService {
                 let task_id = required_string_arg(&args, "task_id")?;
                 let task =
                     block_on_result(complete_task_by_id(ctx.conversation_id, task_id.as_str()))?;
+                emit_task_board_refresh(ctx);
                 Ok(text_result(json!({
                     "completed": true,
                     "task": task,
@@ -307,5 +312,27 @@ impl TaskManagerService {
                 })))
             }),
         );
+    }
+}
+
+fn emit_task_board_refresh(ctx: &ToolContext<'_>) {
+    let Some(task_board_prompt) = block_on_option(enqueue_task_board_refresh(
+        ctx.conversation_id,
+        ctx.conversation_turn_id,
+    ))
+    else {
+        return;
+    };
+
+    let Some(callback) = ctx.on_stream_chunk.as_ref() else {
+        return;
+    };
+    let event_payload = build_task_board_updated_event_payload(
+        ctx.conversation_id,
+        ctx.conversation_turn_id,
+        task_board_prompt.as_str(),
+    );
+    if let Ok(serialized) = serde_json::to_string(&event_payload) {
+        callback(serialized);
     }
 }

@@ -9,6 +9,7 @@ import type {
 import { createInternalId } from './internalId';
 
 const TASK_CREATE_REVIEW_REQUIRED_EVENT = 'task_create_review_required';
+const TASK_BOARD_UPDATED_EVENT = 'task_board_updated';
 const UI_PROMPT_REQUIRED_EVENT = 'ui_prompt_required';
 
 type AnyRecord = Record<string, unknown>;
@@ -261,5 +262,54 @@ export const extractUiPromptPanelFromToolStream = (
     },
     submitting: false,
     error: null,
+  };
+};
+
+export const extractTaskBoardUpdatedEvent = (
+  streamPayload: unknown,
+): {
+  sessionId: string;
+  conversationTurnId: string | null;
+  taskBoard: string;
+} | null => {
+  const source = asRecord(streamPayload) || {};
+  const rawContent = typeof source.content === 'string' ? source.content.trim() : '';
+  if (!rawContent) {
+    return null;
+  }
+
+  let parsedChunk: unknown = null;
+  try {
+    parsedChunk = JSON.parse(rawContent);
+  } catch (_) {
+    return null;
+  }
+
+  const eventEnvelope = asRecord(parsedChunk);
+  if (eventEnvelope?.event !== TASK_BOARD_UPDATED_EVENT) {
+    return null;
+  }
+
+  const payload = asRecord(eventEnvelope?.data) || {};
+  const sessionId = typeof payload.conversation_id === 'string'
+    ? payload.conversation_id.trim()
+    : '';
+  if (!sessionId) {
+    return null;
+  }
+  const conversationTurnId = typeof payload.conversation_turn_id === 'string'
+    ? payload.conversation_turn_id.trim()
+    : '';
+  const taskBoard = typeof payload.task_board === 'string'
+    ? payload.task_board.trim()
+    : '';
+  if (!taskBoard) {
+    return null;
+  }
+
+  return {
+    sessionId,
+    conversationTurnId: conversationTurnId || null,
+    taskBoard,
   };
 };

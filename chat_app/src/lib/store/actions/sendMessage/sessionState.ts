@@ -16,6 +16,7 @@ export const createDefaultSessionChatState = (): SessionChatState => ({
   streamingMessageId: null,
   activeTurnId: null,
   streamingPreviewText: '',
+  runtimeContextRefreshNonce: 0,
 });
 
 const resolveSessionChatState = (

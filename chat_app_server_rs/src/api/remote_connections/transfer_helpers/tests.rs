@@ -65,6 +65,20 @@ fn classifies_second_factor_required_error_code() {
 }
 
 #[test]
+fn classifies_wrapped_second_factor_required_error_code() {
+    let err = TransferJobError::remote(
+        "跳板机认证失败：jump_password 认证失败: __CHATOS_SECOND_FACTOR_REQUIRED__:SMS OTP。请检查配置",
+    );
+    assert!(matches!(
+        err,
+        TransferJobError::Remote {
+            code: RemoteTransferErrorCode::SecondFactorRequired,
+            ..
+        }
+    ));
+}
+
+#[test]
 fn classifies_remote_path_not_found_error_code() {
     let err = TransferJobError::remote("No such file");
     assert!(matches!(

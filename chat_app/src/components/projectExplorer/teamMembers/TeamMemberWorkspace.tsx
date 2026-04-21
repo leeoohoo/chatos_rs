@@ -9,6 +9,7 @@ import type {
   RemoteConnection,
   Session,
   AiModelConfig,
+  AgentConfig,
 } from '../../../types';
 import type {
   SendMessageRuntimeOptions,
@@ -25,6 +26,7 @@ import TeamMemberSummaryView from './TeamMemberSummaryView';
 interface TeamMemberWorkspaceProps {
   project: Project;
   selectedContact: ContactItem | null;
+  currentAgent: AgentConfig | null;
   selectedProjectSession: Session | null;
   isSelectedSessionActive: boolean;
   sessionSummaryPaneVisible: boolean;
@@ -92,6 +94,7 @@ interface TeamMemberWorkspaceProps {
 const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
   project,
   selectedContact,
+  currentAgent,
   selectedProjectSession,
   isSelectedSessionActive,
   sessionSummaryPaneVisible,
@@ -257,6 +260,7 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
         showProjectSelector={false}
         showProjectFileButton={false}
         showWorkspaceRootPicker={false}
+        currentAgent={currentAgent}
         availableRemoteConnections={availableRemoteConnections}
         currentRemoteConnectionId={currentRemoteConnectionId}
         onRemoteConnectionChange={onRemoteConnectionChange}
