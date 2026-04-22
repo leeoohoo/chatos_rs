@@ -3,10 +3,12 @@ use once_cell::sync::OnceCell;
 use portable_pty::{native_pty_system, MasterPty, PtySize};
 use std::collections::VecDeque;
 use std::io::{Read, Write};
+use std::sync::mpsc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration as StdDuration, Instant};
 use tokio::sync::broadcast;
+use tokio::sync::Mutex as AsyncMutex;
 use tokio::time::Duration;
 
 use crate::models::remote_connection::{RemoteConnection, RemoteConnectionService};
@@ -15,8 +17,8 @@ use super::terminal_io::{
     is_io_would_block, request_pty_resize_nonblocking, write_channel_nonblocking,
 };
 use super::{
-    connect_ssh2_session_with_verification, input_triggers_busy, is_password_auth,
-    should_use_native_ssh, spawn_remote_shell,
+    connect_ssh2_session_with_interactive_verification, connect_ssh2_session_with_verification,
+    input_triggers_busy, is_password_auth, should_use_native_ssh, spawn_remote_shell,
 };
 
 const REMOTE_TERMINAL_SNAPSHOT_LIMIT_BYTES: usize = 512 * 1024;
@@ -102,6 +104,8 @@ impl RemoteTerminalSession {
     fn new(
         connection: &RemoteConnection,
         verification_code: Option<&str>,
+        verification_code_rx: Option<mpsc::Receiver<String>>,
+        challenge_tx: Option<mpsc::Sender<String>>,
     ) -> Result<
         (
             Arc<Self>,
@@ -112,10 +116,20 @@ impl RemoteTerminalSession {
         if is_password_auth(connection) {
             // Keep password/OTP auth in native ssh2 path so second-factor challenges are
             // surfaced to frontend and can trigger the verification modal.
-            return Self::new_native(connection, verification_code);
+            return Self::new_native(
+                connection,
+                verification_code,
+                verification_code_rx,
+                challenge_tx,
+            );
         }
         if should_use_native_ssh(connection) {
-            Self::new_native(connection, verification_code)
+            Self::new_native(
+                connection,
+                verification_code,
+                verification_code_rx,
+                challenge_tx,
+            )
         } else {
             Self::new_legacy(connection)
         }
@@ -185,6 +199,8 @@ impl RemoteTerminalSession {
     fn new_native(
         connection: &RemoteConnection,
         verification_code: Option<&str>,
+        verification_code_rx: Option<mpsc::Receiver<String>>,
+        challenge_tx: Option<mpsc::Sender<String>>,
     ) -> Result<
         (
             Arc<Self>,
@@ -192,11 +208,21 @@ impl RemoteTerminalSession {
         ),
         String,
     > {
-        let connected = connect_ssh2_session_with_verification(
-            connection,
-            Duration::from_secs(12),
-            verification_code,
-        )?;
+        let connected = if verification_code_rx.is_some() {
+            connect_ssh2_session_with_interactive_verification(
+                connection,
+                Duration::from_secs(180),
+                verification_code,
+                verification_code_rx,
+                challenge_tx,
+            )?
+        } else {
+            connect_ssh2_session_with_verification(
+                connection,
+                Duration::from_secs(12),
+                verification_code,
+            )?
+        };
         let mut channel = connected
             .session
             .channel_session()
@@ -405,12 +431,14 @@ impl RemoteTerminalSession {
 
 pub(super) struct RemoteTerminalManager {
     sessions: DashMap<String, Arc<RemoteTerminalSession>>,
+    startup_locks: DashMap<String, Arc<AsyncMutex<()>>>,
 }
 
 impl RemoteTerminalManager {
     fn new() -> Self {
         Self {
             sessions: DashMap::new(),
+            startup_locks: DashMap::new(),
         }
     }
 
@@ -436,6 +464,8 @@ impl RemoteTerminalManager {
         &self,
         connection: &RemoteConnection,
         verification_code: Option<&str>,
+        verification_code_rx: Option<mpsc::Receiver<String>>,
+        challenge_tx: Option<mpsc::Sender<String>>,
     ) -> Result<Arc<RemoteTerminalSession>, String> {
         self.close_idle_sessions();
 
@@ -451,7 +481,32 @@ impl RemoteTerminalManager {
             }
         }
 
-        let (session, child) = RemoteTerminalSession::new(connection, verification_code)?;
+        let startup_lock = self
+            .startup_locks
+            .entry(connection.id.clone())
+            .or_insert_with(|| Arc::new(AsyncMutex::new(())))
+            .clone();
+        let _guard = startup_lock.lock().await;
+
+        if let Some(existing) = self.get(&connection.id) {
+            if existing.is_alive() {
+                if existing.is_idle_timed_out(Instant::now()) {
+                    self.close_with_reason(&connection.id, DisconnectReason::IdleTimeout);
+                } else {
+                    return Ok(existing);
+                }
+            } else {
+                self.sessions.remove(&connection.id);
+            }
+        }
+
+        let (session, child) =
+            RemoteTerminalSession::new(
+                connection,
+                verification_code,
+                verification_code_rx,
+                challenge_tx,
+            )?;
         if let Some(mut child) = child {
             let manager = get_remote_terminal_manager();
             let id = connection.id.clone();

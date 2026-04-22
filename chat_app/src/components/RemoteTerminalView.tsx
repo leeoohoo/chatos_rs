@@ -153,6 +153,8 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
   const lastSnapshotRef = useRef('');
   const lastConnectionIdRef = useRef<string | null>(null);
   const paletteRef = useRef(getThemeColors(actualTheme));
+  const skippedStrictModeProbeRef = useRef(false);
+  const pendingVerificationCodeRef = useRef<string | null>(null);
 
   const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -162,7 +164,6 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
   const [verificationOpen, setVerificationOpen] = useState(false);
   const [verificationPrompt, setVerificationPrompt] = useState<string>('');
   const [verificationCode, setVerificationCode] = useState('');
-  const [pendingVerificationCode, setPendingVerificationCode] = useState<string | null>(null);
 
   const apiBaseUrl = client.getBaseUrl();
   const palette = useMemo(() => getThemeColors(actualTheme), [actualTheme]);
@@ -257,7 +258,7 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
       setVerificationOpen(false);
       setVerificationPrompt('');
       setVerificationCode('');
-      setPendingVerificationCode(null);
+      pendingVerificationCodeRef.current = null;
       lastConnectionIdRef.current = null;
       lastSnapshotRef.current = '';
       return;
@@ -265,6 +266,16 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
 
     const term = terminalRef.current;
     if (!term) return;
+
+    if (
+      import.meta.env.DEV
+      && !skippedStrictModeProbeRef.current
+      && !pendingVerificationCodeRef.current
+      && connectSeq === 0
+    ) {
+      skippedStrictModeProbeRef.current = true;
+      return;
+    }
 
     const connectionChanged = lastConnectionIdRef.current !== currentRemoteConnection.id;
     if (connectionChanged) {
@@ -274,24 +285,34 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
       setVerificationOpen(false);
       setVerificationPrompt('');
       setVerificationCode('');
-      setPendingVerificationCode(null);
+      pendingVerificationCodeRef.current = null;
     }
 
+    const verificationCodeForAttempt = pendingVerificationCodeRef.current;
     const wsUrl = buildWsUrl(
       apiBaseUrl,
       `/remote-connections/${currentRemoteConnection.id}/ws`,
       accessToken,
-      pendingVerificationCode,
+      verificationCodeForAttempt,
     );
     const ws = new WebSocket(wsUrl);
     socketRef.current = ws;
     setConnectionState('connecting');
     setErrorMessage(null);
 
+    const clearVerificationCodeForAttempt = () => {
+      if (
+        verificationCodeForAttempt
+        && pendingVerificationCodeRef.current === verificationCodeForAttempt
+      ) {
+        pendingVerificationCodeRef.current = null;
+        setVerificationCode('');
+      }
+    };
+
     ws.onopen = () => {
       if (socketRef.current !== ws) return;
       setConnectionState('connected');
-      setPendingVerificationCode(null);
       if (terminalRef.current) {
         ws.send(JSON.stringify({
           type: 'resize',
@@ -307,10 +328,12 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
       try {
         const payload = JSON.parse(event.data as string);
         if (payload?.type === 'output' && typeof payload.data === 'string') {
+          clearVerificationCodeForAttempt();
           terminalRef.current?.write(payload.data);
           return;
         }
         if (payload?.type === 'snapshot' && typeof payload.data === 'string') {
+          clearVerificationCodeForAttempt();
           if (payload.data === lastSnapshotRef.current) {
             return;
           }
@@ -320,18 +343,24 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
           return;
         }
         if (payload?.type === 'state') {
+          clearVerificationCodeForAttempt();
           setBusy(Boolean(payload.busy));
           return;
         }
         if (payload?.type === 'error') {
           if (payload?.code === 'second_factor_required') {
+            pendingVerificationCodeRef.current = null;
             setVerificationPrompt(
               typeof payload?.challenge_prompt === 'string' ? payload.challenge_prompt : '',
             );
             setVerificationOpen(true);
             setConnectionState('error');
             setBusy(false);
-            setErrorMessage('需要验证码，请输入后继续连接');
+            setErrorMessage(
+              verificationCodeForAttempt
+                ? '验证码未通过或已过期，请重新输入后继续连接'
+                : '需要验证码，请输入后继续连接',
+            );
             return;
           }
           setErrorMessage(resolveRemoteTerminalWsErrorMessage(payload, '远端终端错误'));
@@ -444,7 +473,15 @@ const RemoteTerminalView: React.FC<RemoteTerminalViewProps> = ({ className }) =>
             return;
           }
           setVerificationOpen(false);
-          setPendingVerificationCode(trimmed);
+          const active = socketRef.current;
+          if (active && active.readyState === WebSocket.OPEN) {
+            active.send(JSON.stringify({ type: 'verification', code: trimmed }));
+            setVerificationCode('');
+            setConnectionState('connecting');
+            setErrorMessage(null);
+            return;
+          }
+          pendingVerificationCodeRef.current = trimmed;
           setConnectSeq((prev) => prev + 1);
         }}
       />

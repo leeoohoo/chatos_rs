@@ -202,6 +202,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
         handleCreateTerminal={controller.sessionListActions.handleCreateTerminal}
         remoteModalOpen={controller.remoteForm.remoteModalOpen}
         editingRemoteConnectionId={controller.remoteForm.editingRemoteConnectionId}
+        remoteConnections={controller.remoteConnections}
         remoteName={controller.remoteForm.remoteName}
         remoteHost={controller.remoteForm.remoteHost}
         remotePort={controller.remoteForm.remotePort}
@@ -213,10 +214,13 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
         remoteDefaultPath={controller.remoteForm.remoteDefaultPath}
         remoteHostKeyPolicy={controller.remoteForm.remoteHostKeyPolicy}
         remoteJumpEnabled={controller.remoteForm.remoteJumpEnabled}
+        remoteJumpMode={controller.remoteForm.remoteJumpMode}
+        remoteJumpConnectionId={controller.remoteForm.remoteJumpConnectionId}
         remoteJumpHost={controller.remoteForm.remoteJumpHost}
         remoteJumpPort={controller.remoteForm.remoteJumpPort}
         remoteJumpUsername={controller.remoteForm.remoteJumpUsername}
         remoteJumpPrivateKeyPath={controller.remoteForm.remoteJumpPrivateKeyPath}
+        remoteJumpCertificatePath={controller.remoteForm.remoteJumpCertificatePath}
         remoteJumpPassword={controller.remoteForm.remoteJumpPassword}
         remoteError={controller.remoteForm.remoteError}
         remoteErrorAction={controller.remoteForm.remoteErrorAction}
@@ -238,10 +242,13 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
         setRemoteDefaultPath={controller.remoteForm.setRemoteDefaultPath}
         setRemoteHostKeyPolicy={controller.remoteForm.setRemoteHostKeyPolicy}
         setRemoteJumpEnabled={controller.remoteForm.setRemoteJumpEnabled}
+        setRemoteJumpMode={controller.remoteForm.setRemoteJumpMode}
+        setRemoteJumpConnectionId={controller.remoteForm.setRemoteJumpConnectionId}
         setRemoteJumpHost={controller.remoteForm.setRemoteJumpHost}
         setRemoteJumpPort={controller.remoteForm.setRemoteJumpPort}
         setRemoteJumpUsername={controller.remoteForm.setRemoteJumpUsername}
         setRemoteJumpPrivateKeyPath={controller.remoteForm.setRemoteJumpPrivateKeyPath}
+        setRemoteJumpCertificatePath={controller.remoteForm.setRemoteJumpCertificatePath}
         setRemoteJumpPassword={controller.remoteForm.setRemoteJumpPassword}
         setRemoteVerificationCode={controller.remoteForm.setRemoteVerificationCode}
         setRemoteVerificationModalOpen={controller.remoteForm.setRemoteVerificationModalOpen}

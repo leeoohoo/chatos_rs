@@ -23,10 +23,12 @@ pub(super) struct CreateRemoteConnectionRequest {
     pub(super) default_remote_path: Option<String>,
     pub(super) host_key_policy: Option<String>,
     pub(super) jump_enabled: Option<bool>,
+    pub(super) jump_connection_id: Option<String>,
     pub(super) jump_host: Option<String>,
     pub(super) jump_port: Option<i64>,
     pub(super) jump_username: Option<String>,
     pub(super) jump_private_key_path: Option<String>,
+    pub(super) jump_certificate_path: Option<String>,
     pub(super) jump_password: Option<String>,
     pub(super) user_id: Option<String>,
 }
@@ -44,10 +46,12 @@ pub(super) struct UpdateRemoteConnectionRequest {
     pub(super) default_remote_path: Option<String>,
     pub(super) host_key_policy: Option<String>,
     pub(super) jump_enabled: Option<bool>,
+    pub(super) jump_connection_id: Option<String>,
     pub(super) jump_host: Option<String>,
     pub(super) jump_port: Option<i64>,
     pub(super) jump_username: Option<String>,
     pub(super) jump_private_key_path: Option<String>,
+    pub(super) jump_certificate_path: Option<String>,
     pub(super) jump_password: Option<String>,
 }
 
@@ -60,11 +64,13 @@ pub(super) enum WsInput {
     Command { command: String },
     #[serde(rename = "resize")]
     Resize { cols: u16, rows: u16 },
+    #[serde(rename = "verification")]
+    Verification { code: String },
     #[serde(rename = "ping")]
     Ping,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type")]
 pub(super) enum WsOutput {
     #[serde(rename = "output")]

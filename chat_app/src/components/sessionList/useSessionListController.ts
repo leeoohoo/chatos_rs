@@ -99,6 +99,7 @@ export const useSessionListController = ({
 
   const remoteForm = useRemoteConnectionForm({
     apiClient,
+    remoteConnections,
     createRemoteConnection,
     updateRemoteConnection,
   });
@@ -110,11 +111,13 @@ export const useSessionListController = ({
     remotePrivateKeyPath: remoteForm.remotePrivateKeyPath,
     remoteCertificatePath: remoteForm.remoteCertificatePath,
     remoteJumpPrivateKeyPath: remoteForm.remoteJumpPrivateKeyPath,
+    remoteJumpCertificatePath: remoteForm.remoteJumpCertificatePath,
     onProjectRootChange: setProjectRoot,
     onTerminalRootChange: setTerminalRoot,
     onRemotePrivateKeyPathChange: remoteForm.setRemotePrivateKeyPath,
     onRemoteCertificatePathChange: remoteForm.setRemoteCertificatePath,
     onRemoteJumpPrivateKeyPathChange: remoteForm.setRemoteJumpPrivateKeyPath,
+    onRemoteJumpCertificatePathChange: remoteForm.setRemoteJumpCertificatePath,
   });
 
   const { dialogState, showConfirmDialog, handleConfirm, handleCancel } = useConfirmDialog();

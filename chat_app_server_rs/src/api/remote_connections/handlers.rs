@@ -15,7 +15,8 @@ use crate::models::remote_connection::RemoteConnectionService;
 
 use super::{
     error_payload, get_remote_terminal_manager, internal_error_response, normalize_create_request,
-    normalize_update_request, remote_connectivity_error_response, run_remote_connectivity_test,
+    normalize_update_request, remote_connectivity_error_response, resolve_jump_connection_snapshot,
+    run_remote_connectivity_test,
     CreateRemoteConnectionRequest, DisconnectReason, RemoteConnectionQuery,
     UpdateRemoteConnectionRequest,
 };
@@ -112,7 +113,12 @@ pub(super) async fn test_remote_connection_draft(
 
     let verification_code = verification_code_from_headers(&headers);
 
-    match run_remote_connectivity_test(&connection, verification_code.as_deref()).await {
+    let resolved_connection = match resolve_jump_connection_snapshot(&connection).await {
+        Ok(connection) => connection,
+        Err(err) => return remote_connectivity_error_response(err),
+    };
+
+    match run_remote_connectivity_test(&resolved_connection, verification_code.as_deref()).await {
         Ok(result) => (StatusCode::OK, Json(result)),
         Err(err) => remote_connectivity_error_response(err),
     }
@@ -231,7 +237,12 @@ pub(super) async fn test_remote_connection_saved(
 
     let verification_code = verification_code_from_headers(&headers);
 
-    match run_remote_connectivity_test(&connection, verification_code.as_deref()).await {
+    let resolved_connection = match resolve_jump_connection_snapshot(&connection).await {
+        Ok(connection) => connection,
+        Err(err) => return remote_connectivity_error_response(err),
+    };
+
+    match run_remote_connectivity_test(&resolved_connection, verification_code.as_deref()).await {
         Ok(result) => {
             let _ = RemoteConnectionService::touch(&connection.id).await;
             (StatusCode::OK, Json(result))

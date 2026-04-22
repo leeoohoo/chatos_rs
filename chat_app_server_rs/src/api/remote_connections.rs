@@ -10,6 +10,7 @@ mod net_utils;
 mod path_utils;
 mod remote_sftp;
 mod remote_terminal;
+mod resolved_connection;
 mod request_normalize;
 mod ssh_auth;
 mod ssh_command;
@@ -21,7 +22,8 @@ mod transfer_helpers;
 mod transfer_manager;
 
 use self::connectivity::{
-    connect_ssh2_session_with_verification, should_use_native_ssh, spawn_remote_shell,
+    connect_ssh2_session_with_interactive_verification, connect_ssh2_session_with_verification,
+    should_use_native_ssh, spawn_remote_shell,
 };
 pub(crate) use self::connectivity::{
     run_remote_connectivity_test, run_ssh_command, run_ssh_command_with_verification,
@@ -39,7 +41,7 @@ use self::handlers::{
     test_remote_connection_saved, update_remote_connection,
 };
 use self::host_keys::apply_host_key_policy;
-use self::jump_tunnel::create_jump_tunnel_stream;
+use self::jump_tunnel::create_jump_tunnel_stream_with_verification_channel;
 use self::net_utils::{configure_stream_timeout, connect_tcp_stream};
 use self::path_utils::{
     input_triggers_busy, join_remote_path, normalize_remote_path, remote_parent_path, shell_quote,
@@ -50,6 +52,7 @@ use self::remote_sftp::{
     upload_file_to_remote,
 };
 use self::remote_terminal::{get_remote_terminal_manager, DisconnectReason, RemoteTerminalEvent};
+pub(crate) use self::resolved_connection::resolve_jump_connection_snapshot;
 use self::request_normalize::{normalize_create_request, normalize_update_request};
 use self::ssh_auth::{
     authenticate_jump_session, authenticate_target_session, encode_second_factor_required_error,

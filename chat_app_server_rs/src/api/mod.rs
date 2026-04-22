@@ -65,6 +65,7 @@ pub fn router() -> Router {
         HeaderName::from_static("x-project-id"),
         HeaderName::from_static("x-conversation-id"),
         HeaderName::from_static("x-request-id"),
+        HeaderName::from_static("x-remote-verification-code"),
     ];
 
     let cors = if cfg.cors_origins.iter().any(|o| o == "*") {

@@ -291,10 +291,12 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
             default_remote_path TEXT,
             host_key_policy TEXT NOT NULL DEFAULT 'strict',
             jump_enabled INTEGER NOT NULL DEFAULT 0,
+            jump_connection_id TEXT,
             jump_host TEXT,
             jump_port INTEGER,
             jump_username TEXT,
             jump_private_key_path TEXT,
+            jump_certificate_path TEXT,
             jump_password TEXT,
             user_id TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -387,6 +389,12 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
         .await
         .ok();
     ensure_column(pool, "remote_connections", "jump_password", "TEXT")
+        .await
+        .ok();
+    ensure_column(pool, "remote_connections", "jump_connection_id", "TEXT")
+        .await
+        .ok();
+    ensure_column(pool, "remote_connections", "jump_certificate_path", "TEXT")
         .await
         .ok();
     ensure_column(pool, "mcp_change_logs", "change_kind", "TEXT")

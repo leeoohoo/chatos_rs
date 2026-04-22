@@ -18,6 +18,7 @@ use super::super::transfer_helpers::{
     estimate_local_total_bytes_typed, run_sftp_transfer_job_typed,
 };
 use super::super::transfer_manager::get_sftp_transfer_manager;
+use super::super::resolve_jump_connection_snapshot;
 use super::contracts::SftpTransferStartRequest;
 use super::errors::RemoteSftpApiError;
 use super::support::{
@@ -33,6 +34,11 @@ pub(crate) async fn start_sftp_transfer(
     let connection = match ensure_owned_remote_connection(&id, &auth).await {
         Ok(connection) => connection,
         Err(err) => return map_remote_connection_access_error(err),
+    };
+
+    let resolved_connection = match resolve_jump_connection_snapshot(&connection).await {
+        Ok(connection) => connection,
+        Err(err) => return RemoteSftpApiError::remote_error(err).into_response(),
     };
 
     let direction = match normalize_transfer_direction(req.direction) {
@@ -88,13 +94,13 @@ pub(crate) async fn start_sftp_transfer(
     };
     let transfer_manager = get_sftp_transfer_manager();
     let status = transfer_manager.create(
-        connection.id.as_str(),
+        resolved_connection.id.as_str(),
         direction.as_str(),
         total_estimated,
         current_path,
     );
 
-    let connection_for_task = connection.clone();
+    let connection_for_task = resolved_connection.clone();
     let transfer_id_for_task = status.id.clone();
     let direction_for_task = direction.clone();
     let local_for_task = local_path.clone();

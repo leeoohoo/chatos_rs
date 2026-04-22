@@ -1,8 +1,13 @@
-import type { FsEntry, Session } from '../../types';
+import type { FsEntry, RemoteConnection, Session } from '../../types';
 
 export type RemoteAuthType = 'private_key' | 'private_key_cert' | 'password';
 export type HostKeyPolicy = 'strict' | 'accept_new';
-export type KeyFilePickerTarget = 'private_key' | 'certificate' | 'jump_private_key';
+export type JumpHostMode = 'existing' | 'manual';
+export type KeyFilePickerTarget =
+  | 'private_key'
+  | 'certificate'
+  | 'jump_private_key'
+  | 'jump_certificate';
 export type DirPickerTarget = 'project' | 'terminal';
 
 export interface RemoteConnectionFormPayload {
@@ -17,10 +22,12 @@ export interface RemoteConnectionFormPayload {
   default_remote_path?: string;
   host_key_policy?: HostKeyPolicy;
   jump_enabled?: boolean;
+  jump_connection_id?: string;
   jump_host?: string;
   jump_port?: number;
   jump_username?: string;
   jump_private_key_path?: string;
+  jump_certificate_path?: string;
   jump_password?: string;
 }
 
@@ -36,10 +43,13 @@ export interface RemoteConnectionFormValues {
   defaultPath: string;
   hostKeyPolicy: HostKeyPolicy;
   jumpEnabled: boolean;
+  jumpMode: JumpHostMode;
+  jumpConnectionId: string;
   jumpHost: string;
   jumpPort: string;
   jumpUsername: string;
   jumpPrivateKeyPath: string;
+  jumpCertificatePath: string;
   jumpPassword: string;
 }
 
@@ -121,11 +131,16 @@ export const getKeyFilePickerTitle = (target: KeyFilePickerTarget): string => {
   if (target === 'certificate') {
     return '选择证书文件';
   }
+  if (target === 'jump_certificate') {
+    return '选择跳板机证书文件';
+  }
   return '选择跳板机私钥文件';
 };
 
 export const buildRemoteConnectionPayload = (
-  values: RemoteConnectionFormValues
+  values: RemoteConnectionFormValues,
+  availableRemoteConnections: RemoteConnection[] = [],
+  editingRemoteConnectionId?: string | null,
 ): { payload: RemoteConnectionFormPayload } | { error: string } => {
   const {
     name,
@@ -139,10 +154,13 @@ export const buildRemoteConnectionPayload = (
     defaultPath,
     hostKeyPolicy,
     jumpEnabled,
+    jumpMode,
+    jumpConnectionId,
     jumpHost,
     jumpPort,
     jumpUsername,
     jumpPrivateKeyPath,
+    jumpCertificatePath,
     jumpPassword,
   } = values;
 
@@ -161,18 +179,54 @@ export const buildRemoteConnectionPayload = (
   if (authType === 'private_key_cert' && !certificatePath.trim()) {
     return { error: '私钥+证书模式需要证书路径' };
   }
-  if (jumpEnabled && (!jumpHost.trim() || !jumpUsername.trim())) {
+  const normalizedJumpConnectionId = jumpConnectionId.trim();
+  const selectedJumpConnection = availableRemoteConnections.find(
+    (item) => item.id === normalizedJumpConnectionId,
+  );
+
+  if (jumpEnabled && jumpMode === 'existing' && !selectedJumpConnection) {
+    return { error: '请选择已有远端连接作为跳板机' };
+  }
+  if (
+    jumpEnabled
+    && jumpMode === 'existing'
+    && editingRemoteConnectionId
+    && normalizedJumpConnectionId === editingRemoteConnectionId
+  ) {
+    return { error: '跳板机不能选择当前正在编辑的连接' };
+  }
+  if (jumpEnabled && jumpMode === 'manual' && (!jumpHost.trim() || !jumpUsername.trim())) {
     return { error: '启用跳板机后需填写跳板机主机和用户名' };
+  }
+  if (jumpEnabled && jumpMode === 'manual' && jumpCertificatePath.trim() && !jumpPrivateKeyPath.trim()) {
+    return { error: '跳板机证书模式需要先填写跳板机私钥路径' };
   }
 
   const parsedPort = Number(port);
   if (!Number.isFinite(parsedPort) || parsedPort < 1 || parsedPort > 65535) {
     return { error: '端口范围必须在 1-65535' };
   }
-  const parsedJumpPort = Number(jumpPort);
-  if (jumpEnabled && (!Number.isFinite(parsedJumpPort) || parsedJumpPort < 1 || parsedJumpPort > 65535)) {
+  const effectiveJumpPort = jumpMode === 'existing'
+    ? Number(selectedJumpConnection?.port ?? 22)
+    : Number(jumpPort);
+  if (jumpEnabled && (!Number.isFinite(effectiveJumpPort) || effectiveJumpPort < 1 || effectiveJumpPort > 65535)) {
     return { error: '跳板机端口范围必须在 1-65535' };
   }
+  const effectiveJumpHost = jumpMode === 'existing'
+    ? selectedJumpConnection?.host
+    : jumpHost.trim();
+  const effectiveJumpUsername = jumpMode === 'existing'
+    ? selectedJumpConnection?.username
+    : jumpUsername.trim();
+  const effectiveJumpPrivateKeyPath = jumpMode === 'existing'
+    ? undefined
+    : jumpPrivateKeyPath.trim();
+  const effectiveJumpCertificatePath = jumpMode === 'existing'
+    ? undefined
+    : jumpCertificatePath.trim();
+  const effectiveJumpPassword = jumpMode === 'existing'
+    ? undefined
+    : jumpPassword;
 
   const defaultName = `${username.trim()}@${host.trim()}`;
   return {
@@ -188,12 +242,22 @@ export const buildRemoteConnectionPayload = (
       default_remote_path: defaultPath.trim() || undefined,
       host_key_policy: hostKeyPolicy,
       jump_enabled: jumpEnabled,
-      jump_host: jumpEnabled ? jumpHost.trim() : undefined,
-      jump_port: jumpEnabled ? parsedJumpPort : undefined,
-      jump_username: jumpEnabled ? jumpUsername.trim() : undefined,
+      jump_connection_id:
+        jumpEnabled && jumpMode === 'existing' ? normalizedJumpConnectionId : undefined,
+      jump_host: jumpEnabled ? effectiveJumpHost : undefined,
+      jump_port: jumpEnabled ? effectiveJumpPort : undefined,
+      jump_username: jumpEnabled ? effectiveJumpUsername : undefined,
       jump_private_key_path:
-        jumpEnabled && jumpPrivateKeyPath.trim() ? jumpPrivateKeyPath.trim() : undefined,
-      jump_password: jumpEnabled && jumpPassword.trim() ? jumpPassword : undefined,
+        jumpEnabled && effectiveJumpPrivateKeyPath?.trim()
+          ? effectiveJumpPrivateKeyPath.trim()
+          : undefined,
+      jump_certificate_path:
+        jumpEnabled && effectiveJumpCertificatePath?.trim()
+          ? effectiveJumpCertificatePath.trim()
+          : undefined,
+      jump_password: jumpEnabled && effectiveJumpPassword?.trim()
+        ? effectiveJumpPassword.trim()
+        : undefined,
     },
   };
 };

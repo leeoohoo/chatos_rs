@@ -323,6 +323,8 @@ export interface RemoteConnectionResponse {
   hostKeyPolicy?: 'strict' | 'accept_new';
   jump_enabled?: boolean;
   jumpEnabled?: boolean;
+  jump_connection_id?: string | null;
+  jumpConnectionId?: string | null;
   jump_host?: string | null;
   jumpHost?: string | null;
   jump_port?: number | null;
@@ -331,6 +333,8 @@ export interface RemoteConnectionResponse {
   jumpUsername?: string | null;
   jump_private_key_path?: string | null;
   jumpPrivateKeyPath?: string | null;
+  jump_certificate_path?: string | null;
+  jumpCertificatePath?: string | null;
   jump_password?: string | null;
   jumpPassword?: string | null;
   user_id?: string | null;
@@ -611,10 +615,12 @@ export interface RemoteConnectionDraftPayload {
   default_remote_path?: string;
   host_key_policy?: 'strict' | 'accept_new';
   jump_enabled?: boolean;
+  jump_connection_id?: string;
   jump_host?: string;
   jump_port?: number;
   jump_username?: string;
   jump_private_key_path?: string;
+  jump_certificate_path?: string;
   jump_password?: string;
   user_id?: string;
 }
@@ -631,10 +637,12 @@ export interface RemoteConnectionUpdatePayload {
   default_remote_path?: string;
   host_key_policy?: 'strict' | 'accept_new';
   jump_enabled?: boolean;
+  jump_connection_id?: string;
   jump_host?: string;
   jump_port?: number;
   jump_username?: string;
   jump_private_key_path?: string;
+  jump_certificate_path?: string;
   jump_password?: string;
 }
 

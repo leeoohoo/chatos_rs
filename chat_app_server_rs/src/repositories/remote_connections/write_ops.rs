@@ -45,6 +45,12 @@ pub async fn create_remote_connection(connection: &RemoteConnection) -> Result<S
                 ),
                 ("jump_enabled", Bson::Boolean(conn_mongo.jump_enabled)),
                 (
+                    "jump_connection_id",
+                    crate::core::values::optional_string_bson(
+                        conn_mongo.jump_connection_id.clone(),
+                    ),
+                ),
+                (
                     "jump_host",
                     crate::core::values::optional_string_bson(conn_mongo.jump_host.clone()),
                 ),
@@ -63,6 +69,12 @@ pub async fn create_remote_connection(connection: &RemoteConnection) -> Result<S
                     "jump_private_key_path",
                     crate::core::values::optional_string_bson(
                         conn_mongo.jump_private_key_path.clone(),
+                    ),
+                ),
+                (
+                    "jump_certificate_path",
+                    crate::core::values::optional_string_bson(
+                        conn_mongo.jump_certificate_path.clone(),
                     ),
                 ),
                 (
@@ -87,7 +99,7 @@ pub async fn create_remote_connection(connection: &RemoteConnection) -> Result<S
         },
         |pool| {
             Box::pin(async move {
-                sqlx::query("INSERT INTO remote_connections (id, name, host, port, username, auth_type, password, private_key_path, certificate_path, default_remote_path, host_key_policy, jump_enabled, jump_host, jump_port, jump_username, jump_private_key_path, jump_password, user_id, created_at, updated_at, last_active_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                sqlx::query("INSERT INTO remote_connections (id, name, host, port, username, auth_type, password, private_key_path, certificate_path, default_remote_path, host_key_policy, jump_enabled, jump_connection_id, jump_host, jump_port, jump_username, jump_private_key_path, jump_certificate_path, jump_password, user_id, created_at, updated_at, last_active_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
                     .bind(&conn_sqlite.id)
                     .bind(&conn_sqlite.name)
                     .bind(&conn_sqlite.host)
@@ -100,10 +112,12 @@ pub async fn create_remote_connection(connection: &RemoteConnection) -> Result<S
                     .bind(&conn_sqlite.default_remote_path)
                     .bind(&conn_sqlite.host_key_policy)
                     .bind(if conn_sqlite.jump_enabled { 1_i64 } else { 0_i64 })
+                    .bind(&conn_sqlite.jump_connection_id)
                     .bind(&conn_sqlite.jump_host)
                     .bind(conn_sqlite.jump_port)
                     .bind(&conn_sqlite.jump_username)
                     .bind(&conn_sqlite.jump_private_key_path)
+                    .bind(&conn_sqlite.jump_certificate_path)
                     .bind(&conn_sqlite.jump_password)
                     .bind(&conn_sqlite.user_id)
                     .bind(&now_sqlite)
@@ -147,10 +161,12 @@ pub async fn update_remote_connection(id: &str, data: &RemoteConnection) -> Resu
                                 "default_remote_path": data_mongo.default_remote_path,
                                 "host_key_policy": data_mongo.host_key_policy,
                                 "jump_enabled": data_mongo.jump_enabled,
+                                "jump_connection_id": data_mongo.jump_connection_id,
                                 "jump_host": data_mongo.jump_host,
                                 "jump_port": data_mongo.jump_port,
                                 "jump_username": data_mongo.jump_username,
                                 "jump_private_key_path": data_mongo.jump_private_key_path,
+                                "jump_certificate_path": data_mongo.jump_certificate_path,
                                 "jump_password": data_mongo.jump_password,
                                 "updated_at": now_mongo,
                             }
@@ -164,7 +180,7 @@ pub async fn update_remote_connection(id: &str, data: &RemoteConnection) -> Resu
         },
         |pool| {
             Box::pin(async move {
-                sqlx::query("UPDATE remote_connections SET name = ?, host = ?, port = ?, username = ?, auth_type = ?, password = ?, private_key_path = ?, certificate_path = ?, default_remote_path = ?, host_key_policy = ?, jump_enabled = ?, jump_host = ?, jump_port = ?, jump_username = ?, jump_private_key_path = ?, jump_password = ?, updated_at = ? WHERE id = ?")
+                sqlx::query("UPDATE remote_connections SET name = ?, host = ?, port = ?, username = ?, auth_type = ?, password = ?, private_key_path = ?, certificate_path = ?, default_remote_path = ?, host_key_policy = ?, jump_enabled = ?, jump_connection_id = ?, jump_host = ?, jump_port = ?, jump_username = ?, jump_private_key_path = ?, jump_certificate_path = ?, jump_password = ?, updated_at = ? WHERE id = ?")
                     .bind(&data_sqlite.name)
                     .bind(&data_sqlite.host)
                     .bind(data_sqlite.port)
@@ -176,10 +192,12 @@ pub async fn update_remote_connection(id: &str, data: &RemoteConnection) -> Resu
                     .bind(&data_sqlite.default_remote_path)
                     .bind(&data_sqlite.host_key_policy)
                     .bind(if data_sqlite.jump_enabled { 1_i64 } else { 0_i64 })
+                    .bind(&data_sqlite.jump_connection_id)
                     .bind(&data_sqlite.jump_host)
                     .bind(data_sqlite.jump_port)
                     .bind(&data_sqlite.jump_username)
                     .bind(&data_sqlite.jump_private_key_path)
+                    .bind(&data_sqlite.jump_certificate_path)
                     .bind(&data_sqlite.jump_password)
                     .bind(&now_sqlite)
                     .bind(&id_sqlite)

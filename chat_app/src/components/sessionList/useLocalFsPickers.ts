@@ -21,11 +21,13 @@ interface UseLocalFsPickersOptions {
   remotePrivateKeyPath: string;
   remoteCertificatePath: string;
   remoteJumpPrivateKeyPath: string;
+  remoteJumpCertificatePath: string;
   onProjectRootChange: (path: string) => void;
   onTerminalRootChange: (path: string) => void;
   onRemotePrivateKeyPathChange: (path: string) => void;
   onRemoteCertificatePathChange: (path: string) => void;
   onRemoteJumpPrivateKeyPathChange: (path: string) => void;
+  onRemoteJumpCertificatePathChange: (path: string) => void;
 }
 
 interface UseLocalFsPickersResult {
@@ -70,11 +72,13 @@ export const useLocalFsPickers = ({
   remotePrivateKeyPath,
   remoteCertificatePath,
   remoteJumpPrivateKeyPath,
+  remoteJumpCertificatePath,
   onProjectRootChange,
   onTerminalRootChange,
   onRemotePrivateKeyPathChange,
   onRemoteCertificatePathChange,
   onRemoteJumpPrivateKeyPathChange,
+  onRemoteJumpCertificatePathChange,
 }: UseLocalFsPickersOptions): UseLocalFsPickersResult => {
   const [keyFilePickerOpen, setKeyFilePickerOpen] = useState(false);
   const [keyFilePickerTarget, setKeyFilePickerTarget] = useState<KeyFilePickerTarget>('private_key');
@@ -238,12 +242,15 @@ export const useLocalFsPickers = ({
       ? remotePrivateKeyPath
       : target === 'certificate'
         ? remoteCertificatePath
-        : remoteJumpPrivateKeyPath;
+        : target === 'jump_private_key'
+          ? remoteJumpPrivateKeyPath
+          : remoteJumpCertificatePath;
     const parentPath = currentPath ? deriveParentPath(currentPath) : null;
     await loadKeyFileEntries(parentPath);
   }, [
     loadKeyFileEntries,
     remoteCertificatePath,
+    remoteJumpCertificatePath,
     remoteJumpPrivateKeyPath,
     remotePrivateKeyPath,
   ]);
@@ -259,14 +266,17 @@ export const useLocalFsPickers = ({
       onRemotePrivateKeyPathChange(path);
     } else if (keyFilePickerTarget === 'certificate') {
       onRemoteCertificatePathChange(path);
-    } else {
+    } else if (keyFilePickerTarget === 'jump_private_key') {
       onRemoteJumpPrivateKeyPathChange(path);
+    } else {
+      onRemoteJumpCertificatePathChange(path);
     }
     closeKeyFilePicker();
   }, [
     closeKeyFilePicker,
     keyFilePickerTarget,
     onRemoteCertificatePathChange,
+    onRemoteJumpCertificatePathChange,
     onRemoteJumpPrivateKeyPathChange,
     onRemotePrivateKeyPathChange,
   ]);

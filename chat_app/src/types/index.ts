@@ -117,10 +117,12 @@ export interface RemoteConnection {
   defaultRemotePath?: string | null;
   hostKeyPolicy: 'strict' | 'accept_new';
   jumpEnabled: boolean;
+  jumpConnectionId?: string | null;
   jumpHost?: string | null;
   jumpPort?: number | null;
   jumpUsername?: string | null;
   jumpPrivateKeyPath?: string | null;
+  jumpCertificatePath?: string | null;
   jumpPassword?: string | null;
   userId?: string | null;
   createdAt: Date;

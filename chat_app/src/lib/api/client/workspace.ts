@@ -66,10 +66,12 @@ export interface RemoteConnectionPayload {
   default_remote_path?: string;
   host_key_policy?: 'strict' | 'accept_new';
   jump_enabled?: boolean;
+  jump_connection_id?: string;
   jump_host?: string;
   jump_port?: number;
   jump_username?: string;
   jump_private_key_path?: string;
+  jump_certificate_path?: string;
   jump_password?: string;
   user_id?: string;
 }

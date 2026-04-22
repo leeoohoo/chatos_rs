@@ -5,6 +5,8 @@ import { CreateContactModal } from './CreateContactModal';
 import { CreateProjectModal, CreateTerminalModal } from './CreateResourceModals';
 import { DirPickerDialog, KeyFilePickerDialog } from './Pickers';
 import { RemoteConnectionModal } from './RemoteConnectionModal';
+import type { RemoteConnection } from '../../types';
+import type { JumpHostMode } from './helpers';
 
 interface SessionListDialogsProps {
   createContactModalOpen: boolean;
@@ -35,6 +37,7 @@ interface SessionListDialogsProps {
 
   remoteModalOpen: boolean;
   editingRemoteConnectionId: string | null;
+  remoteConnections: RemoteConnection[];
   remoteName: string;
   remoteHost: string;
   remotePort: string;
@@ -46,10 +49,13 @@ interface SessionListDialogsProps {
   remoteDefaultPath: string;
   remoteHostKeyPolicy: any;
   remoteJumpEnabled: boolean;
+  remoteJumpMode: JumpHostMode;
+  remoteJumpConnectionId: string;
   remoteJumpHost: string;
   remoteJumpPort: string;
   remoteJumpUsername: string;
   remoteJumpPrivateKeyPath: string;
+  remoteJumpCertificatePath: string;
   remoteJumpPassword: string;
   remoteError: string | null;
   remoteErrorAction: string | null;
@@ -71,10 +77,13 @@ interface SessionListDialogsProps {
   setRemoteDefaultPath: (value: string) => void;
   setRemoteHostKeyPolicy: (value: any) => void;
   setRemoteJumpEnabled: (value: boolean) => void;
+  setRemoteJumpMode: (value: JumpHostMode) => void;
+  setRemoteJumpConnectionId: (value: string) => void;
   setRemoteJumpHost: (value: string) => void;
   setRemoteJumpPort: (value: string) => void;
   setRemoteJumpUsername: (value: string) => void;
   setRemoteJumpPrivateKeyPath: (value: string) => void;
+  setRemoteJumpCertificatePath: (value: string) => void;
   setRemoteJumpPassword: (value: string) => void;
   setRemoteVerificationCode: (value: string) => void;
   setRemoteVerificationModalOpen: (value: boolean) => void;
@@ -145,6 +154,7 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
   handleCreateTerminal,
   remoteModalOpen,
   editingRemoteConnectionId,
+  remoteConnections,
   remoteName,
   remoteHost,
   remotePort,
@@ -156,10 +166,13 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
   remoteDefaultPath,
   remoteHostKeyPolicy,
   remoteJumpEnabled,
+  remoteJumpMode,
+  remoteJumpConnectionId,
   remoteJumpHost,
   remoteJumpPort,
   remoteJumpUsername,
   remoteJumpPrivateKeyPath,
+  remoteJumpCertificatePath,
   remoteJumpPassword,
   remoteError,
   remoteErrorAction,
@@ -181,10 +194,13 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
   setRemoteDefaultPath,
   setRemoteHostKeyPolicy,
   setRemoteJumpEnabled,
+  setRemoteJumpMode,
+  setRemoteJumpConnectionId,
   setRemoteJumpHost,
   setRemoteJumpPort,
   setRemoteJumpUsername,
   setRemoteJumpPrivateKeyPath,
+  setRemoteJumpCertificatePath,
   setRemoteJumpPassword,
   setRemoteVerificationCode,
   setRemoteVerificationModalOpen,
@@ -269,6 +285,8 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
     <RemoteConnectionModal
       isOpen={remoteModalOpen}
       editingRemoteConnection={Boolean(editingRemoteConnectionId)}
+      editingRemoteConnectionId={editingRemoteConnectionId}
+      remoteConnections={remoteConnections}
       remoteName={remoteName}
       remoteHost={remoteHost}
       remotePort={remotePort}
@@ -280,10 +298,13 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
       remoteDefaultPath={remoteDefaultPath}
       remoteHostKeyPolicy={remoteHostKeyPolicy}
       remoteJumpEnabled={remoteJumpEnabled}
+      remoteJumpMode={remoteJumpMode}
+      remoteJumpConnectionId={remoteJumpConnectionId}
       remoteJumpHost={remoteJumpHost}
       remoteJumpPort={remoteJumpPort}
       remoteJumpUsername={remoteJumpUsername}
       remoteJumpPrivateKeyPath={remoteJumpPrivateKeyPath}
+      remoteJumpCertificatePath={remoteJumpCertificatePath}
       remoteJumpPassword={remoteJumpPassword}
       remoteError={remoteError}
       remoteErrorAction={remoteErrorAction}
@@ -305,10 +326,13 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
       onRemoteDefaultPathChange={setRemoteDefaultPath}
       onRemoteHostKeyPolicyChange={setRemoteHostKeyPolicy}
       onRemoteJumpEnabledChange={setRemoteJumpEnabled}
+      onRemoteJumpModeChange={setRemoteJumpMode}
+      onRemoteJumpConnectionIdChange={setRemoteJumpConnectionId}
       onRemoteJumpHostChange={setRemoteJumpHost}
       onRemoteJumpPortChange={setRemoteJumpPort}
       onRemoteJumpUsernameChange={setRemoteJumpUsername}
       onRemoteJumpPrivateKeyPathChange={setRemoteJumpPrivateKeyPath}
+      onRemoteJumpCertificatePathChange={setRemoteJumpCertificatePath}
       onRemoteJumpPasswordChange={setRemoteJumpPassword}
       onRemoteVerificationCodeChange={setRemoteVerificationCode}
       onRemoteVerificationClose={() => setRemoteVerificationModalOpen(false)}

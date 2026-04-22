@@ -2,17 +2,19 @@ import { useCallback, useState } from 'react';
 
 import { resolveRemoteConnectionErrorFeedback } from '../../lib/api/remoteConnectionErrors';
 import type { RemoteConnection } from '../../types';
-import type { HostKeyPolicy, RemoteAuthType } from './helpers';
+import type { HostKeyPolicy, JumpHostMode, RemoteAuthType } from './helpers';
 import { buildRemoteConnectionPayload } from './helpers';
 
 interface UseRemoteConnectionFormOptions {
   apiClient: any;
+  remoteConnections: RemoteConnection[];
   createRemoteConnection: (payload: any) => Promise<any>;
   updateRemoteConnection: (id: string, payload: any) => Promise<any>;
 }
 
 export const useRemoteConnectionForm = ({
   apiClient,
+  remoteConnections,
   createRemoteConnection,
   updateRemoteConnection,
 }: UseRemoteConnectionFormOptions) => {
@@ -28,10 +30,13 @@ export const useRemoteConnectionForm = ({
   const [remoteDefaultPath, setRemoteDefaultPath] = useState('');
   const [remoteHostKeyPolicy, setRemoteHostKeyPolicy] = useState<HostKeyPolicy>('strict');
   const [remoteJumpEnabled, setRemoteJumpEnabled] = useState(false);
+  const [remoteJumpMode, setRemoteJumpMode] = useState<JumpHostMode>('manual');
+  const [remoteJumpConnectionId, setRemoteJumpConnectionId] = useState('');
   const [remoteJumpHost, setRemoteJumpHost] = useState('');
   const [remoteJumpPort, setRemoteJumpPort] = useState('22');
   const [remoteJumpUsername, setRemoteJumpUsername] = useState('');
   const [remoteJumpPrivateKeyPath, setRemoteJumpPrivateKeyPath] = useState('');
+  const [remoteJumpCertificatePath, setRemoteJumpCertificatePath] = useState('');
   const [remoteJumpPassword, setRemoteJumpPassword] = useState('');
   const [remoteError, setRemoteError] = useState<string | null>(null);
   const [remoteErrorAction, setRemoteErrorAction] = useState<string | null>(null);
@@ -63,6 +68,13 @@ export const useRemoteConnectionForm = ({
     setRemoteErrorAction(feedback.action ?? null);
   }, []);
 
+  const handleRemoteJumpEnabledChange = useCallback((enabled: boolean) => {
+    setRemoteJumpEnabled(enabled);
+    if (enabled && remoteConnections.length > 0 && !remoteJumpConnectionId.trim()) {
+      setRemoteJumpMode('existing');
+    }
+  }, [remoteConnections.length, remoteJumpConnectionId]);
+
   const openRemoteModal = useCallback(() => {
     setEditingRemoteConnectionId(null);
     setRemoteName('');
@@ -76,10 +88,13 @@ export const useRemoteConnectionForm = ({
     setRemoteDefaultPath('');
     setRemoteHostKeyPolicy('strict');
     setRemoteJumpEnabled(false);
+    setRemoteJumpMode('manual');
+    setRemoteJumpConnectionId('');
     setRemoteJumpHost('');
     setRemoteJumpPort('22');
     setRemoteJumpUsername('');
     setRemoteJumpPrivateKeyPath('');
+    setRemoteJumpCertificatePath('');
     setRemoteJumpPassword('');
     setRemoteError(null);
     setRemoteErrorAction(null);
@@ -107,10 +122,13 @@ export const useRemoteConnectionForm = ({
     setRemoteDefaultPath(connection.defaultRemotePath || '');
     setRemoteHostKeyPolicy(connection.hostKeyPolicy || 'strict');
     setRemoteJumpEnabled(Boolean(connection.jumpEnabled));
+    setRemoteJumpMode(connection.jumpConnectionId ? 'existing' : 'manual');
+    setRemoteJumpConnectionId(connection.jumpConnectionId || '');
     setRemoteJumpHost(connection.jumpHost || '');
     setRemoteJumpPort(String(connection.jumpPort || 22));
     setRemoteJumpUsername(connection.jumpUsername || '');
     setRemoteJumpPrivateKeyPath(connection.jumpPrivateKeyPath || '');
+    setRemoteJumpCertificatePath(connection.jumpCertificatePath || '');
     setRemoteJumpPassword(connection.jumpPassword || '');
     setRemoteError(null);
     setRemoteErrorAction(null);
@@ -138,12 +156,15 @@ export const useRemoteConnectionForm = ({
       defaultPath: remoteDefaultPath,
       hostKeyPolicy: remoteHostKeyPolicy,
       jumpEnabled: remoteJumpEnabled,
+      jumpMode: remoteJumpMode,
+      jumpConnectionId: remoteJumpConnectionId,
       jumpHost: remoteJumpHost,
       jumpPort: remoteJumpPort,
       jumpUsername: remoteJumpUsername,
       jumpPrivateKeyPath: remoteJumpPrivateKeyPath,
+      jumpCertificatePath: remoteJumpCertificatePath,
       jumpPassword: remoteJumpPassword,
-    });
+    }, remoteConnections, editingRemoteConnectionId);
     if ('error' in built) {
       setRemoteError(built.error);
       setRemoteErrorAction(null);
@@ -177,6 +198,7 @@ export const useRemoteConnectionForm = ({
   }, [
     applyRemoteErrorFeedback,
     apiClient,
+    editingRemoteConnectionId,
     extractSecondFactorPrompt,
     isSecondFactorRequired,
     remoteName,
@@ -190,11 +212,15 @@ export const useRemoteConnectionForm = ({
     remoteDefaultPath,
     remoteHostKeyPolicy,
     remoteJumpEnabled,
+    remoteJumpMode,
+    remoteJumpConnectionId,
     remoteJumpHost,
     remoteJumpPort,
     remoteJumpUsername,
     remoteJumpPrivateKeyPath,
+    remoteJumpCertificatePath,
     remoteJumpPassword,
+    remoteConnections,
   ]);
 
   const handleSaveRemoteConnection = useCallback(async () => {
@@ -210,12 +236,15 @@ export const useRemoteConnectionForm = ({
       defaultPath: remoteDefaultPath,
       hostKeyPolicy: remoteHostKeyPolicy,
       jumpEnabled: remoteJumpEnabled,
+      jumpMode: remoteJumpMode,
+      jumpConnectionId: remoteJumpConnectionId,
       jumpHost: remoteJumpHost,
       jumpPort: remoteJumpPort,
       jumpUsername: remoteJumpUsername,
       jumpPrivateKeyPath: remoteJumpPrivateKeyPath,
+      jumpCertificatePath: remoteJumpCertificatePath,
       jumpPassword: remoteJumpPassword,
-    });
+    }, remoteConnections, editingRemoteConnectionId);
     if ('error' in built) {
       setRemoteError(built.error);
       setRemoteErrorAction(null);
@@ -260,11 +289,15 @@ export const useRemoteConnectionForm = ({
     remoteDefaultPath,
     remoteHostKeyPolicy,
     remoteJumpEnabled,
+    remoteJumpMode,
+    remoteJumpConnectionId,
     remoteJumpHost,
     remoteJumpPort,
     remoteJumpUsername,
     remoteJumpPrivateKeyPath,
+    remoteJumpCertificatePath,
     remoteJumpPassword,
+    remoteConnections,
     updateRemoteConnection,
   ]);
 
@@ -360,7 +393,11 @@ export const useRemoteConnectionForm = ({
     remoteHostKeyPolicy,
     setRemoteHostKeyPolicy,
     remoteJumpEnabled,
-    setRemoteJumpEnabled,
+    setRemoteJumpEnabled: handleRemoteJumpEnabledChange,
+    remoteJumpMode,
+    setRemoteJumpMode,
+    remoteJumpConnectionId,
+    setRemoteJumpConnectionId,
     remoteJumpHost,
     setRemoteJumpHost,
     remoteJumpPort,
@@ -369,6 +406,8 @@ export const useRemoteConnectionForm = ({
     setRemoteJumpUsername,
     remoteJumpPrivateKeyPath,
     setRemoteJumpPrivateKeyPath,
+    remoteJumpCertificatePath,
+    setRemoteJumpCertificatePath,
     remoteJumpPassword,
     setRemoteJumpPassword,
     remoteError,

@@ -4,7 +4,9 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use tokio::time::Duration;
 
-use crate::api::remote_connections::{run_remote_connectivity_test, run_ssh_command};
+use crate::api::remote_connections::{
+    resolve_jump_connection_snapshot, run_remote_connectivity_test, run_ssh_command,
+};
 use crate::models::remote_connection::{RemoteConnection, RemoteConnectionService};
 
 use super::context::{
@@ -62,7 +64,8 @@ pub(super) async fn test_connection_with_context(
     explicit_connection_id: Option<String>,
 ) -> Result<Value, String> {
     let connection = resolve_owned_connection(&ctx, explicit_connection_id).await?;
-    let result = run_remote_connectivity_test(&connection, None).await?;
+    let resolved_connection = resolve_jump_connection_snapshot(&connection).await?;
+    let result = run_remote_connectivity_test(&resolved_connection, None).await?;
     let _ = RemoteConnectionService::touch(&connection.id).await;
 
     Ok(json!({
@@ -99,8 +102,13 @@ pub(super) async fn run_command_with_context(
         .unwrap_or(ctx.max_output_chars)
         .clamp(128, ctx.max_output_chars.max(128));
 
-    let output =
-        run_ssh_command(&connection, command.as_str(), Duration::from_secs(timeout)).await?;
+    let resolved_connection = resolve_jump_connection_snapshot(&connection).await?;
+    let output = run_ssh_command(
+        &resolved_connection,
+        command.as_str(),
+        Duration::from_secs(timeout),
+    )
+    .await?;
     let (output_text, truncated) = truncate_text(output.as_str(), output_limit);
     let _ = RemoteConnectionService::touch(&connection.id).await;
 
@@ -138,8 +146,9 @@ pub(super) async fn list_directory_with_context(
         "set -e; P={quoted}; if [ ! -d \"$P\" ]; then printf '__CHATOS_DIR_NOT_FOUND__\\n'; else cd \"$P\"; find . -mindepth 1 -maxdepth 1 -printf '%P\\t%y\\t%s\\t%T@\\n'; fi",
         quoted = shell_quote(path.as_str()),
     );
+    let resolved_connection = resolve_jump_connection_snapshot(&connection).await?;
     let output = run_ssh_command(
-        &connection,
+        &resolved_connection,
         script.as_str(),
         Duration::from_secs(ctx.command_timeout_seconds),
     )
@@ -186,8 +195,9 @@ pub(super) async fn read_file_with_context(
         quoted = shell_quote(normalized_path.as_str()),
         limit = read_limit,
     );
+    let resolved_connection = resolve_jump_connection_snapshot(&connection).await?;
     let output = run_ssh_command(
-        &connection,
+        &resolved_connection,
         script.as_str(),
         Duration::from_secs(ctx.command_timeout_seconds),
     )

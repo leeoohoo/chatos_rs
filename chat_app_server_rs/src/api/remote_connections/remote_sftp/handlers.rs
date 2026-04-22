@@ -15,7 +15,10 @@ use crate::core::validation::normalize_non_empty;
 use crate::models::remote_connection::RemoteConnectionService;
 
 use super::super::transfer_helpers::{run_scp_download_typed, run_scp_upload_typed};
-use super::super::{join_remote_path, normalize_remote_path, remote_parent_path, shell_quote};
+use super::super::{
+    join_remote_path, normalize_remote_path, remote_parent_path, resolve_jump_connection_snapshot,
+    shell_quote,
+};
 use super::contracts::{
     SftpDeleteRequest, SftpDownloadRequest, SftpListQuery, SftpMkdirRequest, SftpRenameRequest,
     SftpUploadRequest,
@@ -37,12 +40,17 @@ pub(crate) async fn list_remote_sftp_entries(
         Err(err) => return map_remote_connection_access_error(err),
     };
 
+    let resolved_connection = match resolve_jump_connection_snapshot(&connection).await {
+        Ok(connection) => connection,
+        Err(err) => return RemoteSftpApiError::remote_error(err).into_response(),
+    };
+
     let path = normalize_non_empty(query.path)
-        .or(connection.default_remote_path.clone())
+        .or(resolved_connection.default_remote_path.clone())
         .unwrap_or_else(|| ".".to_string());
     let verification_code = verification_code_from_headers(&headers);
 
-    match fetch_remote_entries(&connection, path.as_str(), verification_code.as_deref()).await {
+    match fetch_remote_entries(&resolved_connection, path.as_str(), verification_code.as_deref()).await {
         Ok(entries) => {
             let _ = RemoteConnectionService::touch(&connection.id).await;
             (
@@ -79,6 +87,11 @@ pub(crate) async fn upload_file_to_remote(
     };
     let verification_code = verification_code_from_headers(&headers);
 
+    let resolved_connection = match resolve_jump_connection_snapshot(&connection).await {
+        Ok(connection) => connection,
+        Err(err) => return RemoteSftpApiError::remote_error(err).into_response(),
+    };
+
     let local = FsPath::new(&local_path);
     if !local.exists() || !local.is_file() {
         return RemoteSftpApiError::bad_request_with_code(
@@ -89,7 +102,7 @@ pub(crate) async fn upload_file_to_remote(
     }
 
     match run_scp_upload_typed(
-        &connection,
+        &resolved_connection,
         local_path.as_str(),
         remote_path.as_str(),
         verification_code.as_deref(),
@@ -125,12 +138,17 @@ pub(crate) async fn download_file_from_remote(
     };
     let verification_code = verification_code_from_headers(&headers);
 
+    let resolved_connection = match resolve_jump_connection_snapshot(&connection).await {
+        Ok(connection) => connection,
+        Err(err) => return RemoteSftpApiError::remote_error(err).into_response(),
+    };
+
     if let Err(err) = ensure_local_target_parent_dir_exists(local_path.as_str()) {
         return err.into_response();
     }
 
     match run_scp_download_typed(
-        &connection,
+        &resolved_connection,
         remote_path.as_str(),
         local_path.as_str(),
         verification_code.as_deref(),
@@ -167,10 +185,15 @@ pub(crate) async fn create_remote_directory(
     }
 
     let target_path = join_remote_path(parent.as_str(), name.as_str());
+    let resolved_connection = match resolve_jump_connection_snapshot(&connection).await {
+        Ok(connection) => connection,
+        Err(err) => return RemoteSftpApiError::remote_error(err).into_response(),
+    };
+
     let script = format!("mkdir -p {}", shell_quote(target_path.as_str()));
     let verification_code = verification_code_from_headers(&headers);
     match super::super::run_ssh_command_with_verification(
-        &connection,
+        &resolved_connection,
         script.as_str(),
         Duration::from_secs(20),
         verification_code.as_deref(),
@@ -208,6 +231,11 @@ pub(crate) async fn rename_remote_entry(
         Err(err) => return err.into_response(),
     };
 
+    let resolved_connection = match resolve_jump_connection_snapshot(&connection).await {
+        Ok(connection) => connection,
+        Err(err) => return RemoteSftpApiError::remote_error(err).into_response(),
+    };
+
     let script = format!(
         "mv {} {}",
         shell_quote(from_path.as_str()),
@@ -215,7 +243,7 @@ pub(crate) async fn rename_remote_entry(
     );
     let verification_code = verification_code_from_headers(&headers);
     match super::super::run_ssh_command_with_verification(
-        &connection,
+        &resolved_connection,
         script.as_str(),
         Duration::from_secs(20),
         verification_code.as_deref(),
@@ -247,6 +275,11 @@ pub(crate) async fn delete_remote_entry(
     };
     let recursive = req.recursive.unwrap_or(false);
 
+    let resolved_connection = match resolve_jump_connection_snapshot(&connection).await {
+        Ok(connection) => connection,
+        Err(err) => return RemoteSftpApiError::remote_error(err).into_response(),
+    };
+
     let quoted = shell_quote(path.as_str());
     let script = if recursive {
         format!("rm -rf {}", quoted)
@@ -259,7 +292,7 @@ pub(crate) async fn delete_remote_entry(
     let verification_code = verification_code_from_headers(&headers);
 
     match super::super::run_ssh_command_with_verification(
-        &connection,
+        &resolved_connection,
         script.as_str(),
         Duration::from_secs(20),
         verification_code.as_deref(),
