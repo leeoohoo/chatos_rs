@@ -36,6 +36,14 @@ pub async fn create_tasks_for_turn(
             status: draft.status,
             tags: draft.tags,
             due_at: draft.due_at,
+            outcome_summary: draft.outcome_summary,
+            outcome_items: draft.outcome_items,
+            resume_hint: draft.resume_hint,
+            blocker_reason: draft.blocker_reason,
+            blocker_needs: draft.blocker_needs,
+            blocker_kind: draft.blocker_kind,
+            completed_at: None,
+            last_outcome_at: None,
             created_at: now.clone(),
             updated_at: now.clone(),
         })
@@ -66,8 +74,12 @@ pub async fn create_tasks_for_turn(
                 for task in &records {
                     let tags_json =
                         serde_json::to_string(&task.tags).unwrap_or_else(|_| "[]".to_string());
+                    let outcome_items_json = serde_json::to_string(&task.outcome_items)
+                        .unwrap_or_else(|_| "[]".to_string());
+                    let blocker_needs_json = serde_json::to_string(&task.blocker_needs)
+                        .unwrap_or_else(|_| "[]".to_string());
                     sqlx::query(
-                        "INSERT INTO task_manager_tasks (id, conversation_id, conversation_turn_id, title, details, priority, status, tags_json, due_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        "INSERT INTO task_manager_tasks (id, conversation_id, conversation_turn_id, title, details, priority, status, tags_json, due_at, outcome_summary, outcome_items_json, resume_hint, blocker_reason, blocker_needs_json, blocker_kind, completed_at, last_outcome_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     )
                     .bind(&task.id)
                     .bind(&task.conversation_id)
@@ -78,6 +90,14 @@ pub async fn create_tasks_for_turn(
                     .bind(&task.status)
                     .bind(tags_json)
                     .bind(&task.due_at)
+                    .bind(&task.outcome_summary)
+                    .bind(outcome_items_json)
+                    .bind(&task.resume_hint)
+                    .bind(&task.blocker_reason)
+                    .bind(blocker_needs_json)
+                    .bind(&task.blocker_kind)
+                    .bind(&task.completed_at)
+                    .bind(&task.last_outcome_at)
                     .bind(&task.created_at)
                     .bind(&task.updated_at)
                     .execute(&mut *tx)

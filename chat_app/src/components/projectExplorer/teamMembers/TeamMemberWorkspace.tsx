@@ -20,6 +20,7 @@ import type {
 } from '../../../lib/store/types';
 import type { SessionSummaryItem } from '../../../features/sessionSummary/useSessionSummaryPanel';
 import type { RuntimeGuidanceWorkbarItem, TaskWorkbarItem } from '../../TaskWorkbar';
+import type { TaskOutcomeDraft } from '../../taskWorkbar/TaskOutcomeModal';
 import type { ContactItem } from './types';
 import TeamMemberSummaryView from './TeamMemberSummaryView';
 
@@ -74,11 +75,17 @@ interface TeamMemberWorkspaceProps {
   workbarError: string | null;
   workbarHistoryError: string | null;
   workbarActionLoadingTaskId: string | null;
+  taskModalOpen: boolean;
+  taskModalMode: 'complete' | 'edit';
+  taskModalTask: TaskWorkbarItem | null;
+  taskModalError: string | null;
   onRefreshWorkbarTasks: () => void;
   onOpenWorkbarHistory: (sessionId: string) => void;
   onCompleteTask: (task: TaskWorkbarItem) => void;
   onDeleteTask: (task: TaskWorkbarItem) => void;
   onEditTask: (task: TaskWorkbarItem) => void;
+  onCloseTaskModal: () => void;
+  onSubmitTaskModal: (draft: TaskOutcomeDraft) => void;
   activeUiPromptPanel: UiPromptPanelState | null;
   onUiPromptSubmit: (payload: UiPromptResponsePayload) => void;
   onUiPromptCancel: () => void;
@@ -138,11 +145,17 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
   workbarError,
   workbarHistoryError,
   workbarActionLoadingTaskId,
+  taskModalOpen,
+  taskModalMode,
+  taskModalTask,
+  taskModalError,
   onRefreshWorkbarTasks,
   onOpenWorkbarHistory,
   onCompleteTask,
   onDeleteTask,
   onEditTask,
+  onCloseTaskModal,
+  onSubmitTaskModal,
   activeUiPromptPanel,
   onUiPromptSubmit,
   onUiPromptCancel,
@@ -227,6 +240,10 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
         workbarError={workbarError}
         workbarHistoryError={workbarHistoryError}
         workbarActionLoadingTaskId={workbarActionLoadingTaskId}
+        taskModalOpen={taskModalOpen}
+        taskModalMode={taskModalMode}
+        taskModalTask={taskModalTask}
+        taskModalError={taskModalError}
         onRefreshWorkbarTasks={onRefreshWorkbarTasks}
         onOpenHistory={onOpenWorkbarHistory}
         uiPromptHistoryCount={0}
@@ -234,6 +251,8 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
         onCompleteTask={onCompleteTask}
         onDeleteTask={onDeleteTask}
         onEditTask={onEditTask}
+        onCloseTaskModal={onCloseTaskModal}
+        onSubmitTaskModal={onSubmitTaskModal}
         activeUiPromptPanel={activeUiPromptPanel}
         onUiPromptSubmit={onUiPromptSubmit}
         onUiPromptCancel={onUiPromptCancel}

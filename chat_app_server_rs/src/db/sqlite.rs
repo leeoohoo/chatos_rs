@@ -183,6 +183,14 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
             status TEXT NOT NULL,
             tags_json TEXT NOT NULL,
             due_at TEXT,
+            outcome_summary TEXT NOT NULL DEFAULT '',
+            outcome_items_json TEXT NOT NULL DEFAULT '[]',
+            resume_hint TEXT NOT NULL DEFAULT '',
+            blocker_reason TEXT NOT NULL DEFAULT '',
+            blocker_needs_json TEXT NOT NULL DEFAULT '[]',
+            blocker_kind TEXT NOT NULL DEFAULT '',
+            completed_at TEXT,
+            last_outcome_at TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (conversation_id) REFERENCES sessions(id) ON DELETE CASCADE
@@ -421,6 +429,60 @@ async fn create_tables_sqlite(pool: &SqlitePool) -> Result<(), String> {
         .await
         .ok();
     rename_column_if_needed(pool, "task_manager_tasks", "session_id", "conversation_id")
+        .await
+        .ok();
+    ensure_column(
+        pool,
+        "task_manager_tasks",
+        "outcome_summary",
+        "TEXT NOT NULL DEFAULT ''",
+    )
+    .await
+    .ok();
+    ensure_column(
+        pool,
+        "task_manager_tasks",
+        "outcome_items_json",
+        "TEXT NOT NULL DEFAULT '[]'",
+    )
+    .await
+    .ok();
+    ensure_column(
+        pool,
+        "task_manager_tasks",
+        "resume_hint",
+        "TEXT NOT NULL DEFAULT ''",
+    )
+    .await
+    .ok();
+    ensure_column(
+        pool,
+        "task_manager_tasks",
+        "blocker_reason",
+        "TEXT NOT NULL DEFAULT ''",
+    )
+    .await
+    .ok();
+    ensure_column(
+        pool,
+        "task_manager_tasks",
+        "blocker_needs_json",
+        "TEXT NOT NULL DEFAULT '[]'",
+    )
+    .await
+    .ok();
+    ensure_column(
+        pool,
+        "task_manager_tasks",
+        "blocker_kind",
+        "TEXT NOT NULL DEFAULT ''",
+    )
+    .await
+    .ok();
+    ensure_column(pool, "task_manager_tasks", "completed_at", "TEXT")
+        .await
+        .ok();
+    ensure_column(pool, "task_manager_tasks", "last_outcome_at", "TEXT")
         .await
         .ok();
     rename_column_if_needed(pool, "ui_prompt_requests", "session_id", "conversation_id")

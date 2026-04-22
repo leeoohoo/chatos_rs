@@ -269,6 +269,12 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     runtimeGuidanceItems,
     runtimeGuidanceLastAppliedAt,
     runtimeGuidancePendingCount,
+    taskModalError,
+    taskModalMode,
+    taskModalOpen,
+    taskModalTask,
+    closeTaskModal,
+    submitTaskModal,
     workbarActionLoadingTaskId,
     workbarError,
     workbarHistoryError,
@@ -394,6 +400,10 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     workbarError,
     workbarHistoryError,
     workbarActionLoadingTaskId,
+    taskModalOpen,
+    taskModalMode,
+    taskModalTask,
+    taskModalError,
     onRefreshWorkbarTasks: handleRefreshWorkbar,
     onOpenHistory: handleOpenHistory,
     onOpenUiPromptHistory: handleOpenUiPromptHistory,
@@ -407,6 +417,10 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     },
     onEditTask: (task: any) => {
       void handleWorkbarEditTask(task);
+    },
+    onCloseTaskModal: closeTaskModal,
+    onSubmitTaskModal: (draft: any) => {
+      void submitTaskModal(draft);
     },
     activeUiPromptPanel,
     onUiPromptSubmit: handleUiPromptSubmit,

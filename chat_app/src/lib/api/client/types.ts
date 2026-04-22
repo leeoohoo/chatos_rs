@@ -1127,6 +1127,19 @@ export interface TaskManagerUpdatePayload {
   status?: 'todo' | 'doing' | 'blocked' | 'done';
   tags?: string[];
   due_at?: string | null;
+  outcome_summary?: string;
+  outcome_items?: Array<{
+    kind?: string;
+    text?: string;
+    importance?: 'high' | 'medium' | 'low';
+    refs?: string[];
+  }>;
+  resume_hint?: string;
+  blocker_reason?: string;
+  blocker_needs?: string[];
+  blocker_kind?: string;
+  completed_at?: string | null;
+  last_outcome_at?: string | null;
 }
 
 export interface TaskManagerTaskResponse {
@@ -1137,6 +1150,19 @@ export interface TaskManagerTaskResponse {
   status?: 'todo' | 'doing' | 'blocked' | 'done' | null;
   tags?: string[];
   due_at?: string | null;
+  outcome_summary?: string | null;
+  outcome_items?: Array<{
+    kind?: string;
+    text?: string;
+    importance?: 'high' | 'medium' | 'low';
+    refs?: string[];
+  }>;
+  resume_hint?: string | null;
+  blocker_reason?: string | null;
+  blocker_needs?: string[];
+  blocker_kind?: string | null;
+  completed_at?: string | null;
+  last_outcome_at?: string | null;
   created_at?: string;
   updated_at?: string;
   conversation_turn_id?: string | null;
@@ -1150,6 +1176,17 @@ export interface TaskReviewTaskDraft {
   status?: 'todo' | 'doing' | 'blocked' | 'done';
   tags?: string[];
   due_at?: string | null;
+  outcome_summary?: string;
+  outcome_items?: Array<{
+    kind?: string;
+    text?: string;
+    importance?: 'high' | 'medium' | 'low';
+    refs?: string[];
+  }>;
+  resume_hint?: string;
+  blocker_reason?: string;
+  blocker_needs?: string[];
+  blocker_kind?: string;
   [key: string]: unknown;
 }
 

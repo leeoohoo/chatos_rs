@@ -9,6 +9,54 @@ use crate::services::task_manager::types::TaskRecord;
 
 use super::row::TaskRow;
 
+pub async fn get_task_by_id(
+    conversation_id: &str,
+    task_id: &str,
+) -> Result<TaskRecord, String> {
+    let conversation_id = trimmed_non_empty(conversation_id)
+        .ok_or_else(|| "conversation_id is required".to_string())?
+        .to_string();
+    let task_id = trimmed_non_empty(task_id)
+        .ok_or_else(|| "task_id is required".to_string())?
+        .to_string();
+    let conversation_id_for_mongo = conversation_id.clone();
+    let task_id_for_mongo = task_id.clone();
+    let conversation_id_for_sqlite = conversation_id.clone();
+    let task_id_for_sqlite = task_id.clone();
+
+    with_db(
+        move |db| {
+            let conversation_id = conversation_id_for_mongo.clone();
+            let task_id = task_id_for_mongo.clone();
+            Box::pin(async move {
+                db.collection::<Document>("task_manager_tasks")
+                    .find_one(doc! { "conversation_id": conversation_id, "id": task_id }, None)
+                    .await
+                    .map_err(|err| err.to_string())?
+                    .and_then(|document| task_record_from_doc(&document))
+                    .ok_or_else(|| crate::services::task_manager::TASK_NOT_FOUND_ERR.to_string())
+            })
+        },
+        move |pool| {
+            let conversation_id = conversation_id_for_sqlite.clone();
+            let task_id = task_id_for_sqlite.clone();
+            Box::pin(async move {
+                sqlx::query_as::<_, TaskRow>(
+                    "SELECT id, conversation_id, conversation_turn_id, title, details, priority, status, tags_json, due_at, outcome_summary, outcome_items_json, resume_hint, blocker_reason, blocker_needs_json, blocker_kind, completed_at, last_outcome_at, created_at, updated_at FROM task_manager_tasks WHERE conversation_id = ? AND id = ? LIMIT 1",
+                )
+                .bind(conversation_id)
+                .bind(task_id)
+                .fetch_optional(pool)
+                .await
+                .map_err(|err| err.to_string())?
+                .map(TaskRow::into_record)
+                .ok_or_else(|| crate::services::task_manager::TASK_NOT_FOUND_ERR.to_string())
+            })
+        },
+    )
+    .await
+}
+
 pub async fn list_tasks_for_context(
     conversation_id: &str,
     conversation_turn_id: Option<&str>,
@@ -65,7 +113,7 @@ pub async fn list_tasks_for_context(
             let conversation_turn_id = conversation_turn_id_for_sqlite.clone();
             Box::pin(async move {
                 let mut qb = QueryBuilder::<Sqlite>::new(
-                    "SELECT id, conversation_id, conversation_turn_id, title, details, priority, status, tags_json, due_at, created_at, updated_at FROM task_manager_tasks WHERE conversation_id = ",
+                    "SELECT id, conversation_id, conversation_turn_id, title, details, priority, status, tags_json, due_at, outcome_summary, outcome_items_json, resume_hint, blocker_reason, blocker_needs_json, blocker_kind, completed_at, last_outcome_at, created_at, updated_at FROM task_manager_tasks WHERE conversation_id = ",
                 );
                 qb.push_bind(conversation_id);
                 if let Some(turn_id) = conversation_turn_id {

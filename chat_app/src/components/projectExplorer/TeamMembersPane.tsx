@@ -318,6 +318,12 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
     runtimeGuidanceItems,
     runtimeGuidanceLastAppliedAt,
     runtimeGuidancePendingCount,
+    taskModalError,
+    taskModalMode,
+    taskModalOpen,
+    taskModalTask,
+    closeTaskModal,
+    submitTaskModal,
     workbarActionLoadingTaskId,
     workbarError,
     workbarHistoryError,
@@ -514,11 +520,17 @@ const TeamMembersPane: React.FC<TeamMembersPaneProps> = ({ project, className })
         workbarError={workbarError}
         workbarHistoryError={workbarHistoryError}
         workbarActionLoadingTaskId={workbarActionLoadingTaskId}
+        taskModalOpen={taskModalOpen}
+        taskModalMode={taskModalMode}
+        taskModalTask={taskModalTask}
+        taskModalError={taskModalError}
         onRefreshWorkbarTasks={handleRefreshWorkbar}
         onOpenWorkbarHistory={handleOpenTeamWorkbarHistory}
         onCompleteTask={(task) => { void handleWorkbarCompleteTask(task); }}
         onDeleteTask={(task) => { void handleWorkbarDeleteTask(task); }}
         onEditTask={(task) => { void handleWorkbarEditTask(task); }}
+        onCloseTaskModal={closeTaskModal}
+        onSubmitTaskModal={(draft) => { void submitTaskModal(draft); }}
         activeUiPromptPanel={activeUiPromptPanel}
         onUiPromptSubmit={handleUiPromptSubmit}
         onUiPromptCancel={handleUiPromptCancel}

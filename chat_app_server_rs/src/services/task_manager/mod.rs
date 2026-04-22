@@ -14,7 +14,7 @@ pub use store::{
 };
 #[allow(unused_imports)]
 pub use types::{
-    TaskCreateReviewPayload, TaskDraft, TaskRecord, TaskReviewAction, TaskReviewDecision,
+    TaskCreateReviewPayload, TaskDraft, TaskOutcomeItem, TaskRecord, TaskReviewAction, TaskReviewDecision,
     TaskUpdatePatch, REVIEW_NOT_FOUND_ERR, REVIEW_TIMEOUT_ERR, REVIEW_TIMEOUT_MS_DEFAULT,
     TASK_NOT_FOUND_ERR,
 };
@@ -36,6 +36,12 @@ mod tests {
             status: "invalid".to_string(),
             tags: vec![" ui ".to_string(), "ui".to_string(), "".to_string()],
             due_at: Some("  ".to_string()),
+            outcome_summary: String::new(),
+            outcome_items: Vec::new(),
+            resume_hint: String::new(),
+            blocker_reason: String::new(),
+            blocker_needs: Vec::new(),
+            blocker_kind: String::new(),
         };
 
         let normalized = normalize_task_draft(draft).expect("normalize should succeed");
@@ -76,6 +82,12 @@ mod tests {
             status: "todo".to_string(),
             tags: vec!["one".to_string()],
             due_at: None,
+            outcome_summary: String::new(),
+            outcome_items: Vec::new(),
+            resume_hint: String::new(),
+            blocker_reason: String::new(),
+            blocker_needs: Vec::new(),
+            blocker_kind: String::new(),
         };
 
         let (payload, receiver) =
@@ -90,6 +102,12 @@ mod tests {
             status: "doing".to_string(),
             tags: vec!["backend".to_string()],
             due_at: Some("2026-03-01T10:00:00Z".to_string()),
+            outcome_summary: "found context".to_string(),
+            outcome_items: Vec::new(),
+            resume_hint: String::new(),
+            blocker_reason: String::new(),
+            blocker_needs: Vec::new(),
+            blocker_kind: String::new(),
         }];
 
         submit_task_review_decision(
@@ -121,6 +139,12 @@ mod tests {
             status: "todo".to_string(),
             tags: Vec::new(),
             due_at: None,
+            outcome_summary: String::new(),
+            outcome_items: Vec::new(),
+            resume_hint: String::new(),
+            blocker_reason: String::new(),
+            blocker_needs: Vec::new(),
+            blocker_kind: String::new(),
         };
 
         let (payload, receiver) =

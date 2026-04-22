@@ -11,7 +11,7 @@ use crate::core::auth::AuthUser;
 use crate::core::session_access::{ensure_owned_session, map_session_access_error_with_success};
 use crate::services::task_manager::{
     complete_task_by_id, delete_task_by_id, get_task_review_payload, list_tasks_for_context,
-    submit_task_review_decision, update_task_by_id, TaskDraft, TaskReviewAction, TaskUpdatePatch,
+    submit_task_review_decision, update_task_by_id, TaskDraft, TaskOutcomeItem, TaskReviewAction, TaskUpdatePatch,
     REVIEW_NOT_FOUND_ERR, TASK_NOT_FOUND_ERR,
 };
 
@@ -48,6 +48,31 @@ struct UpdateTaskRequest {
     due_at: Option<Option<String>>,
     #[serde(rename = "dueAt")]
     due_at_legacy: Option<Option<String>>,
+    outcome_summary: Option<String>,
+    outcome_items: Option<Vec<TaskOutcomeItem>>,
+    resume_hint: Option<String>,
+    blocker_reason: Option<String>,
+    blocker_needs: Option<Vec<String>>,
+    blocker_kind: Option<String>,
+    completed_at: Option<Option<String>>,
+    #[serde(rename = "completedAt")]
+    completed_at_legacy: Option<Option<String>>,
+    last_outcome_at: Option<Option<String>>,
+    #[serde(rename = "lastOutcomeAt")]
+    last_outcome_at_legacy: Option<Option<String>>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct CompleteTaskRequest {
+    outcome_summary: Option<String>,
+    outcome_items: Option<Vec<TaskOutcomeItem>>,
+    resume_hint: Option<String>,
+    completed_at: Option<Option<String>>,
+    #[serde(rename = "completedAt")]
+    completed_at_legacy: Option<Option<String>>,
+    last_outcome_at: Option<Option<String>>,
+    #[serde(rename = "lastOutcomeAt")]
+    last_outcome_at_legacy: Option<Option<String>>,
 }
 
 pub fn router() -> Router {
@@ -138,6 +163,14 @@ async fn update_task(
         status: req.status,
         tags: req.tags,
         due_at: req.due_at.or(req.due_at_legacy),
+        outcome_summary: req.outcome_summary,
+        outcome_items: req.outcome_items,
+        resume_hint: req.resume_hint,
+        blocker_reason: req.blocker_reason,
+        blocker_needs: req.blocker_needs,
+        blocker_kind: req.blocker_kind,
+        completed_at: req.completed_at.or(req.completed_at_legacy),
+        last_outcome_at: req.last_outcome_at.or(req.last_outcome_at_legacy),
     };
 
     let empty_patch = patch.title.is_none()
@@ -145,7 +178,15 @@ async fn update_task(
         && patch.priority.is_none()
         && patch.status.is_none()
         && patch.tags.is_none()
-        && patch.due_at.is_none();
+        && patch.due_at.is_none()
+        && patch.outcome_summary.is_none()
+        && patch.outcome_items.is_none()
+        && patch.resume_hint.is_none()
+        && patch.blocker_reason.is_none()
+        && patch.blocker_needs.is_none()
+        && patch.blocker_kind.is_none()
+        && patch.completed_at.is_none()
+        && patch.last_outcome_at.is_none();
     if empty_patch {
         return (
             StatusCode::BAD_REQUEST,
@@ -178,6 +219,7 @@ async fn complete_task(
     auth: AuthUser,
     Path(task_id): Path<String>,
     Query(scope): Query<SessionScopeQuery>,
+    Json(req): Json<CompleteTaskRequest>,
 ) -> (StatusCode, Json<Value>) {
     if scope.conversation_id.trim().is_empty() {
         return (
@@ -195,7 +237,16 @@ async fn complete_task(
         return map_session_access_error_with_success(err);
     }
 
-    match complete_task_by_id(scope.conversation_id.as_str(), task_id.as_str()).await {
+    let patch = TaskUpdatePatch {
+        outcome_summary: req.outcome_summary,
+        outcome_items: req.outcome_items,
+        resume_hint: req.resume_hint,
+        completed_at: req.completed_at.or(req.completed_at_legacy),
+        last_outcome_at: req.last_outcome_at.or(req.last_outcome_at_legacy),
+        ..TaskUpdatePatch::default()
+    };
+
+    match complete_task_by_id(scope.conversation_id.as_str(), task_id.as_str(), Some(patch)).await {
         Ok(task) => {
             let payload = json!({
                 "success": true,

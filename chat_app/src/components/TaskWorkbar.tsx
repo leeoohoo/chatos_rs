@@ -6,6 +6,7 @@ import {
 import RuntimeGuidanceSection from './taskWorkbar/RuntimeGuidanceSection';
 import TaskCard from './taskWorkbar/TaskCard';
 import TaskHistoryDrawer from './taskWorkbar/TaskHistoryDrawer';
+import TaskOutcomeModal, { type TaskOutcomeDraft } from './taskWorkbar/TaskOutcomeModal';
 import type {
   HistoryFilter,
   RuntimeGuidanceWorkbarItem,
@@ -34,6 +35,12 @@ interface TaskWorkbarProps {
   onCompleteTask?: (task: TaskWorkbarItem) => void;
   onDeleteTask?: (task: TaskWorkbarItem) => void;
   onEditTask?: (task: TaskWorkbarItem) => void;
+  taskModalOpen?: boolean;
+  taskModalMode?: 'complete' | 'edit';
+  taskModalTask?: TaskWorkbarItem | null;
+  taskModalError?: string | null;
+  onCloseTaskModal?: () => void;
+  onSubmitTaskModal?: (draft: TaskOutcomeDraft) => void;
   actionLoadingTaskId?: string | null;
   runtimeGuidancePendingCount?: number;
   runtimeGuidanceAppliedCount?: number;
@@ -57,6 +64,12 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
   onCompleteTask,
   onDeleteTask,
   onEditTask,
+  taskModalOpen = false,
+  taskModalMode = 'edit',
+  taskModalTask = null,
+  taskModalError = null,
+  onCloseTaskModal,
+  onSubmitTaskModal,
   actionLoadingTaskId = null,
   runtimeGuidancePendingCount = 0,
   runtimeGuidanceAppliedCount = 0,
@@ -265,6 +278,15 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
         onCompleteTask={onCompleteTask}
         onDeleteTask={onDeleteTask}
         onEditTask={onEditTask}
+      />
+      <TaskOutcomeModal
+        open={taskModalOpen}
+        mode={taskModalMode}
+        task={taskModalTask}
+        error={taskModalError}
+        submitting={taskModalTask ? actionLoadingTaskId === taskModalTask.id : false}
+        onClose={() => onCloseTaskModal?.()}
+        onSubmit={(draft) => onSubmitTaskModal?.(draft)}
       />
     </>
   );

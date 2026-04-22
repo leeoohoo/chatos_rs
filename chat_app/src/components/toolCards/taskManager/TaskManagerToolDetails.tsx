@@ -20,6 +20,12 @@ const TaskListCard: React.FC<{ title: string; items: unknown[] }> = ({ title, it
           const priority = asString(task.priority).trim();
           const status = asString(task.status).trim();
           const dueAt = asString(task.due_at ?? task.dueAt).trim();
+          const outcomeSummary = asString(task.outcome_summary ?? task.outcomeSummary).trim();
+          const resumeHint = asString(task.resume_hint ?? task.resumeHint).trim();
+          const blockerReason = asString(task.blocker_reason ?? task.blockerReason).trim();
+          const blockerNeeds = asArray(task.blocker_needs ?? task.blockerNeeds)
+            .map((item) => asString(item).trim())
+            .filter(Boolean);
           const tags = asArray(task.tags).map((item) => asString(item).trim()).filter(Boolean);
 
           return (
@@ -28,9 +34,16 @@ const TaskListCard: React.FC<{ title: string; items: unknown[] }> = ({ title, it
               <div className="tool-detail-item-meta">
                 {[priority, status, dueAt].filter(Boolean).join(' · ')}
               </div>
-              {(details || tags.length > 0) && (
+              {(details || tags.length > 0 || outcomeSummary || resumeHint || blockerReason || blockerNeeds.length > 0) && (
                 <div className="tool-detail-item-body">
-                  {[details, tags.length > 0 ? `#${tags.join(' #')}` : ''].filter(Boolean).join(' · ')}
+                  {[
+                    details,
+                    outcomeSummary ? `成果: ${outcomeSummary}` : '',
+                    blockerReason ? `阻塞: ${blockerReason}` : '',
+                    blockerNeeds.length > 0 ? `需满足: ${blockerNeeds.join('；')}` : '',
+                    resumeHint ? `提示: ${resumeHint}` : '',
+                    tags.length > 0 ? `#${tags.join(' #')}` : '',
+                  ].filter(Boolean).join(' · ')}
                 </div>
               )}
             </div>
@@ -119,4 +132,3 @@ export const TaskManagerToolDetails: React.FC<TaskManagerToolDetailsProps> = ({
 };
 
 export default TaskManagerToolDetails;
-

@@ -64,7 +64,8 @@ export const updateTaskManagerTask = (
 export const completeTaskManagerTask = (
   request: ApiRequestFn,
   conversationId: string,
-  taskId: string
+  taskId: string,
+  payload?: Partial<TaskManagerUpdatePayload>
 ): Promise<TaskManagerTaskResponse> => {
   if (!conversationId) {
     throw new Error('conversationId is required');
@@ -79,7 +80,7 @@ export const completeTaskManagerTask = (
     '/task-manager/tasks/' + encodeURIComponent(taskId) + '/complete?' + params.toString(),
     {
     method: 'POST',
-    body: JSON.stringify({}),
+    body: JSON.stringify(payload || {}),
     },
   );
 };

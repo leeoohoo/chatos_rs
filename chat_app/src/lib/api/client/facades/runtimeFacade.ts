@@ -56,7 +56,11 @@ export interface RuntimeFacade {
     taskId: string,
     payload: TaskManagerUpdatePayload,
   ): Promise<TaskManagerTaskResponse>;
-  completeTaskManagerTask(conversationId: string, taskId: string): Promise<TaskManagerTaskResponse>;
+  completeTaskManagerTask(
+    conversationId: string,
+    taskId: string,
+    payload?: Partial<TaskManagerUpdatePayload>,
+  ): Promise<TaskManagerTaskResponse>;
   deleteTaskManagerTask(conversationId: string, taskId: string): Promise<{ success?: boolean }>;
   submitTaskReviewDecision(
     reviewId: string,
@@ -122,8 +126,8 @@ export const runtimeFacade: RuntimeFacade & ThisType<ApiClient> = {
   async updateTaskManagerTask(conversationId, taskId, payload) {
     return tasksApi.updateTaskManagerTask(this.getRequestFn(), conversationId, taskId, payload);
   },
-  async completeTaskManagerTask(conversationId, taskId) {
-    return tasksApi.completeTaskManagerTask(this.getRequestFn(), conversationId, taskId);
+  async completeTaskManagerTask(conversationId, taskId, payload) {
+    return tasksApi.completeTaskManagerTask(this.getRequestFn(), conversationId, taskId, payload);
   },
   async deleteTaskManagerTask(conversationId, taskId) {
     return tasksApi.deleteTaskManagerTask(this.getRequestFn(), conversationId, taskId);

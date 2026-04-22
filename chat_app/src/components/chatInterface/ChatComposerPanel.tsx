@@ -3,6 +3,7 @@ import { InputArea } from '../InputArea';
 import TaskDraftPanel from '../TaskDraftPanel';
 import TaskWorkbar, { type RuntimeGuidanceWorkbarItem, type TaskWorkbarItem } from '../TaskWorkbar';
 import UiPromptPanel from '../UiPromptPanel';
+import type { TaskOutcomeDraft } from '../taskWorkbar/TaskOutcomeModal';
 import type { AgentConfig, AiModelConfig, Project, RemoteConnection } from '../../types';
 import type {
   TaskReviewDraft,
@@ -21,6 +22,10 @@ interface ChatComposerPanelProps {
   workbarError: string | null;
   workbarHistoryError: string | null;
   workbarActionLoadingTaskId: string | null;
+  taskModalOpen: boolean;
+  taskModalMode: 'complete' | 'edit';
+  taskModalTask: TaskWorkbarItem | null;
+  taskModalError: string | null;
   onRefreshWorkbarTasks: () => void;
   onOpenHistory: (sessionId: string) => void;
   onOpenUiPromptHistory?: (sessionId: string) => void;
@@ -29,6 +34,8 @@ interface ChatComposerPanelProps {
   onCompleteTask: (task: TaskWorkbarItem) => void;
   onDeleteTask: (task: TaskWorkbarItem) => void;
   onEditTask: (task: TaskWorkbarItem) => void;
+  onCloseTaskModal: () => void;
+  onSubmitTaskModal: (draft: TaskOutcomeDraft) => void;
   activeUiPromptPanel: UiPromptPanelState | null;
   onUiPromptSubmit: (payload: UiPromptResponsePayload) => void;
   onUiPromptCancel: () => void;
@@ -94,6 +101,10 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
   workbarError,
   workbarHistoryError,
   workbarActionLoadingTaskId,
+  taskModalOpen,
+  taskModalMode,
+  taskModalTask,
+  taskModalError,
   onRefreshWorkbarTasks,
   onOpenHistory,
   onOpenUiPromptHistory,
@@ -102,6 +113,8 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
   onCompleteTask,
   onDeleteTask,
   onEditTask,
+  onCloseTaskModal,
+  onSubmitTaskModal,
   activeUiPromptPanel,
   onUiPromptSubmit,
   onUiPromptCancel,
@@ -165,6 +178,12 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
       onCompleteTask={onCompleteTask}
       onDeleteTask={onDeleteTask}
       onEditTask={onEditTask}
+      taskModalOpen={taskModalOpen}
+      taskModalMode={taskModalMode}
+      taskModalTask={taskModalTask}
+      taskModalError={taskModalError}
+      onCloseTaskModal={onCloseTaskModal}
+      onSubmitTaskModal={onSubmitTaskModal}
     />
     {activeUiPromptPanel ? (
       <UiPromptPanel

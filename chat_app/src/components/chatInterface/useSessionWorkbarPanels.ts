@@ -21,7 +21,14 @@ interface SessionWorkbarApiClient {
       limit?: number;
     },
   ) => Promise<unknown[]>;
-  completeTaskManagerTask: (sessionId: string, taskId: string) => Promise<unknown>;
+  completeTaskManagerTask: (
+    sessionId: string,
+    taskId: string,
+    payload?: {
+      outcome_summary?: string;
+      resume_hint?: string;
+    },
+  ) => Promise<unknown>;
   deleteTaskManagerTask: (sessionId: string, taskId: string) => Promise<unknown>;
   updateTaskManagerTask: (
     sessionId: string,
@@ -32,6 +39,11 @@ interface SessionWorkbarApiClient {
       priority?: 'high' | 'medium' | 'low';
       status?: 'todo' | 'doing' | 'blocked' | 'done';
       due_at?: string | null;
+      outcome_summary?: string;
+      resume_hint?: string;
+      blocker_reason?: string;
+      blocker_needs?: string[];
+      blocker_kind?: string;
     },
   ) => Promise<unknown>;
   submitTaskReviewDecision: (
@@ -162,6 +174,12 @@ export const useSessionWorkbarPanels = ({
 
   const {
     workbarActionLoadingTaskId,
+    taskModalError,
+    taskModalMode,
+    taskModalOpen,
+    taskModalTask,
+    closeTaskModal,
+    submitTaskModal,
     handleWorkbarCompleteTask,
     handleWorkbarDeleteTask,
     handleWorkbarEditTask,
@@ -247,6 +265,12 @@ export const useSessionWorkbarPanels = ({
     runtimeGuidanceLastAppliedAt,
     runtimeGuidancePendingCount,
     runtimeGuidanceState,
+    taskModalError,
+    taskModalMode,
+    taskModalOpen,
+    taskModalTask,
+    closeTaskModal,
+    submitTaskModal,
     workbarActionLoadingTaskId,
     workbarError,
     workbarHistoryError,

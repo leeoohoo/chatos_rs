@@ -12,6 +12,8 @@ const STATUS_TODO: &str = "todo";
 const STATUS_DOING: &str = "doing";
 const STATUS_BLOCKED: &str = "blocked";
 const STATUS_DONE: &str = "done";
+const BLOCKED_TASK_LIMIT: usize = 3;
+const COMPLETED_TASK_LIMIT: usize = 5;
 
 pub async fn build_task_board_prompt(
     conversation_id: &str,
@@ -78,12 +80,16 @@ fn format_task_board_prompt(tasks: &[TaskRecord]) -> String {
         "- 如果工作虽然不复杂，但需要读取较多内容、跨文件核对、分阶段推进，也应该先拆成任务再执行。".to_string(),
         "- 执行当前任务时，不要再自己推断下一项主任务是什么，直接以本看板中的“当前执行任务”为准。".to_string(),
         "- 当你完成当前任务后，必须立即更新任务状态；只有状态变更后，系统才会把新的当前任务放进看板。".to_string(),
+        "- 当任务被阻塞时，必须写明已做事项、阻塞原因和继续推进所需条件，避免后续重复排障。".to_string(),
     ];
 
     if tasks.is_empty() {
         lines.push("".to_string());
         lines.push("当前执行任务：".to_string());
         lines.push("- 当前无任务".to_string());
+        lines.push("".to_string());
+        lines.push("当前阻塞任务与阻塞信息：".to_string());
+        lines.push("- 暂无".to_string());
         lines.push("".to_string());
         lines.push("已完成任务历史：".to_string());
         lines.push("- 暂无".to_string());
@@ -97,10 +103,18 @@ fn format_task_board_prompt(tasks: &[TaskRecord]) -> String {
         .iter()
         .filter(|task| active_task_id.as_deref() == Some(task.id.as_str()))
         .collect::<Vec<_>>();
-    let completed_tasks = tasks
+    let mut blocked_tasks = tasks
+        .iter()
+        .filter(|task| normalize_status(task.status.as_str()) == STATUS_BLOCKED)
+        .collect::<Vec<_>>();
+    blocked_tasks.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+    blocked_tasks.truncate(BLOCKED_TASK_LIMIT);
+    let mut completed_tasks = tasks
         .iter()
         .filter(|task| normalize_status(task.status.as_str()) == STATUS_DONE)
         .collect::<Vec<_>>();
+    completed_tasks.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+    completed_tasks.truncate(COMPLETED_TASK_LIMIT);
 
     lines.push("".to_string());
     lines.push("当前执行任务：".to_string());
@@ -113,12 +127,22 @@ fn format_task_board_prompt(tasks: &[TaskRecord]) -> String {
     }
 
     lines.push("".to_string());
+    lines.push("当前阻塞任务与阻塞信息：".to_string());
+    if blocked_tasks.is_empty() {
+        lines.push("- 暂无".to_string());
+    } else {
+        for task in blocked_tasks {
+            append_blocked_task_line(&mut lines, task);
+        }
+    }
+
+    lines.push("".to_string());
     lines.push("已完成任务历史：".to_string());
     if completed_tasks.is_empty() {
         lines.push("- 暂无".to_string());
     } else {
         for task in completed_tasks {
-            append_task_line(&mut lines, task, false);
+            append_completed_task_line(&mut lines, task);
         }
     }
 
@@ -151,8 +175,26 @@ fn append_task_line(lines: &mut Vec<String>, task: &TaskRecord, is_current: bool
     }
 }
 
+fn append_blocked_task_line(lines: &mut Vec<String>, task: &TaskRecord) {
+    append_task_line(lines, task, false);
+    lines.push(format!("  outcome: {}", display_outcome_summary(task)));
+    lines.push(format!("  blocker: {}", display_blocker_reason(task)));
+    lines.push(format!("  needs: {}", display_blocker_needs(task)));
+}
+
+fn append_completed_task_line(lines: &mut Vec<String>, task: &TaskRecord) {
+    append_task_line(lines, task, false);
+    lines.push(format!("  outcome: {}", display_outcome_summary(task)));
+    if !task.resume_hint.trim().is_empty() {
+        lines.push(format!(
+            "  hint: {}",
+            compact_text(task.resume_hint.as_str(), 140)
+        ));
+    }
+}
+
 fn select_active_task_id(tasks: &[TaskRecord]) -> Option<String> {
-    for preferred_status in [STATUS_DOING, STATUS_TODO, STATUS_BLOCKED] {
+    for preferred_status in [STATUS_DOING, STATUS_TODO] {
         if let Some(task) = tasks.iter().find(|task| task.status.trim() == preferred_status) {
             return Some(task.id.clone());
         }
@@ -192,6 +234,32 @@ fn compact_text(input: &str, max_chars: usize) -> String {
     }
     out.push_str("...");
     out
+}
+
+fn display_outcome_summary(task: &TaskRecord) -> String {
+    if !task.outcome_summary.trim().is_empty() {
+        return compact_text(task.outcome_summary.as_str(), 180);
+    }
+    if let Some(item) = task.outcome_items.first() {
+        if !item.text.trim().is_empty() {
+            return compact_text(item.text.as_str(), 180);
+        }
+    }
+    "(未沉淀成果)".to_string()
+}
+
+fn display_blocker_reason(task: &TaskRecord) -> String {
+    if !task.blocker_reason.trim().is_empty() {
+        return compact_text(task.blocker_reason.as_str(), 180);
+    }
+    "(未说明阻塞原因)".to_string()
+}
+
+fn display_blocker_needs(task: &TaskRecord) -> String {
+    if task.blocker_needs.is_empty() {
+        return "(未说明解阻条件)".to_string();
+    }
+    compact_text(task.blocker_needs.join("；").as_str(), 180)
 }
 
 fn build_prefixed_messages(system_prompts: &[Option<&str>]) -> Option<Vec<Value>> {
@@ -375,6 +443,14 @@ mod tests {
             status: status.to_string(),
             tags: Vec::new(),
             due_at: None,
+            outcome_summary: String::new(),
+            outcome_items: Vec::new(),
+            resume_hint: String::new(),
+            blocker_reason: String::new(),
+            blocker_needs: Vec::new(),
+            blocker_kind: String::new(),
+            completed_at: None,
+            last_outcome_at: None,
             created_at: "2026-04-21T00:00:00Z".to_string(),
             updated_at: "2026-04-21T00:00:00Z".to_string(),
         }
@@ -391,6 +467,7 @@ mod tests {
         assert!(prompt.contains("当前任务看板由系统维护"));
         assert!(prompt.contains("`task_manager_complete_task`"));
         assert!(prompt.contains("当前执行任务："));
+        assert!(prompt.contains("当前阻塞任务与阻塞信息："));
         assert!(prompt.contains("已完成任务历史："));
         assert!(prompt.contains("id=task_doing <- 当前优先执行"));
         assert!(prompt.contains("[done] done task"));
@@ -412,6 +489,7 @@ mod tests {
     fn prompts_to_create_tasks_when_board_is_empty() {
         let prompt = format_task_board_prompt(&[]);
         assert!(prompt.contains("当前无任务"));
+        assert!(prompt.contains("当前阻塞任务与阻塞信息："));
         assert!(prompt.contains("已完成任务历史："));
     }
 
@@ -432,6 +510,19 @@ mod tests {
         assert!(!current_section.contains("<- 当前优先执行"));
         assert!(prompt.contains("[done] done task a"));
         assert!(prompt.contains("[done] done task b"));
+    }
+
+    #[test]
+    fn blocked_tasks_show_reason_and_needs() {
+        let mut blocked = build_task("task_blocked", "blocked task", "blocked");
+        blocked.outcome_summary = "checked remote read_file and found missing field".to_string();
+        blocked.blocker_reason = "waiting for protocol decision".to_string();
+        blocked.blocker_needs = vec!["confirm whether total_lines can be added".to_string()];
+
+        let prompt = format_task_board_prompt(&[blocked]);
+        assert!(prompt.contains("当前阻塞任务与阻塞信息："));
+        assert!(prompt.contains("blocker: waiting for protocol decision"));
+        assert!(prompt.contains("needs: confirm whether total_lines can be added"));
     }
 
     #[test]

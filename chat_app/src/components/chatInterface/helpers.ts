@@ -341,6 +341,14 @@ export const normalizeWorkbarTask = (raw: unknown): TaskWorkbarItem => {
   const conversationTurnId = String(record.conversation_turn_id ?? record.conversationTurnId ?? '').trim();
   const createdAt = String(record.created_at ?? record.createdAt ?? '');
   const dueAtRaw = record.due_at ?? record.dueAt;
+  const outcomeItemsCandidate = record.outcome_items ?? record.outcomeItems;
+  const outcomeItemsRaw: unknown[] = Array.isArray(outcomeItemsCandidate)
+    ? outcomeItemsCandidate
+    : [];
+  const blockerNeedsCandidate = record.blocker_needs ?? record.blockerNeeds;
+  const blockerNeedsRaw: unknown[] = Array.isArray(blockerNeedsCandidate)
+    ? blockerNeedsCandidate
+    : [];
 
   return {
     id: String(record.id || '').trim(),
@@ -356,6 +364,34 @@ export const normalizeWorkbarTask = (raw: unknown): TaskWorkbarItem => {
           .map((tag) => String(tag).trim())
           .filter((tag: string) => tag.length > 0)
       : [],
+    outcomeSummary: String(record.outcome_summary ?? record.outcomeSummary ?? ''),
+    outcomeItems: outcomeItemsRaw
+      .map((item: unknown) => asRecord(item))
+      .filter((item): item is Record<string, unknown> => item !== null)
+      .map((item: Record<string, unknown>) => ({
+        kind: String(item.kind || 'finding').trim() || 'finding',
+        text: String(item.text || '').trim(),
+        importance: (() => {
+          const raw = String(item.importance || '').trim().toLowerCase();
+          if (raw === 'high' || raw === 'medium' || raw === 'low') {
+            return raw as 'high' | 'medium' | 'low';
+          }
+          return undefined;
+        })(),
+        refs: Array.isArray(item.refs)
+          ? item.refs.map((ref: unknown) => String(ref).trim()).filter((ref: string) => ref.length > 0)
+          : [],
+      }))
+      .filter((item: { text: string }) => item.text.length > 0),
+    resumeHint: String(record.resume_hint ?? record.resumeHint ?? ''),
+    blockerReason: String(record.blocker_reason ?? record.blockerReason ?? ''),
+    blockerNeeds: blockerNeedsRaw
+          .map((item: unknown) => String(item).trim())
+          .filter((item: string) => item.length > 0)
+      ,
+    blockerKind: String(record.blocker_kind ?? record.blockerKind ?? ''),
+    completedAt: record.completed_at ?? record.completedAt ? String(record.completed_at ?? record.completedAt) : null,
+    lastOutcomeAt: record.last_outcome_at ?? record.lastOutcomeAt ? String(record.last_outcome_at ?? record.lastOutcomeAt) : null,
   };
 };
 

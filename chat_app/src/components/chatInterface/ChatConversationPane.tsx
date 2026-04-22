@@ -45,6 +45,10 @@ interface ChatConversationPaneProps {
   workbarError: string | null;
   workbarHistoryError: string | null;
   workbarActionLoadingTaskId: string | null;
+  taskModalOpen: ChatComposerPanelProps['taskModalOpen'];
+  taskModalMode: ChatComposerPanelProps['taskModalMode'];
+  taskModalTask: ChatComposerPanelProps['taskModalTask'];
+  taskModalError: ChatComposerPanelProps['taskModalError'];
   onRefreshWorkbarTasks: () => void;
   onOpenHistory: (sessionId: string) => void;
   onOpenUiPromptHistory: (sessionId: string) => void;
@@ -53,6 +57,8 @@ interface ChatConversationPaneProps {
   onCompleteTask: ChatComposerPanelProps['onCompleteTask'];
   onDeleteTask: ChatComposerPanelProps['onDeleteTask'];
   onEditTask: ChatComposerPanelProps['onEditTask'];
+  onCloseTaskModal: ChatComposerPanelProps['onCloseTaskModal'];
+  onSubmitTaskModal: ChatComposerPanelProps['onSubmitTaskModal'];
   activeUiPromptPanel: ChatComposerPanelProps['activeUiPromptPanel'];
   onUiPromptSubmit: ChatComposerPanelProps['onUiPromptSubmit'];
   onUiPromptCancel: () => void;
@@ -244,6 +250,10 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
   workbarError,
   workbarHistoryError,
   workbarActionLoadingTaskId,
+  taskModalOpen,
+  taskModalMode,
+  taskModalTask,
+  taskModalError,
   onRefreshWorkbarTasks,
   onOpenHistory,
   onOpenUiPromptHistory,
@@ -252,6 +262,8 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
   onCompleteTask,
   onDeleteTask,
   onEditTask,
+  onCloseTaskModal,
+  onSubmitTaskModal,
   activeUiPromptPanel,
   onUiPromptSubmit,
   onUiPromptCancel,
@@ -328,6 +340,10 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
           workbarError={workbarError}
           workbarHistoryError={workbarHistoryError}
           workbarActionLoadingTaskId={workbarActionLoadingTaskId}
+          taskModalOpen={taskModalOpen}
+          taskModalMode={taskModalMode}
+          taskModalTask={taskModalTask}
+          taskModalError={taskModalError}
           onRefreshWorkbarTasks={onRefreshWorkbarTasks}
           onOpenHistory={onOpenHistory}
           onOpenUiPromptHistory={onOpenUiPromptHistory}
@@ -336,6 +352,8 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
           onCompleteTask={onCompleteTask}
           onDeleteTask={onDeleteTask}
           onEditTask={onEditTask}
+          onCloseTaskModal={onCloseTaskModal}
+          onSubmitTaskModal={onSubmitTaskModal}
           activeUiPromptPanel={activeUiPromptPanel}
           onUiPromptSubmit={onUiPromptSubmit}
           onUiPromptCancel={onUiPromptCancel}

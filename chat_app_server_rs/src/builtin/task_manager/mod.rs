@@ -150,7 +150,29 @@ impl TaskManagerService {
                                 "priority": { "type": "string", "enum": ["high", "medium", "low"] },
                                 "status": { "type": "string", "enum": ["todo", "doing", "blocked", "done"] },
                                 "tags": { "type": "array", "items": { "type": "string" } },
-                                "due_at": { "type": "string" }
+                                "due_at": { "type": "string" },
+                                "outcome_summary": { "type": "string" },
+                                "outcome_items": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "kind": { "type": "string" },
+                                            "text": { "type": "string" },
+                                            "importance": { "type": "string", "enum": ["high", "medium", "low"] },
+                                            "refs": { "type": "array", "items": { "type": "string" } }
+                                        },
+                                        "required": ["text"],
+                                        "additionalProperties": false
+                                    }
+                                },
+                                "resume_hint": { "type": "string" },
+                                "blocker_reason": { "type": "string" },
+                                "blocker_needs": { "type": "array", "items": { "type": "string" } },
+                                "blocker_kind": {
+                                    "type": "string",
+                                    "enum": ["external_dependency", "permission", "missing_information", "design_decision", "environment_failure", "upstream_bug", "unknown"]
+                                }
                             },
                             "required": ["title"],
                             "additionalProperties": false
@@ -161,7 +183,29 @@ impl TaskManagerService {
                     "priority": { "type": "string", "enum": ["high", "medium", "low"] },
                     "status": { "type": "string", "enum": ["todo", "doing", "blocked", "done"] },
                     "tags": { "type": "array", "items": { "type": "string" } },
-                    "due_at": { "type": "string" }
+                    "due_at": { "type": "string" },
+                    "outcome_summary": { "type": "string" },
+                    "outcome_items": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "kind": { "type": "string" },
+                                "text": { "type": "string" },
+                                "importance": { "type": "string", "enum": ["high", "medium", "low"] },
+                                "refs": { "type": "array", "items": { "type": "string" } }
+                            },
+                            "required": ["text"],
+                            "additionalProperties": false
+                        }
+                    },
+                    "resume_hint": { "type": "string" },
+                    "blocker_reason": { "type": "string" },
+                    "blocker_needs": { "type": "array", "items": { "type": "string" } },
+                    "blocker_kind": {
+                        "type": "string",
+                        "enum": ["external_dependency", "permission", "missing_information", "design_decision", "environment_failure", "upstream_bug", "unknown"]
+                    }
                 },
                 "additionalProperties": false
             }),
@@ -227,14 +271,14 @@ impl TaskManagerService {
     fn register_update_task(&mut self) {
         self.register_tool(
             "update_task",
-            "Update a task in current conversation by task_id. Provide changes as a JSON string (example: {\"status\":\"doing\"}).",
+            "Update a task in current conversation by task_id. Provide changes as a JSON string (example: {\"status\":\"doing\"}). When setting status=blocked, include outcome_summary and blocker_reason whenever possible.",
             json!({
                 "type": "object",
                 "properties": {
                     "task_id": { "type": "string" },
                     "changes": {
                         "type": "string",
-                        "description": "JSON object string. Allowed keys: title, details (or description), priority, status, tags, due_at (or dueAt)."
+                        "description": "JSON object string. Allowed keys: title, details (or description), priority, status, tags, due_at (or dueAt), outcome_summary, outcome_items, resume_hint, blocker_reason, blocker_needs, blocker_kind, completed_at, last_outcome_at."
                     }
                 },
                 "required": ["task_id", "changes"],
@@ -261,19 +305,45 @@ impl TaskManagerService {
     fn register_complete_task(&mut self) {
         self.register_tool(
             "complete_task",
-            "Mark a task as done in current conversation by task_id.",
+            "Mark a task as done in current conversation by task_id. Prefer providing outcome_summary and key findings so later tasks can reuse them.",
             json!({
                 "type": "object",
                 "properties": {
-                    "task_id": { "type": "string" }
+                    "task_id": { "type": "string" },
+                    "outcome_summary": { "type": "string" },
+                    "outcome_items": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "kind": { "type": "string" },
+                                "text": { "type": "string" },
+                                "importance": { "type": "string", "enum": ["high", "medium", "low"] },
+                                "refs": { "type": "array", "items": { "type": "string" } }
+                            },
+                            "required": ["text"],
+                            "additionalProperties": false
+                        }
+                    },
+                    "resume_hint": { "type": "string" }
                 },
                 "required": ["task_id"],
                 "additionalProperties": false
             }),
             Arc::new(move |args, ctx| {
                 let task_id = required_string_arg(&args, "task_id")?;
+                let mut patch_args = args
+                    .as_object()
+                    .cloned()
+                    .ok_or_else(|| "complete_task payload must be an object".to_string())?;
+                patch_args.remove("task_id");
+                let patch = if patch_args.is_empty() {
+                    None
+                } else {
+                    Some(parse_update_patch(&Value::Object(patch_args))?)
+                };
                 let task =
-                    block_on_result(complete_task_by_id(ctx.conversation_id, task_id.as_str()))?;
+                    block_on_result(complete_task_by_id(ctx.conversation_id, task_id.as_str(), patch))?;
                 emit_task_board_refresh(ctx);
                 Ok(text_result(json!({
                     "completed": true,
