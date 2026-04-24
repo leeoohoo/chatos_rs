@@ -1,4 +1,4 @@
-﻿[package]
+[package]
 name = "chat_app_server_rs"
 version = "0.1.0"
 edition = "2021"
@@ -31,7 +31,7 @@ url = "2"
 urlencoding = "2"
 zip = "0.6"
 quick-xml = "0.31"
-lopdf = "0.32"
+lopdf = "0.40"
 sha2 = "0.10"
 hex = "0.4"
 walkdir = "2.4"
