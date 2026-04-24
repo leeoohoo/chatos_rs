@@ -18,7 +18,7 @@ mongodb = "3"
 futures-util = "0.3"
 rusqlite = { version = "0.32", features = ["bundled"] }
 dotenvy = "0.15"
-tower-http = { version = "0.5", features = ["cors", "trace"] }
+tower-http = { version = "0.6", features = ["cors", "trace"] }
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 url = "2"
 parking_lot = "0.12"
