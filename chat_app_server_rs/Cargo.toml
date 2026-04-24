@@ -1,4 +1,4 @@
-﻿[package]
+[package]
 name = "chat_app_server_rs"
 version = "0.1.0"
 edition = "2021"
@@ -38,7 +38,7 @@ walkdir = "2.4"
 dirs = "5.0"
 pathdiff = "0.2"
 portable-pty = "0.8"
-dashmap = "5.5"
+dashmap = "6.1"
 regex = "1"
 async-recursion = "1"
 argon2 = "0.5"
