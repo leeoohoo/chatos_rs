@@ -3,7 +3,7 @@
 #   python -m pip install -r openai-codex-gateway/requirements.txt
 
 # Required by vendor/codex_app_server models and client
-pydantic>=2.7,<3
+pydantic>=2.13.3,<3
 
 # Required by test scripts under openai-codex-gateway/tests
 openai>=1.40,<2
