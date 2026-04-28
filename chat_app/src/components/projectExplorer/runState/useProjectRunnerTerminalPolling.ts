@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import type ApiClient from '../../../lib/api/client';
 import { ApiRequestError } from '../../../lib/api/client/shared';
@@ -24,10 +24,10 @@ export const useProjectRunnerTerminalPolling = ({
   const [activeRun, setActiveRun] = useState<ProjectRunnerActiveTerminal | null>(null);
   const [activeTerminalBusy, setActiveTerminalBusy] = useState(false);
 
-  const resetActiveRunState = () => {
+  const resetActiveRunState = useCallback(() => {
     setActiveRun(null);
     setActiveTerminalBusy(false);
-  };
+  }, []);
 
   useEffect(() => {
     if (!project?.id) {

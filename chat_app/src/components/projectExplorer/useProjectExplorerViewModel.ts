@@ -35,11 +35,11 @@ export const useProjectExplorerViewModel = ({
 
   const resolveParentPath = useCallback(
     (path: string | null | undefined) => pathHelpers.getParentPath(path || '') || '',
-    [pathHelpers],
+    [pathHelpers.getParentPath],
   );
   const resolveNormalizedPath = useCallback(
     (path: string | null | undefined) => pathHelpers.normalizePath(path || ''),
-    [pathHelpers],
+    [pathHelpers.normalizePath],
   );
 
   const dataLoading = useProjectExplorerDataLoading({

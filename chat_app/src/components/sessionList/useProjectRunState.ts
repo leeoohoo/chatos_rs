@@ -9,6 +9,7 @@ import {
   buildProjectRunnerTarget,
   hasProjectRunnerScript,
   isProjectRunnerPathMissingError,
+  loadProjectRunnerContactRows,
   normalizeProjectRunnerRootPath,
   readProjectRunnerErrorMessage,
   resolveProjectRuntimeTerminal,
@@ -79,7 +80,7 @@ const resolveProjectRunState = async (
 ): Promise<ProjectRunViewState> => {
   try {
     const [members, scriptExists] = await Promise.all([
-      apiClient.listProjectContacts(project.id, { limit: 500, offset: 0 }),
+      loadProjectRunnerContactRows(apiClient, project.id),
       hasProjectRunnerScript(apiClient, project.rootPath),
     ]);
     const memberCount = Array.isArray(members) ? members.length : 0;

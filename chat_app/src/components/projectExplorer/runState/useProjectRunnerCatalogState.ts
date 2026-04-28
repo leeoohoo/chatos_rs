@@ -6,7 +6,7 @@ import {
   buildProjectRunnerTarget,
   hasProjectRunnerScript,
   isProjectRunnerPathMissingError,
-  normalizeProjectRunnerMembers,
+  loadProjectRunnerMembers,
   readProjectRunnerErrorMessage,
   RUNNER_SCRIPT_REL_PATH,
 } from '../../../lib/domain/projectRunner';
@@ -41,8 +41,7 @@ export const useProjectRunnerCatalogState = ({
     setProjectMembersLoading(true);
     setProjectMembersError(null);
     try {
-      const rows = await client.listProjectContacts(project.id, { limit: 500, offset: 0 });
-      setProjectMembers(normalizeProjectRunnerMembers(rows));
+      setProjectMembers(await loadProjectRunnerMembers(client, project.id));
     } catch (error) {
       setProjectMembers([]);
       setProjectMembersError(error instanceof Error ? error.message : '加载项目成员失败');

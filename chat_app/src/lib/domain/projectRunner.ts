@@ -44,9 +44,51 @@ type RunnerFilesystemClient = {
   listFsEntries: (path?: string) => Promise<{ entries?: unknown[] } | null | undefined>;
 };
 
+type RunnerProjectContactsClient = {
+  listProjectContacts: (
+    projectId: string,
+    paging?: { limit?: number; offset?: number },
+  ) => Promise<ProjectContactLinkResponse[]>;
+};
+
 const readTrimmedString = (value: unknown): string => (
   typeof value === 'string' ? value.trim() : ''
 );
+
+const projectRunnerContactRowsInflight = new WeakMap<object, Map<string, Promise<ProjectContactLinkResponse[]>>>();
+const projectRunnerScriptInflight = new WeakMap<object, Map<string, Promise<boolean>>>();
+
+const withClientInflight = <Result,>(
+  store: WeakMap<object, Map<string, Promise<Result>>>,
+  client: object,
+  key: string,
+  load: () => Promise<Result>,
+): Promise<Result> => {
+  let scoped = store.get(client);
+  if (!scoped) {
+    scoped = new Map<string, Promise<Result>>();
+    store.set(client, scoped);
+  }
+
+  const existing = scoped.get(key);
+  if (existing) {
+    return existing;
+  }
+
+  const task = load().finally(() => {
+    const current = store.get(client);
+    if (!current) {
+      return;
+    }
+    current.delete(key);
+    if (current.size === 0) {
+      store.delete(client);
+    }
+  });
+
+  scoped.set(key, task);
+  return task;
+};
 
 export const normalizeProjectRunnerRootPath = (value: string): string => (
   value.trim().replace(/[\\/]+$/, '')
@@ -91,6 +133,28 @@ export const normalizeProjectRunnerMembers = (
   return Array.from(deduped.values());
 };
 
+export const loadProjectRunnerMembers = async (
+  client: RunnerProjectContactsClient,
+  projectId: string,
+): Promise<ProjectRunnerMember[]> => {
+  const rows = await loadProjectRunnerContactRows(client, projectId);
+  return normalizeProjectRunnerMembers(rows);
+};
+
+export const loadProjectRunnerContactRows = async (
+  client: RunnerProjectContactsClient,
+  projectId: string,
+): Promise<ProjectContactLinkResponse[]> => {
+  const normalizedProjectId = readTrimmedString(projectId);
+  if (!normalizedProjectId) {
+    return [];
+  }
+
+  return withClientInflight(projectRunnerContactRowsInflight, client, normalizedProjectId, async () => (
+    client.listProjectContacts(normalizedProjectId, { limit: 500, offset: 0 })
+  ));
+};
+
 export const hasProjectRunnerScript = async (
   client: RunnerFilesystemClient,
   rootPath: string,
@@ -100,24 +164,26 @@ export const hasProjectRunnerScript = async (
     return false;
   }
 
-  const rootList = await client.listFsEntries(safeRoot);
-  const rootEntries = Array.isArray(rootList?.entries)
-    ? rootList.entries.map((entry) => normalizeFsEntry(entry))
-    : [];
-  const runnerDirEntry = rootEntries.find((entry) => entry.isDir && entry.name === RUNNER_SCRIPT_DIR) || null;
-  if (!runnerDirEntry?.path) {
-    return false;
-  }
-
-  try {
-    const runnerList = await client.listFsEntries(runnerDirEntry.path);
-    const runnerEntries = Array.isArray(runnerList?.entries)
-      ? runnerList.entries.map((entry) => normalizeFsEntry(entry))
+  return withClientInflight(projectRunnerScriptInflight, client, safeRoot, async () => {
+    const rootList = await client.listFsEntries(safeRoot);
+    const rootEntries = Array.isArray(rootList?.entries)
+      ? rootList.entries.map((entry) => normalizeFsEntry(entry))
       : [];
-    return runnerEntries.some((entry) => !entry.isDir && entry.name === RUNNER_SCRIPT_FILE);
-  } catch {
-    return false;
-  }
+    const runnerDirEntry = rootEntries.find((entry) => entry.isDir && entry.name === RUNNER_SCRIPT_DIR) || null;
+    if (!runnerDirEntry?.path) {
+      return false;
+    }
+
+    try {
+      const runnerList = await client.listFsEntries(runnerDirEntry.path);
+      const runnerEntries = Array.isArray(runnerList?.entries)
+        ? runnerList.entries.map((entry) => normalizeFsEntry(entry))
+        : [];
+      return runnerEntries.some((entry) => !entry.isDir && entry.name === RUNNER_SCRIPT_FILE);
+    } catch {
+      return false;
+    }
+  });
 };
 
 export const resolveProjectRuntimeTerminal = (

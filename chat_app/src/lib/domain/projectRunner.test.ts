@@ -7,6 +7,8 @@ import {
   buildProjectRunnerGenerationPrompt,
   buildProjectRunnerTarget,
   hasProjectRunnerScript,
+  loadProjectRunnerContactRows,
+  loadProjectRunnerMembers,
   normalizeProjectRunnerMembers,
   normalizeProjectRunnerRootPath,
   readProjectRunnerDispatchTarget,
@@ -74,6 +76,87 @@ describe('domain/projectRunner', () => {
     await expect(hasProjectRunnerScript({ listFsEntries }, '/workspace/')).resolves.toBe(true);
     expect(listFsEntries).toHaveBeenNthCalledWith(1, '/workspace');
     expect(listFsEntries).toHaveBeenNthCalledWith(2, '/workspace/.chatos');
+  });
+
+  it('dedupes concurrent project runner script checks per client and root path', async () => {
+    let resolveBlocker!: () => void;
+    const blocker = new Promise<void>((resolve) => {
+      resolveBlocker = resolve;
+    });
+    const listFsEntries = vi.fn(async (path?: string) => {
+      if (path === '/workspace') {
+        await blocker;
+        return {
+          entries: [
+            { name: '.chatos', path: '/workspace/.chatos', is_dir: true },
+          ],
+        };
+      }
+      if (path === '/workspace/.chatos') {
+        return {
+          entries: [
+            { name: 'project_runner.sh', path: '/workspace/.chatos/project_runner.sh', is_dir: false },
+          ],
+        };
+      }
+      return { entries: [] };
+    });
+
+    const client = { listFsEntries };
+    const pendingA = hasProjectRunnerScript(client, '/workspace/');
+    const pendingB = hasProjectRunnerScript(client, '/workspace/');
+    resolveBlocker();
+
+    await expect(Promise.all([pendingA, pendingB])).resolves.toEqual([true, true]);
+    expect(listFsEntries).toHaveBeenCalledTimes(2);
+  });
+
+  it('dedupes concurrent project runner member loads per client and project', async () => {
+    let resolveBlocker!: () => void;
+    const blocker = new Promise<void>((resolve) => {
+      resolveBlocker = resolve;
+    });
+    const listProjectContacts = vi.fn(async () => {
+      await blocker;
+      return [
+        {
+          contact_id: 'contact_1',
+          agent_id: 'agent_1',
+          agent_name_snapshot: 'Agent One',
+        },
+      ];
+    });
+
+    const client = { listProjectContacts };
+    const rowsA = loadProjectRunnerContactRows(client, 'project_1');
+    const rowsB = loadProjectRunnerContactRows(client, 'project_1');
+    const membersA = loadProjectRunnerMembers(client, 'project_1');
+    resolveBlocker();
+
+    await expect(Promise.all([rowsA, rowsB])).resolves.toEqual([
+      [
+        {
+          contact_id: 'contact_1',
+          agent_id: 'agent_1',
+          agent_name_snapshot: 'Agent One',
+        },
+      ],
+      [
+        {
+          contact_id: 'contact_1',
+          agent_id: 'agent_1',
+          agent_name_snapshot: 'Agent One',
+        },
+      ],
+    ]);
+    await expect(membersA).resolves.toEqual([
+      {
+        contactId: 'contact_1',
+        agentId: 'agent_1',
+        name: 'Agent One',
+      },
+    ]);
+    expect(listProjectContacts).toHaveBeenCalledTimes(1);
   });
 
   it('prefers busy runtime terminals and keeps the latest active fallback', () => {

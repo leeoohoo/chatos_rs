@@ -7,6 +7,7 @@ import {
   normalizeProjectContactLinks,
   normalizeProjectMemberContacts,
 } from '../../../lib/domain/projectMembers';
+import { loadProjectRunnerContactRows } from '../../../lib/domain/projectRunner';
 import { useDialogService } from '../../ui/DialogProvider';
 import type { ContactItem, ProjectContactLink } from './types';
 
@@ -107,7 +108,7 @@ export const useProjectMembersManager = ({
       setProjectMembersLoading(true);
       setProjectMembersError(null);
       try {
-        const rows = await apiClient.listProjectContacts(projectId, { limit: 500, offset: 0 });
+        const rows = await loadProjectRunnerContactRows(apiClient, projectId);
         if (cancelled) {
           return;
         }
