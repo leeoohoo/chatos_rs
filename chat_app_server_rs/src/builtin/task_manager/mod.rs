@@ -4,7 +4,6 @@ mod review_flow;
 #[cfg(test)]
 mod tests;
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use serde_json::{json, Value};
@@ -13,6 +12,7 @@ use uuid::Uuid;
 use crate::core::async_bridge::{block_on_option, block_on_result};
 use crate::core::mcp_tools::ToolStreamChunkCallback;
 use crate::core::tool_io::text_result;
+use crate::core::tool_registry::ToolRegistry;
 use crate::services::task_board_prompt::{
     build_task_board_updated_event_payload, enqueue_task_board_refresh,
 };
@@ -31,17 +31,9 @@ pub struct TaskManagerOptions {
 
 #[derive(Clone)]
 pub struct TaskManagerService {
-    tools: HashMap<String, Tool>,
+    registry: ToolRegistry<ToolHandler>,
     default_conversation_id: String,
     default_turn_id: String,
-}
-
-#[derive(Clone)]
-struct Tool {
-    name: String,
-    description: String,
-    input_schema: Value,
-    handler: ToolHandler,
 }
 
 type ToolHandler = Arc<dyn Fn(Value, &ToolContext) -> Result<Value, String> + Send + Sync>;
@@ -55,7 +47,7 @@ pub(super) struct ToolContext<'a> {
 impl TaskManagerService {
     pub fn new(opts: TaskManagerOptions) -> Result<Self, String> {
         let mut service = Self {
-            tools: HashMap::new(),
+            registry: ToolRegistry::new(),
             default_conversation_id: format!("conversation_{}", Uuid::new_v4().simple()),
             default_turn_id: format!("turn_{}", Uuid::new_v4().simple()),
         };
@@ -73,16 +65,7 @@ impl TaskManagerService {
     }
 
     pub fn list_tools(&self) -> Vec<Value> {
-        self.tools
-            .values()
-            .map(|tool| {
-                json!({
-                    "name": tool.name,
-                    "description": tool.description,
-                    "inputSchema": tool.input_schema
-                })
-            })
-            .collect()
+        self.registry.list_tools()
     }
 
     pub fn call_tool(
@@ -94,7 +77,7 @@ impl TaskManagerService {
         on_stream_chunk: Option<ToolStreamChunkCallback>,
     ) -> Result<Value, String> {
         let tool = self
-            .tools
+            .registry
             .get(name)
             .ok_or_else(|| format!("Tool not found: {name}"))?;
 
@@ -120,15 +103,8 @@ impl TaskManagerService {
         input_schema: Value,
         handler: ToolHandler,
     ) {
-        self.tools.insert(
-            name.to_string(),
-            Tool {
-                name: name.to_string(),
-                description: description.to_string(),
-                input_schema,
-                handler,
-            },
-        );
+        self.registry
+            .register_tool(name, description, input_schema, handler);
     }
 
     fn register_add_task(&mut self, add_timeout: u64, server_name: &str) {
@@ -389,8 +365,7 @@ fn emit_task_board_refresh(ctx: &ToolContext<'_>) {
     let Some(task_board_prompt) = block_on_option(enqueue_task_board_refresh(
         ctx.conversation_id,
         ctx.conversation_turn_id,
-    ))
-    else {
+    )) else {
         return;
     };
 

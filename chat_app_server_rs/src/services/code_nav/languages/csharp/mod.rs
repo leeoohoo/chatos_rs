@@ -9,6 +9,7 @@ use crate::services::code_nav::languages::basic::{
     strip_c_style_comments, strip_leading_attributes, BasicFileAnalysis, BasicLanguageSpec,
     BasicSymbol,
 };
+use crate::services::code_nav::languages::regex_utils::compile_static_regex;
 use crate::services::code_nav::types::{
     DocumentSymbolsRequest, DocumentSymbolsResponse, NavCapabilities, NavLocation,
     NavPositionRequest, ProjectContext,
@@ -38,10 +39,9 @@ const CSHARP_PROJECT_FILES: &[&str] = &[
 const CSHARP_PROJECT_EXTENSIONS: &[&str] = &["csproj", "sln"];
 
 static TYPE_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(
+    compile_static_regex(
         r"^\s*(?:(?:public|private|protected|internal|static|abstract|sealed|partial|readonly|unsafe|new)\s+)*(class|interface|struct|enum|record(?:\s+(?:class|struct))?)\s+([A-Za-z_][A-Za-z0-9_]*)\b",
     )
-    .unwrap()
 });
 
 const SPEC: BasicLanguageSpec = BasicLanguageSpec {

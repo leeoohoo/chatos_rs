@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 
-import { useConfirmDialog } from '../../hooks/useConfirmDialog';
 import { apiClient as globalApiClient } from '../../lib/api/client';
 import {
   useChatApiClientFromContext,
   useOptionalChatStoreContext,
 } from '../../lib/store/ChatStoreContext';
 import { useChatStore } from '../../lib/store';
+import { useDialogService } from '../ui/DialogProvider';
 import {
   useContactSessionCreator,
 } from './useContactSessionCreator';
@@ -96,6 +96,7 @@ export const useSessionListController = ({
 
   const apiClientFromContext = useChatApiClientFromContext();
   const apiClient = apiClientFromContext || globalApiClient;
+  const { confirm, alert } = useDialogService();
 
   const remoteForm = useRemoteConnectionForm({
     apiClient,
@@ -120,8 +121,6 @@ export const useSessionListController = ({
     onRemoteJumpCertificatePathChange: remoteForm.setRemoteJumpCertificatePath,
   });
 
-  const { dialogState, showConfirmDialog, handleConfirm, handleCancel } = useConfirmDialog();
-
   const existingContactAgentIds = useMemo(
     () => (contacts || []).map((item: ContactItem) => item.agentId),
     [contacts],
@@ -138,11 +137,11 @@ export const useSessionListController = ({
   });
 
   const contactSessionCreator = useContactSessionCreator({
-    agents: agents as any[],
+    agents,
     currentSessionId: currentSession?.id || null,
     loadContacts: loadContactsAction,
     createContact: createContactAction,
-    ensureSessionForContact: contactSessionState.ensureSessionForContact as any,
+    ensureSessionForContact: contactSessionState.ensureSessionForContact,
     updateSession,
     selectSession,
   });
@@ -156,7 +155,7 @@ export const useSessionListController = ({
     currentTerminal,
     remoteConnections,
     currentRemoteConnection,
-    ensureSessionForContact: contactSessionState.ensureSessionForContact as any,
+    ensureSessionForContact: contactSessionState.ensureSessionForContact,
     selectSession,
     setActivePanel,
     onOpenSessionSummary,
@@ -204,7 +203,8 @@ export const useSessionListController = ({
     deleteContactAction,
     loadContactsAction,
     clearCachedSessionIdsForContact: contactSessionState.clearCachedSessionIdsForContact,
-    showConfirmDialog,
+    confirmDialog: confirm,
+    alertDialog: alert,
   });
 
   useSessionListBootstrap({
@@ -246,10 +246,7 @@ export const useSessionListController = ({
     currentRemoteConnection,
     currentTerminal,
     deleteActions,
-    dialogState,
     existingContactAgentIds,
-    handleCancel,
-    handleConfirm,
     inlineActionMenus,
     isRefreshing,
     isRefreshingRemote,

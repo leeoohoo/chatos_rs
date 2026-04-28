@@ -1,0 +1,151 @@
+import {
+  useCallback,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type KeyboardEvent,
+} from 'react';
+
+import type { InputAreaProps, Project } from '../../types';
+
+interface UseInputAreaMessageDraftOptions {
+  attachments: File[];
+  clearAttachments: () => void;
+  currentRemoteConnectionId: string | null;
+  disabled: boolean;
+  effectiveAllowAttachments: boolean;
+  isGuidingMode: boolean;
+  maxLength: number;
+  mcpEnabled: boolean;
+  normalizedWorkspaceRoot: string | null;
+  onGuide?: InputAreaProps['onGuide'];
+  onSend: InputAreaProps['onSend'];
+  requireModelSelection: () => boolean;
+  sanitizedEnabledMcpIds: string[];
+  selectedRuntimeProject: Project | null;
+  selectedSkillIds: string[];
+  skillsEnabled: boolean;
+}
+
+export const useInputAreaMessageDraft = ({
+  attachments,
+  clearAttachments,
+  currentRemoteConnectionId,
+  disabled,
+  effectiveAllowAttachments,
+  isGuidingMode,
+  maxLength,
+  mcpEnabled,
+  normalizedWorkspaceRoot,
+  onGuide,
+  onSend,
+  requireModelSelection,
+  sanitizedEnabledMcpIds,
+  selectedRuntimeProject,
+  selectedSkillIds,
+  skillsEnabled,
+}: UseInputAreaMessageDraftOptions) => {
+  const [message, setMessage] = useState('');
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const adjustTextareaHeight = useCallback(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) {
+      return;
+    }
+
+    textarea.style.height = 'auto';
+    const scrollHeight = textarea.scrollHeight;
+    textarea.style.height = `${Math.min(scrollHeight, 200)}px`;
+  }, []);
+
+  const resetComposer = useCallback(() => {
+    setMessage('');
+    clearAttachments();
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+    }
+  }, [clearAttachments]);
+
+  const handleInputChange = useCallback((event: ChangeEvent<HTMLTextAreaElement>) => {
+    const value = event.target.value;
+    if (value.length <= maxLength) {
+      setMessage(value);
+      adjustTextareaHeight();
+    }
+  }, [adjustTextareaHeight, maxLength]);
+
+  const handleSend = useCallback(() => {
+    const trimmedMessage = message.trim();
+    if (!trimmedMessage && (!effectiveAllowAttachments || attachments.length === 0)) {
+      return;
+    }
+    if (disabled) {
+      return;
+    }
+
+    if (isGuidingMode) {
+      if (!trimmedMessage) {
+        return;
+      }
+      onGuide?.(trimmedMessage);
+      resetComposer();
+      return;
+    }
+
+    if (requireModelSelection()) {
+      return;
+    }
+
+    const runtimeProjectId = selectedRuntimeProject?.id?.trim() || '0';
+    const runtimeProjectRoot = runtimeProjectId === '0'
+      ? null
+      : (selectedRuntimeProject?.rootPath || null);
+    const runtimeWorkspaceRoot = normalizedWorkspaceRoot || null;
+
+    onSend(trimmedMessage, attachments, {
+      mcpEnabled,
+      enabledMcpIds: sanitizedEnabledMcpIds,
+      remoteConnectionId: currentRemoteConnectionId,
+      projectId: runtimeProjectId,
+      projectRoot: runtimeProjectRoot,
+      workspaceRoot: runtimeWorkspaceRoot,
+      skillsEnabled,
+      selectedSkillIds: skillsEnabled ? selectedSkillIds : [],
+    });
+    resetComposer();
+  }, [
+    attachments,
+    currentRemoteConnectionId,
+    disabled,
+    effectiveAllowAttachments,
+    isGuidingMode,
+    mcpEnabled,
+    message,
+    normalizedWorkspaceRoot,
+    onGuide,
+    onSend,
+    requireModelSelection,
+    resetComposer,
+    sanitizedEnabledMcpIds,
+    selectedRuntimeProject,
+    selectedSkillIds,
+    skillsEnabled,
+  ]);
+
+  const handleKeyDown = useCallback((event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      handleSend();
+    }
+  }, [handleSend]);
+
+  return {
+    message,
+    textareaRef,
+    handleInputChange,
+    handleKeyDown,
+    handleSend,
+    canSend: Boolean(message.trim() || (!isGuidingMode && attachments.length > 0)),
+  };
+};

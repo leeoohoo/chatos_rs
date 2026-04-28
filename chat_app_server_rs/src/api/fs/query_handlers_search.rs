@@ -1,0 +1,234 @@
+use std::fs;
+
+use crate::core::auth::AuthUser;
+use axum::{extract::Query, Json};
+use axum::http::StatusCode;
+use serde_json::{json, Value};
+
+use super::super::contracts::{FsContentSearchQuery, FsSearchQuery};
+use super::super::helpers::format_system_time;
+use super::super::policy::FsPathPolicy;
+use super::super::search::{is_search_match, normalize_search_keyword};
+use super::policy_error_tuple;
+use crate::services::workspace_search::{
+    search_text as search_workspace_text, TextSearchRequest, DEFAULT_MAX_FILE_BYTES,
+    DEFAULT_MAX_VISITS,
+};
+
+const DEFAULT_SEARCH_LIMIT: usize = 200;
+const MAX_SEARCH_LIMIT: usize = 500;
+const MAX_SEARCH_VISITS: usize = 20_000;
+
+pub(in super::super) async fn search_entries(
+    auth: AuthUser,
+    Query(query): Query<FsSearchQuery>,
+) -> (StatusCode, Json<Value>) {
+    let policy = match FsPathPolicy::for_user(&auth).await {
+        Ok(value) => value,
+        Err(err) => return policy_error_tuple(err),
+    };
+    let raw_path = query
+        .path
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let Some(raw_path) = raw_path else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "搜索路径不能为空" })),
+        );
+    };
+
+    let raw_keyword = query
+        .q
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let Some(raw_keyword) = raw_keyword else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "搜索关键字不能为空" })),
+        );
+    };
+
+    let path = match policy.authorize_existing_dir(raw_path.as_str(), "路径不存在", "路径不是目录")
+    {
+        Ok(value) => value,
+        Err(err) => return policy_error_tuple(err),
+    };
+
+    let limit = query
+        .limit
+        .unwrap_or(DEFAULT_SEARCH_LIMIT)
+        .clamp(1, MAX_SEARCH_LIMIT);
+    let keyword = normalize_search_keyword(&raw_keyword);
+
+    let mut stack = vec![path.path.clone()];
+    let mut entries: Vec<Value> = Vec::new();
+    let mut visited_dirs = 0usize;
+    let mut truncated = false;
+
+    while let Some(dir_path) = stack.pop() {
+        if visited_dirs >= MAX_SEARCH_VISITS {
+            truncated = true;
+            break;
+        }
+        visited_dirs += 1;
+
+        let iter = match fs::read_dir(&dir_path) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        for entry in iter {
+            if entries.len() >= limit {
+                truncated = true;
+                break;
+            }
+
+            let entry = match entry {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let file_type = match entry.file_type() {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
+            let meta = match entry.metadata() {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+
+            let full_path = entry.path();
+            if file_type.is_symlink() {
+                continue;
+            }
+            if meta.is_dir() {
+                stack.push(full_path);
+                continue;
+            }
+
+            let name = entry.file_name().to_string_lossy().to_string();
+            let relative_path = full_path
+                .strip_prefix(&path.path)
+                .ok()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|| full_path.to_string_lossy().to_string());
+
+            if !is_search_match(&name, &relative_path, &keyword) {
+                continue;
+            }
+
+            let modified_at = meta.modified().ok().and_then(format_system_time);
+            entries.push(json!({
+                "name": name,
+                "path": full_path.to_string_lossy(),
+                "relative_path": relative_path,
+                "is_dir": false,
+                "size": Some(meta.len()),
+                "modified_at": modified_at
+            }));
+        }
+
+        if truncated {
+            break;
+        }
+    }
+
+    entries.sort_by(|a, b| {
+        let ap = a
+            .get("relative_path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_lowercase();
+        let bp = b
+            .get("relative_path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_lowercase();
+        ap.cmp(&bp)
+    });
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "path": path.path.to_string_lossy(),
+            "query": keyword,
+            "entries": entries,
+            "truncated": truncated,
+            "visited_dirs": visited_dirs
+        })),
+    )
+}
+
+pub(in super::super) async fn search_content(
+    auth: AuthUser,
+    Query(query): Query<FsContentSearchQuery>,
+) -> (StatusCode, Json<Value>) {
+    let policy = match FsPathPolicy::for_user(&auth).await {
+        Ok(value) => value,
+        Err(err) => return policy_error_tuple(err),
+    };
+    let raw_path = query
+        .path
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let Some(raw_path) = raw_path else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "搜索路径不能为空" })),
+        );
+    };
+
+    let raw_keyword = query
+        .q
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let Some(raw_keyword) = raw_keyword else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "搜索关键字不能为空" })),
+        );
+    };
+
+    let path = match policy.authorize_existing_dir(raw_path.as_str(), "路径不存在", "路径不是目录")
+    {
+        Ok(value) => value,
+        Err(err) => return policy_error_tuple(err),
+    };
+    let query_text = raw_keyword;
+    let limit = query
+        .limit
+        .unwrap_or(DEFAULT_SEARCH_LIMIT)
+        .clamp(1, MAX_SEARCH_LIMIT);
+
+    match search_workspace_text(&TextSearchRequest {
+        root: path.path.clone(),
+        query: query_text.clone(),
+        max_results: limit,
+        max_file_bytes: DEFAULT_MAX_FILE_BYTES,
+        max_visits: DEFAULT_MAX_VISITS,
+        case_sensitive: query.case_sensitive.unwrap_or(false),
+        whole_word: query.whole_word.unwrap_or(false),
+    }) {
+        Ok(result) => (
+            StatusCode::OK,
+            Json(json!({
+                "path": path.path.to_string_lossy(),
+                "query": query_text,
+                "entries": result.entries,
+                "truncated": result.truncated,
+                "visited_dirs": result.visited_dirs
+            })),
+        ),
+        Err(message) if message == "路径不存在" || message == "路径不是目录" => {
+            (StatusCode::BAD_REQUEST, Json(json!({ "error": message })))
+        }
+        Err(message) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": message })),
+        ),
+    }
+}

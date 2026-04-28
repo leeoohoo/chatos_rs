@@ -3,8 +3,8 @@ use once_cell::sync::OnceCell;
 use portable_pty::{native_pty_system, MasterPty, PtySize};
 use std::collections::VecDeque;
 use std::io::{Read, Write};
-use std::sync::mpsc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration as StdDuration, Instant};
 use tokio::sync::broadcast;
@@ -500,13 +500,12 @@ impl RemoteTerminalManager {
             }
         }
 
-        let (session, child) =
-            RemoteTerminalSession::new(
-                connection,
-                verification_code,
-                verification_code_rx,
-                challenge_tx,
-            )?;
+        let (session, child) = RemoteTerminalSession::new(
+            connection,
+            verification_code,
+            verification_code_rx,
+            challenge_tx,
+        )?;
         if let Some(mut child) = child {
             let manager = get_remote_terminal_manager();
             let id = connection.id.clone();

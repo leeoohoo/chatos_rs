@@ -10,8 +10,8 @@ use super::dto::{
     TurnRuntimeSnapshotDto, TurnRuntimeSnapshotLookupResponseDto, UpsertSummaryJobConfigRequestDto,
 };
 use super::http::{
-    build_url, client, context_timeout_duration, push_limit_offset_params, send_delete_result,
-    send_json, send_list, send_optional_json, timeout_duration,
+    client, push_limit_offset_params, send_delete_result, send_json, send_list, send_optional_json,
+    try_build_url, try_context_timeout_duration, try_timeout_duration,
 };
 use super::mapping::map_memory_session;
 
@@ -57,8 +57,8 @@ pub async fn create_session(
     metadata: Option<Value>,
 ) -> Result<Session, String> {
     let req = client()
-        .post(build_url("/sessions").as_str())
-        .timeout(timeout_duration())
+        .post(try_build_url("/sessions")?)
+        .timeout(try_timeout_duration()?)
         .json(&CreateSessionRequest {
             user_id,
             project_id,
@@ -72,8 +72,11 @@ pub async fn create_session(
 
 pub async fn get_session_by_id(session_id: &str) -> Result<Option<Session>, String> {
     let req = client()
-        .get(build_url(&format!("/sessions/{}", urlencoding::encode(session_id))).as_str())
-        .timeout(timeout_duration());
+        .get(try_build_url(&format!(
+            "/sessions/{}",
+            urlencoding::encode(session_id)
+        ))?)
+        .timeout(try_timeout_duration()?);
 
     match send_optional_json::<MemorySession>(req).await? {
         Some(session) => Ok(Some(map_memory_session(session))),
@@ -88,8 +91,11 @@ pub async fn update_session(
     metadata: Option<Value>,
 ) -> Result<Option<Session>, String> {
     let req = client()
-        .patch(build_url(&format!("/sessions/{}", urlencoding::encode(session_id))).as_str())
-        .timeout(timeout_duration())
+        .patch(try_build_url(&format!(
+            "/sessions/{}",
+            urlencoding::encode(session_id)
+        ))?)
+        .timeout(try_timeout_duration()?)
         .json(&PatchSessionRequest {
             title,
             status,
@@ -104,8 +110,11 @@ pub async fn update_session(
 
 pub async fn delete_session(session_id: &str) -> Result<bool, String> {
     let req = client()
-        .delete(build_url(&format!("/sessions/{}", urlencoding::encode(session_id))).as_str())
-        .timeout(timeout_duration());
+        .delete(try_build_url(&format!(
+            "/sessions/{}",
+            urlencoding::encode(session_id)
+        ))?)
+        .timeout(try_timeout_duration()?);
 
     send_delete_result(req).await
 }
@@ -118,8 +127,8 @@ pub async fn upsert_message(message: &Message) -> Result<Message, String> {
     );
 
     let req = client()
-        .put(build_url(path.as_str()).as_str())
-        .timeout(timeout_duration())
+        .put(try_build_url(path.as_str())?)
+        .timeout(try_timeout_duration()?)
         .json(&SyncMessageRequest {
             role: message.role.clone(),
             content: message.content.clone(),
@@ -147,8 +156,8 @@ pub async fn sync_turn_runtime_snapshot(
     );
 
     let req = client()
-        .put(build_url(path.as_str()).as_str())
-        .timeout(timeout_duration())
+        .put(try_build_url(path.as_str())?)
+        .timeout(try_timeout_duration()?)
         .json(payload);
 
     send_json(req).await
@@ -162,8 +171,8 @@ pub async fn get_latest_turn_runtime_snapshot(
         urlencoding::encode(session_id)
     );
     let req = client()
-        .get(build_url(path.as_str()).as_str())
-        .timeout(timeout_duration());
+        .get(try_build_url(path.as_str())?)
+        .timeout(try_timeout_duration()?);
     send_json(req).await
 }
 
@@ -177,8 +186,8 @@ pub async fn get_turn_runtime_snapshot_by_turn(
         urlencoding::encode(turn_id)
     );
     let req = client()
-        .get(build_url(path.as_str()).as_str())
-        .timeout(timeout_duration());
+        .get(try_build_url(path.as_str())?)
+        .timeout(try_timeout_duration()?);
     send_json(req).await
 }
 
@@ -198,14 +207,11 @@ pub async fn list_messages(
 
 pub async fn delete_messages_by_session(session_id: &str) -> Result<i64, String> {
     let req = client()
-        .delete(
-            build_url(&format!(
-                "/sessions/{}/messages",
-                urlencoding::encode(session_id)
-            ))
-            .as_str(),
-        )
-        .timeout(timeout_duration());
+        .delete(try_build_url(&format!(
+            "/sessions/{}/messages",
+            urlencoding::encode(session_id)
+        ))?)
+        .timeout(try_timeout_duration()?);
 
     let resp: Value = send_json(req).await?;
     Ok(resp.get("deleted").and_then(|v| v.as_i64()).unwrap_or(0))
@@ -213,16 +219,22 @@ pub async fn delete_messages_by_session(session_id: &str) -> Result<i64, String>
 
 pub async fn get_message_by_id(message_id: &str) -> Result<Option<Message>, String> {
     let req = client()
-        .get(build_url(&format!("/messages/{}", urlencoding::encode(message_id))).as_str())
-        .timeout(timeout_duration());
+        .get(try_build_url(&format!(
+            "/messages/{}",
+            urlencoding::encode(message_id)
+        ))?)
+        .timeout(try_timeout_duration()?);
 
     send_optional_json::<Message>(req).await
 }
 
 pub async fn delete_message(message_id: &str) -> Result<bool, String> {
     let req = client()
-        .delete(build_url(&format!("/messages/{}", urlencoding::encode(message_id))).as_str())
-        .timeout(timeout_duration());
+        .delete(try_build_url(&format!(
+            "/messages/{}",
+            urlencoding::encode(message_id)
+        ))?)
+        .timeout(try_timeout_duration()?);
 
     send_delete_result(req).await
 }
@@ -241,15 +253,12 @@ pub async fn list_summaries(
 
 pub async fn delete_summary(session_id: &str, summary_id: &str) -> Result<bool, String> {
     let req = client()
-        .delete(
-            build_url(&format!(
-                "/sessions/{}/summaries/{}",
-                urlencoding::encode(session_id),
-                urlencoding::encode(summary_id)
-            ))
-            .as_str(),
-        )
-        .timeout(timeout_duration());
+        .delete(try_build_url(&format!(
+            "/sessions/{}/summaries/{}",
+            urlencoding::encode(session_id),
+            urlencoding::encode(summary_id)
+        ))?)
+        .timeout(try_timeout_duration()?);
 
     send_delete_result(req).await
 }
@@ -275,8 +284,8 @@ pub async fn compose_context(
     memory_summary_limit: usize,
 ) -> Result<(Option<String>, usize, Vec<Message>), String> {
     let req = client()
-        .post(build_url("/context/compose").as_str())
-        .timeout(context_timeout_duration())
+        .post(try_build_url("/context/compose")?)
+        .timeout(try_context_timeout_duration()?)
         .json(&serde_json::json!({
             "session_id": session_id,
             "summary_limit": memory_summary_limit.max(1),
@@ -289,8 +298,8 @@ pub async fn compose_context(
 
 pub async fn get_summary_job_config(user_id: &str) -> Result<SummaryJobConfigDto, String> {
     let req = client()
-        .get(build_url("/configs/summary-job").as_str())
-        .timeout(timeout_duration())
+        .get(try_build_url("/configs/summary-job")?)
+        .timeout(try_timeout_duration()?)
         .query(&[("user_id", user_id)]);
     send_json(req).await
 }
@@ -299,8 +308,8 @@ pub async fn upsert_summary_job_config(
     req_body: &UpsertSummaryJobConfigRequestDto,
 ) -> Result<SummaryJobConfigDto, String> {
     let req = client()
-        .put(build_url("/configs/summary-job").as_str())
-        .timeout(timeout_duration())
+        .put(try_build_url("/configs/summary-job")?)
+        .timeout(try_timeout_duration()?)
         .json(req_body);
     send_json(req).await
 }

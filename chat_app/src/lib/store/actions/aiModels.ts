@@ -1,9 +1,9 @@
 import type { AiModelConfig } from '../../../types';
 import type {
   AiModelConfigCreatePayload,
-  AiModelConfigResponse,
 } from '../../api/client/types';
 import type ApiClient from '../../api/client';
+import { normalizeAiModelConfig } from '../../domain/configs';
 import { mergeSessionAiSelectionIntoMetadata } from '../helpers/sessionAiSelection';
 import { mergeSessionRuntimeIntoMetadata } from '../helpers/sessionRuntime';
 import type { ChatActions, ChatState, ChatStoreDraft } from '../types';
@@ -15,36 +15,6 @@ interface Deps {
   client: ApiClient;
   getUserIdParam: () => string;
 }
-
-const toDate = (value?: string): Date => {
-  if (!value) {
-    return new Date();
-  }
-
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
-};
-
-const normalizeAiModelConfig = (config: AiModelConfigResponse): AiModelConfig => {
-  const createdAt = config.created_at || config.createdAt;
-  const updatedAt = config.updated_at || config.updatedAt || createdAt;
-
-  return {
-    id: config.id,
-    name: config.name,
-    provider: config.provider || 'gpt',
-    base_url: config.base_url || '',
-    api_key: config.api_key || '',
-    model_name: config.model_name || config.model || '',
-    thinking_level: config.thinking_level || undefined,
-    enabled: config.enabled === true,
-    supports_images: config.supports_images === true,
-    supports_reasoning: config.supports_reasoning === true,
-    supports_responses: config.supports_responses === true,
-    createdAt: toDate(createdAt),
-    updatedAt: toDate(updatedAt),
-  };
-};
 
 export function createAiModelActions({ set, get, client, getUserIdParam }: Deps) {
   return {

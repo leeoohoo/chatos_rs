@@ -7,6 +7,8 @@ pub mod java;
 pub mod javascript;
 pub mod kotlin;
 pub mod python;
+mod regex_utils;
 pub mod rust;
+mod shared_nav;
 pub mod ts_service;
 pub mod typescript;

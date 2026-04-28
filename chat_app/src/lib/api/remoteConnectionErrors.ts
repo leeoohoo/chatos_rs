@@ -1,4 +1,5 @@
 import { ApiRequestError } from './client/shared';
+import { asRecord, readValue } from '../store/helpers/normalizerUtils';
 
 export const REMOTE_CONNECTION_ERROR_CODE_MESSAGES: Record<string, string> = {
   invalid_argument: '请求参数不合法',
@@ -115,6 +116,31 @@ export interface RemoteConnectionErrorFeedback {
   action?: string;
 }
 
+type RemoteErrorPayloadLike = {
+  code: string;
+  message: string;
+  challengePrompt: string;
+  errorValue: unknown;
+};
+
+const readRemoteErrorPayloadLike = (value: unknown): RemoteErrorPayloadLike => {
+  const record = asRecord(value);
+  const payloadRecord = asRecord(readValue(record, 'payload'));
+  const nestedError = readValue(record, 'error');
+  const messageValue = readValue(record, 'message');
+
+  return {
+    code: typeof readValue(record, 'code') === 'string' ? String(readValue(record, 'code')) : '',
+    message: typeof messageValue === 'string' ? messageValue : '',
+    challengePrompt: typeof (
+      readValue(payloadRecord, 'challenge_prompt') ?? readValue(payloadRecord, 'challengePrompt')
+    ) === 'string'
+      ? String(readValue(payloadRecord, 'challenge_prompt') ?? readValue(payloadRecord, 'challengePrompt'))
+      : '',
+    errorValue: nestedError,
+  };
+};
+
 const normalizeRawMessage = (value: unknown, fallback: string): string => {
   if (typeof value === 'string' && value.trim().length > 0) {
     return value.trim();
@@ -122,8 +148,10 @@ const normalizeRawMessage = (value: unknown, fallback: string): string => {
   if (value instanceof Error && value.message.trim().length > 0) {
     return value.message.trim();
   }
-  if (value && typeof value === 'object' && typeof (value as any).message === 'string') {
-    const text = (value as any).message.trim();
+  const record = asRecord(value);
+  const rawMessage = readValue(record, 'message');
+  if (typeof rawMessage === 'string') {
+    const text = rawMessage.trim();
     if (text.length > 0) {
       return text;
     }
@@ -157,10 +185,7 @@ const extractErrorCode = (error: unknown): string => {
   if (error instanceof ApiRequestError) {
     return typeof error.code === 'string' ? error.code : '';
   }
-  if (error && typeof error === 'object' && typeof (error as any).code === 'string') {
-    return (error as any).code;
-  }
-  return '';
+  return readRemoteErrorPayloadLike(error).code;
 };
 
 export const resolveRemoteConnectionErrorFeedback = (
@@ -195,11 +220,12 @@ export const resolveRemoteConnectionErrorMessage = (
 };
 
 export const resolveRemoteTerminalWsErrorFeedback = (
-  payload: any,
+  payload: unknown,
   fallback = '远端终端错误',
 ): RemoteConnectionErrorFeedback => {
-  const code = typeof payload?.code === 'string' ? payload.code : '';
-  const raw = normalizeRawMessage(payload?.error, fallback);
+  const wsPayload = readRemoteErrorPayloadLike(payload);
+  const code = wsPayload.code;
+  const raw = normalizeRawMessage(wsPayload.errorValue, fallback);
   const message = resolveCodeLabel(code, raw);
   const action = REMOTE_CONNECTION_ERROR_CODE_ACTIONS[code];
   if (action) {
@@ -209,11 +235,23 @@ export const resolveRemoteTerminalWsErrorFeedback = (
 };
 
 export const resolveRemoteTerminalWsErrorMessage = (
-  payload: any,
+  payload: unknown,
   fallback = '远端终端错误',
 ): string => {
   const feedback = resolveRemoteTerminalWsErrorFeedback(payload, fallback);
   return formatRemoteConnectionErrorFeedback(feedback);
+};
+
+export const isSecondFactorRequiredError = (value: unknown): boolean => (
+  readRemoteErrorPayloadLike(value).code === 'second_factor_required'
+);
+
+export const extractSecondFactorPrompt = (
+  value: unknown,
+  fallback = '请输入短信验证码或 OTP',
+): string => {
+  const prompt = readRemoteErrorPayloadLike(value).challengePrompt.trim();
+  return prompt || fallback;
 };
 
 export const resolveRemoteSftpErrorFeedback = (

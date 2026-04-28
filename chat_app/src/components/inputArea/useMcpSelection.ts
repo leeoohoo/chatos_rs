@@ -1,131 +1,36 @@
 import { useCallback, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react';
 
-const AGENT_BUILDER_MCP_ID = 'builtin_agent_builder';
-const PROJECT_REQUIRED_MCP_IDS = new Set([
-  'builtin_code_maintainer',
-  'builtin_code_maintainer_read',
-  'builtin_code_maintainer_write',
-  'builtin_terminal_controller',
-]);
-const REMOTE_REQUIRED_MCP_IDS = new Set([
-  'builtin_remote_connection_controller',
-]);
-const MCP_PROJECT_DEFAULTS_STORAGE_KEY = 'chatos_mcp_project_defaults_v1';
+import {
+  PROJECT_REQUIRED_MCP_IDS,
+  REMOTE_REQUIRED_MCP_IDS,
+} from './mcpSelection/mcpSelectionConstants';
+import { normalizeSelectableMcpConfigs } from './mcpSelection/mcpConfigNormalization';
+import {
+  normalizeEnabledMcpIdList,
+  normalizeProjectScopeKey,
+  readProjectDefaultMap,
+  writeProjectDefaultMap,
+} from './mcpSelection/mcpProjectDefaults';
+import {
+  buildSelectableMcpIds,
+  sanitizeEnabledMcpIds,
+  splitMcpConfigsByBuiltin,
+} from './mcpSelection/mcpSelectionState';
+import { buildMcpToolsetPresets } from './mcpSelection/mcpToolsetPresets';
+import type {
+  McpToolsetPreset,
+  SelectableMcpConfig,
+} from './mcpSelection/mcpSelectionTypes';
 
-export interface SelectableMcpConfig {
-  id: string;
-  name: string;
-  displayName: string;
-  builtin: boolean;
-}
-
-interface McpToolsetPresetSpec {
-  id: string;
-  label: string;
-  description: string;
-  preferredIds: string[];
-}
-
-export interface McpToolsetPreset {
-  id: string;
-  label: string;
-  description: string;
-  targetIds: string[];
-  disabled: boolean;
-}
-
-const MCP_TOOLSET_PRESET_SPECS: McpToolsetPresetSpec[] = [
-  {
-    id: 'coding',
-    label: '代码开发',
-    description: '代码读写 + 终端 + 任务，适合实现与调试',
-    preferredIds: [
-      'builtin_code_maintainer_read',
-      'builtin_code_maintainer_write',
-      'builtin_code_maintainer',
-      'builtin_terminal_controller',
-      'builtin_task_manager',
-      'builtin_notepad',
-    ],
-  },
-  {
-    id: 'web_research',
-    label: 'Web 研究',
-    description: '网页搜索/提取 + 浏览器自动化 + 只读代码',
-    preferredIds: [
-      'builtin_web_tools',
-      'builtin_browser_tools',
-      'builtin_code_maintainer_read',
-      'builtin_notepad',
-    ],
-  },
-  {
-    id: 'remote_ops',
-    label: '远程运维',
-    description: '远程连接 + 终端 + 任务，适合服务器排障',
-    preferredIds: [
-      'builtin_remote_connection_controller',
-      'builtin_terminal_controller',
-      'builtin_task_manager',
-      'builtin_code_maintainer_read',
-    ],
-  },
-  {
-    id: 'minimal',
-    label: '轻量模式',
-    description: '仅保留最小必要工具，减少噪音',
-    preferredIds: [
-      'builtin_code_maintainer_read',
-      'builtin_terminal_controller',
-    ],
-  },
-];
-
-export function buildMcpToolsetPresets(
-  selectableMcpIds: string[],
-  availableMcpIds: string[],
-): McpToolsetPreset[] {
-  const selectableSet = new Set(selectableMcpIds);
-  const availableSet = new Set(availableMcpIds);
-  return MCP_TOOLSET_PRESET_SPECS.map((preset) => {
-    const targetIds: string[] = [];
-    for (const candidateId of preset.preferredIds) {
-      if (!availableSet.has(candidateId) || !selectableSet.has(candidateId)) {
-        continue;
-      }
-      if (!targetIds.includes(candidateId)) {
-        targetIds.push(candidateId);
-      }
-    }
-    return {
-      id: preset.id,
-      label: preset.label,
-      description: preset.description,
-      targetIds,
-      disabled: targetIds.length === 0,
-    };
-  });
-}
-
-interface McpConfigLike {
-  id?: string;
-  name?: string;
-  display_name?: string;
-  enabled?: boolean;
-  builtin?: boolean;
-}
+export type {
+  McpToolsetPreset,
+  SelectableMcpConfig,
+} from './mcpSelection/mcpSelectionTypes';
+export { buildMcpToolsetPresets } from './mcpSelection/mcpToolsetPresets';
 
 interface McpApiClient {
   getMcpConfigs: () => Promise<unknown>;
 }
-
-interface StoredMcpProjectDefault {
-  mcpEnabled: boolean;
-  enabledMcpIds: string[];
-  updatedAt: string;
-}
-
-type StoredMcpProjectDefaultMap = Record<string, StoredMcpProjectDefault>;
 
 interface UseMcpSelectionOptions {
   client: McpApiClient;
@@ -167,76 +72,6 @@ interface UseMcpSelectionResult {
   handleApplyProjectMcpDefault: () => void;
 }
 
-const normalizeProjectScopeKey = (value: unknown): string | null => {
-  if (typeof value !== 'string') {
-    return null;
-  }
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-};
-
-const normalizeEnabledMcpIdList = (value: unknown): string[] => {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  const out: string[] = [];
-  for (const item of value) {
-    if (typeof item !== 'string') {
-      continue;
-    }
-    const trimmed = item.trim();
-    if (!trimmed || out.includes(trimmed)) {
-      continue;
-    }
-    out.push(trimmed);
-  }
-  return out;
-};
-
-const readProjectDefaultMap = (): StoredMcpProjectDefaultMap => {
-  if (typeof window === 'undefined' || !window.localStorage) {
-    return {};
-  }
-  try {
-    const raw = window.localStorage.getItem(MCP_PROJECT_DEFAULTS_STORAGE_KEY);
-    if (!raw) {
-      return {};
-    }
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      return {};
-    }
-
-    const out: StoredMcpProjectDefaultMap = {};
-    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
-      const normalizedKey = normalizeProjectScopeKey(key);
-      if (!normalizedKey || !value || typeof value !== 'object' || Array.isArray(value)) {
-        continue;
-      }
-      const entry = value as Record<string, unknown>;
-      out[normalizedKey] = {
-        mcpEnabled: entry.mcpEnabled !== false,
-        enabledMcpIds: normalizeEnabledMcpIdList(entry.enabledMcpIds),
-        updatedAt: typeof entry.updatedAt === 'string' ? entry.updatedAt : '',
-      };
-    }
-    return out;
-  } catch {
-    return {};
-  }
-};
-
-const writeProjectDefaultMap = (value: StoredMcpProjectDefaultMap): void => {
-  if (typeof window === 'undefined' || !window.localStorage) {
-    return;
-  }
-  try {
-    window.localStorage.setItem(MCP_PROJECT_DEFAULTS_STORAGE_KEY, JSON.stringify(value));
-  } catch {
-    // ignore localStorage write errors
-  }
-};
-
 export const useMcpSelection = ({
   client,
   mcpEnabled,
@@ -265,15 +100,7 @@ export const useMcpSelection = ({
     [availableMcpConfigs],
   );
   const selectableMcpIds = useMemo(
-    () => availableMcpIds.filter((id) => {
-      if (!hasDirectoryContext && PROJECT_REQUIRED_MCP_IDS.has(id)) {
-        return false;
-      }
-      if (!hasRemoteContext && REMOTE_REQUIRED_MCP_IDS.has(id)) {
-        return false;
-      }
-      return true;
-    }),
+    () => buildSelectableMcpIds(availableMcpIds, hasDirectoryContext, hasRemoteContext),
     [availableMcpIds, hasDirectoryContext, hasRemoteContext],
   );
   const selectableMcpIdSet = useMemo(
@@ -284,17 +111,15 @@ export const useMcpSelection = ({
     () => availableMcpIds.length > 0 && selectableMcpIds.length === availableMcpIds.length,
     [availableMcpIds.length, selectableMcpIds.length],
   );
-  const sanitizedEnabledMcpIds = useMemo(() => {
-    if (availableMcpIds.length === 0) {
-      return enabledMcpIds;
-    }
-    if (enabledMcpIds.length === 0) {
-      return allowAllShortcut ? [] : [...selectableMcpIds];
-    }
-    return enabledMcpIds.filter((id) => selectableMcpIdSet.has(id));
-  }, [
+  const sanitizedEnabledMcpIds = useMemo(() => sanitizeEnabledMcpIds({
+    availableMcpIds,
+    enabledMcpIds,
+    selectableMcpIds,
+    selectableMcpIdSet,
     allowAllShortcut,
-    availableMcpIds.length,
+  }), [
+    allowAllShortcut,
+    availableMcpIds,
     enabledMcpIds,
     selectableMcpIdSet,
     selectableMcpIds,
@@ -302,12 +127,8 @@ export const useMcpSelection = ({
   const isAllMcpSelected = enabledMcpIds.length === 0
     || (selectableMcpIds.length > 0 && sanitizedEnabledMcpIds.length === selectableMcpIds.length);
   const selectedMcpCount = isAllMcpSelected ? selectableMcpIds.length : sanitizedEnabledMcpIds.length;
-  const builtinMcpConfigs = useMemo(
-    () => availableMcpConfigs.filter((item) => item.builtin),
-    [availableMcpConfigs],
-  );
-  const customMcpConfigs = useMemo(
-    () => availableMcpConfigs.filter((item) => !item.builtin),
+  const { builtinMcpConfigs, customMcpConfigs } = useMemo(
+    () => splitMcpConfigsByBuiltin(availableMcpConfigs),
     [availableMcpConfigs],
   );
   const mcpToolsetPresets = useMemo(
@@ -327,40 +148,7 @@ export const useMcpSelection = ({
     setMcpConfigsError(null);
     try {
       const rows = await client.getMcpConfigs();
-      const seenIds = new Set<string>();
-      const normalized = (Array.isArray(rows) ? rows : [])
-        .map((item) => {
-          const candidate = (item && typeof item === 'object' ? item : {}) as McpConfigLike;
-          const id = typeof candidate.id === 'string' ? candidate.id.trim() : '';
-          if (!id || id === AGENT_BUILDER_MCP_ID) {
-            return null;
-          }
-          if (seenIds.has(id)) {
-            return null;
-          }
-          seenIds.add(id);
-          const enabled = typeof candidate.enabled === 'boolean' ? candidate.enabled : true;
-          if (!enabled) {
-            return null;
-          }
-          const displayNameRaw = typeof candidate.display_name === 'string' ? candidate.display_name.trim() : '';
-          const nameRaw = typeof candidate.name === 'string' ? candidate.name.trim() : '';
-          return {
-            id,
-            name: nameRaw || id,
-            displayName: displayNameRaw || nameRaw || id,
-            builtin: candidate.builtin === true,
-          } satisfies SelectableMcpConfig;
-        })
-        .filter((item: SelectableMcpConfig | null): item is SelectableMcpConfig => item !== null)
-        .sort((left, right) => {
-          if (left.builtin !== right.builtin) {
-            return left.builtin ? -1 : 1;
-          }
-          return left.displayName.localeCompare(right.displayName, 'zh-Hans-CN');
-        });
-
-      setAvailableMcpConfigs(normalized);
+      setAvailableMcpConfigs(normalizeSelectableMcpConfigs(rows));
     } catch (error) {
       setMcpConfigsError(error instanceof Error ? error.message : '加载 MCP 列表失败');
       setAvailableMcpConfigs([]);

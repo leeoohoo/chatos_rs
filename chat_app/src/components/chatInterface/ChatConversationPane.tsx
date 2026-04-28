@@ -6,9 +6,11 @@ import SummaryPane from './SummaryPane';
 import type { RuntimeGuidanceWorkbarItem } from '../TaskWorkbar';
 import type {
   ChatInterfaceProps,
+  GuideMessageHandler,
   Message,
   Project,
   RemoteConnection,
+  SendMessageHandler,
   Session,
 } from '../../types';
 
@@ -65,17 +67,8 @@ interface ChatConversationPaneProps {
   activeTaskReviewPanel: ChatComposerPanelProps['activeTaskReviewPanel'];
   onTaskReviewConfirm: ChatComposerPanelProps['onTaskReviewConfirm'];
   onTaskReviewCancel: ChatComposerPanelProps['onTaskReviewCancel'];
-  onSend: (content: string, attachments?: File[], runtimeOptions?: {
-    mcpEnabled?: boolean;
-    remoteConnectionId?: string | null;
-    projectId?: string | null;
-    projectRoot?: string | null;
-    workspaceRoot?: string | null;
-    enabledMcpIds?: string[];
-    skillsEnabled?: boolean;
-    selectedSkillIds?: string[];
-  }) => void;
-  onGuide: (content: string) => void;
+  onSend: SendMessageHandler;
+  onGuide: GuideMessageHandler;
   onStop: () => void;
   inputDisabled: boolean;
   isStreaming: boolean;

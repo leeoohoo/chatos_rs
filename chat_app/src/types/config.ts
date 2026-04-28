@@ -1,0 +1,116 @@
+import type { UnknownRecord } from './common';
+
+export interface SystemContext {
+  id: string;
+  name: string;
+  content: string;
+  userId: string;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+  app_ids?: string[];
+}
+
+export interface ChatConfig {
+  model: string;
+  temperature: number;
+  systemPrompt: string;
+  enableMcp: boolean;
+  reasoningEnabled: boolean;
+}
+
+export interface McpConfig {
+  id: string;
+  name: string;
+  display_name?: string;
+  command: string;
+  type: 'http' | 'stdio';
+  args?: string[] | null;
+  env?: Record<string, string> | null;
+  cwd?: string | null;
+  enabled: boolean;
+  readonly?: boolean;
+  builtin?: boolean;
+  config?: UnknownRecord | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface AiModelConfig {
+  id: string;
+  name: string;
+  provider: string;
+  base_url: string;
+  api_key: string;
+  model_name: string;
+  thinking_level?: string;
+  enabled: boolean;
+  supports_images: boolean;
+  supports_reasoning: boolean;
+  supports_responses: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface AgentConfig {
+  id: string;
+  name: string;
+  description?: string;
+  ai_model_config_id: string;
+  enabled: boolean;
+  project_id?: string | null;
+  workspace_dir?: string | null;
+  role_definition?: string;
+  skills?: Array<{ id?: string; name?: string; content?: string }>;
+  skill_ids?: string[];
+  default_skill_ids?: string[];
+  runtime_skills?: Array<{
+    id?: string;
+    name?: string;
+    description?: string | null;
+    plugin_source?: string | null;
+    source_type?: string;
+    source_path?: string | null;
+    updated_at?: string | null;
+  }>;
+  plugin_sources?: string[];
+  runtime_plugins?: Array<{
+    source?: string;
+    name?: string;
+    category?: string | null;
+    description?: string | null;
+    content_summary?: string | null;
+    updated_at?: string | null;
+  }>;
+  mcp_policy?: UnknownRecord | null;
+  project_policy?: UnknownRecord | null;
+  createdAt: Date;
+  updatedAt: Date;
+  app_ids?: string[];
+}
+
+export interface AiClientConfig {
+  apiKey: string;
+  baseUrl?: string;
+  model: string;
+  temperature: number;
+  systemPrompt?: string;
+  enableStreaming: boolean;
+}
+
+export interface McpToolConfig {
+  name: string;
+  command: string;
+  enabled: boolean;
+  timeout: number;
+  retryCount: number;
+}
+
+export interface Application {
+  id: string;
+  name: string;
+  url: string;
+  iconUrl?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}

@@ -33,24 +33,40 @@ function extractErrorMessage(error: unknown): string {
   return '请求失败，请稍后重试';
 }
 
-function normalizeAuthUser(input: any): AuthUser | null {
+const readStringField = (record: Record<string, unknown>, key: string): string => {
+  const value = record[key];
+  return typeof value === 'string' ? value : '';
+};
+
+function normalizeAuthUser(input: unknown): AuthUser | null {
   if (!input || typeof input !== 'object') {
     return null;
   }
+  const record = input as Record<string, unknown>;
   const id =
-    String(input.id || input.user_id || input.username || input.email || '').trim();
+    String(
+      readStringField(record, 'id')
+      || readStringField(record, 'user_id')
+      || readStringField(record, 'username')
+      || readStringField(record, 'email')
+      || '',
+    ).trim();
   if (!id) {
     return null;
   }
+  const username = String(
+    readStringField(record, 'username') || readStringField(record, 'user_id') || id,
+  ).trim() || id;
+  const rawEmail = readStringField(record, 'email');
   return {
-    ...input,
+    ...(input as AuthUser),
     id,
-    username: String(input.username || input.user_id || id).trim() || id,
+    username,
     email:
-      typeof input.email === 'string' && input.email.trim()
-        ? input.email.trim()
-        : String(input.username || input.user_id || id),
-  } as AuthUser;
+      rawEmail.trim()
+        ? rawEmail.trim()
+        : String(readStringField(record, 'username') || readStringField(record, 'user_id') || id),
+  };
 }
 
 let tokenRefreshListenerRegistered = false;

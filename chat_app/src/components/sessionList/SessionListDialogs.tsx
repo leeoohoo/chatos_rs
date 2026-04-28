@@ -1,16 +1,22 @@
 import React from 'react';
 
-import ConfirmDialog from '../ui/ConfirmDialog';
+import type { AgentConfig, FsEntry } from '../../types';
 import { CreateContactModal } from './CreateContactModal';
 import { CreateProjectModal, CreateTerminalModal } from './CreateResourceModals';
 import { DirPickerDialog, KeyFilePickerDialog } from './Pickers';
 import { RemoteConnectionModal } from './RemoteConnectionModal';
 import type { RemoteConnection } from '../../types';
-import type { JumpHostMode } from './helpers';
+import type {
+  DirPickerTarget,
+  HostKeyPolicy,
+  JumpHostMode,
+  KeyFilePickerTarget,
+  RemoteAuthType,
+} from './helpers';
 
 interface SessionListDialogsProps {
   createContactModalOpen: boolean;
-  agents: any[];
+  agents: AgentConfig[];
   existingContactAgentIds: string[];
   selectedContactAgentId: string | null;
   contactError: string | null;
@@ -42,12 +48,12 @@ interface SessionListDialogsProps {
   remoteHost: string;
   remotePort: string;
   remoteUsername: string;
-  remoteAuthType: any;
+  remoteAuthType: RemoteAuthType;
   remotePassword: string;
   remotePrivateKeyPath: string;
   remoteCertificatePath: string;
   remoteDefaultPath: string;
-  remoteHostKeyPolicy: any;
+  remoteHostKeyPolicy: HostKeyPolicy;
   remoteJumpEnabled: boolean;
   remoteJumpMode: JumpHostMode;
   remoteJumpConnectionId: string;
@@ -70,12 +76,12 @@ interface SessionListDialogsProps {
   setRemoteHost: (value: string) => void;
   setRemotePort: (value: string) => void;
   setRemoteUsername: (value: string) => void;
-  setRemoteAuthType: (value: any) => void;
+  setRemoteAuthType: (value: RemoteAuthType) => void;
   setRemotePassword: (value: string) => void;
   setRemotePrivateKeyPath: (value: string) => void;
   setRemoteCertificatePath: (value: string) => void;
   setRemoteDefaultPath: (value: string) => void;
-  setRemoteHostKeyPolicy: (value: any) => void;
+  setRemoteHostKeyPolicy: (value: HostKeyPolicy) => void;
   setRemoteJumpEnabled: (value: boolean) => void;
   setRemoteJumpMode: (value: JumpHostMode) => void;
   setRemoteJumpConnectionId: (value: string) => void;
@@ -87,7 +93,7 @@ interface SessionListDialogsProps {
   setRemoteJumpPassword: (value: string) => void;
   setRemoteVerificationCode: (value: string) => void;
   setRemoteVerificationModalOpen: (value: boolean) => void;
-  openKeyFilePicker: (target: any) => void;
+  openKeyFilePicker: (target: KeyFilePickerTarget) => void;
   handleTestRemoteConnection: () => Promise<void> | void;
   handleSaveRemoteConnection: () => Promise<void> | void;
   handleSubmitRemoteVerification: () => Promise<void> | void;
@@ -97,18 +103,18 @@ interface SessionListDialogsProps {
   keyFilePickerPath: string | null;
   keyFilePickerParent: string | null;
   keyFilePickerLoading: boolean;
-  keyFilePickerItems: any[];
+  keyFilePickerItems: FsEntry[];
   keyFilePickerError: string | null;
   closeKeyFilePicker: () => void;
   loadKeyFileEntries: (path: string | null) => Promise<void> | void;
   applySelectedKeyFile: (path: string) => void;
 
   dirPickerOpen: boolean;
-  dirPickerTarget: any;
+  dirPickerTarget: DirPickerTarget;
   dirPickerPath: string | null;
   dirPickerParent: string | null;
   dirPickerLoading: boolean;
-  dirPickerItems: any[];
+  dirPickerItems: FsEntry[];
   dirPickerError: string | null;
   showHiddenDirs: boolean;
   dirPickerCreateModalOpen: boolean;
@@ -122,10 +128,6 @@ interface SessionListDialogsProps {
   setDirPickerCreateModalOpen: (value: boolean) => void;
   setDirPickerNewFolderName: (value: string) => void;
   createDirInPicker: () => Promise<void> | void;
-
-  dialogState: any;
-  handleConfirm: () => void;
-  handleCancel: () => void;
 }
 
 export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
@@ -237,14 +239,11 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
   setDirPickerCreateModalOpen,
   setDirPickerNewFolderName,
   createDirInPicker,
-  dialogState,
-  handleConfirm,
-  handleCancel,
 }) => (
   <>
     <CreateContactModal
       isOpen={createContactModalOpen}
-      agents={(agents || []) as any[]}
+      agents={agents || []}
       existingAgentIds={existingContactAgentIds}
       selectedAgentId={selectedContactAgentId || ''}
       error={contactError}
@@ -384,21 +383,6 @@ export const SessionListDialogs: React.FC<SessionListDialogsProps> = ({
       onCreateModalClose={() => setDirPickerCreateModalOpen(false)}
       onNewFolderNameChange={setDirPickerNewFolderName}
       onCreateDir={() => { void createDirInPicker(); }}
-    />
-
-    <ConfirmDialog
-      isOpen={dialogState.isOpen}
-      title={dialogState.title}
-      message={dialogState.message}
-      description={dialogState.description}
-      details={dialogState.details}
-      detailsTitle={dialogState.detailsTitle}
-      detailsLines={dialogState.detailsLines}
-      confirmText={dialogState.confirmText}
-      cancelText={dialogState.cancelText}
-      type={dialogState.type}
-      onConfirm={handleConfirm}
-      onCancel={handleCancel}
     />
   </>
 );

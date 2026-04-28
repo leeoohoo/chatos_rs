@@ -1,4 +1,6 @@
 import type { FsEntry, RemoteConnection, Session } from '../../types';
+import type { FsEntryResponse } from '../../lib/api/client/types';
+import { normalizeFsEntry as normalizeDomainFsEntry } from '../../lib/domain/filesystem';
 
 export type RemoteAuthType = 'private_key' | 'private_key_cert' | 'password';
 export type HostKeyPolicy = 'strict' | 'accept_new';
@@ -116,13 +118,9 @@ export const deriveParentPath = (path: string): string | null => {
   return parent;
 };
 
-export const normalizeFsEntry = (raw: any, fallbackIsDir: boolean): FsEntry => ({
-  name: raw?.name ?? '',
-  path: raw?.path ?? '',
-  isDir: raw?.is_dir ?? raw?.isDir ?? fallbackIsDir,
-  size: raw?.size ?? null,
-  modifiedAt: raw?.modified_at ?? raw?.modifiedAt ?? null,
-});
+export const normalizeFsEntry = (raw: FsEntryResponse | unknown, fallbackIsDir: boolean): FsEntry => {
+  return normalizeDomainFsEntry(raw, { fallbackIsDir });
+};
 
 export const getKeyFilePickerTitle = (target: KeyFilePickerTarget): string => {
   if (target === 'private_key') {

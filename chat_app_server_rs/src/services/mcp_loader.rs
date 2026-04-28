@@ -141,28 +141,19 @@ pub async fn load_mcp_configs_for_user(
     ),
     String,
 > {
-    let use_filter = mcp_config_ids
-        .as_ref()
-        .map(|v| !v.is_empty())
-        .unwrap_or(false);
-    let mut configs = if use_filter {
-        mcp_configs::list_enabled_mcp_configs_by_ids(
-            user_id.clone(),
-            mcp_config_ids.as_ref().unwrap(),
-        )
-        .await?
+    let filter_ids = mcp_config_ids.as_ref().filter(|ids| !ids.is_empty());
+    let mut configs = if let Some(ids) = filter_ids {
+        mcp_configs::list_enabled_mcp_configs_by_ids(user_id.clone(), ids).await?
     } else {
         mcp_configs::list_enabled_mcp_configs(user_id.clone()).await?
     };
     let mut seen_ids: std::collections::HashSet<String> =
         configs.iter().map(|cfg| cfg.id.clone()).collect();
-    if use_filter {
-        if let Some(ids) = mcp_config_ids.as_ref() {
-            for id in ids {
-                if let Some(cfg) = get_builtin_mcp_config(id) {
-                    if seen_ids.insert(cfg.id.clone()) {
-                        configs.push(cfg);
-                    }
+    if let Some(ids) = filter_ids {
+        for id in ids {
+            if let Some(cfg) = get_builtin_mcp_config(id) {
+                if seen_ids.insert(cfg.id.clone()) {
+                    configs.push(cfg);
                 }
             }
         }

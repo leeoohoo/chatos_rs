@@ -1,46 +1,17 @@
 import type { McpConfig } from '../../../types';
 import type { McpConfigResponse, McpConfigUpdatePayload } from '../../api/client/types';
 import type ApiClient from '../../api/client';
+import { normalizeMcpConfig } from '../../domain/configs';
+import type { ChatStoreDraft, ChatStoreGet, ChatStoreSet } from '../types';
 import { debugLog } from '@/lib/utils';
 import { generateId } from '@/lib/utils';
 
 interface Deps {
-  set: any;
-  get: any;
+  set: ChatStoreSet;
+  get: ChatStoreGet;
   client: ApiClient;
   getUserIdParam: () => string;
 }
-
-const toDate = (value?: string): Date => {
-  if (!value) {
-    return new Date();
-  }
-
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
-};
-
-const normalizeMcpConfig = (config: McpConfigResponse): McpConfig => {
-  const createdAt = config.created_at || config.createdAt;
-  const updatedAt = config.updated_at || config.updatedAt || createdAt;
-
-  return {
-    id: config.id,
-    name: config.name,
-    display_name: config.display_name ?? config.displayName ?? undefined,
-    command: config.command,
-    type: config.type,
-    args: config.args ?? null,
-    env: config.env ?? null,
-    cwd: config.cwd ?? null,
-    enabled: config.enabled === true,
-    readonly: config.readonly,
-    builtin: config.builtin,
-    config: config.config ?? undefined,
-    createdAt: toDate(createdAt),
-    updatedAt: toDate(updatedAt),
-  };
-};
 
 export function createMcpActions({ set, get, client, getUserIdParam }: Deps) {
   return {
@@ -51,12 +22,12 @@ export function createMcpActions({ set, get, client, getUserIdParam }: Deps) {
 
         debugLog('🔍 [后端返回] loadMcpConfigs 返回的数据:', configs);
 
-        set((state: any) => {
+        set((state: ChatStoreDraft) => {
           state.mcpConfigs = configs.map(normalizeMcpConfig);
         });
       } catch (error) {
         console.error('Failed to load MCP configs:', error);
-        set((state: any) => {
+        set((state: ChatStoreDraft) => {
           state.error = error instanceof Error ? error.message : 'Failed to load MCP configs';
         });
       }
@@ -106,7 +77,7 @@ export function createMcpActions({ set, get, client, getUserIdParam }: Deps) {
         return saved ? normalizeMcpConfig(saved) : null;
       } catch (error) {
         console.error('Failed to update MCP config:', error);
-        set((state: any) => {
+        set((state: ChatStoreDraft) => {
           state.error = error instanceof Error ? error.message : 'Failed to update MCP config';
         });
         return null;
@@ -116,12 +87,12 @@ export function createMcpActions({ set, get, client, getUserIdParam }: Deps) {
     deleteMcpConfig: async (id: string) => {
       try {
         await client.deleteMcpConfig(id);
-        set((state: any) => {
-          state.mcpConfigs = state.mcpConfigs.filter((config: any) => config.id !== id);
+        set((state: ChatStoreDraft) => {
+          state.mcpConfigs = state.mcpConfigs.filter((config) => config.id !== id);
         });
       } catch (error) {
         console.error('Failed to delete MCP config:', error);
-        set((state: any) => {
+        set((state: ChatStoreDraft) => {
           state.error = error instanceof Error ? error.message : 'Failed to delete MCP config';
         });
       }

@@ -180,6 +180,15 @@ jobs:
       - name: cargo check
         run: cargo check
 
+      - name: request-path panic audit
+        run: bash ../scripts/check-request-path-panics.sh
+
+      - name: non-test unwrap/expect audit
+        run: python ../scripts/check-non-test-unwrap-expect.py
+
+      - name: hotspot line budgets
+        run: bash ../scripts/check-hotspot-line-budgets.sh
+
       - name: cargo test
         run: cargo test -q
 
@@ -203,6 +212,9 @@ jobs:
 
       - name: cargo check
         run: cargo check
+
+      - name: non-test unwrap/expect audit
+        run: python ../../scripts/check-non-test-unwrap-expect.py
 
       - name: cargo test
         run: cargo test -q
@@ -238,6 +250,9 @@ jobs:
 
       - name: lint
         run: npm run lint
+
+      - name: hotspot line budgets
+        run: bash ../scripts/check-hotspot-line-budgets.sh
 
   memory-server-frontend:
     name: memory_server/frontend (TypeScript)

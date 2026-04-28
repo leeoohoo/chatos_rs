@@ -2,18 +2,17 @@ mod actions;
 mod context;
 pub(crate) mod provider;
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::{json, Value};
 
-use crate::core::async_bridge::block_on_result;
-use crate::core::tool_io::text_result;
+use crate::core::tool_registry::{async_text_tool_handler, ToolRegistry};
 
 use self::actions::{web_extract_with_context, web_research_with_context, web_search_with_context};
 use self::context::{optional_usize, required_string_array, required_trimmed_string};
+use self::provider::build_web_client;
 
 const DEFAULT_REQUEST_TIMEOUT_SECONDS: u64 = 30;
 const DEFAULT_SEARCH_LIMIT: usize = 5;
@@ -34,16 +33,7 @@ pub struct WebToolsOptions {
 
 #[derive(Clone)]
 pub struct WebToolsService {
-    tools: HashMap<String, Tool>,
-    unavailable_tools: HashMap<String, String>,
-}
-
-#[derive(Clone)]
-struct Tool {
-    name: String,
-    description: String,
-    input_schema: Value,
-    handler: ToolHandler,
+    registry: ToolRegistry<ToolHandler>,
 }
 
 type ToolHandler = Arc<dyn Fn(Value) -> Result<Value, String> + Send + Sync>;
@@ -71,15 +61,13 @@ impl WebToolsService {
             .workspace_dir
             .canonicalize()
             .unwrap_or_else(|_| opts.workspace_dir.clone());
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(timeout))
-            .user_agent("chatos-rs-web-tools/0.1")
-            .build()
-            .map_err(|err| format!("build web_tools client failed: {}", err))?;
+        let client = build_web_client(
+            Duration::from_secs(timeout),
+            "chatos-rs-web-tools/0.1",
+        )?;
 
         let mut service = Self {
-            tools: HashMap::new(),
-            unavailable_tools: HashMap::new(),
+            registry: ToolRegistry::new(),
         };
         let bound = BoundContext {
             _server_name: opts.server_name,
@@ -99,34 +87,19 @@ impl WebToolsService {
     }
 
     pub fn list_tools(&self) -> Vec<Value> {
-        self.tools
-            .values()
-            .map(|tool| {
-                json!({
-                    "name": tool.name,
-                    "description": tool.description,
-                    "inputSchema": tool.input_schema
-                })
-            })
-            .collect()
+        self.registry.list_tools()
     }
 
     pub fn call_tool(&self, name: &str, args: Value) -> Result<Value, String> {
         let tool = self
-            .tools
+            .registry
             .get(name)
             .ok_or_else(|| format!("Tool not found: {name}"))?;
         (tool.handler)(args)
     }
 
     pub fn unavailable_tools(&self) -> Vec<(String, String)> {
-        let mut pairs: Vec<(String, String)> = self
-            .unavailable_tools
-            .iter()
-            .map(|(name, reason)| (name.clone(), reason.clone()))
-            .collect();
-        pairs.sort_by(|left, right| left.0.cmp(&right.0));
-        pairs
+        self.registry.unavailable_tools()
     }
 
     fn register_tool(
@@ -136,15 +109,8 @@ impl WebToolsService {
         input_schema: Value,
         handler: ToolHandler,
     ) {
-        self.tools.insert(
-            name.to_string(),
-            Tool {
-                name: name.to_string(),
-                description: description.to_string(),
-                input_schema,
-                handler,
-            },
-        );
+        self.registry
+            .register_tool(name, description, input_schema, handler);
     }
 
     fn register_web_search(&mut self, bound: BoundContext) {
@@ -160,15 +126,11 @@ impl WebToolsService {
                 "required": ["query"],
                 "additionalProperties": false
             }),
-            Arc::new(move |args| {
+            async_text_tool_handler(move |args| {
                 let query = required_trimmed_string(&args, "query")?;
                 let limit = optional_usize(&args, "limit");
                 let ctx = bound.clone();
-                let result =
-                    block_on_result(
-                        async move { web_search_with_context(ctx, query, limit).await },
-                    )?;
-                Ok(text_result(result))
+                Ok(async move { web_search_with_context(ctx, query, limit).await })
             }),
         );
     }
@@ -189,12 +151,10 @@ impl WebToolsService {
                 "required": ["urls"],
                 "additionalProperties": false
             }),
-            Arc::new(move |args| {
+            async_text_tool_handler(move |args| {
                 let urls = required_string_array(&args, "urls")?;
                 let ctx = bound.clone();
-                let result =
-                    block_on_result(async move { web_extract_with_context(ctx, urls).await })?;
-                Ok(text_result(result))
+                Ok(async move { web_extract_with_context(ctx, urls).await })
             }),
         );
     }
@@ -213,15 +173,14 @@ impl WebToolsService {
                 "required": ["query"],
                 "additionalProperties": false
             }),
-            Arc::new(move |args| {
+            async_text_tool_handler(move |args| {
                 let query = required_trimmed_string(&args, "query")?;
                 let limit = optional_usize(&args, "limit");
                 let extract_top = optional_usize(&args, "extract_top");
                 let ctx = bound.clone();
-                let result = block_on_result(async move {
+                Ok(async move {
                     web_research_with_context(ctx, query, limit, extract_top).await
-                })?;
-                Ok(text_result(result))
+                })
             }),
         );
     }

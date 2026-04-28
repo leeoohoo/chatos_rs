@@ -4,7 +4,14 @@ import TaskDraftPanel from '../TaskDraftPanel';
 import TaskWorkbar, { type RuntimeGuidanceWorkbarItem, type TaskWorkbarItem } from '../TaskWorkbar';
 import UiPromptPanel from '../UiPromptPanel';
 import type { TaskOutcomeDraft } from '../taskWorkbar/TaskOutcomeModal';
-import type { AgentConfig, AiModelConfig, Project, RemoteConnection } from '../../types';
+import type {
+  AgentConfig,
+  AiModelConfig,
+  GuideMessageHandler,
+  Project,
+  RemoteConnection,
+  SendMessageHandler,
+} from '../../types';
 import type {
   TaskReviewDraft,
   TaskReviewPanelState,
@@ -42,21 +49,8 @@ interface ChatComposerPanelProps {
   activeTaskReviewPanel: TaskReviewPanelState | null;
   onTaskReviewConfirm: (drafts: TaskReviewDraft[]) => void;
   onTaskReviewCancel: () => void;
-  onSend: (
-    content: string,
-    attachments?: File[],
-	    runtimeOptions?: {
-	      mcpEnabled?: boolean;
-	      remoteConnectionId?: string | null;
-	      projectId?: string | null;
-	      projectRoot?: string | null;
-	      workspaceRoot?: string | null;
-	      enabledMcpIds?: string[];
-	      skillsEnabled?: boolean;
-	      selectedSkillIds?: string[];
-	    },
-	  ) => void;
-  onGuide: (content: string) => void;
+  onSend: SendMessageHandler;
+  onGuide: GuideMessageHandler;
   onStop: () => void;
   inputDisabled: boolean;
   isStreaming: boolean;

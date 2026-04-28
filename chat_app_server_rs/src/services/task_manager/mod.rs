@@ -14,9 +14,9 @@ pub use store::{
 };
 #[allow(unused_imports)]
 pub use types::{
-    TaskCreateReviewPayload, TaskDraft, TaskOutcomeItem, TaskRecord, TaskReviewAction, TaskReviewDecision,
-    TaskUpdatePatch, REVIEW_NOT_FOUND_ERR, REVIEW_TIMEOUT_ERR, REVIEW_TIMEOUT_MS_DEFAULT,
-    TASK_NOT_FOUND_ERR,
+    TaskCreateReviewPayload, TaskDraft, TaskOutcomeItem, TaskRecord, TaskReviewAction,
+    TaskReviewDecision, TaskUpdatePatch, REVIEW_NOT_FOUND_ERR, REVIEW_TIMEOUT_ERR,
+    REVIEW_TIMEOUT_MS_DEFAULT, TASK_NOT_FOUND_ERR,
 };
 
 #[cfg(test)]
@@ -62,6 +62,7 @@ mod tests {
             status: Some("invalid".to_string()),
             tags: Some(vec![" ui ".to_string(), "ui".to_string(), "".to_string()]),
             due_at: Some(Some("  ".to_string())),
+            ..Default::default()
         };
 
         let normalized = patch.normalized().expect("patch normalize should succeed");

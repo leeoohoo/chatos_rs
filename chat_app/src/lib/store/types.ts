@@ -1,4 +1,19 @@
-import type { Message, Session, ChatConfig, Theme, McpConfig, AiModelConfig, SystemContext, AgentConfig, Application, Project, Terminal, RemoteConnection } from '../../types';
+import type {
+  AgentConfig,
+  AiModelConfig,
+  Application,
+  ChatConfig,
+  ContactRecord,
+  McpConfig,
+  Message,
+  Project,
+  RemoteConnection,
+  SendMessageRuntimeOptions,
+  Session,
+  SystemContext,
+  Terminal,
+  Theme,
+} from '../../types';
 import type {
   SystemContextDraftEvaluateResponse,
   SystemContextDraftGenerateResponse,
@@ -6,6 +21,9 @@ import type {
   SystemContextModelConfigPayload,
   SystemContextResponse,
 } from '../api/client/types';
+
+export type { ContactRecord } from '../../types';
+export type { SendMessageRuntimeOptions } from '../../types';
 
 export interface TaskReviewDraft {
   id: string;
@@ -97,19 +115,6 @@ export interface SessionCreatePayload {
   enabledMcpIds?: string[];
 }
 
-export interface SendMessageRuntimeOptions {
-  contactAgentId?: string | null;
-  contactId?: string | null;
-  remoteConnectionId?: string | null;
-  projectId?: string | null;
-  projectRoot?: string | null;
-  workspaceRoot?: string | null;
-  mcpEnabled?: boolean;
-  enabledMcpIds?: string[];
-  skillsEnabled?: boolean;
-  selectedSkillIds?: string[];
-}
-
 export interface SessionSelectOptions {
   keepActivePanel?: boolean;
 }
@@ -143,15 +148,6 @@ export interface RuntimeGuidanceItem {
   status: 'queued' | 'applied' | 'dropped';
   createdAt: string;
   appliedAt: string | null;
-}
-
-export interface ContactRecord {
-  id: string;
-  agentId: string;
-  name: string;
-  status: string;
-  createdAt: Date;
-  updatedAt: Date;
 }
 
 export interface ChatState {
@@ -302,7 +298,7 @@ export interface ChatActions {
   ) => Promise<void>;
   sendMessage: (
     content: string,
-    attachments?: any[],
+    attachments?: File[],
     runtimeOptions?: SendMessageRuntimeOptions,
   ) => Promise<void>;
   submitRuntimeGuidance: (content: string, options: {

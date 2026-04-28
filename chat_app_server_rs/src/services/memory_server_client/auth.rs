@@ -1,10 +1,10 @@
 use super::dto::{MemoryAuthLoginResponse, MemoryAuthMeResponse};
-use super::http::{build_url, client, send_json_without_service_token, timeout_duration};
+use super::http::{client, send_json_without_service_token, try_build_url, try_timeout_duration};
 
 pub async fn auth_login(username: &str, password: &str) -> Result<MemoryAuthLoginResponse, String> {
     let req = client()
-        .post(build_url("/auth/login").as_str())
-        .timeout(timeout_duration())
+        .post(try_build_url("/auth/login")?)
+        .timeout(try_timeout_duration()?)
         .json(&serde_json::json!({
             "username": username,
             "password": password
@@ -19,8 +19,8 @@ pub async fn auth_me(access_token: &str) -> Result<MemoryAuthMeResponse, String>
     }
 
     let req = client()
-        .get(build_url("/auth/me").as_str())
-        .timeout(timeout_duration())
+        .get(try_build_url("/auth/me")?)
+        .timeout(try_timeout_duration()?)
         .bearer_auth(trimmed);
     send_json_without_service_token(req).await
 }

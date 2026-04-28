@@ -1,10 +1,11 @@
 import type ApiClient from '../../api/client';
 import type { ContactRecord } from '../types';
 import { normalizeContact } from '../helpers/contacts';
+import type { ChatStoreDraft, ChatStoreGet, ChatStoreSet } from '../types';
 
 interface Deps {
-  set: any;
-  get: any;
+  set: ChatStoreSet;
+  get: ChatStoreGet;
   client: ApiClient;
   getUserIdParam: () => string;
 }
@@ -30,13 +31,13 @@ export function createContactActions({ set, get, client, getUserIdParam }: Deps)
           .filter((item): item is ContactRecord => !!item)
           .filter((item) => item.status === '' || item.status === 'active')
           .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
-        set((state: any) => {
+        set((state: ChatStoreDraft) => {
           state.contacts = normalized;
         });
         return normalized;
       } catch (error) {
         console.error('Failed to load contacts:', error);
-        set((state: any) => {
+        set((state: ChatStoreDraft) => {
           state.error = error instanceof Error ? error.message : 'Failed to load contacts';
         });
         return [];
@@ -63,7 +64,7 @@ export function createContactActions({ set, get, client, getUserIdParam }: Deps)
       if (!normalized) {
         throw new Error('create contact returned invalid payload');
       }
-      set((state: any) => {
+      set((state: ChatStoreDraft) => {
         state.contacts = upsertContactRecord(state.contacts || [], normalized)
           .filter((item: ContactRecord) => item.status === '' || item.status === 'active')
           .sort((a: ContactRecord, b: ContactRecord) => b.updatedAt.getTime() - a.updatedAt.getTime());
@@ -77,7 +78,7 @@ export function createContactActions({ set, get, client, getUserIdParam }: Deps)
         return;
       }
       await client.deleteContact(trimmed);
-      set((state: any) => {
+      set((state: ChatStoreDraft) => {
         state.contacts = (state.contacts || []).filter((item: ContactRecord) => item.id !== trimmed);
       });
     },

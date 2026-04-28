@@ -1,26 +1,22 @@
 import { useCallback, useState } from 'react';
 
-export interface SessionSummaryItem {
-  id: string;
-  summaryText: string;
-  summaryModel: string;
-  triggerType: string;
-  sourceMessageCount: number;
-  sourceEstimatedTokens: number;
-  status: string;
-  errorMessage: string | null;
-  level: number;
-  createdAt: string;
-  updatedAt: string;
-}
+import { useDialogService } from '../../components/ui/DialogProvider';
+import type {
+  SessionSummariesListResponse,
+} from '../../lib/api/client/types';
+import {
+  normalizeSessionSummary,
+  type SessionSummaryItem,
+} from '../../lib/domain/configs';
+export type { SessionSummaryItem } from '../../lib/domain/configs';
 
 interface SessionSummaryApiClient {
   getConversationSummaries: (
     sessionId: string,
     options?: { limit?: number; offset?: number },
-  ) => Promise<{ items?: any[] }>;
-  deleteConversationSummary: (sessionId: string, summaryId: string) => Promise<any>;
-  clearConversationSummaries: (sessionId: string) => Promise<any>;
+  ) => Promise<SessionSummariesListResponse>;
+  deleteConversationSummary: (sessionId: string, summaryId: string) => Promise<{ success?: boolean }>;
+  clearConversationSummaries: (sessionId: string) => Promise<{ success?: boolean }>;
 }
 
 interface UseSessionSummaryPanelResult {
@@ -42,44 +38,10 @@ interface UseSessionSummaryPanelResult {
   ) => Promise<void>;
 }
 
-const normalizeSessionSummary = (item: any): SessionSummaryItem | null => {
-  const id = typeof item?.id === 'string' ? item.id.trim() : '';
-  if (!id) {
-    return null;
-  }
-  const createdAt = typeof item?.created_at === 'string'
-    ? item.created_at
-    : (typeof item?.createdAt === 'string' ? item.createdAt : '');
-  const updatedAt = typeof item?.updated_at === 'string'
-    ? item.updated_at
-    : (typeof item?.updatedAt === 'string' ? item.updatedAt : createdAt);
-
-  return {
-    id,
-    summaryText: typeof item?.summary_text === 'string'
-      ? item.summary_text
-      : (typeof item?.summaryText === 'string' ? item.summaryText : ''),
-    summaryModel: typeof item?.summary_model === 'string'
-      ? item.summary_model
-      : (typeof item?.summaryModel === 'string' ? item.summaryModel : ''),
-    triggerType: typeof item?.trigger_type === 'string'
-      ? item.trigger_type
-      : (typeof item?.triggerType === 'string' ? item.triggerType : ''),
-    sourceMessageCount: Number(item?.source_message_count ?? item?.sourceMessageCount ?? 0) || 0,
-    sourceEstimatedTokens: Number(item?.source_estimated_tokens ?? item?.sourceEstimatedTokens ?? 0) || 0,
-    status: typeof item?.status === 'string' ? item.status : '',
-    errorMessage: typeof item?.error_message === 'string'
-      ? item.error_message
-      : (typeof item?.errorMessage === 'string' ? item.errorMessage : null),
-    level: Number(item?.level ?? 0) || 0,
-    createdAt,
-    updatedAt,
-  };
-};
-
 export const useSessionSummaryPanel = (
   apiClient: SessionSummaryApiClient,
 ): UseSessionSummaryPanelResult => {
+  const { confirm } = useDialogService();
   const [summaryPaneSessionId, setSummaryPaneSessionId] = useState<string | null>(null);
   const [summaryItems, setSummaryItems] = useState<SessionSummaryItem[]>([]);
   const [summaryLoading, setSummaryLoading] = useState(false);
@@ -109,7 +71,7 @@ export const useSessionSummaryPanel = (
     try {
       const result = await apiClient.getConversationSummaries(sessionId, { limit: 200, offset: 0 });
       const normalized = (Array.isArray(result?.items) ? result.items : [])
-        .map((item: any) => normalizeSessionSummary(item))
+        .map((item) => normalizeSessionSummary(item))
         .filter((item: SessionSummaryItem | null): item is SessionSummaryItem => Boolean(item))
         .sort((left, right) => {
           const leftTs = new Date(left.createdAt || left.updatedAt).getTime();
@@ -161,8 +123,13 @@ export const useSessionSummaryPanel = (
       return;
     }
     const confirmed = options?.skipConfirm === true
-      || typeof window === 'undefined'
-      || window.confirm(options?.confirmMessage || '确定清空当前会话的所有总结吗？');
+      || await confirm({
+        title: '清空会话总结',
+        message: options?.confirmMessage || '确定清空当前会话的所有总结吗？',
+        confirmText: '清空',
+        cancelText: '取消',
+        type: 'danger',
+      });
     if (!confirmed) {
       return;
     }
@@ -176,7 +143,7 @@ export const useSessionSummaryPanel = (
     } finally {
       setClearingSummaries(false);
     }
-  }, [apiClient, loadSessionSummaries]);
+  }, [apiClient, confirm, loadSessionSummaries]);
 
   return {
     summaryPaneSessionId,

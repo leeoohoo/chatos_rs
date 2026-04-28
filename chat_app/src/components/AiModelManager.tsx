@@ -1,9 +1,8 @@
 import React, { useState, useEffect } from 'react';
 
-import { useConfirmDialog } from '../hooks/useConfirmDialog';
 import { useChatStoreResolved } from '../lib/store/ChatStoreContext';
 import type { AiModelConfig } from '../types';
-import ConfirmDialog from './ui/ConfirmDialog';
+import { useDialogService } from './ui/DialogProvider';
 import AiModelList from './aiModelManager/AiModelList';
 import AiModelManagerForm from './aiModelManager/AiModelManagerForm';
 import {
@@ -27,7 +26,7 @@ const AiModelManager: React.FC<AiModelManagerProps> = ({ onClose, store: externa
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingConfig, setEditingConfig] = useState<AiModelConfig | null>(null);
   const [formData, setFormData] = useState<AiModelFormData>(getDefaultAiModelFormData());
-  const { dialogState, showConfirmDialog, handleConfirm, handleCancel } = useConfirmDialog();
+  const { confirm } = useDialogService();
 
   useEffect(() => {
     const currentWindow = window as AiModelManagerWindow;
@@ -74,16 +73,17 @@ const AiModelManager: React.FC<AiModelManagerProps> = ({ onClose, store: externa
 
   const handleDeleteServer = async (id: string) => {
     const config = aiModelConfigs.find((c: AiModelConfig) => c.id === id);
-    showConfirmDialog({
+    const confirmed = await confirm({
       title: '删除确认',
       message: `确定要删除AI模型配置 "${config?.name || 'Unknown'}" 吗？此操作无法撤销。`,
       confirmText: '删除',
       cancelText: '取消',
       type: 'danger',
-      onConfirm: async () => {
-        await deleteAiModelConfig(id);
-      }
     });
+    if (!confirmed) {
+      return;
+    }
+    await deleteAiModelConfig(id);
   };
 
   const toggleServerEnabled = async (config: AiModelConfig) => {
@@ -142,16 +142,6 @@ const AiModelManager: React.FC<AiModelManagerProps> = ({ onClose, store: externa
         </div>
       </div>
 
-      <ConfirmDialog
-        isOpen={dialogState.isOpen}
-        title={dialogState.title}
-        message={dialogState.message}
-        confirmText={dialogState.confirmText}
-        cancelText={dialogState.cancelText}
-        type={dialogState.type}
-        onConfirm={handleConfirm}
-        onCancel={handleCancel}
-      />
     </div>
   );
 };

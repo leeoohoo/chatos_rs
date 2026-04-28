@@ -5,6 +5,10 @@ use axum::{
 
 mod contracts;
 mod history;
+mod history_compact;
+mod history_display;
+mod history_process;
+mod history_process_support;
 mod mcp_server_handlers;
 mod message_handlers;
 mod session_handlers;

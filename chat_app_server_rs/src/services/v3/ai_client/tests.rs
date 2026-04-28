@@ -262,6 +262,84 @@ async fn recovers_missing_tool_call_output_with_pending_tool_items_merged() {
 }
 
 #[tokio::test]
+async fn falls_back_to_stateless_when_tool_call_response_has_no_response_id() {
+    let steps = vec![
+        MockProviderStep::json(
+            StatusCode::OK,
+            json!({
+                "status": "completed",
+                "output": [{
+                    "type": "function_call",
+                    "call_id": "call_tool_missing_resp_id",
+                    "name": "demo_echo",
+                    "arguments": "{\"text\":\"hello\"}"
+                }]
+            }),
+        ),
+        MockProviderStep::json(
+            StatusCode::OK,
+            json!({
+                "id": "resp_after_stateless_fallback",
+                "status": "completed",
+                "output_text": "stateless fallback success"
+            }),
+        ),
+    ];
+    let (base_url, captured, server) = start_mock_provider(steps).await;
+    let mut client = build_test_client(base_url);
+
+    let result = run_process_with_tools(
+        &mut client,
+        RunProcessWithToolsArgs {
+            previous_response_id: Some("prev_resp_tool_seed".to_string()),
+            tools: vec![demo_echo_tool()],
+            callbacks: empty_callbacks(),
+            use_prev_id: true,
+            can_use_prev_id: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("missing tool response_id should fallback to stateless mode");
+    server.abort();
+
+    assert_eq!(
+        result.get("content").and_then(|value| value.as_str()),
+        Some("stateless fallback success")
+    );
+
+    let requests = captured.lock().await.clone();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        requests[0]
+            .get("previous_response_id")
+            .and_then(|value| value.as_str()),
+        Some("prev_resp_tool_seed")
+    );
+    assert!(requests[1].get("previous_response_id").is_none());
+    assert!(requests[1]
+        .get("input")
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            let has_user = items.iter().any(|item| {
+                item.get("role").and_then(|value| value.as_str()) == Some("user")
+            });
+            let has_call = items.iter().any(|item| {
+                item.get("type").and_then(|value| value.as_str()) == Some("function_call")
+                    && item.get("call_id").and_then(|value| value.as_str())
+                        == Some("call_tool_missing_resp_id")
+            });
+            let has_output = items.iter().any(|item| {
+                item.get("type").and_then(|value| value.as_str()) == Some("function_call_output")
+                    && item.get("call_id").and_then(|value| value.as_str())
+                        == Some("call_tool_missing_resp_id")
+            });
+            has_user && has_call && has_output
+        })
+        .unwrap_or(false));
+}
+
+#[tokio::test]
 async fn recovers_missing_tool_call_output_in_stream_mode_with_pending_items_merged() {
     let first_stream_events = vec![json!({
         "type": "response.completed",

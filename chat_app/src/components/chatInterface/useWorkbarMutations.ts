@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react';
 import type { TaskWorkbarItem } from '../TaskWorkbar';
 import type { TaskOutcomeDraft } from '../taskWorkbar/TaskOutcomeModal';
+import { useDialogService } from '../ui/DialogProvider';
 
 interface WorkbarMutationApiClient {
   completeTaskManagerTask: (
@@ -56,6 +57,7 @@ export function useWorkbarMutations({
   refreshWorkbarTasks,
   setWorkbarError,
 }: UseWorkbarMutationsArgs) {
+  const { confirm } = useDialogService();
   const [workbarActionLoadingTaskId, setWorkbarActionLoadingTaskId] = useState<string | null>(null);
   const [taskModalOpen, setTaskModalOpen] = useState(false);
   const [taskModalMode, setTaskModalMode] = useState<TaskModalMode>('edit');
@@ -100,17 +102,21 @@ export function useWorkbarMutations({
     if (!currentSessionId) {
       return;
     }
-    if (typeof window !== 'undefined') {
-      const confirmed = window.confirm('Delete task "' + task.title + '"?');
-      if (!confirmed) {
-        return;
-      }
+    const confirmed = await confirm({
+      title: 'Delete Task',
+      message: `Delete task "${task.title}"?`,
+      confirmText: 'Delete',
+      cancelText: 'Cancel',
+      type: 'danger',
+    });
+    if (!confirmed) {
+      return;
     }
 
     await withWorkbarTaskMutation(task.id, async () => {
       await apiClient.deleteTaskManagerTask(currentSessionId, task.id);
     });
-  }, [apiClient, currentSessionId, withWorkbarTaskMutation]);
+  }, [apiClient, confirm, currentSessionId, withWorkbarTaskMutation]);
 
   const handleWorkbarEditTask = useCallback(async (task: TaskWorkbarItem) => {
     setTaskModalMode('edit');

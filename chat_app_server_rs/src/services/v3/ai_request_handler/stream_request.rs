@@ -2,16 +2,18 @@ use serde_json::json;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
+use crate::core::messages::owned_non_empty_text;
 use crate::services::ai_common::{
-    await_with_optional_abort, build_assistant_message_metadata, build_bearer_post_request,
-    consume_sse_stream, truncate_log,
+    consume_sse_stream, emit_stream_callbacks, read_error_response_text,
+    parsed_stream_response_is_empty, send_bearer_json_request,
+    EMPTY_STREAM_RESPONSE_PARSE_ERROR,
 };
 
 use super::parser::{
     apply_stream_event, collect_stream_tool_calls, extract_output_text,
     extract_reasoning_from_response, extract_tool_calls, StreamState,
 };
-use super::{should_persist_assistant_message, AiRequestHandler, AiResponse, StreamCallbacks};
+use super::{persist_assistant_response_if_needed, AiRequestHandler, AiResponse, StreamCallbacks};
 
 impl AiRequestHandler {
     pub(super) async fn handle_stream_request(
@@ -27,19 +29,23 @@ impl AiRequestHandler {
         message_mode: Option<String>,
         message_source: Option<String>,
     ) -> Result<AiResponse, String> {
-        let req =
-            build_bearer_post_request(&self.client, &url, &self.api_key, force_identity_encoding);
-        let resp = await_with_optional_abort(req.json(&payload).send(), token.clone()).await?;
+        let resp = send_bearer_json_request(
+            &self.client,
+            &url,
+            &self.api_key,
+            &payload,
+            token.clone(),
+            force_identity_encoding,
+        )
+        .await?;
 
         let status = resp.status();
         if !status.is_success() {
-            let text = resp.text().await.unwrap_or_default();
-            let err_text = truncate_log(&text, 2000);
-            error!(
-                "[AI_V3] stream request failed: status={}, error={}",
-                status, err_text
-            );
-            return Err(format!("status {}: {}", status, err_text));
+            let err = read_error_response_text(resp)
+                .await
+                .unwrap_or_else(|inner| format!("status {}: {}", status, inner));
+            error!("[AI_V3] stream request failed: {}", err);
+            return Err(err);
         }
 
         let stream = resp.bytes_stream();
@@ -49,29 +55,18 @@ impl AiRequestHandler {
         consume_sse_stream(stream, token.clone(), |v| {
             parsed_event_count += 1;
             let payload = apply_stream_event(&mut stream_state, &v);
-            if let Some(chunk) = payload.chunk {
-                if let Some(cb) = &callbacks.on_chunk {
-                    cb(chunk);
-                }
-            }
-            if let Some(thinking) = payload.thinking {
-                if let Some(cb) = &callbacks.on_thinking {
-                    cb(thinking);
-                }
-            }
+            emit_stream_callbacks(&callbacks, payload.chunk, payload.thinking);
         })
         .await?;
 
-        let parsed_empty_response = parsed_event_count == 0
-            && stream_state.response_obj.is_none()
-            && stream_state.full_content.trim().is_empty()
-            && stream_state.reasoning.trim().is_empty()
-            && stream_state.provider_error.is_none();
+        let parsed_empty_response = parsed_stream_response_is_empty(
+            parsed_event_count,
+            stream_state.full_content.as_str(),
+            stream_state.reasoning.as_str(),
+            stream_state.response_obj.is_some() || stream_state.provider_error.is_some(),
+        );
         if parsed_empty_response {
-            return Err(
-                "stream response parse failed: no valid SSE events parsed from provider"
-                    .to_string(),
-            );
+            return Err(EMPTY_STREAM_RESPONSE_PARSE_ERROR.to_string());
         }
 
         let response_val = stream_state
@@ -92,16 +87,10 @@ impl AiRequestHandler {
                 }
             }
         }
-        let reasoning_opt = if stream_state.reasoning.is_empty() {
+        let reasoning_opt = owned_non_empty_text(stream_state.reasoning.as_str()).or_else(|| {
             let fallback = extract_reasoning_from_response(&response_val);
-            if fallback.is_empty() {
-                None
-            } else {
-                Some(fallback)
-            }
-        } else {
-            Some(stream_state.reasoning.clone())
-        };
+            owned_non_empty_text(fallback.as_str())
+        });
         if stream_state.finish_reason.is_none() {
             stream_state.finish_reason = response_val
                 .get("status")
@@ -133,49 +122,21 @@ impl AiRequestHandler {
                 response_val.get("error").cloned().filter(|v| !v.is_null());
         }
 
-        let should_persist = should_persist_assistant_message(
+        persist_assistant_response_if_needed(
+            self,
+            session_id.clone(),
+            turn_id.clone(),
+            persist_messages,
+            message_mode,
+            message_source,
             content.as_str(),
-            reasoning_opt.as_deref(),
-            tool_calls.as_ref(),
-            stream_state.finish_reason.as_deref(),
-        );
-        if persist_messages && should_persist {
-            if let Some(session_id) = session_id.clone() {
-                let meta_val = build_assistant_message_metadata(
-                    tool_calls.as_ref(),
-                    stream_state.response_id.as_deref(),
-                    turn_id.as_deref(),
-                    stream_state.finish_reason.as_deref(),
-                );
-                if let Err(err) = self
-                    .message_manager
-                    .save_assistant_message(
-                        &session_id,
-                        &content,
-                        None,
-                        reasoning_opt.clone(),
-                        message_mode,
-                        message_source,
-                        meta_val,
-                        tool_calls.clone(),
-                    )
-                    .await
-                {
-                    error!(
-                        "[AI_V3] save assistant message failed: session_id={}, detail={}",
-                        session_id, err
-                    );
-                }
-            }
-        } else if persist_messages {
-            info!(
-                "[AI_V3] skip assistant message persistence due to non-terminal empty stream response: session_id={}, turn_id={}, response_id={}, finish_reason={}",
-                session_id.clone().unwrap_or_else(|| "n/a".to_string()),
-                turn_id.clone().unwrap_or_else(|| "n/a".to_string()),
-                stream_state.response_id.as_deref().unwrap_or("none"),
-                stream_state.finish_reason.as_deref().unwrap_or("none")
-            );
-        }
+            reasoning_opt.clone(),
+            tool_calls.clone(),
+            stream_state.response_id.clone(),
+            stream_state.finish_reason.clone(),
+            "non-terminal empty stream response",
+        )
+        .await;
 
         Ok(AiResponse {
             content,

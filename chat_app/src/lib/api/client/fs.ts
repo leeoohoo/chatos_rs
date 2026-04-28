@@ -1,5 +1,6 @@
 import {
   ApiRequestError,
+  buildParsedJsonErrorPayload,
   guessFilenameFromPath,
   parseFilenameFromContentDisposition,
 } from './shared';
@@ -34,22 +35,12 @@ export const downloadFsEntry = async (
 
   if (!response.ok) {
     const text = await response.text();
-    let message = `HTTP error! status: ${response.status}`;
-    let code: string | undefined;
-    let payload: any = null;
-    if (text) {
-      try {
-        const parsed = JSON.parse(text);
-        payload = parsed;
-        code = typeof parsed?.code === 'string' ? parsed.code : undefined;
-        message =
-          (typeof parsed?.error === 'string' && parsed.error) ||
-          (typeof parsed?.message === 'string' && parsed.message) ||
-          message;
-      } catch {
-        message = text;
-      }
-    }
+    const fallbackMessage = `HTTP error! status: ${response.status}`;
+    const {
+      message,
+      code,
+      payload,
+    } = buildParsedJsonErrorPayload(text, fallbackMessage);
     throw new ApiRequestError(message, {
       status: response.status,
       code,

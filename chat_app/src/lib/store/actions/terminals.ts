@@ -1,10 +1,12 @@
 import type { Terminal } from '../../../types';
 import type ApiClient from '../../api/client';
+import { ApiRequestError } from '../../api/client/shared';
 import { normalizeTerminal } from '../helpers/terminals';
+import type { ChatStoreDraft, ChatStoreGet, ChatStoreSet } from '../types';
 
 interface Deps {
-  set: any;
-  get: any;
+  set: ChatStoreSet;
+  get: ChatStoreGet;
   client: ApiClient;
   getUserIdParam: () => string;
 }
@@ -16,7 +18,7 @@ export function createTerminalActions({ set, get, client, getUserIdParam }: Deps
         const uid = getUserIdParam();
         const list = await client.listTerminals(uid);
         const formatted = Array.isArray(list) ? list.map(normalizeTerminal) : [];
-        set((state: any) => {
+        set((state: ChatStoreDraft) => {
           state.terminals = formatted;
           if (!state.currentTerminalId) {
             const lastId = localStorage.getItem(`lastTerminalId_${uid}`);
@@ -31,13 +33,19 @@ export function createTerminalActions({ set, get, client, getUserIdParam }: Deps
             const matched = formatted.find(t => t.id === state.currentTerminalId);
             if (matched) {
               state.currentTerminal = matched;
+            } else {
+              state.currentTerminalId = null;
+              state.currentTerminal = null;
+              if (state.activePanel === 'terminal') {
+                state.activePanel = 'chat';
+              }
             }
           }
         });
         return formatted;
       } catch (error) {
         console.error('Failed to load terminals:', error);
-        set((state: any) => {
+        set((state: ChatStoreDraft) => {
           state.error = error instanceof Error ? error.message : 'Failed to load terminals';
         });
         return [];
@@ -53,7 +61,7 @@ export function createTerminalActions({ set, get, client, getUserIdParam }: Deps
       };
       const created = await client.createTerminal(payload);
       const terminal = normalizeTerminal(created);
-      set((state: any) => {
+      set((state: ChatStoreDraft) => {
         state.terminals.unshift(terminal);
         state.currentTerminalId = terminal.id;
         state.currentTerminal = terminal;
@@ -66,8 +74,8 @@ export function createTerminalActions({ set, get, client, getUserIdParam }: Deps
     deleteTerminal: async (terminalId: string) => {
       try {
         await client.deleteTerminal(terminalId);
-        set((state: any) => {
-          state.terminals = state.terminals.filter((t: any) => t.id !== terminalId);
+        set((state: ChatStoreDraft) => {
+          state.terminals = state.terminals.filter((terminal) => terminal.id !== terminalId);
           if (state.currentTerminalId === terminalId) {
             state.currentTerminalId = null;
             state.currentTerminal = null;
@@ -78,7 +86,7 @@ export function createTerminalActions({ set, get, client, getUserIdParam }: Deps
         });
       } catch (error) {
         console.error('Failed to delete terminal:', error);
-        set((state: any) => {
+        set((state: ChatStoreDraft) => {
           state.error = error instanceof Error ? error.message : 'Failed to delete terminal';
         });
       }
@@ -92,7 +100,7 @@ export function createTerminalActions({ set, get, client, getUserIdParam }: Deps
           terminal = normalizeTerminal(fetched);
         }
         const uid = getUserIdParam();
-        set((state: any) => {
+        set((state: ChatStoreDraft) => {
           state.currentTerminalId = terminalId;
           state.currentTerminal = terminal;
           state.activePanel = 'terminal';
@@ -100,7 +108,14 @@ export function createTerminalActions({ set, get, client, getUserIdParam }: Deps
         localStorage.setItem(`lastTerminalId_${uid}`, terminalId);
       } catch (error) {
         console.error('Failed to select terminal:', error);
-        set((state: any) => {
+        set((state: ChatStoreDraft) => {
+          if (error instanceof ApiRequestError && error.status === 404 && state.currentTerminalId === terminalId) {
+            state.currentTerminalId = null;
+            state.currentTerminal = null;
+            if (state.activePanel === 'terminal') {
+              state.activePanel = 'chat';
+            }
+          }
           state.error = error instanceof Error ? error.message : 'Failed to select terminal';
         });
       }

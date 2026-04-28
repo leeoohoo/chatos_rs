@@ -3,6 +3,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { normalizeProjectScopeId } from '../../../features/contactSession/sessionResolver';
 import type { ProjectContactLinkResponse } from '../../../lib/api/client/types';
 import type { ContactRecord } from '../../../lib/store/types';
+import {
+  normalizeProjectContactLinks,
+  normalizeProjectMemberContacts,
+} from '../../../lib/domain/projectMembers';
+import { useDialogService } from '../../ui/DialogProvider';
 import type { ContactItem, ProjectContactLink } from './types';
 
 interface ProjectMembersApiClient {
@@ -41,56 +46,6 @@ interface UseProjectMembersManagerResult {
   selectMemberPickerContact: (contactId: string | null) => void;
 }
 
-const normalizeContactList = (value: unknown): ContactItem[] => {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  const out: ContactItem[] = [];
-  for (const item of value) {
-    const id = typeof item?.id === 'string' ? item.id.trim() : '';
-    const agentId = typeof item?.agentId === 'string' ? item.agentId.trim() : '';
-    if (!id || !agentId) {
-      continue;
-    }
-    const name = typeof item?.name === 'string' && item.name.trim()
-      ? item.name.trim()
-      : id;
-    out.push({ id, agentId, name });
-  }
-  return out;
-};
-
-const readStringField = (value: unknown, key: string): string => {
-  if (!value || typeof value !== 'object') {
-    return '';
-  }
-  const raw = (value as Record<string, unknown>)[key];
-  return typeof raw === 'string' ? raw.trim() : '';
-};
-
-const normalizeProjectContactRows = (value: unknown): ProjectContactLink[] => {
-  const deduped = new Map<string, ProjectContactLink>();
-  for (const item of Array.isArray(value) ? value : []) {
-    const contactId = readStringField(item, 'contact_id');
-    const agentId = readStringField(item, 'agent_id');
-    if (!contactId || !agentId) {
-      continue;
-    }
-    const name = readStringField(item, 'agent_name_snapshot') || contactId;
-    const ts = new Date(
-      readStringField(item, 'updated_at')
-      || readStringField(item, 'last_bound_at')
-      || Date.now(),
-    ).getTime();
-    const updatedAt = Number.isFinite(ts) ? ts : 0;
-    const current = deduped.get(contactId);
-    if (!current || updatedAt >= current.updatedAt) {
-      deduped.set(contactId, { contactId, agentId, name, updatedAt });
-    }
-  }
-  return Array.from(deduped.values()).sort((left, right) => right.updatedAt - left.updatedAt);
-};
-
 export const useProjectMembersManager = ({
   apiClient,
   projectId,
@@ -98,6 +53,7 @@ export const useProjectMembersManager = ({
   loadContacts,
   onMemberRemoved,
 }: UseProjectMembersManagerOptions): UseProjectMembersManagerResult => {
+  const { confirm } = useDialogService();
   const [projectMembers, setProjectMembers] = useState<ProjectContactLink[]>([]);
   const [projectMembersLoading, setProjectMembersLoading] = useState(false);
   const [projectMembersError, setProjectMembersError] = useState<string | null>(null);
@@ -155,7 +111,7 @@ export const useProjectMembersManager = ({
         if (cancelled) {
           return;
         }
-        setProjectMembers(normalizeProjectContactRows(rows));
+        setProjectMembers(normalizeProjectContactLinks(rows));
       } catch (error) {
         if (!cancelled) {
           setProjectMembersError(error instanceof Error ? error.message : '加载项目成员失败');
@@ -178,7 +134,7 @@ export const useProjectMembersManager = ({
     let latestContacts = contacts || [];
     try {
       const loaded = await loadContacts();
-      const normalizedLoaded = normalizeContactList(loaded);
+      const normalizedLoaded = normalizeProjectMemberContacts(loaded);
       if (normalizedLoaded.length > 0) {
         latestContacts = normalizedLoaded;
       }
@@ -217,9 +173,13 @@ export const useProjectMembersManager = ({
     if (!projectId) {
       return false;
     }
-    const confirmed = typeof window === 'undefined'
-      ? true
-      : window.confirm(`确定将 ${contact.name} 从当前项目团队中移除吗？`);
+    const confirmed = await confirm({
+      title: '移除项目成员',
+      message: `确定将 ${contact.name} 从当前项目团队中移除吗？`,
+      confirmText: '移除',
+      cancelText: '取消',
+      type: 'danger',
+    });
     if (!confirmed) {
       return false;
     }
@@ -238,7 +198,7 @@ export const useProjectMembersManager = ({
     } finally {
       setRemovingContactId((prev) => (prev === contact.id ? null : prev));
     }
-  }, [apiClient, emitProjectContactChanged, onMemberRemoved, projectId]);
+  }, [apiClient, confirm, emitProjectContactChanged, onMemberRemoved, projectId]);
 
   const closeMemberPicker = useCallback(() => {
     setMemberPickerOpen(false);

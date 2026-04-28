@@ -2,37 +2,15 @@ import type {
   AiModelConfig,
   Attachment,
   ContentSegment,
+  DraftUserMessageSnapshot,
   Message,
+  MessageHistoryProcessState,
   ToolCall,
+  UnavailableToolInfo,
 } from '../../../../types';
 
-export interface MessageHistoryProcessState {
-  hasProcess: boolean;
-  toolCallCount: number;
-  thinkingCount: number;
-  unavailableToolCount?: number;
-  processMessageCount: number;
-  userMessageId: string;
-  turnId: string;
-  finalAssistantMessageId: string | null;
-  expanded: boolean;
-  loaded: boolean;
-  loading: boolean;
-}
-
-export interface UnavailableToolEntry {
-  id: string;
-  serverName: string;
-  toolName: string;
-  reason: string;
-  createdAt: string;
-}
-
-export interface DraftUserMessageSnapshot {
-  id: string;
-  content: string;
-  createdAt: string;
-}
+export type UnavailableToolEntry = UnavailableToolInfo;
+export type { DraftUserMessageSnapshot, MessageHistoryProcessState };
 
 export interface MessageModelConfigMetadata {
   id: string;

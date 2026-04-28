@@ -6,25 +6,14 @@ import type {
   RemoteSftpEntriesResponse,
   RemoteSftpTransferStatusResponse,
 } from '../../lib/api/client/types';
+import { normalizeFsEntry } from '../../lib/domain/filesystem';
 import type { FsEntry } from '../../types';
 
 import type { RemoteEntry, SftpTransferStatus } from './types';
 
-export const normalizeLocalEntry = (raw: FsEntryResponse): FsEntry => ({
-  name: raw?.name ?? '',
-  path: raw?.path ?? '',
-  isDir: raw?.is_dir ?? raw?.isDir ?? false,
-  size: raw?.size ?? null,
-  modifiedAt: raw?.modified_at ?? raw?.modifiedAt ?? null,
-});
+export const normalizeLocalEntry = (raw: FsEntryResponse): FsEntry => normalizeFsEntry(raw);
 
-export const normalizeRemoteEntry = (raw: RemoteSftpEntryResponse): RemoteEntry => ({
-  name: raw?.name ?? '',
-  path: raw?.path ?? '',
-  isDir: raw?.is_dir ?? raw?.isDir ?? false,
-  size: raw?.size ?? null,
-  modifiedAt: raw?.modified_at ?? raw?.modifiedAt ?? null,
-});
+export const normalizeRemoteEntry = (raw: RemoteSftpEntryResponse): RemoteEntry => normalizeFsEntry(raw);
 
 export const normalizeTransferStatus = (
   raw: RemoteSftpTransferStatusResponse,

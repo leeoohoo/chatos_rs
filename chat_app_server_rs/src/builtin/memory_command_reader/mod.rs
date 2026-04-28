@@ -1,10 +1,10 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use serde_json::{json, Value};
 
 use crate::core::async_bridge::block_on_result;
 use crate::core::tool_io::text_result;
+use crate::core::tool_registry::ToolRegistry;
 use crate::services::memory_server_client;
 
 #[derive(Debug, Clone)]
@@ -15,15 +15,7 @@ pub struct MemoryCommandReaderOptions {
 
 #[derive(Clone)]
 pub struct MemoryCommandReaderService {
-    tools: HashMap<String, Tool>,
-}
-
-#[derive(Clone)]
-struct Tool {
-    name: String,
-    description: String,
-    input_schema: Value,
-    handler: ToolHandler,
+    registry: ToolRegistry<ToolHandler>,
 }
 
 type ToolHandler = Arc<dyn Fn(Value) -> Result<Value, String> + Send + Sync>;
@@ -35,28 +27,19 @@ fn normalize_lookup_token(value: &str) -> String {
 impl MemoryCommandReaderService {
     pub fn new(opts: MemoryCommandReaderOptions) -> Result<Self, String> {
         let mut service = Self {
-            tools: HashMap::new(),
+            registry: ToolRegistry::new(),
         };
         service.register_get_command_detail(opts.server_name.as_str(), opts.agent_id.as_str());
         Ok(service)
     }
 
     pub fn list_tools(&self) -> Vec<Value> {
-        self.tools
-            .values()
-            .map(|tool| {
-                json!({
-                    "name": tool.name,
-                    "description": tool.description,
-                    "inputSchema": tool.input_schema,
-                })
-            })
-            .collect()
+        self.registry.list_tools()
     }
 
     pub fn call_tool(&self, name: &str, args: Value) -> Result<Value, String> {
         let tool = self
-            .tools
+            .registry
             .get(name)
             .ok_or_else(|| format!("Tool not found: {name}"))?;
         (tool.handler)(args)
@@ -69,15 +52,8 @@ impl MemoryCommandReaderService {
         input_schema: Value,
         handler: ToolHandler,
     ) {
-        self.tools.insert(
-            name.to_string(),
-            Tool {
-                name: name.to_string(),
-                description: description.to_string(),
-                input_schema,
-                handler,
-            },
-        );
+        self.registry
+            .register_tool(name, description, input_schema, handler);
     }
 
     fn register_get_command_detail(&mut self, server_name: &str, agent_id: &str) {

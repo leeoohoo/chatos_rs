@@ -174,7 +174,7 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
       )}
       <SessionListDialogs
         createContactModalOpen={controller.contactSessionCreator.createContactModalOpen}
-        agents={(controller.agents || []) as any[]}
+        agents={controller.agents || []}
         existingContactAgentIds={controller.existingContactAgentIds}
         selectedContactAgentId={controller.contactSessionCreator.selectedContactAgentId}
         contactError={controller.contactSessionCreator.contactError}
@@ -285,9 +285,6 @@ export const SessionList: React.FC<SessionListProps> = (props) => {
         setDirPickerCreateModalOpen={controller.localFsPickers.setDirPickerCreateModalOpen}
         setDirPickerNewFolderName={controller.localFsPickers.setDirPickerNewFolderName}
         createDirInPicker={controller.localFsPickers.createDirInPicker}
-        dialogState={controller.dialogState}
-        handleConfirm={controller.handleConfirm}
-        handleCancel={controller.handleCancel}
       />
     </div>
   );

@@ -1,69 +1,47 @@
+#[path = "chat_v3/runtime_guidance.rs"]
+mod runtime_guidance;
+#[path = "chat_v3/tools_panel.rs"]
+mod tools_panel;
+
 use axum::http::StatusCode;
 use axum::{
-    extract::{Path, Query},
+    extract::Path,
     routing::{get, post},
     Json, Router,
 };
-use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::api::chat_stream_common::{
-    build_builtin_mcp_debug_payload, resolve_chat_stream_context,
-    sync_chat_turn_snapshot,
-    validate_chat_stream_request, wire_implicit_command_tracking, ChatStreamRequest,
+    resolve_chat_stream_context, sync_chat_turn_snapshot, validate_chat_stream_request,
+    wire_implicit_command_tracking, ChatStreamRequest,
 };
 use crate::api::conversation_semantics::extract_conversation_scope_id;
 use crate::config::Config;
-use crate::core::builtin_mcp_prompt::compose_effective_builtin_mcp_system_prompt;
 use crate::core::ai_model_config::resolve_chat_model_config;
 use crate::core::ai_settings::chat_max_tokens_from_settings;
 use crate::core::auth::AuthUser;
+use crate::core::builtin_mcp_prompt::compose_effective_builtin_mcp_system_prompt;
 use crate::core::chat_context::maybe_spawn_session_title_rename;
-use crate::core::chat_runtime::project_id_from_metadata;
 use crate::core::chat_stream::{
     build_v3_callbacks, handle_chat_result, send_error_event, send_start_event,
     send_tools_unavailable_event,
 };
-use crate::core::mcp_runtime::{load_mcp_servers_by_selection, McpServerBundle};
-use crate::core::mcp_tools::ToolInfo;
-use crate::core::user_scope::{ensure_and_set_user_id, resolve_user_id};
+use crate::core::user_scope::ensure_and_set_user_id;
 use crate::services::ai_common::normalize_turn_id;
 use crate::services::memory_server_client;
+use crate::services::runtime_guidance_manager::runtime_guidance_manager;
 use crate::services::task_board_prompt::build_runtime_prefixed_input_items;
-use crate::services::runtime_guidance_manager::{runtime_guidance_manager, EnqueueGuidanceError};
 use crate::services::user_settings::{apply_settings_to_ai_client, get_effective_user_settings};
 use crate::services::v3::ai_server::{AiServer, ChatOptions};
 use crate::services::v3::mcp_tool_execute::McpToolExecute;
-use crate::services::v3::message_manager::MessageManager;
 use crate::utils::abort_registry;
 use crate::utils::attachments;
 use crate::utils::log_helpers::{log_chat_begin, log_chat_cancelled, log_chat_error};
 use crate::utils::sse::{sse_channel, SseSender};
 use tracing::warn;
 use uuid::Uuid;
-
-#[derive(Debug, Deserialize)]
-struct UserQuery {
-    user_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct RuntimeGuidanceRequest {
-    #[serde(rename = "conversation_id", alias = "conversationId")]
-    conversation_id: Option<String>,
-    turn_id: Option<String>,
-    content: Option<String>,
-    project_id: Option<String>,
-}
-
-fn normalize_project_scope_id(value: Option<&str>) -> String {
-    let trimmed = value.unwrap_or_default().trim();
-    if trimmed.is_empty() {
-        "0".to_string()
-    } else {
-        trimmed.to_string()
-    }
-}
+use self::runtime_guidance::submit_runtime_guidance;
+use self::tools_panel::{agent_status, agent_tools};
 
 pub fn router() -> Router {
     Router::new()
@@ -97,77 +75,6 @@ async fn agent_chat_stream(
     let (sse, sender) = sse_channel();
     memory_server_client::spawn_with_current_access_token(stream_chat_v3(sender, req));
     Ok(sse)
-}
-
-async fn agent_tools(auth: AuthUser, Query(query): Query<UserQuery>) -> (StatusCode, Json<Value>) {
-    let user_id = match resolve_user_id(query.user_id, &auth) {
-        Ok(user_id) => user_id,
-        Err(err) => return err,
-    };
-    let (http_servers, stdio_servers, builtin_servers): McpServerBundle =
-        load_mcp_servers_by_selection(Some(user_id), false, Vec::new(), None, None).await;
-    let mut exec = McpToolExecute::new(
-        http_servers.clone(),
-        stdio_servers.clone(),
-        builtin_servers.clone(),
-    );
-    if let Err(err) = exec.init().await {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": err })),
-        );
-    }
-    let tools = exec.get_tools();
-    let unavailable_tools = exec.get_unavailable_tools();
-    let builtin_prompt_debug = build_builtin_mcp_debug_payload(
-        builtin_servers.as_slice(),
-        &exec.tool_metadata,
-        unavailable_tools.as_slice(),
-        Some(
-            compose_effective_builtin_mcp_system_prompt(
-                builtin_servers.as_slice(),
-                &exec.tool_metadata,
-                unavailable_tools.as_slice(),
-            )
-            .unwrap_or_default()
-            .as_str(),
-        ),
-    );
-    (
-        StatusCode::OK,
-        Json(json!({
-            "tools": tools,
-            "count": tools.len(),
-            "unavailable_tools": unavailable_tools,
-            "unavailable_count": unavailable_tools.len(),
-            "servers": { "http": http_servers.len(), "stdio": stdio_servers.len(), "builtin": builtin_servers.len() },
-            "builtin_mcp_prompt_debug": builtin_prompt_debug,
-        })),
-    )
-}
-
-async fn agent_status(auth: AuthUser, Query(query): Query<UserQuery>) -> Json<Value> {
-    let cfg = Config::get();
-    let user_id = resolve_user_id(query.user_id, &auth).ok();
-    let (http_servers, stdio_servers, builtin_servers): McpServerBundle =
-        load_mcp_servers_by_selection(user_id, false, Vec::new(), None, None).await;
-    let builtin_prompt_debug = build_builtin_mcp_debug_payload(
-        builtin_servers.as_slice(),
-        &std::collections::HashMap::<String, ToolInfo>::new(),
-        &[],
-        None,
-    );
-    Json(json!({
-        "status": "ok",
-        "version": "3.0.0",
-        "timestamp": crate::core::time::now_rfc3339(),
-        "openai": {
-            "configured": !cfg.openai_api_key.is_empty(),
-            "base_url": cfg.openai_base_url.clone()
-        },
-        "servers": { "http": http_servers.len(), "stdio": stdio_servers.len(), "builtin": builtin_servers.len() },
-        "builtin_mcp_prompt_debug": builtin_prompt_debug,
-    }))
 }
 
 async fn reset_conversation(Path(conversation_id): Path<String>) -> Json<Value> {
@@ -208,190 +115,17 @@ async fn stop_chat(Json(req): Json<Value>) -> (StatusCode, Json<Value>) {
     )
 }
 
-async fn submit_runtime_guidance(
-    auth: AuthUser,
-    Json(req): Json<RuntimeGuidanceRequest>,
-) -> (StatusCode, Json<Value>) {
-    const CONTENT_MAX_LEN: usize = 1000;
-
-    let session_id = req
-        .conversation_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("");
-    let turn_id = normalize_turn_id(req.turn_id.as_deref()).unwrap_or_default();
-    let content = req
-        .content
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("");
-    let requested_project_id = req
-        .project_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned);
-
-    if session_id.is_empty() || turn_id.is_empty() || content.is_empty() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({
-                "success": false,
-                "error": "conversation_id / turn_id / content 不能为空",
-                "code": "invalid_runtime_guidance_payload",
-            })),
-        );
-    }
-    if content.chars().count() > CONTENT_MAX_LEN {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({
-                "success": false,
-                "error": format!("content 长度不能超过 {} 字符", CONTENT_MAX_LEN),
-                "code": "runtime_guidance_too_long",
-                "max_length": CONTENT_MAX_LEN,
-            })),
-        );
-    }
-
-    let auth_user_id = match resolve_user_id(None, &auth) {
-        Ok(user_id) => user_id,
-        Err(err) => return err,
-    };
-    let target_session = match memory_server_client::get_session_by_id(session_id).await {
-        Ok(Some(session)) => session,
-        Ok(None) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({
-                    "success": false,
-                    "error": "对话线程不存在",
-                    "code": "session_not_found",
-                })),
-            );
-        }
-        Err(err) => {
-            warn!(
-                "runtime guidance session lookup failed: session_id={} detail={}",
-                session_id, err
-            );
-            return (
-                StatusCode::BAD_GATEWAY,
-                Json(json!({
-                    "success": false,
-                    "error": "查询对话线程失败",
-                    "code": "session_lookup_failed",
-                })),
-            );
-        }
-    };
-    let session_user_id = target_session.user_id.as_deref().unwrap_or_default().trim();
-    if session_user_id.is_empty() || session_user_id != auth_user_id {
-        return (
-            StatusCode::FORBIDDEN,
-            Json(json!({
-                "success": false,
-                "error": "对话线程不属于当前用户",
-                "code": "user_scope_forbidden",
-            })),
-        );
-    }
-    if let Some(requested_project_id) = requested_project_id.as_deref() {
-        let session_project_id = target_session
-            .project_id
-            .clone()
-            .or_else(|| project_id_from_metadata(target_session.metadata.as_ref()));
-        let requested_scope = normalize_project_scope_id(Some(requested_project_id));
-        let session_scope = normalize_project_scope_id(session_project_id.as_deref());
-        if requested_scope != session_scope {
-            return (
-                StatusCode::CONFLICT,
-                Json(json!({
-                    "success": false,
-                    "error": "对话线程项目不匹配，已阻止跨项目引导",
-                    "code": "project_scope_mismatch",
-                    "session_project_id": session_scope,
-                    "requested_project_id": requested_scope,
-                })),
-            );
-        }
-    }
-
-    if abort_registry::is_aborted(session_id) {
-        return (
-            StatusCode::CONFLICT,
-            Json(json!({
-                "success": false,
-                "error": "当前轮次已停止，不再接收引导",
-                "code": "turn_not_running",
-            })),
-        );
-    }
-
-    let enqueue_result = runtime_guidance_manager().enqueue_guidance(session_id, &turn_id, content);
-    let guidance_item = match enqueue_result {
-        Ok(item) => item,
-        Err(EnqueueGuidanceError::TurnNotRunning) => {
-            return (
-                StatusCode::CONFLICT,
-                Json(json!({
-                    "success": false,
-                    "error": "当前轮次未运行或已结束",
-                    "code": "turn_not_running",
-                })),
-            );
-        }
-    };
-
-    let pending_count = runtime_guidance_manager().pending_count(session_id, &turn_id);
-    let guidance_id = guidance_item.guidance_id.clone();
-
-    let metadata = json!({
-        "conversation_turn_id": turn_id,
-        "hidden": true,
-        "runtime_guidance": {
-            "guidance_id": guidance_item.guidance_id,
-            "status": "queued",
-            "created_at": guidance_item.created_at,
-        }
-    });
-    let message_manager = MessageManager::new();
-    if let Err(err) = message_manager
-        .save_user_message(
-            session_id,
-            content,
-            Some(guidance_id.clone()),
-            Some("runtime_guidance".to_string()),
-            Some("runtime_guidance".to_string()),
-            Some(metadata),
-        )
-        .await
-    {
-        warn!(
-            "persist runtime guidance failed: session_id={} turn_id={} guidance_id={} detail={}",
-            session_id, turn_id, guidance_id, err
-        );
-    }
-
-    (
-        StatusCode::OK,
-        Json(json!({
-            "success": true,
-            "conversation_id": session_id,
-            "guidance_id": guidance_id,
-            "status": "queued",
-            "pending_count": pending_count,
-            "turn_id": turn_id,
-        })),
-    )
-}
-
 async fn stream_chat_v3(sender: SseSender, req: ChatStreamRequest) {
     let session_id = req.conversation_id.clone().unwrap_or_default();
     let content = req.content.clone().unwrap_or_default();
-    let cfg = Config::get();
+    let cfg = match Config::try_get() {
+        Ok(cfg) => cfg,
+        Err(err) => {
+            send_error_event(&sender, format!("服务配置未初始化: {err}").as_str());
+            sender.send_done();
+            return;
+        }
+    };
 
     send_start_event(&sender, &session_id);
 
@@ -458,7 +192,7 @@ async fn stream_chat_v3(sender: SseSender, req: ChatStreamRequest) {
     let unavailable_tools = mcp_exec.get_unavailable_tools();
     runtime_context.builtin_mcp_system_prompt = compose_effective_builtin_mcp_system_prompt(
         builtin_servers.as_slice(),
-        &mcp_exec.tool_metadata,
+        mcp_exec.tool_metadata(),
         unavailable_tools.as_slice(),
     );
     let prefixed_input_items = build_runtime_prefixed_input_items(
@@ -470,7 +204,7 @@ async fn stream_chat_v3(sender: SseSender, req: ChatStreamRequest) {
     )
     .await;
     send_tools_unavailable_event(&sender, unavailable_tools.as_slice());
-    let mcp_tool_metadata = mcp_exec.tool_metadata.clone();
+    let mcp_tool_metadata = mcp_exec.tool_metadata().clone();
     ai_server.set_mcp_tool_execute(mcp_exec);
     ai_server.ai_client.set_task_board_refresh_context(
         Some(session_id.clone()),

@@ -104,8 +104,7 @@ fn emit_task_board_updated_event(ctx: &ToolContext) {
     let Some(task_board_prompt) = block_on_option(enqueue_task_board_refresh(
         ctx.conversation_id,
         ctx.conversation_turn_id,
-    ))
-    else {
+    )) else {
         return;
     };
 

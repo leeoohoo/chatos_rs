@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import type React from 'react';
+import type { ExplorerContextMenuState } from './useProjectExplorerState';
 import type { WorkspaceTab } from './WorkspaceTabs';
 
 interface Params {
@@ -11,8 +12,8 @@ interface Params {
   setShowOnlyChanged: React.Dispatch<React.SetStateAction<boolean>>;
   workspaceTab: WorkspaceTab;
   setWorkspaceTab: React.Dispatch<React.SetStateAction<WorkspaceTab>>;
-  contextMenu: any;
-  setContextMenu: React.Dispatch<React.SetStateAction<any>>;
+  contextMenu: ExplorerContextMenuState | null;
+  setContextMenu: React.Dispatch<React.SetStateAction<ExplorerContextMenuState | null>>;
   isResizing: boolean;
   resizeStartX: React.MutableRefObject<number>;
   resizeStartWidth: React.MutableRefObject<number>;

@@ -24,7 +24,7 @@ interface TerminalApiClient {
 
 interface UseTerminalRuntimeParams {
   currentTerminal: Terminal | null;
-  loadTerminals: () => void | Promise<any>;
+  loadTerminals: () => void | Promise<unknown>;
   client: TerminalApiClient;
   accessToken?: string | null;
   actualTheme: 'light' | 'dark';

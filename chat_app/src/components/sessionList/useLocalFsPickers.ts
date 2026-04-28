@@ -1,4 +1,8 @@
 import { useCallback, useMemo, useState, type Dispatch, type SetStateAction } from 'react';
+import type {
+  FsEntriesResponse,
+  FsMutationResponse,
+} from '../../lib/api/client/types';
 import type { FsEntry } from '../../types';
 import {
   deriveParentPath,
@@ -9,9 +13,9 @@ import {
 } from './helpers';
 
 interface FsPickerApiClient {
-  listFsDirectories: (path?: string) => Promise<any>;
-  createFsDirectory: (basePath: string, name: string) => Promise<any>;
-  listFsEntries: (path?: string) => Promise<any>;
+  listFsDirectories: (path?: string) => Promise<FsEntriesResponse>;
+  createFsDirectory: (basePath: string, name: string) => Promise<FsMutationResponse>;
+  listFsEntries: (path?: string) => Promise<FsEntriesResponse>;
 }
 
 interface UseLocalFsPickersOptions {
@@ -65,6 +69,10 @@ interface UseLocalFsPickersResult {
   setKeyFilePickerOpen: Dispatch<SetStateAction<boolean>>;
 }
 
+const readErrorMessage = (error: unknown, fallback: string): string => (
+  error instanceof Error ? error.message : fallback
+);
+
 export const useLocalFsPickers = ({
   apiClient,
   projectRoot,
@@ -111,16 +119,16 @@ export const useLocalFsPickers = ({
       setDirPickerParent(data?.parent ?? null);
       setDirPickerEntries(
         Array.isArray(data?.entries)
-          ? data.entries.map((entry: any) => normalizeFsEntry(entry, true))
+          ? data.entries.map((entry) => normalizeFsEntry(entry, true))
           : [],
       );
       setDirPickerRoots(
         Array.isArray(data?.roots)
-          ? data.roots.map((entry: any) => normalizeFsEntry(entry, true))
+          ? data.roots.map((entry) => normalizeFsEntry(entry, true))
           : [],
       );
-    } catch (err: any) {
-      setDirPickerError(err?.message || '加载目录失败');
+    } catch (err) {
+      setDirPickerError(readErrorMessage(err, '加载目录失败'));
     } finally {
       setDirPickerLoading(false);
     }
@@ -185,8 +193,8 @@ export const useLocalFsPickers = ({
       }
 
       await loadDirEntries(createdPath);
-    } catch (err: any) {
-      setDirPickerError(err?.message || '新建目录失败');
+    } catch (err) {
+      setDirPickerError(readErrorMessage(err, '新建目录失败'));
     } finally {
       setDirPickerCreatingFolder(false);
     }
@@ -219,16 +227,16 @@ export const useLocalFsPickers = ({
       setKeyFilePickerParent(data?.parent ?? null);
       setKeyFilePickerEntries(
         Array.isArray(data?.entries)
-          ? data.entries.map((entry: any) => normalizeFsEntry(entry, false))
+          ? data.entries.map((entry) => normalizeFsEntry(entry, false))
           : [],
       );
       setKeyFilePickerRoots(
         Array.isArray(data?.roots)
-          ? data.roots.map((entry: any) => normalizeFsEntry(entry, false))
+          ? data.roots.map((entry) => normalizeFsEntry(entry, false))
           : [],
       );
-    } catch (err: any) {
-      setKeyFilePickerError(err?.message || '加载文件列表失败');
+    } catch (err) {
+      setKeyFilePickerError(readErrorMessage(err, '加载文件列表失败'));
     } finally {
       setKeyFilePickerLoading(false);
     }

@@ -271,8 +271,8 @@ fn normalize_builtin_mcp_prompt(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
     use serde_json::json;
+    use std::collections::HashMap;
 
     use super::{build_turn_runtime_snapshot_payload, BuildTurnRuntimeSnapshotInput};
     use crate::core::builtin_mcp_prompt::BuiltinMcpPromptBuildResult;
@@ -343,8 +343,14 @@ mod tests {
 
         let runtime = payload.runtime.expect("runtime");
         assert_eq!(runtime.unavailable_builtin_tools.len(), 1);
-        assert_eq!(runtime.unavailable_builtin_tools[0].server_name, "browser_tools");
-        assert_eq!(runtime.unavailable_builtin_tools[0].tool_name, "browser_inspect");
+        assert_eq!(
+            runtime.unavailable_builtin_tools[0].server_name,
+            "browser_tools"
+        );
+        assert_eq!(
+            runtime.unavailable_builtin_tools[0].tool_name,
+            "browser_inspect"
+        );
         assert_eq!(
             runtime.unavailable_builtin_tools[0].reason.as_deref(),
             Some("agent-browser unavailable")
@@ -386,9 +392,15 @@ mod tests {
 
         let runtime = payload.runtime.expect("runtime");
         let builtin = runtime.builtin_mcp_prompt.expect("builtin prompt debug");
-        assert_eq!(builtin.prompt_source_path.as_deref(), Some("BUILTIN_MCP_PROMPT.md"));
+        assert_eq!(
+            builtin.prompt_source_path.as_deref(),
+            Some("BUILTIN_MCP_PROMPT.md")
+        );
         assert!(builtin.all_section_ids.iter().any(|item| item == "global"));
-        assert_eq!(builtin.selected_section_ids, vec!["global", "builtin_task_manager"]);
+        assert_eq!(
+            builtin.selected_section_ids,
+            vec!["global", "builtin_task_manager"]
+        );
         assert_eq!(builtin.omitted_section_ids, vec!["builtin_browser_tools"]);
         assert_eq!(builtin.active_builtin_server_names, vec!["task_manager"]);
         assert_eq!(builtin.omitted_builtin_server_names, vec!["browser_tools"]);

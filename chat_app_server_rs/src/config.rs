@@ -41,11 +41,17 @@ impl Config {
         CONFIG
             .set(cfg)
             .map_err(|_| "Config already initialized".to_string())?;
-        Ok(CONFIG.get().expect("config"))
+        Self::try_get()
     }
 
     pub fn get() -> &'static Config {
-        CONFIG.get().expect("Config not initialized")
+        Self::try_get().unwrap_or_else(|err| panic!("{err}"))
+    }
+
+    pub fn try_get() -> Result<&'static Config, String> {
+        CONFIG
+            .get()
+            .ok_or_else(|| "Config not initialized".to_string())
     }
 
     fn from_env() -> Result<Config, String> {

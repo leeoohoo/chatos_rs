@@ -1,6 +1,9 @@
 use serde_json::Value;
 use tracing::info;
 
+use crate::core::messages::{
+    assistant_message_has_reusable_payload, assistant_message_response_id_candidate,
+};
 use crate::core::mcp_tools::ToolResult;
 use crate::models::message::Message;
 use crate::models::session_summary_v2::SessionSummaryV2;
@@ -60,6 +63,33 @@ impl MessageManager {
                 message_source,
                 metadata,
                 tool_calls,
+            )
+            .await
+    }
+
+    pub async fn save_assistant_response_message(
+        &self,
+        session_id: &str,
+        content: &str,
+        reasoning: Option<String>,
+        message_mode: Option<String>,
+        message_source: Option<String>,
+        tool_calls: Option<Value>,
+        response_id: Option<&str>,
+        turn_id: Option<&str>,
+        response_status: Option<&str>,
+    ) -> Result<Message, String> {
+        self.core
+            .save_assistant_response_message(
+                session_id,
+                content,
+                reasoning,
+                message_mode,
+                message_source,
+                tool_calls,
+                response_id,
+                turn_id,
+                response_status,
             )
             .await
     }
@@ -137,55 +167,7 @@ impl MessageManager {
                 continue;
             }
 
-            let mut tool_calls = message.tool_calls.clone().or_else(|| {
-                message
-                    .metadata
-                    .clone()
-                    .and_then(|meta| meta.get("toolCalls").cloned())
-            });
-            if let Some(Value::String(raw)) = tool_calls.clone() {
-                if let Ok(parsed) = serde_json::from_str::<Value>(&raw) {
-                    tool_calls = Some(parsed);
-                }
-            }
-
-            if let Some(tool_calls) = tool_calls {
-                if tool_calls
-                    .as_array()
-                    .map(|array| !array.is_empty())
-                    .unwrap_or(false)
-                {
-                    info!(
-                        "[AI_V3][prev-id] skip assistant with tool_calls: session_id={}, message_id={}",
-                        session_id,
-                        message.id
-                    );
-                    continue;
-                }
-            }
-
-            let response_status = message
-                .metadata
-                .as_ref()
-                .and_then(extract_response_status_from_metadata);
-            if is_non_terminal_response_status(response_status) {
-                info!(
-                    "[AI_V3][prev-id] skip assistant with non-terminal response status: session_id={}, message_id={}, status={}",
-                    session_id,
-                    message.id,
-                    response_status.unwrap_or("unknown")
-                );
-                continue;
-            }
-
-            let has_content = !message.content.trim().is_empty();
-            let has_reasoning = message
-                .reasoning
-                .as_deref()
-                .map(str::trim)
-                .map(|value| !value.is_empty())
-                .unwrap_or(false);
-            if !has_content && !has_reasoning {
+            if !assistant_message_has_reusable_payload(message) {
                 info!(
                     "[AI_V3][prev-id] skip assistant without reusable payload: session_id={}, message_id={}",
                     session_id,
@@ -194,29 +176,14 @@ impl MessageManager {
                 continue;
             }
 
-            if let Some(metadata) = &message.metadata {
-                if let Some(response_id) =
-                    metadata.get("response_id").and_then(|value| value.as_str())
-                {
-                    info!(
-                        "[AI_V3][prev-id] hit metadata.response_id: session_id={}, message_id={}, response_id={}",
-                        session_id,
-                        message.id,
-                        response_id
-                    );
-                    return Some(response_id.to_string());
-                }
-                if let Some(response_id) =
-                    metadata.get("responseId").and_then(|value| value.as_str())
-                {
-                    info!(
-                        "[AI_V3][prev-id] hit metadata.responseId: session_id={}, message_id={}, response_id={}",
-                        session_id,
-                        message.id,
-                        response_id
-                    );
-                    return Some(response_id.to_string());
-                }
+            if let Some(response_id) = assistant_message_response_id_candidate(message) {
+                info!(
+                    "[AI_V3][prev-id] hit metadata response_id alias: session_id={}, message_id={}, response_id={}",
+                    session_id,
+                    message.id,
+                    response_id
+                );
+                return Some(response_id.to_string());
             }
         }
 
@@ -228,23 +195,90 @@ impl MessageManager {
     }
 }
 
-fn extract_response_status_from_metadata(metadata: &Value) -> Option<&str> {
-    metadata
-        .get("response_status")
-        .or_else(|| metadata.get("responseStatus"))
-        .or_else(|| metadata.get("finish_reason"))
-        .or_else(|| metadata.get("finishReason"))
-        .or_else(|| metadata.get("status"))
-        .and_then(|value| value.as_str())
-}
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
 
-fn is_non_terminal_response_status(status: Option<&str>) -> bool {
-    let normalized = status
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| value.to_ascii_lowercase());
-    matches!(
-        normalized.as_deref(),
-        Some("in_progress") | Some("queued") | Some("pending") | Some("incomplete")
-    )
+    use super::assistant_message_response_id_candidate;
+    use crate::models::message::Message;
+
+    #[test]
+    fn response_id_candidate_accepts_terminal_assistant_with_reusable_payload() {
+        let mut message = Message::new(
+            "session_1".to_string(),
+            "assistant".to_string(),
+            "final answer".to_string(),
+        );
+        message.metadata = Some(json!({
+            "response_id": "resp_ok",
+            "response_status": "completed",
+        }));
+
+        assert_eq!(
+            assistant_message_response_id_candidate(&message),
+            Some("resp_ok")
+        );
+    }
+
+    #[test]
+    fn response_id_candidate_rejects_tool_calls_non_terminal_and_empty_payloads() {
+        let mut tool_call_message = Message::new(
+            "session_1".to_string(),
+            "assistant".to_string(),
+            "final answer".to_string(),
+        );
+        tool_call_message.tool_calls = Some(json!([{
+            "id": "call_1",
+            "type": "function",
+            "function": {"name": "demo", "arguments": "{}"}
+        }]));
+        tool_call_message.metadata = Some(json!({
+            "response_id": "resp_tool",
+            "response_status": "completed",
+        }));
+
+        let mut non_terminal = Message::new(
+            "session_1".to_string(),
+            "assistant".to_string(),
+            "working".to_string(),
+        );
+        non_terminal.metadata = Some(json!({
+            "response_id": "resp_pending",
+            "response_status": "in_progress",
+        }));
+
+        let mut empty_payload = Message::new(
+            "session_1".to_string(),
+            "assistant".to_string(),
+            "   ".to_string(),
+        );
+        empty_payload.reasoning = Some("   ".to_string());
+        empty_payload.metadata = Some(json!({
+            "response_id": "resp_empty",
+            "response_status": "completed",
+        }));
+
+        assert_eq!(assistant_message_response_id_candidate(&tool_call_message), None);
+        assert_eq!(assistant_message_response_id_candidate(&non_terminal), None);
+        assert_eq!(assistant_message_response_id_candidate(&empty_payload), None);
+    }
+
+    #[test]
+    fn response_id_candidate_accepts_reasoning_only_payload() {
+        let mut message = Message::new(
+            "session_1".to_string(),
+            "assistant".to_string(),
+            "".to_string(),
+        );
+        message.reasoning = Some("thinking".to_string());
+        message.metadata = Some(json!({
+            "response_id": "resp_reasoning",
+            "response_status": "completed",
+        }));
+
+        assert_eq!(
+            assistant_message_response_id_candidate(&message),
+            Some("resp_reasoning")
+        );
+    }
 }

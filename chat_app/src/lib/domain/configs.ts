@@ -1,0 +1,145 @@
+import type {
+  AgentConfig,
+  AiModelConfig,
+  McpConfig,
+  SystemContext,
+} from '../../types';
+import type {
+  AiModelConfigResponse,
+  McpConfigResponse,
+  MemoryAgentResponse,
+  SessionSummaryResponse,
+  SystemContextResponse,
+} from '../api/client/types';
+
+export interface SessionSummaryItem {
+  id: string;
+  summaryText: string;
+  summaryModel: string;
+  triggerType: string;
+  sourceMessageCount: number;
+  sourceEstimatedTokens: number;
+  status: string;
+  errorMessage: string | null;
+  level: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+const toDate = (value?: string): Date => {
+  if (!value) {
+    return new Date();
+  }
+
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+};
+
+export const normalizeAiModelConfig = (config: AiModelConfigResponse): AiModelConfig => {
+  const createdAt = config.created_at || config.createdAt;
+  const updatedAt = config.updated_at || config.updatedAt || createdAt;
+
+  return {
+    id: config.id,
+    name: config.name,
+    provider: config.provider || 'gpt',
+    base_url: config.base_url || '',
+    api_key: config.api_key || '',
+    model_name: config.model_name || config.model || '',
+    thinking_level: config.thinking_level || undefined,
+    enabled: config.enabled === true,
+    supports_images: config.supports_images === true,
+    supports_reasoning: config.supports_reasoning === true,
+    supports_responses: config.supports_responses === true,
+    createdAt: toDate(createdAt),
+    updatedAt: toDate(updatedAt),
+  };
+};
+
+export const normalizeMcpConfig = (config: McpConfigResponse): McpConfig => {
+  const createdAt = config.created_at || config.createdAt;
+  const updatedAt = config.updated_at || config.updatedAt || createdAt;
+
+  return {
+    id: config.id,
+    name: config.name,
+    display_name: config.display_name ?? config.displayName ?? undefined,
+    command: config.command,
+    type: config.type,
+    args: config.args ?? null,
+    env: config.env ?? null,
+    cwd: config.cwd ?? null,
+    enabled: config.enabled === true,
+    readonly: config.readonly,
+    builtin: config.builtin,
+    config: config.config ?? undefined,
+    createdAt: toDate(createdAt),
+    updatedAt: toDate(updatedAt),
+  };
+};
+
+export const normalizeSystemContext = (context: SystemContextResponse): SystemContext => ({
+  id: context.id,
+  name: context.name,
+  content: context.content,
+  userId: context.user_id || context.userId || '',
+  isActive: context.is_active === true || context.isActive === true,
+  createdAt: toDate(context.created_at || context.createdAt),
+  updatedAt: toDate(context.updated_at || context.updatedAt || context.created_at || context.createdAt),
+  app_ids: Array.isArray(context.app_ids) ? context.app_ids : [],
+});
+
+export const normalizeAgent = (agent: MemoryAgentResponse): AgentConfig => ({
+  id: agent.id,
+  name: agent.name,
+  description: agent.description || '',
+  ai_model_config_id: '',
+  enabled: agent.enabled !== false,
+  project_id: typeof agent.project_policy?.project_id === 'string' ? agent.project_policy.project_id : null,
+  workspace_dir: typeof agent.project_policy?.project_root === 'string' ? agent.project_policy.project_root : null,
+  app_ids: [],
+  role_definition: agent.role_definition || '',
+  skills: Array.isArray(agent.skills) ? agent.skills : [],
+  skill_ids: Array.isArray(agent.skill_ids) ? agent.skill_ids : [],
+  default_skill_ids: Array.isArray(agent.default_skill_ids) ? agent.default_skill_ids : [],
+  mcp_policy: agent.mcp_policy || null,
+  project_policy: agent.project_policy || null,
+  createdAt: toDate(agent.created_at),
+  updatedAt: toDate(agent.updated_at || agent.created_at),
+});
+
+export const normalizeSessionSummary = (
+  item: SessionSummaryResponse | unknown,
+): SessionSummaryItem | null => {
+  const record = item && typeof item === 'object' && !Array.isArray(item)
+    ? item as Record<string, unknown>
+    : null;
+  const readString = (snakeKey: string, camelKey?: string): string => {
+    const snakeValue = record?.[snakeKey];
+    const camelValue = camelKey ? record?.[camelKey] : undefined;
+    if (typeof snakeValue === 'string') return snakeValue;
+    if (typeof camelValue === 'string') return camelValue;
+    return '';
+  };
+
+  const id = readString('id').trim();
+  if (!id) {
+    return null;
+  }
+  const createdAt = readString('created_at', 'createdAt');
+  const updatedAt = readString('updated_at', 'updatedAt') || createdAt;
+
+  return {
+    id,
+    summaryText: readString('summary_text', 'summaryText'),
+    summaryModel: readString('summary_model', 'summaryModel'),
+    triggerType: readString('trigger_type', 'triggerType'),
+    sourceMessageCount: Number(record?.source_message_count ?? record?.sourceMessageCount ?? 0) || 0,
+    sourceEstimatedTokens: Number(record?.source_estimated_tokens ?? record?.sourceEstimatedTokens ?? 0) || 0,
+    status: readString('status'),
+    errorMessage: readString('error_message', 'errorMessage') || null,
+    level: Number(record?.level ?? 0) || 0,
+    createdAt,
+    updatedAt,
+  };
+};

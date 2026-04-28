@@ -5,8 +5,8 @@ use super::dto::{
     UpdateMemoryAgentRequestDto,
 };
 use super::http::{
-    build_url, client, push_limit_offset_params, send_delete_result, send_json, send_list,
-    send_optional_json, timeout_duration,
+    client, push_limit_offset_params, send_delete_result, send_json, send_list, send_optional_json,
+    try_build_url, try_timeout_duration,
 };
 
 pub async fn list_memory_agents(
@@ -29,8 +29,11 @@ pub async fn list_memory_agents(
 
 pub async fn get_memory_agent(agent_id: &str) -> Result<Option<MemoryAgentDto>, String> {
     let req = client()
-        .get(build_url(&format!("/agents/{}", urlencoding::encode(agent_id))).as_str())
-        .timeout(timeout_duration());
+        .get(try_build_url(&format!(
+            "/agents/{}",
+            urlencoding::encode(agent_id)
+        ))?)
+        .timeout(try_timeout_duration()?);
     send_optional_json(req).await
 }
 
@@ -38,8 +41,8 @@ pub async fn create_memory_agent(
     payload: &CreateMemoryAgentRequestDto,
 ) -> Result<MemoryAgentDto, String> {
     let req = client()
-        .post(build_url("/agents").as_str())
-        .timeout(timeout_duration())
+        .post(try_build_url("/agents")?)
+        .timeout(try_timeout_duration()?)
         .json(payload);
     send_json(req).await
 }
@@ -49,16 +52,22 @@ pub async fn update_memory_agent(
     payload: &UpdateMemoryAgentRequestDto,
 ) -> Result<Option<MemoryAgentDto>, String> {
     let req = client()
-        .patch(build_url(&format!("/agents/{}", urlencoding::encode(agent_id))).as_str())
-        .timeout(timeout_duration())
+        .patch(try_build_url(&format!(
+            "/agents/{}",
+            urlencoding::encode(agent_id)
+        ))?)
+        .timeout(try_timeout_duration()?)
         .json(payload);
     send_optional_json(req).await
 }
 
 pub async fn delete_memory_agent(agent_id: &str) -> Result<bool, String> {
     let req = client()
-        .delete(build_url(&format!("/agents/{}", urlencoding::encode(agent_id))).as_str())
-        .timeout(timeout_duration());
+        .delete(try_build_url(&format!(
+            "/agents/{}",
+            urlencoding::encode(agent_id)
+        ))?)
+        .timeout(try_timeout_duration()?);
 
     send_delete_result(req).await
 }
@@ -67,21 +76,18 @@ pub async fn get_memory_agent_runtime_context(
     agent_id: &str,
 ) -> Result<Option<MemoryAgentRuntimeContextDto>, String> {
     let req = client()
-        .get(
-            build_url(&format!(
-                "/agents/{}/runtime-context",
-                urlencoding::encode(agent_id)
-            ))
-            .as_str(),
-        )
-        .timeout(timeout_duration());
+        .get(try_build_url(&format!(
+            "/agents/{}/runtime-context",
+            urlencoding::encode(agent_id)
+        ))?)
+        .timeout(try_timeout_duration()?);
     send_optional_json(req).await
 }
 
 pub async fn ai_create_memory_agent(payload: &Value) -> Result<Value, String> {
     let req = client()
-        .post(build_url("/agents/ai-create").as_str())
-        .timeout(timeout_duration())
+        .post(try_build_url("/agents/ai-create")?)
+        .timeout(try_timeout_duration()?)
         .json(payload);
     send_json(req).await
 }

@@ -10,7 +10,7 @@ mod repositories;
 mod services;
 mod utils;
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use tokio::signal;
 use tracing::{error, info, warn};
@@ -48,14 +48,25 @@ async fn main() {
 
     cfg.print();
 
-    let app = api::router();
+    let app = match api::router() {
+        Ok(app) => app,
+        Err(err) => {
+            error!("Failed to build API router: {err}");
+            std::process::exit(1);
+        }
+    };
 
-    let addr = SocketAddr::new(
-        cfg.host
-            .parse()
-            .unwrap_or_else(|_| "0.0.0.0".parse().unwrap()),
-        cfg.port,
-    );
+    let host = match cfg.host.parse::<IpAddr>() {
+        Ok(host) => host,
+        Err(err) => {
+            warn!(
+                "Invalid HOST value '{}': {}. Falling back to 0.0.0.0",
+                cfg.host, err
+            );
+            IpAddr::V4(Ipv4Addr::UNSPECIFIED)
+        }
+    };
+    let addr = SocketAddr::new(host, cfg.port);
     info!("Server running on http://{}", addr);
 
     let listener = match tokio::net::TcpListener::bind(addr).await {

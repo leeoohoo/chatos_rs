@@ -1,10 +1,9 @@
 import React, { useState } from 'react';
 
-import { useConfirmDialog } from '../hooks/useConfirmDialog';
 import { apiClient } from '../lib/api/client';
 import { useChatStoreResolved } from '../lib/store/ChatStoreContext';
 import type { McpConfig } from '../types';
-import ConfirmDialog from './ui/ConfirmDialog';
+import { useDialogService } from './ui/DialogProvider';
 import {
   getDefaultMcpFormData,
   getMcpConfigArgsInput,
@@ -29,7 +28,7 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
   const storeData = externalStore ? externalStore() : internalStoreData;
 
   const { mcpConfigs, updateMcpConfig, deleteMcpConfig, loadMcpConfigs } = storeData;
-  const { dialogState, showConfirmDialog, handleConfirm, handleCancel } = useConfirmDialog();
+  const { confirm } = useDialogService();
 
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingConfig, setEditingConfig] = useState<McpConfig | null>(null);
@@ -126,14 +125,17 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
     if (isReadonlyMcpConfig(config)) {
       return;
     }
-    showConfirmDialog({
+    const confirmed = await confirm({
       title: '删除 MCP 服务器',
       message: `确定要删除服务器 "${config?.name || 'Unknown'}" 吗？此操作无法撤销。`,
       confirmText: '删除',
       cancelText: '取消',
       type: 'danger',
-      onConfirm: () => deleteMcpConfig(id),
     });
+    if (!confirmed) {
+      return;
+    }
+    await deleteMcpConfig(id);
   };
 
   const handleFetchDynamicConfig = async () => {
@@ -225,17 +227,6 @@ const McpManager: React.FC<McpManagerProps> = ({ onClose, store: externalStore }
           </div>
         </div>
       </div>
-
-      <ConfirmDialog
-        isOpen={dialogState.isOpen}
-        title={dialogState.title}
-        message={dialogState.message}
-        confirmText={dialogState.confirmText}
-        cancelText={dialogState.cancelText}
-        type={dialogState.type}
-        onConfirm={handleConfirm}
-        onCancel={handleCancel}
-      />
     </>
   );
 };

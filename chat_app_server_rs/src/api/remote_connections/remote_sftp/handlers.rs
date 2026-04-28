@@ -50,7 +50,13 @@ pub(crate) async fn list_remote_sftp_entries(
         .unwrap_or_else(|| ".".to_string());
     let verification_code = verification_code_from_headers(&headers);
 
-    match fetch_remote_entries(&resolved_connection, path.as_str(), verification_code.as_deref()).await {
+    match fetch_remote_entries(
+        &resolved_connection,
+        path.as_str(),
+        verification_code.as_deref(),
+    )
+    .await
+    {
         Ok(entries) => {
             let _ = RemoteConnectionService::touch(&connection.id).await;
             (

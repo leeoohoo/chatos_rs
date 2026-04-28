@@ -32,13 +32,11 @@ pub(super) async fn remote_terminal_ws(
 
     let resolved_connection = match resolve_jump_connection_snapshot(&connection).await {
         Ok(connection) => connection,
-        Err(err) => {
-            return axum::Json(serde_json::json!({
-                "error": err,
-                "code": crate::core::remote_connection_error_codes::remote_connection_codes::AUTH_FAILED
-            }))
-            .into_response()
-        }
+        Err(err) => return axum::Json(serde_json::json!({
+            "error": err,
+            "code": crate::core::remote_connection_error_codes::remote_connection_codes::AUTH_FAILED
+        }))
+        .into_response(),
     };
 
     let verification_code = query.verification_code;

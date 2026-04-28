@@ -1,10 +1,11 @@
 import type { Project } from '../../../types';
 import type ApiClient from '../../api/client';
 import { normalizeProject } from '../helpers/projects';
+import type { ChatStoreDraft, ChatStoreGet, ChatStoreSet } from '../types';
 
 interface Deps {
-  set: any;
-  get: any;
+  set: ChatStoreSet;
+  get: ChatStoreGet;
   client: ApiClient;
   getUserIdParam: () => string;
 }
@@ -16,7 +17,7 @@ export function createProjectActions({ set, get, client, getUserIdParam }: Deps)
         const uid = getUserIdParam();
         const list = await client.listProjects(uid);
         const formatted = Array.isArray(list) ? list.map(normalizeProject) : [];
-        set((state: any) => {
+        set((state: ChatStoreDraft) => {
           state.projects = formatted;
           if (!state.currentProjectId) {
             const lastId = localStorage.getItem(`lastProjectId_${uid}`);
@@ -37,7 +38,7 @@ export function createProjectActions({ set, get, client, getUserIdParam }: Deps)
         return formatted;
       } catch (error) {
         console.error('Failed to load projects:', error);
-        set((state: any) => {
+        set((state: ChatStoreDraft) => {
           state.error = error instanceof Error ? error.message : 'Failed to load projects';
         });
         return [];
@@ -54,7 +55,7 @@ export function createProjectActions({ set, get, client, getUserIdParam }: Deps)
       };
       const created = await client.createProject(payload);
       const project = normalizeProject(created);
-      set((state: any) => {
+      set((state: ChatStoreDraft) => {
         state.projects.unshift(project);
         state.currentProjectId = project.id;
         state.currentProject = project;
@@ -72,8 +73,8 @@ export function createProjectActions({ set, get, client, getUserIdParam }: Deps)
         if (updates.description !== undefined) payload.description = updates.description || undefined;
         const updated = await client.updateProject(projectId, payload);
         const project = normalizeProject(updated);
-        set((state: any) => {
-          const index = state.projects.findIndex((p: any) => p.id === projectId);
+        set((state: ChatStoreDraft) => {
+          const index = state.projects.findIndex((project) => project.id === projectId);
           if (index !== -1) {
             state.projects[index] = project;
           }
@@ -84,7 +85,7 @@ export function createProjectActions({ set, get, client, getUserIdParam }: Deps)
         return project;
       } catch (error) {
         console.error('Failed to update project:', error);
-        set((state: any) => {
+        set((state: ChatStoreDraft) => {
           state.error = error instanceof Error ? error.message : 'Failed to update project';
         });
         return null;
@@ -94,8 +95,8 @@ export function createProjectActions({ set, get, client, getUserIdParam }: Deps)
     deleteProject: async (projectId: string) => {
       try {
         await client.deleteProject(projectId);
-        set((state: any) => {
-          state.projects = state.projects.filter((p: any) => p.id !== projectId);
+        set((state: ChatStoreDraft) => {
+          state.projects = state.projects.filter((project) => project.id !== projectId);
           if (state.currentProjectId === projectId) {
             state.currentProjectId = null;
             state.currentProject = null;
@@ -106,7 +107,7 @@ export function createProjectActions({ set, get, client, getUserIdParam }: Deps)
         });
       } catch (error) {
         console.error('Failed to delete project:', error);
-        set((state: any) => {
+        set((state: ChatStoreDraft) => {
           state.error = error instanceof Error ? error.message : 'Failed to delete project';
         });
       }
@@ -114,13 +115,13 @@ export function createProjectActions({ set, get, client, getUserIdParam }: Deps)
 
     selectProject: async (projectId: string) => {
       try {
-        let project = get().projects.find((p: any) => p.id === projectId) || null;
+        let project = get().projects.find((item: Project) => item.id === projectId) || null;
         if (!project) {
           const fetched = await client.getProject(projectId);
           project = normalizeProject(fetched);
         }
         const uid = getUserIdParam();
-        set((state: any) => {
+        set((state: ChatStoreDraft) => {
           state.currentProjectId = projectId;
           state.currentProject = project;
           state.activePanel = 'project';
@@ -128,14 +129,14 @@ export function createProjectActions({ set, get, client, getUserIdParam }: Deps)
         localStorage.setItem(`lastProjectId_${uid}`, projectId);
       } catch (error) {
         console.error('Failed to select project:', error);
-        set((state: any) => {
+        set((state: ChatStoreDraft) => {
           state.error = error instanceof Error ? error.message : 'Failed to select project';
         });
       }
     },
 
     setActivePanel: (panel: 'chat' | 'project' | 'terminal' | 'remote_terminal' | 'remote_sftp') => {
-      set((state: any) => {
+      set((state: ChatStoreDraft) => {
         state.activePanel = panel;
       });
     },

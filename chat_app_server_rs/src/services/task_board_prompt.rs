@@ -30,10 +30,9 @@ pub async fn build_task_board_prompt(
         true,
         TASK_BOARD_LIMIT,
     )
-        .await
-        .unwrap_or_default();
-    Some(format_task_board_prompt(tasks.as_slice()))
-        .filter(|content| !content.trim().is_empty())
+    .await
+    .unwrap_or_default();
+    Some(format_task_board_prompt(tasks.as_slice())).filter(|content| !content.trim().is_empty())
 }
 
 pub async fn build_runtime_prefixed_messages(
@@ -150,7 +149,11 @@ fn format_task_board_prompt(tasks: &[TaskRecord]) -> String {
 }
 
 fn append_task_line(lines: &mut Vec<String>, task: &TaskRecord, is_current: bool) {
-    let marker = if is_current { " <- 当前优先执行" } else { "" };
+    let marker = if is_current {
+        " <- 当前优先执行"
+    } else {
+        ""
+    };
     lines.push(format!(
         "- [{}] {} ({}) id={}{}",
         normalize_status(task.status.as_str()),
@@ -195,7 +198,10 @@ fn append_completed_task_line(lines: &mut Vec<String>, task: &TaskRecord) {
 
 fn select_active_task_id(tasks: &[TaskRecord]) -> Option<String> {
     for preferred_status in [STATUS_DOING, STATUS_TODO] {
-        if let Some(task) = tasks.iter().find(|task| task.status.trim() == preferred_status) {
+        if let Some(task) = tasks
+            .iter()
+            .find(|task| task.status.trim() == preferred_status)
+        {
             return Some(task.id.clone());
         }
     }
@@ -311,10 +317,7 @@ pub fn build_task_board_runtime_guidance(task_board_prompt: &str) -> Option<Stri
     ))
 }
 
-pub async fn enqueue_task_board_refresh(
-    session_id: &str,
-    turn_id: &str,
-) -> Option<String> {
+pub async fn enqueue_task_board_refresh(session_id: &str, turn_id: &str) -> Option<String> {
     let session_id = session_id.trim();
     let turn_id = turn_id.trim();
     if session_id.is_empty() || turn_id.is_empty() {
@@ -334,7 +337,8 @@ async fn sync_task_board_turn_snapshot(
     turn_id: &str,
     task_board_prompt: &str,
 ) -> Result<(), String> {
-    let lookup = memory_server_client::get_turn_runtime_snapshot_by_turn(session_id, turn_id).await?;
+    let lookup =
+        memory_server_client::get_turn_runtime_snapshot_by_turn(session_id, turn_id).await?;
     let payload = if let Some(snapshot) = lookup.snapshot {
         SyncTurnRuntimeSnapshotRequestDto {
             user_message_id: snapshot.user_message_id,
@@ -429,7 +433,8 @@ fn normalize_optional_text(value: Option<&str>) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::format_task_board_prompt;
+    use super::{format_task_board_prompt, upsert_task_board_system_messages};
+    use crate::services::memory_server_client::TurnRuntimeSnapshotSystemMessageDto;
     use crate::services::task_manager::TaskRecord;
 
     fn build_task(id: &str, title: &str, status: &str) -> TaskRecord {
@@ -545,7 +550,8 @@ mod tests {
             },
         ];
 
-        let updated = upsert_task_board_system_messages(messages.as_slice(), "[Task Board]\nlatest");
+        let updated =
+            upsert_task_board_system_messages(messages.as_slice(), "[Task Board]\nlatest");
 
         assert_eq!(updated.len(), 4);
         assert_eq!(updated[2].id, "task_board");

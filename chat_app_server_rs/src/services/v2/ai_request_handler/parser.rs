@@ -2,6 +2,11 @@ use std::collections::BTreeMap;
 
 use serde_json::{json, Value};
 
+use crate::core::messages::extract_non_empty_text_value;
+use crate::core::tool_call::{
+    collect_ordered_tool_calls, join_stream_text, merge_indexed_tool_call_parts,
+};
+
 #[derive(Debug, Default)]
 pub(super) struct StreamState {
     pub full_content: String,
@@ -44,36 +49,26 @@ pub(super) fn merge_tool_call_delta(
         .and_then(|value| value.as_u64())
         .unwrap_or(0) as usize;
 
-    let entry = tool_calls_map
-        .entry(index)
-        .or_insert(json!({"id":"","type":"function","function":{"name":"","arguments":""}}));
-
-    if let Some(id) = tool_call.get("id").and_then(|value| value.as_str()) {
-        entry["id"] = Value::String(id.to_string());
-    }
-
-    if let Some(function) = tool_call.get("function") {
-        if let Some(name) = function.get("name").and_then(|value| value.as_str()) {
-            let current = entry["function"]["name"].as_str().unwrap_or("").to_string();
-            entry["function"]["name"] = Value::String(format!("{}{}", current, name));
-        }
-
-        if let Some(arguments) = function.get("arguments").and_then(|value| value.as_str()) {
-            let current = entry["function"]["arguments"]
-                .as_str()
-                .unwrap_or("")
-                .to_string();
-            entry["function"]["arguments"] = Value::String(format!("{}{}", current, arguments));
-        }
-    }
+    let name_piece = tool_call
+        .get("function")
+        .and_then(|function| function.get("name"))
+        .and_then(|value| value.as_str());
+    let arguments_piece = tool_call
+        .get("function")
+        .and_then(|function| function.get("arguments"))
+        .and_then(|value| value.as_str());
+    merge_indexed_tool_call_parts(
+        tool_calls_map,
+        index,
+        tool_call.get("id").and_then(|value| value.as_str()),
+        None,
+        name_piece,
+        arguments_piece,
+    );
 }
 
 pub(super) fn collect_tool_calls(tool_calls_map: &BTreeMap<usize, Value>) -> Option<Value> {
-    if tool_calls_map.is_empty() {
-        None
-    } else {
-        Some(Value::Array(tool_calls_map.values().cloned().collect()))
-    }
+    collect_ordered_tool_calls(tool_calls_map)
 }
 
 pub(super) fn apply_stream_event(
@@ -164,85 +159,14 @@ pub(super) fn apply_stream_event(
     payload
 }
 
-fn join_stream_text(current: &str, chunk: &str) -> String {
-    if chunk.is_empty() {
-        return current.to_string();
-    }
-    if current.is_empty() {
-        return chunk.to_string();
-    }
-
-    // Providers are inconsistent: some return deltas, some return cumulative snapshots.
-    if chunk.starts_with(current) {
-        return chunk.to_string();
-    }
-    if current.starts_with(chunk) {
-        return current.to_string();
-    }
-
-    let max_overlap = std::cmp::min(current.len(), chunk.len());
-    for overlap in (8..=max_overlap).rev() {
-        let Some(current_tail) = current.get(current.len() - overlap..) else {
-            continue;
-        };
-        let Some(chunk_head) = chunk.get(..overlap) else {
-            continue;
-        };
-        if current_tail == chunk_head {
-            let rest = chunk.get(overlap..).unwrap_or_default();
-            return format!("{}{}", current, rest);
-        }
-    }
-
-    format!("{}{}", current, chunk)
-}
-
 fn extract_message_text(message: &Value) -> Option<String> {
     message
         .get("content")
         .and_then(extract_text_from_value)
-        .filter(|value| !value.is_empty())
 }
 
 fn extract_text_from_value(value: &Value) -> Option<String> {
-    let text = flatten_text(value);
-    if text.is_empty() {
-        None
-    } else {
-        Some(text)
-    }
-}
-
-fn flatten_text(value: &Value) -> String {
-    if let Some(text) = value.as_str() {
-        return text.to_string();
-    }
-
-    if let Some(array) = value.as_array() {
-        let mut out = Vec::new();
-        for item in array {
-            let text = flatten_text(item);
-            if !text.is_empty() {
-                out.push(text);
-            }
-        }
-        return out.join("");
-    }
-
-    let Some(object) = value.as_object() else {
-        return String::new();
-    };
-
-    for key in ["text", "value", "content", "delta"] {
-        if let Some(inner) = object.get(key) {
-            let text = flatten_text(inner);
-            if !text.is_empty() {
-                return text;
-            }
-        }
-    }
-
-    String::new()
+    extract_non_empty_text_value(value, &["text", "value", "content", "delta"])
 }
 
 #[cfg(test)]

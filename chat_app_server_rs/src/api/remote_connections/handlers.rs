@@ -16,9 +16,8 @@ use crate::models::remote_connection::RemoteConnectionService;
 use super::{
     error_payload, get_remote_terminal_manager, internal_error_response, normalize_create_request,
     normalize_update_request, remote_connectivity_error_response, resolve_jump_connection_snapshot,
-    run_remote_connectivity_test,
-    CreateRemoteConnectionRequest, DisconnectReason, RemoteConnectionQuery,
-    UpdateRemoteConnectionRequest,
+    run_remote_connectivity_test, CreateRemoteConnectionRequest, DisconnectReason,
+    RemoteConnectionQuery, UpdateRemoteConnectionRequest,
 };
 
 const REMOTE_VERIFICATION_CODE_HEADER: &str = "x-remote-verification-code";

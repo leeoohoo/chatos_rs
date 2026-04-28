@@ -2,11 +2,11 @@ mod folder_tools;
 mod note_tools;
 mod support;
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
-use serde_json::{json, Value};
+use serde_json::Value;
 
+use crate::core::tool_registry::ToolRegistry;
 use crate::services::notepad::NotepadService;
 
 use self::folder_tools::register_folder_tools;
@@ -20,15 +20,7 @@ pub struct NotepadOptions {
 
 #[derive(Clone)]
 pub struct NotepadBuiltinService {
-    tools: HashMap<String, Tool>,
-}
-
-#[derive(Clone)]
-struct Tool {
-    name: String,
-    description: String,
-    input_schema: Value,
-    handler: ToolHandler,
+    registry: ToolRegistry<ToolHandler>,
 }
 
 type ToolHandler = Arc<dyn Fn(Value) -> Result<Value, String> + Send + Sync>;
@@ -44,7 +36,7 @@ impl NotepadBuiltinService {
         let service = NotepadService::new(user_id)?;
 
         let mut out = Self {
-            tools: HashMap::new(),
+            registry: ToolRegistry::new(),
         };
 
         register_folder_tools(&mut out, service.clone(), opts.server_name.as_str());
@@ -54,21 +46,12 @@ impl NotepadBuiltinService {
     }
 
     pub fn list_tools(&self) -> Vec<Value> {
-        self.tools
-            .values()
-            .map(|tool| {
-                json!({
-                    "name": tool.name,
-                    "description": tool.description,
-                    "inputSchema": tool.input_schema
-                })
-            })
-            .collect()
+        self.registry.list_tools()
     }
 
     pub fn call_tool(&self, name: &str, args: Value) -> Result<Value, String> {
         let tool = self
-            .tools
+            .registry
             .get(name)
             .ok_or_else(|| format!("Tool not found: {name}"))?;
         (tool.handler)(args)
@@ -81,14 +64,7 @@ impl NotepadBuiltinService {
         input_schema: Value,
         handler: ToolHandler,
     ) {
-        self.tools.insert(
-            name.to_string(),
-            Tool {
-                name: name.to_string(),
-                description: description.to_string(),
-                input_schema,
-                handler,
-            },
-        );
+        self.registry
+            .register_tool(name, description, input_schema, handler);
     }
 }

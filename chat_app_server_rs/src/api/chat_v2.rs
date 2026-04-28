@@ -8,27 +8,27 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::api::chat_stream_common::{
-    build_builtin_mcp_debug_payload, resolve_chat_stream_context,
-    sync_chat_turn_snapshot,
+    build_builtin_mcp_debug_payload, resolve_chat_stream_context, sync_chat_turn_snapshot,
     validate_chat_stream_request, wire_implicit_command_tracking, ChatStreamRequest,
 };
 use crate::api::conversation_semantics::extract_conversation_scope_id;
 use crate::config::Config;
-use crate::core::builtin_mcp_prompt::compose_effective_builtin_mcp_system_prompt;
 use crate::core::ai_model_config::resolve_chat_model_config;
 use crate::core::ai_settings::chat_max_tokens_from_settings;
 use crate::core::auth::AuthUser;
+use crate::core::builtin_mcp_prompt::compose_effective_builtin_mcp_system_prompt;
 use crate::core::chat_context::maybe_spawn_session_title_rename;
 use crate::core::chat_stream::{
-    build_v2_callbacks, handle_chat_result, send_start_event, send_tools_unavailable_event,
+    build_v2_callbacks, handle_chat_result, send_error_event, send_start_event,
+    send_tools_unavailable_event,
 };
 use crate::core::mcp_runtime::{load_mcp_servers_by_selection, McpServerBundle};
 use crate::core::mcp_tools::ToolInfo;
 use crate::core::user_scope::{ensure_and_set_user_id, resolve_user_id};
 use crate::services::ai_common::normalize_turn_id;
 use crate::services::memory_server_client;
-use crate::services::task_board_prompt::build_runtime_prefixed_messages;
 use crate::services::runtime_guidance_manager::runtime_guidance_manager;
+use crate::services::task_board_prompt::build_runtime_prefixed_messages;
 use crate::services::user_settings::{apply_settings_to_ai_client, get_effective_user_settings};
 use crate::services::v2::ai_server::{AiServer, ChatOptions};
 use crate::services::v2::mcp_tool_execute::McpToolExecute;
@@ -103,12 +103,12 @@ async fn agent_tools(auth: AuthUser, Query(query): Query<UserQuery>) -> (StatusC
     let unavailable_tools = exec.get_unavailable_tools();
     let builtin_prompt_debug = build_builtin_mcp_debug_payload(
         builtin_servers.as_slice(),
-        &exec.tool_metadata,
+        exec.tool_metadata(),
         unavailable_tools.as_slice(),
         Some(
             compose_effective_builtin_mcp_system_prompt(
                 builtin_servers.as_slice(),
-                &exec.tool_metadata,
+                exec.tool_metadata(),
                 unavailable_tools.as_slice(),
             )
             .unwrap_or_default()
@@ -129,7 +129,16 @@ async fn agent_tools(auth: AuthUser, Query(query): Query<UserQuery>) -> (StatusC
 }
 
 async fn agent_status(auth: AuthUser, Query(query): Query<UserQuery>) -> Json<Value> {
-    let cfg = Config::get();
+    let cfg = match Config::try_get() {
+        Ok(cfg) => cfg,
+        Err(err) => {
+            return Json(json!({
+                "status": "error",
+                "error": "服务配置未初始化",
+                "detail": err
+            }));
+        }
+    };
     let user_id = resolve_user_id(query.user_id, &auth).ok();
     let (http_servers, stdio_servers, builtin_servers): McpServerBundle =
         load_mcp_servers_by_selection(user_id, false, Vec::new(), None, None).await;
@@ -199,7 +208,14 @@ async fn stream_chat_v2(
 ) {
     let session_id = req.conversation_id.clone().unwrap_or_default();
     let content = req.content.clone().unwrap_or_default();
-    let cfg = Config::get();
+    let cfg = match Config::try_get() {
+        Ok(cfg) => cfg,
+        Err(err) => {
+            send_error_event(&sender, format!("服务配置未初始化: {err}").as_str());
+            sender.send_done();
+            return;
+        }
+    };
 
     send_start_event(&sender, &session_id);
 
@@ -215,13 +231,20 @@ async fn stream_chat_v2(
         respect_model_flags,
     );
 
-    let mut ai_server = AiServer::new(
+    let mut ai_server = match AiServer::new(
         model_runtime.api_key.clone(),
         model_runtime.base_url.clone(),
         model_runtime.model.clone(),
         model_runtime.temperature,
         McpToolExecute::new(Vec::new(), Vec::new(), Vec::new()),
-    );
+    ) {
+        Ok(ai_server) => ai_server,
+        Err(err) => {
+            send_error_event(&sender, format!("初始化 AI 服务失败: {err}").as_str());
+            sender.send_done();
+            return;
+        }
+    };
     let mut runtime_context = resolve_chat_stream_context(
         &session_id,
         &content,
@@ -252,7 +275,7 @@ async fn stream_chat_v2(
     let unavailable_tools = mcp_exec.get_unavailable_tools();
     runtime_context.builtin_mcp_system_prompt = compose_effective_builtin_mcp_system_prompt(
         builtin_servers.as_slice(),
-        &mcp_exec.tool_metadata,
+        mcp_exec.tool_metadata(),
         unavailable_tools.as_slice(),
     );
     let prefixed_messages = build_runtime_prefixed_messages(
@@ -264,7 +287,7 @@ async fn stream_chat_v2(
     )
     .await;
     send_tools_unavailable_event(&sender, unavailable_tools.as_slice());
-    let mcp_tool_metadata = mcp_exec.tool_metadata.clone();
+    let mcp_tool_metadata = mcp_exec.tool_metadata().clone();
     ai_server.set_mcp_tool_execute(mcp_exec);
     ai_server.ai_client.set_task_board_refresh_context(
         Some(session_id.clone()),

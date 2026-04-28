@@ -1,9 +1,9 @@
 use std::collections::HashSet;
-use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 
 pub use crate::services::ai_client_common::AiClientCallbacks;
+use crate::services::task_board_refresh_context::TaskBoardRefreshContextStore;
 use crate::services::user_settings::AiClientSettings;
 use crate::services::v3::ai_request_handler::AiRequestHandler;
 use crate::services::v3::mcp_tool_execute::McpToolExecute;
@@ -11,6 +11,9 @@ use crate::services::v3::message_manager::MessageManager;
 
 mod compat;
 mod execution_loop;
+mod execution_loop_guidance;
+mod execution_loop_state;
+mod execution_loop_tool_io;
 mod input_transform;
 mod prev_context;
 mod recovery_policy;
@@ -24,7 +27,6 @@ use self::compat::truncate_function_call_outputs_in_input;
 use self::input_transform::{
     build_current_input_items, normalize_input_to_text_value, to_message_item,
 };
-use crate::services::task_board_prompt::build_runtime_prefixed_input_items;
 
 #[derive(Default)]
 pub struct ProcessOptions {
@@ -58,16 +60,7 @@ pub struct AiClient {
     prev_response_id_disabled_sessions: HashSet<String>,
     force_text_content_sessions: HashSet<String>,
     no_system_message_sessions: HashSet<String>,
-    task_board_refresh_context: Arc<Mutex<Option<TaskBoardRefreshContext>>>,
-}
-
-#[derive(Clone)]
-struct TaskBoardRefreshContext {
-    session_id: String,
-    turn_id: Option<String>,
-    contact_system_prompt: Option<String>,
-    builtin_mcp_system_prompt: Option<String>,
-    command_system_prompt: Option<String>,
+    task_board_refresh_context: TaskBoardRefreshContextStore,
 }
 
 impl AiClient {
@@ -86,7 +79,7 @@ impl AiClient {
             prev_response_id_disabled_sessions: HashSet::new(),
             force_text_content_sessions: HashSet::new(),
             no_system_message_sessions: HashSet::new(),
-            task_board_refresh_context: Arc::new(Mutex::new(None)),
+            task_board_refresh_context: TaskBoardRefreshContextStore::new(),
         }
     }
 
@@ -106,36 +99,17 @@ impl AiClient {
         builtin_mcp_system_prompt: Option<String>,
         command_system_prompt: Option<String>,
     ) {
-        if let Ok(mut slot) = self.task_board_refresh_context.lock() {
-            *slot = session_id
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty())
-                .map(|value| TaskBoardRefreshContext {
-                    session_id: value,
-                    turn_id: turn_id
-                        .map(|value| value.trim().to_string())
-                        .filter(|value| !value.is_empty()),
-                    contact_system_prompt,
-                    builtin_mcp_system_prompt,
-                    command_system_prompt,
-                });
-        }
+        self.task_board_refresh_context.set(
+            session_id,
+            turn_id,
+            contact_system_prompt,
+            builtin_mcp_system_prompt,
+            command_system_prompt,
+        );
     }
 
     pub async fn load_runtime_prefixed_input_items(&self) -> Option<Vec<Value>> {
-        let context = self
-            .task_board_refresh_context
-            .lock()
-            .ok()
-            .and_then(|slot| slot.clone())?;
-        build_runtime_prefixed_input_items(
-            &context.session_id,
-            context.turn_id.as_deref(),
-            context.contact_system_prompt.as_deref(),
-            context.builtin_mcp_system_prompt.as_deref(),
-            context.command_system_prompt.as_deref(),
-        )
-        .await
+        self.task_board_refresh_context.load_prefixed_input_items().await
     }
 }
 

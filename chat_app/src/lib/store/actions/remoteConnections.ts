@@ -2,6 +2,7 @@ import type { RemoteConnection } from '../../../types';
 import type ApiClient from '../../api/client';
 import { normalizeRemoteConnection } from '../helpers/remoteConnections';
 import { mergeSessionRuntimeIntoMetadata } from '../helpers/sessionRuntime';
+import type { ChatStoreDraft, ChatStoreGet, ChatStoreSet } from '../types';
 
 interface CreateRemoteConnectionPayload {
   name?: string;
@@ -46,8 +47,8 @@ interface UpdateRemoteConnectionPayload {
 }
 
 interface Deps {
-  set: any;
-  get: any;
+  set: ChatStoreSet;
+  get: ChatStoreGet;
   client: ApiClient;
   getUserIdParam: () => string;
 }
@@ -65,12 +66,12 @@ export function createRemoteConnectionActions({ set, get, client, getUserIdParam
     const metadata = mergeSessionRuntimeIntoMetadata(currentSession?.metadata, {
       remoteConnectionId: connectionId,
     });
-    set((draft: any) => {
-      const sessionIndex = draft.sessions.findIndex((item: any) => item?.id === currentSessionId);
+    set((draft: ChatStoreDraft) => {
+      const sessionIndex = draft.sessions.findIndex((item) => item?.id === currentSessionId);
       if (sessionIndex >= 0) {
         draft.sessions[sessionIndex].metadata = metadata;
       }
-      if (draft.currentSession?.id === currentSessionId) {
+      if (draft.currentSession && draft.currentSession.id === currentSessionId) {
         draft.currentSession.metadata = metadata;
       }
     });
@@ -83,7 +84,7 @@ export function createRemoteConnectionActions({ set, get, client, getUserIdParam
         const uid = getUserIdParam();
         const list = await client.listRemoteConnections(uid);
         const formatted = Array.isArray(list) ? list.map(normalizeRemoteConnection) : [];
-        set((state: any) => {
+        set((state: ChatStoreDraft) => {
           state.remoteConnections = formatted;
           if (state.currentRemoteConnectionId) {
             const matched = formatted.find((item: RemoteConnection) => item.id === state.currentRemoteConnectionId);
@@ -100,7 +101,7 @@ export function createRemoteConnectionActions({ set, get, client, getUserIdParam
         return formatted;
       } catch (error) {
         console.error('Failed to load remote connections:', error);
-        set((state: any) => {
+        set((state: ChatStoreDraft) => {
           state.error = error instanceof Error ? error.message : 'Failed to load remote connections';
         });
         return [];
@@ -114,7 +115,7 @@ export function createRemoteConnectionActions({ set, get, client, getUserIdParam
         user_id: uid,
       });
       const connection = normalizeRemoteConnection(created);
-      set((state: any) => {
+      set((state: ChatStoreDraft) => {
         state.remoteConnections.unshift(connection);
         state.currentRemoteConnectionId = connection.id;
         state.currentRemoteConnection = connection;
@@ -129,7 +130,7 @@ export function createRemoteConnectionActions({ set, get, client, getUserIdParam
       try {
         const updated = await client.updateRemoteConnection(connectionId, payload);
         const connection = normalizeRemoteConnection(updated);
-        set((state: any) => {
+        set((state: ChatStoreDraft) => {
           const index = state.remoteConnections.findIndex((item: RemoteConnection) => item.id === connectionId);
           if (index !== -1) {
             state.remoteConnections[index] = connection;
@@ -141,7 +142,7 @@ export function createRemoteConnectionActions({ set, get, client, getUserIdParam
         return connection;
       } catch (error) {
         console.error('Failed to update remote connection:', error);
-        set((state: any) => {
+        set((state: ChatStoreDraft) => {
           state.error = error instanceof Error ? error.message : 'Failed to update remote connection';
         });
         return null;
@@ -152,7 +153,7 @@ export function createRemoteConnectionActions({ set, get, client, getUserIdParam
       try {
         const shouldClearSessionRuntime = get().currentRemoteConnectionId === connectionId;
         await client.deleteRemoteConnection(connectionId);
-        set((state: any) => {
+        set((state: ChatStoreDraft) => {
           state.remoteConnections = state.remoteConnections.filter((item: RemoteConnection) => item.id !== connectionId);
           if (state.currentRemoteConnectionId === connectionId) {
             state.currentRemoteConnectionId = null;
@@ -167,7 +168,7 @@ export function createRemoteConnectionActions({ set, get, client, getUserIdParam
         }
       } catch (error) {
         console.error('Failed to delete remote connection:', error);
-        set((state: any) => {
+        set((state: ChatStoreDraft) => {
           state.error = error instanceof Error ? error.message : 'Failed to delete remote connection';
         });
       }
@@ -182,7 +183,7 @@ export function createRemoteConnectionActions({ set, get, client, getUserIdParam
         const activatePanel = options?.activatePanel !== false;
         const uid = getUserIdParam();
         if (!normalizedConnectionId) {
-          set((state: any) => {
+          set((state: ChatStoreDraft) => {
             state.currentRemoteConnectionId = null;
             state.currentRemoteConnection = null;
             if (state.activePanel === 'remote_terminal' || state.activePanel === 'remote_sftp') {
@@ -198,7 +199,7 @@ export function createRemoteConnectionActions({ set, get, client, getUserIdParam
           const fetched = await client.getRemoteConnection(normalizedConnectionId);
           connection = normalizeRemoteConnection(fetched);
         }
-        set((state: any) => {
+        set((state: ChatStoreDraft) => {
           state.currentRemoteConnectionId = normalizedConnectionId;
           state.currentRemoteConnection = connection;
           if (activatePanel) {
@@ -209,7 +210,7 @@ export function createRemoteConnectionActions({ set, get, client, getUserIdParam
         persistRemoteConnectionToCurrentSession(normalizedConnectionId);
       } catch (error) {
         console.error('Failed to select remote connection:', error);
-        set((state: any) => {
+        set((state: ChatStoreDraft) => {
           state.error = error instanceof Error ? error.message : 'Failed to select remote connection';
         });
       }
@@ -223,7 +224,7 @@ export function createRemoteConnectionActions({ set, get, client, getUserIdParam
           connection = normalizeRemoteConnection(fetched);
         }
         const uid = getUserIdParam();
-        set((state: any) => {
+        set((state: ChatStoreDraft) => {
           state.currentRemoteConnectionId = connectionId;
           state.currentRemoteConnection = connection;
           state.activePanel = 'remote_sftp';
@@ -232,7 +233,7 @@ export function createRemoteConnectionActions({ set, get, client, getUserIdParam
         persistRemoteConnectionToCurrentSession(connectionId);
       } catch (error) {
         console.error('Failed to open remote sftp:', error);
-        set((state: any) => {
+        set((state: ChatStoreDraft) => {
           state.error = error instanceof Error ? error.message : 'Failed to open remote sftp';
         });
       }

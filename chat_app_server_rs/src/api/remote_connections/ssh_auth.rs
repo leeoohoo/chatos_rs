@@ -454,8 +454,7 @@ mod tests {
 
     #[test]
     fn keyboard_prompter_records_second_factor_prompt() {
-        let mut prompter =
-            PasswordKeyboardPrompter::new_with_channels("secret", None, None, None);
+        let mut prompter = PasswordKeyboardPrompter::new_with_channels("secret", None, None, None);
         let prompts = vec![
             Prompt {
                 text: Cow::Borrowed("Password: "),
@@ -475,8 +474,7 @@ mod tests {
 
     #[test]
     fn keyboard_prompter_inferrs_unknown_follow_up_prompt_as_second_factor() {
-        let mut prompter =
-            PasswordKeyboardPrompter::new_with_channels("secret", None, None, None);
+        let mut prompter = PasswordKeyboardPrompter::new_with_channels("secret", None, None, None);
         let prompts = vec![
             Prompt {
                 text: Cow::Borrowed("Password: "),

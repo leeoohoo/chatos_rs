@@ -1,4 +1,5 @@
 import type { Message } from '../../../types';
+import type { SendMessageRuntimeOptions } from '../../../types';
 import type ApiClient from '../../api/client';
 import { debugLog } from '@/lib/utils';
 import { prepareAttachmentsForStreaming } from './sendMessage/attachments';
@@ -33,7 +34,6 @@ import {
 import type {
   ChatStoreGet,
   ChatStoreSet,
-  SendMessageRuntimeOptions,
 } from '../types';
 import { type StreamingMessage } from './sendMessage/types';
 
@@ -112,8 +112,8 @@ export function createSendMessageHandler({
     const effectiveSkillsEnabled = runtimeOptionsWithContactFallback.skillsEnabled === true;
     const effectiveSelectedSkillIds = Array.isArray(runtimeOptionsWithContactFallback.selectedSkillIds)
       ? runtimeOptionsWithContactFallback.selectedSkillIds
-        .map((item) => (typeof item === 'string' ? item.trim() : ''))
-        .filter((item, index, arr) => item.length > 0 && arr.indexOf(item) === index)
+        .map((item: string) => (typeof item === 'string' ? item.trim() : ''))
+        .filter((item: string, index: number, arr: string[]) => item.length > 0 && arr.indexOf(item) === index)
       : [];
     const selectedModel = resolveSelectedModelOrThrow(
       effectiveSelectedModelId,

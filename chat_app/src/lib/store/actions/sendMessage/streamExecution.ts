@@ -1,6 +1,7 @@
 import type { ChatStoreSet } from '../../types';
 import { consumeChatStream } from './streamReader';
-import { buildSendMessageFailure, handleStreamEvent } from './streamEventHandler';
+import { buildSendMessageFailure } from './streamControlEvents';
+import { handleStreamEvent } from './streamEventHandler';
 import {
   failSendMessageState,
   finalizeStreamingSessionState,

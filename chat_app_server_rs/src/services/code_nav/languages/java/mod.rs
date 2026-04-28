@@ -7,6 +7,11 @@ use regex::{Regex, RegexBuilder};
 use walkdir::{DirEntry, WalkDir};
 
 use crate::services::code_nav::fallback::extract_token_at_position;
+use crate::services::code_nav::languages::shared_nav::{
+    count_char, declaration_kind_from_symbol_kind as shared_declaration_kind_from_symbol_kind,
+    find_column, is_type_like, last_identifier, nav_location_from_coordinates, normalize_path,
+    push_unique_location,
+};
 use crate::services::code_nav::symbol_index::{
     nav_location_from_indexed_symbol, project_symbol_index, score_indexed_definition_candidate,
     IndexedSymbol,
@@ -15,6 +20,7 @@ use crate::services::code_nav::types::{
     DocumentSymbolItem, DocumentSymbolsRequest, DocumentSymbolsResponse, NavCapabilities,
     NavLocation, NavPositionRequest, ProjectContext,
 };
+use crate::services::code_nav::languages::regex_utils::compile_static_regex;
 use crate::services::code_nav::CodeNavProvider;
 
 const JAVA_IGNORED_DIRS: &[&str] = &[
@@ -34,18 +40,17 @@ const MAX_REFERENCE_RESULTS: usize = 100;
 const MAX_SYMBOL_RESULTS: usize = 200;
 
 static PACKAGE_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"^\s*package\s+([A-Za-z_][A-Za-z0-9_.]*)\s*;").unwrap());
+    Lazy::new(|| compile_static_regex(r"^\s*package\s+([A-Za-z_][A-Za-z0-9_.]*)\s*;"));
 static IMPORT_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"^\s*import\s+(static\s+)?([A-Za-z_][A-Za-z0-9_.]*(?:\.\*)?)\s*;").unwrap()
+    compile_static_regex(r"^\s*import\s+(static\s+)?([A-Za-z_][A-Za-z0-9_.]*(?:\.\*)?)\s*;")
 });
 static TYPE_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"\b(class|interface|enum|record)\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap()
+    compile_static_regex(r"\b(class|interface|enum|record)\s+([A-Za-z_][A-Za-z0-9_]*)")
 });
 static FIELD_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(
+    compile_static_regex(
         r"^\s*(?:@\w+(?:\([^)]*\))?\s*)*(?:(?:public|protected|private|static|final|transient|volatile)\s+)*(?:[\w.$\[\]<>?,]+\s+)+([A-Za-z_][A-Za-z0-9_]*)\s*(?:=[^;]*)?;\s*$",
     )
-    .unwrap()
 });
 
 #[derive(Debug, Clone)]
@@ -352,11 +357,7 @@ fn java_references(
             end_column: entry.column + token.chars().count().saturating_sub(1),
             preview: entry.text,
         };
-        let key = build_nav_key(&location);
-        if !seen.insert(key) {
-            continue;
-        }
-        locations.push(location);
+        push_unique_location(&mut locations, &mut seen, location);
     }
 
     let mut declarations = Vec::new();
@@ -673,50 +674,14 @@ fn nav_location_from_symbol(
     symbol: &JavaSymbol,
     score: f64,
 ) -> Result<Option<NavLocation>, String> {
-    let preview = read_line_preview(path, symbol.line)?;
-    let relative_path = pathdiff::diff_paths(path, root)
-        .unwrap_or_else(|| path.to_path_buf())
-        .to_string_lossy()
-        .replace('\\', "/");
-    Ok(Some(NavLocation {
-        path: normalize_path(path).to_string_lossy().to_string(),
-        relative_path,
-        line: symbol.line,
-        column: symbol.column,
-        end_line: symbol.end_line,
-        end_column: symbol.end_column,
-        preview,
+    nav_location_from_coordinates(
+        root,
+        path,
+        symbol.line,
+        symbol.column,
+        symbol.end_line,
+        symbol.end_column,
         score,
-    }))
-}
-
-fn read_line_preview(path: &Path, line: usize) -> Result<String, String> {
-    let content = fs::read_to_string(path).map_err(|err| err.to_string())?;
-    Ok(content
-        .lines()
-        .nth(line.saturating_sub(1))
-        .unwrap_or("")
-        .trim_end_matches('\r')
-        .chars()
-        .take(400)
-        .collect())
-}
-
-fn push_unique_location(
-    out: &mut Vec<NavLocation>,
-    seen: &mut HashSet<String>,
-    location: NavLocation,
-) {
-    let key = build_nav_key(&location);
-    if seen.insert(key) {
-        out.push(location);
-    }
-}
-
-fn build_nav_key(location: &NavLocation) -> String {
-    format!(
-        "{}:{}:{}:{}:{}",
-        location.path, location.line, location.column, location.end_line, location.end_column
     )
 }
 
@@ -820,16 +785,7 @@ fn cached_java_analysis<'a>(
 }
 
 fn declaration_kind_from_symbol_kind(kind: &str) -> Option<&'static str> {
-    match kind {
-        "class" => Some("class"),
-        "interface" => Some("interface"),
-        "enum" => Some("enum"),
-        "record" => Some("record"),
-        "constructor" => Some("constructor"),
-        "method" => Some("method"),
-        "field" => Some("field"),
-        _ => None,
-    }
+    shared_declaration_kind_from_symbol_kind(kind)
 }
 
 fn classify_java_declaration(
@@ -1124,14 +1080,6 @@ fn matches_java_non_field_statement(line: &str) -> bool {
     .any(|prefix| line.starts_with(prefix))
 }
 
-fn is_type_like(token: &str) -> bool {
-    token
-        .chars()
-        .next()
-        .map(|value| value.is_uppercase())
-        .unwrap_or(false)
-}
-
 fn is_type_symbol(kind: &str) -> bool {
     matches!(kind, "class" | "interface" | "enum" | "record" | "type")
 }
@@ -1170,11 +1118,6 @@ fn java_source_roots(root: &Path) -> Vec<PathBuf> {
     out
 }
 
-fn find_column(line: &str, token: &str) -> Option<usize> {
-    line.find(token)
-        .map(|offset| line[..offset].chars().count() + 1)
-}
-
 fn pop_type_scopes(type_stack: &mut Vec<TypeScope>, brace_depth: i32) {
     while type_stack
         .last()
@@ -1211,10 +1154,12 @@ fn strip_java_comments(line: &str, in_block_comment: &mut bool) -> String {
 
         if in_string {
             out.push(current);
-            if current == '\\' && next.is_some() {
-                out.push(next.unwrap());
-                index += 2;
-                continue;
+            if current == '\\' {
+                if let Some(next) = next {
+                    out.push(next);
+                    index += 2;
+                    continue;
+                }
             }
             if current == string_delim {
                 in_string = false;
@@ -1255,50 +1200,6 @@ fn strip_java_comments(line: &str, in_block_comment: &mut bool) -> String {
     out
 }
 
-fn count_char(value: &str, needle: char) -> usize {
-    value.chars().filter(|ch| *ch == needle).count()
-}
-
-fn last_identifier(value: &str) -> Option<String> {
-    let mut end = None;
-    for (index, ch) in value.char_indices().rev() {
-        if ch.is_alphanumeric() || ch == '_' {
-            end = Some(index + ch.len_utf8());
-            break;
-        }
-    }
-    let end = end?;
-
-    let mut start = end;
-    for (index, ch) in value[..end].char_indices().rev() {
-        if ch.is_alphanumeric() || ch == '_' {
-            start = index;
-        } else {
-            break;
-        }
-    }
-
-    let candidate = value[start..end].trim();
-    if candidate.is_empty() {
-        None
-    } else {
-        Some(candidate.to_string())
-    }
-}
-
-fn normalize_path(path: &Path) -> PathBuf {
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        match component {
-            std::path::Component::CurDir => {}
-            std::path::Component::ParentDir => {
-                normalized.pop();
-            }
-            _ => normalized.push(component.as_os_str()),
-        }
-    }
-    normalized
-}
 
 #[cfg(test)]
 mod tests {

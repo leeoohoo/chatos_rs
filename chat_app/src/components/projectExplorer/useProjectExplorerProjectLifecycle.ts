@@ -1,5 +1,7 @@
 import { useEffect, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import type { FsEntry, FsReadResult, ProjectChangeSummary } from '../../types';
+import type { MoveConflictState } from './Overlays';
+import type { ExplorerContextMenuState } from './useProjectExplorerState';
 
 interface UseProjectExplorerProjectLifecycleOptions {
   projectId?: string | null;
@@ -19,8 +21,8 @@ interface UseProjectExplorerProjectLifecycleOptions {
   setActionMessage: Dispatch<SetStateAction<string | null>>;
   setActionError: Dispatch<SetStateAction<string | null>>;
   setActionLoading: Dispatch<SetStateAction<boolean>>;
-  setContextMenu: Dispatch<SetStateAction<any>>;
-  setMoveConflict: Dispatch<SetStateAction<any>>;
+  setContextMenu: Dispatch<SetStateAction<ExplorerContextMenuState | null>>;
+  setMoveConflict: Dispatch<SetStateAction<MoveConflictState | null>>;
   setDraggingEntryPath: Dispatch<SetStateAction<string | null>>;
   setDropTargetDirPath: Dispatch<SetStateAction<string | null>>;
   setChangeSummary: Dispatch<SetStateAction<ProjectChangeSummary>>;

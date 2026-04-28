@@ -1,7 +1,12 @@
 use serde_json::{json, Value};
 use tracing::info;
 
-use crate::services::task_board_prompt::build_runtime_prefixed_messages;
+use crate::core::messages::{
+    attach_message_tool_calls, attach_reasoning_content, build_assistant_role_message,
+    is_session_summary_message,
+};
+use crate::core::tool_call::extract_message_tool_calls;
+use crate::core::tool_call::build_tool_role_message;
 
 use super::history_tools::ensure_tool_responses;
 use super::runtime_support::cap_tool_content_for_input;
@@ -9,19 +14,7 @@ use super::AiClient;
 
 impl AiClient {
     pub(super) async fn load_runtime_prefixed_messages(&self) -> Option<Vec<Value>> {
-        let context = self
-            .task_board_refresh_context
-            .lock()
-            .ok()
-            .and_then(|slot| slot.clone())?;
-        build_runtime_prefixed_messages(
-            &context.session_id,
-            context.turn_id.as_deref(),
-            context.contact_system_prompt.as_deref(),
-            context.builtin_mcp_system_prompt.as_deref(),
-            context.command_system_prompt.as_deref(),
-        )
-        .await
+        self.task_board_refresh_context.load_prefixed_messages().await
     }
 
     pub(super) async fn load_memory_context_messages_for_scope(
@@ -42,13 +35,7 @@ impl AiClient {
         }
 
         for msg in history {
-            if msg
-                .metadata
-                .as_ref()
-                .and_then(|m| m.get("type"))
-                .and_then(|v| v.as_str())
-                == Some("session_summary")
-            {
+            if is_session_summary_message(&msg) {
                 continue;
             }
             if msg.role == "tool" {
@@ -61,36 +48,32 @@ impl AiClient {
                         .unwrap_or_default();
                 }
                 content = cap_tool_content_for_input(content.as_str());
-                mapped.push(json!({
-                    "role": "tool",
-                    "tool_call_id": msg.tool_call_id.clone().unwrap_or_default(),
-                    "content": content
-                }));
+                mapped.push(build_tool_role_message(
+                    msg.tool_call_id.clone().unwrap_or_default().as_str(),
+                    content.as_str(),
+                ));
             } else {
-                let mut item = json!({"role": msg.role, "content": msg.content});
-                if let Some(tc) = msg.tool_calls {
-                    item["tool_calls"] = tc;
-                }
-                if let Some(tc) = msg
-                    .metadata
-                    .clone()
-                    .and_then(|m| m.get("toolCalls").cloned())
-                {
-                    item["tool_calls"] = tc;
-                }
+                let mut item = if msg.role == "assistant" {
+                    build_assistant_role_message(Value::String(msg.content.clone()))
+                } else {
+                    json!({"role": msg.role, "content": msg.content})
+                };
+                let tool_calls =
+                    extract_message_tool_calls(msg.tool_calls.as_ref(), msg.metadata.as_ref());
+                attach_message_tool_calls(
+                    &mut item,
+                    (!tool_calls.is_empty()).then_some(Value::Array(tool_calls)),
+                );
                 if include_reasoning && msg.role == "assistant" {
-                    let has_tool_calls = item
+                    let preserve_empty_reasoning = item
                         .get("tool_calls")
                         .map(|value| !value.is_null())
                         .unwrap_or(false);
-                    if has_tool_calls {
-                        item["reasoning_content"] =
-                            Value::String(msg.reasoning.clone().unwrap_or_default());
-                    } else if let Some(reasoning) = msg.reasoning.clone() {
-                        if !reasoning.trim().is_empty() {
-                            item["reasoning_content"] = Value::String(reasoning);
-                        }
-                    }
+                    attach_reasoning_content(
+                        &mut item,
+                        msg.reasoning.as_deref(),
+                        preserve_empty_reasoning,
+                    );
                 }
                 mapped.push(item);
             }

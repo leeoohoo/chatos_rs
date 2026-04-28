@@ -50,8 +50,8 @@ pub mod terminals;
 pub mod ui_prompts;
 pub mod user_settings;
 
-pub fn router() -> Router {
-    let cfg = Config::get();
+pub fn router() -> Result<Router, String> {
+    let cfg = Config::try_get()?;
 
     let allowed_headers = [
         ACCEPT,
@@ -142,7 +142,7 @@ pub fn router() -> Router {
         .merge(user_settings::router())
         .route_layer(middleware::from_fn(require_auth));
 
-    Router::new()
+    Ok(Router::new()
         .merge(auth::router())
         .merge(protected_api)
         .route("/health", axum::routing::get(health))
@@ -155,7 +155,7 @@ pub fn router() -> Router {
         .layer(SetRequestIdLayer::new(
             REQUEST_ID_HEADER.clone(),
             MakeRequestUuid,
-        ))
+        )))
 }
 
 async fn health() -> axum::Json<serde_json::Value> {

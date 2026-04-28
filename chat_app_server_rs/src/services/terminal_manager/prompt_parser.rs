@@ -2,29 +2,47 @@ use std::path::{Path, PathBuf};
 
 use super::path_utils::canonicalize_path;
 
+fn compile_regex(pattern: &str) -> Option<regex::Regex> {
+    match regex::Regex::new(pattern) {
+        Ok(value) => Some(value),
+        Err(err) => {
+            tracing::error!(pattern, error = %err, "failed to compile terminal prompt regex");
+            None
+        }
+    }
+}
+
 pub(super) fn extract_prompt_cwd(line: &str) -> Option<PathBuf> {
     let trimmed = line.trim();
     if trimmed.is_empty() {
         return None;
     }
 
-    static POWERSHELL_PROMPT_RE: once_cell::sync::Lazy<regex::Regex> =
+    static POWERSHELL_PROMPT_RE: once_cell::sync::Lazy<Option<regex::Regex>> =
         once_cell::sync::Lazy::new(|| {
-            regex::Regex::new(r"(?:^|[\s\]])PS (?:[^:>\r\n]+::)?([A-Za-z]:\\[^>\r\n]*)> ?$")
-                .unwrap()
+            compile_regex(r"(?:^|[\s\]])PS (?:[^:>\r\n]+::)?([A-Za-z]:\\[^>\r\n]*)> ?$")
         });
-    static CMD_PROMPT_RE: once_cell::sync::Lazy<regex::Regex> =
-        once_cell::sync::Lazy::new(|| regex::Regex::new(r"([A-Za-z]:\\[^>\r\n]*)> ?$").unwrap());
-    static UNIX_PROMPT_RE: once_cell::sync::Lazy<regex::Regex> =
-        once_cell::sync::Lazy::new(|| regex::Regex::new(r"(/[^#$%>\r\n]*)[#$%>] ?$").unwrap());
+    static CMD_PROMPT_RE: once_cell::sync::Lazy<Option<regex::Regex>> =
+        once_cell::sync::Lazy::new(|| compile_regex(r"([A-Za-z]:\\[^>\r\n]*)> ?$"));
+    static UNIX_PROMPT_RE: once_cell::sync::Lazy<Option<regex::Regex>> =
+        once_cell::sync::Lazy::new(|| compile_regex(r"(/[^#$%>\r\n]*)[#$%>] ?$"));
 
-    if let Some(caps) = POWERSHELL_PROMPT_RE.captures(trimmed) {
+    if let Some(caps) = POWERSHELL_PROMPT_RE
+        .as_ref()
+        .and_then(|regex| regex.captures(trimmed))
+    {
         return canonicalize_prompt_path(caps.get(1).map(|m| m.as_str())?);
     }
-    if let Some(caps) = CMD_PROMPT_RE.captures(trimmed) {
+    if let Some(caps) = CMD_PROMPT_RE
+        .as_ref()
+        .and_then(|regex| regex.captures(trimmed))
+    {
         return canonicalize_prompt_path(caps.get(1).map(|m| m.as_str())?);
     }
-    if let Some(caps) = UNIX_PROMPT_RE.captures(trimmed) {
+    if let Some(caps) = UNIX_PROMPT_RE
+        .as_ref()
+        .and_then(|regex| regex.captures(trimmed))
+    {
         return canonicalize_prompt_path(caps.get(1).map(|m| m.as_str())?);
     }
 
@@ -93,17 +111,26 @@ pub(super) fn strip_ansi(input: &str) -> String {
     if input.is_empty() {
         return String::new();
     }
-    static ANSI_CSI_RE: once_cell::sync::Lazy<regex::Regex> =
-        once_cell::sync::Lazy::new(|| regex::Regex::new(r"\x1B\[[0-?]*[ -/]*[@-~]").unwrap());
-    static ANSI_OSC_RE: once_cell::sync::Lazy<regex::Regex> = once_cell::sync::Lazy::new(|| {
-        regex::Regex::new(r"\x1B\][^\x07\x1B]*(?:\x07|\x1B\\)").unwrap()
+    static ANSI_CSI_RE: once_cell::sync::Lazy<Option<regex::Regex>> =
+        once_cell::sync::Lazy::new(|| compile_regex(r"\x1B\[[0-?]*[ -/]*[@-~]"));
+    static ANSI_OSC_RE: once_cell::sync::Lazy<Option<regex::Regex>> = once_cell::sync::Lazy::new(|| {
+        compile_regex(r"\x1B\][^\x07\x1B]*(?:\x07|\x1B\\)")
     });
-    static ANSI_ESC_RE: once_cell::sync::Lazy<regex::Regex> =
-        once_cell::sync::Lazy::new(|| regex::Regex::new(r"\x1B[@-_]").unwrap());
+    static ANSI_ESC_RE: once_cell::sync::Lazy<Option<regex::Regex>> =
+        once_cell::sync::Lazy::new(|| compile_regex(r"\x1B[@-_]"));
 
-    let without_osc = ANSI_OSC_RE.replace_all(input, "");
-    let without_csi = ANSI_CSI_RE.replace_all(&without_osc, "");
-    ANSI_ESC_RE.replace_all(&without_csi, "").to_string()
+    let without_osc = ANSI_OSC_RE
+        .as_ref()
+        .map(|regex| regex.replace_all(input, "").to_string())
+        .unwrap_or_else(|| input.to_string());
+    let without_csi = ANSI_CSI_RE
+        .as_ref()
+        .map(|regex| regex.replace_all(&without_osc, "").to_string())
+        .unwrap_or(without_osc);
+    ANSI_ESC_RE
+        .as_ref()
+        .map(|regex| regex.replace_all(&without_csi, "").to_string())
+        .unwrap_or(without_csi)
 }
 
 pub(super) fn is_prompt_line(line: &str) -> bool {
@@ -114,14 +141,17 @@ pub(super) fn is_prompt_line(line: &str) -> bool {
     static PROMPT_PATTERNS: once_cell::sync::Lazy<Vec<regex::Regex>> =
         once_cell::sync::Lazy::new(|| {
             vec![
-                regex::Regex::new(r"^\([^)]+\)\s?.*[#$%>] ?$").unwrap(),
-                regex::Regex::new(r"^[^\n\r]*@[^\n\r]*[#$%>] ?$").unwrap(),
-                regex::Regex::new(r"^PS [A-Za-z]:\\.*> ?$").unwrap(),
-                regex::Regex::new(r"^[A-Za-z]:\\.*> ?$").unwrap(),
-                regex::Regex::new(r"^.*\$\s?$").unwrap(),
-                regex::Regex::new(r"^.*%\s?$").unwrap(),
-                regex::Regex::new(r"^.*>\s?$").unwrap(),
+                compile_regex(r"^\([^)]+\)\s?.*[#$%>] ?$"),
+                compile_regex(r"^[^\n\r]*@[^\n\r]*[#$%>] ?$"),
+                compile_regex(r"^PS [A-Za-z]:\\.*> ?$"),
+                compile_regex(r"^[A-Za-z]:\\.*> ?$"),
+                compile_regex(r"^.*\$\s?$"),
+                compile_regex(r"^.*%\s?$"),
+                compile_regex(r"^.*>\s?$"),
             ]
+            .into_iter()
+            .flatten()
+            .collect()
         });
     PROMPT_PATTERNS.iter().any(|re| re.is_match(trimmed))
 }

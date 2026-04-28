@@ -10,8 +10,8 @@ mod net_utils;
 mod path_utils;
 mod remote_sftp;
 mod remote_terminal;
-mod resolved_connection;
 mod request_normalize;
+mod resolved_connection;
 mod ssh_auth;
 mod ssh_command;
 mod terminal_io;
@@ -52,8 +52,8 @@ use self::remote_sftp::{
     upload_file_to_remote,
 };
 use self::remote_terminal::{get_remote_terminal_manager, DisconnectReason, RemoteTerminalEvent};
-pub(crate) use self::resolved_connection::resolve_jump_connection_snapshot;
 use self::request_normalize::{normalize_create_request, normalize_update_request};
+pub(crate) use self::resolved_connection::resolve_jump_connection_snapshot;
 use self::ssh_auth::{
     authenticate_jump_session, authenticate_target_session, encode_second_factor_required_error,
     extract_second_factor_required_prompt,

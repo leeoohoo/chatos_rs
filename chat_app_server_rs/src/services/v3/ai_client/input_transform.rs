@@ -1,5 +1,7 @@
 use serde_json::{json, Value};
 
+use crate::core::messages::text_value_or_json;
+
 pub(super) fn extract_raw_input(messages: &[Value]) -> Value {
     if let Some(last_user) = messages
         .iter()
@@ -61,12 +63,7 @@ fn convert_parts_to_response_input(content: &Value) -> Value {
                 }
 
                 if part_type == "image_url" {
-                    let url = part
-                        .get("image_url")
-                        .and_then(|value| value.get("url"))
-                        .and_then(|value| value.as_str())
-                        .or_else(|| part.get("image_url").and_then(|value| value.as_str()))
-                        .unwrap_or("");
+                    let url = image_part_locator(part);
                     content_list.push(json!({
                         "type": "input_image",
                         "image_url": url,
@@ -84,7 +81,10 @@ fn convert_parts_to_response_input(content: &Value) -> Value {
                 continue;
             }
 
-            content_list.push(json!({"type": "input_text", "text": part.to_string()}));
+            content_list.push(json!({
+                "type": "input_text",
+                "text": text_value_or_json(part, &["text", "value", "content", "delta"])
+            }));
         }
 
         return Value::Array(vec![json!({
@@ -134,6 +134,15 @@ fn to_input_text_content(text: String) -> Value {
     Value::Array(vec![json!({"type": "input_text", "text": text})])
 }
 
+fn image_part_locator(part: &Value) -> &str {
+    part.get("image_url")
+        .and_then(|value| value.get("url"))
+        .and_then(|value| value.as_str())
+        .or_else(|| part.get("image_url").and_then(|value| value.as_str()))
+        .or_else(|| part.get("file_id").and_then(|value| value.as_str()))
+        .unwrap_or("")
+}
+
 fn content_parts_to_text(content: &Value) -> String {
     if let Some(text) = content.as_str() {
         return text.to_string();
@@ -162,13 +171,7 @@ fn content_parts_to_text(content: &Value) -> String {
                 }
 
                 if part_type == "input_image" || part_type == "image_url" {
-                    let url = part
-                        .get("image_url")
-                        .and_then(|value| value.get("url"))
-                        .and_then(|value| value.as_str())
-                        .or_else(|| part.get("image_url").and_then(|value| value.as_str()))
-                        .or_else(|| part.get("file_id").and_then(|value| value.as_str()))
-                        .unwrap_or("");
+                    let url = image_part_locator(part);
                     output.push(if url.is_empty() {
                         "[image]".to_string()
                     } else {
@@ -183,13 +186,16 @@ fn content_parts_to_text(content: &Value) -> String {
                 continue;
             }
 
-            output.push(part.to_string());
+            output.push(text_value_or_json(
+                part,
+                &["text", "value", "content", "delta"],
+            ));
         }
 
         return output.join("\n");
     }
 
-    content.to_string()
+    text_value_or_json(content, &["text", "value", "content", "delta"])
 }
 
 pub(super) fn normalize_input_to_text_value(input: &Value) -> Value {
@@ -232,4 +238,49 @@ pub(super) fn build_current_input_items(raw_input: &Value, force_text: bool) -> 
     }
 
     vec![to_message_item("user", &normalized, force_text)]
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{content_parts_to_text, convert_parts_to_response_input};
+
+    #[test]
+    fn content_parts_to_text_preserves_image_placeholders_and_text_fallback() {
+        let content = json!([
+            {"type": "input_text", "text": "hello"},
+            {"type": "input_image", "image_url": {"url": "https://img.example/a.png"}},
+            {"type": "image_url", "image_url": "https://img.example/b.png"},
+            {"other": 1}
+        ]);
+
+        assert_eq!(
+            content_parts_to_text(&content),
+            "hello\n[image:https://img.example/a.png]\n[image:https://img.example/b.png]\n{\"other\":1}"
+        );
+    }
+
+    #[test]
+    fn convert_parts_to_response_input_normalizes_text_and_images() {
+        let content = json!([
+            {"type": "text", "text": "hello"},
+            {"type": "image_url", "image_url": {"url": "https://img.example/a.png"}, "detail": "high"},
+            {"other": 1}
+        ]);
+
+        let normalized = convert_parts_to_response_input(&content);
+        assert_eq!(
+            normalized,
+            json!([{
+                "role": "user",
+                "type": "message",
+                "content": [
+                    {"type": "input_text", "text": "hello"},
+                    {"type": "input_image", "image_url": "https://img.example/a.png", "detail": "high"},
+                    {"type": "input_text", "text": "{\"other\":1}"}
+                ]
+            }])
+        );
+    }
 }

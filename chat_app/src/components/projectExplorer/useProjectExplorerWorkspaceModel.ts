@@ -1,0 +1,65 @@
+import { useProjectExplorerEffects } from './useProjectExplorerEffects';
+import { useProjectExplorerPreviewNavigation } from './useProjectExplorerPreviewNavigation';
+import { useProjectExplorerWorkspaceActions } from './useProjectExplorerWorkspaceActions';
+import { useProjectExplorerWorkspaceViewModel } from './useProjectExplorerWorkspaceViewModel';
+import {
+  buildWorkspaceActionsParams,
+  buildWorkspaceEffectsParams,
+  buildWorkspaceViewModelParams,
+} from './workspaceModelBuilders';
+import type { UseProjectExplorerWorkspaceModelParams } from './workspaceModelTypes';
+
+export const useProjectExplorerWorkspaceModel = ({
+  project,
+  client,
+  state,
+  pathHelpers,
+  search,
+  dataLoading,
+  logs,
+  selection,
+  runState,
+  codeNav,
+  treeStateOps,
+  handleGenerateRunnerScriptForContact,
+}: UseProjectExplorerWorkspaceModelParams) => {
+  const modelParams = {
+    project,
+    client,
+    state,
+    pathHelpers,
+    search,
+    dataLoading,
+    logs,
+    selection,
+    runState,
+    codeNav,
+    treeStateOps,
+    handleGenerateRunnerScriptForContact,
+  };
+  const {
+    handlePreviewTokenSelection,
+    handleOpenDocumentSymbol,
+  } = useProjectExplorerPreviewNavigation({
+    handleTokenSelection: codeNav.handleTokenSelection,
+    setPreviewTargetLine: search.setPreviewTargetLine,
+  });
+
+  const actions = useProjectExplorerWorkspaceActions(
+    buildWorkspaceActionsParams(modelParams),
+  );
+
+  useProjectExplorerEffects(buildWorkspaceEffectsParams(modelParams, actions));
+
+  const workspaceShell = useProjectExplorerWorkspaceViewModel(buildWorkspaceViewModelParams(modelParams, actions, {
+    handlePreviewTokenSelection,
+    handleOpenDocumentSymbol,
+  }));
+
+  return {
+    ...workspaceShell,
+    handleMoveConflictCancel: actions.handleMoveConflictCancel,
+    handleMoveConflictOverwrite: actions.handleMoveConflictOverwrite,
+    handleMoveConflictRename: actions.handleMoveConflictRename,
+  };
+};

@@ -1,18 +1,14 @@
 use serde_json::Value;
 
+use crate::core::tool_call::message_has_tool_calls;
+
 fn is_tool_message(message: &Value) -> bool {
     message.get("role").and_then(|v| v.as_str()) == Some("tool")
 }
 
 fn is_assistant_tool_call(message: &Value) -> bool {
-    if message.get("role").and_then(|v| v.as_str()) != Some("assistant") {
-        return false;
-    }
-    message
-        .get("tool_calls")
-        .and_then(|v| v.as_array())
-        .map(|calls| !calls.is_empty())
-        .unwrap_or(false)
+    message.get("role").and_then(|v| v.as_str()) == Some("assistant")
+        && message_has_tool_calls(message)
 }
 
 fn is_valid_split(messages: &[Value], index: usize) -> bool {

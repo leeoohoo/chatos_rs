@@ -8,6 +8,7 @@ use crate::services::code_nav::languages::basic::{
     count_char, find_balanced_end, find_column, last_identifier, make_symbol,
     strip_c_style_comments, BasicFileAnalysis, BasicLanguageSpec, BasicSymbol,
 };
+use crate::services::code_nav::languages::regex_utils::compile_static_regex;
 use crate::services::code_nav::types::{
     DocumentSymbolsRequest, DocumentSymbolsResponse, NavCapabilities, NavLocation,
     NavPositionRequest, ProjectContext,
@@ -37,12 +38,12 @@ const C_PROJECT_FILES: &[&str] = &[
 const C_PROJECT_EXTENSIONS: &[&str] = &["mk"];
 
 static TYPE_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"^\s*(?:typedef\s+)?(struct|enum|union)\s+([A-Za-z_][A-Za-z0-9_]*)\b").unwrap()
+    compile_static_regex(r"^\s*(?:typedef\s+)?(struct|enum|union)\s+([A-Za-z_][A-Za-z0-9_]*)\b")
 });
 static TYPEDEF_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"^\s*typedef\b.+\b([A-Za-z_][A-Za-z0-9_]*)\s*;").unwrap());
+    Lazy::new(|| compile_static_regex(r"^\s*typedef\b.+\b([A-Za-z_][A-Za-z0-9_]*)\s*;"));
 static MACRO_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"^\s*#\s*define\s+([A-Za-z_][A-Za-z0-9_]*)\b").unwrap());
+    Lazy::new(|| compile_static_regex(r"^\s*#\s*define\s+([A-Za-z_][A-Za-z0-9_]*)\b"));
 
 const SPEC: BasicLanguageSpec = BasicLanguageSpec {
     provider_id: "c",

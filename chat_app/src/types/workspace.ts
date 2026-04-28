@@ -1,0 +1,193 @@
+export interface Project {
+  id: string;
+  name: string;
+  rootPath: string;
+  description?: string | null;
+  userId?: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface ProjectRunTarget {
+  id: string;
+  label: string;
+  kind: string;
+  cwd: string;
+  command: string;
+  source: string;
+  confidence: number;
+  isDefault?: boolean;
+}
+
+export interface ProjectRunCatalog {
+  projectId: string;
+  status: 'analyzing' | 'ready' | 'empty' | 'error' | string;
+  defaultTargetId?: string | null;
+  targets: ProjectRunTarget[];
+  errorMessage?: string | null;
+  analyzedAt?: string | null;
+  updatedAt?: string | null;
+}
+
+export interface Terminal {
+  id: string;
+  name: string;
+  cwd: string;
+  userId?: string | null;
+  projectId?: string | null;
+  status: string;
+  busy?: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+  lastActiveAt: Date;
+}
+
+export interface TerminalLog {
+  id: string;
+  terminalId: string;
+  logType: string;
+  content: string;
+  createdAt: Date | string;
+}
+
+export interface RemoteConnection {
+  id: string;
+  name: string;
+  host: string;
+  port: number;
+  username: string;
+  authType: 'private_key' | 'private_key_cert' | 'password';
+  password?: string | null;
+  privateKeyPath?: string | null;
+  certificatePath?: string | null;
+  defaultRemotePath?: string | null;
+  hostKeyPolicy: 'strict' | 'accept_new';
+  jumpEnabled: boolean;
+  jumpConnectionId?: string | null;
+  jumpHost?: string | null;
+  jumpPort?: number | null;
+  jumpUsername?: string | null;
+  jumpPrivateKeyPath?: string | null;
+  jumpCertificatePath?: string | null;
+  jumpPassword?: string | null;
+  userId?: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  lastActiveAt: Date;
+}
+
+export interface ContactRecord {
+  id: string;
+  agentId: string;
+  name: string;
+  status: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface FsEntry {
+  name: string;
+  path: string;
+  isDir: boolean;
+  size?: number | null;
+  modifiedAt?: string | null;
+}
+
+export interface FsReadResult {
+  path: string;
+  name: string;
+  size: number;
+  contentType: string;
+  isBinary: boolean;
+  modifiedAt?: string | null;
+  content: string;
+}
+
+export interface ProjectSearchHit {
+  path: string;
+  relativePath: string;
+  line: number;
+  column: number;
+  text: string;
+}
+
+export interface CodeNavCapabilities {
+  language: string;
+  provider: string;
+  supportsDefinition: boolean;
+  supportsReferences: boolean;
+  supportsDocumentSymbols: boolean;
+  fallbackAvailable: boolean;
+}
+
+export interface CodeNavLocation {
+  path: string;
+  relativePath: string;
+  line: number;
+  column: number;
+  endLine: number;
+  endColumn: number;
+  preview: string;
+  score: number;
+}
+
+export interface CodeNavLocationsResult {
+  provider: string;
+  language: string;
+  mode: string;
+  token?: string | null;
+  locations: CodeNavLocation[];
+}
+
+export interface CodeNavDocumentSymbol {
+  name: string;
+  kind: string;
+  line: number;
+  column: number;
+  endLine: number;
+  endColumn: number;
+}
+
+export interface CodeNavDocumentSymbolsResult {
+  provider: string;
+  language: string;
+  mode: string;
+  symbols: CodeNavDocumentSymbol[];
+}
+
+export interface ChangeLogItem {
+  id: string;
+  serverName: string;
+  path: string;
+  action: string;
+  changeKind: 'create' | 'edit' | 'delete';
+  bytes: number;
+  sha256?: string | null;
+  diff?: string | null;
+  sessionId?: string | null;
+  runId?: string | null;
+  confirmed: boolean;
+  confirmedAt?: string | null;
+  confirmedBy?: string | null;
+  createdAt: string;
+  sessionTitle?: string | null;
+}
+
+export interface ProjectChangeMark {
+  path: string;
+  relativePath: string;
+  kind: 'create' | 'edit' | 'delete';
+  lastChangeId: string;
+  updatedAt: string;
+}
+
+export interface ProjectChangeSummary {
+  fileMarks: ProjectChangeMark[];
+  deletedMarks: ProjectChangeMark[];
+  counts: {
+    create: number;
+    edit: number;
+    delete: number;
+    total: number;
+  };
+}

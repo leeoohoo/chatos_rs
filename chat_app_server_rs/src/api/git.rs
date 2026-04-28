@@ -5,7 +5,7 @@ use axum::{Json, Router};
 use serde_json::{json, Value};
 
 use crate::services::git;
-use crate::services::git::contracts::{
+use crate::services::git::{
     GitCheckoutRequest, GitCommitRequest, GitCompareQuery, GitCreateBranchRequest, GitDiffQuery,
     GitFetchRequest, GitMergeRequest, GitPathRequest, GitPullRequest, GitPushRequest, GitRootQuery,
 };

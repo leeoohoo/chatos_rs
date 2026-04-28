@@ -2,15 +2,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type ApiClient from '../../lib/api/client';
 import type { Project, Terminal } from '../../types';
-import { normalizeEntry } from '../projectExplorer/utils';
-
-const RUNNER_SCRIPT_DIR = '.chatos';
-const RUNNER_SCRIPT_FILE = 'project_runner.sh';
-const RUNNER_SCRIPT_REL_PATH = `${RUNNER_SCRIPT_DIR}/${RUNNER_SCRIPT_FILE}`;
-const RUNNER_START_COMMAND = `bash ./${RUNNER_SCRIPT_REL_PATH} start`;
-const RUNNER_STOP_COMMAND = `bash ./${RUNNER_SCRIPT_REL_PATH} stop`;
-const RUNNER_RESTART_COMMAND = `bash ./${RUNNER_SCRIPT_REL_PATH} restart`;
-const FS_PATH_NOT_FOUND_ERROR = '路径不存在';
+import {
+  RUNNER_RESTART_COMMAND,
+  RUNNER_START_COMMAND,
+  RUNNER_STOP_COMMAND,
+  buildProjectRunnerTarget,
+  hasProjectRunnerScript,
+  isProjectRunnerPathMissingError,
+  normalizeProjectRunnerRootPath,
+  readProjectRunnerErrorMessage,
+  resolveProjectRuntimeTerminal,
+} from '../../lib/domain/projectRunner';
 
 export interface ProjectRunTargetOption {
   id: string;
@@ -64,42 +66,11 @@ const createInitialProjectRunState = (): ProjectRunViewState => ({
   error: null,
 });
 
-const normalizeRootPath = (value: string): string => value.trim().replace(/[\\/]+$/, '');
-
-const readErrorMessage = (error: unknown): string => (
-  error instanceof Error ? error.message : '运行状态加载失败'
-);
-
-const isPathMissingError = (error: unknown): boolean => (
-  readErrorMessage(error).includes(FS_PATH_NOT_FOUND_ERROR)
-);
-
 const shouldPollProjectRunState = (state: ProjectRunViewState): boolean => {
   if (state.status === 'ready' || state.status === 'missing_root') {
     return false;
   }
   return true;
-};
-
-const hasRunnerScript = async (apiClient: ApiClient, rootPath: string): Promise<boolean> => {
-  const safeRoot = normalizeRootPath(rootPath);
-  if (!safeRoot) {
-    return false;
-  }
-  const rootList = await apiClient.listFsEntries(safeRoot);
-  const rootEntries = Array.isArray(rootList?.entries) ? rootList.entries.map(normalizeEntry) : [];
-  const runnerDirEntry = rootEntries.find((entry) => entry.isDir && entry.name === RUNNER_SCRIPT_DIR) || null;
-  if (!runnerDirEntry?.path) {
-    return false;
-  }
-  const runnerDirPath = runnerDirEntry.path;
-  try {
-    const runnerList = await apiClient.listFsEntries(runnerDirPath);
-    const runnerEntries = Array.isArray(runnerList?.entries) ? runnerList.entries.map(normalizeEntry) : [];
-    return runnerEntries.some((entry) => !entry.isDir && entry.name === RUNNER_SCRIPT_FILE);
-  } catch {
-    return false;
-  }
 };
 
 const resolveProjectRunState = async (
@@ -109,16 +80,11 @@ const resolveProjectRunState = async (
   try {
     const [members, scriptExists] = await Promise.all([
       apiClient.listProjectContacts(project.id, { limit: 500, offset: 0 }),
-      hasRunnerScript(apiClient, project.rootPath),
+      hasProjectRunnerScript(apiClient, project.rootPath),
     ]);
     const memberCount = Array.isArray(members) ? members.length : 0;
     if (scriptExists) {
-      const target: ProjectRunTargetOption = {
-        id: 'project_runner_start',
-        label: 'project_runner.sh start',
-        cwd: project.rootPath,
-        command: RUNNER_START_COMMAND,
-      };
+      const target = buildProjectRunnerTarget(project.rootPath);
       return {
         status: 'ready',
         loading: false,
@@ -150,7 +116,7 @@ const resolveProjectRunState = async (
       error: '请先在项目页生成启动脚本',
     };
   } catch (error) {
-    if (isPathMissingError(error)) {
+    if (isProjectRunnerPathMissingError(error)) {
       return {
         ...createInitialProjectRunState(),
         status: 'missing_root',
@@ -163,27 +129,9 @@ const resolveProjectRunState = async (
       ...createInitialProjectRunState(),
       status: 'error',
       loading: false,
-      error: readErrorMessage(error),
+      error: readProjectRunnerErrorMessage(error, '运行状态加载失败'),
     };
   }
-};
-
-const resolveProjectRuntimeTerminal = (
-  terminals: Terminal[],
-  projectId: string,
-) => {
-  const related = terminals
-    .filter((terminal) => String(terminal?.projectId || '') === projectId && terminal?.status === 'running')
-    .sort((left, right) => {
-      const leftTime = new Date(left?.lastActiveAt || 0).getTime();
-      const rightTime = new Date(right?.lastActiveAt || 0).getTime();
-      return rightTime - leftTime;
-    });
-  const busyTerminal = related.find((terminal) => Boolean(terminal?.busy));
-  return {
-    busyTerminal,
-    activeTerminal: busyTerminal || related[0] || null,
-  };
 };
 
 export const useProjectRunState = ({
@@ -209,7 +157,7 @@ export const useProjectRunState = ({
       const next: Record<string, ProjectRunViewState> = {};
       const nextRootPathById: Record<string, string> = {};
       (projects || []).forEach((project) => {
-        const normalizedRootPath = normalizeRootPath(project.rootPath || '');
+        const normalizedRootPath = normalizeProjectRunnerRootPath(project.rootPath || '');
         nextRootPathById[project.id] = normalizedRootPath;
         const previousRootPath = projectRootPathByIdRef.current[project.id] || '';
         next[project.id] = previousRootPath === normalizedRootPath

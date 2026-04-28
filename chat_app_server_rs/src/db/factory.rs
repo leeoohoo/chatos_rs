@@ -160,19 +160,19 @@ pub async fn init_global() -> Result<Arc<Database>, String> {
     factory.get_adapter().await
 }
 
-pub fn get_factory() -> Arc<DatabaseFactory> {
+pub fn get_factory() -> Result<Arc<DatabaseFactory>, String> {
     DB_FACTORY
         .get()
-        .expect("DB factory not initialized")
-        .clone()
+        .cloned()
+        .ok_or_else(|| "DB factory not initialized".to_string())
 }
 
 pub async fn get_db() -> Result<Arc<Database>, String> {
-    get_factory().get_adapter().await
+    get_factory()?.get_adapter().await
 }
 
 pub fn get_db_sync() -> Result<Arc<Database>, String> {
-    get_factory().get_adapter_sync()
+    get_factory()?.get_adapter_sync()
 }
 
 fn apply_env_overrides(mut cfg: DatabaseConfig) -> DatabaseConfig {

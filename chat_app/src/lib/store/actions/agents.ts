@@ -1,46 +1,32 @@
 import type ApiClient from '../../api/client';
+import { normalizeAgent } from '../../domain/configs';
 import { mergeSessionAiSelectionIntoMetadata } from '../helpers/sessionAiSelection';
 import { mergeSessionRuntimeIntoMetadata } from '../helpers/sessionRuntime';
+import type { ChatStoreDraft, ChatStoreGet, ChatStoreSet } from '../types';
 import { debugLog } from '@/lib/utils';
 
 interface Deps {
-  set: any;
-  get: any;
+  set: ChatStoreSet;
+  get: ChatStoreGet;
   client: ApiClient;
   getUserIdParam: () => string;
 }
 
 export function createAgentActions({ set, get, client, getUserIdParam }: Deps) {
   void get;
+
   return {
     loadAgents: async () => {
       try {
         const memoryAgents = await client.getMemoryAgents(getUserIdParam(), { enabled: true });
-        const agents = (memoryAgents || []).map((agent: any) => ({
-          id: agent.id,
-          name: agent.name,
-          description: agent.description || '',
-          ai_model_config_id: '',
-          enabled: agent.enabled !== false,
-          project_id: agent?.project_policy?.project_id || null,
-          workspace_dir: agent?.project_policy?.project_root || null,
-          app_ids: [],
-          role_definition: agent.role_definition || '',
-          skills: Array.isArray(agent.skills) ? agent.skills : [],
-          skill_ids: Array.isArray(agent.skill_ids) ? agent.skill_ids : [],
-          default_skill_ids: Array.isArray(agent.default_skill_ids) ? agent.default_skill_ids : [],
-          mcp_policy: agent.mcp_policy || null,
-          project_policy: agent.project_policy || null,
-          createdAt: agent.created_at || new Date().toISOString(),
-          updatedAt: agent.updated_at || new Date().toISOString(),
-        }));
+        const agents = (memoryAgents || []).map(normalizeAgent);
         debugLog('🔍 [Memory] loadAgents 返回的数据:', agents);
-        set((state: any) => {
-          state.agents = (agents || []) as any[];
+        set((state: ChatStoreDraft) => {
+          state.agents = agents || [];
         });
       } catch (error) {
         console.error('Failed to load agents:', error);
-        set((state: any) => {
+        set((state: ChatStoreDraft) => {
           state.agents = [];
           state.error = error instanceof Error ? error.message : 'Failed to load agents';
         });
@@ -49,9 +35,9 @@ export function createAgentActions({ set, get, client, getUserIdParam }: Deps) {
 
     setSelectedAgent: (agentId: string | null) => {
       let sessionIdToPersist: string | null = null;
-      let metadataToPersist: Record<string, any> | null = null;
+      let metadataToPersist: Record<string, unknown> | null = null;
 
-      set((state: any) => {
+      set((state: ChatStoreDraft) => {
         state.selectedAgentId = agentId;
         const sessionId = state.currentSessionId;
         if (sessionId) {
@@ -64,7 +50,7 @@ export function createAgentActions({ set, get, client, getUserIdParam }: Deps) {
           }
           state.sessionAiSelectionBySession[sessionId] = nextSelection;
 
-          const sessionIndex = state.sessions.findIndex((s: any) => s.id === sessionId);
+          const sessionIndex = state.sessions.findIndex((session) => session.id === sessionId);
           const baseMetadata = sessionIndex >= 0
             ? state.sessions[sessionIndex]?.metadata
             : state.currentSession?.metadata;

@@ -7,6 +7,10 @@ use regex::{Regex, RegexBuilder};
 use walkdir::{DirEntry, WalkDir};
 
 use crate::services::code_nav::fallback::extract_token_at_position;
+use crate::services::code_nav::languages::shared_nav::{
+    declaration_kind_from_symbol_kind as shared_declaration_kind_from_symbol_kind, find_column,
+    is_type_like, nav_location_from_coordinates, normalize_path, push_unique_location,
+};
 use crate::services::code_nav::symbol_index::{
     nav_location_from_indexed_symbol, project_symbol_index, score_indexed_definition_candidate,
     IndexedSymbol,
@@ -15,6 +19,7 @@ use crate::services::code_nav::types::{
     DocumentSymbolItem, DocumentSymbolsRequest, DocumentSymbolsResponse, NavCapabilities,
     NavLocation, NavPositionRequest, ProjectContext,
 };
+use crate::services::code_nav::languages::regex_utils::compile_static_regex;
 use crate::services::code_nav::CodeNavProvider;
 
 const GO_IGNORED_DIRS: &[&str] = &[
@@ -33,25 +38,25 @@ const MAX_DEFINITION_RESULTS: usize = 20;
 const MAX_REFERENCE_RESULTS: usize = 100;
 const MAX_SYMBOL_RESULTS: usize = 200;
 
-static GO_MODULE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^\s*module\s+([^\s]+)\s*$").unwrap());
+static GO_MODULE_RE: Lazy<Regex> = Lazy::new(|| compile_static_regex(r"^\s*module\s+([^\s]+)\s*$"));
 static IMPORT_SINGLE_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r#"^\s*import\s+(?:(?:([A-Za-z_][A-Za-z0-9_]*)|_|\.)\s+)?"([^"]+)""#).unwrap()
+    compile_static_regex(r#"^\s*import\s+(?:(?:([A-Za-z_][A-Za-z0-9_]*)|_|\.)\s+)?"([^"]+)""#)
 });
 static IMPORT_BLOCK_ITEM_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r#"^\s*(?:(?:([A-Za-z_][A-Za-z0-9_]*)|_|\.)\s+)?"([^"]+)""#).unwrap());
+    Lazy::new(|| compile_static_regex(r#"^\s*(?:(?:([A-Za-z_][A-Za-z0-9_]*)|_|\.)\s+)?"([^"]+)""#));
 static TYPE_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"^\s*type\s+([A-Za-z_][A-Za-z0-9_]*)\s+(struct|interface)\b").unwrap()
+    compile_static_regex(r"^\s*type\s+([A-Za-z_][A-Za-z0-9_]*)\s+(struct|interface)\b")
 });
 static TYPE_ALIAS_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"^\s*type\s+([A-Za-z_][A-Za-z0-9_]*)\b").unwrap());
+    Lazy::new(|| compile_static_regex(r"^\s*type\s+([A-Za-z_][A-Za-z0-9_]*)\b"));
 static METHOD_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"^\s*func\s*\([^)]*\)\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(").unwrap());
+    Lazy::new(|| compile_static_regex(r"^\s*func\s*\([^)]*\)\s*([A-Za-z_][A-Za-z0-9_]*)\s*\("));
 static FUNCTION_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"^\s*func\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(").unwrap());
+    Lazy::new(|| compile_static_regex(r"^\s*func\s+([A-Za-z_][A-Za-z0-9_]*)\s*\("));
 static VAR_CONST_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"^\s*(var|const)\s+([A-Za-z_][A-Za-z0-9_]*)\b").unwrap());
+    Lazy::new(|| compile_static_regex(r"^\s*(var|const)\s+([A-Za-z_][A-Za-z0-9_]*)\b"));
 static SHORT_VAR_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:=").unwrap());
+    Lazy::new(|| compile_static_regex(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:="));
 
 #[derive(Debug, Clone)]
 struct GoImport {
@@ -339,10 +344,7 @@ fn go_references(
             end_column: entry.column + token.chars().count().saturating_sub(1),
             preview: entry.text,
         };
-        let key = build_nav_key(&location);
-        if seen.insert(key) {
-            locations.push(location);
-        }
+        push_unique_location(&mut locations, &mut seen, location);
     }
 
     let mut declarations = Vec::new();
@@ -631,50 +633,14 @@ fn nav_location_from_symbol(
     symbol: &GoSymbol,
     score: f64,
 ) -> Result<Option<NavLocation>, String> {
-    let preview = read_line_preview(path, symbol.line)?;
-    let relative_path = pathdiff::diff_paths(path, root)
-        .unwrap_or_else(|| path.to_path_buf())
-        .to_string_lossy()
-        .replace('\\', "/");
-    Ok(Some(NavLocation {
-        path: normalize_path(path).to_string_lossy().to_string(),
-        relative_path,
-        line: symbol.line,
-        column: symbol.column,
-        end_line: symbol.end_line,
-        end_column: symbol.end_column,
-        preview,
+    nav_location_from_coordinates(
+        root,
+        path,
+        symbol.line,
+        symbol.column,
+        symbol.end_line,
+        symbol.end_column,
         score,
-    }))
-}
-
-fn read_line_preview(path: &Path, line: usize) -> Result<String, String> {
-    let content = fs::read_to_string(path).map_err(|err| err.to_string())?;
-    Ok(content
-        .lines()
-        .nth(line.saturating_sub(1))
-        .unwrap_or("")
-        .trim_end_matches('\r')
-        .chars()
-        .take(400)
-        .collect())
-}
-
-fn push_unique_location(
-    out: &mut Vec<NavLocation>,
-    seen: &mut HashSet<String>,
-    location: NavLocation,
-) {
-    let key = build_nav_key(&location);
-    if seen.insert(key) {
-        out.push(location);
-    }
-}
-
-fn build_nav_key(location: &NavLocation) -> String {
-    format!(
-        "{}:{}:{}:{}:{}",
-        location.path, location.line, location.column, location.end_line, location.end_column
     )
 }
 
@@ -777,16 +743,7 @@ fn cached_go_analysis<'a>(
 }
 
 fn declaration_kind_from_symbol_kind(kind: &str) -> Option<&'static str> {
-    match kind {
-        "struct" => Some("struct"),
-        "interface" => Some("interface"),
-        "type" => Some("type"),
-        "method" => Some("method"),
-        "function" => Some("function"),
-        "variable" => Some("variable"),
-        "constant" => Some("constant"),
-        _ => None,
-    }
+    shared_declaration_kind_from_symbol_kind(kind)
 }
 
 fn classify_go_declaration(line: &str, token: &str) -> Option<&'static str> {
@@ -919,10 +876,12 @@ fn strip_go_comments(line: &str, in_block_comment: &mut bool) -> String {
 
         if in_string {
             out.push(current);
-            if current == '\\' && next.is_some() && string_delim != '`' {
-                out.push(next.unwrap());
-                index += 2;
-                continue;
+            if current == '\\' && string_delim != '`' {
+                if let Some(next) = next {
+                    out.push(next);
+                    index += 2;
+                    continue;
+                }
             }
             if current == string_delim {
                 in_string = false;
@@ -963,21 +922,8 @@ fn strip_go_comments(line: &str, in_block_comment: &mut bool) -> String {
     out
 }
 
-fn is_type_like(token: &str) -> bool {
-    token
-        .chars()
-        .next()
-        .map(|value| value.is_uppercase())
-        .unwrap_or(false)
-}
-
 fn is_type_symbol(kind: &str) -> bool {
     matches!(kind, "struct" | "interface" | "type")
-}
-
-fn find_column(line: &str, token: &str) -> Option<usize> {
-    line.find(token)
-        .map(|offset| line[..offset].chars().count() + 1)
 }
 
 fn should_visit_go_path(entry: &DirEntry) -> bool {
@@ -990,19 +936,6 @@ fn should_visit_go_path(entry: &DirEntry) -> bool {
     !GO_IGNORED_DIRS.contains(&name)
 }
 
-fn normalize_path(path: &Path) -> PathBuf {
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        match component {
-            std::path::Component::CurDir => {}
-            std::path::Component::ParentDir => {
-                normalized.pop();
-            }
-            _ => normalized.push(component.as_os_str()),
-        }
-    }
-    normalized
-}
 
 #[cfg(test)]
 mod tests {

@@ -1,7 +1,11 @@
 use std::collections::HashMap;
 
-use serde_json::{json, Value};
+use serde_json::Value;
 
+use crate::core::tool_call::{
+    build_function_call_item, clone_tool_call_arguments, extract_tool_call_id,
+    extract_tool_call_name, tool_call_arguments_text,
+};
 use crate::services::v3::mcp_tool_execute::ToolResult;
 
 #[derive(Default)]
@@ -16,8 +20,12 @@ pub(super) fn build_tool_call_execution_plan(tool_calls_arr: &[Value]) -> ToolCa
     let mut exact_key_to_call_id: HashMap<String, String> = HashMap::new();
 
     for tool_call in tool_calls_arr {
-        let call_id = tool_call_id(tool_call);
-        let tool_name = tool_call_name(tool_call);
+        let call_id = extract_tool_call_id(tool_call)
+            .unwrap_or("")
+            .to_string();
+        let tool_name = extract_tool_call_name(tool_call)
+            .unwrap_or("")
+            .to_string();
         let mut canonical_call_id: Option<String> = None;
 
         if canonical_call_id.is_none() && !call_id.is_empty() {
@@ -74,78 +82,29 @@ pub(super) fn expand_tool_results_with_aliases(
     expanded
 }
 
-fn tool_call_id(tool_call: &Value) -> String {
-    tool_call
-        .get("id")
-        .and_then(|value| value.as_str())
-        .or_else(|| tool_call.get("call_id").and_then(|value| value.as_str()))
-        .unwrap_or("")
-        .to_string()
-}
-
-fn tool_call_name(tool_call: &Value) -> String {
-    tool_call
-        .get("function")
-        .and_then(|value| value.get("name"))
-        .and_then(|value| value.as_str())
-        .or_else(|| tool_call.get("name").and_then(|value| value.as_str()))
-        .unwrap_or("")
-        .to_string()
-}
-
-fn tool_call_arguments_text(tool_call: &Value) -> String {
-    let arguments = tool_call
-        .get("function")
-        .and_then(|value| value.get("arguments"))
-        .cloned()
-        .or_else(|| tool_call.get("arguments").cloned())
-        .unwrap_or(Value::String("{}".to_string()));
-
-    if let Some(raw) = arguments.as_str() {
-        return raw.trim().to_string();
-    }
-
-    arguments.to_string()
-}
-
 pub(super) fn build_tool_call_items(tool_calls_arr: &[Value]) -> Vec<Value> {
     let mut items = Vec::new();
 
     for tool_call in tool_calls_arr {
-        let call_id = tool_call
-            .get("id")
-            .and_then(|value| value.as_str())
-            .or_else(|| tool_call.get("call_id").and_then(|value| value.as_str()))
+        let call_id = extract_tool_call_id(tool_call)
             .unwrap_or("")
             .to_string();
         if call_id.is_empty() {
             continue;
         }
 
-        let function = tool_call.get("function").cloned().unwrap_or(json!({}));
-        let name = function
-            .get("name")
-            .and_then(|value| value.as_str())
-            .or_else(|| tool_call.get("name").and_then(|value| value.as_str()))
-            .unwrap_or("")
-            .to_string();
-        let args = function
-            .get("arguments")
-            .cloned()
-            .or_else(|| tool_call.get("arguments").cloned())
-            .unwrap_or(Value::String("{}".to_string()));
-        let args_str = if let Some(raw) = args.as_str() {
-            raw.to_string()
-        } else {
-            args.to_string()
-        };
+        let name = extract_tool_call_name(tool_call).unwrap_or("").to_string();
+        let args = clone_tool_call_arguments(tool_call);
+        let args_str = args
+            .as_str()
+            .map(|raw| raw.to_string())
+            .unwrap_or_else(|| args.to_string());
 
-        items.push(json!({
-            "type": "function_call",
-            "call_id": call_id,
-            "name": name,
-            "arguments": args_str
-        }));
+        items.push(build_function_call_item(
+            call_id.as_str(),
+            name.as_str(),
+            args_str.as_str(),
+        ));
     }
 
     items

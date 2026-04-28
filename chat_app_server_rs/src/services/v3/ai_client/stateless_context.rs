@@ -1,8 +1,13 @@
 use std::collections::HashSet;
 
-use serde_json::{json, Value};
+use serde_json::Value;
 use tracing::info;
 
+use crate::core::messages::is_session_summary_message;
+use crate::core::tool_call::{
+    build_function_call_item, build_function_call_output_item, extract_message_tool_calls,
+    extract_tool_call_id, extract_tool_call_name, tool_call_arguments_text,
+};
 use super::compat::cap_tool_output_for_input;
 use super::{build_current_input_items, to_message_item, AiClient};
 
@@ -122,13 +127,7 @@ impl AiClient {
         }
 
         for msg in history {
-            if msg
-                .metadata
-                .as_ref()
-                .and_then(|m| m.get("type"))
-                .and_then(|v| v.as_str())
-                == Some("session_summary")
-            {
+            if is_session_summary_message(&msg) {
                 continue;
             }
             if msg.role == "user"
@@ -142,56 +141,26 @@ impl AiClient {
                     force_text,
                 ));
                 if include_tool_items {
-                    let mut tool_calls = msg.tool_calls.clone().or_else(|| {
-                        msg.metadata
-                            .as_ref()
-                            .and_then(|m| m.get("toolCalls").cloned())
-                    });
-                    if let Some(Value::String(s)) = tool_calls.clone() {
-                        if let Ok(v) = serde_json::from_str::<Value>(&s) {
-                            tool_calls = Some(v);
-                        }
-                    }
                     if msg.role == "assistant" {
-                        if let Some(arr) = tool_calls.and_then(|v| v.as_array().cloned()) {
-                            for tc in arr {
-                                let call_id = tc
-                                    .get("id")
-                                    .and_then(|v| v.as_str())
-                                    .or_else(|| tc.get("call_id").and_then(|v| v.as_str()))
-                                    .unwrap_or("")
-                                    .to_string();
-                                if call_id.is_empty() {
-                                    continue;
-                                }
-                                if !tool_output_ids.contains(&call_id) {
-                                    continue;
-                                }
-                                let func = tc.get("function").cloned().unwrap_or(json!({}));
-                                let name = func
-                                    .get("name")
-                                    .and_then(|v| v.as_str())
-                                    .or_else(|| tc.get("name").and_then(|v| v.as_str()))
-                                    .unwrap_or("")
-                                    .to_string();
-                                let args = func
-                                    .get("arguments")
-                                    .cloned()
-                                    .or_else(|| tc.get("arguments").cloned())
-                                    .unwrap_or(Value::String("{}".to_string()));
-                                let args_str = if let Some(s) = args.as_str() {
-                                    s.to_string()
-                                } else {
-                                    args.to_string()
-                                };
-                                tool_call_ids.insert(call_id.clone());
-                                items.push(json!({
-                                    "type": "function_call",
-                                    "call_id": call_id,
-                                    "name": name,
-                                    "arguments": args_str
-                                }));
+                        for tc in extract_message_tool_calls(
+                            msg.tool_calls.as_ref(),
+                            msg.metadata.as_ref(),
+                        ) {
+                            let call_id = extract_tool_call_id(&tc).unwrap_or("").to_string();
+                            if call_id.is_empty() {
+                                continue;
                             }
+                            if !tool_output_ids.contains(&call_id) {
+                                continue;
+                            }
+                            let name = extract_tool_call_name(&tc).unwrap_or("").to_string();
+                            let args_str = tool_call_arguments_text(&tc);
+                            tool_call_ids.insert(call_id.clone());
+                            items.push(build_function_call_item(
+                                call_id.as_str(),
+                                name.as_str(),
+                                args_str.as_str(),
+                            ));
                         }
                     }
                 }
@@ -202,11 +171,10 @@ impl AiClient {
                     if let Some(call_id) = msg.tool_call_id.clone() {
                         if tool_call_ids.contains(&call_id) {
                             let output = cap_tool_output_for_input(msg.content.as_str());
-                            items.push(json!({
-                                "type": "function_call_output",
-                                "call_id": call_id,
-                                "output": output
-                            }));
+                            items.push(build_function_call_output_item(
+                                call_id.as_str(),
+                                output.as_str(),
+                            ));
                         }
                     }
                 }

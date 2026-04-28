@@ -1,20 +1,20 @@
-use std::sync::Arc;
-
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
+use crate::core::messages::owned_non_empty_text;
 use crate::services::ai_common::{
-    await_with_optional_abort, build_abort_token, build_assistant_message_metadata,
-    build_bearer_post_request, consume_sse_stream, normalize_reasoning_effort, truncate_log,
-    validate_request_payload_size,
+    build_abort_token, consume_sse_stream, emit_stream_callbacks, normalize_reasoning_effort,
+    parsed_stream_response_is_empty, persist_assistant_response_with_policy,
+    read_error_response_text, send_bearer_json_request, validate_request_payload_size,
+    AiStreamCallbacks, AssistantResponsePersistenceRequest, EMPTY_STREAM_RESPONSE_PARSE_ERROR,
 };
 use crate::services::v2::message_manager::MessageManager;
 
 mod parser;
 
 use self::parser::{
-    apply_stream_event, collect_tool_calls, normalize_reasoning_value, StreamState,
+    apply_stream_event, collect_tool_calls, StreamState,
 };
 
 const REQUEST_BODY_LIMIT_ENV: &str = "AI_V2_REQUEST_BODY_MAX_BYTES";
@@ -28,11 +28,7 @@ pub struct AiResponse {
     pub usage: Option<Value>,
 }
 
-#[derive(Clone)]
-pub struct StreamCallbacks {
-    pub on_chunk: Option<Arc<dyn Fn(String) + Send + Sync>>,
-    pub on_thinking: Option<Arc<dyn Fn(String) + Send + Sync>>,
-}
+pub type StreamCallbacks = AiStreamCallbacks;
 
 #[derive(Clone)]
 pub struct AiRequestHandler {
@@ -65,14 +61,10 @@ impl AiRequestHandler {
         thinking_level: Option<String>,
         session_id: Option<String>,
         turn_id: Option<String>,
-        stream: bool,
         message_mode: Option<String>,
         message_source: Option<String>,
         purpose: &str,
     ) -> Result<AiResponse, String> {
-        let requested_stream = stream;
-        let stream = true;
-
         let mut payload = json!({
             "model": model,
             "messages": messages,
@@ -109,11 +101,10 @@ impl AiRequestHandler {
         let token = build_abort_token(session_id.as_deref());
 
         info!(
-            "[AI] handleRequest start: purpose={}, model={}, stream={}, requested_stream={}, baseURL={}, session={}",
+            "[AI] handleRequest start: purpose={}, model={}, stream={}, baseURL={}, session={}",
             purpose,
             payload["model"].as_str().unwrap_or(""),
-            stream,
-            requested_stream,
+            true,
             self.base_url,
             session_id.clone().unwrap_or_else(|| "n/a".to_string())
         );
@@ -137,108 +128,6 @@ impl AiRequestHandler {
         .await
     }
 
-    async fn handle_normal_request(
-        &self,
-        url: String,
-        payload: Value,
-        reasoning_enabled: bool,
-        session_id: Option<String>,
-        turn_id: Option<String>,
-        token: Option<CancellationToken>,
-        force_identity_encoding: bool,
-        persist_messages: bool,
-        message_mode: Option<String>,
-        message_source: Option<String>,
-    ) -> Result<AiResponse, String> {
-        let req =
-            build_bearer_post_request(&self.client, &url, &self.api_key, force_identity_encoding);
-        let resp = await_with_optional_abort(req.json(&payload).send(), token).await?;
-
-        let status = resp.status();
-        let raw = resp.text().await.map_err(|e| e.to_string())?;
-        if !status.is_success() {
-            let err_text = truncate_log(&raw, 2000);
-            error!("[AI] request failed: status={}, error={}", status, err_text);
-            return Err(format!("status {}: {}", status, err_text));
-        }
-
-        let val: Value = serde_json::from_str(raw.as_str()).map_err(|err| {
-            format!(
-                "invalid JSON response (status {}): {}; body_preview={}",
-                status,
-                err,
-                truncate_log(raw.as_str(), 1200)
-            )
-        })?;
-
-        let choice = val
-            .get("choices")
-            .and_then(|c| c.get(0))
-            .cloned()
-            .unwrap_or(Value::Null);
-        let message = choice.get("message").cloned().unwrap_or(Value::Null);
-        let content = message
-            .get("content")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let mut reasoning = None;
-        if reasoning_enabled {
-            let r = normalize_reasoning_value(
-                message
-                    .get("reasoning_content")
-                    .or_else(|| message.get("reasoning")),
-            );
-            if !r.is_empty() {
-                reasoning = Some(r);
-            }
-        }
-        let tool_calls = message.get("tool_calls").cloned();
-        let finish_reason = choice
-            .get("finish_reason")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        let usage = val.get("usage").cloned();
-
-        if persist_messages {
-            if let Some(session_id) = session_id {
-                let meta_val = build_assistant_message_metadata(
-                    tool_calls.as_ref(),
-                    None,
-                    turn_id.as_deref(),
-                    finish_reason.as_deref(),
-                );
-                if let Err(err) = self
-                    .message_manager
-                    .save_assistant_message(
-                        &session_id,
-                        &content,
-                        None,
-                        reasoning.clone(),
-                        message_mode,
-                        message_source,
-                        meta_val,
-                        tool_calls.clone(),
-                    )
-                    .await
-                {
-                    error!(
-                        "[AI] save assistant message failed: session_id={}, detail={}",
-                        session_id, err
-                    );
-                }
-            }
-        }
-
-        Ok(AiResponse {
-            content,
-            reasoning,
-            tool_calls,
-            finish_reason,
-            usage,
-        })
-    }
-
     async fn handle_stream_request(
         &self,
         url: String,
@@ -253,19 +142,23 @@ impl AiRequestHandler {
         message_mode: Option<String>,
         message_source: Option<String>,
     ) -> Result<AiResponse, String> {
-        let req =
-            build_bearer_post_request(&self.client, &url, &self.api_key, force_identity_encoding);
-        let resp = await_with_optional_abort(req.json(&payload).send(), token.clone()).await?;
+        let resp = send_bearer_json_request(
+            &self.client,
+            &url,
+            &self.api_key,
+            &payload,
+            token.clone(),
+            force_identity_encoding,
+        )
+        .await?;
 
         let status = resp.status();
         if !status.is_success() {
-            let text = resp.text().await.unwrap_or_default();
-            let err_text = truncate_log(&text, 2000);
-            error!(
-                "[AI] stream request failed: status={}, error={}",
-                status, err_text
-            );
-            return Err(format!("status {}: {}", status, err_text));
+            let err = read_error_response_text(resp)
+                .await
+                .unwrap_or_else(|inner| format!("status {}: {}", status, inner));
+            error!("[AI] stream request failed: {}", err);
+            return Err(err);
         }
 
         let stream = resp.bytes_stream();
@@ -275,66 +168,36 @@ impl AiRequestHandler {
         consume_sse_stream(stream, token.clone(), |v| {
             parsed_event_count += 1;
             let payload = apply_stream_event(&mut stream_state, &v, reasoning_enabled);
-            if let Some(chunk) = payload.chunk {
-                if let Some(cb) = &callbacks.on_chunk {
-                    cb(chunk);
-                }
-            }
-            if let Some(thinking) = payload.thinking {
-                if let Some(cb) = &callbacks.on_thinking {
-                    cb(thinking);
-                }
-            }
+            emit_stream_callbacks(&callbacks, payload.chunk, payload.thinking);
         })
         .await?;
 
-        let parsed_empty_response = parsed_event_count == 0
-            && stream_state.full_content.trim().is_empty()
-            && stream_state.reasoning.trim().is_empty()
-            && stream_state.tool_calls_map.is_empty();
+        let parsed_empty_response = parsed_stream_response_is_empty(
+            parsed_event_count,
+            stream_state.full_content.as_str(),
+            stream_state.reasoning.as_str(),
+            !stream_state.tool_calls_map.is_empty(),
+        );
         if parsed_empty_response {
-            return Err(
-                "stream response parse failed: no valid SSE events parsed from provider"
-                    .to_string(),
-            );
+            return Err(EMPTY_STREAM_RESPONSE_PARSE_ERROR.to_string());
         }
 
         let tool_calls = collect_tool_calls(&stream_state.tool_calls_map);
-        let reasoning_opt = if stream_state.reasoning.is_empty() {
-            None
-        } else {
-            Some(stream_state.reasoning.clone())
-        };
+        let reasoning_opt = owned_non_empty_text(stream_state.reasoning.as_str());
 
-        if persist_messages {
-            if let Some(session_id) = session_id {
-                let meta_val = build_assistant_message_metadata(
-                    tool_calls.as_ref(),
-                    None,
-                    turn_id.as_deref(),
-                    stream_state.finish_reason.as_deref(),
-                );
-                if let Err(err) = self
-                    .message_manager
-                    .save_assistant_message(
-                        &session_id,
-                        &stream_state.full_content,
-                        None,
-                        reasoning_opt.clone(),
-                        message_mode,
-                        message_source,
-                        meta_val,
-                        tool_calls.clone(),
-                    )
-                    .await
-                {
-                    error!(
-                        "[AI] save assistant message failed: session_id={}, detail={}",
-                        session_id, err
-                    );
-                }
-            }
-        }
+        persist_assistant_response_if_needed(
+            self,
+            session_id,
+            turn_id,
+            persist_messages,
+            message_mode,
+            message_source,
+            stream_state.full_content.as_str(),
+            reasoning_opt.clone(),
+            tool_calls.clone(),
+            stream_state.finish_reason.clone(),
+        )
+        .await;
 
         Ok(AiResponse {
             content: stream_state.full_content,
@@ -344,6 +207,55 @@ impl AiRequestHandler {
             usage: stream_state.usage,
         })
     }
+}
+
+async fn persist_assistant_response_if_needed(
+    handler: &AiRequestHandler,
+    session_id: Option<String>,
+    turn_id: Option<String>,
+    persist_messages: bool,
+    message_mode: Option<String>,
+    message_source: Option<String>,
+    content: &str,
+    reasoning: Option<String>,
+    tool_calls: Option<Value>,
+    finish_reason: Option<String>,
+) {
+    let request = AssistantResponsePersistenceRequest {
+        session_id,
+        turn_id,
+        persist_messages,
+        message_mode,
+        message_source,
+        content: content.to_string(),
+        reasoning,
+        tool_calls,
+        response_id: None,
+        response_status: finish_reason,
+    };
+
+    persist_assistant_response_with_policy(request, true, "[AI]", None, |request| async move {
+        let Some(session_id) = request.session_id.as_deref() else {
+            return Ok(());
+        };
+
+        handler
+            .message_manager
+            .save_assistant_response_message(
+                session_id,
+                request.content.as_str(),
+                request.reasoning,
+                request.message_mode,
+                request.message_source,
+                request.tool_calls,
+                None,
+                request.turn_id.as_deref(),
+                request.response_status.as_deref(),
+            )
+            .await
+            .map(|_| ())
+    })
+    .await;
 }
 
 #[cfg(test)]

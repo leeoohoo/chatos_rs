@@ -1,6 +1,8 @@
 use serde_json::Value;
 use tracing::info;
 
+use crate::core::messages::join_text_lines_or_json;
+
 use super::to_message_item;
 
 fn tool_output_item_max_chars() -> usize {
@@ -163,40 +165,7 @@ pub(super) fn rewrite_system_messages_to_user(input: &Value, force_text_content:
 }
 
 fn response_content_to_text(content: &Value) -> String {
-    if let Some(text) = content.as_str() {
-        return text.to_string();
-    }
-
-    if let Some(array) = content.as_array() {
-        let mut output = Vec::new();
-        for part in array {
-            if let Some(text) = part.as_str() {
-                output.push(text.to_string());
-                continue;
-            }
-            if let Some(text) = part.get("text").and_then(|value| value.as_str()) {
-                output.push(text.to_string());
-                continue;
-            }
-            if let Some(text) = part.get("output_text").and_then(|value| value.as_str()) {
-                output.push(text.to_string());
-                continue;
-            }
-            output.push(part.to_string());
-        }
-        return output.join("\n");
-    }
-
-    if let Some(object) = content.as_object() {
-        if let Some(text) = object.get("text").and_then(|value| value.as_str()) {
-            return text.to_string();
-        }
-        if let Some(text) = object.get("output").and_then(|value| value.as_str()) {
-            return text.to_string();
-        }
-    }
-
-    content.to_string()
+    join_text_lines_or_json(content, &["text", "output_text", "output"])
 }
 
 #[cfg(test)]

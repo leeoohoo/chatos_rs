@@ -1,12 +1,13 @@
-import type { ComponentProps } from 'react';
+import { Suspense, lazy, type ComponentProps } from 'react';
 
-import AiModelManager from '../AiModelManager';
-import ApplicationsPanel from '../ApplicationsPanel';
-import McpManager from '../McpManager';
-import NotepadPanel from '../NotepadPanel';
-import UserSettingsPanel from '../UserSettingsPanel';
 import TurnRuntimeContextDrawer from './TurnRuntimeContextDrawer';
 import UiPromptHistoryDrawer from './UiPromptHistoryDrawer';
+
+const AiModelManager = lazy(() => import('../AiModelManager'));
+const ApplicationsPanel = lazy(() => import('../ApplicationsPanel'));
+const McpManager = lazy(() => import('../McpManager'));
+const NotepadPanel = lazy(() => import('../NotepadPanel'));
+const UserSettingsPanel = lazy(() => import('../UserSettingsPanel'));
 
 interface ChatInterfaceOverlaysProps {
   uiPromptHistoryProps: ComponentProps<typeof UiPromptHistoryDrawer>;
@@ -22,6 +23,8 @@ interface ChatInterfaceOverlaysProps {
   showApplicationsPanel: boolean;
   setShowApplicationsPanel: (value: boolean) => void;
 }
+
+const OverlayFallback = () => null;
 
 export default function ChatInterfaceOverlays({
   uiPromptHistoryProps,
@@ -43,28 +46,42 @@ export default function ChatInterfaceOverlays({
       <TurnRuntimeContextDrawer {...runtimeContextProps} />
 
       {showMcpManager && (
-        <McpManager onClose={() => setShowMcpManager(false)} />
+        <Suspense fallback={<OverlayFallback />}>
+          <McpManager onClose={() => setShowMcpManager(false)} />
+        </Suspense>
       )}
 
-      <NotepadPanel
-        isOpen={showNotepadPanel}
-        onClose={() => setShowNotepadPanel(false)}
-      />
+      {showNotepadPanel && (
+        <Suspense fallback={<OverlayFallback />}>
+          <NotepadPanel
+            isOpen={showNotepadPanel}
+            onClose={() => setShowNotepadPanel(false)}
+          />
+        </Suspense>
+      )}
 
       {showAiModelManager && (
-        <AiModelManager onClose={() => setShowAiModelManager(false)} />
+        <Suspense fallback={<OverlayFallback />}>
+          <AiModelManager onClose={() => setShowAiModelManager(false)} />
+        </Suspense>
       )}
 
       {showUserSettings && (
-        <UserSettingsPanel onClose={() => setShowUserSettings(false)} />
+        <Suspense fallback={<OverlayFallback />}>
+          <UserSettingsPanel onClose={() => setShowUserSettings(false)} />
+        </Suspense>
       )}
 
-      <ApplicationsPanel
-        isOpen={showApplicationsPanel}
-        onClose={() => setShowApplicationsPanel(false)}
-        title="应用列表"
-        layout="modal"
-      />
+      {showApplicationsPanel && (
+        <Suspense fallback={<OverlayFallback />}>
+          <ApplicationsPanel
+            isOpen={showApplicationsPanel}
+            onClose={() => setShowApplicationsPanel(false)}
+            title="应用列表"
+            layout="modal"
+          />
+        </Suspense>
+      )}
     </>
   );
 }

@@ -1,14 +1,5 @@
 import type { FsEntry } from '../../types';
-
-interface FsEntryLike {
-  name?: string;
-  path?: string;
-  is_dir?: boolean;
-  isDir?: boolean;
-  size?: number | null;
-  modified_at?: string | null;
-  modifiedAt?: string | null;
-}
+import { normalizeFsEntry as normalizeDomainFsEntry } from '../../lib/domain/filesystem';
 
 export const MAX_ATTACHMENTS = 20; // 个
 export const MAX_FILE_BYTES = 20 * 1024 * 1024; // 20MB
@@ -22,13 +13,7 @@ export const formatFileSize = (bytes: number) => {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 };
 
-export const normalizeFsEntry = (raw: FsEntryLike): FsEntry => ({
-  name: raw?.name ?? '',
-  path: raw?.path ?? '',
-  isDir: raw?.is_dir ?? raw?.isDir ?? false,
-  size: raw?.size ?? null,
-  modifiedAt: raw?.modified_at ?? raw?.modifiedAt ?? null,
-});
+export const normalizeFsEntry = (raw: unknown): FsEntry => normalizeDomainFsEntry(raw);
 
 const CODE_FILE_EXTENSIONS = new Set([
   'c', 'cc', 'cpp', 'cs', 'css', 'go', 'h', 'hpp', 'html', 'htm', 'java', 'js', 'jsx', 'kt',

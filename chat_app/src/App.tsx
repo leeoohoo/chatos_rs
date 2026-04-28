@@ -5,6 +5,7 @@ import { useTheme } from './hooks/useTheme';
 import { ChatStoreProvider } from './lib/store/ChatStoreContext';
 import { useAuthStore } from './lib/auth/authStore';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { DialogProvider } from './components/ui/DialogProvider';
 import './styles/index.css';
 
 interface AppProps {
@@ -39,11 +40,13 @@ function App({ projectId }: AppProps = {}) {
 
   return (
     <ErrorBoundary>
-      <ChatStoreProvider userId={user.id} projectId={projectId}>
-        <div className="App">
-          <ChatInterface />
-        </div>
-      </ChatStoreProvider>
+      <DialogProvider>
+        <ChatStoreProvider userId={user.id} projectId={projectId}>
+          <div className="App">
+            <ChatInterface />
+          </div>
+        </ChatStoreProvider>
+      </DialogProvider>
     </ErrorBoundary>
   );
 }

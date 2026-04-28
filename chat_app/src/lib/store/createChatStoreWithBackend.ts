@@ -22,6 +22,7 @@ import { createUiActions } from './actions/ui';
 import type {
   ChatActions,
   ChatState,
+  ChatStoreDraft,
   ChatStoreConfig,
   TaskReviewPanelState,
   UiPromptPanelState,
@@ -117,7 +118,7 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                     sendMessage: createSendMessageHandler({ set, get, client, getUserIdParam }),
                     ...createStreamingActions({ set, get, client }),
                     setTaskReviewPanel: (panel: ChatState['taskReviewPanel']) => {
-                        set((state: any) => {
+                        set((state: ChatStoreDraft) => {
                             state.taskReviewPanel = panel;
                         });
                     },
@@ -125,12 +126,12 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                         if (!panel || !panel.reviewId || !panel.sessionId) {
                             return;
                         }
-                        set((state: any) => {
+                        set((state: ChatStoreDraft) => {
                             const sessionId = panel.sessionId;
                             const panels = Array.isArray(state.taskReviewPanelsBySession?.[sessionId])
                                 ? state.taskReviewPanelsBySession[sessionId]
                                 : [];
-                            const index = panels.findIndex((item: any) => item.reviewId === panel.reviewId);
+                            const index = panels.findIndex((item) => item.reviewId === panel.reviewId);
                             if (index >= 0) {
                                 panels[index] = panel;
                             } else {
@@ -146,7 +147,7 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                         if (!reviewId) {
                             return;
                         }
-                        set((state: any) => {
+                        set((state: ChatStoreDraft) => {
                             const candidates = sessionId
                                 ? [sessionId]
                                 : Object.keys(state.taskReviewPanelsBySession || {});
@@ -155,7 +156,7 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                                 if (!Array.isArray(panels) || panels.length === 0) {
                                     continue;
                                 }
-                                const nextPanels = panels.filter((item: any) => item.reviewId !== reviewId);
+                                const nextPanels = panels.filter((item) => item.reviewId !== reviewId);
                                 if (nextPanels.length > 0) {
                                     state.taskReviewPanelsBySession[sid] = nextPanels;
                                 } else {
@@ -169,7 +170,7 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                         });
                     },
                     setUiPromptPanel: (panel: ChatState['uiPromptPanel']) => {
-                        set((state: any) => {
+                        set((state: ChatStoreDraft) => {
                             state.uiPromptPanel = panel;
                         });
                     },
@@ -177,12 +178,12 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                         if (!panel || !panel.promptId || !panel.sessionId) {
                             return;
                         }
-                        set((state: any) => {
+                        set((state: ChatStoreDraft) => {
                             const sessionId = panel.sessionId;
                             const panels = Array.isArray(state.uiPromptPanelsBySession?.[sessionId])
                                 ? state.uiPromptPanelsBySession[sessionId]
                                 : [];
-                            const index = panels.findIndex((item: any) => item.promptId === panel.promptId);
+                            const index = panels.findIndex((item) => item.promptId === panel.promptId);
                             if (index >= 0) {
                                 panels[index] = panel;
                             } else {
@@ -198,7 +199,7 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                         if (!promptId) {
                             return;
                         }
-                        set((state: any) => {
+                        set((state: ChatStoreDraft) => {
                             const candidates = sessionId
                                 ? [sessionId]
                                 : Object.keys(state.uiPromptPanelsBySession || {});
@@ -207,7 +208,7 @@ export function createChatStoreWithBackend(customApiClient?: ApiClient, config?:
                                 if (!Array.isArray(panels) || panels.length === 0) {
                                     continue;
                                 }
-                                const nextPanels = panels.filter((item: any) => item.promptId !== promptId);
+                                const nextPanels = panels.filter((item) => item.promptId !== promptId);
                                 if (nextPanels.length > 0) {
                                     state.uiPromptPanelsBySession[sid] = nextPanels;
                                 } else {

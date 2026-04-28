@@ -1,5 +1,7 @@
 use serde_json::{json, Value};
 
+use crate::core::messages::join_text_lines_or_json;
+
 use super::token_budget::{
     estimate_messages_tokens, estimate_tokens_value, truncate_messages_by_tokens,
     truncate_text_by_tokens,
@@ -141,27 +143,7 @@ pub(super) fn force_truncated_summary(
 }
 
 fn message_content_to_text(content: &Value) -> String {
-    if let Some(text) = content.as_str() {
-        return text.to_string();
-    }
-
-    if let Some(array) = content.as_array() {
-        let mut out = Vec::new();
-        for part in array {
-            if let Some(text) = part.as_str() {
-                out.push(text.to_string());
-                continue;
-            }
-            if let Some(text) = part.get("text").and_then(|value| value.as_str()) {
-                out.push(text.to_string());
-                continue;
-            }
-            out.push(part.to_string());
-        }
-        return out.join("\n");
-    }
-
-    content.to_string()
+    join_text_lines_or_json(content, &["text"])
 }
 
 #[allow(dead_code)]

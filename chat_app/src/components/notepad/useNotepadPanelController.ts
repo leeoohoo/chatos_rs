@@ -3,21 +3,21 @@ import type React from 'react';
 
 import { apiClient as globalApiClient } from '../../lib/api/client';
 import { useChatApiClientFromContext } from '../../lib/store/ChatStoreContext';
-import type { ContextMenuState, ContextMenuTarget } from './NotepadContextMenu';
+import type { ContextMenuState } from './NotepadContextMenu';
 import type { NotepadViewMode } from './NotepadEditor';
-import {
-  buildContextMenuStyle,
-  copyTextToClipboard,
-  downloadMarkdownFile,
-  normalizeNoteMeta,
-} from './controllerHelpers';
 import { useNotepadPanelEffects } from './useNotepadPanelEffects';
 import {
   buildFolderTree,
-  normalizeFolderPath,
-  parseTags,
   type NoteMeta,
 } from './utils';
+import { useDialogService } from '../ui/DialogProvider';
+import { useNotepadContextMenuController } from './useNotepadContextMenuController';
+import { useNotepadEditorState } from './useNotepadEditorState';
+import { useNotepadExportActions } from './useNotepadExportActions';
+import { useNotepadFolderExpansion } from './useNotepadFolderExpansion';
+import { useNotepadData } from './useNotepadData';
+import { useNotepadOpenNote } from './useNotepadOpenNote';
+import { useNotepadCrudActions } from './useNotepadCrudActions';
 
 interface UseNotepadPanelControllerParams {
   isOpen: boolean;
@@ -71,79 +71,47 @@ export const useNotepadPanelController = ({
 }: UseNotepadPanelControllerParams): UseNotepadPanelControllerResult => {
   const apiClientFromContext = useChatApiClientFromContext();
   const apiClient = useMemo(() => apiClientFromContext || globalApiClient, [apiClientFromContext]);
+  const { confirm, prompt } = useDialogService();
 
-  const [folders, setFolders] = useState<string[]>([]);
-  const [notes, setNotes] = useState<NoteMeta[]>([]);
   const [selectedFolder, setSelectedFolder] = useState('');
-  const [selectedNoteId, setSelectedNoteId] = useState('');
-  const [title, setTitle] = useState('');
-  const [tagsText, setTagsText] = useState('');
-  const [content, setContent] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<NotepadViewMode>('split');
-  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set(['']));
-  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [dirty, setDirty] = useState(false);
+  const {
+    selectedNoteId,
+    setSelectedNoteId,
+    title,
+    setTitle,
+    tagsText,
+    setTagsText,
+    content,
+    setContent,
+    dirty,
+    setDirty,
+    resetEditor,
+    handleTitleChange,
+    handleTagsTextChange,
+    handleContentChange,
+  } = useNotepadEditorState();
+  const {
+    expandedFolders,
+    ensureFolderExpanded,
+    toggleFolderExpanded,
+  } = useNotepadFolderExpansion();
 
-  const availableFolders = useMemo(
-    () => folders.filter((item) => item.trim().length > 0),
-    [folders]
-  );
-  const folderTree = useMemo(
-    () => buildFolderTree(availableFolders, notes),
-    [availableFolders, notes]
-  );
-  const selectedNoteMeta = useMemo(
-    () => notes.find((item) => item.id === selectedNoteId) || null,
-    [notes, selectedNoteId]
-  );
-
-  const ensureFolderExpanded = useCallback((folderPath: string) => {
-    const normalized = normalizeFolderPath(folderPath);
-    setExpandedFolders((prev) => {
-      const next = new Set(prev);
-      next.add('');
-      if (!normalized) {
-        return next;
-      }
-      let current = '';
-      const parts = normalized.split('/').filter((item) => item.trim().length > 0);
-      for (const part of parts) {
-        current = current ? `${current}/${part}` : part;
-        next.add(current);
-      }
-      return next;
-    });
-  }, []);
-
-  const resetEditor = useCallback(() => {
-    setSelectedNoteId('');
-    setTitle('');
-    setTagsText('');
-    setContent('');
-    setDirty(false);
-  }, []);
-
-  const loadFolders = useCallback(async () => {
-    const res = await apiClient.listNotepadFolders();
-    const list = Array.isArray(res?.folders) ? res.folders : [];
-    const normalized = list
-      .map((item) => String(item || '').trim())
-      .filter((item) => item.length > 0);
-    setFolders(['', ...normalized]);
-  }, [apiClient]);
-
-  const loadNotes = useCallback(async () => {
-    const res = await apiClient.listNotepadNotes({
-      recursive: true,
-      query: searchQuery || undefined,
-      limit: 500,
-    });
-    const list = Array.isArray(res?.notes) ? res.notes : [];
-    setNotes(list.map(normalizeNoteMeta));
-  }, [apiClient, normalizeNoteMeta, searchQuery]);
+  const {
+    notes,
+    availableFolders,
+    folderTree,
+    selectedNoteMeta,
+    loadFolders,
+    loadNotes,
+  } = useNotepadData({
+    apiClient,
+    searchQuery,
+    selectedNoteId,
+  });
 
   const refreshAll = useCallback(async () => {
     setLoading(true);
@@ -158,259 +126,57 @@ export const useNotepadPanelController = ({
     }
   }, [apiClient, loadFolders, loadNotes]);
 
-  const openNote = useCallback(async (id: string) => {
-    if (!id) {
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await apiClient.getNotepadNote(id);
-      const note = res?.note;
-      const noteFolder = String(note?.folder || '');
-      setSelectedNoteId(String(note?.id || id));
-      setSelectedFolder(noteFolder);
-      setTitle(String(note?.title || ''));
-      setTagsText(Array.isArray(note?.tags) ? note.tags.join(', ') : '');
-      setContent(String(res?.content || ''));
-      ensureFolderExpanded(noteFolder);
-      setDirty(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '打开笔记失败');
-    } finally {
-      setLoading(false);
-    }
-  }, [apiClient, ensureFolderExpanded]);
-
-  useNotepadPanelEffects({
-    isOpen,
-    selectedFolder,
-    contextMenu,
-    refreshAll,
-    loadNotes,
+  const openNote = useNotepadOpenNote({
+    apiClient,
     ensureFolderExpanded,
-    setContextMenu,
+    setContent,
+    setDirty,
+    setError,
+    setLoading,
+    setSelectedFolder,
+    setSelectedNoteId,
+    setTagsText,
+    setTitle,
   });
 
-  const toggleFolderExpanded = useCallback((folderPath: string) => {
-    const normalized = normalizeFolderPath(folderPath);
-    setExpandedFolders((prev) => {
-      const next = new Set(prev);
-      if (next.has(normalized)) {
-        next.delete(normalized);
-      } else {
-        next.add(normalized);
-      }
-      return next;
-    });
-  }, []);
+  const {
+    copyText: handleCopyTextInternal,
+    copyAsMd: handleCopyAsMdFileInternal,
+  } = useNotepadExportActions({
+    apiClient,
+    selectedNoteId,
+    title,
+    content,
+    setError,
+  });
 
-  const handleCreateFolderInternal = useCallback(async (parentFolder?: string) => {
-    const baseFolder = normalizeFolderPath(parentFolder ?? selectedFolder);
-    const promptTitle = baseFolder
-      ? `在目录 "${baseFolder}" 下新建子目录（支持输入相对路径）`
-      : '请输入新文件夹路径（例如 work/ideas）';
-    const raw = window.prompt(promptTitle, '');
-    if (raw === null) {
-      return;
-    }
-    const input = normalizeFolderPath(raw);
-    if (!input) {
-      return;
-    }
-
-    const folder = baseFolder && !input.startsWith(`${baseFolder}/`) && input !== baseFolder
-      ? `${baseFolder}/${input}`
-      : input;
-    setLoading(true);
-    setError(null);
-    try {
-      await apiClient.createNotepadFolder({ folder });
-      setSelectedFolder(folder);
-      ensureFolderExpanded(folder);
-      await Promise.all([loadFolders(), loadNotes()]);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '创建文件夹失败');
-    } finally {
-      setLoading(false);
-    }
-  }, [apiClient, ensureFolderExpanded, loadFolders, loadNotes, selectedFolder]);
-
-  const handleCreateNoteInternal = useCallback(async (folderOverride?: string) => {
-    const targetFolder = normalizeFolderPath(folderOverride ?? selectedFolder);
-    const noteTitle = window.prompt('请输入笔记标题', '');
-    if (noteTitle === null) {
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await apiClient.createNotepadNote({
-        folder: targetFolder,
-        title: noteTitle.trim(),
-      });
-      if (targetFolder) {
-        setSelectedFolder(targetFolder);
-        ensureFolderExpanded(targetFolder);
-      }
-      await loadNotes();
-      const id = String(res?.note?.id || '');
-      if (id) {
-        await openNote(id);
-      } else {
-        resetEditor();
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '创建笔记失败');
-    } finally {
-      setLoading(false);
-    }
-  }, [apiClient, ensureFolderExpanded, loadNotes, openNote, resetEditor, selectedFolder]);
-
-  const handleSaveNote = useCallback(async () => {
-    if (!selectedNoteId) {
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    try {
-      await apiClient.updateNotepadNote(selectedNoteId, {
-        title: title.trim(),
-        content,
-        tags: parseTags(tagsText),
-      });
-      setDirty(false);
-      await loadNotes();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '保存笔记失败');
-    } finally {
-      setLoading(false);
-    }
-  }, [apiClient, content, loadNotes, selectedNoteId, tagsText, title]);
-
-  const resolveNotePayload = useCallback(async (note?: NoteMeta | null): Promise<{ title: string; content: string }> => {
-    const targetNoteId = String(note?.id || selectedNoteId || '').trim();
-    const fallbackTitle = String(note?.title || title || 'Untitled').trim() || 'Untitled';
-
-    if (targetNoteId && targetNoteId === selectedNoteId) {
-      return {
-        title: title.trim() || fallbackTitle,
-        content,
-      };
-    }
-
-    if (!targetNoteId) {
-      return {
-        title: fallbackTitle,
-        content,
-      };
-    }
-
-    const res = await apiClient.getNotepadNote(targetNoteId);
-    const remoteNote = res?.note;
-    return {
-      title: String(remoteNote?.title || fallbackTitle || 'Untitled'),
-      content: String(res?.content || ''),
-    };
-  }, [apiClient, content, selectedNoteId, title]);
-
-  const handleCopyTextInternal = useCallback(async (note?: NoteMeta | null) => {
-    try {
-      const payload = await resolveNotePayload(note);
-      await copyTextToClipboard(payload.content || '');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '复制文本失败');
-    }
-  }, [copyTextToClipboard, resolveNotePayload]);
-
-  const handleCopyAsMdFileInternal = useCallback(async (note?: NoteMeta | null) => {
-    try {
-      const payload = await resolveNotePayload(note);
-      downloadMarkdownFile(payload.title, payload.content || '');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '导出 .md 失败');
-    }
-  }, [resolveNotePayload]);
-
-  const handleDeleteNoteById = useCallback(async (noteId: string, titleHint?: string) => {
-    const normalizedId = String(noteId || '').trim();
-    if (!normalizedId) {
-      return;
-    }
-    const confirmed = window.confirm(`确认删除笔记“${titleHint || '当前笔记'}”？此操作不可恢复。`);
-    if (!confirmed) {
-      return;
-    }
-
-    setLoading(true);
-    setError(null);
-    try {
-      await apiClient.deleteNotepadNote(normalizedId);
-      if (selectedNoteId === normalizedId) {
-        resetEditor();
-      }
-      await loadNotes();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '删除笔记失败');
-    } finally {
-      setLoading(false);
-    }
-  }, [apiClient, loadNotes, resetEditor, selectedNoteId]);
-
-  const handleDeleteNote = useCallback(async () => {
-    if (!selectedNoteId) {
-      return;
-    }
-    const target = notes.find((item) => item.id === selectedNoteId);
-    await handleDeleteNoteById(selectedNoteId, target?.title || undefined);
-  }, [handleDeleteNoteById, notes, selectedNoteId]);
-
-  const handleDeleteFolder = useCallback(async (folderPath?: string) => {
-    const folder = normalizeFolderPath(folderPath ?? selectedFolder);
-    if (!folder) {
-      return;
-    }
-
-    const confirmed = window.confirm(`确认删除目录“${folder}”吗？会同时删除该目录下所有笔记。`);
-    if (!confirmed) {
-      return;
-    }
-
-    setLoading(true);
-    setError(null);
-    try {
-      await apiClient.deleteNotepadFolder({
-        folder,
-        recursive: true,
-      });
-
-      if (selectedFolder === folder || selectedFolder.startsWith(`${folder}/`)) {
-        setSelectedFolder('');
-      }
-
-      const selectedNote = notes.find((item) => item.id === selectedNoteId);
-      const selectedNoteFolder = normalizeFolderPath(selectedNote?.folder);
-      if (selectedNote && (selectedNoteFolder === folder || selectedNoteFolder.startsWith(`${folder}/`))) {
-        resetEditor();
-      }
-
-      await Promise.all([loadFolders(), loadNotes()]);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '删除目录失败');
-    } finally {
-      setLoading(false);
-    }
-  }, [apiClient, loadFolders, loadNotes, notes, resetEditor, selectedFolder, selectedNoteId]);
-
-  const openContextMenu = useCallback((event: React.MouseEvent, target: ContextMenuTarget) => {
-    event.preventDefault();
-    event.stopPropagation();
-    setContextMenu({
-      x: event.clientX,
-      y: event.clientY,
-      target,
-    });
-  }, []);
+  const {
+    createFolder: handleCreateFolderInternal,
+    createNote: handleCreateNoteInternal,
+    saveNote: handleSaveNote,
+    deleteNoteById: handleDeleteNoteById,
+    deleteNote: handleDeleteNote,
+    deleteFolder: handleDeleteFolder,
+  } = useNotepadCrudActions({
+    apiClient,
+    confirm,
+    content,
+    ensureFolderExpanded,
+    loadFolders,
+    loadNotes,
+    notes,
+    openNote,
+    prompt,
+    resetEditor,
+    selectedFolder,
+    selectedNoteId,
+    setDirty,
+    setError,
+    setLoading,
+    setSelectedFolder,
+    tagsText,
+    title,
+  });
 
   const handleTreeSelectFolder = useCallback((folderPath: string) => {
     setSelectedFolder(folderPath);
@@ -421,93 +187,40 @@ export const useNotepadPanelController = ({
     void openNote(noteId);
   }, [openNote]);
 
-  const handleTreeFolderContextMenu = useCallback((event: React.MouseEvent, folderPath: string) => {
-    setSelectedFolder(folderPath);
-    ensureFolderExpanded(folderPath);
-    openContextMenu(event, { type: 'folder', folderPath });
-  }, [ensureFolderExpanded, openContextMenu]);
+  const {
+    contextMenu,
+    setContextMenu,
+    contextMenuStyle,
+    handleFolderContextMenu,
+    handleNoteContextMenu,
+    handleContextCreateFolder,
+    handleContextCreateNote,
+    handleContextCopyText,
+    handleContextCopyAsMd,
+    handleContextDelete,
+    handleContextDeleteSelectedNote,
+  } = useNotepadContextMenuController({
+    selectedNoteMeta,
+    setSelectedFolder,
+    ensureFolderExpanded,
+    createFolder: handleCreateFolderInternal,
+    createNote: handleCreateNoteInternal,
+    deleteFolder: handleDeleteFolder,
+    deleteNoteById: handleDeleteNoteById,
+    copyText: handleCopyTextInternal,
+    copyAsMd: handleCopyAsMdFileInternal,
+    setError,
+  });
 
-  const handleTreeNoteContextMenu = useCallback((event: React.MouseEvent, note: NoteMeta) => {
-    openContextMenu(event, { type: 'note', note });
-  }, [openContextMenu]);
-
-  const handleContextCreateFolder = useCallback(async () => {
-    if (!contextMenu) {
-      return;
-    }
-    const baseFolder = contextMenu.target.type === 'folder'
-      ? contextMenu.target.folderPath
-      : contextMenu.target.note.folder;
-    setContextMenu(null);
-    await handleCreateFolderInternal(baseFolder);
-  }, [contextMenu, handleCreateFolderInternal]);
-
-  const handleContextCreateNote = useCallback(async () => {
-    if (!contextMenu) {
-      return;
-    }
-    const folder = contextMenu.target.type === 'folder'
-      ? contextMenu.target.folderPath
-      : contextMenu.target.note.folder;
-    setContextMenu(null);
-    await handleCreateNoteInternal(folder);
-  }, [contextMenu, handleCreateNoteInternal]);
-
-  const handleContextDelete = useCallback(async () => {
-    if (!contextMenu) {
-      return;
-    }
-    const target = contextMenu.target;
-    setContextMenu(null);
-    if (target.type === 'folder') {
-      await handleDeleteFolder(target.folderPath);
-      return;
-    }
-    await handleDeleteNoteById(target.note.id, target.note.title || undefined);
-  }, [contextMenu, handleDeleteFolder, handleDeleteNoteById]);
-
-  const handleContextDeleteSelectedNote = useCallback(async () => {
-    if (!selectedNoteMeta) {
-      return;
-    }
-    setContextMenu(null);
-    await handleDeleteNoteById(selectedNoteMeta.id, selectedNoteMeta.title || undefined);
-  }, [handleDeleteNoteById, selectedNoteMeta]);
-
-  const handleContextCopyText = useCallback(async () => {
-    if (!contextMenu) {
-      return;
-    }
-    const targetNote = contextMenu.target.type === 'note'
-      ? contextMenu.target.note
-      : selectedNoteMeta;
-    setContextMenu(null);
-    if (!targetNote) {
-      setError('请先选中笔记');
-      return;
-    }
-    await handleCopyTextInternal(targetNote);
-  }, [contextMenu, handleCopyTextInternal, selectedNoteMeta]);
-
-  const handleContextCopyAsMd = useCallback(async () => {
-    if (!contextMenu) {
-      return;
-    }
-    const targetNote = contextMenu.target.type === 'note'
-      ? contextMenu.target.note
-      : selectedNoteMeta;
-    setContextMenu(null);
-    if (!targetNote) {
-      setError('请先选中笔记');
-      return;
-    }
-    await handleCopyAsMdFileInternal(targetNote);
-  }, [contextMenu, handleCopyAsMdFileInternal, selectedNoteMeta]);
-
-  const contextMenuStyle = useMemo(
-    () => buildContextMenuStyle(contextMenu),
-    [contextMenu],
-  );
+  useNotepadPanelEffects({
+    isOpen,
+    selectedFolder,
+    contextMenu,
+    refreshAll,
+    loadNotes,
+    ensureFolderExpanded,
+    setContextMenu,
+  });
 
   return {
     availableFoldersCount: availableFolders.length,
@@ -535,24 +248,15 @@ export const useNotepadPanelController = ({
     handleToggleFolderExpanded: toggleFolderExpanded,
     handleSelectFolder: handleTreeSelectFolder,
     handleOpenNote: handleTreeOpenNote,
-    handleFolderContextMenu: handleTreeFolderContextMenu,
-    handleNoteContextMenu: handleTreeNoteContextMenu,
+    handleFolderContextMenu,
+    handleNoteContextMenu,
     handleCopyText: () => handleCopyTextInternal(selectedNoteMeta),
     handleCopyAsMd: () => handleCopyAsMdFileInternal(selectedNoteMeta),
     handleSave: handleSaveNote,
     handleDelete: handleDeleteNote,
-    handleTitleChange: (value: string) => {
-      setTitle(value);
-      setDirty(true);
-    },
-    handleTagsTextChange: (value: string) => {
-      setTagsText(value);
-      setDirty(true);
-    },
-    handleContentChange: (value: string) => {
-      setContent(value);
-      setDirty(true);
-    },
+    handleTitleChange,
+    handleTagsTextChange,
+    handleContentChange,
     handleContextCreateFolder,
     handleContextCreateNote,
     handleContextCopyText,

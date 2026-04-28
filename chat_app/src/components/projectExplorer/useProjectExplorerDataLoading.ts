@@ -1,6 +1,10 @@
 import { useCallback } from 'react';
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 
+import type {
+  FsEntriesResponse,
+  ProjectChangeSummaryResponse,
+} from '../../lib/api/client/types';
 import type { FsEntry, ProjectChangeSummary } from '../../types';
 import {
   EMPTY_CHANGE_SUMMARY,
@@ -10,8 +14,8 @@ import {
 } from './utils';
 
 interface ProjectExplorerApiClient {
-  listFsEntries(path: string): Promise<any>;
-  getProjectChangeSummary(projectId: string): Promise<any>;
+  listFsEntries(path: string): Promise<FsEntriesResponse>;
+  getProjectChangeSummary(projectId: string): Promise<ProjectChangeSummaryResponse>;
 }
 
 interface UseProjectExplorerDataLoadingParams {
@@ -25,6 +29,10 @@ interface UseProjectExplorerDataLoadingParams {
   setSummaryError: Dispatch<SetStateAction<string | null>>;
   setLoadingSummary: Dispatch<SetStateAction<boolean>>;
 }
+
+const readErrorMessage = (error: unknown, fallback: string): string => (
+  error instanceof Error ? error.message : fallback
+);
 
 export const useProjectExplorerDataLoading = ({
   client,
@@ -44,8 +52,8 @@ export const useProjectExplorerDataLoading = ({
       const data = await client.listFsEntries(path);
       const entries = Array.isArray(data?.entries) ? data.entries.map(normalizeEntry) : [];
       setEntriesMap((prev) => ({ ...prev, [path]: entries }));
-    } catch (err: any) {
-      setError(err?.message || '加载目录失败');
+    } catch (err) {
+      setError(readErrorMessage(err, '加载目录失败'));
     } finally {
       setLoadingPaths((prev) => {
         const next = new Set(prev);
@@ -81,9 +89,9 @@ export const useProjectExplorerDataLoading = ({
       if (!silent) {
         setSummaryError(null);
       }
-    } catch (err: any) {
+    } catch (err) {
       if (!silent) {
-        setSummaryError(err?.message || '加载变更标记失败');
+        setSummaryError(readErrorMessage(err, '加载变更标记失败'));
         setChangeSummary(EMPTY_CHANGE_SUMMARY);
       }
     } finally {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { Message } from '../../../types';
+import type { ChatStoreShape } from '../types';
 import { mergeMessagesWithStreamingDraft } from './messagesState';
 
 const createMessage = (id: string, content: string, status: Message['status'] = 'completed'): Message => ({
@@ -16,7 +17,7 @@ describe('mergeMessagesWithStreamingDraft', () => {
   it('does not append stale draft when session is no longer streaming', () => {
     const messages = [createMessage('final_assistant', 'final from server')];
     const staleDraft = createMessage('temp_assistant', 'stale local draft', 'completed');
-    const state: any = {
+    const state = {
       sessionChatState: {
         session_1: {
           isLoading: false,
@@ -29,7 +30,7 @@ describe('mergeMessagesWithStreamingDraft', () => {
       sessionStreamingMessageDrafts: {
         session_1: staleDraft,
       },
-    };
+    } as unknown as ChatStoreShape;
 
     const merged = mergeMessagesWithStreamingDraft(state, 'session_1', messages);
 
@@ -41,7 +42,7 @@ describe('mergeMessagesWithStreamingDraft', () => {
   it('still injects draft while streaming if server list has no streaming message yet', () => {
     const messages = [createMessage('user_1', 'user', 'completed')];
     const draft = createMessage('temp_assistant', 'in-flight', 'streaming');
-    const state: any = {
+    const state = {
       sessionChatState: {
         session_1: {
           isLoading: true,
@@ -54,11 +55,10 @@ describe('mergeMessagesWithStreamingDraft', () => {
       sessionStreamingMessageDrafts: {
         session_1: draft,
       },
-    };
+    } as unknown as ChatStoreShape;
 
     const merged = mergeMessagesWithStreamingDraft(state, 'session_1', messages);
 
     expect(merged.find((message) => message.id === 'temp_assistant')).toBeDefined();
   });
 });
-

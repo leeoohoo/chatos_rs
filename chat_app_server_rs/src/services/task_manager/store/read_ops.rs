@@ -9,10 +9,7 @@ use crate::services::task_manager::types::TaskRecord;
 
 use super::row::TaskRow;
 
-pub async fn get_task_by_id(
-    conversation_id: &str,
-    task_id: &str,
-) -> Result<TaskRecord, String> {
+pub async fn get_task_by_id(conversation_id: &str, task_id: &str) -> Result<TaskRecord, String> {
     let conversation_id = trimmed_non_empty(conversation_id)
         .ok_or_else(|| "conversation_id is required".to_string())?
         .to_string();

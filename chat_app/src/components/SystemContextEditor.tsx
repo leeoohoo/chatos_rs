@@ -1,7 +1,6 @@
 import React from 'react';
 
 import { useChatStoreResolved } from '../lib/store/ChatStoreContext';
-import ConfirmDialog from './ui/ConfirmDialog';
 import SystemContextSidebar from './systemContextEditor/SystemContextSidebar';
 import SystemContextWorkspace from './systemContextEditor/SystemContextWorkspace';
 import { useSystemContextEditorController } from './systemContextEditor/useSystemContextEditorController';
@@ -9,7 +8,7 @@ import type { SystemContextEditorStoreLike } from './systemContextEditor/types';
 
 interface SystemContextEditorProps {
   onClose?: () => void;
-  store?: any;
+  store?: () => SystemContextEditorStoreLike;
 }
 
 const DocumentIcon = () => (
@@ -33,7 +32,7 @@ const XMarkIcon = () => (
 function useResolvedStore(externalStore?: SystemContextEditorProps['store']): SystemContextEditorStoreLike {
   const internalStoreData = useChatStoreResolved() as SystemContextEditorStoreLike;
   if (externalStore) {
-    return externalStore() as SystemContextEditorStoreLike;
+    return externalStore();
   }
   return internalStoreData;
 }
@@ -55,9 +54,6 @@ const SystemContextEditor: React.FC<SystemContextEditorProps> = ({ onClose, stor
     qualityReport,
     filteredContexts,
     selectedContextName,
-    dialogState,
-    handleConfirm,
-    handleCancel,
     setSearchKeyword,
     fillEditorFromContext,
     handleCreate,
@@ -163,17 +159,6 @@ const SystemContextEditor: React.FC<SystemContextEditorProps> = ({ onClose, stor
           </div>
         </section>
       </div>
-
-      <ConfirmDialog
-        isOpen={dialogState.isOpen}
-        title={dialogState.title}
-        message={dialogState.message}
-        confirmText={dialogState.confirmText}
-        cancelText={dialogState.cancelText}
-        type={dialogState.type}
-        onConfirm={handleConfirm}
-        onCancel={handleCancel}
-      />
     </div>
   );
 };

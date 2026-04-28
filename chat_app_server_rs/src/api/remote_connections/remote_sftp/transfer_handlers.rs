@@ -14,11 +14,11 @@ use crate::core::remote_connection_error_codes::remote_sftp_codes;
 use crate::models::remote_connection::{RemoteConnection, RemoteConnectionService};
 
 use super::super::request_normalize::normalize_transfer_direction;
+use super::super::resolve_jump_connection_snapshot;
 use super::super::transfer_helpers::{
     estimate_local_total_bytes_typed, run_sftp_transfer_job_typed,
 };
 use super::super::transfer_manager::get_sftp_transfer_manager;
-use super::super::resolve_jump_connection_snapshot;
 use super::contracts::SftpTransferStartRequest;
 use super::errors::RemoteSftpApiError;
 use super::support::{

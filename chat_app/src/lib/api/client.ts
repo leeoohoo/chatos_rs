@@ -3,7 +3,11 @@ import * as fsApi from './client/fs';
 import { configFacade, type ConfigFacade } from './client/facades/configFacade';
 import { runtimeFacade, type RuntimeFacade } from './client/facades/runtimeFacade';
 import { workspaceFacade, type WorkspaceFacade } from './client/facades/workspaceFacade';
-import { ApiRequestError } from './client/shared';
+import {
+  ApiRequestError,
+  buildParsedJsonErrorPayload,
+  parseJsonTextSafely,
+} from './client/shared';
 import * as streamApi from './client/stream';
 import type {
   ConversationMessagePayload,
@@ -81,29 +85,31 @@ class ApiClient {
       const response = await fetch(url, config);
       this.applyRefreshedAccessToken(response);
       const text = await response.text();
-      let parsedBody: any = null;
+      let parsedBody: unknown = null;
 
       if (text) {
-        try {
-          parsedBody = JSON.parse(text);
-        } catch (parseError) {
+        const parsedResult = parseJsonTextSafely(text);
+        if (parsedResult.ok) {
+          parsedBody = parsedResult.parsed;
+        } else if (response.ok) {
+          const parseError = new Error(`Invalid JSON response: ${text}`);
           if (response.ok) {
             console.error(`JSON parse error for ${endpoint}:`, parseError, 'Response text:', text);
-            throw new Error(`Invalid JSON response: ${text}`);
+            throw parseError;
           }
         }
       }
 
       if (!response.ok) {
-        const errorCode = typeof parsedBody?.code === 'string' ? parsedBody.code : undefined;
-        const errorMessage =
-          (typeof parsedBody?.error === 'string' && parsedBody.error) ||
-          (typeof parsedBody?.message === 'string' && parsedBody.message) ||
-          `HTTP error! status: ${response.status}`;
+        const {
+          message: errorMessage,
+          code: errorCode,
+          payload,
+        } = buildParsedJsonErrorPayload(text, `HTTP error! status: ${response.status}`);
         throw new ApiRequestError(errorMessage, {
           status: response.status,
           code: errorCode,
-          payload: parsedBody,
+          payload,
         });
       }
 

@@ -1,13 +1,25 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { normalizeChangeLog } from './utils';
+import type { ProjectChangeLogResponse } from '../../lib/api/client/types';
 import type { ChangeLogItem } from '../../types';
+import { normalizeChangeLog } from './utils';
+
+interface ProjectExplorerLogsClient {
+  listProjectChangeLogs(
+    projectId: string,
+    params?: { path?: string; limit?: number; offset?: number },
+  ): Promise<ProjectChangeLogResponse[]>;
+}
 
 interface Params {
-  client: any;
+  client: ProjectExplorerLogsClient;
   projectId?: string;
   selectedPath: string | null;
   selectedFilePath: string | null;
 }
+
+const readErrorMessage = (error: unknown, fallback: string): string => (
+  error instanceof Error ? error.message : fallback
+);
 
 export const useProjectExplorerLogs = ({
   client,
@@ -42,9 +54,9 @@ export const useProjectExplorerLogs = ({
           const normalized = Array.isArray(list) ? list.map(normalizeChangeLog) : [];
           setChangeLogs(normalized);
         }
-      } catch (err: any) {
+      } catch (err) {
         if (!cancelled) {
-          setLogsError(err?.message || '加载变更记录失败');
+          setLogsError(readErrorMessage(err, '加载变更记录失败'));
           setChangeLogs([]);
           setSelectedLogId(null);
         }

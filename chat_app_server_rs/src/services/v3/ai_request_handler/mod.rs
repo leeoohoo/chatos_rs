@@ -1,17 +1,16 @@
-mod normal_request;
 mod parser;
 mod stream_request;
 
 #[cfg(test)]
 mod tests;
 
-use std::sync::Arc;
-
 use serde_json::{json, Value};
 use tracing::{error, info};
 
 use crate::services::ai_common::{
-    build_abort_token, normalize_reasoning_effort, validate_request_payload_size,
+    build_abort_token, normalize_reasoning_effort, persist_assistant_response_with_policy,
+    should_persist_assistant_message, validate_request_payload_size, AiStreamCallbacks,
+    AssistantResponsePersistenceRequest,
 };
 use crate::services::v3::message_manager::MessageManager;
 use crate::utils::model_config::is_gpt_provider;
@@ -29,11 +28,7 @@ pub struct AiResponse {
     pub response_id: Option<String>,
 }
 
-#[derive(Clone, Default)]
-pub struct StreamCallbacks {
-    pub on_chunk: Option<Arc<dyn Fn(String) + Send + Sync>>,
-    pub on_thinking: Option<Arc<dyn Fn(String) + Send + Sync>>,
-}
+pub type StreamCallbacks = AiStreamCallbacks;
 
 #[derive(Clone)]
 pub struct AiRequestHandler {
@@ -72,14 +67,10 @@ impl AiRequestHandler {
         thinking_level: Option<String>,
         session_id: Option<String>,
         turn_id: Option<String>,
-        stream: bool,
         message_mode: Option<String>,
         message_source: Option<String>,
         purpose: &str,
     ) -> Result<AiResponse, String> {
-        let requested_stream = stream;
-        let stream = true;
-
         let payload = build_request_payload(
             input,
             model,
@@ -91,7 +82,7 @@ impl AiRequestHandler {
             max_output_tokens,
             provider.clone(),
             thinking_level.clone(),
-            stream,
+            true,
         );
 
         if let Err(err) = validate_request_payload_size(&payload, REQUEST_BODY_LIMIT_ENV) {
@@ -106,11 +97,10 @@ impl AiRequestHandler {
         let token = build_abort_token(session_id.as_deref());
 
         info!(
-            "[AI_V3] handleRequest start: purpose={}, model={}, stream={}, requested_stream={}, baseURL={}, session={}, tools={}, cwd={}",
+            "[AI_V3] handleRequest start: purpose={}, model={}, stream={}, baseURL={}, session={}, tools={}, cwd={}",
             purpose,
             payload.get("model").and_then(|v| v.as_str()).unwrap_or(""),
-            stream,
-            requested_stream,
+            true,
             self.base_url,
             session_id.clone().unwrap_or_else(|| "n/a".to_string()),
             payload
@@ -140,36 +130,67 @@ impl AiRequestHandler {
     }
 }
 
-pub(super) fn is_non_terminal_response_status(status: Option<&str>) -> bool {
-    let normalized = status
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| value.to_ascii_lowercase());
-    matches!(
-        normalized.as_deref(),
-        Some("in_progress") | Some("queued") | Some("pending") | Some("incomplete")
-    )
-}
-
-pub(super) fn should_persist_assistant_message(
+pub(super) async fn persist_assistant_response_if_needed(
+    handler: &AiRequestHandler,
+    session_id: Option<String>,
+    turn_id: Option<String>,
+    persist_messages: bool,
+    message_mode: Option<String>,
+    message_source: Option<String>,
     content: &str,
-    reasoning: Option<&str>,
-    tool_calls: Option<&Value>,
-    finish_reason: Option<&str>,
-) -> bool {
-    let has_content = !content.trim().is_empty();
-    let has_reasoning = reasoning
-        .map(str::trim)
-        .map(|value| !value.is_empty())
-        .unwrap_or(false);
-    let has_tool_calls = tool_calls
-        .and_then(|value| value.as_array())
-        .map(|items| !items.is_empty())
-        .unwrap_or(false);
-    if has_content || has_reasoning || has_tool_calls {
-        return true;
-    }
-    !is_non_terminal_response_status(finish_reason)
+    reasoning: Option<String>,
+    tool_calls: Option<Value>,
+    response_id: Option<String>,
+    finish_reason: Option<String>,
+    skip_log_label: &str,
+) {
+    let request = AssistantResponsePersistenceRequest {
+        session_id,
+        turn_id,
+        persist_messages,
+        message_mode,
+        message_source,
+        content: content.to_string(),
+        reasoning,
+        tool_calls,
+        response_id,
+        response_status: finish_reason,
+    };
+    let should_persist = should_persist_assistant_message(
+        request.content.as_str(),
+        request.reasoning.as_deref(),
+        request.tool_calls.as_ref(),
+        request.response_status.as_deref(),
+    );
+
+    persist_assistant_response_with_policy(
+        request,
+        should_persist,
+        "[AI_V3]",
+        Some(skip_log_label),
+        |request| async move {
+            let Some(session_id) = request.session_id.as_deref() else {
+                return Ok(());
+            };
+
+            handler
+                .message_manager
+                .save_assistant_response_message(
+                    session_id,
+                    request.content.as_str(),
+                    request.reasoning,
+                    request.message_mode,
+                    request.message_source,
+                    request.tool_calls,
+                    request.response_id.as_deref(),
+                    request.turn_id.as_deref(),
+                    request.response_status.as_deref(),
+                )
+                .await
+                .map(|_| ())
+        },
+    )
+    .await;
 }
 
 fn build_request_payload(

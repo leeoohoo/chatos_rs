@@ -164,7 +164,10 @@ fn parse_outcome_items(value: Option<&Bson>) -> Vec<TaskOutcomeItem> {
                 Bson::Document(doc) => Some(TaskOutcomeItem {
                     kind: doc.get_str("kind").ok().unwrap_or("finding").to_string(),
                     text: doc.get_str("text").ok().unwrap_or_default().to_string(),
-                    importance: doc.get_str("importance").ok().map(|value| value.to_string()),
+                    importance: doc
+                        .get_str("importance")
+                        .ok()
+                        .map(|value| value.to_string()),
                     refs: parse_string_list(doc.get("refs")),
                 }),
                 _ => None,

@@ -21,7 +21,7 @@ interface UseTerminalSocketLifecycleParams {
   apiBaseUrl: string;
   accessToken?: string | null;
   connectSeq: number;
-  loadTerminals: () => void | Promise<any>;
+  loadTerminals: () => void | Promise<unknown>;
   appendCommands: AppendCommandsFn;
   terminalRef: MutableRefObject<XTerm | null>;
   socketRef: MutableRefObject<WebSocket | null>;

@@ -1,4 +1,8 @@
 import type { SessionAiSelection } from '../types';
+import {
+  asRecord,
+  readValue,
+} from './normalizerUtils';
 
 const SESSION_AI_SELECTION_KEY = 'ui_chat_selection';
 
@@ -10,15 +14,17 @@ const normalizeId = (value: unknown): string | null => {
   return trimmed.length > 0 ? trimmed : null;
 };
 
-const parseSessionMetadata = (metadata: any): Record<string, any> => {
-  if (metadata && typeof metadata === 'object' && !Array.isArray(metadata)) {
-    return { ...metadata };
+const parseSessionMetadata = (metadata: unknown): Record<string, unknown> => {
+  const metadataRecord = asRecord(metadata);
+  if (metadataRecord) {
+    return { ...metadataRecord };
   }
   if (typeof metadata === 'string') {
     try {
       const parsed = JSON.parse(metadata);
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        return parsed;
+      const parsedRecord = asRecord(parsed);
+      if (parsedRecord) {
+        return parsedRecord;
       }
     } catch {
       // ignore parse errors and fallback to empty object
@@ -28,24 +34,28 @@ const parseSessionMetadata = (metadata: any): Record<string, any> => {
 };
 
 export const readSessionAiSelectionFromMetadata = (
-  metadata: any,
+  metadata: unknown,
 ): SessionAiSelection | null => {
   const meta = parseSessionMetadata(metadata);
-  const raw = meta?.[SESSION_AI_SELECTION_KEY];
-  const runtime = meta?.chat_runtime;
-  const contact = meta?.contact;
+  const raw = asRecord(readValue(meta, SESSION_AI_SELECTION_KEY));
+  const runtime = asRecord(readValue(meta, 'chat_runtime'));
+  const contact = asRecord(readValue(meta, 'contact'));
+  const uiContact = asRecord(readValue(meta, 'ui_contact'));
   const selectedModelId = normalizeId(
-    runtime?.selected_model_id ?? runtime?.selectedModelId ?? (raw as any)?.selected_model_id ?? (raw as any)?.selectedModelId,
+    readValue(runtime, 'selected_model_id')
+      ?? readValue(runtime, 'selectedModelId')
+      ?? readValue(raw, 'selected_model_id')
+      ?? readValue(raw, 'selectedModelId'),
   );
   const selectedAgentId = normalizeId(
-    contact?.agent_id
-      ?? contact?.agentId
-      ?? runtime?.contact_agent_id
-      ?? runtime?.contactAgentId
-      ?? meta?.ui_contact?.agent_id
-      ?? meta?.ui_contact?.agentId
-      ?? (raw as any)?.selected_agent_id
-      ?? (raw as any)?.selectedAgentId,
+    readValue(contact, 'agent_id')
+      ?? readValue(contact, 'agentId')
+      ?? readValue(runtime, 'contact_agent_id')
+      ?? readValue(runtime, 'contactAgentId')
+      ?? readValue(uiContact, 'agent_id')
+      ?? readValue(uiContact, 'agentId')
+      ?? readValue(raw, 'selected_agent_id')
+      ?? readValue(raw, 'selectedAgentId'),
   );
   if (!selectedModelId && !selectedAgentId) {
     return null;
@@ -54,9 +64,9 @@ export const readSessionAiSelectionFromMetadata = (
 };
 
 export const mergeSessionAiSelectionIntoMetadata = (
-  metadata: any,
+  metadata: unknown,
   selection: SessionAiSelection,
-): Record<string, any> => {
+): Record<string, unknown> => {
   const next = parseSessionMetadata(metadata);
   const selectedModelId = normalizeId(selection.selectedModelId);
   const selectedAgentId = normalizeId(selection.selectedAgentId);
@@ -71,16 +81,12 @@ export const mergeSessionAiSelectionIntoMetadata = (
     selected_agent_id: selectedAgentId,
   };
   next.chat_runtime = {
-    ...(next.chat_runtime && typeof next.chat_runtime === 'object' && !Array.isArray(next.chat_runtime)
-      ? next.chat_runtime
-      : {}),
+    ...(asRecord(next.chat_runtime) ?? {}),
     selected_model_id: selectedModelId,
     contact_agent_id: selectedAgentId,
   };
   next.contact = {
-    ...(next.contact && typeof next.contact === 'object' && !Array.isArray(next.contact)
-      ? next.contact
-      : {}),
+    ...(asRecord(next.contact) ?? {}),
     type: 'memory_agent',
     agent_id: selectedAgentId,
   };

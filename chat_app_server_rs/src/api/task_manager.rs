@@ -11,8 +11,8 @@ use crate::core::auth::AuthUser;
 use crate::core::session_access::{ensure_owned_session, map_session_access_error_with_success};
 use crate::services::task_manager::{
     complete_task_by_id, delete_task_by_id, get_task_review_payload, list_tasks_for_context,
-    submit_task_review_decision, update_task_by_id, TaskDraft, TaskOutcomeItem, TaskReviewAction, TaskUpdatePatch,
-    REVIEW_NOT_FOUND_ERR, TASK_NOT_FOUND_ERR,
+    submit_task_review_decision, update_task_by_id, TaskDraft, TaskOutcomeItem, TaskReviewAction,
+    TaskUpdatePatch, REVIEW_NOT_FOUND_ERR, TASK_NOT_FOUND_ERR,
 };
 
 #[derive(Debug, Deserialize)]
@@ -246,7 +246,13 @@ async fn complete_task(
         ..TaskUpdatePatch::default()
     };
 
-    match complete_task_by_id(scope.conversation_id.as_str(), task_id.as_str(), Some(patch)).await {
+    match complete_task_by_id(
+        scope.conversation_id.as_str(),
+        task_id.as_str(),
+        Some(patch),
+    )
+    .await
+    {
         Ok(task) => {
             let payload = json!({
                 "success": true,

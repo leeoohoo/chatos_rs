@@ -233,14 +233,14 @@ fn normalize_thinking_level_input(
     let level = level
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty());
-    if level.is_none() {
+    let Some(level) = level else {
         return Ok(None);
-    }
+    };
     let provider = normalize_provider_input(Some(provider.to_string()))?;
     if provider != "gpt" {
         return Err("只有 gpt 支持思考等级".to_string());
     }
-    let lvl = level.unwrap().to_lowercase();
+    let lvl = level.to_lowercase();
     let allowed = ["none", "minimal", "low", "medium", "high", "xhigh"];
     if !allowed.contains(&lvl.as_str()) {
         return Err("思考等级仅支持 none/minimal/low/medium/high/xhigh".to_string());
