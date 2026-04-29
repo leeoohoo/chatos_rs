@@ -68,6 +68,10 @@ interface ChatComposerPanelProps {
   onProjectChange: (projectId: string | null) => void;
   showProjectSelector?: boolean;
   showProjectFileButton?: boolean;
+  reviewRepairAvailable?: boolean;
+  reviewRepairRunning?: boolean;
+  reviewRepairDisabled?: boolean;
+  onReviewRepair?: () => void | Promise<void>;
   workspaceRoot?: string | null;
   onWorkspaceRootChange?: (path: string | null) => void;
   currentRemoteConnectionId?: string | null;
@@ -134,6 +138,10 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
   onProjectChange,
   showProjectSelector = true,
   showProjectFileButton = true,
+  reviewRepairAvailable = false,
+  reviewRepairRunning = false,
+  reviewRepairDisabled = false,
+  onReviewRepair,
   workspaceRoot = null,
   onWorkspaceRootChange,
   currentRemoteConnectionId = null,
@@ -163,6 +171,9 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
       onRefresh={onRefreshWorkbarTasks}
       onOpenHistory={() => onOpenHistory(sessionId)}
       onOpenUiPromptHistory={onOpenUiPromptHistory ? () => onOpenUiPromptHistory(sessionId) : undefined}
+      onReviewRepair={reviewRepairAvailable ? onReviewRepair : undefined}
+      reviewRepairRunning={reviewRepairRunning}
+      reviewRepairDisabled={reviewRepairDisabled}
       uiPromptHistoryCount={uiPromptHistoryCount}
       uiPromptHistoryLoading={uiPromptHistoryLoading}
       runtimeGuidancePendingCount={runtimeGuidancePendingCount}
@@ -218,9 +229,9 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
       showProjectFileButton={showProjectFileButton}
       workspaceRoot={workspaceRoot}
       onWorkspaceRootChange={onWorkspaceRootChange}
-	      currentRemoteConnectionId={currentRemoteConnectionId}
-	      currentAgent={currentAgent}
-	      availableRemoteConnections={availableRemoteConnections}
+      currentRemoteConnectionId={currentRemoteConnectionId}
+      currentAgent={currentAgent}
+      availableRemoteConnections={availableRemoteConnections}
       onRemoteConnectionChange={onRemoteConnectionChange}
       showWorkspaceRootPicker={showWorkspaceRootPicker}
       mcpEnabled={mcpEnabled}

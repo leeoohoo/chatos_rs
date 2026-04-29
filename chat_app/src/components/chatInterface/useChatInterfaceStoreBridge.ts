@@ -28,6 +28,7 @@ export const useChatInterfaceStoreBridge = () => {
     selectRemoteConnection: state.selectRemoteConnection,
     updateSession: state.updateSession,
     clearError: state.clearError,
+    setError: state.setError,
     sidebarOpen: state.sidebarOpen,
     toggleSidebar: state.toggleSidebar,
     aiModelConfigs: state.aiModelConfigs,

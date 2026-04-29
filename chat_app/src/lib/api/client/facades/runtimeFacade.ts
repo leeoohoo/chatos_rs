@@ -20,6 +20,8 @@ import type {
   RegisterPayload,
   RuntimeGuidanceSubmitPayload,
   RuntimeGuidanceSubmitResponse,
+  ReviewRepairResponse,
+  ReviewRepairStatusResponse,
   SessionSummariesListResponse,
   SessionSummaryJobConfigPayload,
   SessionSummaryJobConfigResponse,
@@ -96,6 +98,8 @@ export interface RuntimeFacade {
   ): Promise<SessionSummariesListResponse>;
   deleteConversationSummary(conversationId: string, summaryId: string): Promise<{ success?: boolean }>;
   clearConversationSummaries(conversationId: string): Promise<{ success?: boolean }>;
+  runConversationReviewRepair(conversationId: string): Promise<ReviewRepairResponse>;
+  getConversationReviewRepairStatus(conversationId: string): Promise<ReviewRepairStatusResponse>;
   register(data: RegisterPayload): Promise<AuthResponse>;
   login(data: RegisterPayload): Promise<AuthResponse>;
   getMe(): Promise<MeResponse>;
@@ -197,6 +201,12 @@ export const runtimeFacade: RuntimeFacade & ThisType<ApiClient> = {
   },
   async clearConversationSummaries(conversationId) {
     return summaryApi.clearConversationSummaries(this.getRequestFn(), conversationId);
+  },
+  async runConversationReviewRepair(conversationId) {
+    return summaryApi.runConversationReviewRepair(this.getRequestFn(), conversationId);
+  },
+  async getConversationReviewRepairStatus(conversationId) {
+    return summaryApi.getConversationReviewRepairStatus(this.getRequestFn(), conversationId);
   },
   async register(data) {
     return accountApi.register(this.getRequestFn(), data);

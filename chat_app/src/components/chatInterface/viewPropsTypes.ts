@@ -13,6 +13,7 @@ export interface ChatInterfaceConversationState {
   currentContactName: string;
   currentProjectNameForMemory: string;
   currentProjectIdForMemory: string | null;
+  currentContactId: string;
   messages: ComponentProps<typeof ChatConversationPane>['messages'];
   chatIsLoading: boolean;
   chatIsStreaming: boolean;
@@ -24,6 +25,8 @@ export interface ChatInterfaceConversationState {
   agentRecalls: ComponentProps<typeof ChatConversationPane>['agentRecalls'];
   memoryLoading: boolean;
   memoryError: string | null;
+  reviewRepairRunning: boolean;
+  reviewRepairPendingCount: number | null;
   mergedCurrentTurnTasks: ComponentProps<typeof ChatConversationPane>['mergedCurrentTurnTasks'];
   workbarHistoryTasks: ComponentProps<typeof ChatConversationPane>['workbarHistoryTasks'];
   activeConversationTurnId: string | null;
@@ -63,6 +66,7 @@ export interface ChatInterfaceConversationActions {
   handleLoadMore: () => void;
   handleToggleTurnProcess: (userMessageId: string) => void;
   handleRefreshMemory: (sessionId: string) => void;
+  handleRunReviewRepair: (sessionId: string) => Promise<void>;
   handleCloseSummary: () => void;
   toggleSidebar: () => void;
   handleRefreshWorkbar: () => void;

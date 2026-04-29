@@ -30,6 +30,9 @@ interface TaskWorkbarProps {
   onRefresh?: () => void;
   onOpenHistory?: () => void;
   onOpenUiPromptHistory?: () => void;
+  onReviewRepair?: () => void | Promise<void>;
+  reviewRepairRunning?: boolean;
+  reviewRepairDisabled?: boolean;
   uiPromptHistoryCount?: number;
   uiPromptHistoryLoading?: boolean;
   onCompleteTask?: (task: TaskWorkbarItem) => void;
@@ -59,6 +62,9 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
   onRefresh,
   onOpenHistory,
   onOpenUiPromptHistory,
+  onReviewRepair,
+  reviewRepairRunning = false,
+  reviewRepairDisabled = false,
   uiPromptHistoryCount = 0,
   uiPromptHistoryLoading = false,
   onCompleteTask,
@@ -188,6 +194,16 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
                 onClick={onOpenUiPromptHistory}
               >
                 {`交互确认记录 ${uiPromptHistoryCount}${uiPromptHistoryLoading ? ' · 更新中' : ''}`}
+              </button>
+            ) : null}
+            {onReviewRepair ? (
+              <button
+                type="button"
+                className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] text-amber-900 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100"
+                onClick={() => { void onReviewRepair(); }}
+                disabled={reviewRepairRunning || reviewRepairDisabled}
+              >
+                {reviewRepairRunning ? '复盘中...' : '复盘'}
               </button>
             ) : null}
             {expanded ? (

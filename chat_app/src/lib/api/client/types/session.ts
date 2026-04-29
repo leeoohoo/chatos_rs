@@ -171,3 +171,51 @@ export interface SessionSummariesListResponse {
   total: number;
   has_summary: boolean;
 }
+
+export interface ReviewRepairSummaryResult {
+  processed_sessions: number;
+  summarized_sessions: number;
+  generated_summaries: number;
+  marked_messages: number;
+  failed_sessions: number;
+  pending_message_count: number;
+  project_id: string;
+  contact_id?: string | null;
+  agent_id?: string | null;
+  mode: string;
+}
+
+export interface ReviewRepairStatusResult {
+  running: boolean;
+  running_job_count: number;
+  pending_message_count: number;
+  scope_session_count: number;
+  project_id: string;
+  contact_id?: string | null;
+  agent_id?: string | null;
+  job_type: string;
+}
+
+export interface ReviewRepairResponse {
+  success?: boolean;
+  conversation_id?: string;
+  conversationId?: string;
+  project_id?: string;
+  contact_id?: string | null;
+  agent_id?: string | null;
+  result?: ReviewRepairSummaryResult;
+  error?: string;
+  detail?: string;
+}
+
+export interface ReviewRepairStatusResponse {
+  success?: boolean;
+  conversation_id?: string;
+  conversationId?: string;
+  project_id?: string;
+  contact_id?: string | null;
+  agent_id?: string | null;
+  result?: ReviewRepairStatusResult;
+  error?: string;
+  detail?: string;
+}

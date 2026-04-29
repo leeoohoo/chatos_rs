@@ -51,6 +51,7 @@ interface UseProjectRunStateParams {
   loadTerminals: () => Promise<unknown>;
   handleSelectTerminal: (terminalId: string) => Promise<void>;
   setActivePanel: (panel: 'chat' | 'project' | 'terminal' | 'remote_terminal' | 'remote_sftp') => void;
+  enabled?: boolean;
 }
 
 const createInitialProjectRunState = (): ProjectRunViewState => ({
@@ -142,6 +143,7 @@ export const useProjectRunState = ({
   loadTerminals,
   handleSelectTerminal,
   setActivePanel,
+  enabled = true,
 }: UseProjectRunStateParams) => {
   const [projectRunStateById, setProjectRunStateById] = useState<Record<string, ProjectRunViewState>>({});
   const [runningProjectId, setRunningProjectId] = useState<string | null>(null);
@@ -150,6 +152,13 @@ export const useProjectRunState = ({
   const projectRootPathByIdRef = useRef<Record<string, string>>({});
 
   useEffect(() => {
+    if (!enabled) {
+      setProjectRunStateById({});
+      projectRunStateRef.current = {};
+      projectRootPathByIdRef.current = {};
+      return;
+    }
+
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const projectIds = new Set((projects || []).map((project) => String(project.id || '')));
@@ -220,7 +229,7 @@ export const useProjectRunState = ({
         clearTimeout(timer);
       }
     };
-  }, [apiClient, projects]);
+  }, [apiClient, enabled, projects]);
 
   const projectLiveStateById = useMemo<Record<string, ProjectLiveViewState>>(() => {
     const out: Record<string, ProjectLiveViewState> = {};

@@ -219,14 +219,14 @@ export const useSessionListController = ({
   });
 
   useEffect(() => {
-    if (isCollapsed) {
+    if (isCollapsed || !activePanel || activePanel !== 'terminal') {
       return;
     }
     const timer = setInterval(() => {
       void loadTerminals();
     }, 2000);
     return () => clearInterval(timer);
-  }, [isCollapsed, loadTerminals]);
+  }, [activePanel, isCollapsed, loadTerminals]);
 
   const projectRunState = useProjectRunState({
     apiClient,
@@ -235,6 +235,7 @@ export const useSessionListController = ({
     loadTerminals,
     handleSelectTerminal: sessionListActions.handleSelectTerminal,
     setActivePanel,
+    enabled: activePanel !== 'project',
   });
 
   return {

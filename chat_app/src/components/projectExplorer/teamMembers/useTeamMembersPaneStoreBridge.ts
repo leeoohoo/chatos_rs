@@ -22,6 +22,8 @@ const selectTeamMembersPaneStore = (state: ChatState & ChatActions) => ({
   sendMessage: state.sendMessage,
   selectRemoteConnection: state.selectRemoteConnection,
   abortCurrentConversation: state.abortCurrentConversation,
+  clearError: state.clearError,
+  setError: state.setError,
   loadMoreMessages: state.loadMoreMessages,
   toggleTurnProcess: state.toggleTurnProcess,
   createSession: state.createSession,

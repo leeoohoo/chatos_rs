@@ -30,7 +30,6 @@ export const useProjectExplorerUiPersistence = ({
   showOnlyChanged,
   setShowOnlyChanged,
   workspaceTab,
-  setWorkspaceTab,
   contextMenu,
   setContextMenu,
   isResizing,
@@ -63,19 +62,6 @@ export const useProjectExplorerUiPersistence = ({
       showOnlyChanged ? '1' : '0',
     );
   }, [projectId, showOnlyChanged]);
-
-  useEffect(() => {
-    if (!projectId || typeof window === 'undefined') {
-      setWorkspaceTab('files');
-      return;
-    }
-    const saved = window.localStorage.getItem(`project_workspace_tab_${projectId}`);
-    if (saved === 'team') {
-      setWorkspaceTab('team');
-      return;
-    }
-    setWorkspaceTab('files');
-  }, [projectId, setWorkspaceTab]);
 
   useEffect(() => {
     if (!projectId || typeof window === 'undefined') return;

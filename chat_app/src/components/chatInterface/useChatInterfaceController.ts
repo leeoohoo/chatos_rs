@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type ApiClient from '../../lib/api/client';
 import type { UiPromptPanelState } from '../../lib/store/types';
@@ -89,6 +89,16 @@ export const useChatInterfaceController = ({
   const [showUserSettings, setShowUserSettings] = useState(false);
   const [summaryPaneSessionId, setSummaryPaneSessionId] = useState<string | null>(null);
   const [uiPromptHistoryOpen, setUiPromptHistoryOpen] = useState(false);
+  const [reviewRepairRunning, setReviewRepairRunning] = useState(false);
+  const [reviewRepairPendingCount, setReviewRepairPendingCount] = useState<number | null>(null);
+  const reviewRepairPollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearReviewRepairPollTimer = useCallback(() => {
+    if (reviewRepairPollTimerRef.current) {
+      clearTimeout(reviewRepairPollTimerRef.current);
+      reviewRepairPollTimerRef.current = null;
+    }
+  }, []);
 
   const currentSessionIdForUiPrompts = currentSession?.id || null;
   const { sessionSummaryPaneVisible } = useChatSessionEffects({
@@ -201,6 +211,74 @@ export const useChatInterfaceController = ({
     void loadContactMemoryContext(sessionId, true);
   }, [loadContactMemoryContext]);
 
+  const refreshReviewRepairStatus = useCallback(async (
+    sessionId: string,
+  ): Promise<{ running: boolean; pendingCount: number | null }> => {
+    if (!sessionId) {
+      setReviewRepairRunning(false);
+      setReviewRepairPendingCount(null);
+      return { running: false, pendingCount: null };
+    }
+    const result = await apiClient.getConversationReviewRepairStatus(sessionId);
+    if (result?.success === false) {
+      throw new Error(result.detail || result.error || '获取复盘状态失败');
+    }
+    const running = result?.result?.running === true;
+    const pendingCount = typeof result?.result?.pending_message_count === 'number'
+      ? result.result.pending_message_count
+      : null;
+    setReviewRepairRunning(running);
+    setReviewRepairPendingCount(pendingCount);
+    return { running, pendingCount };
+  }, [apiClient]);
+
+  const pollReviewRepairStatusUntilSettled = useCallback(async (sessionId: string) => {
+    clearReviewRepairPollTimer();
+    const poll = async () => {
+      try {
+        const status = await refreshReviewRepairStatus(sessionId);
+        if (status.running) {
+          reviewRepairPollTimerRef.current = setTimeout(() => {
+            void poll();
+          }, 1200);
+          return;
+        }
+        await loadContactMemoryContext(sessionId, true);
+      } catch (error) {
+        console.error('Failed to poll review repair status:', error);
+        reviewRepairPollTimerRef.current = setTimeout(() => {
+          void poll();
+        }, 2000);
+      }
+    };
+    await poll();
+  }, [clearReviewRepairPollTimer, loadContactMemoryContext, refreshReviewRepairStatus]);
+
+  const handleRunReviewRepair = useCallback(async (sessionId: string) => {
+    if (!sessionId) {
+      return;
+    }
+    clearReviewRepairPollTimer();
+    setReviewRepairRunning(true);
+    try {
+      const result = await apiClient.runConversationReviewRepair(sessionId);
+      if (result?.success === false) {
+        throw new Error(result.detail || result.error || '执行复盘失败');
+      }
+      await pollReviewRepairStatusUntilSettled(sessionId);
+    } catch (error) {
+      await refreshReviewRepairStatus(sessionId).catch((statusError) => {
+        console.error('Failed to refresh review repair status after run error:', statusError);
+      });
+      throw error;
+    }
+  }, [
+    apiClient,
+    clearReviewRepairPollTimer,
+    pollReviewRepairStatusUntilSettled,
+    refreshReviewRepairStatus,
+  ]);
+
   const handleCloseSummary = useCallback(() => {
     setSummaryPaneSessionId(null);
   }, []);
@@ -214,6 +292,43 @@ export const useChatInterfaceController = ({
     setUiPromptHistoryOpen(true);
     void loadUiPromptHistory(sessionId);
   }, [loadUiPromptHistory]);
+
+  useEffect(() => {
+    if (activePanel !== 'chat') {
+      clearReviewRepairPollTimer();
+      setReviewRepairRunning(false);
+      setReviewRepairPendingCount(null);
+      return undefined;
+    }
+
+    const sessionId = currentSession?.id || null;
+    clearReviewRepairPollTimer();
+    if (!sessionId) {
+      setReviewRepairRunning(false);
+      setReviewRepairPendingCount(null);
+      return undefined;
+    }
+
+    void refreshReviewRepairStatus(sessionId)
+      .then((status) => {
+        if (status.running) {
+          void pollReviewRepairStatusUntilSettled(sessionId);
+        }
+      })
+      .catch((error) => {
+        console.error('Failed to load review repair status:', error);
+      });
+
+    return () => {
+      clearReviewRepairPollTimer();
+    };
+  }, [
+    activePanel,
+    clearReviewRepairPollTimer,
+    currentSession?.id,
+    pollReviewRepairStatusUntilSettled,
+    refreshReviewRepairStatus,
+  ]);
 
   return {
     showMcpManager,
@@ -233,6 +348,8 @@ export const useChatInterfaceController = ({
     sessionSummaryPaneVisible,
     uiPromptHistoryOpen,
     setUiPromptHistoryOpen,
+    reviewRepairRunning,
+    reviewRepairPendingCount,
     runtimeContextOpen,
     setRuntimeContextOpen,
     runtimeContextSessionId,
@@ -245,6 +362,7 @@ export const useChatInterfaceController = ({
     handleLoadMore,
     handleToggleTurnProcess,
     handleRefreshMemory,
+    handleRunReviewRepair,
     handleCloseSummary,
     handleOpenHistory,
     handleOpenUiPromptHistory,

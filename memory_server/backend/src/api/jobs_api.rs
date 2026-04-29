@@ -22,6 +22,14 @@ pub(super) struct RunJobRequest {
     session_id: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub(super) struct RunScopedReviewRepairRequest {
+    user_id: Option<String>,
+    project_id: Option<String>,
+    contact_id: Option<String>,
+    agent_id: Option<String>,
+}
+
 pub(super) async fn run_summary_once(
     State(state): State<SharedState>,
     headers: HeaderMap,
@@ -51,6 +59,127 @@ pub(super) async fn run_summary_once(
     };
 
     match result {
+        Ok(data) => (StatusCode::OK, Json(json!({"ok": true, "data": data}))),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"ok": false, "error": err})),
+        ),
+    }
+}
+
+pub(super) async fn run_review_repair_once(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Json(req): Json<RunScopedReviewRepairRequest>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match require_auth(&state, &headers) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    let scope_user_id = resolve_scope_user_id(&auth, req.user_id);
+    let ai = match build_ai_client(&state) {
+        Ok(client) => client,
+        Err(err) => return err,
+    };
+
+    let project_id = req
+        .project_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| "0".to_string());
+    let contact_id = req
+        .contact_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+    let agent_id = req
+        .agent_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+
+    if contact_id.is_none() && agent_id.is_none() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "ok": false,
+                "error": "contact_id 或 agent_id 至少要提供一个"
+            })),
+        );
+    }
+
+    match jobs::summary::run_review_repair_for_scope(
+        &state.pool,
+        &ai,
+        scope_user_id.as_str(),
+        project_id.as_str(),
+        contact_id.as_deref(),
+        agent_id.as_deref(),
+    )
+    .await
+    {
+        Ok(data) => (StatusCode::OK, Json(json!({"ok": true, "data": data}))),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"ok": false, "error": err})),
+        ),
+    }
+}
+
+pub(super) async fn get_review_repair_status(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Query(req): Query<RunScopedReviewRepairRequest>,
+) -> (StatusCode, Json<Value>) {
+    let auth = match require_auth(&state, &headers) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    let scope_user_id = resolve_scope_user_id(&auth, req.user_id);
+
+    let project_id = req
+        .project_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| "0".to_string());
+    let contact_id = req
+        .contact_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+    let agent_id = req
+        .agent_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+
+    if contact_id.is_none() && agent_id.is_none() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "ok": false,
+                "error": "contact_id 或 agent_id 至少要提供一个"
+            })),
+        );
+    }
+
+    match jobs::summary::get_review_repair_status_for_scope(
+        &state.pool,
+        scope_user_id.as_str(),
+        project_id.as_str(),
+        contact_id.as_deref(),
+        agent_id.as_deref(),
+    )
+    .await
+    {
         Ok(data) => (StatusCode::OK, Json(json!({"ok": true, "data": data}))),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,

@@ -96,6 +96,7 @@ export const useChatInterfaceModel = ({
     currentSession: store.currentSession,
     sessionSummaryPaneVisible: controller.sessionSummaryPaneVisible,
     currentContactName: derived.currentContactName,
+    currentContactId: derived.currentContactId,
     currentProjectNameForMemory: resources.currentProjectNameForMemory,
     currentProjectIdForMemory: resources.currentProjectIdForMemory,
     messages: store.messages,
@@ -109,6 +110,8 @@ export const useChatInterfaceModel = ({
     agentRecalls: resources.agentRecalls,
     memoryLoading: resources.memoryLoading,
     memoryError: resources.memoryError,
+    reviewRepairRunning: controller.reviewRepairRunning,
+    reviewRepairPendingCount: controller.reviewRepairPendingCount,
     mergedCurrentTurnTasks: resources.mergedCurrentTurnTasks,
     workbarHistoryTasks: resources.workbarHistoryTasks,
     activeConversationTurnId: resources.activeConversationTurnId,
@@ -148,6 +151,14 @@ export const useChatInterfaceModel = ({
     handleLoadMore: controller.handleLoadMore,
     handleToggleTurnProcess: controller.handleToggleTurnProcess,
     handleRefreshMemory: controller.handleRefreshMemory,
+    handleRunReviewRepair: async (sessionId: string) => {
+      try {
+        store.clearError();
+        await controller.handleRunReviewRepair(sessionId);
+      } catch (error) {
+        store.setError(error instanceof Error ? error.message : '执行复盘失败');
+      }
+    },
     handleCloseSummary: controller.handleCloseSummary,
     toggleSidebar: store.toggleSidebar,
     handleRefreshWorkbar: resources.handleRefreshWorkbar,

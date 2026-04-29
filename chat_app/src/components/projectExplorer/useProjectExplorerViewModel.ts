@@ -24,7 +24,7 @@ export const useProjectExplorerViewModel = ({
     project,
   });
 
-  const state = useProjectExplorerState();
+  const state = useProjectExplorerState(project?.id);
 
   const pathHelpers = useProjectExplorerPathHelpers(project?.rootPath);
 

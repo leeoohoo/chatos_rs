@@ -226,6 +226,40 @@ pub struct SyncProjectAgentLinkRequestDto {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ReviewRepairSummaryRunResultDto {
+    pub processed_sessions: usize,
+    pub summarized_sessions: usize,
+    pub generated_summaries: usize,
+    pub marked_messages: usize,
+    pub failed_sessions: usize,
+    pub pending_message_count: i64,
+    pub project_id: String,
+    pub contact_id: Option<String>,
+    pub agent_id: Option<String>,
+    pub mode: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ReviewRepairStatusDto {
+    pub running: bool,
+    pub running_job_count: i64,
+    pub pending_message_count: i64,
+    pub scope_session_count: usize,
+    pub project_id: String,
+    pub contact_id: Option<String>,
+    pub agent_id: Option<String>,
+    pub job_type: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RunReviewRepairSummaryRequestDto {
+    pub user_id: Option<String>,
+    pub project_id: Option<String>,
+    pub contact_id: Option<String>,
+    pub agent_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct MemoryProjectMemoryDto {
     pub id: String,
     pub user_id: String,

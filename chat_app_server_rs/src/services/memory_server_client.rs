@@ -30,8 +30,9 @@ pub use self::contact_ops::{
 pub use self::session_ops::{
     clear_summaries, compose_context, create_session, delete_message, delete_messages_by_session,
     delete_session, delete_summary, get_latest_turn_runtime_snapshot, get_message_by_id,
-    get_session_by_id, get_summary_job_config, get_turn_runtime_snapshot_by_turn, list_messages,
-    list_sessions, list_summaries, sync_turn_runtime_snapshot, update_session, upsert_message,
+    get_review_repair_status, get_session_by_id, get_summary_job_config,
+    get_turn_runtime_snapshot_by_turn, list_messages, list_sessions, list_summaries,
+    run_review_repair_summary, sync_turn_runtime_snapshot, update_session, upsert_message,
     upsert_summary_job_config,
 };
 pub use self::skill_ops::{get_memory_skill, get_memory_skill_plugin};

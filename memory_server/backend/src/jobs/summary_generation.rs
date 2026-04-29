@@ -22,6 +22,64 @@ pub(crate) async fn process_session(
     token_limit: i64,
     target_summary_tokens: i64,
 ) -> Result<(usize, usize), String> {
+    process_session_with_mode(
+        pool,
+        ai,
+        session_id,
+        model_name,
+        model_cfg,
+        summary_prompt,
+        round_limit,
+        token_limit,
+        target_summary_tokens,
+        false,
+        "summary_l0",
+    )
+    .await
+}
+
+pub(crate) async fn process_session_force(
+    pool: &Db,
+    ai: &AiClient,
+    session_id: &str,
+    model_name: &str,
+    model_cfg: Option<&AiModelConfig>,
+    summary_prompt: Option<&str>,
+    round_limit: i64,
+    token_limit: i64,
+    target_summary_tokens: i64,
+    job_type: &str,
+) -> Result<(usize, usize), String> {
+    process_session_with_mode(
+        pool,
+        ai,
+        session_id,
+        model_name,
+        model_cfg,
+        summary_prompt,
+        round_limit,
+        token_limit,
+        target_summary_tokens,
+        true,
+        job_type,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn process_session_with_mode(
+    pool: &Db,
+    ai: &AiClient,
+    session_id: &str,
+    model_name: &str,
+    model_cfg: Option<&AiModelConfig>,
+    summary_prompt: Option<&str>,
+    round_limit: i64,
+    token_limit: i64,
+    target_summary_tokens: i64,
+    force_run: bool,
+    job_type: &str,
+) -> Result<(usize, usize), String> {
     let lease_seconds = job_support::resolve_lock_lease_seconds();
     let lock_key = format!("summary_l0:{}", session_id);
     let Some(lock_handle) =
@@ -44,6 +102,8 @@ pub(crate) async fn process_session(
         round_limit,
         token_limit,
         target_summary_tokens,
+        force_run,
+        job_type,
         &lock_handle,
         lease_seconds,
     )
@@ -70,38 +130,56 @@ async fn process_session_locked(
     round_limit: i64,
     token_limit: i64,
     target_summary_tokens: i64,
+    force_run: bool,
+    job_type: &str,
     lock_handle: &locks::JobLockHandle,
     lease_seconds: i64,
 ) -> Result<(usize, usize), String> {
-    let pending_head =
-        messages::list_pending_messages(pool, session_id, Some(round_limit.max(1))).await?;
-    if pending_head.is_empty() {
-        return Ok((0, 0));
-    }
+    let selected: Vec<crate::models::Message>;
+    let pending_before_count: i64;
+    let trigger: String;
 
-    let mut pending_all_for_trigger: Option<Vec<crate::models::Message>> = None;
-    let trigger = if pending_head.len() as i64 >= round_limit.max(1) {
-        "message_count_limit".to_string()
-    } else {
+    if force_run {
         let all_pending = messages::list_pending_messages(pool, session_id, None).await?;
-        let all_texts: Vec<String> = all_pending.iter().map(message_to_summary_block).collect();
-        let tokens = estimate_tokens_texts(all_texts.as_slice());
-        if tokens >= token_limit.max(500) {
-            pending_all_for_trigger = Some(all_pending);
-            "token_limit".to_string()
-        } else {
+        if all_pending.is_empty() {
             return Ok((0, 0));
         }
-    };
-
-    let (selected, pending_before_count) = if trigger == "message_count_limit" {
-        let all_pending = messages::list_pending_messages(pool, session_id, None).await?;
-        (pending_head, all_pending.len() as i64)
+        pending_before_count = all_pending.len() as i64;
+        selected = all_pending;
+        trigger = "manual_review_repair".to_string();
     } else {
-        let all_pending = pending_all_for_trigger.unwrap_or_default();
-        let pending_before = all_pending.len() as i64;
-        (all_pending, pending_before)
-    };
+        let pending_head =
+            messages::list_pending_messages(pool, session_id, Some(round_limit.max(1))).await?;
+        if pending_head.is_empty() {
+            return Ok((0, 0));
+        }
+
+        let mut pending_all_for_trigger: Option<Vec<crate::models::Message>> = None;
+        trigger = if pending_head.len() as i64 >= round_limit.max(1) {
+            "message_count_limit".to_string()
+        } else {
+            let all_pending = messages::list_pending_messages(pool, session_id, None).await?;
+            let all_texts: Vec<String> = all_pending.iter().map(message_to_summary_block).collect();
+            let tokens = estimate_tokens_texts(all_texts.as_slice());
+            if tokens >= token_limit.max(500) {
+                pending_all_for_trigger = Some(all_pending);
+                "token_limit".to_string()
+            } else {
+                return Ok((0, 0));
+            }
+        };
+
+        let values = if trigger == "message_count_limit" {
+            let all_pending = messages::list_pending_messages(pool, session_id, None).await?;
+            (pending_head, all_pending.len() as i64)
+        } else {
+            let all_pending = pending_all_for_trigger.unwrap_or_default();
+            let pending_before = all_pending.len() as i64;
+            (all_pending, pending_before)
+        };
+        selected = values.0;
+        pending_before_count = values.1;
+    }
 
     let mut summarizable_messages = Vec::new();
     let mut oversized_messages = Vec::new();
@@ -122,7 +200,7 @@ async fn process_session_locked(
         .iter()
         .map(|m| estimate_tokens_text(message_to_summary_block(m).as_str()))
         .sum::<i64>();
-    let source_digest = idempotency::digest_from_ids("summary_l0", selected_ids.as_slice())
+    let source_digest = idempotency::digest_from_ids(job_type, selected_ids.as_slice())
         .ok_or_else(|| "build summary source digest failed".to_string())?;
 
     if let Some(existing) =
@@ -167,7 +245,7 @@ async fn process_session_locked(
 
     let job_run = match jobs::create_job_run(
         pool,
-        "summary_l0",
+        job_type,
         Some(session_id),
         Some(trigger.as_str()),
         selected.len() as i64,

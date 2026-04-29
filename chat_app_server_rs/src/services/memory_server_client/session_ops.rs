@@ -6,8 +6,10 @@ use crate::models::session_summary_v2::SessionSummaryV2;
 
 use super::dto::{
     ComposeContextResponse, CreateSessionRequest, MemorySession, PatchSessionRequest,
+    ReviewRepairStatusDto, ReviewRepairSummaryRunResultDto, RunReviewRepairSummaryRequestDto,
     SummaryJobConfigDto, SyncMessageRequest, SyncTurnRuntimeSnapshotRequestDto,
-    TurnRuntimeSnapshotDto, TurnRuntimeSnapshotLookupResponseDto, UpsertSummaryJobConfigRequestDto,
+    TurnRuntimeSnapshotDto, TurnRuntimeSnapshotLookupResponseDto,
+    UpsertSummaryJobConfigRequestDto,
 };
 use super::http::{
     client, push_limit_offset_params, send_delete_result, send_json, send_list, send_optional_json,
@@ -312,4 +314,46 @@ pub async fn upsert_summary_job_config(
         .timeout(try_timeout_duration()?)
         .json(req_body);
     send_json(req).await
+}
+
+pub async fn run_review_repair_summary(
+    req_body: &RunReviewRepairSummaryRequestDto,
+) -> Result<ReviewRepairSummaryRunResultDto, String> {
+    let req = client()
+        .post(try_build_url("/jobs/summary/review-repair-run-once")?)
+        .timeout(try_timeout_duration()?)
+        .json(req_body);
+
+    let resp: Value = send_json(req).await?;
+    let data = resp.get("data").cloned().unwrap_or(resp);
+    serde_json::from_value(data).map_err(|err| err.to_string())
+}
+
+pub async fn get_review_repair_status(
+    req_body: &RunReviewRepairSummaryRequestDto,
+) -> Result<ReviewRepairStatusDto, String> {
+    let mut req = client()
+        .get(try_build_url("/jobs/summary/review-repair-status")?)
+        .timeout(try_timeout_duration()?);
+
+    let mut params: Vec<(String, String)> = Vec::new();
+    if let Some(value) = req_body.user_id.as_deref() {
+        params.push(("user_id".to_string(), value.to_string()));
+    }
+    if let Some(value) = req_body.project_id.as_deref() {
+        params.push(("project_id".to_string(), value.to_string()));
+    }
+    if let Some(value) = req_body.contact_id.as_deref() {
+        params.push(("contact_id".to_string(), value.to_string()));
+    }
+    if let Some(value) = req_body.agent_id.as_deref() {
+        params.push(("agent_id".to_string(), value.to_string()));
+    }
+    if !params.is_empty() {
+        req = req.query(&params);
+    }
+
+    let resp: Value = send_json(req).await?;
+    let data = resp.get("data").cloned().unwrap_or(resp);
+    serde_json::from_value(data).map_err(|err| err.to_string())
 }

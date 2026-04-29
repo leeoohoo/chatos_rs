@@ -7,7 +7,10 @@ mod aggregate_ops;
 mod read_ops;
 mod write_ops;
 
-pub use self::aggregate_ops::list_session_ids_with_pending_messages_by_user;
+pub use self::aggregate_ops::{
+    count_pending_messages_by_scope, list_session_ids_with_pending_messages_by_scope,
+    list_session_ids_with_pending_messages_by_user,
+};
 pub use self::read_ops::{
     get_latest_user_message_by_session, get_message_by_id, list_messages_by_session,
     list_pending_messages,

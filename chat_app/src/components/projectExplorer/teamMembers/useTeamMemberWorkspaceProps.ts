@@ -71,8 +71,11 @@ export const useTeamMemberWorkspaceProps = ({
   taskModalMode: resources.workbar.taskModalMode,
   taskModalTask: resources.workbar.taskModalTask,
   taskModalError: resources.workbar.taskModalError,
+  reviewRepairRunning: resources.workbar.reviewRepairRunning,
+  reviewRepairPendingCount: resources.workbar.reviewRepairPendingCount,
   onRefreshWorkbarTasks: resources.workbar.handleRefreshWorkbar,
   onOpenWorkbarHistory: resources.workbar.handleOpenTeamWorkbarHistory,
+  onRunReviewRepair: resources.workbar.handleRunReviewRepair,
   onCompleteTask: (task) => {
     void resources.workbar.handleWorkbarCompleteTask(task);
   },
@@ -132,6 +135,7 @@ export const useTeamMemberWorkspaceProps = ({
   resources.workbar.activeUiPromptPanel,
   resources.workbar.closeTaskModal,
   resources.workbar.handleOpenTeamWorkbarHistory,
+  resources.workbar.handleRunReviewRepair,
   resources.workbar.handleRefreshWorkbar,
   resources.workbar.handleTaskReviewCancel,
   resources.workbar.handleTaskReviewConfirm,
@@ -141,6 +145,8 @@ export const useTeamMemberWorkspaceProps = ({
   resources.workbar.handleWorkbarDeleteTask,
   resources.workbar.handleWorkbarEditTask,
   resources.workbar.mergedCurrentTurnTasks,
+  resources.workbar.reviewRepairRunning,
+  resources.workbar.reviewRepairPendingCount,
   resources.workbar.runtimeGuidanceAppliedCount,
   resources.workbar.runtimeGuidanceItems,
   resources.workbar.runtimeGuidanceLastAppliedAt,

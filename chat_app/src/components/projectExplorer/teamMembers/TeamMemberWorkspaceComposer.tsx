@@ -40,8 +40,11 @@ type TeamMemberWorkspaceComposerProps = Pick<
   | 'taskModalMode'
   | 'taskModalTask'
   | 'taskModalError'
+  | 'reviewRepairRunning'
+  | 'reviewRepairPendingCount'
   | 'onRefreshWorkbarTasks'
   | 'onOpenWorkbarHistory'
+  | 'onRunReviewRepair'
   | 'onCompleteTask'
   | 'onDeleteTask'
   | 'onEditTask'
@@ -97,8 +100,11 @@ export const TeamMemberWorkspaceComposer: React.FC<TeamMemberWorkspaceComposerPr
   taskModalMode,
   taskModalTask,
   taskModalError,
+  reviewRepairRunning,
+  reviewRepairPendingCount,
   onRefreshWorkbarTasks,
   onOpenWorkbarHistory,
+  onRunReviewRepair,
   onCompleteTask,
   onDeleteTask,
   onEditTask,
@@ -135,6 +141,10 @@ export const TeamMemberWorkspaceComposer: React.FC<TeamMemberWorkspaceComposerPr
       taskModalMode={taskModalMode}
       taskModalTask={taskModalTask}
       taskModalError={taskModalError}
+      reviewRepairAvailable={true}
+      reviewRepairRunning={reviewRepairRunning}
+      reviewRepairDisabled={!reviewRepairRunning && (reviewRepairPendingCount ?? 0) === 0}
+      onReviewRepair={() => onRunReviewRepair(selectedProjectSession.id)}
       onRefreshWorkbarTasks={onRefreshWorkbarTasks}
       onOpenHistory={onOpenWorkbarHistory}
       uiPromptHistoryCount={0}
@@ -153,7 +163,7 @@ export const TeamMemberWorkspaceComposer: React.FC<TeamMemberWorkspaceComposerPr
       onSend={onSend}
       onGuide={onGuide}
       onStop={onStop}
-      inputDisabled={!isSelectedSessionActive || chatIsStopping}
+      inputDisabled={!isSelectedSessionActive || chatIsStopping || reviewRepairRunning}
       isStreaming={chatIsStreaming}
       isStopping={chatIsStopping}
       supportedFileTypes={supportedFileTypes}

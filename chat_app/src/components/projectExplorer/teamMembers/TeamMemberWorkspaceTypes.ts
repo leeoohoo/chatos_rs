@@ -73,8 +73,11 @@ export interface TeamMemberWorkspaceProps {
   taskModalMode: 'complete' | 'edit';
   taskModalTask: TaskWorkbarItem | null;
   taskModalError: string | null;
+  reviewRepairRunning: boolean;
+  reviewRepairPendingCount: number | null;
   onRefreshWorkbarTasks: () => void;
   onOpenWorkbarHistory: (sessionId: string) => void;
+  onRunReviewRepair: (sessionId: string) => Promise<void>;
   onCompleteTask: (task: TaskWorkbarItem) => void;
   onDeleteTask: (task: TaskWorkbarItem) => void;
   onEditTask: (task: TaskWorkbarItem) => void;

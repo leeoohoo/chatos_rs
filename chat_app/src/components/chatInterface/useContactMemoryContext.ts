@@ -146,10 +146,10 @@ export const useContactMemoryContext = ({
 }: UseContactMemoryContextOptions): UseContactMemoryContextResult => {
   const [sessionMemorySummaries, setSessionMemorySummaries] = useState<SessionMemorySummary[]>([]);
   const [agentRecalls, setAgentRecalls] = useState<ContactAgentRecall[]>([]);
-  const [memoryLoadedKey, setMemoryLoadedKey] = useState<string | null>(null);
   const [memoryLoading, setMemoryLoading] = useState(false);
   const [memoryError, setMemoryError] = useState<string | null>(null);
   const memoryLoadSeqRef = useRef(0);
+  const memoryLoadedKeyRef = useRef<string | null>(null);
   const currentSessionIdRef = useRef<string | null>(currentSessionId);
 
   useEffect(() => {
@@ -159,7 +159,7 @@ export const useContactMemoryContext = ({
   const resetMemoryState = useCallback(() => {
     setSessionMemorySummaries([]);
     setAgentRecalls([]);
-    setMemoryLoadedKey(null);
+    memoryLoadedKeyRef.current = null;
     setMemoryError(null);
     setMemoryLoading(false);
   }, []);
@@ -177,14 +177,14 @@ export const useContactMemoryContext = ({
     const normalizedContactId = currentContactId.trim();
     const normalizedProjectId = currentProjectIdForMemory.trim();
     const loadKey = `${sessionId}::${normalizedContactId || '-'}::${normalizedProjectId || '-'}`;
-    if (!force && memoryLoadedKey === loadKey) {
+    if (!force && memoryLoadedKeyRef.current === loadKey) {
       return;
     }
 
     if (!normalizedContactId) {
       setSessionMemorySummaries([]);
       setAgentRecalls([]);
-      setMemoryLoadedKey(loadKey);
+      memoryLoadedKeyRef.current = loadKey;
       setMemoryError('当前会话未绑定联系人，无法加载记忆。');
       setMemoryLoading(false);
       return;
@@ -216,7 +216,7 @@ export const useContactMemoryContext = ({
 
       setSessionMemorySummaries(selectedSessionSummaries);
       setAgentRecalls(selectedAgentRecalls);
-      setMemoryLoadedKey(loadKey);
+      memoryLoadedKeyRef.current = loadKey;
     } catch (error) {
       if (
         memoryLoadSeqRef.current !== requestSeq
@@ -238,7 +238,6 @@ export const useContactMemoryContext = ({
     currentContactId,
     currentProjectIdForMemory,
     currentSessionId,
-    memoryLoadedKey,
     resetMemoryState,
   ]);
 

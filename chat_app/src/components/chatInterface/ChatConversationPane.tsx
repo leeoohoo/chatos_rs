@@ -21,6 +21,7 @@ interface ChatConversationPaneProps {
   currentSession: Session | null;
   sessionSummaryPaneVisible: boolean;
   currentContactName: string;
+  currentContactId: string;
   currentProjectNameForMemory: string;
   currentProjectIdForMemory: string | null;
   messages: Message[];
@@ -37,6 +38,9 @@ interface ChatConversationPaneProps {
   memoryLoading: boolean;
   memoryError: string | null;
   onRefreshMemory: (sessionId: string) => void;
+  onRunReviewRepair: (sessionId: string) => Promise<void>;
+  reviewRepairRunning: boolean;
+  reviewRepairPendingCount: number | null;
   onCloseSummary: () => void;
   toggleSidebar: () => void;
   mergedCurrentTurnTasks: ChatComposerPanelProps['mergedCurrentTurnTasks'];
@@ -103,6 +107,7 @@ interface ChatMessagesPaneProps {
   currentSession: Session | null;
   sessionSummaryPaneVisible: boolean;
   currentContactName: string;
+  currentContactId: string;
   currentProjectNameForMemory: string;
   currentProjectIdForMemory: string | null;
   messages: Message[];
@@ -119,6 +124,9 @@ interface ChatMessagesPaneProps {
   memoryLoading: boolean;
   memoryError: string | null;
   onRefreshMemory: (sessionId: string) => void;
+  onRunReviewRepair: (sessionId: string) => Promise<void>;
+  reviewRepairRunning: boolean;
+  reviewRepairPendingCount: number | null;
   onCloseSummary: () => void;
   toggleSidebar: () => void;
 }
@@ -127,6 +135,7 @@ const ChatMessagesPane: React.FC<ChatMessagesPaneProps> = React.memo(({
   currentSession,
   sessionSummaryPaneVisible,
   currentContactName,
+  currentContactId,
   currentProjectNameForMemory,
   currentProjectIdForMemory,
   messages,
@@ -143,9 +152,17 @@ const ChatMessagesPane: React.FC<ChatMessagesPaneProps> = React.memo(({
   memoryLoading,
   memoryError,
   onRefreshMemory,
+  onRunReviewRepair,
+  reviewRepairRunning,
+  reviewRepairPendingCount,
   onCloseSummary,
   toggleSidebar,
 }) => {
+  void currentContactId;
+  void onRunReviewRepair;
+  void reviewRepairRunning;
+  void reviewRepairPendingCount;
+
   if (!currentSession) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -217,6 +234,7 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
   currentSession,
   sessionSummaryPaneVisible,
   currentContactName,
+  currentContactId,
   currentProjectNameForMemory,
   currentProjectIdForMemory,
   messages,
@@ -233,6 +251,9 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
   memoryLoading,
   memoryError,
   onRefreshMemory,
+  onRunReviewRepair,
+  reviewRepairRunning,
+  reviewRepairPendingCount,
   onCloseSummary,
   toggleSidebar,
   mergedCurrentTurnTasks,
@@ -301,14 +322,15 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
           currentSession={currentSession}
           sessionSummaryPaneVisible={sessionSummaryPaneVisible}
           currentContactName={currentContactName}
+          currentContactId={currentContactId}
           currentProjectNameForMemory={currentProjectNameForMemory}
           currentProjectIdForMemory={currentProjectIdForMemory}
-        messages={messages}
-        chatIsLoading={chatIsLoading}
-        chatIsStreaming={chatIsStreaming}
-        chatIsStopping={chatIsStopping}
-        chatStreamingPreviewText={chatStreamingPreviewText}
-        hasMoreMessages={hasMoreMessages}
+          messages={messages}
+          chatIsLoading={chatIsLoading}
+          chatIsStreaming={chatIsStreaming}
+          chatIsStopping={chatIsStopping}
+          chatStreamingPreviewText={chatStreamingPreviewText}
+          hasMoreMessages={hasMoreMessages}
           onLoadMore={onLoadMore}
           onToggleTurnProcess={onToggleTurnProcess}
           customRenderer={customRenderer}
@@ -317,6 +339,9 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
           memoryLoading={memoryLoading}
           memoryError={memoryError}
           onRefreshMemory={onRefreshMemory}
+          onRunReviewRepair={onRunReviewRepair}
+          reviewRepairRunning={reviewRepairRunning}
+          reviewRepairPendingCount={reviewRepairPendingCount}
           onCloseSummary={onCloseSummary}
           toggleSidebar={toggleSidebar}
         />
@@ -372,6 +397,10 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
           onProjectChange={onProjectChange}
           showProjectSelector={false}
           showProjectFileButton={false}
+          reviewRepairAvailable={true}
+          reviewRepairRunning={reviewRepairRunning}
+          reviewRepairDisabled={!reviewRepairRunning && (reviewRepairPendingCount ?? 0) === 0}
+          onReviewRepair={() => onRunReviewRepair(currentSession.id)}
           workspaceRoot={workspaceRoot}
           onWorkspaceRootChange={onWorkspaceRootChange}
           currentRemoteConnectionId={currentRemoteConnectionId}

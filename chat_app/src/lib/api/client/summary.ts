@@ -1,4 +1,6 @@
 import type {
+  ReviewRepairResponse,
+  ReviewRepairStatusResponse,
   SessionSummariesListResponse,
   SessionSummaryJobConfigPayload,
   SessionSummaryJobConfigResponse,
@@ -90,4 +92,31 @@ export const clearConversationSummaries = (
   return request<{ success?: boolean }>(`/conversations/${encodeURIComponent(conversationId)}/summaries`, {
     method: 'DELETE',
   });
+};
+
+export const runConversationReviewRepair = (
+  request: ApiRequestFn,
+  conversationId: string,
+): Promise<ReviewRepairResponse> => {
+  if (!conversationId) {
+    throw new Error('conversationId is required');
+  }
+
+  return request<ReviewRepairResponse>(
+    `/conversations/${encodeURIComponent(conversationId)}/review-repair`,
+    { method: 'POST' },
+  );
+};
+
+export const getConversationReviewRepairStatus = (
+  request: ApiRequestFn,
+  conversationId: string,
+): Promise<ReviewRepairStatusResponse> => {
+  if (!conversationId) {
+    throw new Error('conversationId is required');
+  }
+
+  return request<ReviewRepairStatusResponse>(
+    `/conversations/${encodeURIComponent(conversationId)}/review-repair`,
+  );
 };

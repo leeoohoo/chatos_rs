@@ -150,6 +150,31 @@ pub async fn list_job_runs(
     cursor.try_collect().await.map_err(|e| e.to_string())
 }
 
+pub async fn count_job_runs_for_sessions(
+    db: &Db,
+    job_type: &str,
+    session_ids: &[String],
+    status: Option<&str>,
+) -> Result<i64, String> {
+    if session_ids.is_empty() {
+        return Ok(0);
+    }
+
+    let mut filter = doc! {
+        "job_type": job_type,
+        "session_id": {"$in": session_ids.to_vec()},
+    };
+    if let Some(value) = status {
+        filter.insert("status", value);
+    }
+
+    collection(db)
+        .count_documents(filter)
+        .await
+        .map(|count| count as i64)
+        .map_err(|e| e.to_string())
+}
+
 pub async fn job_stats(db: &Db) -> Result<serde_json::Value, String> {
     let since = (chrono::Utc::now() - chrono::Duration::days(1)).to_rfc3339();
     let pipeline = vec![
