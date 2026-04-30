@@ -1,7 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useState } from 'react';
 
 import type ApiClient from '../../lib/api/client';
-import type { UiPromptPanelState } from '../../lib/store/types';
 import type {
   SendMessageHandler,
   SendMessageRuntimeOptions,
@@ -9,6 +8,8 @@ import type {
 } from '../../types';
 import { useChatSessionEffects } from './useChatSessionEffects';
 import { useRuntimeContextState } from './useRuntimeContextState';
+import { useReviewRepairRealtime } from '../../lib/realtime/useReviewRepairRealtime';
+import { useConversationSummariesRealtime } from '../../lib/realtime/useConversationSummariesRealtime';
 
 interface UseChatInterfaceControllerParams {
   apiClient: ApiClient;
@@ -18,6 +19,11 @@ interface UseChatInterfaceControllerParams {
   currentChatStateActiveTurnId: string | null | undefined;
   activeConversationTurnId: string | null | undefined;
   currentRemoteConnectionId: string | null;
+  uiPromptHistoryOpen: boolean;
+  setUiPromptHistoryOpen: (value: boolean) => void;
+  summaryPaneSessionId: string | null;
+  setSummaryPaneSessionId: (value: string | null | ((prev: string | null) => string | null)) => void;
+  setTaskHistoryOpen?: (value: boolean) => void;
   onMessageSend?: (content: string, attachments?: File[]) => void;
   sendMessage: SendMessageHandler;
   selectRemoteConnection: (
@@ -37,13 +43,15 @@ interface UseChatInterfaceControllerParams {
   loadAiModelConfigs: () => Promise<void>;
   loadAgents: () => Promise<void>;
   loadContactMemoryContext: (sessionId: string, force?: boolean) => Promise<unknown>;
+  loadSessionMemorySummaries: (sessionId: string, force?: boolean) => Promise<unknown>;
+  hydrateContactMemoryContextFromCache: (sessionId: string) => void;
+  markContactMemoryContextStale: (sessionId: string) => void;
   resetMemoryState: () => void;
   cancelPendingMemoryLoad: () => void;
   loadUiPromptHistory: (sessionId: string, force?: boolean) => Promise<unknown>;
   hydrateUiPromptHistoryFromCache: (sessionId: string) => void;
   resetUiPromptHistoryState: () => void;
   cancelPendingUiPromptHistoryLoad: () => void;
-  upsertUiPromptPanel: (panel: UiPromptPanelState) => void;
   resetAllWorkbarState: () => void;
   resetHistoryWorkbarState: () => void;
   handleOpenWorkbarHistory: (
@@ -60,6 +68,11 @@ export const useChatInterfaceController = ({
   currentChatStateActiveTurnId,
   activeConversationTurnId,
   currentRemoteConnectionId,
+  uiPromptHistoryOpen,
+  setUiPromptHistoryOpen,
+  summaryPaneSessionId,
+  setSummaryPaneSessionId,
+  setTaskHistoryOpen,
   onMessageSend,
   sendMessage,
   selectRemoteConnection,
@@ -70,13 +83,15 @@ export const useChatInterfaceController = ({
   loadAiModelConfigs,
   loadAgents,
   loadContactMemoryContext,
+  loadSessionMemorySummaries,
+  hydrateContactMemoryContextFromCache,
+  markContactMemoryContextStale,
   resetMemoryState,
   cancelPendingMemoryLoad,
   loadUiPromptHistory,
   hydrateUiPromptHistoryFromCache,
   resetUiPromptHistoryState,
   cancelPendingUiPromptHistoryLoad,
-  upsertUiPromptPanel,
   resetAllWorkbarState,
   resetHistoryWorkbarState,
   handleOpenWorkbarHistory,
@@ -87,38 +102,24 @@ export const useChatInterfaceController = ({
   const [showApplicationsPanel, setShowApplicationsPanel] = useState(false);
   const [showNotepadPanel, setShowNotepadPanel] = useState(false);
   const [showUserSettings, setShowUserSettings] = useState(false);
-  const [summaryPaneSessionId, setSummaryPaneSessionId] = useState<string | null>(null);
-  const [uiPromptHistoryOpen, setUiPromptHistoryOpen] = useState(false);
-  const [reviewRepairRunning, setReviewRepairRunning] = useState(false);
-  const [reviewRepairPendingCount, setReviewRepairPendingCount] = useState<number | null>(null);
-  const reviewRepairPollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const clearReviewRepairPollTimer = useCallback(() => {
-    if (reviewRepairPollTimerRef.current) {
-      clearTimeout(reviewRepairPollTimerRef.current);
-      reviewRepairPollTimerRef.current = null;
-    }
-  }, []);
-
-  const currentSessionIdForUiPrompts = currentSession?.id || null;
   const { sessionSummaryPaneVisible } = useChatSessionEffects({
-    apiClient,
     activePanel,
     currentSession,
-    currentSessionIdForUiPrompts,
     uiPromptHistoryOpen,
     summaryPaneSessionId,
+    setTaskHistoryOpen,
     loadProjects,
     loadAiModelConfigs,
     loadAgents,
     loadContactMemoryContext,
+    hydrateContactMemoryContextFromCache,
     resetMemoryState,
     cancelPendingMemoryLoad,
     loadUiPromptHistory,
     hydrateUiPromptHistoryFromCache,
     resetUiPromptHistoryState,
     cancelPendingUiPromptHistoryLoad,
-    upsertUiPromptPanel,
     resetAllWorkbarState,
     resetHistoryWorkbarState,
     setUiPromptHistoryOpen,
@@ -211,61 +212,44 @@ export const useChatInterfaceController = ({
     void loadContactMemoryContext(sessionId, true);
   }, [loadContactMemoryContext]);
 
-  const refreshReviewRepairStatus = useCallback(async (
-    sessionId: string,
-  ): Promise<{ running: boolean; pendingCount: number | null }> => {
-    if (!sessionId) {
-      setReviewRepairRunning(false);
-      setReviewRepairPendingCount(null);
-      return { running: false, pendingCount: null };
-    }
-    const result = await apiClient.getConversationReviewRepairStatus(sessionId);
-    if (result?.success === false) {
-      throw new Error(result.detail || result.error || '获取复盘状态失败');
-    }
-    const running = result?.result?.running === true;
-    const pendingCount = typeof result?.result?.pending_message_count === 'number'
-      ? result.result.pending_message_count
-      : null;
-    setReviewRepairRunning(running);
-    setReviewRepairPendingCount(pendingCount);
-    return { running, pendingCount };
-  }, [apiClient]);
-
-  const pollReviewRepairStatusUntilSettled = useCallback(async (sessionId: string) => {
-    clearReviewRepairPollTimer();
-    const poll = async () => {
-      try {
-        const status = await refreshReviewRepairStatus(sessionId);
-        if (status.running) {
-          reviewRepairPollTimerRef.current = setTimeout(() => {
-            void poll();
-          }, 1200);
-          return;
-        }
-        await loadContactMemoryContext(sessionId, true);
-      } catch (error) {
-        console.error('Failed to poll review repair status:', error);
-        reviewRepairPollTimerRef.current = setTimeout(() => {
-          void poll();
-        }, 2000);
+  useConversationSummariesRealtime({
+    sessionId: activePanel === 'chat' ? (currentSession?.id || null) : null,
+    enabled: activePanel === 'chat',
+    onEvent: async () => {
+      const sessionId = currentSession?.id || null;
+      if (!sessionId) {
+        return;
       }
-    };
-    await poll();
-  }, [clearReviewRepairPollTimer, loadContactMemoryContext, refreshReviewRepairStatus]);
+      markContactMemoryContextStale(sessionId);
+      if (!sessionSummaryPaneVisible) {
+        return;
+      }
+      hydrateContactMemoryContextFromCache(sessionId);
+      await loadSessionMemorySummaries(sessionId);
+    },
+  });
+
+  const {
+    reviewRepairRunning,
+    reviewRepairPendingCount,
+    refreshReviewRepairStatus,
+    markReviewRepairStarting,
+  } = useReviewRepairRealtime({
+    apiClient,
+    sessionId: activePanel === 'chat' ? (currentSession?.id || null) : null,
+    enabled: activePanel === 'chat',
+  });
 
   const handleRunReviewRepair = useCallback(async (sessionId: string) => {
     if (!sessionId) {
       return;
     }
-    clearReviewRepairPollTimer();
-    setReviewRepairRunning(true);
+    markReviewRepairStarting();
     try {
       const result = await apiClient.runConversationReviewRepair(sessionId);
       if (result?.success === false) {
         throw new Error(result.detail || result.error || '执行复盘失败');
       }
-      await pollReviewRepairStatusUntilSettled(sessionId);
     } catch (error) {
       await refreshReviewRepairStatus(sessionId).catch((statusError) => {
         console.error('Failed to refresh review repair status after run error:', statusError);
@@ -274,8 +258,7 @@ export const useChatInterfaceController = ({
     }
   }, [
     apiClient,
-    clearReviewRepairPollTimer,
-    pollReviewRepairStatusUntilSettled,
+    markReviewRepairStarting,
     refreshReviewRepairStatus,
   ]);
 
@@ -284,51 +267,13 @@ export const useChatInterfaceController = ({
   }, []);
 
   const handleOpenHistory = useCallback((sessionId: string) => {
-    setSummaryPaneSessionId(sessionId);
-    handleOpenWorkbarHistory(sessionId, { forceHistory: false, forceSummaries: true });
+    handleOpenWorkbarHistory(sessionId, { forceHistory: false, forceSummaries: false });
   }, [handleOpenWorkbarHistory]);
 
   const handleOpenUiPromptHistory = useCallback((sessionId: string) => {
     setUiPromptHistoryOpen(true);
     void loadUiPromptHistory(sessionId);
   }, [loadUiPromptHistory]);
-
-  useEffect(() => {
-    if (activePanel !== 'chat') {
-      clearReviewRepairPollTimer();
-      setReviewRepairRunning(false);
-      setReviewRepairPendingCount(null);
-      return undefined;
-    }
-
-    const sessionId = currentSession?.id || null;
-    clearReviewRepairPollTimer();
-    if (!sessionId) {
-      setReviewRepairRunning(false);
-      setReviewRepairPendingCount(null);
-      return undefined;
-    }
-
-    void refreshReviewRepairStatus(sessionId)
-      .then((status) => {
-        if (status.running) {
-          void pollReviewRepairStatusUntilSettled(sessionId);
-        }
-      })
-      .catch((error) => {
-        console.error('Failed to load review repair status:', error);
-      });
-
-    return () => {
-      clearReviewRepairPollTimer();
-    };
-  }, [
-    activePanel,
-    clearReviewRepairPollTimer,
-    currentSession?.id,
-    pollReviewRepairStatusUntilSettled,
-    refreshReviewRepairStatus,
-  ]);
 
   return {
     showMcpManager,

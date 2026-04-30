@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import type { SessionSummariesListResponse } from '../../lib/api/client/types';
+import { loadConversationSummaryItems, markConversationSummaryCacheStale } from '../../lib/sessionSummaries/cache';
+
 export interface SessionMemorySummary {
   id: string;
   summaryText: string;
@@ -23,7 +26,7 @@ interface MemoryApiClient {
   getConversationSummaries: (
     sessionId: string,
     params?: { limit?: number; offset?: number },
-  ) => Promise<{ items?: unknown[] }>;
+  ) => Promise<SessionSummariesListResponse>;
   getContactAgentRecalls: (
     contactId: string,
     params?: { limit?: number; offset?: number },
@@ -43,6 +46,9 @@ interface UseContactMemoryContextResult {
   memoryLoading: boolean;
   memoryError: string | null;
   loadContactMemoryContext: (sessionId: string, force?: boolean) => Promise<void>;
+  loadSessionMemorySummaries: (sessionId: string, force?: boolean) => Promise<void>;
+  markContactMemoryContextStale: (sessionId: string) => void;
+  hydrateContactMemoryContextFromCache: (sessionId: string) => void;
   resetMemoryState: () => void;
   cancelPendingMemoryLoad: () => void;
 }
@@ -50,15 +56,6 @@ interface UseContactMemoryContextResult {
 const toTimestamp = (value: string | null | undefined): number => {
   const parsed = value ? new Date(value).getTime() : Number.NaN;
   return Number.isFinite(parsed) ? parsed : 0;
-};
-
-const compareByNewestTime = (
-  left: { createdAt?: string; updatedAt?: string },
-  right: { createdAt?: string; updatedAt?: string },
-): number => {
-  const leftTs = Math.max(toTimestamp(left.updatedAt), toTimestamp(left.createdAt));
-  const rightTs = Math.max(toTimestamp(right.updatedAt), toTimestamp(right.createdAt));
-  return rightTs - leftTs;
 };
 
 const asRecord = (value: unknown): Record<string, unknown> | null => {
@@ -74,42 +71,6 @@ const readString = (record: Record<string, unknown> | null, key: string): string
   }
   const value = record[key];
   return typeof value === 'string' ? value : '';
-};
-
-const normalizeSessionSummaries = (rows: unknown[]): SessionMemorySummary[] => {
-  const normalized = rows
-    .map((item) => {
-      const record = asRecord(item);
-      return {
-        id: String(record?.id || ''),
-        summaryText: String(record?.summary_text ?? record?.summaryText ?? ''),
-        status: String(record?.status || ''),
-        level: Number.isFinite(Number(record?.level)) ? Number(record?.level) : 0,
-        createdAt: String(record?.created_at ?? record?.createdAt ?? ''),
-        updatedAt: String(record?.updated_at ?? record?.updatedAt ?? ''),
-      };
-    })
-    .filter((item) => item.id && item.summaryText.trim().length > 0);
-
-  const retainedLevel0 = normalized
-    .filter((item) => item.level === 0)
-    .sort(compareByNewestTime);
-  const topLevel = [...normalized]
-    .sort((left, right) => {
-      if (right.level !== left.level) {
-        return right.level - left.level;
-      }
-      return compareByNewestTime(left, right);
-    })
-    .slice(0, 2);
-
-  const selectedMap = new Map<string, SessionMemorySummary>();
-  for (const item of [...retainedLevel0, ...topLevel]) {
-    if (!selectedMap.has(item.id)) {
-      selectedMap.set(item.id, item);
-    }
-  }
-  return Array.from(selectedMap.values());
 };
 
 const normalizeAgentRecalls = (rows: unknown[]): ContactAgentRecall[] => {
@@ -151,6 +112,11 @@ export const useContactMemoryContext = ({
   const memoryLoadSeqRef = useRef(0);
   const memoryLoadedKeyRef = useRef<string | null>(null);
   const currentSessionIdRef = useRef<string | null>(currentSessionId);
+  const memoryCacheRef = useRef<Map<string, {
+    sessionMemorySummaries: SessionMemorySummary[];
+    agentRecalls: ContactAgentRecall[];
+  }>>(new Map());
+  const staleMemorySessionsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     currentSessionIdRef.current = currentSessionId;
@@ -168,6 +134,99 @@ export const useContactMemoryContext = ({
     memoryLoadSeqRef.current += 1;
   }, []);
 
+  const hydrateContactMemoryContextFromCache = useCallback((sessionId: string) => {
+    if (!sessionId) {
+      resetMemoryState();
+      return;
+    }
+    const cached = memoryCacheRef.current.get(sessionId);
+    setSessionMemorySummaries(cached ? [...cached.sessionMemorySummaries] : []);
+    setAgentRecalls(cached ? [...cached.agentRecalls] : []);
+    setMemoryError(null);
+    setMemoryLoading(false);
+  }, [resetMemoryState]);
+
+  const markContactMemoryContextStale = useCallback((sessionId: string) => {
+    if (!sessionId) {
+      return;
+    }
+    staleMemorySessionsRef.current.add(sessionId);
+    markConversationSummaryCacheStale(apiClient, sessionId);
+  }, [apiClient]);
+
+  const loadSessionMemorySummaries = useCallback(async (sessionId: string, force = false) => {
+    if (!sessionId || !currentSessionId || currentSessionId !== sessionId) {
+      resetMemoryState();
+      return;
+    }
+
+    const normalizedContactId = currentContactId.trim();
+    const normalizedProjectId = currentProjectIdForMemory.trim();
+    const loadKey = `${sessionId}::${normalizedContactId || '-'}::${normalizedProjectId || '-'}`;
+    const cached = memoryCacheRef.current.get(sessionId);
+    const isStale = staleMemorySessionsRef.current.has(sessionId);
+    if (!force && !isStale && memoryLoadedKeyRef.current === loadKey) {
+      return;
+    }
+    if (!force && !isStale && cached) {
+      setSessionMemorySummaries(cached.sessionMemorySummaries);
+      setAgentRecalls(cached.agentRecalls);
+      setMemoryError(null);
+      setMemoryLoading(false);
+      memoryLoadedKeyRef.current = loadKey;
+      return;
+    }
+
+    const requestSeq = memoryLoadSeqRef.current + 1;
+    memoryLoadSeqRef.current = requestSeq;
+    setMemoryLoading(true);
+    setMemoryError(null);
+    try {
+      const selectedSessionSummaries = await loadConversationSummaryItems(apiClient, sessionId, {
+        force,
+        limit: 300,
+      });
+
+      if (
+        memoryLoadSeqRef.current !== requestSeq
+        || currentSessionIdRef.current !== sessionId
+      ) {
+        return;
+      }
+      const preservedAgentRecalls = cached?.agentRecalls || [];
+
+      setSessionMemorySummaries(selectedSessionSummaries);
+      setAgentRecalls(preservedAgentRecalls);
+      memoryCacheRef.current.set(sessionId, {
+        sessionMemorySummaries: selectedSessionSummaries,
+        agentRecalls: preservedAgentRecalls,
+      });
+      staleMemorySessionsRef.current.delete(sessionId);
+      memoryLoadedKeyRef.current = loadKey;
+    } catch (error) {
+      if (
+        memoryLoadSeqRef.current !== requestSeq
+        || currentSessionIdRef.current !== sessionId
+      ) {
+        return;
+      }
+      setMemoryError(error instanceof Error ? error.message : '会话总结加载失败');
+    } finally {
+      if (
+        memoryLoadSeqRef.current === requestSeq
+        && currentSessionIdRef.current === sessionId
+      ) {
+        setMemoryLoading(false);
+      }
+    }
+  }, [
+    apiClient,
+    currentContactId,
+    currentProjectIdForMemory,
+    currentSessionId,
+    resetMemoryState,
+  ]);
+
   const loadContactMemoryContext = useCallback(async (sessionId: string, force = false) => {
     if (!sessionId || !currentSessionId || currentSessionId !== sessionId) {
       resetMemoryState();
@@ -177,7 +236,17 @@ export const useContactMemoryContext = ({
     const normalizedContactId = currentContactId.trim();
     const normalizedProjectId = currentProjectIdForMemory.trim();
     const loadKey = `${sessionId}::${normalizedContactId || '-'}::${normalizedProjectId || '-'}`;
-    if (!force && memoryLoadedKeyRef.current === loadKey) {
+    const cached = memoryCacheRef.current.get(sessionId);
+    const isStale = staleMemorySessionsRef.current.has(sessionId);
+    if (!force && !isStale && memoryLoadedKeyRef.current === loadKey) {
+      return;
+    }
+    if (!force && !isStale && cached) {
+      setSessionMemorySummaries(cached.sessionMemorySummaries);
+      setAgentRecalls(cached.agentRecalls);
+      setMemoryError(null);
+      setMemoryLoading(false);
+      memoryLoadedKeyRef.current = loadKey;
       return;
     }
 
@@ -195,8 +264,8 @@ export const useContactMemoryContext = ({
     setMemoryLoading(true);
     setMemoryError(null);
     try {
-      const [summaryRows, recallRows] = await Promise.all([
-        apiClient.getConversationSummaries(sessionId, { limit: 300, offset: 0 }),
+      const [selectedSessionSummaries, recallRows] = await Promise.all([
+        loadConversationSummaryItems(apiClient, sessionId, { force, limit: 300 }),
         apiClient.getContactAgentRecalls(normalizedContactId, { limit: 200, offset: 0 }),
       ]);
 
@@ -207,15 +276,17 @@ export const useContactMemoryContext = ({
         return;
       }
 
-      const selectedSessionSummaries = normalizeSessionSummaries(
-        Array.isArray(summaryRows?.items) ? summaryRows.items : [],
-      );
       const selectedAgentRecalls = normalizeAgentRecalls(
         Array.isArray(recallRows) ? recallRows : [],
       );
 
       setSessionMemorySummaries(selectedSessionSummaries);
       setAgentRecalls(selectedAgentRecalls);
+      memoryCacheRef.current.set(sessionId, {
+        sessionMemorySummaries: selectedSessionSummaries,
+        agentRecalls: selectedAgentRecalls,
+      });
+      staleMemorySessionsRef.current.delete(sessionId);
       memoryLoadedKeyRef.current = loadKey;
     } catch (error) {
       if (
@@ -247,6 +318,9 @@ export const useContactMemoryContext = ({
     memoryLoading,
     memoryError,
     loadContactMemoryContext,
+    loadSessionMemorySummaries,
+    markContactMemoryContextStale,
+    hydrateContactMemoryContextFromCache,
     resetMemoryState,
     cancelPendingMemoryLoad,
   };

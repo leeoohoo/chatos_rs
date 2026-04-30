@@ -16,7 +16,6 @@ export const useProjectPreviewRunController = ({
   selectedRunTargetId,
   onRunCommand,
   onInterruptTerminal,
-  onGetTerminal,
   onListTerminalLogs,
   onListTerminals,
 }: UseProjectPreviewRunControllerParams) => {
@@ -65,7 +64,6 @@ export const useProjectPreviewRunController = ({
     projectRootPath,
     runTargetCwd,
     selectedRunTargetCommand: selectedRunTarget?.command,
-    onGetTerminal,
     onListTerminals,
     setActiveRun,
     setActiveTerminalBusy,

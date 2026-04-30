@@ -1,4 +1,6 @@
 import type { SessionRuntimeGuidanceState, TaskReviewPanelState, UiPromptPanelState } from '../../lib/store/types';
+import type { SessionSummariesListResponse } from '../../lib/api/client/types';
+import type { TaskManagerTaskResponse } from '../../lib/api/client/types/runtime';
 import type { Message, Project, Session } from '../../types';
 import { useContactMemoryContext } from './useContactMemoryContext';
 import { useContactProjectScope } from './useContactProjectScope';
@@ -6,6 +8,10 @@ import { useSessionWorkbarPanels } from './useSessionWorkbarPanels';
 import { useUiPromptHistory } from './useUiPromptHistory';
 
 interface SessionResourcesApiClient {
+  getPendingTaskReviews: (
+    sessionId: string,
+    options?: { limit?: number },
+  ) => Promise<unknown[]>;
   getContactProjects: (
     contactId: string,
     params?: { limit?: number; offset?: number },
@@ -13,7 +19,7 @@ interface SessionResourcesApiClient {
   getConversationSummaries: (
     sessionId: string,
     params?: { limit?: number; offset?: number },
-  ) => Promise<{ items?: unknown[] }>;
+  ) => Promise<SessionSummariesListResponse>;
   getContactAgentRecalls: (
     contactId: string,
     params?: { limit?: number; offset?: number },
@@ -21,6 +27,10 @@ interface SessionResourcesApiClient {
   getUiPromptHistory: (
     sessionId: string,
     params?: { limit?: number },
+  ) => Promise<unknown[]>;
+  getPendingUiPrompts: (
+    sessionId: string,
+    options?: { limit?: number },
   ) => Promise<unknown[]>;
   getTaskManagerTasks: (
     sessionId: string,
@@ -37,8 +47,8 @@ interface SessionResourcesApiClient {
       outcome_summary?: string;
       resume_hint?: string;
     },
-  ) => Promise<unknown>;
-  deleteTaskManagerTask: (sessionId: string, taskId: string) => Promise<unknown>;
+  ) => Promise<TaskManagerTaskResponse>;
+  deleteTaskManagerTask: (sessionId: string, taskId: string) => Promise<{ success?: boolean }>;
   updateTaskManagerTask: (
     sessionId: string,
     taskId: string,
@@ -54,7 +64,7 @@ interface SessionResourcesApiClient {
       blocker_needs?: string[];
       blocker_kind?: string;
     },
-  ) => Promise<unknown>;
+  ) => Promise<TaskManagerTaskResponse>;
   submitTaskReviewDecision: (
     reviewId: string,
     payload: {
@@ -90,6 +100,8 @@ interface UseChatInterfaceSessionResourcesParams {
   projects: Project[];
   messages: Message[];
   activePanel: string;
+  taskHistoryOpen?: boolean;
+  uiPromptHistoryOpen?: boolean;
   sessionRuntimeGuidanceState: Record<string, SessionRuntimeGuidanceState | undefined>;
   taskReviewPanelsBySession: Record<string, TaskReviewPanelState[] | undefined>;
   uiPromptPanelsBySession: Record<string, UiPromptPanelState[] | undefined>;
@@ -108,6 +120,8 @@ export const useChatInterfaceSessionResources = ({
   projects,
   messages,
   activePanel,
+  taskHistoryOpen = false,
+  uiPromptHistoryOpen = false,
   sessionRuntimeGuidanceState,
   taskReviewPanelsBySession,
   uiPromptPanelsBySession,
@@ -134,6 +148,9 @@ export const useChatInterfaceSessionResources = ({
     memoryLoading,
     memoryError,
     loadContactMemoryContext,
+    loadSessionMemorySummaries,
+    markContactMemoryContextStale,
+    hydrateContactMemoryContextFromCache,
     resetMemoryState,
     cancelPendingMemoryLoad,
   } = useContactMemoryContext({
@@ -143,18 +160,18 @@ export const useChatInterfaceSessionResources = ({
     currentProjectIdForMemory,
   });
 
-  const currentSessionIdForUiPrompts = currentSession?.id || null;
   const {
     uiPromptHistoryItems,
     uiPromptHistoryLoading,
     uiPromptHistoryError,
     loadUiPromptHistory,
+    markUiPromptHistoryStale,
     resetUiPromptHistoryState,
     hydrateUiPromptHistoryFromCache,
     cancelPendingUiPromptHistoryLoad,
   } = useUiPromptHistory({
     apiClient,
-    currentSessionId: currentSessionIdForUiPrompts,
+    currentSessionId: currentSession?.id || null,
   });
 
   const workbar = useSessionWorkbarPanels({
@@ -163,6 +180,8 @@ export const useChatInterfaceSessionResources = ({
     enabled: activePanel === 'chat',
     messages,
     selectedSessionActiveTurnId: currentChatStateActiveTurnId,
+    taskHistoryOpen,
+    uiPromptHistoryOpen,
     sessionRuntimeGuidanceState,
     taskReviewPanelsBySession,
     uiPromptPanelsBySession,
@@ -170,8 +189,9 @@ export const useChatInterfaceSessionResources = ({
     removeTaskReviewPanel,
     upsertUiPromptPanel,
     removeUiPromptPanel,
-    loadWorkbarSummaries: loadContactMemoryContext,
+    loadWorkbarSummaries: loadSessionMemorySummaries,
     loadUiPromptHistory,
+    markUiPromptHistoryStale,
   });
 
   return {
@@ -185,9 +205,11 @@ export const useChatInterfaceSessionResources = ({
     memoryLoading,
     memoryError,
     loadContactMemoryContext,
+    loadSessionMemorySummaries,
+    markContactMemoryContextStale,
+    hydrateContactMemoryContextFromCache,
     resetMemoryState,
     cancelPendingMemoryLoad,
-    currentSessionIdForUiPrompts,
     uiPromptHistoryItems,
     uiPromptHistoryLoading,
     uiPromptHistoryError,

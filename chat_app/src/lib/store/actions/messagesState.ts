@@ -1,5 +1,6 @@
 import type { Message } from '../../../types';
 import type { ChatStoreDraft } from '../types';
+import { normalizeTurnId } from '../../domain/messages';
 
 export type TurnProcessMapValue = {
   expanded: boolean;
@@ -96,6 +97,47 @@ export const mergeMessagesWithStreamingDraft = (
   if (!chatState?.isStreaming) {
     if (state.sessionStreamingMessageDrafts) {
       state.sessionStreamingMessageDrafts[sessionId] = null;
+    }
+    return messages;
+  }
+
+  const activeTurnId = normalizeTurnId(
+    chatState.activeTurnId
+    || draftMessage?.metadata?.conversation_turn_id
+    || '',
+  );
+  const hasPersistedTerminalMessage = Boolean(
+    activeTurnId
+    && messages.some((message) => {
+      if (message?.role !== 'assistant' || message?.status === 'streaming') {
+        return false;
+      }
+      const finalTurnId = normalizeTurnId(
+        message?.metadata?.historyFinalForTurnId
+        || message?.metadata?.conversation_turn_id
+        || '',
+      );
+      return finalTurnId === activeTurnId;
+    })
+  );
+
+  if (hasPersistedTerminalMessage) {
+    if (state.sessionStreamingMessageDrafts) {
+      state.sessionStreamingMessageDrafts[sessionId] = null;
+    }
+    state.sessionChatState[sessionId] = {
+      ...chatState,
+      isLoading: false,
+      isStreaming: false,
+      isStopping: false,
+      streamingMessageId: null,
+      activeTurnId: null,
+      streamingPreviewText: '',
+    };
+    if (state.currentSessionId === sessionId) {
+      state.isLoading = false;
+      state.isStreaming = false;
+      state.streamingMessageId = null;
     }
     return messages;
   }

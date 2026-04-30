@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { normalizeProjectScopeId } from '../../../features/contactSession/sessionResolver';
 import type { ProjectContactLinkResponse } from '../../../lib/api/client/types';
@@ -7,7 +7,14 @@ import {
   normalizeProjectContactLinks,
   normalizeProjectMemberContacts,
 } from '../../../lib/domain/projectMembers';
-import { loadProjectRunnerContactRows } from '../../../lib/domain/projectRunner';
+import {
+  getProjectRunnerContactRowsSnapshot,
+  loadProjectRunnerContactRows,
+  markProjectRunnerContactRowsStale,
+  removeProjectRunnerContactRow,
+  upsertProjectRunnerContactRow,
+} from '../../../lib/domain/projectRunner';
+import { useProjectRunRealtime } from '../../../lib/realtime/useProjectRunRealtime';
 import { useDialogService } from '../../ui/DialogProvider';
 import type { ContactItem, ProjectContactLink } from './types';
 
@@ -58,11 +65,11 @@ export const useProjectMembersManager = ({
   const [projectMembers, setProjectMembers] = useState<ProjectContactLink[]>([]);
   const [projectMembersLoading, setProjectMembersLoading] = useState(false);
   const [projectMembersError, setProjectMembersError] = useState<string | null>(null);
-  const [projectMembersReloadSeed, setProjectMembersReloadSeed] = useState(0);
   const [memberPickerOpen, setMemberPickerOpen] = useState(false);
   const [memberPickerSelectedId, setMemberPickerSelectedId] = useState<string | null>(null);
   const [memberPickerError, setMemberPickerError] = useState<string | null>(null);
   const [removingContactId, setRemovingContactId] = useState<string | null>(null);
+  const realtimeMutationGuardRef = useRef<Map<string, number>>(new Map());
 
   const normalizedProjectId = normalizeProjectScopeId(projectId);
   const projectContactIdSet = useMemo(
@@ -70,36 +77,83 @@ export const useProjectMembersManager = ({
     [projectMembers],
   );
 
-  const emitProjectContactChanged = useCallback((projectIdValue: string) => {
-    if (typeof window === 'undefined') {
+  const syncProjectMembersFromRows = useCallback((rows: ProjectContactLinkResponse[] | null | undefined) => {
+    if (!rows) {
       return;
     }
-    window.dispatchEvent(new CustomEvent('project-contact-changed', {
-      detail: { projectId: projectIdValue },
-    }));
+    setProjectMembers(normalizeProjectContactLinks(rows));
+    setProjectMembersError(null);
   }, []);
 
-  useEffect(() => {
-    if (typeof window === 'undefined') {
+  const markRealtimeMutationHandled = useCallback((reason: string, contactId?: string | null) => {
+    const normalizedReason = String(reason || '').trim();
+    const normalizedContactId = String(contactId || '').trim();
+    if (!normalizedReason || !normalizedContactId) {
       return;
     }
-    const handler = (event: Event) => {
-      const customEvent = event as CustomEvent<{ projectId?: string }>;
-      const changedProjectId = normalizeProjectScopeId(customEvent?.detail?.projectId ?? null);
-      if (changedProjectId !== normalizedProjectId) {
+    realtimeMutationGuardRef.current.set(`${normalizedReason}:${normalizedContactId}`, Date.now());
+  }, []);
+
+  const consumeRecentRealtimeMutation = useCallback((reason: string, contactId?: string | null): boolean => {
+    const normalizedReason = String(reason || '').trim();
+    const normalizedContactId = String(contactId || '').trim();
+    if (!normalizedReason || !normalizedContactId) {
+      return false;
+    }
+    const key = `${normalizedReason}:${normalizedContactId}`;
+    const seenAt = realtimeMutationGuardRef.current.get(key);
+    if (!seenAt) {
+      return false;
+    }
+    if (Date.now() - seenAt > 4000) {
+      realtimeMutationGuardRef.current.delete(key);
+      return false;
+    }
+    realtimeMutationGuardRef.current.delete(key);
+    return true;
+  }, []);
+
+  const reloadProjectMembers = useCallback(async () => {
+    if (!projectId) {
+      setProjectMembers([]);
+      setProjectMembersLoading(false);
+      return;
+    }
+    setProjectMembersLoading(true);
+    setProjectMembersError(null);
+    try {
+      const rows = await loadProjectRunnerContactRows(apiClient, projectId);
+      syncProjectMembersFromRows(rows);
+    } catch (error) {
+      setProjectMembersError(error instanceof Error ? error.message : '加载项目成员失败');
+      setProjectMembers([]);
+    } finally {
+      setProjectMembersLoading(false);
+    }
+  }, [apiClient, projectId, syncProjectMembersFromRows]);
+
+  useProjectRunRealtime({
+    projectId: normalizedProjectId || null,
+    enabled: Boolean(normalizedProjectId),
+    onMembersUpdated: async (payload) => {
+      const reason = String(payload.reason || '').trim();
+      const contactId = String(payload.contact_id || '').trim();
+      if (reason !== 'project_contact_added' && reason !== 'project_contact_removed') {
         return;
       }
-      setProjectMembersReloadSeed((prev) => prev + 1);
-    };
-    window.addEventListener('project-contact-changed', handler as EventListener);
-    return () => {
-      window.removeEventListener('project-contact-changed', handler as EventListener);
-    };
-  }, [normalizedProjectId]);
+      if (consumeRecentRealtimeMutation(reason, contactId)) {
+        return;
+      }
+      if (normalizedProjectId) {
+        markProjectRunnerContactRowsStale(apiClient, normalizedProjectId);
+      }
+      await reloadProjectMembers();
+    },
+  });
 
   useEffect(() => {
     let cancelled = false;
-    const loadProjectMembers = async () => {
+    const loadProjectMembersOnMount = async () => {
       if (!projectId) {
         setProjectMembers([]);
         setProjectMembersLoading(false);
@@ -124,11 +178,11 @@ export const useProjectMembersManager = ({
         }
       }
     };
-    void loadProjectMembers();
+    void loadProjectMembersOnMount();
     return () => {
       cancelled = true;
     };
-  }, [apiClient, projectId, projectMembersReloadSeed]);
+  }, [apiClient, projectId]);
 
   const openAddMember = useCallback(async () => {
     setMemberPickerError(null);
@@ -158,8 +212,13 @@ export const useProjectMembersManager = ({
       return null;
     }
     try {
-      await apiClient.addProjectContact(projectId, { contact_id: contactId });
-      emitProjectContactChanged(projectId);
+      const nextRow = await apiClient.addProjectContact(projectId, { contact_id: contactId });
+      markRealtimeMutationHandled('project_contact_added', contactId);
+      syncProjectMembersFromRows(
+        upsertProjectRunnerContactRow(apiClient, projectId, nextRow)
+        || getProjectRunnerContactRowsSnapshot(apiClient, projectId)
+        || [nextRow],
+      );
       setMemberPickerOpen(false);
       setMemberPickerSelectedId(null);
       setMemberPickerError(null);
@@ -168,7 +227,13 @@ export const useProjectMembersManager = ({
       setMemberPickerError(error instanceof Error ? error.message : '添加项目成员失败');
       return null;
     }
-  }, [apiClient, emitProjectContactChanged, memberPickerSelectedId, projectId]);
+  }, [
+    apiClient,
+    markRealtimeMutationHandled,
+    memberPickerSelectedId,
+    projectId,
+    syncProjectMembersFromRows,
+  ]);
 
   const removeMember = useCallback(async (contact: ContactItem): Promise<boolean> => {
     if (!projectId) {
@@ -188,7 +253,12 @@ export const useProjectMembersManager = ({
     setRemovingContactId(contact.id);
     try {
       await apiClient.removeProjectContact(projectId, contact.id);
-      emitProjectContactChanged(projectId);
+      markRealtimeMutationHandled('project_contact_removed', contact.id);
+      syncProjectMembersFromRows(
+        removeProjectRunnerContactRow(apiClient, projectId, contact.id)
+        || getProjectRunnerContactRowsSnapshot(apiClient, projectId)
+        || [],
+      );
       if (onMemberRemoved) {
         await onMemberRemoved(contact);
       }
@@ -199,7 +269,14 @@ export const useProjectMembersManager = ({
     } finally {
       setRemovingContactId((prev) => (prev === contact.id ? null : prev));
     }
-  }, [apiClient, confirm, emitProjectContactChanged, onMemberRemoved, projectId]);
+  }, [
+    apiClient,
+    confirm,
+    markRealtimeMutationHandled,
+    onMemberRemoved,
+    projectId,
+    syncProjectMembersFromRows,
+  ]);
 
   const closeMemberPicker = useCallback(() => {
     setMemberPickerOpen(false);

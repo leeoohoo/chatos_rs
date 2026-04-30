@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { Terminal } from '../../types';
 import {
+  getProjectRunnerContactRowsSnapshot,
   RUNNER_START_COMMAND,
   RUNNER_SCRIPT_REL_PATH,
   buildProjectRunnerGenerationPrompt,
@@ -13,6 +14,8 @@ import {
   normalizeProjectRunnerRootPath,
   readProjectRunnerDispatchTarget,
   resolveProjectRuntimeTerminal,
+  removeProjectRunnerContactRow,
+  upsertProjectRunnerContactRow,
 } from './projectRunner';
 
 const buildTerminal = (overrides: Partial<Terminal>): Terminal => ({
@@ -157,6 +160,71 @@ describe('domain/projectRunner', () => {
       },
     ]);
     expect(listProjectContacts).toHaveBeenCalledTimes(1);
+  });
+
+  it('supports local project runner member cache patching after snapshot load', async () => {
+    const listProjectContacts = vi.fn(async () => [
+      {
+        contact_id: 'contact_1',
+        agent_id: 'agent_1',
+        agent_name_snapshot: 'Agent One',
+      },
+    ]);
+
+    const client = { listProjectContacts };
+    await expect(loadProjectRunnerContactRows(client, 'project_1')).resolves.toEqual([
+      {
+        contact_id: 'contact_1',
+        agent_id: 'agent_1',
+        agent_name_snapshot: 'Agent One',
+      },
+    ]);
+
+    expect(upsertProjectRunnerContactRow(client, 'project_1', {
+      contact_id: 'contact_2',
+      agent_id: 'agent_2',
+      agent_name_snapshot: 'Agent Two',
+    })).toEqual([
+      {
+        contact_id: 'contact_2',
+        agent_id: 'agent_2',
+        agent_name_snapshot: 'Agent Two',
+      },
+      {
+        contact_id: 'contact_1',
+        agent_id: 'agent_1',
+        agent_name_snapshot: 'Agent One',
+      },
+    ]);
+
+    expect(getProjectRunnerContactRowsSnapshot(client, 'project_1')).toEqual([
+      {
+        contact_id: 'contact_2',
+        agent_id: 'agent_2',
+        agent_name_snapshot: 'Agent Two',
+      },
+      {
+        contact_id: 'contact_1',
+        agent_id: 'agent_1',
+        agent_name_snapshot: 'Agent One',
+      },
+    ]);
+
+    expect(removeProjectRunnerContactRow(client, 'project_1', 'contact_1')).toEqual([
+      {
+        contact_id: 'contact_2',
+        agent_id: 'agent_2',
+        agent_name_snapshot: 'Agent Two',
+      },
+    ]);
+
+    expect(getProjectRunnerContactRowsSnapshot(client, 'project_1')).toEqual([
+      {
+        contact_id: 'contact_2',
+        agent_id: 'agent_2',
+        agent_name_snapshot: 'Agent Two',
+      },
+    ]);
   });
 
   it('prefers busy runtime terminals and keeps the latest active fallback', () => {

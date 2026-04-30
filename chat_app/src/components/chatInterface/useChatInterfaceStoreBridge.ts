@@ -11,6 +11,7 @@ import {
 export const useChatInterfaceStoreBridge = () => {
   const store = useChatStoreSelector((state) => ({
     currentSession: state.currentSession,
+    sessions: state.sessions,
     contacts: state.contacts,
     currentProject: state.currentProject,
     currentTerminal: state.currentTerminal,

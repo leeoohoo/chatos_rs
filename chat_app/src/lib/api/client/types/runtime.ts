@@ -81,6 +81,12 @@ export interface StreamChatOptions {
   selectedSkillIds?: string[];
 }
 
+export interface StreamChatCommandResponse {
+  accepted?: boolean;
+  conversation_id?: string;
+  turn_id?: string | null;
+}
+
 export interface StreamChatModelConfigPayload {
   provider: string;
   model_name: string;
@@ -281,6 +287,14 @@ export interface TaskReviewTaskDraft {
   blocker_needs?: string[];
   blocker_kind?: string;
   [key: string]: unknown;
+}
+
+export interface TaskReviewItemResponse {
+  review_id: string;
+  conversation_id?: string;
+  conversation_turn_id?: string | null;
+  draft_tasks?: TaskReviewTaskDraft[] | null;
+  timeout_ms?: number | null;
 }
 
 export interface TaskReviewDecisionPayload {

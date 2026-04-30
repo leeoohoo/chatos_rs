@@ -22,6 +22,7 @@ export type {
 interface TaskWorkbarProps {
   tasks: TaskWorkbarItem[];
   historyTasks?: TaskWorkbarItem[];
+  historyOpen?: boolean;
   currentTurnId?: string | null;
   isLoading?: boolean;
   historyLoading?: boolean;
@@ -29,6 +30,7 @@ interface TaskWorkbarProps {
   historyError?: string | null;
   onRefresh?: () => void;
   onOpenHistory?: () => void;
+  onHistoryOpenChange?: (value: boolean) => void;
   onOpenUiPromptHistory?: () => void;
   onReviewRepair?: () => void | Promise<void>;
   reviewRepairRunning?: boolean;
@@ -54,6 +56,7 @@ interface TaskWorkbarProps {
 export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
   tasks,
   historyTasks = [],
+  historyOpen = false,
   currentTurnId,
   isLoading = false,
   historyLoading = false,
@@ -61,6 +64,7 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
   historyError = null,
   onRefresh,
   onOpenHistory,
+  onHistoryOpenChange,
   onOpenUiPromptHistory,
   onReviewRepair,
   reviewRepairRunning = false,
@@ -83,8 +87,11 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
   runtimeGuidanceItems = [],
 }) => {
   const [expanded, setExpanded] = useState(false);
-  const [historyOpen, setHistoryOpen] = useState(false);
+  const [uncontrolledHistoryOpen, setUncontrolledHistoryOpen] = useState(false);
   const [historyFilter, setHistoryFilter] = useState<HistoryFilter>('all');
+  const resolvedHistoryOpen = typeof onHistoryOpenChange === 'function'
+    ? historyOpen
+    : uncontrolledHistoryOpen;
 
   const sortedTasks = useMemo(() => sortTasks(tasks), [tasks]);
   const sortedHistoryTasks = useMemo(
@@ -149,7 +156,11 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
 
   const handleOpenHistory = (filter: HistoryFilter = 'all') => {
     setHistoryFilter(filter);
-    setHistoryOpen(true);
+    if (typeof onHistoryOpenChange === 'function') {
+      onHistoryOpenChange(true);
+    } else {
+      setUncontrolledHistoryOpen(true);
+    }
     onOpenHistory?.();
   };
 
@@ -279,7 +290,7 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
       </div>
 
       <TaskHistoryDrawer
-        open={historyOpen}
+        open={resolvedHistoryOpen}
         historyFilter={historyFilter}
         sortedHistoryTasks={sortedHistoryTasks}
         processedHistoryTasks={processedHistoryTasks}
@@ -288,7 +299,13 @@ export const TaskWorkbar: React.FC<TaskWorkbarProps> = ({
         isLoading={isLoading}
         historyError={historyError}
         actionLoadingTaskId={actionLoadingTaskId}
-        onClose={() => setHistoryOpen(false)}
+        onClose={() => {
+          if (typeof onHistoryOpenChange === 'function') {
+            onHistoryOpenChange(false);
+            return;
+          }
+          setUncontrolledHistoryOpen(false);
+        }}
         onRefresh={onRefresh}
         onSetHistoryFilter={setHistoryFilter}
         onCompleteTask={onCompleteTask}

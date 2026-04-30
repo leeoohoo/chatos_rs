@@ -1,10 +1,10 @@
 import { useCallback } from 'react';
 
-import type ApiClient from '../../lib/api/client';
+import type { NoteDetail } from './utils';
 
 interface UseNotepadOpenNoteOptions {
-  apiClient: ApiClient;
   ensureFolderExpanded: (folderPath: string) => void;
+  loadNoteDetail: (noteId: string, options?: { force?: boolean }) => Promise<NoteDetail>;
   setContent: (value: string) => void;
   setDirty: (value: boolean) => void;
   setError: (value: string | null) => void;
@@ -16,8 +16,8 @@ interface UseNotepadOpenNoteOptions {
 }
 
 export const useNotepadOpenNote = ({
-  apiClient,
   ensureFolderExpanded,
+  loadNoteDetail,
   setContent,
   setDirty,
   setError,
@@ -33,14 +33,14 @@ export const useNotepadOpenNote = ({
   setLoading(true);
   setError(null);
   try {
-    const res = await apiClient.getNotepadNote(id);
-    const note = res?.note;
-    const noteFolder = String(note?.folder || '');
-    setSelectedNoteId(String(note?.id || id));
+    const detail = await loadNoteDetail(id);
+    const note = detail.note;
+    const noteFolder = String(note.folder || '');
+    setSelectedNoteId(String(note.id || id));
     setSelectedFolder(noteFolder);
-    setTitle(String(note?.title || ''));
-    setTagsText(Array.isArray(note?.tags) ? note.tags.join(', ') : '');
-    setContent(String(res?.content || ''));
+    setTitle(String(note.title || ''));
+    setTagsText(Array.isArray(note.tags) ? note.tags.join(', ') : '');
+    setContent(String(detail.content || ''));
     ensureFolderExpanded(noteFolder);
     setDirty(false);
   } catch (err) {
@@ -49,8 +49,8 @@ export const useNotepadOpenNote = ({
     setLoading(false);
   }
 }, [
-  apiClient,
   ensureFolderExpanded,
+  loadNoteDetail,
   setContent,
   setDirty,
   setError,

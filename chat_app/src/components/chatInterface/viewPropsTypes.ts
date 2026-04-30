@@ -10,6 +10,7 @@ import UiPromptHistoryDrawer from './UiPromptHistoryDrawer';
 export interface ChatInterfaceConversationState {
   currentSession: Session | null;
   sessionSummaryPaneVisible: boolean;
+  taskHistoryOpen: boolean;
   currentContactName: string;
   currentProjectNameForMemory: string;
   currentProjectIdForMemory: string | null;
@@ -71,6 +72,7 @@ export interface ChatInterfaceConversationActions {
   toggleSidebar: () => void;
   handleRefreshWorkbar: () => void;
   handleOpenHistory: (sessionId: string) => void;
+  setTaskHistoryOpen: (value: boolean) => void;
   handleOpenUiPromptHistory: (sessionId: string) => void;
   handleWorkbarCompleteTask: (task: TaskWorkbarItem) => Promise<void>;
   handleWorkbarDeleteTask: (task: TaskWorkbarItem) => Promise<void>;

@@ -2,6 +2,8 @@ import { useCallback, useState } from 'react';
 import type { TaskWorkbarItem } from '../TaskWorkbar';
 import type { TaskOutcomeDraft } from '../taskWorkbar/TaskOutcomeModal';
 import { useDialogService } from '../ui/DialogProvider';
+import { normalizeWorkbarTask } from './helpers';
+import type { TaskManagerTaskResponse } from '../../lib/api/client/types/runtime';
 
 interface WorkbarMutationApiClient {
   completeTaskManagerTask: (
@@ -17,8 +19,8 @@ interface WorkbarMutationApiClient {
       }>;
       resume_hint?: string;
     },
-  ) => Promise<unknown>;
-  deleteTaskManagerTask: (sessionId: string, taskId: string) => Promise<unknown>;
+  ) => Promise<TaskManagerTaskResponse>;
+  deleteTaskManagerTask: (sessionId: string, taskId: string) => Promise<{ success?: boolean }>;
   updateTaskManagerTask: (
     sessionId: string,
     taskId: string,
@@ -34,17 +36,39 @@ interface WorkbarMutationApiClient {
       blocker_needs?: string[];
       blocker_kind?: string;
     },
-  ) => Promise<unknown>;
+  ) => Promise<TaskManagerTaskResponse>;
 }
 
 interface UseWorkbarMutationsArgs {
   apiClient: WorkbarMutationApiClient;
   currentSessionId: string | null;
-  refreshWorkbarTasks: () => Promise<void>;
+  currentConversationTurnId?: string | null;
+  preferRealtimeSync?: boolean;
+  taskHistoryOpen?: boolean;
+  loadCurrentTurnWorkbarTasks: (
+    sessionId: string,
+    conversationTurnId?: string | null,
+    force?: boolean,
+  ) => Promise<void>;
+  loadHistoryWorkbarTasks: (sessionId: string, force?: boolean) => Promise<void>;
+  markHistoryWorkbarTasksStale: (sessionId: string) => void;
+  patchCurrentTurnWorkbarTask: (sessionId: string, task: TaskWorkbarItem) => boolean;
+  removeCurrentTurnWorkbarTask: (sessionId: string, taskId: string) => boolean;
+  patchHistoryWorkbarTask: (sessionId: string, task: TaskWorkbarItem) => boolean;
+  removeHistoryWorkbarTask: (sessionId: string, taskId: string) => boolean;
+  markTaskRealtimeMutationHandled?: (payload: {
+    action: string;
+    taskId?: string | null;
+    turnId?: string | null;
+  }) => void;
   setWorkbarError: (value: string | null) => void;
 }
 
 type TaskModalMode = 'complete' | 'edit';
+type WorkbarMutationResult = {
+  patchTask?: TaskManagerTaskResponse | null;
+  removeTaskId?: string | null;
+};
 
 const normalizeNeeds = (raw: string): string[] => raw
   .split(/\r?\n|[;；]/)
@@ -54,7 +78,17 @@ const normalizeNeeds = (raw: string): string[] => raw
 export function useWorkbarMutations({
   apiClient,
   currentSessionId,
-  refreshWorkbarTasks,
+  currentConversationTurnId = null,
+  preferRealtimeSync = false,
+  taskHistoryOpen = false,
+  loadCurrentTurnWorkbarTasks,
+  loadHistoryWorkbarTasks,
+  markHistoryWorkbarTasksStale,
+  patchCurrentTurnWorkbarTask,
+  removeCurrentTurnWorkbarTask,
+  patchHistoryWorkbarTask,
+  removeHistoryWorkbarTask,
+  markTaskRealtimeMutationHandled,
   setWorkbarError,
 }: UseWorkbarMutationsArgs) {
   const { confirm } = useDialogService();
@@ -64,13 +98,100 @@ export function useWorkbarMutations({
   const [taskModalTask, setTaskModalTask] = useState<TaskWorkbarItem | null>(null);
   const [taskModalError, setTaskModalError] = useState<string | null>(null);
 
-  const withWorkbarTaskMutation = useCallback(async (taskId: string, action: () => Promise<void>) => {
+  const applyLocalTaskMutationResult = useCallback(async (
+    sessionId: string,
+    result: WorkbarMutationResult | void,
+  ): Promise<void> => {
+    const patchedTask = result?.patchTask
+      ? normalizeWorkbarTask(result.patchTask)
+      : null;
+    const removedTaskId = typeof result?.removeTaskId === 'string'
+      ? result.removeTaskId.trim()
+      : '';
+
+    if (patchedTask) {
+      const currentTurnPatched = patchCurrentTurnWorkbarTask(sessionId, patchedTask);
+      if (!currentTurnPatched && !preferRealtimeSync) {
+        await loadCurrentTurnWorkbarTasks(sessionId, currentConversationTurnId, true);
+      }
+      if (taskHistoryOpen) {
+        const historyPatched = patchHistoryWorkbarTask(sessionId, patchedTask);
+        if (!historyPatched && !preferRealtimeSync) {
+          await loadHistoryWorkbarTasks(sessionId, true);
+        }
+      } else {
+        markHistoryWorkbarTasksStale(sessionId);
+      }
+      return;
+    }
+
+    if (removedTaskId) {
+      const currentTurnPatched = removeCurrentTurnWorkbarTask(sessionId, removedTaskId);
+      if (!currentTurnPatched && !preferRealtimeSync) {
+        await loadCurrentTurnWorkbarTasks(sessionId, currentConversationTurnId, true);
+      }
+      if (taskHistoryOpen) {
+        const historyPatched = removeHistoryWorkbarTask(sessionId, removedTaskId);
+        if (!historyPatched && !preferRealtimeSync) {
+          await loadHistoryWorkbarTasks(sessionId, true);
+        }
+      } else {
+        markHistoryWorkbarTasksStale(sessionId);
+      }
+      return;
+    }
+
+    if (!preferRealtimeSync) {
+      await loadCurrentTurnWorkbarTasks(sessionId, currentConversationTurnId, true);
+      if (taskHistoryOpen) {
+        await loadHistoryWorkbarTasks(sessionId, true);
+      } else {
+        markHistoryWorkbarTasksStale(sessionId);
+      }
+    }
+  }, [
+    currentConversationTurnId,
+    loadCurrentTurnWorkbarTasks,
+    loadHistoryWorkbarTasks,
+    markHistoryWorkbarTasksStale,
+    patchCurrentTurnWorkbarTask,
+    patchHistoryWorkbarTask,
+    preferRealtimeSync,
+    removeCurrentTurnWorkbarTask,
+    removeHistoryWorkbarTask,
+    taskHistoryOpen,
+  ]);
+
+  const withWorkbarTaskMutation = useCallback(async (
+    taskId: string,
+    action: () => Promise<WorkbarMutationResult | void>,
+  ) => {
     setWorkbarActionLoadingTaskId(taskId);
     setWorkbarError(null);
     setTaskModalError(null);
     try {
-      await action();
-      await refreshWorkbarTasks();
+      const result = await action();
+      if (currentSessionId) {
+        await applyLocalTaskMutationResult(currentSessionId, result);
+      }
+      if (preferRealtimeSync && currentSessionId) {
+        const taskIdForGuard = typeof result?.removeTaskId === 'string'
+          ? result.removeTaskId.trim()
+          : String(result?.patchTask?.id || '').trim();
+        const turnIdForGuard = String(
+          result?.patchTask?.conversation_turn_id || currentConversationTurnId || '',
+        ).trim();
+        const actionForGuard = result?.removeTaskId
+          ? 'task_deleted'
+          : (result?.patchTask ? 'task_updated' : '');
+        if (actionForGuard && taskIdForGuard) {
+          markTaskRealtimeMutationHandled?.({
+            action: actionForGuard,
+            taskId: taskIdForGuard,
+            turnId: turnIdForGuard,
+          });
+        }
+      }
       setTaskModalOpen(false);
       setTaskModalTask(null);
     } catch (error) {
@@ -80,7 +201,21 @@ export function useWorkbarMutations({
     } finally {
       setWorkbarActionLoadingTaskId(null);
     }
-  }, [refreshWorkbarTasks, setWorkbarError]);
+  }, [
+    currentSessionId,
+    applyLocalTaskMutationResult,
+    loadCurrentTurnWorkbarTasks,
+    loadHistoryWorkbarTasks,
+    markHistoryWorkbarTasksStale,
+    patchCurrentTurnWorkbarTask,
+    patchHistoryWorkbarTask,
+    preferRealtimeSync,
+    markTaskRealtimeMutationHandled,
+    removeCurrentTurnWorkbarTask,
+    removeHistoryWorkbarTask,
+    setWorkbarError,
+    taskHistoryOpen,
+  ]);
 
   const closeTaskModal = useCallback(() => {
     if (workbarActionLoadingTaskId) {
@@ -115,6 +250,9 @@ export function useWorkbarMutations({
 
     await withWorkbarTaskMutation(task.id, async () => {
       await apiClient.deleteTaskManagerTask(currentSessionId, task.id);
+      return {
+        removeTaskId: task.id,
+      };
     });
   }, [apiClient, confirm, currentSessionId, withWorkbarTaskMutation]);
 
@@ -162,10 +300,13 @@ export function useWorkbarMutations({
 
     if (taskModalMode === 'complete') {
       await withWorkbarTaskMutation(taskModalTask.id, async () => {
-        await apiClient.completeTaskManagerTask(currentSessionId, taskModalTask.id, {
+        const completedTask = await apiClient.completeTaskManagerTask(currentSessionId, taskModalTask.id, {
           outcome_summary: nextOutcomeSummary,
           resume_hint: nextResumeHint,
         });
+        return {
+          patchTask: completedTask,
+        };
       });
       return;
     }
@@ -225,9 +366,11 @@ export function useWorkbarMutations({
       closeTaskModal();
       return;
     }
-
     await withWorkbarTaskMutation(taskModalTask.id, async () => {
-      await apiClient.updateTaskManagerTask(currentSessionId, taskModalTask.id, payload);
+      const updatedTask = await apiClient.updateTaskManagerTask(currentSessionId, taskModalTask.id, payload);
+      return {
+        patchTask: updatedTask,
+      };
     });
   }, [apiClient, closeTaskModal, currentSessionId, setWorkbarError, taskModalMode, taskModalTask, withWorkbarTaskMutation]);
 

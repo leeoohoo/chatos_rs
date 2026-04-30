@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 import type { Terminal as XTerm } from '@xterm/xterm';
 
+import { getRealtimeConnectionStateSnapshot } from '../../lib/realtime/state';
 import type { Terminal } from '../../types';
 import { debugLog } from '../../lib/utils';
 import type { CommandHistoryParseState } from './commandHistory';
@@ -44,6 +45,10 @@ interface UseTerminalSocketLifecycleParams {
   setConnectionState: Dispatch<SetStateAction<TerminalConnectionState>>;
   setErrorMessage: Dispatch<SetStateAction<string | null>>;
 }
+
+const shouldFallbackRefreshTerminals = (): boolean => (
+  getRealtimeConnectionStateSnapshot() !== 'connected'
+);
 
 export const useTerminalSocketLifecycle = ({
   currentTerminal,
@@ -171,12 +176,16 @@ export const useTerminalSocketLifecycle = ({
         } else if (payload?.type === 'exit') {
           inputForwardEnabledRef.current = false;
           setConnectionState('disconnected');
-          loadTerminals();
+          if (shouldFallbackRefreshTerminals()) {
+            loadTerminals();
+          }
         } else if (payload?.type === 'state') {
           if (typeof payload.snapshot_paging === 'boolean') {
             supportsSnapshotPagingRef.current = payload.snapshot_paging;
           }
-          loadTerminals();
+          if (shouldFallbackRefreshTerminals()) {
+            loadTerminals();
+          }
         } else if (payload?.type === 'error') {
           setErrorMessage(payload.error || '终端发生错误');
           inputForwardEnabledRef.current = false;
@@ -207,7 +216,9 @@ export const useTerminalSocketLifecycle = ({
       supportsSnapshotPagingRef.current = false;
       snapshotRequestContextRef.current = null;
       setConnectionState('disconnected');
-      loadTerminals();
+      if (shouldFallbackRefreshTerminals()) {
+        loadTerminals();
+      }
     };
 
     return () => {

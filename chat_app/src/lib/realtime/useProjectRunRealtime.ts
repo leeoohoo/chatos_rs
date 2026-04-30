@@ -1,0 +1,105 @@
+import { useEffect, useRef } from 'react';
+
+import { useRealtimeEvent, useRealtimeTopic } from './RealtimeProvider';
+import type {
+  RealtimeEventEnvelope,
+  RealtimeProjectMembersUpdatedPayloadWrapper,
+  RealtimeProjectRunCatalogPayloadWrapper,
+  RealtimeProjectRunStatePayloadWrapper,
+} from './types';
+
+interface UseProjectRunRealtimeOptions {
+  projectId?: string | null;
+  enabled?: boolean;
+  onRunStateChanged?: (payload: RealtimeProjectRunStatePayloadWrapper) => void | Promise<void>;
+  onCatalogUpdated?: (payload: RealtimeProjectRunCatalogPayloadWrapper) => void | Promise<void>;
+  onMembersUpdated?: (payload: RealtimeProjectMembersUpdatedPayloadWrapper) => void | Promise<void>;
+}
+
+const isProjectRunStatePayload = (
+  envelope: RealtimeEventEnvelope,
+): envelope is RealtimeEventEnvelope & { payload: RealtimeProjectRunStatePayloadWrapper } => (
+  envelope?.payload?.kind === 'project_run_state'
+);
+
+const isProjectRunCatalogPayload = (
+  envelope: RealtimeEventEnvelope,
+): envelope is RealtimeEventEnvelope & { payload: RealtimeProjectRunCatalogPayloadWrapper } => (
+  envelope?.payload?.kind === 'project_run_catalog'
+);
+
+const isProjectMembersUpdatedPayload = (
+  envelope: RealtimeEventEnvelope,
+): envelope is RealtimeEventEnvelope & { payload: RealtimeProjectMembersUpdatedPayloadWrapper } => (
+  envelope?.payload?.kind === 'project_members_updated'
+);
+
+export const useProjectRunRealtime = ({
+  projectId,
+  enabled = true,
+  onRunStateChanged,
+  onCatalogUpdated,
+  onMembersUpdated,
+}: UseProjectRunRealtimeOptions) => {
+  const onRunStateChangedRef = useRef(onRunStateChanged);
+  const onCatalogUpdatedRef = useRef(onCatalogUpdated);
+  const onMembersUpdatedRef = useRef(onMembersUpdated);
+
+  useEffect(() => {
+    onRunStateChangedRef.current = onRunStateChanged;
+  }, [onRunStateChanged]);
+
+  useEffect(() => {
+    onCatalogUpdatedRef.current = onCatalogUpdated;
+  }, [onCatalogUpdated]);
+
+  useEffect(() => {
+    onMembersUpdatedRef.current = onMembersUpdated;
+  }, [onMembersUpdated]);
+
+  useRealtimeTopic(
+    projectId ? { scope: 'project', id: projectId } : null,
+    enabled && Boolean(projectId),
+  );
+
+  useRealtimeEvent((event) => {
+    if (!enabled || !projectId) {
+      return;
+    }
+
+    if (event.event === 'project.run.state_changed' && isProjectRunStatePayload(event)) {
+      const payloadProjectId = String(
+        event.project_id
+        || event.payload.project_id
+        || '',
+      ).trim();
+      if (payloadProjectId === projectId) {
+        void onRunStateChangedRef.current?.(event.payload);
+      }
+      return;
+    }
+
+    if (event.event === 'project.run.catalog.updated' && isProjectRunCatalogPayload(event)) {
+      const payloadProjectId = String(
+        event.project_id
+        || event.payload.project_id
+        || '',
+      ).trim();
+      if (payloadProjectId === projectId) {
+        void onCatalogUpdatedRef.current?.(event.payload);
+      }
+      return;
+    }
+
+    if (event.event === 'project.members.updated' && isProjectMembersUpdatedPayload(event)) {
+      const payloadProjectId = String(
+        event.project_id
+        || event.payload.project_id
+        || '',
+      ).trim();
+      if (payloadProjectId === projectId) {
+        void onMembersUpdatedRef.current?.(event.payload);
+      }
+    }
+  });
+};

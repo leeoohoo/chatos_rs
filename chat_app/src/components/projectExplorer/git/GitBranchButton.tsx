@@ -10,16 +10,23 @@ import { useGitBranchButtonModel } from './useGitBranchButtonModel';
 
 interface GitBranchButtonProps {
   client: ProjectGitApiClient;
+  projectId?: string | null;
   projectRoot: string;
   onRepositoryChanged?: () => Promise<void> | void;
 }
 
 export const GitBranchButton: React.FC<GitBranchButtonProps> = ({
   client,
+  projectId,
   projectRoot,
   onRepositoryChanged,
 }) => {
-  const model = useGitBranchButtonModel({ client, projectRoot, onRepositoryChanged });
+  const model = useGitBranchButtonModel({
+    client,
+    projectId,
+    projectRoot,
+    onRepositoryChanged,
+  });
 
   return (
     <div className="relative" ref={model.panelRef}>

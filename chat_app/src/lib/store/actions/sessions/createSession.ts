@@ -19,6 +19,7 @@ import {
   resolveSessionTimestamp,
 } from '../sessionsUtils';
 import type { SessionActionDeps } from './types';
+import { normalizeTrackedSessions, upsertSessionCaches } from './cache';
 
 export function createSessionCreateActions({
   set,
@@ -163,11 +164,15 @@ export function createSessionCreateActions({
           ...session,
           metadata: session?.metadata ?? (Object.keys(initialMetadata).length > 0 ? initialMetadata : null),
         });
+        upsertSessionCaches(client, formattedSession);
         const selectionFromMetadata = readSessionAiSelectionFromMetadata(formattedSession.metadata);
         const effectiveSelection = selectionFromMetadata || inheritedAiSelection;
 
         set((state: ChatStoreDraft) => {
-          state.sessions.unshift(formattedSession);
+          state.sessions = normalizeTrackedSessions(
+            [formattedSession, ...(state.sessions || [])],
+            state.contacts || [],
+          );
           state.currentSessionId = formattedSession.id;
           state.currentSession = formattedSession;
           if (!state.sessionAiSelectionBySession) {

@@ -61,4 +61,48 @@ describe('mergeMessagesWithStreamingDraft', () => {
 
     expect(merged.find((message) => message.id === 'temp_assistant')).toBeDefined();
   });
+
+  it('clears local streaming state when server snapshot already has final assistant for the same turn', () => {
+    const finalAssistant = {
+      ...createMessage('assistant_final', 'final from server', 'completed'),
+      metadata: {
+        conversation_turn_id: 'turn_1',
+        historyFinalForTurnId: 'turn_1',
+      },
+    } as Message;
+    const draft = {
+      ...createMessage('temp_assistant', 'stale in-flight', 'streaming'),
+      metadata: {
+        conversation_turn_id: 'turn_1',
+      },
+    } as Message;
+    const state = {
+      currentSessionId: 'session_1',
+      isLoading: true,
+      isStreaming: true,
+      streamingMessageId: 'temp_assistant',
+      sessionChatState: {
+        session_1: {
+          isLoading: true,
+          isStreaming: true,
+          isStopping: false,
+          streamingMessageId: 'temp_assistant',
+          activeTurnId: 'turn_1',
+          streamingPreviewText: 'stale in-flight',
+        },
+      },
+      sessionStreamingMessageDrafts: {
+        session_1: draft,
+      },
+    } as unknown as ChatStoreShape;
+
+    const merged = mergeMessagesWithStreamingDraft(state, 'session_1', [finalAssistant]);
+
+    expect(merged).toEqual([finalAssistant]);
+    expect(state.sessionStreamingMessageDrafts.session_1).toBeNull();
+    expect(state.sessionChatState.session_1.isStreaming).toBe(false);
+    expect(state.sessionChatState.session_1.streamingMessageId).toBeNull();
+    expect(state.isStreaming).toBe(false);
+    expect(state.streamingMessageId).toBeNull();
+  });
 });

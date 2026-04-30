@@ -3,42 +3,70 @@ import { useEffect } from 'react';
 import type { GitBranchesResult, GitStatusResult } from '../../../types';
 
 interface UseProjectGitLifecycleParams {
+  open: boolean;
   clearCompare: () => void;
   setBranches: React.Dispatch<React.SetStateAction<GitBranchesResult | null>>;
   setStatus: React.Dispatch<React.SetStateAction<GitStatusResult | null>>;
   setActionMessage: React.Dispatch<React.SetStateAction<string | null>>;
+  hydrateCachedState: (projectRoot: string) => void;
   refreshClientInfo: () => Promise<void>;
-  refreshSummary: () => Promise<void>;
+  refreshSummary: (options?: { force?: boolean }) => Promise<void>;
+  markSummaryStale: () => void;
+  markDetailsStale: () => void;
+  projectRoot: string;
 }
 
 export const useProjectGitLifecycle = ({
+  open,
   clearCompare,
   setBranches,
   setStatus,
   setActionMessage,
+  hydrateCachedState,
   refreshClientInfo,
   refreshSummary,
+  markSummaryStale,
+  markDetailsStale,
+  projectRoot,
 }: UseProjectGitLifecycleParams) => {
   useEffect(() => {
     setBranches(null);
     setStatus(null);
     clearCompare();
     setActionMessage(null);
-    void refreshClientInfo();
+    markSummaryStale();
+    markDetailsStale();
+    hydrateCachedState(projectRoot);
     void refreshSummary();
-  }, [clearCompare, refreshClientInfo, refreshSummary, setActionMessage, setBranches, setStatus]);
+  }, [
+    clearCompare,
+    hydrateCachedState,
+    markDetailsStale,
+    markSummaryStale,
+    projectRoot,
+    refreshSummary,
+    setActionMessage,
+    setBranches,
+    setStatus,
+  ]);
 
   useEffect(() => {
-    const timer = window.setInterval(() => {
-      void refreshSummary();
-    }, 15000);
+    if (!open) {
+      return;
+    }
+    void refreshClientInfo();
+  }, [open, refreshClientInfo]);
+
+  useEffect(() => {
     const handleFocus = () => {
-      void refreshSummary();
+      markSummaryStale();
+      if (open) {
+        void refreshSummary();
+      }
     };
     window.addEventListener('focus', handleFocus);
     return () => {
-      window.clearInterval(timer);
       window.removeEventListener('focus', handleFocus);
     };
-  }, [refreshSummary]);
+  }, [markSummaryStale, open, refreshSummary]);
 };

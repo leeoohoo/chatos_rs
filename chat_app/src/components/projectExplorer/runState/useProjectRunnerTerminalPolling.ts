@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import type ApiClient from '../../../lib/api/client';
-import { ApiRequestError } from '../../../lib/api/client/shared';
 import { normalizeTerminal } from '../../../lib/domain/terminals';
 import {
   resolveProjectRuntimeTerminal,
   RUNNER_START_COMMAND,
 } from '../../../lib/domain/projectRunner';
+import { useChatRuntimeEnv } from '../../../lib/store/ChatStoreContext';
+import { loadTerminalsSnapshot } from '../../../lib/store/actions/terminalsCache';
 import type { ProjectRunnerActiveTerminal } from '../../../lib/domain/projectRunner';
+import { useProjectRunRealtime } from '../../../lib/realtime/useProjectRunRealtime';
+import { useTerminalStateRealtime } from '../../../lib/realtime/useTerminalStateRealtime';
 import type { Project } from '../../../types';
 
 const readTrimmedString = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
@@ -21,6 +24,7 @@ export const useProjectRunnerTerminalPolling = ({
   client,
   project,
 }: UseProjectRunnerTerminalPollingOptions) => {
+  const { userId } = useChatRuntimeEnv();
   const [activeRun, setActiveRun] = useState<ProjectRunnerActiveTerminal | null>(null);
   const [activeTerminalBusy, setActiveTerminalBusy] = useState(false);
 
@@ -29,101 +33,110 @@ export const useProjectRunnerTerminalPolling = ({
     setActiveTerminalBusy(false);
   }, []);
 
-  useEffect(() => {
+  const refreshProjectActiveRun = useCallback(async () => {
     if (!project?.id) {
       resetActiveRunState();
       return;
     }
-
-    let disposed = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const poll = async () => {
-      try {
-        const list = await client.listTerminals();
-        if (disposed || !Array.isArray(list)) {
-          return;
-        }
-        const normalizedTerminals = list.map((item) => normalizeTerminal(item));
-        const { busyTerminal, activeTerminal } = resolveProjectRuntimeTerminal(
-          normalizedTerminals,
-          project.id,
-        );
-        const chosen = activeTerminal;
-        if (!chosen) {
-          setActiveTerminalBusy(false);
-          return;
-        }
-
-        const terminalId = readTrimmedString(chosen.id);
-        const terminalName = readTrimmedString(chosen.name) || terminalId;
-        setActiveTerminalBusy(Boolean(busyTerminal?.busy || chosen.busy));
-        if (!terminalId) {
-          return;
-        }
-        setActiveRun((prev) => ({
-          terminalId,
-          terminalName,
-          command: prev?.command || RUNNER_START_COMMAND,
-          cwd: readTrimmedString(chosen.cwd) || prev?.cwd || readTrimmedString(project.rootPath || ''),
-          dispatchedAt: prev?.dispatchedAt || Date.now(),
-        }));
-      } catch {
-        // ignore polling errors
-      } finally {
-        if (!disposed) {
-          timer = setTimeout(() => {
-            void poll();
-          }, 2000);
-        }
+    try {
+      const list = await loadTerminalsSnapshot(client, userId);
+      if (!Array.isArray(list)) {
+        return;
       }
-    };
-    void poll();
-    return () => {
-      disposed = true;
-      if (timer) {
-        clearTimeout(timer);
+      const normalizedTerminals = list.map((item) => normalizeTerminal(item));
+      const { busyTerminal, activeTerminal } = resolveProjectRuntimeTerminal(
+        normalizedTerminals,
+        project.id,
+      );
+      const chosen = activeTerminal;
+      if (!chosen) {
+        setActiveRun(null);
+        setActiveTerminalBusy(false);
+        return;
       }
-    };
-  }, [client, project?.id, project?.rootPath]);
+
+      const terminalId = readTrimmedString(chosen.id);
+      const terminalName = readTrimmedString(chosen.name) || terminalId;
+      setActiveTerminalBusy(Boolean(busyTerminal?.busy || chosen.busy));
+      if (!terminalId) {
+        return;
+      }
+      setActiveRun((prev) => ({
+        terminalId,
+        terminalName,
+        command: prev?.command || RUNNER_START_COMMAND,
+        cwd: readTrimmedString(chosen.cwd) || prev?.cwd || readTrimmedString(project.rootPath || ''),
+        dispatchedAt: prev?.dispatchedAt || Date.now(),
+      }));
+    } catch {
+      // ignore refresh errors
+    }
+  }, [client, project?.id, project?.rootPath, resetActiveRunState, userId]);
 
   useEffect(() => {
-    if (!activeRun?.terminalId) {
-      setActiveTerminalBusy(false);
-      return;
-    }
+    void refreshProjectActiveRun();
+  }, [refreshProjectActiveRun]);
 
-    let disposed = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const poll = async () => {
-      try {
-        const terminal = await client.getTerminal(activeRun.terminalId);
-        if (disposed) {
-          return;
-        }
-        setActiveTerminalBusy(Boolean(terminal?.busy));
-      } catch (error) {
-        if (!disposed) {
+  useProjectRunRealtime({
+    enabled: Boolean(project?.id),
+    projectId: project?.id || null,
+    onRunStateChanged: async (payload) => {
+      const terminalId = readTrimmedString(payload.terminal_id);
+      const terminalName = readTrimmedString(payload.terminal_name) || terminalId;
+      const cwd = readTrimmedString(payload.cwd) || readTrimmedString(project?.rootPath || '');
+      setActiveTerminalBusy(Boolean(payload.busy));
+
+      if ((readTrimmedString(payload.status) || '') === 'exited') {
+        setActiveRun(null);
+        setActiveTerminalBusy(false);
+        return;
+      }
+
+      if (!terminalId) {
+        if (payload.running !== true) {
+          setActiveRun(null);
           setActiveTerminalBusy(false);
-          if (error instanceof ApiRequestError && error.status === 404) {
-            setActiveRun(null);
-          }
         }
-      } finally {
-        if (!disposed) {
-          timer = setTimeout(() => {
-            void poll();
-          }, 1500);
+        return;
+      }
+
+      setActiveRun((prev) => ({
+        terminalId,
+        terminalName: terminalName || prev?.terminalName || terminalId,
+        command: prev?.command || RUNNER_START_COMMAND,
+        cwd: cwd || prev?.cwd || '',
+        dispatchedAt: prev?.dispatchedAt || Date.now(),
+      }));
+    },
+  });
+
+  useTerminalStateRealtime({
+    enabled: Boolean(activeRun?.terminalId),
+    terminalId: activeRun?.terminalId || null,
+    onStateChanged: async (payload) => {
+      setActiveTerminalBusy(Boolean(payload.busy));
+      if (payload.status === 'exited') {
+        setActiveRun(null);
+        setActiveTerminalBusy(false);
+        return;
+      }
+      setActiveRun((prev) => {
+        if (!prev) {
+          return prev;
         }
-      }
-    };
-    void poll();
-    return () => {
-      disposed = true;
-      if (timer) {
-        clearTimeout(timer);
-      }
-    };
-  }, [activeRun?.terminalId, client]);
+        const nextTerminalName = readTrimmedString(payload.terminal_name) || prev.terminalName;
+        const nextCwd = readTrimmedString(payload.cwd) || prev.cwd;
+        if (nextTerminalName === prev.terminalName && nextCwd === prev.cwd) {
+          return prev;
+        }
+        return {
+          ...prev,
+          terminalName: nextTerminalName,
+          cwd: nextCwd,
+        };
+      });
+    },
+  });
 
   return {
     activeRun,

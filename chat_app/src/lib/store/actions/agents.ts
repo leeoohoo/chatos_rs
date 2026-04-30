@@ -4,6 +4,7 @@ import { mergeSessionAiSelectionIntoMetadata } from '../helpers/sessionAiSelecti
 import { mergeSessionRuntimeIntoMetadata } from '../helpers/sessionRuntime';
 import type { ChatStoreDraft, ChatStoreGet, ChatStoreSet } from '../types';
 import { debugLog } from '@/lib/utils';
+import type { AgentConfig } from '../../../types';
 
 interface Deps {
   set: ChatStoreSet;
@@ -12,14 +13,76 @@ interface Deps {
   getUserIdParam: () => string;
 }
 
+interface LoadAgentsOptions {
+  force?: boolean;
+}
+
+interface AgentsCacheEntry {
+  agents: AgentConfig[];
+  stale: boolean;
+}
+
+interface AgentsClientCacheState {
+  cache: Map<string, AgentsCacheEntry>;
+  inflight: Map<string, Promise<AgentConfig[]>>;
+}
+
+const agentsClientCaches = new WeakMap<ApiClient, AgentsClientCacheState>();
+
+const normalizeUserId = (userId: string): string => String(userId || '').trim();
+
+const getOrCreateClientCacheState = (apiClient: ApiClient): AgentsClientCacheState => {
+  const existing = agentsClientCaches.get(apiClient);
+  if (existing) {
+    return existing;
+  }
+  const next: AgentsClientCacheState = {
+    cache: new Map(),
+    inflight: new Map(),
+  };
+  agentsClientCaches.set(apiClient, next);
+  return next;
+};
+
 export function createAgentActions({ set, get, client, getUserIdParam }: Deps) {
   void get;
 
+  const syncLoadedAgents = (userId: string, agents: AgentConfig[]) => {
+    getOrCreateClientCacheState(client).cache.set(normalizeUserId(userId), {
+      agents,
+      stale: false,
+    });
+  };
+
   return {
-    loadAgents: async () => {
+    loadAgents: async (options?: LoadAgentsOptions) => {
       try {
-        const memoryAgents = await client.getMemoryAgents(getUserIdParam(), { enabled: true });
-        const agents = (memoryAgents || []).map(normalizeAgent);
+        const userId = getUserIdParam();
+        const cacheKey = normalizeUserId(userId);
+        const cacheState = getOrCreateClientCacheState(client);
+        const cached = cacheState.cache.get(cacheKey);
+        if (!options?.force && cached && !cached.stale) {
+          set((state: ChatStoreDraft) => {
+            state.agents = cached.agents || [];
+          });
+          return;
+        }
+
+        let inflight = cacheState.inflight.get(cacheKey);
+        if (!inflight) {
+          inflight = client.getMemoryAgents(userId, { enabled: true })
+            .then((memoryAgents) => (memoryAgents || []).map(normalizeAgent))
+            .then((agents) => {
+              syncLoadedAgents(userId, agents);
+              return agents;
+            })
+            .finally(() => {
+              cacheState.inflight.delete(cacheKey);
+            });
+          cacheState.inflight.set(cacheKey, inflight);
+        }
+
+        const agents = await inflight;
         debugLog('🔍 [Memory] loadAgents 返回的数据:', agents);
         set((state: ChatStoreDraft) => {
           state.agents = agents || [];

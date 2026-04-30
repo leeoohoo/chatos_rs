@@ -1,7 +1,7 @@
 import type React from 'react';
 
-import type { NotepadNoteResponse } from '../../lib/api/client/types';
-import { sanitizeFileName, type NoteMeta } from './utils';
+import type { NotepadNoteDetailResponse, NotepadNoteResponse } from '../../lib/api/client/types';
+import { sanitizeFileName, type NoteDetail, type NoteMeta } from './utils';
 
 export const normalizeNoteMeta = (note: NotepadNoteResponse): NoteMeta => ({
   id: String(note.id || ''),
@@ -10,6 +10,23 @@ export const normalizeNoteMeta = (note: NotepadNoteResponse): NoteMeta => ({
   tags: Array.isArray(note.tags) ? note.tags : [],
   updated_at: String(note.updated_at || ''),
 });
+
+export const normalizeNoteDetail = (response: NotepadNoteDetailResponse, fallbackId?: string): NoteDetail => {
+  const normalizedNote = normalizeNoteMeta(response?.note || {
+    id: String(response?.note?.id || fallbackId || ''),
+    title: String(response?.note?.title || ''),
+    folder: String(response?.note?.folder || ''),
+    tags: Array.isArray(response?.note?.tags) ? response.note.tags : [],
+    created_at: String(response?.note?.created_at || ''),
+    updated_at: String(response?.note?.updated_at || ''),
+    file: String(response?.note?.file || ''),
+  });
+
+  return {
+    note: normalizedNote,
+    content: String(response?.content || ''),
+  };
+};
 
 export const copyTextToClipboard = async (text: string): Promise<void> => {
   if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {

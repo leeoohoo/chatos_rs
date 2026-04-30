@@ -12,6 +12,7 @@ use crate::core::user_scope::resolve_user_id;
 use crate::core::validation::normalize_non_empty;
 use crate::repositories::projects as projects_repo;
 use crate::services::memory_server_client;
+use crate::services::realtime::publish_sessions_updated;
 
 use super::contracts::{CreateSessionRequest, SessionQuery, UpdateSessionRequest};
 use super::support::{
@@ -156,7 +157,7 @@ pub(super) async fn create_session(
                 if let Err(err) = memory_server_client::sync_project_agent_link(
                     &memory_server_client::SyncProjectAgentLinkRequestDto {
                         user_id: Some(user_id.clone()),
-                        project_id: Some(project_id),
+                        project_id: Some(project_id.clone()),
                         agent_id: Some(agent_id),
                         contact_id: contact_id_from_metadata(metadata),
                         session_id: Some(saved.id.clone()),
@@ -172,6 +173,12 @@ pub(super) async fn create_session(
                     );
                 }
             }
+            publish_sessions_updated(
+                auth.user_id.as_str(),
+                "session_created",
+                Some(saved.id.as_str()),
+                Some(project_id.as_str()),
+            );
             (
                 StatusCode::CREATED,
                 Json(serde_json::to_value(saved).unwrap_or(Value::Null)),
@@ -210,10 +217,19 @@ pub(super) async fn update_session(
     match memory_server_client::update_session(&id, req.title.clone(), None, req.metadata.clone())
         .await
     {
-        Ok(Some(session)) => (
-            StatusCode::OK,
-            Json(serde_json::to_value(session).unwrap_or(Value::Null)),
-        ),
+        Ok(Some(session)) => {
+            let project_id = normalize_project_scope(session.project_id.as_deref());
+            publish_sessions_updated(
+                auth.user_id.as_str(),
+                "session_updated",
+                Some(session.id.as_str()),
+                Some(project_id.as_str()),
+            );
+            (
+                StatusCode::OK,
+                Json(serde_json::to_value(session).unwrap_or(Value::Null)),
+            )
+        }
         Ok(None) => (StatusCode::OK, Json(Value::Null)),
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -231,10 +247,13 @@ pub(super) async fn delete_session(
     }
 
     match memory_server_client::delete_session(&id).await {
-        Ok(true) => (
-            StatusCode::OK,
-            Json(serde_json::json!({"success": true, "message": "对话线程已归档"})),
-        ),
+        Ok(true) => {
+            publish_sessions_updated(auth.user_id.as_str(), "session_deleted", Some(id.as_str()), None);
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({"success": true, "message": "对话线程已归档"})),
+            )
+        }
         Ok(false) => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": "对话线程不存在"})),

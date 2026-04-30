@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { normalizeUiPromptHistoryItem } from './helpers';
 import type { UiPromptHistoryItem } from './types';
+import {
+  getUiPromptHistoryInflight,
+  markUiPromptHistoryCacheStale,
+  peekUiPromptHistoryCacheEntry,
+  setUiPromptHistoryCacheEntry,
+  setUiPromptHistoryInflight,
+} from './uiPromptHistoryCache';
 
 interface UiPromptHistoryApiClient {
   getUiPromptHistory: (
@@ -19,6 +26,7 @@ interface UseUiPromptHistoryResult {
   uiPromptHistoryLoading: boolean;
   uiPromptHistoryError: string | null;
   loadUiPromptHistory: (sessionId: string, force?: boolean) => Promise<void>;
+  markUiPromptHistoryStale: (sessionId: string) => void;
   resetUiPromptHistoryState: () => void;
   hydrateUiPromptHistoryFromCache: (sessionId: string) => void;
   cancelPendingUiPromptHistoryLoad: () => void;
@@ -33,7 +41,7 @@ export const useUiPromptHistory = ({
   const [uiPromptHistoryError, setUiPromptHistoryError] = useState<string | null>(null);
   const [uiPromptHistoryLoadedSessionId, setUiPromptHistoryLoadedSessionId] = useState<string | null>(null);
   const uiPromptHistoryLoadSeqRef = useRef(0);
-  const uiPromptHistoryCacheRef = useRef<Map<string, UiPromptHistoryItem[]>>(new Map());
+  const uiPromptHistoryStaleSessionsRef = useRef<Set<string>>(new Set());
   const currentSessionIdRef = useRef<string | null>(currentSessionId);
 
   useEffect(() => {
@@ -52,16 +60,24 @@ export const useUiPromptHistory = ({
       resetUiPromptHistoryState();
       return;
     }
-    const cached = uiPromptHistoryCacheRef.current.get(sessionId);
-    setUiPromptHistoryItems(cached ? [...cached] : []);
+    const cached = peekUiPromptHistoryCacheEntry(apiClient, sessionId);
+    setUiPromptHistoryItems(cached ? [...cached.items] : []);
     setUiPromptHistoryError(null);
     setUiPromptHistoryLoadedSessionId(cached ? sessionId : null);
     setUiPromptHistoryLoading(false);
-  }, [resetUiPromptHistoryState]);
+  }, [apiClient, resetUiPromptHistoryState]);
 
   const cancelPendingUiPromptHistoryLoad = useCallback(() => {
     uiPromptHistoryLoadSeqRef.current += 1;
   }, []);
+
+  const markUiPromptHistoryStale = useCallback((sessionId: string) => {
+    if (!sessionId) {
+      return;
+    }
+    uiPromptHistoryStaleSessionsRef.current.add(sessionId);
+    markUiPromptHistoryCacheStale(apiClient, sessionId);
+  }, [apiClient]);
 
   const loadUiPromptHistory = useCallback(async (sessionId: string, force = false) => {
     if (!sessionId) {
@@ -69,15 +85,54 @@ export const useUiPromptHistory = ({
       return;
     }
 
-    const cached = uiPromptHistoryCacheRef.current.get(sessionId);
-    if (!force && uiPromptHistoryLoadedSessionId === sessionId && uiPromptHistoryItems.length > 0) {
+    const cachedEntry = peekUiPromptHistoryCacheEntry(apiClient, sessionId);
+    const cached = cachedEntry?.items || null;
+    const isStale = uiPromptHistoryStaleSessionsRef.current.has(sessionId);
+    if (
+      !force
+      && !isStale
+      && uiPromptHistoryLoadedSessionId === sessionId
+      && uiPromptHistoryItems.length > 0
+    ) {
       return;
     }
-    if (!force && cached) {
+    if (!force && !isStale && cached) {
       setUiPromptHistoryItems(cached);
       setUiPromptHistoryError(null);
       setUiPromptHistoryLoadedSessionId(sessionId);
       setUiPromptHistoryLoading(false);
+      return;
+    }
+
+    const existingInflight = !force
+      ? getUiPromptHistoryInflight(apiClient, sessionId)
+      : null;
+    if (existingInflight) {
+      const shouldShowLoading = force || !cached;
+      if (shouldShowLoading) {
+        setUiPromptHistoryLoading(true);
+      }
+      setUiPromptHistoryError(null);
+      try {
+        const normalized = await existingInflight;
+        if (
+          currentSessionIdRef.current !== sessionId
+        ) {
+          return;
+        }
+        uiPromptHistoryStaleSessionsRef.current.delete(sessionId);
+        setUiPromptHistoryItems(normalized);
+        setUiPromptHistoryLoadedSessionId(sessionId);
+      } catch (error) {
+        if (currentSessionIdRef.current !== sessionId) {
+          return;
+        }
+        setUiPromptHistoryError(error instanceof Error ? error.message : '交互确认记录加载失败');
+      } finally {
+        if (currentSessionIdRef.current === sessionId) {
+          setUiPromptHistoryLoading(false);
+        }
+      }
       return;
     }
 
@@ -89,19 +144,30 @@ export const useUiPromptHistory = ({
     }
     setUiPromptHistoryError(null);
     try {
-      const records = await apiClient.getUiPromptHistory(sessionId, { limit: 200 });
-      const normalized = Array.isArray(records)
-        ? records
-            .map((item) => normalizeUiPromptHistoryItem(item))
-            .filter((item): item is UiPromptHistoryItem => item !== null)
-        : [];
-      uiPromptHistoryCacheRef.current.set(sessionId, normalized);
+      const inflight = apiClient.getUiPromptHistory(sessionId, { limit: 200 })
+        .then((records) => (
+          Array.isArray(records)
+            ? records
+                .map((item) => normalizeUiPromptHistoryItem(item))
+                .filter((item): item is UiPromptHistoryItem => item !== null)
+            : []
+        ))
+        .then((normalized) => {
+          setUiPromptHistoryCacheEntry(apiClient, sessionId, normalized);
+          return normalized;
+        })
+        .finally(() => {
+          setUiPromptHistoryInflight(apiClient, sessionId, null);
+        });
+      setUiPromptHistoryInflight(apiClient, sessionId, inflight);
+      const normalized = await inflight;
       if (
         uiPromptHistoryLoadSeqRef.current !== requestSeq
         || currentSessionIdRef.current !== sessionId
       ) {
         return;
       }
+      uiPromptHistoryStaleSessionsRef.current.delete(sessionId);
       setUiPromptHistoryItems(normalized);
       setUiPromptHistoryLoadedSessionId(sessionId);
     } catch (error) {
@@ -127,6 +193,7 @@ export const useUiPromptHistory = ({
     uiPromptHistoryLoading,
     uiPromptHistoryError,
     loadUiPromptHistory,
+    markUiPromptHistoryStale,
     resetUiPromptHistoryState,
     hydrateUiPromptHistoryFromCache,
     cancelPendingUiPromptHistoryLoad,

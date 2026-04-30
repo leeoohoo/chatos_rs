@@ -213,13 +213,16 @@ export interface ChatState {
 
 export interface ChatActions {
   // 联系人操作
-  loadContacts: () => Promise<ContactRecord[]>;
+  loadContacts: (options?: { force?: boolean }) => Promise<ContactRecord[]>;
   createContact: (agentId: string, agentNameSnapshot?: string) => Promise<ContactRecord>;
   deleteContact: (contactId: string) => Promise<void>;
   getContactByAgentId: (agentId: string) => ContactRecord | null;
+  markContactsStale: (userId?: string | null) => void;
+  removeContactLocally: (contactId: string) => void;
+  refreshContactById: (contactId: string) => Promise<ContactRecord | null>;
 
   // 会话操作
-  loadSessions: (options?: { limit?: number; offset?: number; append?: boolean; silent?: boolean }) => Promise<Session[]>;
+  loadSessions: (options?: { force?: boolean; limit?: number; offset?: number; append?: boolean; silent?: boolean }) => Promise<Session[]>;
   createSession: (
     payload?: string | SessionCreatePayload,
     options?: SessionCreateOptions,
@@ -227,21 +230,30 @@ export interface ChatActions {
   selectSession: (sessionId: string, options?: SessionSelectOptions) => Promise<void>;
   updateSession: (sessionId: string, updates: Partial<Session>) => Promise<void>;
   deleteSession: (sessionId: string) => Promise<void>;
+  markSessionsStale: (options?: { userId?: string | null; sessionId?: string | null }) => void;
+  removeSessionLocally: (sessionId: string) => void;
+  refreshSessionById: (sessionId: string) => Promise<Session | null>;
 
   // 项目操作
-  loadProjects: () => Promise<Project[]>;
+  loadProjects: (options?: { force?: boolean }) => Promise<Project[]>;
   createProject: (name: string, rootPath: string, description?: string) => Promise<Project>;
   updateProject: (projectId: string, updates: Partial<Project>) => Promise<Project | null>;
   deleteProject: (projectId: string) => Promise<void>;
   selectProject: (projectId: string) => Promise<void>;
+  markProjectsStale: (options?: { userId?: string | null; projectId?: string | null }) => void;
+  removeProjectLocally: (projectId: string) => void;
+  refreshProjectById: (projectId: string) => Promise<Project | null>;
   setActivePanel: (panel: 'chat' | 'project' | 'terminal' | 'remote_terminal' | 'remote_sftp') => void;
 
   // 终端操作
-  loadTerminals: () => Promise<Terminal[]>;
+  loadTerminals: (options?: { force?: boolean }) => Promise<Terminal[]>;
   createTerminal: (cwd: string, name?: string) => Promise<Terminal>;
   deleteTerminal: (terminalId: string) => Promise<void>;
   selectTerminal: (terminalId: string) => Promise<void>;
-  loadRemoteConnections: () => Promise<RemoteConnection[]>;
+  markTerminalsStale: (options?: { userId?: string | null; terminalId?: string | null }) => void;
+  removeTerminalLocally: (terminalId: string) => void;
+  refreshTerminalById: (terminalId: string) => Promise<Terminal | null>;
+  loadRemoteConnections: (options?: { force?: boolean }) => Promise<RemoteConnection[]>;
   createRemoteConnection: (payload: {
     name?: string;
     host: string;
@@ -288,9 +300,13 @@ export interface ChatActions {
     options?: { activatePanel?: boolean },
   ) => Promise<void>;
   openRemoteSftp: (connectionId: string) => Promise<void>;
+  markRemoteConnectionsStale: (options?: { userId?: string | null; connectionId?: string | null }) => void;
+  removeRemoteConnectionLocally: (connectionId: string) => void;
+  refreshRemoteConnectionById: (connectionId: string) => Promise<RemoteConnection | null>;
 
   // 消息操作
   loadMessages: (sessionId: string) => Promise<void>;
+  syncSessionMessagesInBackground: (sessionId: string) => Promise<void>;
   loadMoreMessages: (sessionId: string) => Promise<void>;
   toggleTurnProcess: (
     userMessageId: string,
@@ -336,12 +352,12 @@ export interface ChatActions {
   loadMcpConfigs: () => Promise<void>;
   updateMcpConfig: (config: McpConfig) => Promise<McpConfig | null>;
   deleteMcpConfig: (id: string) => Promise<void>;
-  loadAiModelConfigs: () => Promise<void>;
+  loadAiModelConfigs: (options?: { force?: boolean }) => Promise<void>;
   updateAiModelConfig: (config: AiModelConfig) => Promise<void>;
   deleteAiModelConfig: (id: string) => Promise<void>;
   setSelectedModel: (modelId: string | null) => void;
   // 智能体
-  loadAgents: () => Promise<void>;
+  loadAgents: (options?: { force?: boolean }) => Promise<void>;
   setSelectedAgent: (agentId: string | null) => void;
   loadSystemContexts: () => Promise<void>;
   createSystemContext: (name: string, content: string, appIds?: string[]) => Promise<SystemContextResponse | null>;

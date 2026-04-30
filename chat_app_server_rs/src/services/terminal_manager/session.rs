@@ -7,6 +7,10 @@ use portable_pty::{native_pty_system, MasterPty, PtySize};
 use tokio::sync::broadcast;
 
 use crate::models::terminal::Terminal;
+use crate::services::realtime::{
+    publish_project_run_state_changed, publish_terminal_list_invalidated,
+    publish_terminal_state_changed,
+};
 
 use super::directory_guard::{
     build_return_to_root_command, clear_input_line_sequence, normalize_shell_input,
@@ -21,6 +25,7 @@ use super::prompt_parser::{
 use super::{input_triggers_busy, now_millis, TerminalEvent};
 
 pub struct TerminalSession {
+    terminal: Terminal,
     id: String,
     pub(super) sender: broadcast::Sender<TerminalEvent>,
     writer: Mutex<Box<dyn Write + Send>>,
@@ -73,6 +78,7 @@ impl TerminalSession {
         let (sender, _) = broadcast::channel(4096);
 
         let session = Arc::new(TerminalSession {
+            terminal: terminal.clone(),
             id: terminal.id.clone(),
             sender,
             writer: Mutex::new(writer),
@@ -401,6 +407,31 @@ impl TerminalSession {
     fn set_busy(&self, busy: bool) {
         let prev = self.busy.swap(busy, Ordering::Relaxed);
         if prev != busy {
+            if let Some(user_id) = self.terminal.user_id.as_deref() {
+                publish_terminal_state_changed(
+                    user_id,
+                    &self.terminal,
+                    busy,
+                    if busy { "busy_started" } else { "busy_cleared" },
+                );
+                publish_terminal_list_invalidated(
+                    user_id,
+                    Some(self.terminal.id.as_str()),
+                    self.terminal.project_id.as_deref(),
+                    if busy { "busy_started" } else { "busy_cleared" },
+                );
+                if let Some(project_id) = self.terminal.project_id.as_deref() {
+                    publish_project_run_state_changed(
+                        user_id,
+                        project_id,
+                        Some(&self.terminal),
+                        busy,
+                        true,
+                        "running",
+                        if busy { "busy_started" } else { "busy_cleared" },
+                    );
+                }
+            }
             let _ = self.sender.send(TerminalEvent::State(busy));
         }
     }

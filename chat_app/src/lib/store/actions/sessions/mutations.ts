@@ -4,11 +4,47 @@ import { readSessionAiSelectionFromMetadata } from '../../helpers/sessionAiSelec
 import type { ChatStoreDraft } from '../../types';
 import { deleteSessionMessagesCacheEntry } from '../sessionsUtils';
 import type { SessionActionDeps } from './types';
+import {
+  markSessionCachesStale,
+  normalizeTrackedSessions,
+  removeSessionCaches,
+  upsertSessionCaches,
+} from './cache';
 
 export function createSessionMutationActions({
   set,
   client,
+  getSessionParams,
 }: SessionActionDeps) {
+  const removeSessionStateLocally = (state: ChatStoreDraft, sessionId: string) => {
+    state.sessions = (state.sessions || []).filter((session) => session.id !== sessionId);
+    if (state.sessionStreamingMessageDrafts && sessionId in state.sessionStreamingMessageDrafts) {
+      delete state.sessionStreamingMessageDrafts[sessionId];
+    }
+    if (state.sessionChatState && sessionId in state.sessionChatState) {
+      delete state.sessionChatState[sessionId];
+    }
+    if (state.sessionTurnProcessState && sessionId in state.sessionTurnProcessState) {
+      delete state.sessionTurnProcessState[sessionId];
+    }
+    if (state.sessionTurnProcessCache && sessionId in state.sessionTurnProcessCache) {
+      delete state.sessionTurnProcessCache[sessionId];
+    }
+    if (state.sessionAiSelectionBySession && sessionId in state.sessionAiSelectionBySession) {
+      delete state.sessionAiSelectionBySession[sessionId];
+    }
+    if (state.currentSessionId === sessionId) {
+      state.currentSessionId = null;
+      state.currentSession = null;
+      state.selectedModelId = null;
+      state.selectedAgentId = null;
+      state.messages = [];
+    }
+    if (state.activePanel === 'chat' && state.currentSessionId === null) {
+      state.activePanel = state.currentProjectId ? 'project' : 'chat';
+    }
+  };
+
   return {
     updateSession: async (sessionId: string, updates: Partial<Session>) => {
       try {
@@ -35,11 +71,21 @@ export function createSessionMutationActions({
         const selectionFromMetadata = readSessionAiSelectionFromMetadata(
           updatedSession?.metadata ?? payload.metadata,
         );
+        if (updatedSession) {
+          upsertSessionCaches(client, updatedSession);
+        } else {
+          markSessionCachesStale(client, {
+            sessionId,
+            userId: getSessionParams().userId,
+          });
+        }
 
         set((state: ChatStoreDraft) => {
-          const index = state.sessions.findIndex((session: Session) => session.id === sessionId);
-          if (index !== -1 && updatedSession) {
-            state.sessions[index] = updatedSession;
+          if (updatedSession) {
+            state.sessions = normalizeTrackedSessions(
+              [updatedSession, ...(state.sessions || []).filter((session: Session) => session.id !== sessionId)],
+              state.contacts || [],
+            );
           }
           if (state.currentSessionId === sessionId) {
             state.currentSession = updatedSession;
@@ -70,6 +116,10 @@ export function createSessionMutationActions({
       try {
         await client.deleteSession(sessionId);
         const now = new Date();
+        markSessionCachesStale(client, {
+          sessionId,
+          userId: getSessionParams().userId,
+        });
 
         set((state: ChatStoreDraft) => {
           const index = state.sessions.findIndex((session) => session.id === sessionId);
@@ -114,6 +164,18 @@ export function createSessionMutationActions({
           state.error = error instanceof Error ? error.message : 'Failed to delete session';
         });
       }
+    },
+
+    removeSessionLocally: (sessionId: string) => {
+      const trimmed = sessionId.trim();
+      if (!trimmed) {
+        return;
+      }
+      removeSessionCaches(client, trimmed);
+      set((state: ChatStoreDraft) => {
+        removeSessionStateLocally(state, trimmed);
+      });
+      deleteSessionMessagesCacheEntry(trimmed);
     },
   };
 }

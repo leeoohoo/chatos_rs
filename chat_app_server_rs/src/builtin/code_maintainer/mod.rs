@@ -12,3 +12,4 @@ mod tests;
 mod utils;
 
 pub use self::service::{CodeMaintainerOptions, CodeMaintainerService};
+pub(crate) use self::storage::ChangeLogStore;

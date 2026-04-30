@@ -1,20 +1,27 @@
 import type { Session } from '../../../../types';
 import { debugLog, generateId } from '@/lib/utils';
 import { normalizeSession } from '../../helpers/sessions';
+import type { ContactRecord } from '../../types';
 import { readSessionAiSelectionFromMetadata } from '../../helpers/sessionAiSelection';
 import { mergeSessionRuntimeIntoMetadata } from '../../helpers/sessionRuntime';
 import type { ChatStoreDraft } from '../../types';
 import {
+  type MemoryContact,
   isSessionActive,
-  normalizeContact,
-  normalizeContactSessions,
   splitSessionsByMappedContacts,
 } from '../sessionsUtils';
-import type { MemoryContact } from '../sessionsUtils';
 import type {
   LoadSessionsOptions,
   SessionActionDeps,
 } from './types';
+import {
+  buildSessionsListCacheKey,
+  getOrCreateSessionsClientCacheState,
+  loadSessionDetail,
+  markSessionCachesStale,
+  normalizeTrackedSessions,
+  syncLoadedSessions,
+} from './cache';
 
 export function createLoadSessionActions({
   set,
@@ -24,6 +31,77 @@ export function createLoadSessionActions({
   customUserId,
   customProjectId,
 }: SessionActionDeps) {
+  const toMemoryContacts = (contacts: ContactRecord[], userId: string): MemoryContact[] => {
+    return (contacts || []).map((contact) => ({
+      id: contact.id,
+      user_id: userId,
+      agent_id: contact.agentId,
+      agent_name_snapshot: contact.name,
+      status: contact.status,
+      created_at: contact.createdAt?.toISOString?.(),
+      updated_at: contact.updatedAt?.toISOString?.(),
+    }));
+  };
+
+  const applyLoadedSessionsToState = (
+    deduped: Session[],
+    userId: string,
+    projectId: string,
+    options: LoadSessionsOptions,
+  ) => {
+    set((state: ChatStoreDraft) => {
+      state.sessions = deduped;
+      if (!state.sessionAiSelectionBySession) {
+        state.sessionAiSelectionBySession = {};
+      }
+      for (const session of deduped) {
+        const selection = readSessionAiSelectionFromMetadata(session?.metadata);
+        if (selection) {
+          state.sessionAiSelectionBySession[session.id] = selection;
+        }
+      }
+      if (!options.silent) {
+        state.isLoading = false;
+      }
+      if (state.currentSessionId) {
+        const matched = deduped.find((session) => session.id === state.currentSessionId);
+        if (matched) {
+          state.currentSession = matched;
+        } else {
+          state.currentSessionId = null;
+          state.currentSession = null;
+          state.messages = [];
+        }
+      }
+    });
+
+    const currentState = get();
+    if (deduped.length > 0 && !currentState.currentSessionId) {
+      const activeSessions = deduped.filter((session: Session) => isSessionActive(session));
+      if (activeSessions.length > 0) {
+        const lastSessionId = localStorage.getItem(`lastSessionId_${userId}_${projectId}`);
+        let sessionToSelect: Session | undefined;
+
+        if (lastSessionId) {
+          sessionToSelect = activeSessions.find((session) => session.id === lastSessionId);
+        }
+
+        if (!sessionToSelect) {
+          sessionToSelect = [...activeSessions].sort((a, b) =>
+            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+          )[0];
+        }
+
+        if (sessionToSelect) {
+          debugLog('🔍 自动选择会话:', sessionToSelect.id);
+          setTimeout(() => {
+            get().selectSession(sessionToSelect.id);
+          }, 0);
+        }
+      }
+    }
+  };
+
   return {
     loadSessions: async (options: LoadSessionsOptions = {}) => {
       try {
@@ -37,132 +115,108 @@ export function createLoadSessionActions({
         }
 
         const { userId, projectId } = getSessionParams();
+        const cacheKey = buildSessionsListCacheKey(userId);
+        const cacheState = getOrCreateSessionsClientCacheState(client);
+        const allowPrimaryListCache = !options.force && !options.append && !options.limit && !options.offset;
+        const cached = allowPrimaryListCache ? cacheState.listCache.get(cacheKey) : null;
 
         debugLog('🔍 loadSessions 调用 client.getSessions', { userId, projectId, customUserId, customProjectId, options });
-        const [rawContacts, rawSessions] = await Promise.all([
-          client.getContacts(userId, { limit: 2000, offset: 0 }).catch(() => []),
-          client.getSessions(
+        if (cached && !cached.stale) {
+          applyLoadedSessionsToState(cached.sessions, userId, projectId, options);
+          debugLog('🔍 loadSessions 命中本地缓存');
+          return cached.sessions;
+        }
+
+        const executeLoad = async (): Promise<{ contacts: ContactRecord[]; sessions: Session[] }> => {
+          const contacts = await get().loadContacts();
+          const memoryContacts = toMemoryContacts(contacts, userId);
+          const rawSessions = await client.getSessions(
             userId,
             undefined,
             { limit: options.limit, offset: options.offset },
-          ),
-        ]);
-        const contacts = (Array.isArray(rawContacts) ? rawContacts : [])
-          .map(normalizeContact)
-          .filter((item): item is MemoryContact => !!item)
-          .filter((item) => {
-            const status = typeof item.status === 'string' ? item.status.toLowerCase() : '';
-            return status === '' || status === 'active';
-          });
+          );
+          const sessions = Array.isArray(rawSessions)
+            ? rawSessions.map(normalizeSession)
+            : [];
 
-        const sessions = Array.isArray(rawSessions)
-          ? rawSessions.map(normalizeSession)
-          : [];
+          const { matchedSessions: filteredByContacts, missingContacts } = splitSessionsByMappedContacts(
+            sessions,
+            memoryContacts,
+          );
 
-        const { matchedSessions: filteredByContacts, missingContacts } = splitSessionsByMappedContacts(
-          sessions,
-          contacts,
-        );
-
-        const backfilledSessions: Session[] = [];
-        for (const contact of missingContacts) {
-          const metadata = mergeSessionRuntimeIntoMetadata(null, {
-            contactAgentId: contact.agent_id,
-            contactId: contact.id,
-            selectedModelId: null,
-            projectId: '0',
-            projectRoot: null,
-            mcpEnabled: true,
-            enabledMcpIds: [],
-          });
-          try {
-            const created = await client.createSession({
-              id: generateId(),
-              title: contact.agent_name_snapshot || '联系人',
-              user_id: userId,
-              project_id: '0',
-              metadata,
-            });
-            backfilledSessions.push(normalizeSession(created));
-          } catch (error) {
-            debugLog('🔍 联系人补建会话失败，忽略', {
+          const backfilledSessions: Session[] = [];
+          for (const contact of missingContacts) {
+            const metadata = mergeSessionRuntimeIntoMetadata(null, {
+              contactAgentId: contact.agent_id,
               contactId: contact.id,
-              agentId: contact.agent_id,
-              error: error instanceof Error ? error.message : String(error),
+              selectedModelId: null,
+              projectId: '0',
+              projectRoot: null,
+              mcpEnabled: true,
+              enabledMcpIds: [],
             });
+            try {
+              const created = await client.createSession({
+                id: generateId(),
+                title: contact.agent_name_snapshot || '联系人',
+                user_id: userId,
+                project_id: '0',
+                metadata,
+              });
+              backfilledSessions.push(normalizeSession(created));
+            } catch (error) {
+              debugLog('🔍 联系人补建会话失败，忽略', {
+                contactId: contact.id,
+                agentId: contact.agent_id,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            }
           }
+
+          const mergedByContact = [
+            ...filteredByContacts,
+            ...backfilledSessions,
+          ];
+          debugLog('🔍 loadSessions 返回结果:', mergedByContact);
+
+          const existing = options.append ? (get().sessions || []) : [];
+          const merged = options.append ? [...existing, ...mergedByContact] : mergedByContact;
+          const dedupedById: Session[] = [];
+          const seen = new Set<string>();
+          for (const session of merged) {
+            if (session && !seen.has(session.id)) {
+              seen.add(session.id);
+              dedupedById.push(session);
+            }
+          }
+
+          return {
+            contacts,
+            sessions: normalizeTrackedSessions(dedupedById, contacts),
+          };
+        };
+
+        let deduped: Session[];
+        if (allowPrimaryListCache) {
+          let inflight = cacheState.listInflight.get(cacheKey);
+          if (!inflight) {
+            inflight = executeLoad()
+              .then(({ contacts, sessions }) => {
+                syncLoadedSessions(client, userId, sessions, contacts);
+                return sessions;
+              })
+              .finally(() => {
+                cacheState.listInflight.delete(cacheKey);
+              });
+            cacheState.listInflight.set(cacheKey, inflight);
+          }
+          deduped = await inflight;
+        } else {
+          const loaded = await executeLoad();
+          deduped = loaded.sessions;
         }
 
-        const mergedByContact = [
-          ...filteredByContacts,
-          ...backfilledSessions,
-        ];
-        debugLog('🔍 loadSessions 返回结果:', mergedByContact);
-
-        const existing = options.append ? (get().sessions || []) : [];
-        const merged = options.append ? [...existing, ...mergedByContact] : mergedByContact;
-        const dedupedById: Session[] = [];
-        const seen = new Set<string>();
-        for (const s of merged) {
-          if (s && !seen.has(s.id)) {
-            seen.add(s.id);
-            dedupedById.push(s);
-          }
-        }
-        const deduped = normalizeContactSessions(dedupedById);
-
-        set((state: ChatStoreDraft) => {
-          state.sessions = deduped;
-          if (!state.sessionAiSelectionBySession) {
-            state.sessionAiSelectionBySession = {};
-          }
-          for (const session of deduped) {
-            const selection = readSessionAiSelectionFromMetadata(session?.metadata);
-            if (selection) {
-              state.sessionAiSelectionBySession[session.id] = selection;
-            }
-          }
-          if (!options.silent) {
-            state.isLoading = false;
-          }
-          if (state.currentSessionId) {
-            const matched = deduped.find(s => s.id === state.currentSessionId);
-            if (matched) {
-              state.currentSession = matched;
-            } else {
-              state.currentSessionId = null;
-              state.currentSession = null;
-              state.messages = [];
-            }
-          }
-        });
-
-        const currentState = get();
-        if (deduped.length > 0 && !currentState.currentSessionId) {
-          const activeSessions = deduped.filter((session: Session) => isSessionActive(session));
-          if (activeSessions.length > 0) {
-            const lastSessionId = localStorage.getItem(`lastSessionId_${userId}_${projectId}`);
-            let sessionToSelect: Session | undefined;
-
-            if (lastSessionId) {
-              sessionToSelect = activeSessions.find(s => s.id === lastSessionId);
-            }
-
-            if (!sessionToSelect) {
-              sessionToSelect = [...activeSessions].sort((a, b) =>
-                new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-              )[0];
-            }
-
-            if (sessionToSelect) {
-              debugLog('🔍 自动选择会话:', sessionToSelect.id);
-              setTimeout(() => {
-                get().selectSession(sessionToSelect.id);
-              }, 0);
-            }
-          }
-        }
-
+        applyLoadedSessionsToState(deduped, userId, projectId, options);
         debugLog('🔍 loadSessions 完成');
         return deduped;
       } catch (error) {
@@ -174,6 +228,53 @@ export function createLoadSessionActions({
           }
         });
         return [];
+      }
+    },
+
+    markSessionsStale: (options?: { userId?: string | null; sessionId?: string | null }) => {
+      markSessionCachesStale(client, options);
+    },
+
+    refreshSessionById: async (sessionId: string) => {
+      const trimmed = sessionId.trim();
+      if (!trimmed) {
+        return null;
+      }
+      try {
+        const refreshed = await loadSessionDetail(client, trimmed, { force: true });
+        const contacts = (get().contacts || []) as ContactRecord[];
+        const tracked = normalizeTrackedSessions([refreshed], contacts).length > 0;
+        set((state: ChatStoreDraft) => {
+          const remaining = (state.sessions || []).filter((session) => session.id !== trimmed);
+          state.sessions = tracked
+            ? normalizeTrackedSessions([refreshed, ...remaining], state.contacts || [])
+            : normalizeTrackedSessions(remaining, state.contacts || []);
+          if (state.currentSessionId === trimmed) {
+            state.currentSession = refreshed;
+          }
+          const selection = readSessionAiSelectionFromMetadata(refreshed?.metadata);
+          if (selection) {
+            if (!state.sessionAiSelectionBySession) {
+              state.sessionAiSelectionBySession = {};
+            }
+            state.sessionAiSelectionBySession[trimmed] = selection;
+            if (state.currentSessionId === trimmed) {
+              state.selectedModelId = selection.selectedModelId ?? null;
+              state.selectedAgentId = selection.selectedAgentId ?? null;
+            }
+          }
+        });
+        return refreshed;
+      } catch (error) {
+        console.error('Failed to refresh session by id:', error);
+        markSessionCachesStale(client, {
+          sessionId: trimmed,
+          userId: getSessionParams().userId,
+        });
+        set((state: ChatStoreDraft) => {
+          state.error = error instanceof Error ? error.message : 'Failed to refresh session';
+        });
+        return null;
       }
     },
   };

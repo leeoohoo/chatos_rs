@@ -5,7 +5,7 @@ import type {
   TerminalLogResponse,
   TerminalResponse,
 } from '../../../lib/api/client/types';
-import type { ProjectRunTarget } from '../../../types';
+import type { ProjectRunTarget, Terminal } from '../../../types';
 
 export interface ProjectPreviewActiveRunState {
   terminalId: string;
@@ -27,12 +27,11 @@ export interface UseProjectPreviewRunControllerParams {
     terminalId: string,
     payload?: { reason?: string },
   ) => Promise<TerminalDispatchResponse>;
-  onGetTerminal: (terminalId: string) => Promise<TerminalResponse>;
   onListTerminalLogs: (
     terminalId: string,
     params?: { limit?: number; offset?: number; before?: string },
   ) => Promise<TerminalLogResponse[]>;
-  onListTerminals: () => Promise<TerminalResponse[]>;
+  onListTerminals: () => Promise<Array<TerminalResponse | Terminal>>;
 }
 
 export type ProjectPreviewRunSetter = Dispatch<SetStateAction<ProjectPreviewActiveRunState | null>>;

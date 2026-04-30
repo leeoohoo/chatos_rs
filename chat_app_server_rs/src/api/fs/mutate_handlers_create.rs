@@ -7,6 +7,9 @@ use serde_json::{json, Value};
 
 use crate::core::auth::AuthUser;
 use crate::services::code_nav::symbol_index::invalidate_project_symbol_indexes_for_path;
+use crate::services::workspace_realtime_watcher::{
+    note_workspace_path_changed, suppress_logged_path,
+};
 
 use super::super::contracts::{FsCreateFileRequest, FsMkdirRequest};
 use super::super::helpers::is_valid_entry_name;
@@ -87,11 +90,14 @@ pub(in super::super) async fn create_dir(
         );
     }
     invalidate_project_symbol_indexes_for_path(target.as_path());
+    let target_path = target.to_string_lossy().to_string();
+    suppress_logged_path(target_path.as_str());
+    note_workspace_path_changed(target_path.as_str());
 
     (
         StatusCode::CREATED,
         Json(json!({
-            "path": target.to_string_lossy(),
+            "path": target_path,
             "parent": parent.path.to_string_lossy(),
             "name": name,
             "created": true
@@ -194,10 +200,13 @@ pub(in super::super) async fn create_file(
 
     let size = fs::metadata(&target).map(|meta| meta.len()).unwrap_or(0);
     invalidate_project_symbol_indexes_for_path(target.as_path());
+    let target_path = target.to_string_lossy().to_string();
+    suppress_logged_path(target_path.as_str());
+    note_workspace_path_changed(target_path.as_str());
     (
         StatusCode::CREATED,
         Json(json!({
-            "path": target.to_string_lossy(),
+            "path": target_path,
             "parent": parent.path.to_string_lossy(),
             "name": name,
             "size": size,

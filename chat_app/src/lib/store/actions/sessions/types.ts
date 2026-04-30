@@ -14,6 +14,7 @@ export interface SessionActionDeps {
 }
 
 export type LoadSessionsOptions = {
+  force?: boolean;
   limit?: number;
   offset?: number;
   append?: boolean;

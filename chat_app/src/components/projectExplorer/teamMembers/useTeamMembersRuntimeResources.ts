@@ -7,9 +7,20 @@ import type { ContactItem } from './types';
 import { useTeamMemberRuntimeContext } from './useTeamMemberRuntimeContext';
 import { useTeamMembersContactResources } from './useTeamMembersContactResources';
 import { useTeamMembersPaneStoreBridge } from './useTeamMembersPaneStoreBridge';
-
-const REVIEW_REPAIR_POLL_INTERVAL_MS = 1200;
-const REVIEW_REPAIR_RETRY_INTERVAL_MS = 2000;
+import { useReviewRepairRealtime } from '../../../lib/realtime/useReviewRepairRealtime';
+import { useConversationSummariesRealtime } from '../../../lib/realtime/useConversationSummariesRealtime';
+import {
+  syncTaskReviewPanelsSnapshot,
+  syncUiPromptPanelsSnapshot,
+} from '../../chatInterface/helpers';
+import {
+  loadPendingTaskReviewPanels,
+  peekPendingTaskReviewCacheEntry,
+} from '../../chatInterface/pendingTaskReviewCache';
+import {
+  loadPendingUiPromptPanels,
+  peekPendingUiPromptCacheEntry,
+} from '../../chatInterface/pendingUiPromptCache';
 
 interface UseTeamMembersRuntimeResourcesOptions {
   store: ReturnType<typeof useTeamMembersPaneStoreBridge>;
@@ -20,6 +31,7 @@ export const useTeamMembersRuntimeResources = ({
   store,
   contacts,
 }: UseTeamMembersRuntimeResourcesOptions) => {
+  const [taskHistoryOpen, setTaskHistoryOpen] = useState(false);
   const {
     apiClient,
     currentSession,
@@ -41,6 +53,16 @@ export const useTeamMembersRuntimeResources = ({
     upsertUiPromptPanel,
     removeUiPromptPanel,
   } = store;
+  const taskReviewPanelsBySessionRef = useRef(taskReviewPanelsBySession);
+  const uiPromptPanelsBySessionRef = useRef(uiPromptPanelsBySession);
+
+  useEffect(() => {
+    taskReviewPanelsBySessionRef.current = taskReviewPanelsBySession;
+  }, [taskReviewPanelsBySession]);
+
+  useEffect(() => {
+    uiPromptPanelsBySessionRef.current = uiPromptPanelsBySession;
+  }, [uiPromptPanelsBySession]);
 
   const {
     normalizedProjectId,
@@ -65,17 +87,6 @@ export const useTeamMembersRuntimeResources = ({
     }
     return sessionChatState?.[conversation.selectedProjectSession.id]?.runtimeContextRefreshNonce || 0;
   }, [conversation.selectedProjectSession?.id, sessionChatState]);
-  const [reviewRepairRunning, setReviewRepairRunning] = useState(false);
-  const [reviewRepairPendingCount, setReviewRepairPendingCount] = useState<number | null>(null);
-  const reviewRepairPollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const clearReviewRepairPollTimer = useCallback(() => {
-    if (reviewRepairPollTimerRef.current) {
-      clearTimeout(reviewRepairPollTimerRef.current);
-      reviewRepairPollTimerRef.current = null;
-    }
-  }, []);
-
   const runtimeSourceSession = conversation.selectedProjectSession || currentSession;
   const {
     mcpEnabled: composerMcpEnabled,
@@ -91,10 +102,87 @@ export const useTeamMembersRuntimeResources = ({
     if (!sessionId) {
       return;
     }
-    await summary.loadSessionSummaries(sessionId, { silent: true });
+    await summary.loadSessionSummaries(sessionId, { silent: true, force: _force });
   }, [summary.loadSessionSummaries]);
 
-  const loadSessionSummaries = summary.loadSessionSummaries;
+  useEffect(() => {
+    setTaskHistoryOpen(false);
+  }, [conversation.isSelectedSessionActive, conversation.selectedProjectSession?.id]);
+
+  useEffect(() => {
+    const sessionIds = members.projectContacts
+      .map((item) => String(item.session?.id || '').trim())
+      .filter((sessionId, index, arr) => sessionId.length > 0 && arr.indexOf(sessionId) === index);
+    if (sessionIds.length === 0) {
+      return;
+    }
+
+    let cancelled = false;
+    sessionIds.forEach((sessionId) => {
+      const cachedTaskReviewPanels = peekPendingTaskReviewCacheEntry(apiClient, sessionId);
+      if (cachedTaskReviewPanels && !cachedTaskReviewPanels.stale) {
+        syncTaskReviewPanelsSnapshot({
+          sessionId,
+          panels: cachedTaskReviewPanels.panels,
+          existingPanels: taskReviewPanelsBySessionRef.current?.[sessionId],
+          upsertTaskReviewPanel,
+          removeTaskReviewPanel,
+        });
+      } else {
+        void loadPendingTaskReviewPanels(apiClient, sessionId, { limit: 50 })
+          .then((panels) => {
+            if (cancelled) {
+              return;
+            }
+            syncTaskReviewPanelsSnapshot({
+              sessionId,
+              panels,
+              existingPanels: taskReviewPanelsBySessionRef.current?.[sessionId],
+              upsertTaskReviewPanel,
+              removeTaskReviewPanel,
+            });
+          })
+          .catch(() => {});
+      }
+
+      const cachedUiPromptPanels = peekPendingUiPromptCacheEntry(apiClient, sessionId);
+      if (cachedUiPromptPanels && !cachedUiPromptPanels.stale) {
+        syncUiPromptPanelsSnapshot({
+          sessionId,
+          panels: cachedUiPromptPanels.panels,
+          existingPanels: uiPromptPanelsBySessionRef.current?.[sessionId],
+          upsertUiPromptPanel,
+          removeUiPromptPanel,
+        });
+      } else {
+        void loadPendingUiPromptPanels(apiClient, sessionId, { limit: 50 })
+          .then((panels) => {
+            if (cancelled) {
+              return;
+            }
+            syncUiPromptPanelsSnapshot({
+              sessionId,
+              panels,
+              existingPanels: uiPromptPanelsBySessionRef.current?.[sessionId],
+              upsertUiPromptPanel,
+              removeUiPromptPanel,
+            });
+          })
+          .catch(() => {});
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    apiClient,
+    members.projectContacts,
+    removeTaskReviewPanel,
+    removeUiPromptPanel,
+    upsertTaskReviewPanel,
+    upsertUiPromptPanel,
+  ]);
 
   const workbar = useSessionWorkbarPanels({
     apiClient,
@@ -102,6 +190,7 @@ export const useTeamMembersRuntimeResources = ({
     enabled: Boolean(conversation.isSelectedSessionActive && conversation.selectedProjectSession?.id),
     messages,
     selectedSessionActiveTurnId,
+    taskHistoryOpen,
     sessionRuntimeGuidanceState,
     taskReviewPanelsBySession,
     uiPromptPanelsBySession,
@@ -116,9 +205,9 @@ export const useTeamMembersRuntimeResources = ({
     if (!sessionId) {
       return;
     }
-    summary.setSummaryPaneSessionId(sessionId);
-    workbar.handleOpenWorkbarHistory(sessionId, { forceHistory: true, forceSummaries: true });
-  }, [summary.setSummaryPaneSessionId, workbar.handleOpenWorkbarHistory]);
+    setTaskHistoryOpen(true);
+    workbar.handleOpenWorkbarHistory(sessionId, { forceHistory: false, forceSummaries: false });
+  }, [workbar.handleOpenWorkbarHistory]);
 
   const runtimeContext = useTeamMemberRuntimeContext({
     apiClient,
@@ -163,62 +252,47 @@ export const useTeamMembersRuntimeResources = ({
     void selectRemoteConnection(connectionId, { activatePanel: false });
   }, [selectRemoteConnection]);
 
-  const refreshReviewRepairStatus = useCallback(async (
-    sessionId: string,
-  ): Promise<{ running: boolean; pendingCount: number | null }> => {
-    if (!sessionId) {
-      setReviewRepairRunning(false);
-      setReviewRepairPendingCount(null);
-      return { running: false, pendingCount: null };
-    }
-    const result = await apiClient.getConversationReviewRepairStatus(sessionId);
-    if (result?.success === false) {
-      throw new Error(result.detail || result.error || '获取复盘状态失败');
-    }
-    const running = result?.result?.running === true;
-    const pendingCount = typeof result?.result?.pending_message_count === 'number'
-      ? result.result.pending_message_count
-      : null;
-    setReviewRepairRunning(running);
-    setReviewRepairPendingCount(pendingCount);
-    return { running, pendingCount };
-  }, [apiClient]);
-
-  const pollReviewRepairStatusUntilSettled = useCallback(async (sessionId: string) => {
-    clearReviewRepairPollTimer();
-    const poll = async () => {
-      try {
-        const status = await refreshReviewRepairStatus(sessionId);
-        if (status.running) {
-          reviewRepairPollTimerRef.current = setTimeout(() => {
-            void poll();
-          }, REVIEW_REPAIR_POLL_INTERVAL_MS);
-          return;
-        }
-        await loadSessionSummaries(sessionId, { silent: true });
-      } catch (error) {
-        console.error('Failed to poll team review repair status:', error);
-        reviewRepairPollTimerRef.current = setTimeout(() => {
-          void poll();
-        }, REVIEW_REPAIR_RETRY_INTERVAL_MS);
+  useConversationSummariesRealtime({
+    sessionId: conversation.selectedProjectSession?.id || null,
+    enabled: Boolean(conversation.selectedProjectSession?.id),
+    onEvent: async () => {
+      const selectedSessionId = conversation.selectedProjectSession?.id || null;
+      if (!selectedSessionId) {
+        return;
       }
-    };
-    await poll();
-  }, [clearReviewRepairPollTimer, loadSessionSummaries, refreshReviewRepairStatus]);
+      summary.markSessionSummariesStale(selectedSessionId);
+      if (!conversation.sessionSummaryPaneVisible) {
+        return;
+      }
+      summary.hydrateSessionSummariesFromCache(selectedSessionId);
+      await summary.loadSessionSummaries(selectedSessionId, { silent: true });
+    },
+  });
+
+  const {
+    reviewRepairRunning,
+    reviewRepairPendingCount,
+    refreshReviewRepairStatus,
+    markReviewRepairStarting,
+  } = useReviewRepairRealtime({
+    apiClient,
+    sessionId: conversation.selectedProjectSession?.id || null,
+    onFailed: (errorMessage) => {
+      setError?.(errorMessage);
+    },
+  });
 
   const handleRunReviewRepair = useCallback(async (sessionId: string) => {
     if (!sessionId) {
       return;
     }
-    clearReviewRepairPollTimer();
-    setReviewRepairRunning(true);
+    markReviewRepairStarting();
     try {
       clearError?.();
       const result = await apiClient.runConversationReviewRepair(sessionId);
       if (result?.success === false) {
         throw new Error(result.detail || result.error || '执行复盘失败');
       }
-      await pollReviewRepairStatusUntilSettled(sessionId);
     } catch (error) {
       await refreshReviewRepairStatus(sessionId).catch((statusError) => {
         console.error('Failed to refresh team review repair status after run error:', statusError);
@@ -229,8 +303,7 @@ export const useTeamMembersRuntimeResources = ({
   }, [
     apiClient,
     clearError,
-    clearReviewRepairPollTimer,
-    pollReviewRepairStatusUntilSettled,
+    markReviewRepairStarting,
     refreshReviewRepairStatus,
     setError,
   ]);
@@ -259,35 +332,6 @@ export const useTeamMembersRuntimeResources = ({
     summary,
   ]);
 
-  useEffect(() => {
-    const sessionId = conversation.selectedProjectSession?.id || null;
-    clearReviewRepairPollTimer();
-    if (!sessionId) {
-      setReviewRepairRunning(false);
-      setReviewRepairPendingCount(null);
-      return undefined;
-    }
-
-    void refreshReviewRepairStatus(sessionId)
-      .then((status) => {
-        if (status.running) {
-          void pollReviewRepairStatusUntilSettled(sessionId);
-        }
-      })
-      .catch((error) => {
-        console.error('Failed to load team review repair status:', error);
-      });
-
-    return () => {
-      clearReviewRepairPollTimer();
-    };
-  }, [
-    clearReviewRepairPollTimer,
-    conversation.selectedProjectSession?.id,
-    pollReviewRepairStatusUntilSettled,
-    refreshReviewRepairStatus,
-  ]);
-
   return {
     composer: {
       composerMcpEnabled,
@@ -301,6 +345,8 @@ export const useTeamMembersRuntimeResources = ({
     },
     workbar: {
       ...workbar,
+      taskHistoryOpen,
+      setTaskHistoryOpen,
       handleOpenTeamWorkbarHistory,
       handleRunReviewRepair,
       reviewRepairRunning,

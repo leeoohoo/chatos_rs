@@ -1,51 +1,46 @@
 import { useEffect, useMemo, useRef } from 'react';
 
-import type ApiClient from '../../lib/api/client';
-import type { UiPromptPanelState } from '../../lib/store/types';
 import type { Session } from '../../types';
-import { toUiPromptPanelFromRecord } from './helpers';
 
 interface UseChatSessionEffectsParams {
-  apiClient: ApiClient;
   activePanel: string;
   currentSession: Session | null;
-  currentSessionIdForUiPrompts: string | null;
   uiPromptHistoryOpen: boolean;
   summaryPaneSessionId: string | null;
+  setTaskHistoryOpen?: (value: boolean) => void;
   loadProjects: () => Promise<unknown>;
   loadAiModelConfigs: () => Promise<void>;
   loadAgents: () => Promise<void>;
   loadContactMemoryContext: (sessionId: string, force?: boolean) => Promise<unknown>;
+  hydrateContactMemoryContextFromCache: (sessionId: string) => void;
   resetMemoryState: () => void;
   cancelPendingMemoryLoad: () => void;
   loadUiPromptHistory: (sessionId: string, force?: boolean) => Promise<unknown>;
   hydrateUiPromptHistoryFromCache: (sessionId: string) => void;
   resetUiPromptHistoryState: () => void;
   cancelPendingUiPromptHistoryLoad: () => void;
-  upsertUiPromptPanel: (panel: UiPromptPanelState) => void;
   resetAllWorkbarState: () => void;
   resetHistoryWorkbarState: () => void;
   setUiPromptHistoryOpen: (value: boolean) => void;
 }
 
 export const useChatSessionEffects = ({
-  apiClient,
   activePanel,
   currentSession,
-  currentSessionIdForUiPrompts,
   uiPromptHistoryOpen,
   summaryPaneSessionId,
+  setTaskHistoryOpen,
   loadProjects,
   loadAiModelConfigs,
   loadAgents,
   loadContactMemoryContext,
+  hydrateContactMemoryContextFromCache,
   resetMemoryState,
   cancelPendingMemoryLoad,
   loadUiPromptHistory,
   hydrateUiPromptHistoryFromCache,
   resetUiPromptHistoryState,
   cancelPendingUiPromptHistoryLoad,
-  upsertUiPromptPanel,
   resetAllWorkbarState,
   resetHistoryWorkbarState,
   setUiPromptHistoryOpen,
@@ -57,32 +52,6 @@ export const useChatSessionEffects = ({
     () => Boolean(activePanel === 'chat' && currentSession && summaryPaneSessionId === currentSession.id),
     [activePanel, currentSession, summaryPaneSessionId],
   );
-
-  useEffect(() => {
-    if (!currentSessionIdForUiPrompts || activePanel !== 'chat') {
-      return;
-    }
-
-    let cancelled = false;
-    void apiClient
-      .getPendingUiPrompts(currentSessionIdForUiPrompts, { limit: 50 })
-      .then((records) => {
-        if (cancelled || !Array.isArray(records)) {
-          return;
-        }
-        records.forEach((record) => {
-          const panel = toUiPromptPanelFromRecord(record);
-          if (panel) {
-            upsertUiPromptPanel(panel);
-          }
-        });
-      })
-      .catch(() => {});
-
-    return () => {
-      cancelled = true;
-    };
-  }, [activePanel, apiClient, currentSessionIdForUiPrompts, upsertUiPromptPanel]);
 
   useEffect(() => {
     if (didInitRef.current) {
@@ -104,6 +73,7 @@ export const useChatSessionEffects = ({
       resetMemoryState();
       resetUiPromptHistoryState();
       setUiPromptHistoryOpen(false);
+      setTaskHistoryOpen?.(false);
       return;
     }
 
@@ -112,12 +82,14 @@ export const useChatSessionEffects = ({
       lastHydratedChatSessionRef.current = currentSession.id;
       cancelPendingMemoryLoad();
       cancelPendingUiPromptHistoryLoad();
+      setTaskHistoryOpen?.(false);
       resetHistoryWorkbarState();
       resetMemoryState();
       hydrateUiPromptHistoryFromCache(currentSession.id);
     }
 
     if (sessionSummaryPaneVisible) {
+      hydrateContactMemoryContextFromCache(currentSession.id);
       void loadContactMemoryContext(currentSession.id);
     }
     if (uiPromptHistoryOpen) {
@@ -128,6 +100,7 @@ export const useChatSessionEffects = ({
     cancelPendingMemoryLoad,
     cancelPendingUiPromptHistoryLoad,
     currentSession,
+    hydrateContactMemoryContextFromCache,
     hydrateUiPromptHistoryFromCache,
     loadContactMemoryContext,
     loadUiPromptHistory,
@@ -135,6 +108,7 @@ export const useChatSessionEffects = ({
     resetHistoryWorkbarState,
     resetMemoryState,
     resetUiPromptHistoryState,
+    setTaskHistoryOpen,
     sessionSummaryPaneVisible,
     setUiPromptHistoryOpen,
     uiPromptHistoryOpen,

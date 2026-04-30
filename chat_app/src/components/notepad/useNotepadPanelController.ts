@@ -2,12 +2,14 @@ import { useCallback, useMemo, useState } from 'react';
 import type React from 'react';
 
 import { apiClient as globalApiClient } from '../../lib/api/client';
+import { useNotepadRealtime } from '../../lib/realtime/useNotepadRealtime';
 import { useChatApiClientFromContext } from '../../lib/store/ChatStoreContext';
 import type { ContextMenuState } from './NotepadContextMenu';
 import type { NotepadViewMode } from './NotepadEditor';
 import { useNotepadPanelEffects } from './useNotepadPanelEffects';
 import {
   buildFolderTree,
+  normalizeFolderPath,
   type NoteMeta,
 } from './utils';
 import { useDialogService } from '../ui/DialogProvider';
@@ -78,6 +80,7 @@ export const useNotepadPanelController = ({
   const [viewMode, setViewMode] = useState<NotepadViewMode>('split');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [refreshNonce, setRefreshNonce] = useState(0);
   const {
     selectedNoteId,
     setSelectedNoteId,
@@ -105,30 +108,51 @@ export const useNotepadPanelController = ({
     availableFolders,
     folderTree,
     selectedNoteMeta,
+    ensureInit,
+    hydrateFolders,
+    hydrateNotes,
     loadFolders,
     loadNotes,
+    loadNoteDetail,
+    getCachedNoteDetail,
+    markFoldersStale,
+    markNotesStale,
+    markNoteDetailStale,
+    upsertCachedNoteDetail,
+    upsertCachedNote,
+    removeCachedNote,
+    applyFolderToCache,
+    removeFolderFromCache,
+    renameFolderInCache,
   } = useNotepadData({
     apiClient,
     searchQuery,
     selectedNoteId,
   });
 
-  const refreshAll = useCallback(async () => {
+  const refreshAll = useCallback(async (options?: { force?: boolean }) => {
     setLoading(true);
     setError(null);
     try {
-      await apiClient.notepadInit();
-      await Promise.all([loadFolders(), loadNotes()]);
+      if (options?.force) {
+        markFoldersStale();
+        markNotesStale();
+      }
+      await ensureInit(options);
+      await Promise.all([
+        loadFolders(options),
+        loadNotes(options),
+      ]);
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载记事本失败');
     } finally {
       setLoading(false);
     }
-  }, [apiClient, loadFolders, loadNotes]);
+  }, [ensureInit, loadFolders, loadNotes, markFoldersStale, markNotesStale]);
 
   const openNote = useNotepadOpenNote({
-    apiClient,
     ensureFolderExpanded,
+    loadNoteDetail,
     setContent,
     setDirty,
     setError,
@@ -143,7 +167,8 @@ export const useNotepadPanelController = ({
     copyText: handleCopyTextInternal,
     copyAsMd: handleCopyAsMdFileInternal,
   } = useNotepadExportActions({
-    apiClient,
+    getCachedNoteDetail,
+    loadNoteDetail,
     selectedNoteId,
     title,
     content,
@@ -162,8 +187,13 @@ export const useNotepadPanelController = ({
     confirm,
     content,
     ensureFolderExpanded,
-    loadFolders,
     loadNotes,
+    markNotesStale,
+    upsertCachedNoteDetail,
+    upsertCachedNote,
+    removeCachedNote,
+    applyFolderToCache,
+    removeFolderFromCache,
     notes,
     openNote,
     prompt,
@@ -186,6 +216,122 @@ export const useNotepadPanelController = ({
   const handleTreeOpenNote = useCallback((noteId: string) => {
     void openNote(noteId);
   }, [openNote]);
+
+  const renameFolderPath = useCallback((folderPath: string, fromPath: string, toPath: string) => {
+    const normalizedFolder = normalizeFolderPath(folderPath);
+    const normalizedFrom = normalizeFolderPath(fromPath);
+    const normalizedTo = normalizeFolderPath(toPath);
+    if (!normalizedFrom || !normalizedTo) {
+      return normalizedFolder;
+    }
+    if (normalizedFolder === normalizedFrom) {
+      return normalizedTo;
+    }
+    const prefix = `${normalizedFrom}/`;
+    if (normalizedFolder.startsWith(prefix)) {
+      const suffix = normalizedFolder.slice(prefix.length);
+      return suffix ? `${normalizedTo}/${suffix}` : normalizedTo;
+    }
+    return normalizedFolder;
+  }, []);
+
+  useNotepadRealtime({
+    enabled: true,
+    onInvalidate: async (payload) => {
+      const reason = String(payload.reason || '').trim();
+      const payloadFolder = String(payload.folder || '').trim();
+      const payloadFrom = String(payload.from || '').trim();
+      const payloadTo = String(payload.to || '').trim();
+      const payloadNoteId = String(payload.note_id || '').trim();
+      const currentNoteId = String(selectedNoteId || '').trim();
+      const normalizedSelectedFolder = normalizeFolderPath(selectedFolder);
+      const currentListContainsRenamedFolder = Boolean(
+        payloadFrom
+        && notes.some((note) => {
+          const noteFolder = normalizeFolderPath(note.folder);
+          return noteFolder === payloadFrom || noteFolder.startsWith(`${payloadFrom}/`);
+        }),
+      );
+
+      if (reason === 'folder_created' && payloadFolder) {
+        applyFolderToCache(payloadFolder);
+      } else if (reason === 'folder_deleted' && payloadFolder) {
+        removeFolderFromCache(payloadFolder);
+        if (
+          normalizedSelectedFolder
+          && (normalizedSelectedFolder === payloadFolder || normalizedSelectedFolder.startsWith(`${payloadFolder}/`))
+        ) {
+          setSelectedFolder('');
+        }
+        if (selectedNoteMeta) {
+          const selectedNoteFolder = normalizeFolderPath(selectedNoteMeta.folder);
+          if (selectedNoteFolder === payloadFolder || selectedNoteFolder.startsWith(`${payloadFolder}/`)) {
+            resetEditor();
+          }
+        }
+      } else if (reason === 'folder_renamed' && payloadFrom && payloadTo) {
+        renameFolderInCache(payloadFrom, payloadTo);
+        if (
+          normalizedSelectedFolder
+          && (normalizedSelectedFolder === payloadFrom || normalizedSelectedFolder.startsWith(`${payloadFrom}/`))
+        ) {
+          const nextSelectedFolder = renameFolderPath(normalizedSelectedFolder, payloadFrom, payloadTo);
+          setSelectedFolder(nextSelectedFolder);
+          ensureFolderExpanded(nextSelectedFolder);
+        }
+      } else if (reason === 'note_deleted' && payloadNoteId) {
+        removeCachedNote(payloadNoteId);
+        if (payloadNoteId === currentNoteId) {
+          resetEditor();
+        }
+      }
+
+      if (reason === 'folder_renamed') {
+        markFoldersStale();
+        markNotesStale();
+      } else if (reason === 'note_created' || reason === 'note_updated') {
+        markNotesStale();
+      }
+      if (payloadNoteId && reason !== 'note_deleted') {
+        markNoteDetailStale(payloadNoteId);
+      }
+
+      if (!isOpen) {
+        setRefreshNonce((value) => value + 1);
+        return;
+      }
+
+      if (payloadNoteId && currentNoteId && payloadNoteId === currentNoteId && !dirty) {
+        await openNote(currentNoteId);
+        return;
+      }
+
+      if (reason === 'folder_renamed') {
+        hydrateFolders();
+      }
+      if (reason === 'note_deleted') {
+        hydrateNotes();
+      }
+
+      if ((reason === 'note_created' || reason === 'note_updated') && payloadNoteId) {
+        await loadNoteDetail(payloadNoteId, { force: true });
+        hydrateNotes();
+        return;
+      }
+
+      const affectsSelectedFolder = !selectedFolder
+        || payloadFolder === selectedFolder
+        || payloadFolder.startsWith(`${selectedFolder}/`)
+        || payloadFrom === selectedFolder
+        || payloadFrom.startsWith(`${selectedFolder}/`)
+        || payloadTo === selectedFolder
+        || payloadTo.startsWith(`${selectedFolder}/`);
+
+      if (reason === 'folder_renamed' && (affectsSelectedFolder || currentListContainsRenamedFolder)) {
+        await loadNotes({ force: true });
+      }
+    },
+  });
 
   const {
     contextMenu,
@@ -215,11 +361,15 @@ export const useNotepadPanelController = ({
   useNotepadPanelEffects({
     isOpen,
     selectedFolder,
+    searchQuery,
     contextMenu,
     refreshAll,
     loadNotes,
+    hydrateFolders,
+    hydrateNotes,
     ensureFolderExpanded,
     setContextMenu,
+    refreshNonce,
   });
 
   return {
@@ -242,7 +392,7 @@ export const useNotepadPanelController = ({
     viewMode,
     setSearchQuery,
     setViewMode,
-    handleRefresh: refreshAll,
+    handleRefresh: () => refreshAll({ force: true }),
     handleCreateFolder: () => handleCreateFolderInternal(),
     handleCreateNote: () => handleCreateNoteInternal(),
     handleToggleFolderExpanded: toggleFolderExpanded,

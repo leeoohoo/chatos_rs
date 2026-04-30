@@ -1,9 +1,11 @@
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 
 import { useSessionRuntimeSettings } from '../../features/sessionRuntime/useSessionRuntimeSettings';
 import type { ChatInterfaceProps } from '../../types';
 import { useChatInterfaceController } from './useChatInterfaceController';
 import { useChatInterfaceDerivedState } from './useChatInterfaceDerivedState';
+import { useGlobalConversationPanelsRealtime } from './useGlobalConversationPanelsRealtime';
+import { useChatStreamRealtimeBridge } from './useChatStreamRealtimeBridge';
 import { useChatInterfaceSessionResources } from './useChatInterfaceSessionResources';
 import { useChatInterfaceStoreBridge } from './useChatInterfaceStoreBridge';
 import { useChatInterfaceViewProps } from './useChatInterfaceViewProps';
@@ -24,6 +26,20 @@ export const useChatInterfaceModel = ({
   customRenderer,
 }: UseChatInterfaceModelParams) => {
   const store = useChatInterfaceStoreBridge();
+  const [summaryPaneSessionId, setSummaryPaneSessionId] = useState<string | null>(null);
+  const [uiPromptHistoryOpen, setUiPromptHistoryOpen] = useState(false);
+  const [taskHistoryOpen, setTaskHistoryOpen] = useState(false);
+
+  useGlobalConversationPanelsRealtime({
+    apiClient: store.apiClient,
+    sessions: store.sessions || [],
+    upsertTaskReviewPanel: store.upsertTaskReviewPanel,
+    removeTaskReviewPanel: store.removeTaskReviewPanel,
+    upsertUiPromptPanel: store.upsertUiPromptPanel,
+    removeUiPromptPanel: store.removeUiPromptPanel,
+  });
+
+  useChatStreamRealtimeBridge();
 
   const derived = useChatInterfaceDerivedState({
     currentSession: store.currentSession,
@@ -53,6 +69,8 @@ export const useChatInterfaceModel = ({
     projects: store.projects,
     messages: store.messages,
     activePanel: store.activePanel,
+    taskHistoryOpen,
+    uiPromptHistoryOpen,
     sessionRuntimeGuidanceState: store.sessionRuntimeGuidanceState || {},
     taskReviewPanelsBySession: store.taskReviewPanelsBySession || {},
     uiPromptPanelsBySession: store.uiPromptPanelsBySession || {},
@@ -70,6 +88,11 @@ export const useChatInterfaceModel = ({
     currentChatStateActiveTurnId: derived.currentChatState?.activeTurnId,
     activeConversationTurnId: resources.activeConversationTurnId,
     currentRemoteConnectionId: store.currentRemoteConnection?.id || null,
+    uiPromptHistoryOpen,
+    setUiPromptHistoryOpen,
+    summaryPaneSessionId,
+    setSummaryPaneSessionId,
+    setTaskHistoryOpen,
     onMessageSend,
     sendMessage: store.sendMessage,
     selectRemoteConnection: store.selectRemoteConnection,
@@ -80,13 +103,15 @@ export const useChatInterfaceModel = ({
     loadAiModelConfigs: store.loadAiModelConfigs,
     loadAgents: store.loadAgents,
     loadContactMemoryContext: resources.loadContactMemoryContext,
+    loadSessionMemorySummaries: resources.loadSessionMemorySummaries,
+    hydrateContactMemoryContextFromCache: resources.hydrateContactMemoryContextFromCache,
+    markContactMemoryContextStale: resources.markContactMemoryContextStale,
     resetMemoryState: resources.resetMemoryState,
     cancelPendingMemoryLoad: resources.cancelPendingMemoryLoad,
     loadUiPromptHistory: resources.loadUiPromptHistory,
     hydrateUiPromptHistoryFromCache: resources.hydrateUiPromptHistoryFromCache,
     resetUiPromptHistoryState: resources.resetUiPromptHistoryState,
     cancelPendingUiPromptHistoryLoad: resources.cancelPendingUiPromptHistoryLoad,
-    upsertUiPromptPanel: store.upsertUiPromptPanel,
     resetAllWorkbarState: resources.resetAllWorkbarState,
     resetHistoryWorkbarState: resources.resetHistoryWorkbarState,
     handleOpenWorkbarHistory: resources.handleOpenWorkbarHistory,
@@ -95,6 +120,7 @@ export const useChatInterfaceModel = ({
   const conversation: ChatInterfaceConversationState = {
     currentSession: store.currentSession,
     sessionSummaryPaneVisible: controller.sessionSummaryPaneVisible,
+    taskHistoryOpen,
     currentContactName: derived.currentContactName,
     currentContactId: derived.currentContactId,
     currentProjectNameForMemory: resources.currentProjectNameForMemory,
@@ -163,6 +189,7 @@ export const useChatInterfaceModel = ({
     toggleSidebar: store.toggleSidebar,
     handleRefreshWorkbar: resources.handleRefreshWorkbar,
     handleOpenHistory: controller.handleOpenHistory,
+    setTaskHistoryOpen,
     handleOpenUiPromptHistory: controller.handleOpenUiPromptHistory,
     handleWorkbarCompleteTask: resources.handleWorkbarCompleteTask,
     handleWorkbarDeleteTask: resources.handleWorkbarDeleteTask,
@@ -219,12 +246,12 @@ export const useChatInterfaceModel = ({
   });
 
   const handleClearSummaryPaneSelection = useCallback(() => {
-    controller.setSummaryPaneSessionId(null);
-  }, [controller]);
+    setSummaryPaneSessionId(null);
+  }, []);
 
   const handleToggleSessionSummary = useCallback((sessionId: string) => {
-    controller.setSummaryPaneSessionId((prev) => (prev === sessionId ? null : sessionId));
-  }, [controller]);
+    setSummaryPaneSessionId((prev) => (prev === sessionId ? null : sessionId));
+  }, []);
 
   return {
     user: store.user,

@@ -1,6 +1,7 @@
 import type { Message } from '../../../types';
 import type { SendMessageRuntimeOptions } from '../../../types';
 import type ApiClient from '../../api/client';
+import { getRealtimeConnectionStateSnapshot } from '../../realtime/state';
 import { debugLog } from '@/lib/utils';
 import { prepareAttachmentsForStreaming } from './sendMessage/attachments';
 import { createInternalId } from './sendMessage/internalId';
@@ -13,10 +14,6 @@ import {
   buildStreamChatRuntimeOptions,
   resolveModelCapabilities,
 } from './sendMessage/requestPayload';
-import {
-  rollbackFailedSendMessage,
-  runStreamingAssistantTurn,
-} from './sendMessage/streamExecution';
 import {
   resolveRuntimeConfig,
   resolveSelectedModelOrThrow,
@@ -56,6 +53,9 @@ export function createSendMessageHandler({
   ) {
     let tempUserId: string | null = null;
     let tempAssistantId: string | null = null;
+    let streamExecutionModulePromise:
+      | Promise<typeof import('./sendMessage/streamExecution')>
+      | null = null;
     const {
       currentSessionId,
       currentSession,
@@ -222,46 +222,68 @@ export function createSendMessageHandler({
 
       debugLog('🚀 开始调用后端流式聊天API:', chatRequest);
 
-      const response = await client.streamChat(
-        currentSessionId,
-        content,
-        selectedModel,
-        getUserIdParam(),
-        apiAttachments,
-        reasoningEnabled,
-        buildStreamChatRuntimeOptions({
-          turnId: conversationTurnId,
-          contactAgentId: effectiveContactAgentId,
-          remoteConnectionId: effectiveRemoteConnectionId,
-          projectId: effectiveProjectId,
-          projectRoot: effectiveExecutionRoot,
-          mcpEnabled: effectiveMcpEnabled,
-          enabledMcpIds: effectiveEnabledMcpIds,
-          skillsEnabled: effectiveSkillsEnabled,
-          selectedSkillIds: effectiveSelectedSkillIds,
-        }),
-      );
+      const streamRuntimeOptions = buildStreamChatRuntimeOptions({
+        turnId: conversationTurnId,
+        contactAgentId: effectiveContactAgentId,
+        remoteConnectionId: effectiveRemoteConnectionId,
+        projectId: effectiveProjectId,
+        projectRoot: effectiveExecutionRoot,
+        mcpEnabled: effectiveMcpEnabled,
+        enabledMcpIds: effectiveEnabledMcpIds,
+        skillsEnabled: effectiveSkillsEnabled,
+        selectedSkillIds: effectiveSelectedSkillIds,
+      });
+      const preferRealtimeStream = getRealtimeConnectionStateSnapshot() === 'connected';
 
-      if (!response) {
-        throw new Error('No response received');
+      if (preferRealtimeStream) {
+        const commandResponse = await client.sendChatCommand(
+          currentSessionId,
+          content,
+          selectedModel,
+          getUserIdParam(),
+          apiAttachments,
+          reasoningEnabled,
+          streamRuntimeOptions,
+        );
+        if (commandResponse?.accepted === false) {
+          throw new Error('聊天命令未被接受');
+        }
+      } else {
+        const response = await client.streamChat(
+          currentSessionId,
+          content,
+          selectedModel,
+          getUserIdParam(),
+          apiAttachments,
+          reasoningEnabled,
+          streamRuntimeOptions,
+        );
+
+        if (!response) {
+          throw new Error('No response received');
+        }
+
+        streamExecutionModulePromise ??= import('./sendMessage/streamExecution');
+        const { runStreamingAssistantTurn } = await streamExecutionModulePromise;
+        await runStreamingAssistantTurn({
+          set,
+          currentSessionId,
+          tempAssistantMessage,
+          tempUserId,
+          conversationTurnId,
+          streamedTextRef,
+          response,
+        });
       }
 
-      await runStreamingAssistantTurn({
-        set,
-        currentSessionId,
-        tempAssistantMessage,
-        tempUserId,
-        conversationTurnId,
-        streamedTextRef,
-        response,
-      });
-
-      if (get().currentSessionId === currentSessionId) {
+      if (!preferRealtimeStream && get().currentSessionId === currentSessionId) {
         await get().loadMessages(currentSessionId);
       }
 
       debugLog('✅ 消息发送完成');
     } catch (error) {
+      streamExecutionModulePromise ??= import('./sendMessage/streamExecution');
+      const { rollbackFailedSendMessage } = await streamExecutionModulePromise;
       const readableError = rollbackFailedSendMessage({
         set,
         currentSessionId,

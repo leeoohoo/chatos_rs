@@ -55,8 +55,47 @@ const readTrimmedString = (value: unknown): string => (
   typeof value === 'string' ? value.trim() : ''
 );
 
+const readProjectRunnerContactId = (value: ProjectContactLinkResponse | unknown): string => {
+  const record = asRecord(value) || {};
+  return readTrimmedString(readValue(record, 'contact_id') ?? readValue(record, 'contactId'));
+};
+
+interface ProjectRunnerContactRowsCacheEntry {
+  rows: ProjectContactLinkResponse[];
+  stale: boolean;
+}
+
 const projectRunnerContactRowsInflight = new WeakMap<object, Map<string, Promise<ProjectContactLinkResponse[]>>>();
+const projectRunnerContactRowsCache = new WeakMap<object, Map<string, ProjectRunnerContactRowsCacheEntry>>();
 const projectRunnerScriptInflight = new WeakMap<object, Map<string, Promise<boolean>>>();
+
+const getProjectRunnerContactRowsScopedCache = (
+  client: object,
+): Map<string, ProjectRunnerContactRowsCacheEntry> | null => (
+  projectRunnerContactRowsCache.get(client) || null
+);
+
+const ensureProjectRunnerContactRowsScopedCache = (
+  client: object,
+): Map<string, ProjectRunnerContactRowsCacheEntry> => {
+  const existing = getProjectRunnerContactRowsScopedCache(client);
+  if (existing) {
+    return existing;
+  }
+  const next = new Map<string, ProjectRunnerContactRowsCacheEntry>();
+  projectRunnerContactRowsCache.set(client, next);
+  return next;
+};
+
+const setProjectRunnerContactRowsCacheEntry = (
+  client: object,
+  projectId: string,
+  entry: ProjectRunnerContactRowsCacheEntry,
+): ProjectContactLinkResponse[] => {
+  const scopedCache = ensureProjectRunnerContactRowsScopedCache(client);
+  scopedCache.set(projectId, entry);
+  return entry.rows;
+};
 
 const withClientInflight = <Result,>(
   store: WeakMap<object, Map<string, Promise<Result>>>,
@@ -150,9 +189,102 @@ export const loadProjectRunnerContactRows = async (
     return [];
   }
 
-  return withClientInflight(projectRunnerContactRowsInflight, client, normalizedProjectId, async () => (
-    client.listProjectContacts(normalizedProjectId, { limit: 500, offset: 0 })
-  ));
+  const cachedRows = getProjectRunnerContactRowsScopedCache(client)?.get(normalizedProjectId);
+  if (cachedRows && !cachedRows.stale) {
+    return cachedRows.rows;
+  }
+
+  return withClientInflight(projectRunnerContactRowsInflight, client, normalizedProjectId, async () => {
+    const rows = await client.listProjectContacts(normalizedProjectId, { limit: 500, offset: 0 });
+    setProjectRunnerContactRowsCacheEntry(client, normalizedProjectId, {
+      rows,
+      stale: false,
+    });
+    return rows;
+  });
+};
+
+export const getProjectRunnerContactRowsSnapshot = (
+  client: RunnerProjectContactsClient,
+  projectId: string,
+): ProjectContactLinkResponse[] | null => {
+  const normalizedProjectId = readTrimmedString(projectId);
+  if (!normalizedProjectId) {
+    return null;
+  }
+  return getProjectRunnerContactRowsScopedCache(client)?.get(normalizedProjectId)?.rows || null;
+};
+
+export const upsertProjectRunnerContactRow = (
+  client: RunnerProjectContactsClient,
+  projectId: string,
+  row: ProjectContactLinkResponse | null | undefined,
+): ProjectContactLinkResponse[] | null => {
+  const normalizedProjectId = readTrimmedString(projectId);
+  const normalizedContactId = readProjectRunnerContactId(row);
+  if (!normalizedProjectId || !normalizedContactId) {
+    return null;
+  }
+
+  const scopedCache = getProjectRunnerContactRowsScopedCache(client);
+  const cached = scopedCache?.get(normalizedProjectId);
+  if (!scopedCache || !cached) {
+    return null;
+  }
+
+  const nextRows = [
+    row as ProjectContactLinkResponse,
+    ...cached.rows.filter((item) => readProjectRunnerContactId(item) !== normalizedContactId),
+  ];
+
+  return setProjectRunnerContactRowsCacheEntry(client, normalizedProjectId, {
+    rows: nextRows,
+    stale: cached.stale,
+  });
+};
+
+export const removeProjectRunnerContactRow = (
+  client: RunnerProjectContactsClient,
+  projectId: string,
+  contactId: string,
+): ProjectContactLinkResponse[] | null => {
+  const normalizedProjectId = readTrimmedString(projectId);
+  const normalizedContactId = readTrimmedString(contactId);
+  if (!normalizedProjectId || !normalizedContactId) {
+    return null;
+  }
+
+  const scopedCache = getProjectRunnerContactRowsScopedCache(client);
+  const cached = scopedCache?.get(normalizedProjectId);
+  if (!scopedCache || !cached) {
+    return null;
+  }
+
+  const nextRows = cached.rows.filter((item) => readProjectRunnerContactId(item) !== normalizedContactId);
+
+  return setProjectRunnerContactRowsCacheEntry(client, normalizedProjectId, {
+    rows: nextRows,
+    stale: cached.stale,
+  });
+};
+
+export const markProjectRunnerContactRowsStale = (
+  client: RunnerProjectContactsClient,
+  projectId: string,
+): void => {
+  const normalizedProjectId = readTrimmedString(projectId);
+  if (!normalizedProjectId) {
+    return;
+  }
+  const scopedCache = getProjectRunnerContactRowsScopedCache(client);
+  const cached = scopedCache?.get(normalizedProjectId);
+  if (!scopedCache || !cached) {
+    return;
+  }
+  scopedCache.set(normalizedProjectId, {
+    ...cached,
+    stale: true,
+  });
 };
 
 export const hasProjectRunnerScript = async (

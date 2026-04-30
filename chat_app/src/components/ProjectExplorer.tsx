@@ -66,6 +66,7 @@ export const ProjectExplorer: React.FC<ProjectExplorerProps> = ({ project, class
         rightActions={(
           <GitBranchButton
             client={client}
+            projectId={project.id}
             projectRoot={project.rootPath}
             onRepositoryChanged={handleGitRepositoryChanged}
           />

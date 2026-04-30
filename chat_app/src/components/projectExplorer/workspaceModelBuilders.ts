@@ -119,7 +119,7 @@ export const buildWorkspaceEffectsParams = (
     treeWidth: state.treeWidth,
     setIsResizing: state.setIsResizing,
   },
-  summaryPolling: {
+  summaryRealtime: {
     projectId: project?.id,
     loadChangeSummary: dataLoading.loadChangeSummary,
   },

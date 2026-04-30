@@ -23,6 +23,7 @@ interface ChatComposerPanelProps {
   sessionId: string;
   mergedCurrentTurnTasks: TaskWorkbarItem[];
   workbarHistoryTasks: TaskWorkbarItem[];
+  taskHistoryOpen?: boolean;
   activeConversationTurnId: string | null;
   workbarLoading: boolean;
   workbarHistoryLoading: boolean;
@@ -35,6 +36,7 @@ interface ChatComposerPanelProps {
   taskModalError: string | null;
   onRefreshWorkbarTasks: () => void;
   onOpenHistory: (sessionId: string) => void;
+  onTaskHistoryOpenChange?: (value: boolean) => void;
   onOpenUiPromptHistory?: (sessionId: string) => void;
   uiPromptHistoryCount?: number;
   uiPromptHistoryLoading?: boolean;
@@ -93,6 +95,7 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
   sessionId,
   mergedCurrentTurnTasks,
   workbarHistoryTasks,
+  taskHistoryOpen = false,
   activeConversationTurnId,
   workbarLoading,
   workbarHistoryLoading,
@@ -105,6 +108,7 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
   taskModalError,
   onRefreshWorkbarTasks,
   onOpenHistory,
+  onTaskHistoryOpenChange,
   onOpenUiPromptHistory,
   uiPromptHistoryCount,
   uiPromptHistoryLoading,
@@ -162,6 +166,7 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
     <TaskWorkbar
       tasks={mergedCurrentTurnTasks}
       historyTasks={workbarHistoryTasks}
+      historyOpen={taskHistoryOpen}
       currentTurnId={activeConversationTurnId}
       isLoading={workbarLoading}
       historyLoading={workbarHistoryLoading}
@@ -170,6 +175,7 @@ const ChatComposerPanel: React.FC<ChatComposerPanelProps> = ({
       actionLoadingTaskId={workbarActionLoadingTaskId}
       onRefresh={onRefreshWorkbarTasks}
       onOpenHistory={() => onOpenHistory(sessionId)}
+      onHistoryOpenChange={onTaskHistoryOpenChange}
       onOpenUiPromptHistory={onOpenUiPromptHistory ? () => onOpenUiPromptHistory(sessionId) : undefined}
       onReviewRepair={reviewRepairAvailable ? onReviewRepair : undefined}
       reviewRepairRunning={reviewRepairRunning}

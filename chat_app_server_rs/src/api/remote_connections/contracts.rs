@@ -96,6 +96,7 @@ pub(super) enum WsOutput {
 pub(super) struct SftpTransferStatus {
     pub(super) id: String,
     pub(super) connection_id: String,
+    pub(super) user_id: String,
     pub(super) direction: String,
     pub(super) state: String,
     pub(super) total_bytes: Option<u64>,

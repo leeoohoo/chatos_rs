@@ -1,14 +1,14 @@
 import { useCallback } from 'react';
 
-import type ApiClient from '../../lib/api/client';
 import {
   copyTextToClipboard,
   downloadMarkdownFile,
 } from './controllerHelpers';
-import type { NoteMeta } from './utils';
+import type { NoteDetail, NoteMeta } from './utils';
 
 interface UseNotepadExportActionsOptions {
-  apiClient: ApiClient;
+  getCachedNoteDetail: (noteId: string) => NoteDetail | null;
+  loadNoteDetail: (noteId: string, options?: { force?: boolean }) => Promise<NoteDetail>;
   selectedNoteId: string;
   title: string;
   content: string;
@@ -16,7 +16,8 @@ interface UseNotepadExportActionsOptions {
 }
 
 export const useNotepadExportActions = ({
-  apiClient,
+  getCachedNoteDetail,
+  loadNoteDetail,
   selectedNoteId,
   title,
   content,
@@ -42,13 +43,20 @@ export const useNotepadExportActions = ({
       };
     }
 
-    const res = await apiClient.getNotepadNote(targetNoteId);
-    const remoteNote = res?.note;
+    const cachedDetail = getCachedNoteDetail(targetNoteId);
+    if (cachedDetail) {
+      return {
+        title: String(cachedDetail.note.title || fallbackTitle || 'Untitled'),
+        content: String(cachedDetail.content || ''),
+      };
+    }
+
+    const remoteDetail = await loadNoteDetail(targetNoteId);
     return {
-      title: String(remoteNote?.title || fallbackTitle || 'Untitled'),
-      content: String(res?.content || ''),
+      title: String(remoteDetail.note.title || fallbackTitle || 'Untitled'),
+      content: String(remoteDetail.content || ''),
     };
-  }, [apiClient, content, selectedNoteId, title]);
+  }, [content, getCachedNoteDetail, loadNoteDetail, selectedNoteId, title]);
 
   const copyText = useCallback(async (note?: NoteMeta | null) => {
     try {

@@ -44,6 +44,8 @@ async fn main() {
         std::process::exit(1);
     }
 
+    services::workspace_realtime_watcher::start_workspace_realtime_watcher();
+
     info!("Memory-only mode enabled, skip local session background jobs");
 
     cfg.print();

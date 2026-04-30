@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type ApiClient from '../../lib/api/client';
+import { useRealtimeEvent, useRealtimeTopics } from '../../lib/realtime/RealtimeProvider';
+import { getRealtimeConnectionStateSnapshot } from '../../lib/realtime/state';
+import type {
+  RealtimeEventEnvelope,
+  RealtimeProjectMembersUpdatedPayloadWrapper,
+  RealtimeProjectRunCatalogPayloadWrapper,
+  RealtimeProjectRunStatePayloadWrapper,
+} from '../../lib/realtime/types';
 import type { Project, Terminal } from '../../types';
 import {
   RUNNER_RESTART_COMMAND,
@@ -54,6 +62,15 @@ interface UseProjectRunStateParams {
   enabled?: boolean;
 }
 
+interface ProjectRealtimeLiveState {
+  isRunning: boolean;
+  terminalId: string | null;
+  terminalName: string | null;
+  cwd: string | null;
+  busy: boolean;
+  status: string;
+}
+
 const createInitialProjectRunState = (): ProjectRunViewState => ({
   status: 'loading',
   loading: true,
@@ -68,12 +85,31 @@ const createInitialProjectRunState = (): ProjectRunViewState => ({
   error: null,
 });
 
-const shouldPollProjectRunState = (state: ProjectRunViewState): boolean => {
-  if (state.status === 'ready' || state.status === 'missing_root') {
-    return false;
-  }
-  return true;
-};
+const isProjectRunStatePayload = (
+  event: RealtimeEventEnvelope,
+): event is RealtimeEventEnvelope & { payload: RealtimeProjectRunStatePayloadWrapper } => (
+  event?.payload?.kind === 'project_run_state'
+);
+
+const isProjectRunCatalogPayload = (
+  event: RealtimeEventEnvelope,
+): event is RealtimeEventEnvelope & { payload: RealtimeProjectRunCatalogPayloadWrapper } => (
+  event?.payload?.kind === 'project_run_catalog'
+);
+
+const isProjectMembersUpdatedPayload = (
+  event: RealtimeEventEnvelope,
+): event is RealtimeEventEnvelope & { payload: RealtimeProjectMembersUpdatedPayloadWrapper } => (
+  event?.payload?.kind === 'project_members_updated'
+);
+
+const readTrimmedString = (value: unknown): string => (
+  typeof value === 'string' ? value.trim() : ''
+);
+
+const shouldFallbackRefreshTerminals = (): boolean => (
+  getRealtimeConnectionStateSnapshot() !== 'connected'
+);
 
 const resolveProjectRunState = async (
   apiClient: ApiClient,
@@ -146,21 +182,34 @@ export const useProjectRunState = ({
   enabled = true,
 }: UseProjectRunStateParams) => {
   const [projectRunStateById, setProjectRunStateById] = useState<Record<string, ProjectRunViewState>>({});
+  const [projectRealtimeLiveById, setProjectRealtimeLiveById] = useState<Record<string, ProjectRealtimeLiveState>>({});
   const [runningProjectId, setRunningProjectId] = useState<string | null>(null);
   const [projectActionLoadingById, setProjectActionLoadingById] = useState<Record<string, boolean>>({});
   const projectRunStateRef = useRef<Record<string, ProjectRunViewState>>({});
   const projectRootPathByIdRef = useRef<Record<string, string>>({});
+  const projectIds = useMemo(
+    () => new Set((projects || []).map((project) => String(project.id || '')).filter(Boolean)),
+    [projects],
+  );
+  const realtimeProjectTopics = useMemo(
+    () => (projects || []).map((project) => (
+      project?.id ? { scope: 'project' as const, id: project.id } : null
+    )),
+    [projects],
+  );
+
+  useRealtimeTopics(realtimeProjectTopics, enabled);
 
   useEffect(() => {
     if (!enabled) {
       setProjectRunStateById({});
+      setProjectRealtimeLiveById({});
       projectRunStateRef.current = {};
       projectRootPathByIdRef.current = {};
       return;
     }
 
     let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
     const projectIds = new Set((projects || []).map((project) => String(project.id || '')));
 
     setProjectRunStateById((prev) => {
@@ -180,17 +229,8 @@ export const useProjectRunState = ({
     });
 
     const loadProjectRunStates = async () => {
-      const projectsToRefresh = (projects || []).filter((project) => {
-        const currentState = projectRunStateRef.current[project.id];
-        return !currentState || shouldPollProjectRunState(currentState);
-      });
-
-      if (projectsToRefresh.length === 0) {
-        return;
-      }
-
       const updates = await Promise.all(
-        projectsToRefresh.map(async (project) => ({
+        (projects || []).map(async (project) => ({
           projectId: project.id,
           state: await resolveProjectRunState(apiClient, project),
         })),
@@ -213,44 +253,118 @@ export const useProjectRunState = ({
         projectRunStateRef.current = next;
         return next;
       });
-
-      if (!cancelled && updates.some((item) => shouldPollProjectRunState(item.state))) {
-        timer = setTimeout(() => {
-          void loadProjectRunStates();
-        }, 5000);
-      }
     };
 
     void loadProjectRunStates();
 
     return () => {
       cancelled = true;
-      if (timer) {
-        clearTimeout(timer);
-      }
     };
   }, [apiClient, enabled, projects]);
+
+  useEffect(() => {
+    if (!enabled) {
+      setProjectRealtimeLiveById({});
+      return;
+    }
+    setProjectRealtimeLiveById((prev) => {
+      const next: Record<string, ProjectRealtimeLiveState> = {};
+      (projects || []).forEach((project) => {
+        if (prev[project.id]) {
+          next[project.id] = prev[project.id];
+        }
+      });
+      return next;
+    });
+  }, [enabled, projects]);
+
+  const refreshProjectRunState = useCallback(async (projectId: string) => {
+    const project = (projects || []).find((item) => item.id === projectId);
+    if (!enabled || !project) {
+      return;
+    }
+    const nextState = await resolveProjectRunState(apiClient, project);
+    setProjectRunStateById((prev) => {
+      const next = {
+        ...prev,
+        [projectId]: nextState,
+      };
+      projectRunStateRef.current = next;
+      return next;
+    });
+  }, [apiClient, enabled, projects]);
+
+  useRealtimeEvent((event) => {
+    if (!enabled) {
+      return;
+    }
+    if (event.event === 'project.members.updated' && isProjectMembersUpdatedPayload(event)) {
+      const payloadProjectId = String(event.project_id || event.payload.project_id || '').trim();
+      if (!payloadProjectId || !projectIds.has(payloadProjectId)) {
+        return;
+      }
+      void refreshProjectRunState(payloadProjectId);
+      return;
+    }
+    if (event.event === 'project.run.catalog.updated' && isProjectRunCatalogPayload(event)) {
+      const payloadProjectId = String(event.project_id || event.payload.project_id || '').trim();
+      if (!payloadProjectId || !projectIds.has(payloadProjectId)) {
+        return;
+      }
+      void refreshProjectRunState(payloadProjectId);
+      return;
+    }
+
+    if (event.event !== 'project.run.state_changed' || !isProjectRunStatePayload(event)) {
+      return;
+    }
+    const payloadProjectId = String(event.project_id || event.payload.project_id || '').trim();
+    if (!payloadProjectId || !projectIds.has(payloadProjectId)) {
+      return;
+    }
+    const terminalId = readTrimmedString(event.payload.terminal_id);
+    const terminalName = readTrimmedString(event.payload.terminal_name) || terminalId || null;
+    const cwd = readTrimmedString(event.payload.cwd) || null;
+    const status = readTrimmedString(event.payload.status) || 'unknown';
+    setProjectRealtimeLiveById((prev) => ({
+      ...prev,
+      [payloadProjectId]: {
+        isRunning: event.payload.running === true,
+        terminalId: terminalId || null,
+        terminalName,
+        cwd,
+        busy: event.payload.busy === true,
+        status,
+      },
+    }));
+  });
 
   const projectLiveStateById = useMemo<Record<string, ProjectLiveViewState>>(() => {
     const out: Record<string, ProjectLiveViewState> = {};
 
     (projects || []).forEach((project) => {
       const { busyTerminal, activeTerminal } = resolveProjectRuntimeTerminal(terminals || [], project.id);
+      const realtimeLive = projectRealtimeLiveById[project.id];
       const runState = projectRunStateById[project.id];
       const command = runState?.defaultCommand || runState?.fallbackCommand || null;
-      const cwd = runState?.defaultCwd || runState?.fallbackCwd || activeTerminal?.cwd || null;
+      const cwd = runState?.defaultCwd || runState?.fallbackCwd || realtimeLive?.cwd || activeTerminal?.cwd || null;
+      const terminalId = realtimeLive?.terminalId || activeTerminal?.id || null;
+      const terminalName = realtimeLive?.terminalName || activeTerminal?.name || null;
+      const isRunning = typeof realtimeLive?.isRunning === 'boolean'
+        ? realtimeLive.isRunning
+        : Boolean(busyTerminal);
 
       out[project.id] = {
-        isRunning: Boolean(busyTerminal),
-        terminalId: activeTerminal?.id || null,
-        terminalName: activeTerminal?.name || null,
+        isRunning,
+        terminalId,
+        terminalName,
         canRestart: Boolean(command && cwd),
         actionLoading: Boolean(projectActionLoadingById[project.id]),
       };
     });
 
     return out;
-  }, [projectActionLoadingById, projectRunStateById, projects, terminals]);
+  }, [projectActionLoadingById, projectRealtimeLiveById, projectRunStateById, projects, terminals]);
 
   const setProjectRunError = useCallback((projectId: string, error: string | null) => {
     setProjectRunStateById((prev) => {
@@ -305,7 +419,9 @@ export const useProjectRunState = ({
         await handleSelectTerminal(terminalId);
       }
       setActivePanel('terminal');
-      await loadTerminals();
+      if (shouldFallbackRefreshTerminals()) {
+        await loadTerminals();
+      }
     } catch (error) {
       setProjectRunError(projectId, error instanceof Error ? error.message : '运行失败');
     } finally {
@@ -336,7 +452,9 @@ export const useProjectRunState = ({
       if (terminalId) {
         await handleSelectTerminal(terminalId);
       }
-      await loadTerminals();
+      if (shouldFallbackRefreshTerminals()) {
+        await loadTerminals();
+      }
       setActivePanel('terminal');
     } catch (error) {
       setProjectRunError(projectId, error instanceof Error ? error.message : '停止失败');
@@ -369,7 +487,9 @@ export const useProjectRunState = ({
         await handleSelectTerminal(terminalId);
       }
       setActivePanel('terminal');
-      await loadTerminals();
+      if (shouldFallbackRefreshTerminals()) {
+        await loadTerminals();
+      }
     } catch (error) {
       setProjectRunError(projectId, error instanceof Error ? error.message : '重启失败');
     } finally {

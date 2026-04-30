@@ -2,7 +2,9 @@ import { useCallback } from 'react';
 
 import type ApiClient from '../../lib/api/client';
 import type { useDialogService } from '../ui/DialogProvider';
+import { normalizeNoteMeta } from './controllerHelpers';
 import {
+  type NoteDetail,
   normalizeFolderPath,
   parseTags,
   type NoteMeta,
@@ -13,8 +15,13 @@ interface UseNotepadCrudActionsOptions {
   confirm: ReturnType<typeof useDialogService>['confirm'];
   content: string;
   ensureFolderExpanded: (folderPath: string) => void;
-  loadFolders: () => Promise<void>;
-  loadNotes: () => Promise<void>;
+  loadNotes: (options?: { force?: boolean }) => Promise<void>;
+  markNotesStale: () => void;
+  upsertCachedNote: (note: NoteMeta) => void;
+  upsertCachedNoteDetail: (detail: NoteDetail) => void;
+  removeCachedNote: (noteId: string) => void;
+  applyFolderToCache: (folderPath: string) => void;
+  removeFolderFromCache: (folderPath: string) => void;
   notes: NoteMeta[];
   openNote: (id: string) => Promise<void>;
   prompt: ReturnType<typeof useDialogService>['prompt'];
@@ -34,8 +41,13 @@ export const useNotepadCrudActions = ({
   confirm,
   content,
   ensureFolderExpanded,
-  loadFolders,
   loadNotes,
+  markNotesStale,
+  upsertCachedNote,
+  upsertCachedNoteDetail,
+  removeCachedNote,
+  applyFolderToCache,
+  removeFolderFromCache,
   notes,
   openNote,
   prompt,
@@ -81,13 +93,13 @@ export const useNotepadCrudActions = ({
       await apiClient.createNotepadFolder({ folder });
       setSelectedFolder(folder);
       ensureFolderExpanded(folder);
-      await Promise.all([loadFolders(), loadNotes()]);
+      applyFolderToCache(folder);
     } catch (err) {
       setError(err instanceof Error ? err.message : '创建文件夹失败');
     } finally {
       setLoading(false);
     }
-  }, [apiClient, ensureFolderExpanded, loadFolders, loadNotes, prompt, selectedFolder, setError, setLoading, setSelectedFolder]);
+  }, [apiClient, applyFolderToCache, ensureFolderExpanded, prompt, selectedFolder, setError, setLoading, setSelectedFolder]);
 
   const createNote = useCallback(async (folderOverride?: string) => {
     const targetFolder = normalizeFolderPath(folderOverride ?? selectedFolder);
@@ -117,7 +129,16 @@ export const useNotepadCrudActions = ({
         setSelectedFolder(targetFolder);
         ensureFolderExpanded(targetFolder);
       }
-      await loadNotes();
+      const nextNote = normalizeNoteMeta(res?.note || {
+        id: String(res?.note?.id || ''),
+        title: noteTitle.trim(),
+        folder: targetFolder,
+        tags: [],
+        created_at: '',
+        updated_at: '',
+        file: '',
+      });
+      upsertCachedNote(nextNote);
       const id = String(res?.note?.id || '');
       if (id) {
         await openNote(id);
@@ -129,7 +150,7 @@ export const useNotepadCrudActions = ({
     } finally {
       setLoading(false);
     }
-  }, [apiClient, ensureFolderExpanded, loadNotes, openNote, prompt, resetEditor, selectedFolder, setError, setLoading, setSelectedFolder]);
+  }, [apiClient, ensureFolderExpanded, openNote, prompt, resetEditor, selectedFolder, setError, setLoading, setSelectedFolder, upsertCachedNote]);
 
   const saveNote = useCallback(async () => {
     if (!selectedNoteId) {
@@ -138,19 +159,28 @@ export const useNotepadCrudActions = ({
     setLoading(true);
     setError(null);
     try {
-      await apiClient.updateNotepadNote(selectedNoteId, {
+      const res = await apiClient.updateNotepadNote(selectedNoteId, {
         title: title.trim(),
         content,
         tags: parseTags(tagsText),
       });
       setDirty(false);
-      await loadNotes();
+      if (res?.note) {
+        upsertCachedNote(normalizeNoteMeta(res.note));
+        upsertCachedNoteDetail({
+          note: normalizeNoteMeta(res.note),
+          content,
+        });
+      } else {
+        markNotesStale();
+        await loadNotes({ force: true });
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : '保存笔记失败');
     } finally {
       setLoading(false);
     }
-  }, [apiClient, content, loadNotes, selectedNoteId, setDirty, setError, setLoading, tagsText, title]);
+  }, [apiClient, content, loadNotes, markNotesStale, selectedNoteId, setDirty, setError, setLoading, tagsText, title, upsertCachedNote, upsertCachedNoteDetail]);
 
   const deleteNoteById = useCallback(async (noteId: string, titleHint?: string) => {
     const normalizedId = String(noteId || '').trim();
@@ -175,13 +205,13 @@ export const useNotepadCrudActions = ({
       if (selectedNoteId === normalizedId) {
         resetEditor();
       }
-      await loadNotes();
+      removeCachedNote(normalizedId);
     } catch (err) {
       setError(err instanceof Error ? err.message : '删除笔记失败');
     } finally {
       setLoading(false);
     }
-  }, [apiClient, confirm, loadNotes, resetEditor, selectedNoteId, setError, setLoading]);
+  }, [apiClient, confirm, removeCachedNote, resetEditor, selectedNoteId, setError, setLoading]);
 
   const deleteNote = useCallback(async () => {
     if (!selectedNoteId) {
@@ -226,13 +256,13 @@ export const useNotepadCrudActions = ({
         resetEditor();
       }
 
-      await Promise.all([loadFolders(), loadNotes()]);
+      removeFolderFromCache(folder);
     } catch (err) {
       setError(err instanceof Error ? err.message : '删除目录失败');
     } finally {
       setLoading(false);
     }
-  }, [apiClient, confirm, loadFolders, loadNotes, notes, resetEditor, selectedFolder, selectedNoteId, setError, setLoading, setSelectedFolder]);
+  }, [apiClient, confirm, notes, removeFolderFromCache, resetEditor, selectedFolder, selectedNoteId, setError, setLoading, setSelectedFolder]);
 
   return {
     createFolder,

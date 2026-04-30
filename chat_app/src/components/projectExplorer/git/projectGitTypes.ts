@@ -38,6 +38,7 @@ export interface ProjectGitApiClient {
 export interface UseProjectGitOptions {
   client: ProjectGitApiClient;
   projectRoot: string;
+  open?: boolean;
   onRepositoryChanged?: () => Promise<void> | void;
 }
 
@@ -58,8 +59,10 @@ export interface UseProjectGitResult {
   error: string | null;
   actionMessage: string | null;
   refreshClientInfo: () => Promise<void>;
-  refreshSummary: () => Promise<void>;
-  loadDetails: () => Promise<void>;
+  refreshSummary: (options?: { force?: boolean }) => Promise<void>;
+  loadDetails: (options?: { force?: boolean }) => Promise<void>;
+  markSummaryStale: () => void;
+  markDetailsStale: () => void;
   fetchRemote: () => Promise<void>;
   pullCurrent: () => Promise<void>;
   pushCurrent: () => Promise<void>;

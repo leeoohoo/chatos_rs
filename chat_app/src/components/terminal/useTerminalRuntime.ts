@@ -129,8 +129,11 @@ export const useTerminalRuntime = ({
   });
 
   useEffect(() => {
+    if (currentTerminal) {
+      return;
+    }
     loadTerminals();
-  }, [loadTerminals]);
+  }, [currentTerminal, loadTerminals]);
 
   const reconnect = useCallback(() => {
     state.setConnectSeq((prev) => prev + 1);

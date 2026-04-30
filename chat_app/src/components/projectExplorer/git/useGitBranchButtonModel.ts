@@ -1,17 +1,20 @@
 import { useMemo, useRef, useState } from 'react';
 
+import { useProjectChangeSummaryRealtime } from '../../../lib/realtime/useProjectChangeSummaryRealtime';
 import type { GitBranchInfo } from '../../../types';
 import type { ProjectGitApiClient } from './projectGitTypes';
 import { useProjectGit } from './useProjectGit';
 
 interface UseGitBranchButtonModelOptions {
   client: ProjectGitApiClient;
+  projectId?: string | null;
   projectRoot: string;
   onRepositoryChanged?: () => Promise<void> | void;
 }
 
 export const useGitBranchButtonModel = ({
   client,
+  projectId,
   projectRoot,
   onRepositoryChanged,
 }: UseGitBranchButtonModelOptions) => {
@@ -23,7 +26,20 @@ export const useGitBranchButtonModel = ({
   const [commitMessage, setCommitMessage] = useState('');
   const [selectedCommitPaths, setSelectedCommitPaths] = useState<Set<string>>(new Set());
   const panelRef = useRef<HTMLDivElement | null>(null);
-  const git = useProjectGit({ client, projectRoot, onRepositoryChanged });
+  const git = useProjectGit({ client, projectRoot, open, onRepositoryChanged });
+
+  useProjectChangeSummaryRealtime({
+    projectId,
+    enabled: Boolean(projectId),
+    onInvalidate: async () => {
+      git.markSummaryStale();
+      git.markDetailsStale();
+      await git.refreshSummary();
+      if (open) {
+        await git.loadDetails();
+      }
+    },
+  });
 
   const branchLabel = useMemo(() => {
     if (git.loadingSummary && !git.summary) return 'Git 检查中...';

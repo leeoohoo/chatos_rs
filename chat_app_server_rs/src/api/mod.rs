@@ -41,6 +41,7 @@ pub mod memory_agents;
 pub mod messages;
 pub mod notepad;
 pub mod projects;
+pub mod realtime;
 pub mod remote_connections;
 pub mod session_summary_job_config;
 pub mod sessions;
@@ -129,6 +130,7 @@ pub fn router() -> Result<Router, String> {
         .merge(code_nav::router())
         .nest("/api/applications", applications::router())
         .merge(projects::router())
+        .merge(realtime::router())
         .merge(remote_connections::router())
         .merge(session_summary_job_config::router())
         .merge(task_manager::router())

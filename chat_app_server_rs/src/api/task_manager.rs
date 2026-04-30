@@ -10,9 +10,10 @@ use serde_json::{json, Value};
 use crate::core::auth::AuthUser;
 use crate::core::session_access::{ensure_owned_session, map_session_access_error_with_success};
 use crate::services::task_manager::{
-    complete_task_by_id, delete_task_by_id, get_task_review_payload, list_tasks_for_context,
-    submit_task_review_decision, update_task_by_id, TaskDraft, TaskOutcomeItem, TaskReviewAction,
-    TaskUpdatePatch, REVIEW_NOT_FOUND_ERR, TASK_NOT_FOUND_ERR,
+    complete_task_by_id, delete_task_by_id, get_task_review_payload,
+    list_task_review_payloads_for_conversation, list_tasks_for_context,
+    submit_task_review_decision, update_task_by_id, TaskDraft, TaskOutcomeItem,
+    TaskReviewAction, TaskUpdatePatch, REVIEW_NOT_FOUND_ERR, TASK_NOT_FOUND_ERR,
 };
 
 #[derive(Debug, Deserialize)]
@@ -28,6 +29,13 @@ struct TaskListQuery {
     conversation_id: String,
     conversation_turn_id: Option<String>,
     include_done: Option<bool>,
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PendingReviewListQuery {
+    #[serde(rename = "conversation_id", alias = "conversationId")]
+    conversation_id: String,
     limit: Option<usize>,
 }
 
@@ -77,6 +85,7 @@ struct CompleteTaskRequest {
 
 pub fn router() -> Router {
     Router::new()
+        .route("/api/task-manager/reviews/pending", get(list_pending_reviews))
         .route(
             "/api/task-manager/reviews/:review_id/decision",
             post(submit_review_decision),
@@ -90,6 +99,33 @@ pub fn router() -> Router {
             "/api/task-manager/tasks/:task_id/complete",
             post(complete_task),
         )
+}
+
+async fn list_pending_reviews(
+    auth: AuthUser,
+    Query(query): Query<PendingReviewListQuery>,
+) -> (StatusCode, Json<Value>) {
+    if query.conversation_id.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "success": false, "error": "conversation_id is required" })),
+        );
+    }
+    if let Err(err) = ensure_owned_session(query.conversation_id.as_str(), &auth).await {
+        return map_session_access_error_with_success(err);
+    }
+
+    let limit = query.limit.unwrap_or(50).clamp(1, 200);
+    let reviews =
+        list_task_review_payloads_for_conversation(query.conversation_id.as_str(), limit).await;
+    let payload = json!({
+        "success": true,
+        "conversation_id": query.conversation_id,
+        "conversationId": query.conversation_id,
+        "count": reviews.len(),
+        "reviews": reviews,
+    });
+    (StatusCode::OK, Json(payload))
 }
 
 async fn list_tasks(

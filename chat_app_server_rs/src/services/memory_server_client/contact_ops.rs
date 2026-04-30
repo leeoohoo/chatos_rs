@@ -6,8 +6,8 @@ use super::dto::{
     MemoryProjectMemoryDto, SyncMemoryProjectRequestDto, SyncProjectAgentLinkRequestDto,
 };
 use super::http::{
-    client, push_limit_offset_params, send_delete_result, send_json, send_list, try_build_url,
-    try_timeout_duration,
+    client, push_limit_offset_params, send_delete_result, send_json, send_list,
+    send_optional_json, try_build_url, try_timeout_duration,
 };
 
 pub async fn list_memory_contacts(
@@ -22,6 +22,16 @@ pub async fn list_memory_contacts(
     push_limit_offset_params(&mut params, limit, offset);
 
     send_list("/contacts", &params).await
+}
+
+pub async fn get_memory_contact(contact_id: &str) -> Result<Option<MemoryContactDto>, String> {
+    let req = client()
+        .get(try_build_url(&format!(
+            "/contacts/{}",
+            urlencoding::encode(contact_id)
+        ))?)
+        .timeout(try_timeout_duration()?);
+    send_optional_json(req).await
 }
 
 pub async fn create_memory_contact(

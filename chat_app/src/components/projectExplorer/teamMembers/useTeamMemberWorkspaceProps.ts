@@ -44,7 +44,7 @@ export const useTeamMemberWorkspaceProps = ({
     if (!sessionId) {
       return;
     }
-    void resources.summary.loadSessionSummaries(sessionId);
+    void resources.summary.loadSessionSummaries(sessionId, { force: true });
   },
   onCloseSummary: () => {
     resources.summary.setSummaryPaneSessionId(null);
@@ -61,6 +61,7 @@ export const useTeamMemberWorkspaceProps = ({
   onEnabledMcpIdsChange: resources.composer.handleComposerEnabledMcpIdsChange,
   mergedCurrentTurnTasks: resources.workbar.mergedCurrentTurnTasks,
   workbarHistoryTasks: resources.workbar.workbarHistoryTasks,
+  taskHistoryOpen: resources.workbar.taskHistoryOpen,
   activeConversationTurnId: resources.workbar.activeConversationTurnId,
   workbarLoading: resources.workbar.workbarLoading,
   workbarHistoryLoading: resources.workbar.workbarHistoryLoading,
@@ -75,6 +76,7 @@ export const useTeamMemberWorkspaceProps = ({
   reviewRepairPendingCount: resources.workbar.reviewRepairPendingCount,
   onRefreshWorkbarTasks: resources.workbar.handleRefreshWorkbar,
   onOpenWorkbarHistory: resources.workbar.handleOpenTeamWorkbarHistory,
+  onTaskHistoryOpenChange: resources.workbar.setTaskHistoryOpen,
   onRunReviewRepair: resources.workbar.handleRunReviewRepair,
   onCompleteTask: (task) => {
     void resources.workbar.handleWorkbarCompleteTask(task);
@@ -147,6 +149,7 @@ export const useTeamMemberWorkspaceProps = ({
   resources.workbar.mergedCurrentTurnTasks,
   resources.workbar.reviewRepairRunning,
   resources.workbar.reviewRepairPendingCount,
+  resources.workbar.setTaskHistoryOpen,
   resources.workbar.runtimeGuidanceAppliedCount,
   resources.workbar.runtimeGuidanceItems,
   resources.workbar.runtimeGuidanceLastAppliedAt,
@@ -156,6 +159,7 @@ export const useTeamMemberWorkspaceProps = ({
   resources.workbar.taskModalMode,
   resources.workbar.taskModalOpen,
   resources.workbar.taskModalTask,
+  resources.workbar.taskHistoryOpen,
   resources.workbar.workbarActionLoadingTaskId,
   resources.workbar.workbarError,
   resources.workbar.workbarHistoryError,

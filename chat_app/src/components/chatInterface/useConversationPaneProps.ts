@@ -17,6 +17,7 @@ export const useConversationPaneProps = ({
 }: UseConversationPanePropsParams): ComponentProps<typeof ChatConversationPane> => useMemo(() => ({
   currentSession: conversation.currentSession,
   sessionSummaryPaneVisible: conversation.sessionSummaryPaneVisible,
+  taskHistoryOpen: conversation.taskHistoryOpen,
   currentContactName: conversation.currentContactName,
   currentContactId: conversation.currentContactId,
   currentProjectNameForMemory: conversation.currentProjectNameForMemory,
@@ -54,6 +55,7 @@ export const useConversationPaneProps = ({
   taskModalError: conversation.taskModalError,
   onRefreshWorkbarTasks: actions.handleRefreshWorkbar,
   onOpenHistory: actions.handleOpenHistory,
+  onTaskHistoryOpenChange: actions.setTaskHistoryOpen,
   onOpenUiPromptHistory: actions.handleOpenUiPromptHistory,
   uiPromptHistoryCount: conversation.uiPromptHistoryItems.length,
   uiPromptHistoryLoading: conversation.uiPromptHistoryLoading,

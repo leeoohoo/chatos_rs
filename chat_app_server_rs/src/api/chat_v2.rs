@@ -20,7 +20,7 @@ use crate::core::builtin_mcp_prompt::compose_effective_builtin_mcp_system_prompt
 use crate::core::chat_context::maybe_spawn_session_title_rename;
 use crate::core::chat_stream::{
     build_v2_callbacks, handle_chat_result, send_error_event, send_start_event,
-    send_tools_unavailable_event,
+    send_tools_unavailable_event, ChatEventSink, ChatRealtimeStreamContext,
 };
 use crate::core::mcp_runtime::{load_mcp_servers_by_selection, McpServerBundle};
 use crate::core::mcp_tools::ToolInfo;
@@ -47,6 +47,7 @@ struct UserQuery {
 pub fn router() -> Router {
     Router::new()
         .route("/api/agent_v2/chat/stream", post(agent_chat_stream))
+        .route("/api/agent_v2/chat/send", post(agent_chat_send))
         .route("/api/agent_v2/tools", get(agent_tools))
         .route("/api/agent_v2/status", get(agent_status))
         .route(
@@ -75,10 +76,36 @@ async fn agent_chat_stream(
     let (sse, sender) = sse_channel();
 
     memory_server_client::spawn_with_current_access_token(stream_chat_v2(
-        sender, req, false, true, false,
+        Some(sender), req, false, true, false,
     ));
 
     Ok(sse)
+}
+
+async fn agent_chat_send(
+    auth: AuthUser,
+    Json(mut req): Json<ChatStreamRequest>,
+) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<Value>)> {
+    if let Err(err) = ensure_and_set_user_id(&mut req.user_id, &auth) {
+        return Err(err);
+    }
+    validate_chat_stream_request(&req, false)?;
+    let conversation_id = req.conversation_id.clone().unwrap_or_default();
+    let accepted_turn_id = normalize_turn_id(req.turn_id.as_deref());
+
+    abort_registry::reset(&conversation_id);
+    memory_server_client::spawn_with_current_access_token(stream_chat_v2(
+        None, req, false, true, false,
+    ));
+
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(json!({
+            "accepted": true,
+            "conversation_id": conversation_id,
+            "turn_id": accepted_turn_id,
+        })),
+    ))
 }
 
 async fn agent_tools(auth: AuthUser, Query(query): Query<UserQuery>) -> (StatusCode, Json<Value>) {
@@ -200,7 +227,7 @@ async fn stop_chat(Json(req): Json<Value>) -> (StatusCode, Json<Value>) {
 }
 
 async fn stream_chat_v2(
-    sender: SseSender,
+    sender: Option<SseSender>,
     req: ChatStreamRequest,
     always_send_done: bool,
     rename_session: bool,
@@ -208,16 +235,27 @@ async fn stream_chat_v2(
 ) {
     let session_id = req.conversation_id.clone().unwrap_or_default();
     let content = req.content.clone().unwrap_or_default();
+    let initial_turn_id = normalize_turn_id(req.turn_id.as_deref());
+    let initial_sink = ChatEventSink::new(
+        sender.clone(),
+        Some(ChatRealtimeStreamContext {
+            user_id: req.user_id.clone(),
+            conversation_id: Some(session_id.clone()),
+            conversation_turn_id: initial_turn_id.clone(),
+            project_id: req.project_id.clone(),
+            user_message_id: None,
+        }),
+    );
     let cfg = match Config::try_get() {
         Ok(cfg) => cfg,
         Err(err) => {
-            send_error_event(&sender, format!("服务配置未初始化: {err}").as_str());
-            sender.send_done();
+            send_error_event(&initial_sink, format!("服务配置未初始化: {err}").as_str());
+            initial_sink.send_done();
             return;
         }
     };
 
-    send_start_event(&sender, &session_id);
+    send_start_event(&initial_sink, &session_id);
 
     maybe_spawn_session_title_rename(rename_session, &session_id, &content, 30);
 
@@ -240,8 +278,8 @@ async fn stream_chat_v2(
     ) {
         Ok(ai_server) => ai_server,
         Err(err) => {
-            send_error_event(&sender, format!("初始化 AI 服务失败: {err}").as_str());
-            sender.send_done();
+            send_error_event(&initial_sink, format!("初始化 AI 服务失败: {err}").as_str());
+            initial_sink.send_done();
             return;
         }
     };
@@ -270,8 +308,7 @@ async fn stream_chat_v2(
     let attachments_list = req.attachments.unwrap_or_default();
     let att = attachments::parse_attachments(&attachments_list);
     let user_message_id = Uuid::new_v4().to_string();
-    let resolved_turn_id =
-        normalize_turn_id(req.turn_id.as_deref()).unwrap_or_else(|| user_message_id.clone());
+    let resolved_turn_id = initial_turn_id.unwrap_or_else(|| user_message_id.clone());
     let unavailable_tools = mcp_exec.get_unavailable_tools();
     runtime_context.builtin_mcp_system_prompt = compose_effective_builtin_mcp_system_prompt(
         builtin_servers.as_slice(),
@@ -286,7 +323,17 @@ async fn stream_chat_v2(
         runtime_context.command_system_prompt.as_deref(),
     )
     .await;
-    send_tools_unavailable_event(&sender, unavailable_tools.as_slice());
+    let sink = ChatEventSink::new(
+        sender.clone(),
+        Some(ChatRealtimeStreamContext {
+            user_id: req.user_id.clone(),
+            conversation_id: Some(session_id.clone()),
+            conversation_turn_id: Some(resolved_turn_id.clone()),
+            project_id: req.project_id.clone(),
+            user_message_id: Some(user_message_id.clone()),
+        }),
+    );
+    send_tools_unavailable_event(&sink, unavailable_tools.as_slice());
     let mcp_tool_metadata = mcp_exec.tool_metadata().clone();
     ai_server.set_mcp_tool_execute(mcp_exec);
     ai_server.ai_client.set_task_board_refresh_context(
@@ -313,7 +360,7 @@ async fn stream_chat_v2(
         !model_runtime.api_key.is_empty(),
     );
 
-    let callback_bundle = build_v2_callbacks(&sender, &session_id);
+    let callback_bundle = build_v2_callbacks(&sink, &session_id);
     let mut callbacks = callback_bundle.callbacks.clone();
     wire_implicit_command_tracking(
         &mut callbacks,
@@ -388,7 +435,7 @@ async fn stream_chat_v2(
     }
 
     let should_send_done = handle_chat_result(
-        &sender,
+        &sink,
         &session_id,
         Some(&chunk_sent),
         Some(&callback_bundle.streamed_content),
@@ -398,6 +445,6 @@ async fn stream_chat_v2(
     );
     runtime_guidance_manager().close_turn(&session_id, &resolved_turn_id);
     if always_send_done || should_send_done {
-        sender.send_done();
+        sink.send_done();
     }
 }

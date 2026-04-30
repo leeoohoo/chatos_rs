@@ -6,6 +6,9 @@ use serde_json::{json, Value};
 
 use crate::core::auth::AuthUser;
 use crate::services::code_nav::symbol_index::invalidate_project_symbol_indexes_for_path;
+use crate::services::workspace_realtime_watcher::{
+    note_workspace_path_changed, suppress_logged_path,
+};
 
 use super::super::contracts::FsMoveRequest;
 use super::super::helpers::is_valid_entry_name;
@@ -192,6 +195,10 @@ pub(in super::super) async fn move_entry(
     }
     invalidate_project_symbol_indexes_for_path(source_path.path.as_path());
     invalidate_project_symbol_indexes_for_path(target_path.as_path());
+    suppress_logged_path(source_norm.as_str());
+    note_workspace_path_changed(source_norm.as_str());
+    suppress_logged_path(target_norm.as_str());
+    note_workspace_path_changed(target_norm.as_str());
 
     (
         StatusCode::OK,

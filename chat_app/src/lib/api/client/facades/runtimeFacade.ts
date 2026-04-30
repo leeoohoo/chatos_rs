@@ -27,11 +27,13 @@ import type {
   SessionSummaryJobConfigResponse,
   StopChatResponse,
   StreamChatAttachmentPayload,
+  StreamChatCommandResponse,
   StreamChatModelConfigPayload,
   StreamChatOptions,
   TaskManagerTaskResponse,
   TaskManagerUpdatePayload,
   TaskReviewDecisionPayload,
+  TaskReviewItemResponse,
   UiPromptItemResponse,
   UiPromptResponsePayload,
   UserSettingsResponse,
@@ -48,6 +50,15 @@ export interface RuntimeFacade {
     reasoningEnabled?: boolean,
     options?: StreamChatOptions,
   ): Promise<ReadableStream>;
+  sendChatCommand(
+    conversationId: string,
+    content: string,
+    modelConfig: StreamChatModelConfigPayload,
+    userId?: string,
+    attachments?: StreamChatAttachmentPayload[],
+    reasoningEnabled?: boolean,
+    options?: StreamChatOptions,
+  ): Promise<StreamChatCommandResponse>;
   submitRuntimeGuidance(payload: RuntimeGuidanceSubmitPayload): Promise<RuntimeGuidanceSubmitResponse>;
   getTaskManagerTasks(
     conversationId: string,
@@ -68,6 +79,7 @@ export interface RuntimeFacade {
     reviewId: string,
     payload: TaskReviewDecisionPayload,
   ): Promise<{ success?: boolean; status?: string }>;
+  getPendingTaskReviews(conversationId: string, options?: { limit?: number }): Promise<TaskReviewItemResponse[]>;
   getPendingUiPrompts(conversationId: string, options?: { limit?: number }): Promise<UiPromptItemResponse[]>;
   getUiPromptHistory(
     conversationId: string,
@@ -121,6 +133,18 @@ export const runtimeFacade: RuntimeFacade & ThisType<ApiClient> = {
       options,
     );
   },
+  async sendChatCommand(conversationId, content, modelConfig, userId, attachments, reasoningEnabled, options) {
+    return streamApi.sendChatCommand(
+      this.getStreamApiContext(),
+      conversationId,
+      content,
+      modelConfig,
+      userId,
+      attachments,
+      reasoningEnabled,
+      options,
+    );
+  },
   async submitRuntimeGuidance(payload) {
     return streamApi.submitRuntimeGuidance(this.getRequestFn(), payload);
   },
@@ -138,6 +162,9 @@ export const runtimeFacade: RuntimeFacade & ThisType<ApiClient> = {
   },
   async submitTaskReviewDecision(reviewId, payload) {
     return tasksApi.submitTaskReviewDecision(this.getRequestFn(), reviewId, payload);
+  },
+  async getPendingTaskReviews(conversationId, options) {
+    return tasksApi.getPendingTaskReviews(this.getRequestFn(), conversationId, options);
   },
   async getPendingUiPrompts(conversationId, options) {
     return tasksApi.getPendingUiPrompts(this.getRequestFn(), conversationId, options);

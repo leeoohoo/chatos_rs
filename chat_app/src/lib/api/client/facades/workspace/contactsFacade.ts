@@ -12,6 +12,7 @@ import type ApiClient from '../../../client';
 
 export interface WorkspaceContactFacade {
   getContacts(userId?: string, paging?: PagingOptions): Promise<ContactResponse[]>;
+  getContact(contactId: string): Promise<ContactResponse>;
   createContact(data: { agent_id: string; agent_name_snapshot?: string; user_id?: string }): Promise<ContactCreateResponse>;
   deleteContact(contactId: string): Promise<DeleteSuccessResponse>;
   getContactProjectMemories(
@@ -26,6 +27,9 @@ export interface WorkspaceContactFacade {
 export const workspaceContactFacade: WorkspaceContactFacade & ThisType<ApiClient> = {
   async getContacts(userId, paging) {
     return workspaceApi.getContacts(this.getRequestFn(), userId, paging);
+  },
+  async getContact(contactId) {
+    return workspaceApi.getContact(this.getRequestFn(), contactId);
   },
   async createContact(data) {
     return workspaceApi.createContact(this.getRequestFn(), data);

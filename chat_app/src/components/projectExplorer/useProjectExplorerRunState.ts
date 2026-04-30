@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo } from 'react';
 
 import type ApiClient from '../../lib/api/client';
+import { loadTerminalsSnapshot } from '../../lib/store/actions/terminalsCache';
+import { useChatRuntimeEnv } from '../../lib/store/ChatStoreContext';
 import type {
   FsEntry,
   Project,
@@ -37,6 +39,7 @@ export const useProjectExplorerRunState = ({
   setActionLoading,
   setActionMessage,
 }: UseProjectExplorerRunStateParams) => {
+  const { userId } = useChatRuntimeEnv();
   const runnerCatalog = useProjectRunnerCatalogState({ client, project });
   const runnerTerminal = useProjectRunnerTerminalPolling({ client, project });
   const runnerCommands = useProjectRunnerCommands({
@@ -95,8 +98,8 @@ export const useProjectExplorerRunState = ({
   }, [client]);
 
   const handleListTerminals = useCallback(async () => {
-    return client.listTerminals();
-  }, [client]);
+    return loadTerminalsSnapshot(client, userId);
+  }, [client, userId]);
 
   useEffect(() => {
     runnerCatalog.resetRunnerCatalogState();

@@ -2,6 +2,7 @@ import { useEffect, type Dispatch, type MutableRefObject, type SetStateAction } 
 import type { FsEntry, FsReadResult, ProjectChangeSummary } from '../../types';
 import type { MoveConflictState } from './Overlays';
 import type { ExplorerContextMenuState } from './useProjectExplorerState';
+import { useProjectChangeSummaryRealtime } from '../../lib/realtime/useProjectChangeSummaryRealtime';
 
 interface UseProjectExplorerProjectLifecycleOptions {
   projectId?: string | null;
@@ -160,22 +161,20 @@ export const useProjectExplorerProjectLifecycle = ({
   ]);
 };
 
-interface UseProjectExplorerSummaryPollingOptions {
+interface UseProjectExplorerSummaryRealtimeOptions {
   projectId?: string | null;
   loadChangeSummary: (options?: { silent?: boolean }) => Promise<void>;
 }
 
-export const useProjectExplorerSummaryPolling = ({
+export const useProjectExplorerSummaryRealtime = ({
   projectId,
   loadChangeSummary,
-}: UseProjectExplorerSummaryPollingOptions) => {
-  useEffect(() => {
-    if (!projectId) return undefined;
-    const timer = window.setInterval(() => {
+}: UseProjectExplorerSummaryRealtimeOptions) => {
+  useProjectChangeSummaryRealtime({
+    projectId,
+    enabled: Boolean(projectId),
+    onInvalidate: () => {
       void loadChangeSummary({ silent: true });
-    }, 6000);
-    return () => {
-      window.clearInterval(timer);
-    };
-  }, [loadChangeSummary, projectId]);
+    },
+  });
 };

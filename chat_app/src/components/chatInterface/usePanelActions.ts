@@ -32,28 +32,44 @@ interface UsePanelActionsArgs {
   activeTaskReviewPanel: TaskReviewPanelState | null;
   activeUiPromptPanel: UiPromptPanelState | null;
   apiClient: PanelActionsApiClient;
+  preferRealtimeSync?: boolean;
+  taskHistoryOpen?: boolean;
+  uiPromptHistoryOpen?: boolean;
   upsertTaskReviewPanel: (panel: TaskReviewPanelState) => void;
   removeTaskReviewPanel: (reviewId: string, sessionId?: string) => void;
   upsertUiPromptPanel: (panel: UiPromptPanelState) => void;
   removeUiPromptPanel: (promptId: string, sessionId?: string) => void;
-  loadCurrentTurnWorkbarTasks: (sessionId: string, conversationTurnId?: string | null) => Promise<void>;
+  loadCurrentTurnWorkbarTasks: (
+    sessionId: string,
+    conversationTurnId?: string | null,
+    force?: boolean,
+  ) => Promise<void>;
   loadHistoryWorkbarTasks: (sessionId: string, force?: boolean) => Promise<void>;
-  loadWorkbarSummaries: (sessionId: string, force?: boolean) => Promise<void>;
+  markHistoryWorkbarTasksStale?: (sessionId: string) => void;
   loadUiPromptHistory: (sessionId: string, force?: boolean) => Promise<void>;
+  markUiPromptHistoryStale?: (sessionId: string) => void;
+  removePendingTaskReviewCachePanel?: (reviewId: string, sessionId?: string) => void;
+  removePendingUiPromptCachePanel?: (promptId: string, sessionId?: string) => void;
 }
 
 export function usePanelActions({
   activeTaskReviewPanel,
   activeUiPromptPanel,
   apiClient,
+  preferRealtimeSync = false,
+  taskHistoryOpen = false,
+  uiPromptHistoryOpen = false,
   upsertTaskReviewPanel,
   removeTaskReviewPanel,
   upsertUiPromptPanel,
   removeUiPromptPanel,
   loadCurrentTurnWorkbarTasks,
   loadHistoryWorkbarTasks,
-  loadWorkbarSummaries,
+  markHistoryWorkbarTasksStale,
   loadUiPromptHistory,
+  markUiPromptHistoryStale,
+  removePendingTaskReviewCachePanel,
+  removePendingUiPromptCachePanel,
 }: UsePanelActionsArgs) {
   const handleTaskReviewConfirm = useCallback(async (drafts: TaskReviewDraft[]) => {
     if (!activeTaskReviewPanel) {
@@ -80,12 +96,23 @@ export function usePanelActions({
           due_at: draft.dueAt || undefined,
         })),
       });
+      removePendingTaskReviewCachePanel?.(
+        activeTaskReviewPanel.reviewId,
+        activeTaskReviewPanel.sessionId,
+      );
       removeTaskReviewPanel(activeTaskReviewPanel.reviewId, activeTaskReviewPanel.sessionId);
-      await Promise.all([
-        loadCurrentTurnWorkbarTasks(activeTaskReviewPanel.sessionId, activeTaskReviewPanel.conversationTurnId),
-        loadHistoryWorkbarTasks(activeTaskReviewPanel.sessionId, true),
-        loadWorkbarSummaries(activeTaskReviewPanel.sessionId, true),
-      ]);
+      if (!preferRealtimeSync) {
+        await loadCurrentTurnWorkbarTasks(
+          activeTaskReviewPanel.sessionId,
+          activeTaskReviewPanel.conversationTurnId,
+          true,
+        );
+        if (taskHistoryOpen) {
+          await loadHistoryWorkbarTasks(activeTaskReviewPanel.sessionId, true);
+        } else {
+          markHistoryWorkbarTasksStale?.(activeTaskReviewPanel.sessionId);
+        }
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : '任务确认提交失败';
       upsertTaskReviewPanel({
@@ -99,8 +126,11 @@ export function usePanelActions({
     apiClient,
     loadCurrentTurnWorkbarTasks,
     loadHistoryWorkbarTasks,
-    loadWorkbarSummaries,
+    markHistoryWorkbarTasksStale,
+    preferRealtimeSync,
+    removePendingTaskReviewCachePanel,
     removeTaskReviewPanel,
+    taskHistoryOpen,
     upsertTaskReviewPanel,
   ]);
 
@@ -121,12 +151,23 @@ export function usePanelActions({
         action: 'cancel',
         reason: 'user_cancelled',
       });
+      removePendingTaskReviewCachePanel?.(
+        activeTaskReviewPanel.reviewId,
+        activeTaskReviewPanel.sessionId,
+      );
       removeTaskReviewPanel(activeTaskReviewPanel.reviewId, activeTaskReviewPanel.sessionId);
-      await Promise.all([
-        loadCurrentTurnWorkbarTasks(activeTaskReviewPanel.sessionId, activeTaskReviewPanel.conversationTurnId),
-        loadHistoryWorkbarTasks(activeTaskReviewPanel.sessionId, true),
-        loadWorkbarSummaries(activeTaskReviewPanel.sessionId, true),
-      ]);
+      if (!preferRealtimeSync) {
+        await loadCurrentTurnWorkbarTasks(
+          activeTaskReviewPanel.sessionId,
+          activeTaskReviewPanel.conversationTurnId,
+          true,
+        );
+        if (taskHistoryOpen) {
+          await loadHistoryWorkbarTasks(activeTaskReviewPanel.sessionId, true);
+        } else {
+          markHistoryWorkbarTasksStale?.(activeTaskReviewPanel.sessionId);
+        }
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : '任务取消提交失败';
       upsertTaskReviewPanel({
@@ -140,8 +181,11 @@ export function usePanelActions({
     apiClient,
     loadCurrentTurnWorkbarTasks,
     loadHistoryWorkbarTasks,
-    loadWorkbarSummaries,
+    markHistoryWorkbarTasksStale,
+    preferRealtimeSync,
+    removePendingTaskReviewCachePanel,
     removeTaskReviewPanel,
+    taskHistoryOpen,
     upsertTaskReviewPanel,
   ]);
 
@@ -159,8 +203,18 @@ export function usePanelActions({
 
     try {
       await apiClient.submitUiPromptResponse(activeUiPromptPanel.promptId, payload);
+      removePendingUiPromptCachePanel?.(
+        activeUiPromptPanel.promptId,
+        activeUiPromptPanel.sessionId,
+      );
       removeUiPromptPanel(activeUiPromptPanel.promptId, activeUiPromptPanel.sessionId);
-      await loadUiPromptHistory(activeUiPromptPanel.sessionId, true);
+      if (!preferRealtimeSync) {
+        if (uiPromptHistoryOpen) {
+          await loadUiPromptHistory(activeUiPromptPanel.sessionId, true);
+        } else {
+          markUiPromptHistoryStale?.(activeUiPromptPanel.sessionId);
+        }
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : '交互确认提交失败';
       upsertUiPromptPanel({
@@ -173,7 +227,11 @@ export function usePanelActions({
     activeUiPromptPanel,
     apiClient,
     loadUiPromptHistory,
+    markUiPromptHistoryStale,
+    preferRealtimeSync,
+    removePendingUiPromptCachePanel,
     removeUiPromptPanel,
+    uiPromptHistoryOpen,
     upsertUiPromptPanel,
   ]);
 
@@ -194,8 +252,18 @@ export function usePanelActions({
         status: 'canceled',
         reason: 'user_cancelled',
       });
+      removePendingUiPromptCachePanel?.(
+        activeUiPromptPanel.promptId,
+        activeUiPromptPanel.sessionId,
+      );
       removeUiPromptPanel(activeUiPromptPanel.promptId, activeUiPromptPanel.sessionId);
-      await loadUiPromptHistory(activeUiPromptPanel.sessionId, true);
+      if (!preferRealtimeSync) {
+        if (uiPromptHistoryOpen) {
+          await loadUiPromptHistory(activeUiPromptPanel.sessionId, true);
+        } else {
+          markUiPromptHistoryStale?.(activeUiPromptPanel.sessionId);
+        }
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : '交互确认取消失败';
       upsertUiPromptPanel({
@@ -208,7 +276,11 @@ export function usePanelActions({
     activeUiPromptPanel,
     apiClient,
     loadUiPromptHistory,
+    markUiPromptHistoryStale,
+    preferRealtimeSync,
+    removePendingUiPromptCachePanel,
     removeUiPromptPanel,
+    uiPromptHistoryOpen,
     upsertUiPromptPanel,
   ]);
 

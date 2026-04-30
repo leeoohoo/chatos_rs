@@ -10,6 +10,7 @@ import {
   readProjectRunnerErrorMessage,
   RUNNER_SCRIPT_REL_PATH,
 } from '../../../lib/domain/projectRunner';
+import { useProjectRunRealtime } from '../../../lib/realtime/useProjectRunRealtime';
 import type { ProjectRunnerMember } from '../../../lib/domain/projectRunner';
 
 interface UseProjectRunnerCatalogStateOptions {
@@ -95,31 +96,20 @@ export const useProjectRunnerCatalogState = ({
     setSelectedRunTargetId(null);
   }, []);
 
-  useEffect(() => {
-    if (!project?.id || runnerScriptExists || runnerRootMissing) {
-      return;
-    }
-    let disposed = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const poll = async () => {
-      try {
-        await loadRunnerScriptState();
-      } finally {
-        if (!disposed) {
-          timer = setTimeout(() => {
-            void poll();
-          }, 2500);
-        }
+  useProjectRunRealtime({
+    enabled: Boolean(project?.id),
+    projectId: project?.id || null,
+    onCatalogUpdated: async () => {
+      await refreshRunnerState();
+    },
+    onMembersUpdated: async (payload) => {
+      const reason = String(payload.reason || '').trim();
+      if (reason !== 'project_contact_added' && reason !== 'project_contact_removed') {
+        return;
       }
-    };
-    void poll();
-    return () => {
-      disposed = true;
-      if (timer) {
-        clearTimeout(timer);
-      }
-    };
-  }, [loadRunnerScriptState, project?.id, runnerRootMissing, runnerScriptExists]);
+      await loadProjectMembers();
+    },
+  });
 
   const runStatus = useMemo(() => {
     if (!project?.id) {

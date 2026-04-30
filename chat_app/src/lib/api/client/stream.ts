@@ -3,6 +3,7 @@ import type {
   RuntimeGuidanceSubmitResponse,
   StopChatResponse,
   StreamChatAttachmentPayload,
+  StreamChatCommandResponse,
   StreamChatModelConfigPayload,
   StreamChatOptions,
 } from './types';
@@ -74,11 +75,11 @@ export const streamChat = async (
         : undefined,
       project_id: options?.projectId || undefined,
       project_root: options?.projectRoot || undefined,
-	      mcp_enabled: options?.mcpEnabled,
-	      enabled_mcp_ids: options?.enabledMcpIds || [],
-	      skills_enabled: options?.skillsEnabled === true,
-	      selected_skill_ids: options?.selectedSkillIds || [],
-	      ai_model_config: {
+      mcp_enabled: options?.mcpEnabled,
+      enabled_mcp_ids: options?.enabledMcpIds || [],
+      skills_enabled: options?.skillsEnabled === true,
+      selected_skill_ids: options?.selectedSkillIds || [],
+      ai_model_config: {
         provider: modelConfig.provider,
         model_name: modelConfig.model_name,
         temperature: modelConfig.temperature || 0.7,
@@ -102,6 +103,85 @@ export const streamChat = async (
   }
 
   return response.body;
+};
+
+export const sendChatCommand = async (
+  context: StreamApiContext,
+  conversationId: string,
+  content: string,
+  modelConfig: StreamChatModelConfigPayload,
+  userId?: string,
+  attachments?: StreamChatAttachmentPayload[],
+  reasoningEnabled?: boolean,
+  options?: StreamChatOptions,
+): Promise<StreamChatCommandResponse> => {
+  const useResponses = modelConfig?.supports_responses === true;
+  const url = `${context.baseUrl}/${useResponses ? 'agent_v3' : 'agent_v2'}/chat/send`;
+  const hasRemoteConnectionId = Boolean(
+    options && Object.prototype.hasOwnProperty.call(options, 'remoteConnectionId'),
+  );
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(context.accessToken ? { Authorization: `Bearer ${context.accessToken}` } : {}),
+      Accept: 'application/json',
+    },
+    body: JSON.stringify({
+      conversation_id: conversationId,
+      content,
+      user_id: userId,
+      attachments: attachments || [],
+      reasoning_enabled: reasoningEnabled,
+      turn_id: options?.turnId,
+      contact_agent_id: options?.contactAgentId || undefined,
+      remote_connection_id: hasRemoteConnectionId
+        ? (options?.remoteConnectionId ?? null)
+        : undefined,
+      project_id: options?.projectId || undefined,
+      project_root: options?.projectRoot || undefined,
+      mcp_enabled: options?.mcpEnabled,
+      enabled_mcp_ids: options?.enabledMcpIds || [],
+      skills_enabled: options?.skillsEnabled === true,
+      selected_skill_ids: options?.selectedSkillIds || [],
+      ai_model_config: {
+        provider: modelConfig.provider,
+        model_name: modelConfig.model_name,
+        temperature: modelConfig.temperature || 0.7,
+        thinking_level: modelConfig.thinking_level,
+        api_key: modelConfig.api_key,
+        base_url: modelConfig.base_url,
+        supports_images: modelConfig.supports_images === true,
+        supports_reasoning: modelConfig.supports_reasoning === true,
+        supports_responses: modelConfig.supports_responses === true,
+      },
+    }),
+  });
+  context.applyRefreshedAccessToken(response);
+
+  if (!response.ok) {
+    throw await buildStreamHttpError(response);
+  }
+
+  const raw = await response.text().catch(() => '');
+  if (!raw) {
+    return {
+      accepted: true,
+      conversation_id: conversationId,
+      turn_id: options?.turnId || null,
+    };
+  }
+
+  try {
+    return JSON.parse(raw) as StreamChatCommandResponse;
+  } catch {
+    return {
+      accepted: true,
+      conversation_id: conversationId,
+      turn_id: options?.turnId || null,
+    };
+  }
 };
 
 export const stopChat = (

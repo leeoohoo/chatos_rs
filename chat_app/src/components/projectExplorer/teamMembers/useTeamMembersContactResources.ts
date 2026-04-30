@@ -110,6 +110,9 @@ export const useTeamMembersContactResources = ({
     setSummaryError,
     resetSummaryState,
     loadSessionSummaries,
+    markSessionSummariesStale,
+    hydrateSessionSummariesFromCache,
+    cancelPendingSessionSummariesLoad,
     openSummaryForSession,
     deleteSummary,
     clearSummaries,
@@ -155,7 +158,7 @@ export const useTeamMembersContactResources = ({
     openSummaryForSession,
     deleteSummary,
     clearSummaries,
-    loadSessionSummaries,
+    cancelPendingSessionSummariesLoad,
     ensureContactSession,
     sendMessage,
     toggleTurnProcess,
@@ -217,6 +220,9 @@ export const useTeamMembersContactResources = ({
       setSummaryPaneSessionId,
       resetSummaryState,
       loadSessionSummaries,
+      markSessionSummariesStale,
+      hydrateSessionSummariesFromCache,
+      cancelPendingSessionSummariesLoad,
     },
   };
 };

@@ -1,10 +1,11 @@
 import { useEffect, useRef } from 'react';
 
 interface UseSessionListBootstrapOptions {
+  loadSessions: (options?: { silent?: boolean }) => Promise<unknown> | unknown;
   loadProjects: () => Promise<unknown> | unknown;
   loadAgents: () => Promise<unknown> | unknown;
   loadContacts: () => Promise<unknown> | unknown;
-  loadTerminals: () => Promise<unknown> | unknown;
+  loadTerminals: (options?: { force?: boolean }) => Promise<unknown> | unknown;
   loadRemoteConnections: () => Promise<unknown> | unknown;
   isCollapsed: boolean;
   terminalsExpanded: boolean;
@@ -12,6 +13,7 @@ interface UseSessionListBootstrapOptions {
 }
 
 export const useSessionListBootstrap = ({
+  loadSessions,
   loadProjects,
   loadAgents,
   loadContacts,
@@ -21,11 +23,20 @@ export const useSessionListBootstrap = ({
   terminalsExpanded,
   remoteExpanded,
 }: UseSessionListBootstrapOptions): void => {
+  const didLoadSessionsRef = useRef(false);
   const didLoadProjectsRef = useRef(false);
   const didLoadAgentsRef = useRef(false);
   const didLoadContactsRef = useRef(false);
   const didLoadTerminalsRef = useRef(false);
   const didLoadRemoteRef = useRef(false);
+
+  useEffect(() => {
+    if (didLoadSessionsRef.current) return;
+    didLoadSessionsRef.current = true;
+    void Promise.resolve(loadSessions({ silent: true })).catch((error) => {
+      console.error('Failed to load sessions:', error);
+    });
+  }, [loadSessions]);
 
   useEffect(() => {
     if (didLoadProjectsRef.current) return;

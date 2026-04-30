@@ -20,6 +20,7 @@ type ChatComposerPanelProps = ComponentProps<typeof ChatComposerPanel>;
 interface ChatConversationPaneProps {
   currentSession: Session | null;
   sessionSummaryPaneVisible: boolean;
+  taskHistoryOpen: boolean;
   currentContactName: string;
   currentContactId: string;
   currentProjectNameForMemory: string;
@@ -57,6 +58,7 @@ interface ChatConversationPaneProps {
   taskModalError: ChatComposerPanelProps['taskModalError'];
   onRefreshWorkbarTasks: () => void;
   onOpenHistory: (sessionId: string) => void;
+  onTaskHistoryOpenChange: (value: boolean) => void;
   onOpenUiPromptHistory: (sessionId: string) => void;
   uiPromptHistoryCount: number;
   uiPromptHistoryLoading: boolean;
@@ -233,6 +235,7 @@ ChatMessagesPane.displayName = 'ChatMessagesPane';
 const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
   currentSession,
   sessionSummaryPaneVisible,
+  taskHistoryOpen,
   currentContactName,
   currentContactId,
   currentProjectNameForMemory,
@@ -270,6 +273,7 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
   taskModalError,
   onRefreshWorkbarTasks,
   onOpenHistory,
+  onTaskHistoryOpenChange,
   onOpenUiPromptHistory,
   uiPromptHistoryCount,
   uiPromptHistoryLoading,
@@ -352,6 +356,7 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
           sessionId={currentSession.id}
           mergedCurrentTurnTasks={mergedCurrentTurnTasks}
           workbarHistoryTasks={workbarHistoryTasks}
+          taskHistoryOpen={taskHistoryOpen}
           activeConversationTurnId={activeConversationTurnId}
           workbarLoading={workbarLoading}
           workbarHistoryLoading={workbarHistoryLoading}
@@ -364,6 +369,7 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
           taskModalError={taskModalError}
           onRefreshWorkbarTasks={onRefreshWorkbarTasks}
           onOpenHistory={onOpenHistory}
+          onTaskHistoryOpenChange={onTaskHistoryOpenChange}
           onOpenUiPromptHistory={onOpenUiPromptHistory}
           uiPromptHistoryCount={uiPromptHistoryCount}
           uiPromptHistoryLoading={uiPromptHistoryLoading}
@@ -399,7 +405,7 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
           showProjectFileButton={false}
           reviewRepairAvailable={true}
           reviewRepairRunning={reviewRepairRunning}
-          reviewRepairDisabled={!reviewRepairRunning && (reviewRepairPendingCount ?? 0) === 0}
+          reviewRepairDisabled={!reviewRepairRunning && reviewRepairPendingCount === 0}
           onReviewRepair={() => onRunReviewRepair(currentSession.id)}
           workspaceRoot={workspaceRoot}
           onWorkspaceRootChange={onWorkspaceRootChange}

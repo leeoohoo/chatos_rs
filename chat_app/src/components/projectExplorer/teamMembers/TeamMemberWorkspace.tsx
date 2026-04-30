@@ -46,6 +46,7 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
   onEnabledMcpIdsChange,
   mergedCurrentTurnTasks,
   workbarHistoryTasks,
+  taskHistoryOpen,
   activeConversationTurnId,
   workbarLoading,
   workbarHistoryLoading,
@@ -60,6 +61,7 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
   reviewRepairPendingCount,
   onRefreshWorkbarTasks,
   onOpenWorkbarHistory,
+  onTaskHistoryOpenChange,
   onRunReviewRepair,
   onCompleteTask,
   onDeleteTask,
@@ -140,6 +142,7 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
         onEnabledMcpIdsChange={onEnabledMcpIdsChange}
         mergedCurrentTurnTasks={mergedCurrentTurnTasks}
         workbarHistoryTasks={workbarHistoryTasks}
+        taskHistoryOpen={taskHistoryOpen}
         activeConversationTurnId={activeConversationTurnId}
         workbarLoading={workbarLoading}
         workbarHistoryLoading={workbarHistoryLoading}
@@ -154,6 +157,7 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
         reviewRepairPendingCount={reviewRepairPendingCount}
         onRefreshWorkbarTasks={onRefreshWorkbarTasks}
         onOpenWorkbarHistory={onOpenWorkbarHistory}
+        onTaskHistoryOpenChange={onTaskHistoryOpenChange}
         onRunReviewRepair={onRunReviewRepair}
         onCompleteTask={onCompleteTask}
         onDeleteTask={onDeleteTask}

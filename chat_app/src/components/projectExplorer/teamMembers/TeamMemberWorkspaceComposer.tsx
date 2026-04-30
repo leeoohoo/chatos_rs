@@ -30,6 +30,7 @@ type TeamMemberWorkspaceComposerProps = Pick<
   | 'onEnabledMcpIdsChange'
   | 'mergedCurrentTurnTasks'
   | 'workbarHistoryTasks'
+  | 'taskHistoryOpen'
   | 'activeConversationTurnId'
   | 'workbarLoading'
   | 'workbarHistoryLoading'
@@ -44,6 +45,7 @@ type TeamMemberWorkspaceComposerProps = Pick<
   | 'reviewRepairPendingCount'
   | 'onRefreshWorkbarTasks'
   | 'onOpenWorkbarHistory'
+  | 'onTaskHistoryOpenChange'
   | 'onRunReviewRepair'
   | 'onCompleteTask'
   | 'onDeleteTask'
@@ -90,6 +92,7 @@ export const TeamMemberWorkspaceComposer: React.FC<TeamMemberWorkspaceComposerPr
   onEnabledMcpIdsChange,
   mergedCurrentTurnTasks,
   workbarHistoryTasks,
+  taskHistoryOpen,
   activeConversationTurnId,
   workbarLoading,
   workbarHistoryLoading,
@@ -104,6 +107,7 @@ export const TeamMemberWorkspaceComposer: React.FC<TeamMemberWorkspaceComposerPr
   reviewRepairPendingCount,
   onRefreshWorkbarTasks,
   onOpenWorkbarHistory,
+  onTaskHistoryOpenChange,
   onRunReviewRepair,
   onCompleteTask,
   onDeleteTask,
@@ -131,6 +135,7 @@ export const TeamMemberWorkspaceComposer: React.FC<TeamMemberWorkspaceComposerPr
       sessionId={selectedProjectSession.id}
       mergedCurrentTurnTasks={mergedCurrentTurnTasks}
       workbarHistoryTasks={workbarHistoryTasks}
+      taskHistoryOpen={taskHistoryOpen}
       activeConversationTurnId={activeConversationTurnId}
       workbarLoading={workbarLoading}
       workbarHistoryLoading={workbarHistoryLoading}
@@ -143,10 +148,11 @@ export const TeamMemberWorkspaceComposer: React.FC<TeamMemberWorkspaceComposerPr
       taskModalError={taskModalError}
       reviewRepairAvailable={true}
       reviewRepairRunning={reviewRepairRunning}
-      reviewRepairDisabled={!reviewRepairRunning && (reviewRepairPendingCount ?? 0) === 0}
+      reviewRepairDisabled={!reviewRepairRunning && reviewRepairPendingCount === 0}
       onReviewRepair={() => onRunReviewRepair(selectedProjectSession.id)}
       onRefreshWorkbarTasks={onRefreshWorkbarTasks}
       onOpenHistory={onOpenWorkbarHistory}
+      onTaskHistoryOpenChange={onTaskHistoryOpenChange}
       uiPromptHistoryCount={0}
       uiPromptHistoryLoading={false}
       onCompleteTask={onCompleteTask}

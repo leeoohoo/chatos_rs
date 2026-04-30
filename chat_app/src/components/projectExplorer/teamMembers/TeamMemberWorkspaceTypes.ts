@@ -63,6 +63,7 @@ export interface TeamMemberWorkspaceProps {
   onEnabledMcpIdsChange: (ids: string[]) => void;
   mergedCurrentTurnTasks: TaskWorkbarItem[];
   workbarHistoryTasks: TaskWorkbarItem[];
+  taskHistoryOpen?: boolean;
   activeConversationTurnId: string | null;
   workbarLoading: boolean;
   workbarHistoryLoading: boolean;
@@ -77,6 +78,7 @@ export interface TeamMemberWorkspaceProps {
   reviewRepairPendingCount: number | null;
   onRefreshWorkbarTasks: () => void;
   onOpenWorkbarHistory: (sessionId: string) => void;
+  onTaskHistoryOpenChange?: (value: boolean) => void;
   onRunReviewRepair: (sessionId: string) => Promise<void>;
   onCompleteTask: (task: TaskWorkbarItem) => void;
   onDeleteTask: (task: TaskWorkbarItem) => void;

@@ -32,6 +32,13 @@ export const createContact = (
   });
 };
 
+export const getContact = (
+  request: ApiRequestFn,
+  contactId: string,
+): Promise<ContactResponse> => {
+  return request<ContactResponse>(`/contacts/${encodeURIComponent(contactId)}`);
+};
+
 export const deleteContact = (
   request: ApiRequestFn,
   contactId: string,

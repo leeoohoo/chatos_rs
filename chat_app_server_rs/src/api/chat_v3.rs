@@ -24,7 +24,7 @@ use crate::core::builtin_mcp_prompt::compose_effective_builtin_mcp_system_prompt
 use crate::core::chat_context::maybe_spawn_session_title_rename;
 use crate::core::chat_stream::{
     build_v3_callbacks, handle_chat_result, send_error_event, send_start_event,
-    send_tools_unavailable_event,
+    send_tools_unavailable_event, ChatEventSink, ChatRealtimeStreamContext,
 };
 use crate::core::user_scope::ensure_and_set_user_id;
 use crate::services::ai_common::normalize_turn_id;
@@ -46,6 +46,7 @@ use self::tools_panel::{agent_status, agent_tools};
 pub fn router() -> Router {
     Router::new()
         .route("/api/agent_v3/chat/stream", post(agent_chat_stream))
+        .route("/api/agent_v3/chat/send", post(agent_chat_send))
         .route("/api/agent_v3/chat/stop", post(stop_chat))
         .route("/api/agent_v3/chat/guide", post(submit_runtime_guidance))
         .route("/api/agent_v3/tools", get(agent_tools))
@@ -73,8 +74,32 @@ async fn agent_chat_stream(
 
     abort_registry::reset(&conversation_id);
     let (sse, sender) = sse_channel();
-    memory_server_client::spawn_with_current_access_token(stream_chat_v3(sender, req));
+    memory_server_client::spawn_with_current_access_token(stream_chat_v3(Some(sender), req));
     Ok(sse)
+}
+
+async fn agent_chat_send(
+    auth: AuthUser,
+    Json(mut req): Json<ChatStreamRequest>,
+) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<Value>)> {
+    if let Err(err) = ensure_and_set_user_id(&mut req.user_id, &auth) {
+        return Err(err);
+    }
+    validate_chat_stream_request(&req, true)?;
+    let conversation_id = req.conversation_id.clone().unwrap_or_default();
+    let accepted_turn_id = normalize_turn_id(req.turn_id.as_deref());
+
+    abort_registry::reset(&conversation_id);
+    memory_server_client::spawn_with_current_access_token(stream_chat_v3(None, req));
+
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(json!({
+            "accepted": true,
+            "conversation_id": conversation_id,
+            "turn_id": accepted_turn_id,
+        })),
+    ))
 }
 
 async fn reset_conversation(Path(conversation_id): Path<String>) -> Json<Value> {
@@ -115,19 +140,30 @@ async fn stop_chat(Json(req): Json<Value>) -> (StatusCode, Json<Value>) {
     )
 }
 
-async fn stream_chat_v3(sender: SseSender, req: ChatStreamRequest) {
+async fn stream_chat_v3(sender: Option<SseSender>, req: ChatStreamRequest) {
     let session_id = req.conversation_id.clone().unwrap_or_default();
     let content = req.content.clone().unwrap_or_default();
+    let initial_turn_id = normalize_turn_id(req.turn_id.as_deref());
+    let initial_sink = ChatEventSink::new(
+        sender.clone(),
+        Some(ChatRealtimeStreamContext {
+            user_id: req.user_id.clone(),
+            conversation_id: Some(session_id.clone()),
+            conversation_turn_id: initial_turn_id.clone(),
+            project_id: req.project_id.clone(),
+            user_message_id: None,
+        }),
+    );
     let cfg = match Config::try_get() {
         Ok(cfg) => cfg,
         Err(err) => {
-            send_error_event(&sender, format!("服务配置未初始化: {err}").as_str());
-            sender.send_done();
+            send_error_event(&initial_sink, format!("服务配置未初始化: {err}").as_str());
+            initial_sink.send_done();
             return;
         }
     };
 
-    send_start_event(&sender, &session_id);
+    send_start_event(&initial_sink, &session_id);
 
     maybe_spawn_session_title_rename(true, &session_id, &content, 30);
 
@@ -137,8 +173,8 @@ async fn stream_chat_v3(sender: SseSender, req: ChatStreamRequest) {
         .and_then(|v| v.as_bool())
         != Some(true)
     {
-        send_error_event(&sender, "当前模型未启用 Responses API");
-        sender.send_done();
+        send_error_event(&initial_sink, "当前模型未启用 Responses API");
+        initial_sink.send_done();
         return;
     }
 
@@ -187,8 +223,7 @@ async fn stream_chat_v3(sender: SseSender, req: ChatStreamRequest) {
     let attachments_list = req.attachments.unwrap_or_default();
     let att = attachments::parse_attachments(&attachments_list);
     let user_message_id = Uuid::new_v4().to_string();
-    let resolved_turn_id =
-        normalize_turn_id(req.turn_id.as_deref()).unwrap_or_else(|| user_message_id.clone());
+    let resolved_turn_id = initial_turn_id.unwrap_or_else(|| user_message_id.clone());
     let unavailable_tools = mcp_exec.get_unavailable_tools();
     runtime_context.builtin_mcp_system_prompt = compose_effective_builtin_mcp_system_prompt(
         builtin_servers.as_slice(),
@@ -203,7 +238,17 @@ async fn stream_chat_v3(sender: SseSender, req: ChatStreamRequest) {
         runtime_context.command_system_prompt.as_deref(),
     )
     .await;
-    send_tools_unavailable_event(&sender, unavailable_tools.as_slice());
+    let sink = ChatEventSink::new(
+        sender.clone(),
+        Some(ChatRealtimeStreamContext {
+            user_id: req.user_id.clone(),
+            conversation_id: Some(session_id.clone()),
+            conversation_turn_id: Some(resolved_turn_id.clone()),
+            project_id: req.project_id.clone(),
+            user_message_id: Some(user_message_id.clone()),
+        }),
+    );
+    send_tools_unavailable_event(&sink, unavailable_tools.as_slice());
     let mcp_tool_metadata = mcp_exec.tool_metadata().clone();
     ai_server.set_mcp_tool_execute(mcp_exec);
     ai_server.ai_client.set_task_board_refresh_context(
@@ -230,7 +275,7 @@ async fn stream_chat_v3(sender: SseSender, req: ChatStreamRequest) {
         !model_runtime.api_key.is_empty(),
     );
 
-    let callback_bundle = build_v3_callbacks(&sender, &session_id, true);
+    let callback_bundle = build_v3_callbacks(&sink, &session_id, true);
     let mut callbacks = callback_bundle.callbacks.clone();
     wire_implicit_command_tracking(
         &mut callbacks,
@@ -314,7 +359,7 @@ async fn stream_chat_v3(sender: SseSender, req: ChatStreamRequest) {
     }
 
     let should_send_done = handle_chat_result(
-        &sender,
+        &sink,
         &session_id,
         Some(&chunk_sent),
         Some(&callback_bundle.streamed_content),
@@ -323,7 +368,7 @@ async fn stream_chat_v3(sender: SseSender, req: ChatStreamRequest) {
         |err| log_chat_error(err),
     );
     if should_send_done {
-        sender.send_done();
+        sink.send_done();
     }
     runtime_guidance_manager().close_turn(&session_id, &resolved_turn_id);
 }

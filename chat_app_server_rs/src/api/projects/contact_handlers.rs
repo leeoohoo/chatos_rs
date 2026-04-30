@@ -9,6 +9,7 @@ use crate::core::auth::AuthUser;
 use crate::core::project_access::{ensure_owned_project, map_project_access_error};
 use crate::core::validation::normalize_non_empty;
 use crate::services::memory_server_client;
+use crate::services::realtime::publish_project_members_updated;
 
 use super::contracts::{AddProjectContactRequest, ProjectContactsQuery};
 
@@ -90,7 +91,7 @@ pub(super) async fn add_project_contact(
     match memory_server_client::sync_project_agent_link(
         &memory_server_client::SyncProjectAgentLinkRequestDto {
             user_id: Some(auth.user_id.clone()),
-            project_id: Some(id),
+            project_id: Some(id.clone()),
             agent_id: Some(contact.agent_id),
             contact_id: Some(contact.id),
             session_id: None,
@@ -100,10 +101,18 @@ pub(super) async fn add_project_contact(
     )
     .await
     {
-        Ok(link) => (
-            StatusCode::OK,
-            Json(serde_json::to_value(link).unwrap_or(Value::Null)),
-        ),
+        Ok(link) => {
+            publish_project_members_updated(
+                auth.user_id.as_str(),
+                id.as_str(),
+                "project_contact_added",
+                Some(contact_id.as_str()),
+            );
+            (
+                StatusCode::OK,
+                Json(serde_json::to_value(link).unwrap_or(Value::Null)),
+            )
+        }
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": "add project contact failed", "detail": err})),
@@ -144,7 +153,7 @@ pub(super) async fn remove_project_contact(
     match memory_server_client::sync_project_agent_link(
         &memory_server_client::SyncProjectAgentLinkRequestDto {
             user_id: Some(auth.user_id.clone()),
-            project_id: Some(id),
+            project_id: Some(id.clone()),
             agent_id: Some(linked.agent_id),
             contact_id: Some(linked.contact_id),
             session_id: None,
@@ -154,7 +163,15 @@ pub(super) async fn remove_project_contact(
     )
     .await
     {
-        Ok(_) => (StatusCode::OK, Json(serde_json::json!({"success": true}))),
+        Ok(_) => {
+            publish_project_members_updated(
+                auth.user_id.as_str(),
+                id.as_str(),
+                "project_contact_removed",
+                Some(contact_id.as_str()),
+            );
+            (StatusCode::OK, Json(serde_json::json!({"success": true})))
+        }
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({"error": "remove project contact failed", "detail": err})),

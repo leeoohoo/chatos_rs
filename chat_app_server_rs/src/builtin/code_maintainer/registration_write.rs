@@ -12,6 +12,7 @@ use super::storage::ChangeLogStore;
 use super::utils::{format_bytes, sha256_bytes};
 
 use crate::core::tool_io::text_result;
+use crate::services::workspace_realtime_watcher::{note_workspace_path_changed, suppress_logged_path};
 
 pub(super) fn register_write_tools(
     service: &mut CodeMaintainerService,
@@ -104,6 +105,7 @@ fn register_write_file_tool(
             let result = fs_ops.write_file(path, content)?;
             let after_snapshot = DiffInput::text(content.to_string());
             let diff = build_diff(before_snapshot, after_snapshot);
+            let full_path = target.to_string_lossy().to_string();
             let record = change_log
                 .lock()
                 .map_err(|_| "change log unavailable".to_string())?
@@ -117,6 +119,8 @@ fn register_write_file_tool(
                     ctx.run_id,
                     diff,
                 )?;
+            suppress_logged_path(full_path.as_str());
+            note_workspace_path_changed(full_path.as_str());
             Ok(text_result(json!({ "result": result, "change": record })))
         }),
     );
@@ -193,6 +197,7 @@ fn register_edit_file_tool(
             let updated_content = edit_result.content.clone();
             let write_result = fs_ops.write_file(path, &updated_content)?;
             let diff = build_diff(DiffInput::text(content), DiffInput::text(updated_content));
+            let full_path = fs_ops.resolve_path(path)?.to_string_lossy().to_string();
             let record = change_log
                 .lock()
                 .map_err(|_| "change log unavailable".to_string())?
@@ -206,6 +211,8 @@ fn register_edit_file_tool(
                     ctx.run_id,
                     diff,
                 )?;
+            suppress_logged_path(full_path.as_str());
+            note_workspace_path_changed(full_path.as_str());
             Ok(text_result(json!({
                 "result": write_result,
                 "match": edit_result.info,
@@ -262,6 +269,7 @@ fn register_append_file_tool(
             };
             let result = fs_ops.append_file(path, content)?;
             let diff = build_diff(before_snapshot, after_snapshot);
+            let full_path = target.to_string_lossy().to_string();
             let record = change_log
                 .lock()
                 .map_err(|_| "change log unavailable".to_string())?
@@ -275,6 +283,8 @@ fn register_append_file_tool(
                     ctx.run_id,
                     diff,
                 )?;
+            suppress_logged_path(full_path.as_str());
+            note_workspace_path_changed(full_path.as_str());
             Ok(text_result(json!({ "result": result, "change": record })))
         }),
     );
@@ -312,6 +322,7 @@ fn register_delete_path_tool(
             } else {
                 DiffInput::text(String::new())
             };
+            let full_path = target.to_string_lossy().to_string();
             let delete_result = fs_ops.delete_path(path)?;
             let exists_after_delete = target.exists();
             if delete_result.deleted && exists_after_delete {
@@ -346,6 +357,8 @@ fn register_delete_path_tool(
                     ctx.run_id,
                     diff,
                 )?;
+            suppress_logged_path(full_path.as_str());
+            note_workspace_path_changed(full_path.as_str());
             Ok(text_result(json!({
                 "result": {
                     "path": delete_result.path,
@@ -433,6 +446,9 @@ fn register_apply_patch_tool(
                         ctx.run_id,
                         diff,
                     )?;
+                    let full_path_string = full_path.to_string_lossy().to_string();
+                    suppress_logged_path(full_path_string.as_str());
+                    note_workspace_path_changed(full_path_string.as_str());
                     hashes.push(json!({ "path": path, "sha256": hash }));
                 }
 
@@ -458,10 +474,14 @@ fn register_apply_patch_tool(
                         ctx.run_id,
                         diff,
                     )?;
+                    let full_path_string = full_path.to_string_lossy().to_string();
+                    suppress_logged_path(full_path_string.as_str());
+                    note_workspace_path_changed(full_path_string.as_str());
                     hashes.push(json!({ "path": path, "sha256": hash }));
                 }
 
                 for path in &result.deleted {
+                    let full_path = fs_ops.resolve_path(path)?;
                     let before_snapshot = before_snapshots
                         .remove(path)
                         .unwrap_or_else(|| DiffInput::text(String::new()));
@@ -478,6 +498,9 @@ fn register_apply_patch_tool(
                         ctx.run_id,
                         diff,
                     )?;
+                    let full_path_string = full_path.to_string_lossy().to_string();
+                    suppress_logged_path(full_path_string.as_str());
+                    note_workspace_path_changed(full_path_string.as_str());
                 }
             }
 

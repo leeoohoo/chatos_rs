@@ -1,21 +1,21 @@
 import {
   useProjectExplorerProjectLifecycle,
-  useProjectExplorerSummaryPolling,
+  useProjectExplorerSummaryRealtime,
 } from './useProjectExplorerProjectLifecycle';
 import { useProjectExplorerUiPersistence } from './useProjectExplorerUiPersistence';
 
 interface UseProjectExplorerEffectsParams {
   lifecycle: Parameters<typeof useProjectExplorerProjectLifecycle>[0];
   persistence: Parameters<typeof useProjectExplorerUiPersistence>[0];
-  summaryPolling: Parameters<typeof useProjectExplorerSummaryPolling>[0];
+  summaryRealtime: Parameters<typeof useProjectExplorerSummaryRealtime>[0];
 }
 
 export const useProjectExplorerEffects = ({
   lifecycle,
   persistence,
-  summaryPolling,
+  summaryRealtime,
 }: UseProjectExplorerEffectsParams) => {
   useProjectExplorerProjectLifecycle(lifecycle);
   useProjectExplorerUiPersistence(persistence);
-  useProjectExplorerSummaryPolling(summaryPolling);
+  useProjectExplorerSummaryRealtime(summaryRealtime);
 };

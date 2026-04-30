@@ -1,8 +1,17 @@
 import type { Terminal } from '../../../types';
 import type ApiClient from '../../api/client';
 import { ApiRequestError } from '../../api/client/shared';
-import { normalizeTerminal } from '../helpers/terminals';
+import { normalizeTerminal } from '../../domain/terminals';
 import type { ChatStoreDraft, ChatStoreGet, ChatStoreSet } from '../types';
+import {
+  loadTerminalDetailSnapshot,
+  loadTerminalsSnapshot,
+  markTerminalCachesStale,
+  removeTerminal,
+  removeTerminalCaches,
+  upsertTerminal,
+  upsertTerminalCaches,
+} from './terminalsCache';
 
 interface Deps {
   set: ChatStoreSet;
@@ -11,36 +20,49 @@ interface Deps {
   getUserIdParam: () => string;
 }
 
+interface LoadTerminalsOptions {
+  force?: boolean;
+}
+
+const syncCurrentTerminalSelection = (
+  state: ChatStoreDraft,
+  uid: string,
+  terminals: Terminal[],
+) => {
+  state.terminals = terminals;
+  if (!state.currentTerminalId) {
+    const lastId = localStorage.getItem(`lastTerminalId_${uid}`);
+    if (lastId) {
+      const matched = terminals.find((item) => item.id === lastId);
+      if (matched) {
+        state.currentTerminalId = matched.id;
+        state.currentTerminal = matched;
+      }
+    }
+    return;
+  }
+
+  const matched = terminals.find((item) => item.id === state.currentTerminalId);
+  if (matched) {
+    state.currentTerminal = matched;
+    return;
+  }
+
+  state.currentTerminalId = null;
+  state.currentTerminal = null;
+  if (state.activePanel === 'terminal') {
+    state.activePanel = 'chat';
+  }
+};
+
 export function createTerminalActions({ set, get, client, getUserIdParam }: Deps) {
   return {
-    loadTerminals: async () => {
+    loadTerminals: async (options?: LoadTerminalsOptions) => {
       try {
         const uid = getUserIdParam();
-        const list = await client.listTerminals(uid);
-        const formatted = Array.isArray(list) ? list.map(normalizeTerminal) : [];
+        const formatted = await loadTerminalsSnapshot(client, uid, options);
         set((state: ChatStoreDraft) => {
-          state.terminals = formatted;
-          if (!state.currentTerminalId) {
-            const lastId = localStorage.getItem(`lastTerminalId_${uid}`);
-            if (lastId) {
-              const matched = formatted.find(t => t.id === lastId);
-              if (matched) {
-                state.currentTerminalId = matched.id;
-                state.currentTerminal = matched;
-              }
-            }
-          } else {
-            const matched = formatted.find(t => t.id === state.currentTerminalId);
-            if (matched) {
-              state.currentTerminal = matched;
-            } else {
-              state.currentTerminalId = null;
-              state.currentTerminal = null;
-              if (state.activePanel === 'terminal') {
-                state.activePanel = 'chat';
-              }
-            }
-          }
+          syncCurrentTerminalSelection(state, uid, formatted);
         });
         return formatted;
       } catch (error) {
@@ -60,22 +82,24 @@ export function createTerminalActions({ set, get, client, getUserIdParam }: Deps
         user_id: uid,
       };
       const created = await client.createTerminal(payload);
-      const terminal = normalizeTerminal(created);
+      const normalizedTerminal = normalizeTerminal(created);
+      upsertTerminalCaches(client, normalizedTerminal);
       set((state: ChatStoreDraft) => {
-        state.terminals.unshift(terminal);
-        state.currentTerminalId = terminal.id;
-        state.currentTerminal = terminal;
+        state.terminals = upsertTerminal(state.terminals, normalizedTerminal);
+        state.currentTerminalId = normalizedTerminal.id;
+        state.currentTerminal = normalizedTerminal;
         state.activePanel = 'terminal';
       });
-      localStorage.setItem(`lastTerminalId_${uid}`, terminal.id);
-      return terminal;
+      localStorage.setItem(`lastTerminalId_${uid}`, normalizedTerminal.id);
+      return normalizedTerminal;
     },
 
     deleteTerminal: async (terminalId: string) => {
       try {
         await client.deleteTerminal(terminalId);
+        removeTerminalCaches(client, terminalId);
         set((state: ChatStoreDraft) => {
-          state.terminals = state.terminals.filter((terminal) => terminal.id !== terminalId);
+          state.terminals = removeTerminal(state.terminals, terminalId);
           if (state.currentTerminalId === terminalId) {
             state.currentTerminalId = null;
             state.currentTerminal = null;
@@ -96,11 +120,14 @@ export function createTerminalActions({ set, get, client, getUserIdParam }: Deps
       try {
         let terminal = get().terminals.find((t: Terminal) => t.id === terminalId) || null;
         if (!terminal) {
-          const fetched = await client.getTerminal(terminalId);
-          terminal = normalizeTerminal(fetched);
+          terminal = await loadTerminalDetailSnapshot(client, terminalId);
+        }
+        if (!terminal) {
+          throw new ApiRequestError('终端不存在', { status: 404 });
         }
         const uid = getUserIdParam();
         set((state: ChatStoreDraft) => {
+          state.terminals = upsertTerminal(state.terminals, terminal);
           state.currentTerminalId = terminalId;
           state.currentTerminal = terminal;
           state.activePanel = 'terminal';
@@ -118,6 +145,60 @@ export function createTerminalActions({ set, get, client, getUserIdParam }: Deps
           }
           state.error = error instanceof Error ? error.message : 'Failed to select terminal';
         });
+      }
+    },
+
+    markTerminalsStale: (options?: { userId?: string | null; terminalId?: string | null }) => {
+      markTerminalCachesStale(client, options);
+    },
+
+    removeTerminalLocally: (terminalId: string) => {
+      removeTerminalCaches(client, terminalId);
+      set((state: ChatStoreDraft) => {
+        state.terminals = removeTerminal(state.terminals, terminalId);
+        if (state.currentTerminalId === terminalId) {
+          state.currentTerminalId = null;
+          state.currentTerminal = null;
+          if (state.activePanel === 'terminal') {
+            state.activePanel = 'chat';
+          }
+        }
+      });
+    },
+
+    refreshTerminalById: async (terminalId: string) => {
+      try {
+        const normalized = String(terminalId || '').trim();
+        if (!normalized) {
+          return null;
+        }
+        const terminal = await loadTerminalDetailSnapshot(client, normalized, { force: true });
+        if (!terminal) {
+          set((state: ChatStoreDraft) => {
+            state.terminals = removeTerminal(state.terminals, normalized);
+            if (state.currentTerminalId === normalized) {
+              state.currentTerminalId = null;
+              state.currentTerminal = null;
+              if (state.activePanel === 'terminal') {
+                state.activePanel = 'chat';
+              }
+            }
+          });
+          return null;
+        }
+        const uid = getUserIdParam();
+        set((state: ChatStoreDraft) => {
+          state.terminals = upsertTerminal(state.terminals, terminal);
+          if (state.currentTerminalId === normalized) {
+            state.currentTerminal = terminal;
+          } else {
+            syncCurrentTerminalSelection(state, uid, state.terminals);
+          }
+        });
+        return terminal;
+      } catch (error) {
+        console.error('Failed to refresh terminal detail:', error);
+        return null;
       }
     },
 

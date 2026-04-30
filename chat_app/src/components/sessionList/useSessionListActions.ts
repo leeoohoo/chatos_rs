@@ -18,9 +18,9 @@ interface SessionListActionsParams {
   setActivePanel: (panel: ActivePanel) => void;
   onOpenSessionSummary?: (sessionId: string) => void;
   onOpenSessionRuntimeContext?: (sessionId: string) => void;
-  loadContactsAction: () => Promise<unknown>;
-  loadTerminals: () => Promise<unknown>;
-  loadRemoteConnections: () => Promise<unknown>;
+  loadContactsAction: (options?: { force?: boolean }) => Promise<unknown>;
+  loadTerminals: (options?: { force?: boolean }) => Promise<unknown>;
+  loadRemoteConnections: (options?: { force?: boolean }) => Promise<unknown>;
   setIsRefreshing: (value: boolean) => void;
   setIsRefreshingTerminals: (value: boolean) => void;
   setIsRefreshingRemote: (value: boolean) => void;
@@ -126,19 +126,19 @@ export const useSessionListActions = ({
 
   const handleRefreshSessions = useCallback(async () => {
     setIsRefreshing(true);
-    await loadContactsAction();
+    await loadContactsAction({ force: true });
     setIsRefreshing(false);
   }, [loadContactsAction, setIsRefreshing]);
 
   const handleRefreshTerminals = useCallback(async () => {
     setIsRefreshingTerminals(true);
-    await loadTerminals();
+    await loadTerminals({ force: true });
     setIsRefreshingTerminals(false);
   }, [loadTerminals, setIsRefreshingTerminals]);
 
   const handleRefreshRemote = useCallback(async () => {
     setIsRefreshingRemote(true);
-    await loadRemoteConnections();
+    await loadRemoteConnections({ force: true });
     setIsRefreshingRemote(false);
   }, [loadRemoteConnections, setIsRefreshingRemote]);
 

@@ -2,6 +2,7 @@ use mongodb::bson::Document;
 use uuid::Uuid;
 
 use crate::repositories::db::with_db;
+use crate::services::realtime::{publish_task_board_updated, resolve_conversation_scope};
 use crate::services::session_mirror::ensure_sqlite_session_present;
 use crate::services::task_manager::mapper::task_record_to_doc;
 use crate::services::task_manager::normalizer::{normalize_task_drafts, trimmed_non_empty};
@@ -53,7 +54,7 @@ pub async fn create_tasks_for_turn(
     let sqlite_records = records.clone();
     let sqlite_conversation_id = conversation_id.clone();
 
-    with_db(
+    let created = with_db(
         move |db| {
             let records = mongo_records.clone();
             Box::pin(async move {
@@ -109,5 +110,38 @@ pub async fn create_tasks_for_turn(
             })
         },
     )
-    .await
+    .await?;
+
+    publish_created_tasks(&conversation_id, &conversation_turn_id, &created).await;
+    Ok(created)
+}
+
+async fn publish_created_tasks(
+    conversation_id: &str,
+    conversation_turn_id: &str,
+    records: &[TaskRecord],
+) {
+    if records.is_empty() {
+        return;
+    }
+    let Ok(scope) = resolve_conversation_scope(conversation_id).await else {
+        return;
+    };
+    let Some(user_id) = scope.user_id.as_deref() else {
+        return;
+    };
+
+    for record in records {
+        publish_task_board_updated(
+            user_id,
+            conversation_id,
+            Some(conversation_turn_id),
+            None,
+            Some(record.id.as_str()),
+            "task_created",
+            Some(record.clone()),
+            None,
+            None,
+        );
+    }
 }
