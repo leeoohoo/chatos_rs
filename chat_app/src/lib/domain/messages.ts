@@ -26,6 +26,9 @@ type NormalizedRawMessage = {
   role: Message['role'];
   sessionId: string;
   summary?: string;
+  summaryId?: string | null;
+  summarizedAt?: string | null;
+  summaryStatus?: string | null;
   toolCallId: string;
   topLevelToolCalls: UnknownRecord[];
 };
@@ -221,6 +224,15 @@ export const normalizeRawMessages = (
       role: readValue(messageRecord, 'role') as Message['role'],
       content: typeof rawContent === 'string' ? rawContent : String(rawContent ?? ''),
       summary: readValue(messageRecord, 'summary') as string | undefined,
+      summaryStatus: typeof readValue(messageRecord, 'summary_status') === 'string'
+        ? String(readValue(messageRecord, 'summary_status'))
+        : null,
+      summaryId: typeof readValue(messageRecord, 'summary_id') === 'string'
+        ? String(readValue(messageRecord, 'summary_id'))
+        : null,
+      summarizedAt: typeof readValue(messageRecord, 'summarized_at') === 'string'
+        ? String(readValue(messageRecord, 'summarized_at'))
+        : null,
       toolCallId: normalizeToolCallId(
         readValue(messageRecord, 'tool_call_id') ?? readValue(messageRecord, 'toolCallId'),
       ),
@@ -355,6 +367,9 @@ export const normalizeRawMessages = (
       status: 'completed' as const,
       createdAt: message.createdAt,
       updatedAt: undefined,
+      summaryStatus: message.summaryStatus,
+      summaryId: message.summaryId,
+      summarizedAt: message.summarizedAt,
       toolCallId: message.toolCallId,
       metadata: {
         ...((message.metadata !== null && typeof message.metadata === 'object')

@@ -536,7 +536,7 @@ fn is_local_gateway_base_url(base_url: &str) -> bool {
 
 fn request_timeout_for_base_url(base_url: &str, timeout_secs: u64) -> Option<Duration> {
     if is_local_gateway_base_url(base_url) {
-        None
+        Some(Duration::from_secs(timeout_secs.max(120)))
     } else {
         Some(Duration::from_secs(timeout_secs))
     }

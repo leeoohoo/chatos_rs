@@ -38,6 +38,9 @@ pub struct MessageOut {
     pub tool_call_id: Option<String>,
     pub reasoning: Option<String>,
     pub metadata: Option<Value>,
+    pub summary_status: String,
+    pub summary_id: Option<String>,
+    pub summarized_at: Option<String>,
     pub created_at: String,
 }
 
@@ -56,6 +59,9 @@ impl From<Message> for MessageOut {
             tool_call_id: msg.tool_call_id,
             reasoning: msg.reasoning,
             metadata: msg.metadata,
+            summary_status: msg.summary_status,
+            summary_id: msg.summary_id,
+            summarized_at: msg.summarized_at,
             created_at: msg.created_at,
         }
     }

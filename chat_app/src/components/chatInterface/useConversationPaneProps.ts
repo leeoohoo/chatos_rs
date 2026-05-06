@@ -39,6 +39,7 @@ export const useConversationPaneProps = ({
   onRunReviewRepair: actions.handleRunReviewRepair,
   reviewRepairRunning: conversation.reviewRepairRunning,
   reviewRepairPendingCount: conversation.reviewRepairPendingCount,
+  reviewRepairDisabled: conversation.reviewRepairDisabled,
   onCloseSummary: actions.handleCloseSummary,
   toggleSidebar: actions.toggleSidebar,
   mergedCurrentTurnTasks: conversation.mergedCurrentTurnTasks,

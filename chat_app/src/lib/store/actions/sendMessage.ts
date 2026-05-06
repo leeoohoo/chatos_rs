@@ -1,7 +1,10 @@
 import type { Message } from '../../../types';
 import type { SendMessageRuntimeOptions } from '../../../types';
 import type ApiClient from '../../api/client';
-import { getRealtimeConnectionStateSnapshot } from '../../realtime/state';
+import {
+  getRealtimeConnectionStateSnapshot,
+  waitForRealtimeConnectedSnapshot,
+} from '../../realtime/state';
 import { debugLog } from '@/lib/utils';
 import { prepareAttachmentsForStreaming } from './sendMessage/attachments';
 import { createInternalId } from './sendMessage/internalId';
@@ -33,6 +36,8 @@ import type {
   ChatStoreSet,
 } from '../types';
 import { type StreamingMessage } from './sendMessage/types';
+
+const REALTIME_STREAM_CONNECT_GRACE_MS = 1200;
 
 // 工厂函数：创建 sendMessage 处理器，注入依赖以便于在 store 外部维护
 export function createSendMessageHandler({
@@ -233,7 +238,10 @@ export function createSendMessageHandler({
         skillsEnabled: effectiveSkillsEnabled,
         selectedSkillIds: effectiveSelectedSkillIds,
       });
-      const preferRealtimeStream = getRealtimeConnectionStateSnapshot() === 'connected';
+      let preferRealtimeStream = getRealtimeConnectionStateSnapshot() === 'connected';
+      if (!preferRealtimeStream) {
+        preferRealtimeStream = await waitForRealtimeConnectedSnapshot(REALTIME_STREAM_CONNECT_GRACE_MS);
+      }
 
       if (preferRealtimeStream) {
         const commandResponse = await client.sendChatCommand(

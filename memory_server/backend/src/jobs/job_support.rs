@@ -19,6 +19,32 @@ pub(crate) async fn finish_failed_job_run(
     }
 }
 
+pub(crate) async fn update_failed_job_run_diagnostics(
+    pool: &Db,
+    job_run_id: &str,
+    pending_before_count: Option<i64>,
+    selected_count: Option<i64>,
+    marked_count: Option<i64>,
+    pending_after_count: Option<i64>,
+    log_prefix: &str,
+) {
+    if let Err(err) = jobs::update_job_run_diagnostics(
+        pool,
+        job_run_id,
+        pending_before_count,
+        selected_count,
+        marked_count,
+        pending_after_count,
+    )
+    .await
+    {
+        warn!(
+            "{} update failed job diagnostics failed: job_run_id={} error={}",
+            log_prefix, job_run_id, err
+        );
+    }
+}
+
 pub(crate) async fn resolve_model_config(
     pool: &Db,
     user_id: &str,
@@ -66,4 +92,13 @@ pub(crate) fn resolve_lock_lease_seconds() -> i64 {
         .filter(|value| *value > 0)
         .unwrap_or(1800)
         .max(60)
+}
+
+pub(crate) fn resolve_job_timeout_seconds() -> u64 {
+    std::env::var("MEMORY_SERVER_JOB_TIMEOUT_SECONDS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(180)
+        .max(30)
 }

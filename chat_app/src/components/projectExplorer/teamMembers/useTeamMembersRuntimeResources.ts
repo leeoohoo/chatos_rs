@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { resolveSessionProjectScopeId } from '../../../features/contactSession/sessionResolver';
+import { countPendingReviewRepairMessages } from '../../../lib/domain/reviewRepair';
 import { useSessionRuntimeSettings } from '../../../features/sessionRuntime/useSessionRuntimeSettings';
 import { useSessionWorkbarPanels } from '../../chatInterface/useSessionWorkbarPanels';
 import type { ContactItem } from './types';
@@ -277,10 +278,31 @@ export const useTeamMembersRuntimeResources = ({
   } = useReviewRepairRealtime({
     apiClient,
     sessionId: conversation.selectedProjectSession?.id || null,
+    messageCountHint: conversation.selectedProjectSession?.id
+      ? messages.length
+      : undefined,
     onFailed: (errorMessage) => {
       setError?.(errorMessage);
     },
+    onCompleted: async () => {
+      const selectedSessionId = conversation.selectedProjectSession?.id || null;
+      if (!selectedSessionId) {
+        return;
+      }
+      await store.loadMessages(selectedSessionId);
+    },
   });
+
+  const loadedReviewRepairPendingCount = useMemo(() => {
+    const selectedSessionId = conversation.selectedProjectSession?.id || null;
+    if (!selectedSessionId) {
+      return 0;
+    }
+    return countPendingReviewRepairMessages(messages, selectedSessionId);
+  }, [conversation.selectedProjectSession?.id, messages]);
+  const reviewRepairDisabled = !reviewRepairRunning
+    && reviewRepairPendingCount === 0
+    && loadedReviewRepairPendingCount === 0;
 
   const handleRunReviewRepair = useCallback(async (sessionId: string) => {
     if (!sessionId) {
@@ -351,6 +373,7 @@ export const useTeamMembersRuntimeResources = ({
       handleRunReviewRepair,
       reviewRepairRunning,
       reviewRepairPendingCount,
+      reviewRepairDisabled,
     },
     runtimeContext,
     handleRemoveMember,

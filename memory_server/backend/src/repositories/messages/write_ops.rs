@@ -147,13 +147,50 @@ pub async fn mark_messages_summarized(
             doc! {
                 "session_id": session_id,
                 "id": {"$in": message_ids.to_vec()},
-                "summary_status": "pending",
+                "$or": [
+                    {"summary_status": "pending"},
+                    {"summary_status": {"$exists": false}},
+                    {"summary_status": Bson::Null},
+                    {"summary_status": ""}
+                ],
             },
             doc! {
                 "$set": {
                     "summary_status": "summarized",
                     "summary_id": summary_id,
                     "summarized_at": &now,
+                }
+            },
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(result.modified_count as usize)
+}
+
+pub async fn reset_messages_summary_by_summary_id(
+    db: &Db,
+    session_id: &str,
+    summary_id: &str,
+) -> Result<usize, String> {
+    let normalized_summary_id = summary_id.trim();
+    if normalized_summary_id.is_empty() {
+        return Ok(0);
+    }
+
+    let result = collection(db)
+        .update_many(
+            doc! {
+                "session_id": session_id,
+                "summary_id": normalized_summary_id,
+            },
+            doc! {
+                "$set": {
+                    "summary_status": "pending",
+                    "summarized_at": Bson::Null,
+                },
+                "$unset": {
+                    "summary_id": "",
                 }
             },
         )

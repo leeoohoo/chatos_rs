@@ -93,6 +93,9 @@ export interface Message {
   status: MessageStatus;
   createdAt: Date;
   updatedAt?: Date;
+  summaryStatus?: string | null;
+  summaryId?: string | null;
+  summarizedAt?: string | null;
   metadata?: MessageMetadata;
 }
 

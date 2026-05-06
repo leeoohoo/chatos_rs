@@ -75,6 +75,10 @@ function formatCount(value?: number | null): string {
   return String(value);
 }
 
+function isReviewRepairJob(row: JobRun): boolean {
+  return row.job_type === 'summary_review_repair' || row.trigger_type === 'manual_review_repair';
+}
+
 export function JobRunsPage() {
   const { t } = useI18n();
   const [items, setItems] = useState<JobRun[]>([]);
@@ -274,6 +278,7 @@ export function JobRunsPage() {
         const selected = formatCount(row.selected_count);
         const marked = formatCount(row.marked_count);
         const after = formatCount(row.pending_after_count);
+        const reviewRepair = isReviewRepairJob(row);
         const hasMarked =
           row.marked_count !== undefined && row.marked_count !== null && row.marked_count >= 0;
         const suspect =
@@ -281,11 +286,19 @@ export function JobRunsPage() {
           row.marked_count === 0 &&
           row.status === 'done' &&
           row.input_count > 0 &&
-          row.job_type === 'summary_l0';
+          (row.job_type === 'summary_l0' || reviewRepair);
         return (
           <Space direction="vertical" size={0}>
-            <span>{`pending ${before} -> ${after}`}</span>
-            <span>{`selected ${selected}, marked ${marked}`}</span>
+            <span>
+              {reviewRepair
+                ? t('jobRuns.reviewRepairPendingFlow', { before, after })
+                : `pending ${before} -> ${after}`}
+            </span>
+            <span>
+              {reviewRepair
+                ? t('jobRuns.reviewRepairSelectionFlow', { selected, marked })
+                : `selected ${selected}, marked ${marked}`}
+            </span>
             {suspect && <Tag color="warning">{t('jobRuns.progressSuspect')}</Tag>}
           </Space>
         );

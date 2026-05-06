@@ -1,9 +1,11 @@
 import { useCallback, useState } from 'react';
 
 import type ApiClient from '../../lib/api/client';
+import { countPendingReviewRepairMessages } from '../../lib/domain/reviewRepair';
 import type {
   SendMessageHandler,
   SendMessageRuntimeOptions,
+  Message,
   Session,
 } from '../../types';
 import { useChatSessionEffects } from './useChatSessionEffects';
@@ -15,6 +17,8 @@ interface UseChatInterfaceControllerParams {
   apiClient: ApiClient;
   activePanel: string;
   currentSession: Session | null;
+  messages: Message[];
+  currentMessageCount: number;
   runtimeContextRefreshNonce: number;
   currentChatStateActiveTurnId: string | null | undefined;
   activeConversationTurnId: string | null | undefined;
@@ -64,6 +68,8 @@ export const useChatInterfaceController = ({
   apiClient,
   activePanel,
   currentSession,
+  messages,
+  currentMessageCount,
   runtimeContextRefreshNonce,
   currentChatStateActiveTurnId,
   activeConversationTurnId,
@@ -139,6 +145,33 @@ export const useChatInterfaceController = ({
     runtimeContextRefreshNonce,
   });
 
+  const {
+    reviewRepairRunning,
+    reviewRepairPendingCount,
+    refreshReviewRepairStatus,
+    markReviewRepairStarting,
+  } = useReviewRepairRealtime({
+    apiClient,
+    sessionId: activePanel === 'chat' ? (currentSession?.id || null) : null,
+    enabled: activePanel === 'chat',
+    messageCountHint: activePanel === 'chat' && currentSession?.id
+      ? currentMessageCount
+      : undefined,
+    onCompleted: async () => {
+      if (!currentSession?.id) {
+        return;
+      }
+      await loadMoreMessages(currentSession.id);
+    },
+  });
+
+  const loadedReviewRepairPendingCount = activePanel === 'chat' && currentSession?.id
+    ? countPendingReviewRepairMessages(messages, currentSession.id)
+    : 0;
+  const reviewRepairDisabled = !reviewRepairRunning
+    && reviewRepairPendingCount === 0
+    && loadedReviewRepairPendingCount === 0;
+
   const handleMessageSend = useCallback(async (
     content: string,
     attachments?: File[],
@@ -160,11 +193,22 @@ export const useChatInterfaceController = ({
           ? (remoteConnectionIdOverride ?? null)
           : (currentRemoteConnectionId || null),
       });
+      if (currentSession?.id) {
+        void refreshReviewRepairStatus(currentSession.id).catch((statusError) => {
+          console.error('Failed to refresh review repair status after send:', statusError);
+        });
+      }
       onMessageSend?.(content, attachments);
     } catch (error) {
       console.error('Failed to send message:', error);
     }
-  }, [currentRemoteConnectionId, onMessageSend, sendMessage]);
+  }, [
+    currentRemoteConnectionId,
+    currentSession?.id,
+    onMessageSend,
+    refreshReviewRepairStatus,
+    sendMessage,
+  ]);
 
   const handleComposerRemoteConnectionChange = useCallback((connectionId: string | null) => {
     void selectRemoteConnection(connectionId, { activatePanel: false });
@@ -229,17 +273,6 @@ export const useChatInterfaceController = ({
     },
   });
 
-  const {
-    reviewRepairRunning,
-    reviewRepairPendingCount,
-    refreshReviewRepairStatus,
-    markReviewRepairStarting,
-  } = useReviewRepairRealtime({
-    apiClient,
-    sessionId: activePanel === 'chat' ? (currentSession?.id || null) : null,
-    enabled: activePanel === 'chat',
-  });
-
   const handleRunReviewRepair = useCallback(async (sessionId: string) => {
     if (!sessionId) {
       return;
@@ -295,6 +328,7 @@ export const useChatInterfaceController = ({
     setUiPromptHistoryOpen,
     reviewRepairRunning,
     reviewRepairPendingCount,
+    reviewRepairDisabled,
     runtimeContextOpen,
     setRuntimeContextOpen,
     runtimeContextSessionId,

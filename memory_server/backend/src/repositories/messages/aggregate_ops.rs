@@ -6,7 +6,46 @@ use crate::repositories::session_support::{
     build_contact_or_conditions, contact_or_agent_presence_match, project_scope_condition,
 };
 
+fn pending_summary_status_match() -> Document {
+    doc! {
+        "$or": [
+            {"summary_status": "pending"},
+            {"summary_status": {"$exists": false}},
+            {"summary_status": mongodb::bson::Bson::Null},
+            {"summary_status": ""}
+        ]
+    }
+}
+
 fn prefix_condition_keys(prefix: &str, row: &Document) -> Document {
+    if row.contains_key("$or") {
+        let nested = row
+            .get_array("$or")
+            .ok()
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|value| value.as_document())
+                    .map(|item| prefix_condition_keys(prefix, item))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        return doc! {"$or": nested};
+    }
+    if row.contains_key("$and") {
+        let nested = row
+            .get_array("$and")
+            .ok()
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|value| value.as_document())
+                    .map(|item| prefix_condition_keys(prefix, item))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        return doc! {"$and": nested};
+    }
     let mut out = Document::new();
     for (key, value) in row {
         out.insert(format!("{}.{}", prefix, key), value.clone());
@@ -21,7 +60,7 @@ pub async fn list_session_ids_with_pending_messages_by_user(
 ) -> Result<Vec<String>, String> {
     let contact_match = contact_or_agent_presence_match("session");
     let pipeline = vec![
-        doc! {"$match": {"summary_status": "pending"}},
+        doc! {"$match": pending_summary_status_match()},
         doc! {"$lookup": {
             "from": "sessions",
             "localField": "session_id",
@@ -81,7 +120,7 @@ pub async fn list_session_ids_with_pending_messages_by_scope(
     };
 
     let pipeline = vec![
-        doc! {"$match": {"summary_status": "pending"}},
+        doc! {"$match": pending_summary_status_match()},
         doc! {"$lookup": {
             "from": "sessions",
             "localField": "session_id",
@@ -143,7 +182,7 @@ pub async fn count_pending_messages_by_scope(
     };
 
     let pipeline = vec![
-        doc! {"$match": {"summary_status": "pending"}},
+        doc! {"$match": pending_summary_status_match()},
         doc! {"$lookup": {
             "from": "sessions",
             "localField": "session_id",

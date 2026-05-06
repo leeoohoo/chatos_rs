@@ -7,7 +7,7 @@ use tracing::{info, warn};
 use crate::ai::AiClient;
 use crate::db::Db;
 use crate::models::REVIEW_REPAIR_SUMMARY_PROMPT_TEMPLATE;
-use crate::repositories::{configs, jobs as job_runs, messages, sessions};
+use crate::repositories::{configs, jobs as job_runs, locks, messages, sessions};
 
 use super::summary_generation::{process_session, process_session_force};
 use super::{job_support, summary_support};
@@ -45,6 +45,48 @@ pub struct ScopedReviewRepairStatus {
     pub contact_id: Option<String>,
     pub agent_id: Option<String>,
     pub job_type: String,
+}
+
+async fn collect_review_repair_scope_state(
+    pool: &Db,
+    user_id: &str,
+    project_id: &str,
+    contact_id: Option<&str>,
+    agent_id: Option<&str>,
+) -> Result<(Vec<String>, i64, usize), String> {
+    let scoped_session_ids = sessions::list_session_ids_by_scope(
+        pool,
+        user_id,
+        project_id,
+        contact_id,
+        agent_id,
+        5000,
+    )
+    .await?;
+
+    let processable_session_ids = messages::list_session_ids_with_pending_messages_by_scope(
+        pool,
+        user_id,
+        project_id,
+        contact_id,
+        agent_id,
+        5000,
+    )
+    .await?;
+    let pending_message_count = messages::count_pending_messages_by_scope(
+        pool,
+        user_id,
+        project_id,
+        contact_id,
+        agent_id,
+    )
+    .await?;
+
+    Ok((
+        processable_session_ids,
+        pending_message_count,
+        scoped_session_ids.len(),
+    ))
 }
 
 pub async fn run_once(pool: &Db, ai: &AiClient, user_id: &str) -> Result<SummaryRunResult, String> {
@@ -238,16 +280,7 @@ pub async fn run_review_repair_for_scope(
         .map(|m| m.model.clone())
         .unwrap_or_else(|| "local-fallback".to_string());
 
-    let session_ids = messages::list_session_ids_with_pending_messages_by_scope(
-        pool,
-        user_id,
-        project_id,
-        contact_id,
-        agent_id,
-        config.max_sessions_per_tick,
-    )
-    .await?;
-    let pending_message_count = messages::count_pending_messages_by_scope(
+    let (session_ids, pending_message_count, _) = collect_review_repair_scope_state(
         pool,
         user_id,
         project_id,
@@ -361,7 +394,16 @@ pub async fn get_review_repair_status_for_scope(
     contact_id: Option<&str>,
     agent_id: Option<&str>,
 ) -> Result<ScopedReviewRepairStatus, String> {
-    let session_ids = sessions::list_session_ids_by_scope(
+    let (_processable_session_ids, pending_message_count, scope_session_count) =
+        collect_review_repair_scope_state(
+            pool,
+            user_id,
+            project_id,
+            contact_id,
+            agent_id,
+        )
+        .await?;
+    let scope_session_ids = sessions::list_session_ids_by_scope(
         pool,
         user_id,
         project_id,
@@ -370,18 +412,21 @@ pub async fn get_review_repair_status_for_scope(
         5000,
     )
     .await?;
-    let pending_message_count = messages::count_pending_messages_by_scope(
+    let _ = job_runs::cleanup_stale_running_job_runs(
         pool,
-        user_id,
-        project_id,
-        contact_id,
-        agent_id,
+        "summary_review_repair",
+        scope_session_ids.as_slice(),
     )
-    .await?;
+    .await;
+    let summary_lock_keys: Vec<String> = scope_session_ids
+        .iter()
+        .map(|session_id| format!("summary_l0:{}", session_id))
+        .collect();
+    let _ = locks::cleanup_expired_job_locks(pool, summary_lock_keys.as_slice()).await;
     let running_job_count = job_runs::count_job_runs_for_sessions(
         pool,
         "summary_review_repair",
-        session_ids.as_slice(),
+        scope_session_ids.as_slice(),
         Some("running"),
     )
     .await?;
@@ -390,7 +435,7 @@ pub async fn get_review_repair_status_for_scope(
         running: running_job_count > 0,
         running_job_count,
         pending_message_count,
-        scope_session_count: session_ids.len(),
+        scope_session_count,
         project_id: project_id.to_string(),
         contact_id: contact_id.map(ToOwned::to_owned),
         agent_id: agent_id.map(ToOwned::to_owned),

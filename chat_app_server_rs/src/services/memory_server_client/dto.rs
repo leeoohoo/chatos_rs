@@ -23,6 +23,14 @@ pub(crate) struct ListResponse<T> {
     pub items: Vec<T>,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct DeleteSummaryResultDto {
+    #[serde(default)]
+    pub success: bool,
+    #[serde(default)]
+    pub reset_messages: usize,
+}
+
 #[derive(Debug, Deserialize)]
 pub(crate) struct MemorySession {
     pub id: String,

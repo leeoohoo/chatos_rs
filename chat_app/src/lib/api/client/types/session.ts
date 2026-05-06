@@ -99,6 +99,9 @@ export interface SessionMessageResponse {
   metadata?: Record<string, unknown> | null;
   toolCalls?: unknown[];
   tool_calls?: unknown[];
+  summary_status?: string | null;
+  summary_id?: string | null;
+  summarized_at?: string | null;
   createdAt?: string | Date;
   created_at?: string;
   updatedAt?: string | Date;

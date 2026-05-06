@@ -7,6 +7,8 @@ import {
   hasProjectRunnerScript,
   isProjectRunnerPathMissingError,
   loadProjectRunnerMembers,
+  markProjectRunnerContactRowsStale,
+  markProjectRunnerScriptStateStale,
   readProjectRunnerErrorMessage,
   RUNNER_SCRIPT_REL_PATH,
 } from '../../../lib/domain/projectRunner';
@@ -81,11 +83,17 @@ export const useProjectRunnerCatalogState = ({
   }, [client, project?.rootPath]);
 
   const refreshRunnerState = useCallback(async () => {
+    if (project?.id) {
+      markProjectRunnerContactRowsStale(client, project.id);
+    }
+    if (project?.rootPath) {
+      markProjectRunnerScriptStateStale(client, project.rootPath);
+    }
     await Promise.all([
       loadProjectMembers(),
       loadRunnerScriptState(),
     ]);
-  }, [loadProjectMembers, loadRunnerScriptState]);
+  }, [client, loadProjectMembers, loadRunnerScriptState, project?.id, project?.rootPath]);
 
   const resetRunnerCatalogState = useCallback(() => {
     setProjectMembers([]);
@@ -100,12 +108,14 @@ export const useProjectRunnerCatalogState = ({
     enabled: Boolean(project?.id),
     projectId: project?.id || null,
     onCatalogUpdated: async () => {
-      await refreshRunnerState();
+      if (project?.rootPath) {
+        markProjectRunnerScriptStateStale(client, project.rootPath);
+      }
+      await loadRunnerScriptState();
     },
-    onMembersUpdated: async (payload) => {
-      const reason = String(payload.reason || '').trim();
-      if (reason !== 'project_contact_added' && reason !== 'project_contact_removed') {
-        return;
+    onMembersUpdated: async () => {
+      if (project?.id) {
+        markProjectRunnerContactRowsStale(client, project.id);
       }
       await loadProjectMembers();
     },

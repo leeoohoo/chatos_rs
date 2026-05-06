@@ -5,9 +5,7 @@ use tokio::sync::broadcast;
 
 use crate::core::time::now_rfc3339;
 use crate::models::terminal::Terminal;
-use crate::services::memory_server_client::{
-    ReviewRepairStatusDto, ReviewRepairSummaryRunResultDto, RunReviewRepairSummaryRequestDto,
-};
+use crate::services::memory_server_client::{ReviewRepairStatusDto, RunReviewRepairSummaryRequestDto};
 use crate::services::task_manager::{TaskDraft, TaskRecord};
 
 use super::types::{
@@ -60,11 +58,11 @@ pub fn user_has_realtime_listeners() -> bool {
     REALTIME_HUB.has_receivers()
 }
 
-pub fn publish_review_repair_started(
+pub fn publish_review_repair_started_pending(
     user_id: &str,
     conversation_id: &str,
     scope_req: &RunReviewRepairSummaryRequestDto,
-    result: &ReviewRepairSummaryRunResultDto,
+    pending_message_count: Option<i64>,
 ) {
     publish_review_repair_event(
         "conversation.review_repair.started",
@@ -72,54 +70,20 @@ pub fn publish_review_repair_started(
         conversation_id,
         ReviewRepairRealtimePayload {
             conversation_id: conversation_id.to_string(),
-            project_id: result.project_id.clone(),
-            contact_id: result.contact_id.clone().or_else(|| scope_req.contact_id.clone()),
-            agent_id: result.agent_id.clone().or_else(|| scope_req.agent_id.clone()),
+            project_id: scope_req.project_id.clone().unwrap_or_default(),
+            contact_id: scope_req.contact_id.clone(),
+            agent_id: scope_req.agent_id.clone(),
             running: true,
-            pending_message_count: Some(result.pending_message_count),
+            pending_message_count,
             running_job_count: None,
             scope_session_count: None,
-            processed_sessions: Some(result.processed_sessions),
-            summarized_sessions: Some(result.summarized_sessions),
-            generated_summaries: Some(result.generated_summaries),
-            marked_messages: Some(result.marked_messages),
-            failed_sessions: Some(result.failed_sessions),
-            job_type: Some("review_repair".to_string()),
-            mode: Some(result.mode.clone()),
-            error: None,
-        },
-    );
-}
-
-pub fn publish_review_repair_progress(
-    user_id: &str,
-    conversation_id: &str,
-    scope_req: &RunReviewRepairSummaryRequestDto,
-    status: &ReviewRepairStatusDto,
-) {
-    publish_review_repair_event(
-        "conversation.review_repair.progress",
-        user_id,
-        conversation_id,
-        ReviewRepairRealtimePayload {
-            conversation_id: conversation_id.to_string(),
-            project_id: status.project_id.clone(),
-            contact_id: status
-                .contact_id
-                .clone()
-                .or_else(|| scope_req.contact_id.clone()),
-            agent_id: status.agent_id.clone().or_else(|| scope_req.agent_id.clone()),
-            running: status.running,
-            pending_message_count: Some(status.pending_message_count),
-            running_job_count: Some(status.running_job_count),
-            scope_session_count: Some(status.scope_session_count),
             processed_sessions: None,
             summarized_sessions: None,
             generated_summaries: None,
             marked_messages: None,
             failed_sessions: None,
-            job_type: Some(status.job_type.clone()),
-            mode: None,
+            job_type: Some("review_repair".to_string()),
+            mode: Some("review_repair".to_string()),
             error: None,
         },
     );

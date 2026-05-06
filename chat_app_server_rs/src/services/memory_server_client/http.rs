@@ -30,6 +30,15 @@ pub fn try_timeout_duration() -> Result<Duration, String> {
     ))
 }
 
+pub fn try_background_job_timeout_duration() -> Result<Duration, String> {
+    Ok(Duration::from_millis(
+        Config::try_get()?
+            .memory_server_request_timeout_ms
+            .max(300)
+            .max(120_000) as u64,
+    ))
+}
+
 pub fn try_context_timeout_duration() -> Result<Duration, String> {
     Ok(Duration::from_millis(
         Config::try_get()?.memory_server_context_timeout_ms.max(300) as u64,
@@ -112,7 +121,7 @@ pub async fn send_json_without_service_token<T: DeserializeOwned>(
     resp.json::<T>().await.map_err(|e| e.to_string())
 }
 
-async fn read_status_detail_error(resp: reqwest::Response) -> String {
+pub(crate) async fn read_status_detail_error(resp: reqwest::Response) -> String {
     let status = resp.status();
     let detail = resp.text().await.unwrap_or_default();
     format_status_detail_error(status, detail.as_str())
@@ -122,7 +131,7 @@ fn format_status_detail_error(status: reqwest::StatusCode, detail: &str) -> Stri
     format!("status={} detail={}", status, detail)
 }
 
-fn try_apply_auth(req: RequestBuilder) -> Result<RequestBuilder, String> {
+pub(crate) fn try_apply_auth(req: RequestBuilder) -> Result<RequestBuilder, String> {
     if let Some(access_token) = current_access_token() {
         return Ok(req.bearer_auth(access_token));
     }

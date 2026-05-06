@@ -5,14 +5,15 @@ use crate::models::session::Session;
 use crate::models::session_summary_v2::SessionSummaryV2;
 
 use super::dto::{
-    ComposeContextResponse, CreateSessionRequest, MemorySession, PatchSessionRequest,
-    ReviewRepairStatusDto, ReviewRepairSummaryRunResultDto, RunReviewRepairSummaryRequestDto,
-    SummaryJobConfigDto, SyncMessageRequest, SyncTurnRuntimeSnapshotRequestDto,
-    TurnRuntimeSnapshotDto, TurnRuntimeSnapshotLookupResponseDto,
-    UpsertSummaryJobConfigRequestDto,
+    ComposeContextResponse, CreateSessionRequest, DeleteSummaryResultDto, MemorySession,
+    PatchSessionRequest, ReviewRepairStatusDto, ReviewRepairSummaryRunResultDto,
+    RunReviewRepairSummaryRequestDto, SummaryJobConfigDto, SyncMessageRequest,
+    SyncTurnRuntimeSnapshotRequestDto, TurnRuntimeSnapshotDto,
+    TurnRuntimeSnapshotLookupResponseDto, UpsertSummaryJobConfigRequestDto,
 };
 use super::http::{
-    client, push_limit_offset_params, send_delete_result, send_json, send_list, send_optional_json,
+    client, push_limit_offset_params, read_status_detail_error, send_delete_result, send_json,
+    send_list, send_optional_json, try_apply_auth, try_background_job_timeout_duration,
     try_build_url, try_context_timeout_duration, try_timeout_duration,
 };
 use super::mapping::map_memory_session;
@@ -253,7 +254,10 @@ pub async fn list_summaries(
     send_list(path.as_str(), &params).await
 }
 
-pub async fn delete_summary(session_id: &str, summary_id: &str) -> Result<bool, String> {
+pub async fn delete_summary(
+    session_id: &str,
+    summary_id: &str,
+) -> Result<super::DeleteSummaryResultDto, String> {
     let req = client()
         .delete(try_build_url(&format!(
             "/sessions/{}/summaries/{}",
@@ -262,7 +266,21 @@ pub async fn delete_summary(session_id: &str, summary_id: &str) -> Result<bool, 
         ))?)
         .timeout(try_timeout_duration()?);
 
-    send_delete_result(req).await
+    let resp = try_apply_auth(req)?
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if resp.status().as_u16() == 404 {
+        return Ok(DeleteSummaryResultDto {
+            success: false,
+            reset_messages: 0,
+        });
+    }
+    if !resp.status().is_success() {
+        return Err(read_status_detail_error(resp).await);
+    }
+    let payload: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    serde_json::from_value(payload).map_err(|err| err.to_string())
 }
 
 pub async fn clear_summaries(session_id: &str) -> Result<i64, String> {
@@ -273,7 +291,7 @@ pub async fn clear_summaries(session_id: &str) -> Result<i64, String> {
             break;
         }
         for item in items {
-            if delete_summary(session_id, item.id.as_str()).await? {
+            if delete_summary(session_id, item.id.as_str()).await?.success {
                 deleted += 1;
             }
         }
@@ -321,7 +339,7 @@ pub async fn run_review_repair_summary(
 ) -> Result<ReviewRepairSummaryRunResultDto, String> {
     let req = client()
         .post(try_build_url("/jobs/summary/review-repair-run-once")?)
-        .timeout(try_timeout_duration()?)
+        .timeout(try_background_job_timeout_duration()?)
         .json(req_body);
 
     let resp: Value = send_json(req).await?;

@@ -10,6 +10,7 @@ interface UseReviewRepairRealtimeOptions {
   apiClient: ApiClient;
   sessionId: string | null;
   enabled?: boolean;
+  messageCountHint?: number;
   onCompleted?: () => void | Promise<void>;
   onFailed?: (errorMessage: string) => void;
 }
@@ -113,6 +114,7 @@ export const useReviewRepairRealtime = ({
   apiClient,
   sessionId,
   enabled = true,
+  messageCountHint,
   onCompleted,
   onFailed,
 }: UseReviewRepairRealtimeOptions): ReviewRepairState => {
@@ -126,6 +128,7 @@ export const useReviewRepairRealtime = ({
   const lastCompletionAtRef = useRef(0);
   const lastFailureAtRef = useRef(0);
   const statusHydratedRef = useRef(false);
+  const lastMessageCountHintRef = useRef<number | null>(null);
 
   useEffect(() => {
     pendingCountRef.current = reviewRepairPendingCount;
@@ -137,6 +140,7 @@ export const useReviewRepairRealtime = ({
 
   useEffect(() => {
     statusHydratedRef.current = false;
+    lastMessageCountHintRef.current = null;
   }, [sessionId]);
 
   useEffect(() => {
@@ -272,6 +276,29 @@ export const useReviewRepairRealtime = ({
     enabled,
     apiClient,
     applyStatusToState,
+    sessionId,
+  ]);
+
+  useEffect(() => {
+    if (!enabled || !sessionId) {
+      lastMessageCountHintRef.current = null;
+      return;
+    }
+    const normalizedHint = typeof messageCountHint === 'number' && Number.isFinite(messageCountHint)
+      ? messageCountHint
+      : null;
+    const previousHint = lastMessageCountHintRef.current;
+    lastMessageCountHintRef.current = normalizedHint;
+    if (normalizedHint == null || previousHint == null || normalizedHint <= previousHint) {
+      return;
+    }
+    void refreshReviewRepairStatus(sessionId).catch((error) => {
+      console.error('Failed to refresh review repair status after message count changed:', error);
+    });
+  }, [
+    enabled,
+    messageCountHint,
+    refreshReviewRepairStatus,
     sessionId,
   ]);
 

@@ -76,6 +76,7 @@ export interface TeamMemberWorkspaceProps {
   taskModalError: string | null;
   reviewRepairRunning: boolean;
   reviewRepairPendingCount: number | null;
+  reviewRepairDisabled: boolean;
   onRefreshWorkbarTasks: () => void;
   onOpenWorkbarHistory: (sessionId: string) => void;
   onTaskHistoryOpenChange?: (value: boolean) => void;

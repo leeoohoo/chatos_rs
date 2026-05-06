@@ -18,6 +18,8 @@ import {
   hasProjectRunnerScript,
   isProjectRunnerPathMissingError,
   loadProjectRunnerContactRows,
+  markProjectRunnerContactRowsStale,
+  markProjectRunnerScriptStateStale,
   normalizeProjectRunnerRootPath,
   readProjectRunnerErrorMessage,
   resolveProjectRuntimeTerminal,
@@ -71,6 +73,16 @@ interface ProjectRealtimeLiveState {
   status: string;
 }
 
+interface ProjectRunStateDetails {
+  memberCount: number;
+  runnerScriptExists: boolean;
+  runnerRootMissing: boolean;
+  membersError: string | null;
+  runnerScriptError: string | null;
+  membersLoading: boolean;
+  runnerScriptLoading: boolean;
+}
+
 const createInitialProjectRunState = (): ProjectRunViewState => ({
   status: 'loading',
   loading: true,
@@ -83,6 +95,16 @@ const createInitialProjectRunState = (): ProjectRunViewState => ({
   fallbackCwd: null,
   targets: [],
   error: null,
+});
+
+const createInitialProjectRunStateDetails = (): ProjectRunStateDetails => ({
+  memberCount: 0,
+  runnerScriptExists: false,
+  runnerRootMissing: false,
+  membersError: null,
+  runnerScriptError: null,
+  membersLoading: true,
+  runnerScriptLoading: true,
 });
 
 const isProjectRunStatePayload = (
@@ -111,65 +133,146 @@ const shouldFallbackRefreshTerminals = (): boolean => (
   getRealtimeConnectionStateSnapshot() !== 'connected'
 );
 
-const resolveProjectRunState = async (
-  apiClient: ApiClient,
+const buildProjectRunViewState = (
   project: Project,
-): Promise<ProjectRunViewState> => {
-  try {
-    const [members, scriptExists] = await Promise.all([
-      loadProjectRunnerContactRows(apiClient, project.id),
-      hasProjectRunnerScript(apiClient, project.rootPath),
-    ]);
-    const memberCount = Array.isArray(members) ? members.length : 0;
-    if (scriptExists) {
-      const target = buildProjectRunnerTarget(project.rootPath);
-      return {
-        status: 'ready',
-        loading: false,
-        targetCount: 1,
-        defaultTargetId: target.id,
-        fallbackTargetId: target.id,
-        defaultCommand: target.command,
-        defaultCwd: target.cwd,
-        fallbackCommand: target.command,
-        fallbackCwd: target.cwd,
-        targets: [target],
-        error: null,
-      };
-    }
-    if (memberCount <= 0) {
-      return {
-        ...createInitialProjectRunState(),
-        status: 'no_member',
-        loading: false,
-        error: '请先添加一个联系人',
-      };
-    }
+  details: ProjectRunStateDetails,
+): ProjectRunViewState => {
+  const loading = details.membersLoading || details.runnerScriptLoading;
+
+  if (details.runnerRootMissing) {
     return {
       ...createInitialProjectRunState(),
-      status: 'script_missing',
+      status: 'missing_root',
       loading: false,
-      defaultCwd: project.rootPath,
-      fallbackCwd: project.rootPath,
-      error: '请先在项目页生成启动脚本',
+      error: '项目目录不存在，请检查项目路径',
     };
-  } catch (error) {
-    if (isProjectRunnerPathMissingError(error)) {
-      return {
-        ...createInitialProjectRunState(),
-        status: 'missing_root',
-        loading: false,
-        error: '项目目录不存在，请检查项目路径',
-      };
-    }
+  }
 
+  if (loading) {
+    return {
+      ...createInitialProjectRunState(),
+      status: 'loading',
+      loading: true,
+    };
+  }
+
+  if (details.membersError || details.runnerScriptError) {
     return {
       ...createInitialProjectRunState(),
       status: 'error',
       loading: false,
-      error: readProjectRunnerErrorMessage(error, '运行状态加载失败'),
+      error: details.runnerScriptError || details.membersError || '运行状态加载失败',
     };
   }
+
+  if (details.runnerScriptExists) {
+    const target = buildProjectRunnerTarget(project.rootPath);
+    return {
+      ...createInitialProjectRunState(),
+      status: 'ready',
+      loading: false,
+      targetCount: 1,
+      defaultTargetId: target.id,
+      fallbackTargetId: target.id,
+      defaultCommand: target.command,
+      defaultCwd: target.cwd,
+      fallbackCommand: target.command,
+      fallbackCwd: target.cwd,
+      targets: [target],
+      error: null,
+    };
+  }
+
+  if (details.memberCount <= 0) {
+    return {
+      ...createInitialProjectRunState(),
+      status: 'no_member',
+      loading: false,
+      error: '请先添加一个联系人',
+    };
+  }
+
+  return {
+    ...createInitialProjectRunState(),
+    status: 'script_missing',
+    loading: false,
+    defaultCwd: project.rootPath,
+    fallbackCwd: project.rootPath,
+    error: '请先在项目页生成启动脚本',
+  };
+};
+
+const loadProjectRunMembersDetails = async (
+  apiClient: ApiClient,
+  projectId: string,
+): Promise<Partial<ProjectRunStateDetails>> => {
+  try {
+    const members = await loadProjectRunnerContactRows(apiClient, projectId);
+    return {
+      memberCount: Array.isArray(members) ? members.length : 0,
+      membersError: null,
+      membersLoading: false,
+    };
+  } catch (error) {
+    return {
+      memberCount: 0,
+      membersError: readProjectRunnerErrorMessage(error, '运行状态加载失败'),
+      membersLoading: false,
+    };
+  }
+};
+
+const loadProjectRunScriptDetails = async (
+  apiClient: ApiClient,
+  project: Project,
+): Promise<Partial<ProjectRunStateDetails>> => {
+  try {
+    const scriptExists = await hasProjectRunnerScript(apiClient, project.rootPath);
+    return {
+      runnerScriptExists: scriptExists,
+      runnerRootMissing: false,
+      runnerScriptError: null,
+      runnerScriptLoading: false,
+    };
+  } catch (error) {
+    if (isProjectRunnerPathMissingError(error)) {
+      return {
+        runnerScriptExists: false,
+        runnerRootMissing: true,
+        runnerScriptError: '项目目录不存在，请检查项目路径',
+        runnerScriptLoading: false,
+      };
+    }
+
+    return {
+      runnerScriptExists: false,
+      runnerRootMissing: false,
+      runnerScriptError: readProjectRunnerErrorMessage(error, '运行状态加载失败'),
+      runnerScriptLoading: false,
+    };
+  }
+};
+
+const resolveProjectRunState = async (
+  apiClient: ApiClient,
+  project: Project,
+): Promise<{
+  details: ProjectRunStateDetails;
+  viewState: ProjectRunViewState;
+}> => {
+  const [memberDetails, scriptDetails] = await Promise.all([
+    loadProjectRunMembersDetails(apiClient, project.id),
+    loadProjectRunScriptDetails(apiClient, project),
+  ]);
+  const details: ProjectRunStateDetails = {
+    ...createInitialProjectRunStateDetails(),
+    ...memberDetails,
+    ...scriptDetails,
+  };
+  return {
+    details,
+    viewState: buildProjectRunViewState(project, details),
+  };
 };
 
 export const useProjectRunState = ({
@@ -186,6 +289,7 @@ export const useProjectRunState = ({
   const [runningProjectId, setRunningProjectId] = useState<string | null>(null);
   const [projectActionLoadingById, setProjectActionLoadingById] = useState<Record<string, boolean>>({});
   const projectRunStateRef = useRef<Record<string, ProjectRunViewState>>({});
+  const projectRunStateDetailsRef = useRef<Record<string, ProjectRunStateDetails>>({});
   const projectRootPathByIdRef = useRef<Record<string, string>>({});
   const projectIds = useMemo(
     () => new Set((projects || []).map((project) => String(project.id || '')).filter(Boolean)),
@@ -205,6 +309,7 @@ export const useProjectRunState = ({
       setProjectRunStateById({});
       setProjectRealtimeLiveById({});
       projectRunStateRef.current = {};
+      projectRunStateDetailsRef.current = {};
       projectRootPathByIdRef.current = {};
       return;
     }
@@ -214,16 +319,22 @@ export const useProjectRunState = ({
 
     setProjectRunStateById((prev) => {
       const next: Record<string, ProjectRunViewState> = {};
+      const nextDetails: Record<string, ProjectRunStateDetails> = {};
       const nextRootPathById: Record<string, string> = {};
       (projects || []).forEach((project) => {
         const normalizedRootPath = normalizeProjectRunnerRootPath(project.rootPath || '');
         nextRootPathById[project.id] = normalizedRootPath;
         const previousRootPath = projectRootPathByIdRef.current[project.id] || '';
+        const currentDetails = previousRootPath === normalizedRootPath
+          ? (projectRunStateDetailsRef.current[project.id] || createInitialProjectRunStateDetails())
+          : createInitialProjectRunStateDetails();
+        nextDetails[project.id] = currentDetails;
         next[project.id] = previousRootPath === normalizedRootPath
           ? (prev[project.id] || createInitialProjectRunState())
           : createInitialProjectRunState();
       });
       projectRunStateRef.current = next;
+      projectRunStateDetailsRef.current = nextDetails;
       projectRootPathByIdRef.current = nextRootPathById;
       return next;
     });
@@ -232,7 +343,7 @@ export const useProjectRunState = ({
       const updates = await Promise.all(
         (projects || []).map(async (project) => ({
           projectId: project.id,
-          state: await resolveProjectRunState(apiClient, project),
+          resolved: await resolveProjectRunState(apiClient, project),
         })),
       );
 
@@ -242,15 +353,21 @@ export const useProjectRunState = ({
 
       setProjectRunStateById((prev) => {
         const next: Record<string, ProjectRunViewState> = {};
+        const nextDetails: Record<string, ProjectRunStateDetails> = {};
         projectIds.forEach((projectId) => {
           if (prev[projectId]) {
             next[projectId] = prev[projectId];
           }
+          if (projectRunStateDetailsRef.current[projectId]) {
+            nextDetails[projectId] = projectRunStateDetailsRef.current[projectId];
+          }
         });
         updates.forEach((item) => {
-          next[item.projectId] = item.state;
+          next[item.projectId] = item.resolved.viewState;
+          nextDetails[item.projectId] = item.resolved.details;
         });
         projectRunStateRef.current = next;
+        projectRunStateDetailsRef.current = nextDetails;
         return next;
       });
     };
@@ -278,18 +395,56 @@ export const useProjectRunState = ({
     });
   }, [enabled, projects]);
 
-  const refreshProjectRunState = useCallback(async (projectId: string) => {
+  const refreshProjectRunMembersState = useCallback(async (projectId: string) => {
     const project = (projects || []).find((item) => item.id === projectId);
     if (!enabled || !project) {
       return;
     }
-    const nextState = await resolveProjectRunState(apiClient, project);
+    markProjectRunnerContactRowsStale(apiClient, projectId);
+    const nextMemberDetails = await loadProjectRunMembersDetails(apiClient, projectId);
     setProjectRunStateById((prev) => {
+      const currentDetails = projectRunStateDetailsRef.current[projectId]
+        || createInitialProjectRunStateDetails();
+      const nextDetails: ProjectRunStateDetails = {
+        ...currentDetails,
+        ...nextMemberDetails,
+      };
       const next = {
         ...prev,
-        [projectId]: nextState,
+        [projectId]: buildProjectRunViewState(project, nextDetails),
       };
       projectRunStateRef.current = next;
+      projectRunStateDetailsRef.current = {
+        ...projectRunStateDetailsRef.current,
+        [projectId]: nextDetails,
+      };
+      return next;
+    });
+  }, [apiClient, enabled, projects]);
+
+  const refreshProjectRunScriptState = useCallback(async (projectId: string) => {
+    const project = (projects || []).find((item) => item.id === projectId);
+    if (!enabled || !project) {
+      return;
+    }
+    markProjectRunnerScriptStateStale(apiClient, project.rootPath);
+    const nextScriptDetails = await loadProjectRunScriptDetails(apiClient, project);
+    setProjectRunStateById((prev) => {
+      const currentDetails = projectRunStateDetailsRef.current[projectId]
+        || createInitialProjectRunStateDetails();
+      const nextDetails: ProjectRunStateDetails = {
+        ...currentDetails,
+        ...nextScriptDetails,
+      };
+      const next = {
+        ...prev,
+        [projectId]: buildProjectRunViewState(project, nextDetails),
+      };
+      projectRunStateRef.current = next;
+      projectRunStateDetailsRef.current = {
+        ...projectRunStateDetailsRef.current,
+        [projectId]: nextDetails,
+      };
       return next;
     });
   }, [apiClient, enabled, projects]);
@@ -303,7 +458,7 @@ export const useProjectRunState = ({
       if (!payloadProjectId || !projectIds.has(payloadProjectId)) {
         return;
       }
-      void refreshProjectRunState(payloadProjectId);
+      void refreshProjectRunMembersState(payloadProjectId);
       return;
     }
     if (event.event === 'project.run.catalog.updated' && isProjectRunCatalogPayload(event)) {
@@ -311,7 +466,7 @@ export const useProjectRunState = ({
       if (!payloadProjectId || !projectIds.has(payloadProjectId)) {
         return;
       }
-      void refreshProjectRunState(payloadProjectId);
+      void refreshProjectRunScriptState(payloadProjectId);
       return;
     }
 

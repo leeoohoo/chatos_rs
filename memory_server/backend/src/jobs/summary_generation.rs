@@ -1,3 +1,6 @@
+use std::time::Duration;
+
+use tokio::time::timeout;
 use tracing::{info, warn};
 
 use crate::ai::AiClient;
@@ -81,6 +84,7 @@ async fn process_session_with_mode(
     job_type: &str,
 ) -> Result<(usize, usize), String> {
     let lease_seconds = job_support::resolve_lock_lease_seconds();
+    let job_timeout = Duration::from_secs(job_support::resolve_job_timeout_seconds());
     let lock_key = format!("summary_l0:{}", session_id);
     let Some(lock_handle) =
         locks::try_acquire_job_lock(pool, lock_key.as_str(), lease_seconds).await?
@@ -92,22 +96,34 @@ async fn process_session_with_mode(
         return Ok((0, 0));
     };
 
-    let result = process_session_locked(
-        pool,
-        ai,
-        session_id,
-        model_name,
-        model_cfg,
-        summary_prompt,
-        round_limit,
-        token_limit,
-        target_summary_tokens,
-        force_run,
-        job_type,
-        &lock_handle,
-        lease_seconds,
+    let result = match timeout(
+        job_timeout,
+        process_session_locked(
+            pool,
+            ai,
+            session_id,
+            model_name,
+            model_cfg,
+            summary_prompt,
+            round_limit,
+            token_limit,
+            target_summary_tokens,
+            force_run,
+            job_type,
+            &lock_handle,
+            lease_seconds,
+        ),
     )
-    .await;
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => Err(format!(
+            "summary job timed out after {}s: session_id={} job_type={}",
+            job_timeout.as_secs(),
+            session_id,
+            job_type
+        )),
+    };
 
     if let Err(err) = locks::release_job_lock(pool, &lock_handle).await {
         warn!(
@@ -140,12 +156,13 @@ async fn process_session_locked(
     let trigger: String;
 
     if force_run {
-        let all_pending = messages::list_pending_messages(pool, session_id, None).await?;
-        if all_pending.is_empty() {
+        let review_repair_pending =
+            messages::list_pending_review_repair_messages(pool, session_id, None).await?;
+        if review_repair_pending.is_empty() {
             return Ok((0, 0));
         }
-        pending_before_count = all_pending.len() as i64;
-        selected = all_pending;
+        pending_before_count = review_repair_pending.len() as i64;
+        selected = review_repair_pending;
         trigger = "manual_review_repair".to_string();
     } else {
         let pending_head =
@@ -296,6 +313,15 @@ async fn process_session_locked(
         {
             Ok(v) => v,
             Err(err) => {
+                summary_support::update_failed_job_run_diagnostics(
+                    pool,
+                    job_run.id.as_str(),
+                    Some(pending_before_count),
+                    Some(selected.len() as i64),
+                    Some(0),
+                    Some(pending_before_count),
+                )
+                .await;
                 let _ =
                     summary_support::finish_failed_job_run(pool, job_run.id.as_str(), err.as_str())
                         .await;
@@ -372,6 +398,15 @@ async fn process_session_locked(
     {
         Ok(v) => v,
         Err(err) => {
+            summary_support::update_failed_job_run_diagnostics(
+                pool,
+                job_run.id.as_str(),
+                Some(pending_before_count),
+                Some(selected.len() as i64),
+                Some(0),
+                Some(pending_before_count),
+            )
+            .await;
             let _ = summary_support::finish_failed_job_run(pool, job_run.id.as_str(), err.as_str())
                 .await;
             return Err(err);
@@ -381,6 +416,15 @@ async fn process_session_locked(
     let summary = create_result.summary;
 
     if let Err(err) = memory_sync::sync_memories_from_summary(pool, session_id, &summary).await {
+        summary_support::update_failed_job_run_diagnostics(
+            pool,
+            job_run.id.as_str(),
+            Some(pending_before_count),
+            Some(selected.len() as i64),
+            Some(0),
+            Some(pending_before_count),
+        )
+        .await;
         let _ =
             summary_support::finish_failed_job_run(pool, job_run.id.as_str(), err.as_str()).await;
         return Err(err);
@@ -403,6 +447,15 @@ async fn process_session_locked(
     {
         Ok(v) => v,
         Err(err) => {
+            summary_support::update_failed_job_run_diagnostics(
+                pool,
+                job_run.id.as_str(),
+                Some(pending_before_count),
+                Some(selected.len() as i64),
+                Some(0),
+                Some(pending_before_count),
+            )
+            .await;
             let _ = summary_support::finish_failed_job_run(pool, job_run.id.as_str(), err.as_str())
                 .await;
             return Err(err);

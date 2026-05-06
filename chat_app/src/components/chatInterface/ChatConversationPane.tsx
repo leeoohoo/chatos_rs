@@ -42,6 +42,7 @@ interface ChatConversationPaneProps {
   onRunReviewRepair: (sessionId: string) => Promise<void>;
   reviewRepairRunning: boolean;
   reviewRepairPendingCount: number | null;
+  reviewRepairDisabled: boolean;
   onCloseSummary: () => void;
   toggleSidebar: () => void;
   mergedCurrentTurnTasks: ChatComposerPanelProps['mergedCurrentTurnTasks'];
@@ -129,6 +130,7 @@ interface ChatMessagesPaneProps {
   onRunReviewRepair: (sessionId: string) => Promise<void>;
   reviewRepairRunning: boolean;
   reviewRepairPendingCount: number | null;
+  reviewRepairDisabled: boolean;
   onCloseSummary: () => void;
   toggleSidebar: () => void;
 }
@@ -157,6 +159,7 @@ const ChatMessagesPane: React.FC<ChatMessagesPaneProps> = React.memo(({
   onRunReviewRepair,
   reviewRepairRunning,
   reviewRepairPendingCount,
+  reviewRepairDisabled,
   onCloseSummary,
   toggleSidebar,
 }) => {
@@ -164,6 +167,7 @@ const ChatMessagesPane: React.FC<ChatMessagesPaneProps> = React.memo(({
   void onRunReviewRepair;
   void reviewRepairRunning;
   void reviewRepairPendingCount;
+  void reviewRepairDisabled;
 
   if (!currentSession) {
     return (
@@ -257,6 +261,7 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
   onRunReviewRepair,
   reviewRepairRunning,
   reviewRepairPendingCount,
+  reviewRepairDisabled,
   onCloseSummary,
   toggleSidebar,
   mergedCurrentTurnTasks,
@@ -346,6 +351,7 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
           onRunReviewRepair={onRunReviewRepair}
           reviewRepairRunning={reviewRepairRunning}
           reviewRepairPendingCount={reviewRepairPendingCount}
+          reviewRepairDisabled={reviewRepairDisabled}
           onCloseSummary={onCloseSummary}
           toggleSidebar={toggleSidebar}
         />
@@ -405,7 +411,7 @@ const ChatConversationPane: React.FC<ChatConversationPaneProps> = ({
           showProjectFileButton={false}
           reviewRepairAvailable={true}
           reviewRepairRunning={reviewRepairRunning}
-          reviewRepairDisabled={!reviewRepairRunning && reviewRepairPendingCount === 0}
+          reviewRepairDisabled={reviewRepairDisabled}
           onReviewRepair={() => onRunReviewRepair(currentSession.id)}
           workspaceRoot={workspaceRoot}
           onWorkspaceRootChange={onWorkspaceRootChange}

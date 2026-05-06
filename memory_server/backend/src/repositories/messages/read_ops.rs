@@ -1,11 +1,22 @@
 use futures_util::TryStreamExt;
-use mongodb::bson::doc;
+use mongodb::bson::{doc, Bson, Document};
 use mongodb::options::{FindOneOptions, FindOptions};
 
 use crate::db::Db;
 use crate::models::Message;
 
 use super::collection;
+
+fn pending_summary_status_filter() -> Document {
+    doc! {
+        "$or": [
+            {"summary_status": "pending"},
+            {"summary_status": {"$exists": false}},
+            {"summary_status": Bson::Null},
+            {"summary_status": ""}
+        ]
+    }
+}
 
 pub async fn get_message_by_id(db: &Db, message_id: &str) -> Result<Option<Message>, String> {
     collection(db)
@@ -52,12 +63,23 @@ pub async fn list_pending_messages(
     };
 
     let cursor = collection(db)
-        .find(doc! {"session_id": session_id, "summary_status": "pending"})
+        .find(doc! {
+            "session_id": session_id,
+            "$and": [pending_summary_status_filter()]
+        })
         .with_options(options)
         .await
         .map_err(|e| e.to_string())?;
 
     cursor.try_collect().await.map_err(|e| e.to_string())
+}
+
+pub async fn list_pending_review_repair_messages(
+    db: &Db,
+    session_id: &str,
+    limit: Option<i64>,
+) -> Result<Vec<Message>, String> {
+    list_pending_messages(db, session_id, limit).await
 }
 
 pub async fn get_latest_user_message_by_session(

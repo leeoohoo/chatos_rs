@@ -8,6 +8,15 @@ use crate::models::JobRun;
 
 use super::now_rfc3339;
 
+fn running_job_timeout_seconds() -> i64 {
+    std::env::var("MEMORY_SERVER_RUNNING_JOB_TIMEOUT_SECONDS")
+        .ok()
+        .and_then(|value| value.parse::<i64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(600)
+        .max(60)
+}
+
 fn collection(db: &Db) -> mongodb::Collection<JobRun> {
     db.collection::<JobRun>("job_runs")
 }
@@ -173,6 +182,42 @@ pub async fn count_job_runs_for_sessions(
         .await
         .map(|count| count as i64)
         .map_err(|e| e.to_string())
+}
+
+pub async fn cleanup_stale_running_job_runs(
+    db: &Db,
+    job_type: &str,
+    session_ids: &[String],
+) -> Result<u64, String> {
+    if session_ids.is_empty() {
+        return Ok(0);
+    }
+
+    let timeout_seconds = running_job_timeout_seconds();
+    let stale_before = (chrono::Utc::now() - chrono::Duration::seconds(timeout_seconds)).to_rfc3339();
+    let result = collection(db)
+        .update_many(
+            doc! {
+                "job_type": job_type,
+                "session_id": {"$in": session_ids.to_vec()},
+                "status": "running",
+                "started_at": {"$lte": stale_before},
+            },
+            doc! {
+                "$set": {
+                    "status": "failed",
+                    "error_message": format!(
+                        "timed_out: exceeded {}s without completion",
+                        timeout_seconds
+                    ),
+                    "finished_at": now_rfc3339(),
+                }
+            },
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(result.modified_count)
 }
 
 pub async fn job_stats(db: &Db) -> Result<serde_json::Value, String> {

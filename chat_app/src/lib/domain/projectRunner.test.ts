@@ -10,6 +10,7 @@ import {
   hasProjectRunnerScript,
   loadProjectRunnerContactRows,
   loadProjectRunnerMembers,
+  markProjectRunnerScriptStateStale,
   normalizeProjectRunnerMembers,
   normalizeProjectRunnerRootPath,
   readProjectRunnerDispatchTarget,
@@ -112,6 +113,37 @@ describe('domain/projectRunner', () => {
 
     await expect(Promise.all([pendingA, pendingB])).resolves.toEqual([true, true]);
     expect(listFsEntries).toHaveBeenCalledTimes(2);
+  });
+
+  it('reuses cached project runner script checks until explicitly invalidated', async () => {
+    const listFsEntries = vi.fn(async (path?: string) => {
+      if (path === '/workspace') {
+        return {
+          entries: [
+            { name: '.chatos', path: '/workspace/.chatos', is_dir: true },
+          ],
+        };
+      }
+      if (path === '/workspace/.chatos') {
+        return {
+          entries: [
+            { name: 'project_runner.sh', path: '/workspace/.chatos/project_runner.sh', is_dir: false },
+          ],
+        };
+      }
+      return { entries: [] };
+    });
+
+    const client = { listFsEntries };
+
+    await expect(hasProjectRunnerScript(client, '/workspace/')).resolves.toBe(true);
+    await expect(hasProjectRunnerScript(client, '/workspace/')).resolves.toBe(true);
+    expect(listFsEntries).toHaveBeenCalledTimes(2);
+
+    markProjectRunnerScriptStateStale(client, '/workspace/');
+
+    await expect(hasProjectRunnerScript(client, '/workspace/')).resolves.toBe(true);
+    expect(listFsEntries).toHaveBeenCalledTimes(4);
   });
 
   it('dedupes concurrent project runner member loads per client and project', async () => {

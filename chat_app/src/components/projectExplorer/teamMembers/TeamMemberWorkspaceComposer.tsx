@@ -43,6 +43,7 @@ type TeamMemberWorkspaceComposerProps = Pick<
   | 'taskModalError'
   | 'reviewRepairRunning'
   | 'reviewRepairPendingCount'
+  | 'reviewRepairDisabled'
   | 'onRefreshWorkbarTasks'
   | 'onOpenWorkbarHistory'
   | 'onTaskHistoryOpenChange'
@@ -104,7 +105,7 @@ export const TeamMemberWorkspaceComposer: React.FC<TeamMemberWorkspaceComposerPr
   taskModalTask,
   taskModalError,
   reviewRepairRunning,
-  reviewRepairPendingCount,
+  reviewRepairDisabled,
   onRefreshWorkbarTasks,
   onOpenWorkbarHistory,
   onTaskHistoryOpenChange,
@@ -148,7 +149,7 @@ export const TeamMemberWorkspaceComposer: React.FC<TeamMemberWorkspaceComposerPr
       taskModalError={taskModalError}
       reviewRepairAvailable={true}
       reviewRepairRunning={reviewRepairRunning}
-      reviewRepairDisabled={!reviewRepairRunning && reviewRepairPendingCount === 0}
+      reviewRepairDisabled={reviewRepairDisabled}
       onReviewRepair={() => onRunReviewRepair(selectedProjectSession.id)}
       onRefreshWorkbarTasks={onRefreshWorkbarTasks}
       onOpenHistory={onOpenWorkbarHistory}

@@ -59,6 +59,7 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
   taskModalError,
   reviewRepairRunning,
   reviewRepairPendingCount,
+  reviewRepairDisabled,
   onRefreshWorkbarTasks,
   onOpenWorkbarHistory,
   onTaskHistoryOpenChange,
@@ -155,6 +156,7 @@ const TeamMemberWorkspace: React.FC<TeamMemberWorkspaceProps> = ({
         taskModalError={taskModalError}
         reviewRepairRunning={reviewRepairRunning}
         reviewRepairPendingCount={reviewRepairPendingCount}
+        reviewRepairDisabled={reviewRepairDisabled}
         onRefreshWorkbarTasks={onRefreshWorkbarTasks}
         onOpenWorkbarHistory={onOpenWorkbarHistory}
         onTaskHistoryOpenChange={onTaskHistoryOpenChange}

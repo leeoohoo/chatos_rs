@@ -65,9 +65,15 @@ interface ProjectRunnerContactRowsCacheEntry {
   stale: boolean;
 }
 
+interface ProjectRunnerScriptCacheEntry {
+  exists: boolean;
+  stale: boolean;
+}
+
 const projectRunnerContactRowsInflight = new WeakMap<object, Map<string, Promise<ProjectContactLinkResponse[]>>>();
 const projectRunnerContactRowsCache = new WeakMap<object, Map<string, ProjectRunnerContactRowsCacheEntry>>();
 const projectRunnerScriptInflight = new WeakMap<object, Map<string, Promise<boolean>>>();
+const projectRunnerScriptCache = new WeakMap<object, Map<string, ProjectRunnerScriptCacheEntry>>();
 
 const getProjectRunnerContactRowsScopedCache = (
   client: object,
@@ -85,6 +91,34 @@ const ensureProjectRunnerContactRowsScopedCache = (
   const next = new Map<string, ProjectRunnerContactRowsCacheEntry>();
   projectRunnerContactRowsCache.set(client, next);
   return next;
+};
+
+const getProjectRunnerScriptScopedCache = (
+  client: object,
+): Map<string, ProjectRunnerScriptCacheEntry> | null => (
+  projectRunnerScriptCache.get(client) || null
+);
+
+const ensureProjectRunnerScriptScopedCache = (
+  client: object,
+): Map<string, ProjectRunnerScriptCacheEntry> => {
+  const existing = getProjectRunnerScriptScopedCache(client);
+  if (existing) {
+    return existing;
+  }
+  const next = new Map<string, ProjectRunnerScriptCacheEntry>();
+  projectRunnerScriptCache.set(client, next);
+  return next;
+};
+
+const setProjectRunnerScriptCacheEntry = (
+  client: object,
+  rootPath: string,
+  entry: ProjectRunnerScriptCacheEntry,
+): boolean => {
+  const scopedCache = ensureProjectRunnerScriptScopedCache(client);
+  scopedCache.set(rootPath, entry);
+  return entry.exists;
 };
 
 const setProjectRunnerContactRowsCacheEntry = (
@@ -287,6 +321,25 @@ export const markProjectRunnerContactRowsStale = (
   });
 };
 
+export const markProjectRunnerScriptStateStale = (
+  client: RunnerFilesystemClient,
+  rootPath: string,
+): void => {
+  const normalizedRootPath = normalizeProjectRunnerRootPath(rootPath);
+  if (!normalizedRootPath) {
+    return;
+  }
+  const scopedCache = getProjectRunnerScriptScopedCache(client);
+  const cached = scopedCache?.get(normalizedRootPath);
+  if (!scopedCache || !cached) {
+    return;
+  }
+  scopedCache.set(normalizedRootPath, {
+    ...cached,
+    stale: true,
+  });
+};
+
 export const hasProjectRunnerScript = async (
   client: RunnerFilesystemClient,
   rootPath: string,
@@ -296,6 +349,11 @@ export const hasProjectRunnerScript = async (
     return false;
   }
 
+  const cached = getProjectRunnerScriptScopedCache(client)?.get(safeRoot);
+  if (cached && !cached.stale) {
+    return cached.exists;
+  }
+
   return withClientInflight(projectRunnerScriptInflight, client, safeRoot, async () => {
     const rootList = await client.listFsEntries(safeRoot);
     const rootEntries = Array.isArray(rootList?.entries)
@@ -303,7 +361,10 @@ export const hasProjectRunnerScript = async (
       : [];
     const runnerDirEntry = rootEntries.find((entry) => entry.isDir && entry.name === RUNNER_SCRIPT_DIR) || null;
     if (!runnerDirEntry?.path) {
-      return false;
+      return setProjectRunnerScriptCacheEntry(client, safeRoot, {
+        exists: false,
+        stale: false,
+      });
     }
 
     try {
@@ -311,9 +372,15 @@ export const hasProjectRunnerScript = async (
       const runnerEntries = Array.isArray(runnerList?.entries)
         ? runnerList.entries.map((entry) => normalizeFsEntry(entry))
         : [];
-      return runnerEntries.some((entry) => !entry.isDir && entry.name === RUNNER_SCRIPT_FILE);
+      return setProjectRunnerScriptCacheEntry(client, safeRoot, {
+        exists: runnerEntries.some((entry) => !entry.isDir && entry.name === RUNNER_SCRIPT_FILE),
+        stale: false,
+      });
     } catch {
-      return false;
+      return setProjectRunnerScriptCacheEntry(client, safeRoot, {
+        exists: false,
+        stale: false,
+      });
     }
   });
 };

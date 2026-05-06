@@ -28,6 +28,7 @@ export interface ChatInterfaceConversationState {
   memoryError: string | null;
   reviewRepairRunning: boolean;
   reviewRepairPendingCount: number | null;
+  reviewRepairDisabled: boolean;
   mergedCurrentTurnTasks: ComponentProps<typeof ChatConversationPane>['mergedCurrentTurnTasks'];
   workbarHistoryTasks: ComponentProps<typeof ChatConversationPane>['workbarHistoryTasks'];
   activeConversationTurnId: string | null;

@@ -4,6 +4,14 @@
 
 按照 `REALTIME_PUSH_REFACTOR_PLAN.md` 分阶段推进，把高频轮询和零散流式链路逐步收敛到统一 realtime 通道。
 
+## 剩余高价值缺口
+
+- 已补根目录执行计划：
+  - `REALTIME_REMAINING_GAPS_EXECUTION_PLAN.md`
+- 当前确认的高价值剩余项：
+  - 聊天主链仍保留真实 SSE fallback，尚未完全收成“长链接主路径”
+  - `project runner catalog / conversation summaries / sessions|contacts|projects|remote_connections` 仍以 invalidation 后 HTTP snapshot 为主，局部 patch 还有提升空间
+
 ## 已完成
 
 ### 1. 全局 realtime 基础设施
@@ -25,9 +33,8 @@
 
 ### 2. review-repair 实时化
 
-- 后端 `review-repair` 发起后会桥接 memory job 状态，并推送：
+- 后端 `review-repair` 发起后会推送：
   - `conversation.review_repair.started`
-  - `conversation.review_repair.progress`
   - `conversation.review_repair.completed`
   - `conversation.review_repair.failed`
   - `conversation.summaries.updated`
@@ -66,6 +73,12 @@
   - `chat_app/src/components/sessionList/useProjectRunState.ts`
 - 项目页 runner catalog 已去掉 2.5 秒自旋，改为 `project.run.catalog.updated` 触发刷新：
   - `chat_app/src/components/projectExplorer/runState/useProjectRunnerCatalogState.ts`
+- 项目运行目录与侧边栏运行态的 realtime 刷新粒度又收紧了一层：
+  - `project.run.catalog.updated` 现在只刷新 runner 脚本侧，不再顺手重拉项目成员
+  - `project.members.updated` 现在只刷新成员侧，不再顺手重查 runner 脚本
+  - 侧边栏 `useProjectRunState` 已拆成 members/script 两条定向刷新，减少事件到达后的整块 HTTP 回拉
+  - runner 脚本存在性查询补上了 client 侧缓存，并在 `project.run.catalog.updated` / 手动分析时失效
+  - 这样项目页与侧边栏同时关注同一项目时，不会重复打文件系统接口检查 `.chatos/project_runner.sh`
 
 ## 已验证
 
@@ -195,6 +208,19 @@
     - 快速切换联系人时旧请求回写当前界面状态
   - 相关文件：
     - `chat_app/src/lib/realtime/useReviewRepairRealtime.ts`
+- 复盘按钮“始终不可点击”的一类后端误判已补兼容修复：
+  - `review-repair` scope 解析不再只依赖 session 顶层 `project_id`，现在会兜底读取 `metadata.chat_runtime.project_id`
+  - memory 侧项目 scope 查询也同步兼容 `metadata.chat_runtime.project_id/projectId`
+  - 未总结消息统计不再只认 `summary_status = pending`，现在兼容老消息缺失该字段、为空或为 `null` 的情况
+  - 复盘后标记 summarized 也同步兼容这类老消息，避免按钮状态长期不回落
+  - 同时修掉了消息聚合里默认项目 scope 前缀化 `$or` 条件的结构问题，避免 `project_id = 0` 时统计失真
+  - 相关文件：
+    - `chat_app_server_rs/src/api/sessions/support.rs`
+    - `chat_app_server_rs/src/api/sessions/review_handlers.rs`
+    - `memory_server/backend/src/repositories/session_support.rs`
+    - `memory_server/backend/src/repositories/messages/aggregate_ops.rs`
+    - `memory_server/backend/src/repositories/messages/read_ops.rs`
+    - `memory_server/backend/src/repositories/messages/write_ops.rs`
 - 项目运行态 / 预览运行态又去掉了一层“事件到达后再重拉”的冗余：
   - `project.run.state_changed` 现在前端优先直接消费 realtime payload，先 patch 本地运行态
   - 不再把每次运行态事件都转成额外的 `listTerminals()` / `getTerminal()` 查询
@@ -209,6 +235,45 @@
     - `chat_app/src/components/projectExplorer/previewRunController/useProjectPreviewTerminalPolling.ts`
     - `chat_app/src/components/projectExplorer/previewRunController/previewRunControllerTypes.ts`
     - `chat_app/src/components/projectExplorer/useProjectPreviewRunController.ts`
+- `review-repair` 命令入口已补齐“真正异步化”：
+  - `POST /api/conversations/:conversation_id/review-repair` 现在改成 `202 Accepted`
+  - 点击后会立即推送 `conversation.review_repair.started`
+  - 复盘执行改为后台任务，不再同步等待 memory server 的长任务返回
+  - 这样修掉了“前端先提示执行失败、后端任务其实已经 running”的假失败问题
+  - 同时将 review-repair 对 memory server 的长任务调用从默认 `5s` 请求超时中摘出，改为后台长任务专用超时，避免后台链路自己再次误报失败
+  - 完成态优先以实时/状态接口的真实结果收口，状态接口取不到时才回落到本地推导，减少 loading 提前解除和错误 completed/failed
+  - 相关文件：
+    - `chat_app_server_rs/src/api/sessions/review_handlers.rs`
+    - `chat_app_server_rs/src/services/realtime/hub.rs`
+    - `chat_app_server_rs/src/services/realtime/mod.rs`
+    - `chat_app_server_rs/src/services/memory_server_client/http.rs`
+    - `chat_app_server_rs/src/services/memory_server_client/session_ops.rs`
+- 已定位并修复一类更深层的 `review-repair` 卡死问题：
+  - 现象：
+    - 任务面板里 `manual_review_repair` 长时间保持 `running`
+    - 同一个 session 持续被普通 summary worker 打印 `skip session lock busy`
+    - 前端 `review-repair` 状态会被僵尸 `running job` 一直拖住
+  - 根因：
+    - `memory_server` 的 summary/review-repair 执行会占用 session 级 job lock
+    - 当 AI 调用走本地 `127.0.0.1:8089` 网关时，之前代码会关闭请求超时
+    - 一旦本地网关流式调用卡住，任务就可能无限等待，既不 finish job_run，也不释放 lock
+    - `review_repair_status` 又只看 `job_runs.status=running`，不会自动清理这类超时僵尸任务
+  - 当前修复：
+    - 本地 `8089` 网关不再无限等待，恢复为“较长但有限”的 AI 请求超时
+    - summary/review-repair 单 session 执行新增显式 job timeout，超时后直接失败收尾
+    - `review_repair_status` 查询前会清理当前 scope 下超时过久的僵尸 `running job`
+    - `review_repair_status` 查询前还会顺手清理当前 scope 下已过期的 `summary_l0:*` session lock，避免旧卡死任务继续把会话锁住
+  - 直接收益：
+    - 复盘任务不会再因为本地网关流式卡住而无限 `running`
+    - 同一会话不会被 stale lock 长时间拖住，普通 summary worker 也不会半小时一直 `lock busy`
+    - 前端 `running` 状态更容易正确回落，不会长期被陈旧 job_run 卡住
+  - 相关文件：
+    - `memory_server/backend/src/ai/mod.rs`
+    - `memory_server/backend/src/jobs/job_support.rs`
+    - `memory_server/backend/src/jobs/summary.rs`
+    - `memory_server/backend/src/jobs/summary_generation.rs`
+    - `memory_server/backend/src/repositories/jobs.rs`
+    - `memory_server/backend/src/repositories/locks.rs`
 - 聊天发送入口又往统一 realtime 主路径收了一层：
   - `sendMessage` 不再依赖调用方透传 `preferRealtimeStream`
   - 现在统一由发送层内部读取全局 realtime 连接状态，决定：
@@ -379,6 +444,33 @@
 - `summary / memory` 这条链也开始收口到“realtime 失效通知 + 可见时刷新”：
   - 新增会话总结 realtime 消费 hook：
     - `chat_app/src/lib/realtime/useConversationSummariesRealtime.ts`
+- 聊天主链这轮又继续往“默认长链接主路径”收了一层：
+  - `sendMessage` 在决定是否回退 SSE 前，新增了一个短暂的 realtime 建连等待窗口
+  - 这样可以减少：
+    - websocket 已经在 `connecting`，但发送瞬间尚未切到 `connected` 时的误回退
+    - 页面刚恢复、provider 刚挂起后第一条消息又走回 `/chat/stream`
+  - 当前策略仍然保留 SSE 兜底，但不再对“正在建连”的 realtime 过早判失败
+  - 相关文件：
+    - `chat_app/src/lib/realtime/state.ts`
+    - `chat_app/src/lib/store/actions/sendMessage.ts`
+- `review-repair` 后端 bridge polling 这轮已继续收口：
+  - chat backend 不再为了维持前端 loading 持续轮询 memory `review_repair_status`
+  - 当前改成更直接的异步长任务链路：
+    - `POST /review-repair` 立即返回 `202`
+    - 同步推 `conversation.review_repair.started`
+    - 后台直接 await memory 长任务
+    - 成功后只在终态补查一次真实 status 收口，再推 `completed + summaries.updated`
+    - 失败时直接推 `failed`
+  - 这样可以减少：
+    - backend 内部重复 bridge polling memory status
+    - 长时间 running 任务期间的无意义状态探测噪音
+  - 当前取舍：
+    - 运行中的 `pending_message_count` 不再依赖持续 progress 事件更新
+    - 前端 loading 主要靠 `started/completed/failed` 与状态接口兜底维持
+  - 相关文件：
+    - `chat_app_server_rs/src/api/sessions/review_handlers.rs`
+    - `chat_app_server_rs/src/services/realtime/hub.rs`
+    - `chat_app_server_rs/src/services/realtime/mod.rs`
 - `task / review / ui prompt` 本轮又补了一层“真实强刷语义 + 非可见历史不回源”：
   - `current turn task` 现在支持显式 `force` 刷新：
     - `loadCurrentTurnWorkbarTasks(sessionId, turnId, true)` 不再直接命中旧 cache
@@ -801,6 +893,7 @@
     - session 级 cache
     - stale 标记
     - inflight 去重
+  - 聊天主入口 `useRuntimeContextState` 已改成：
     - 打开 drawer 时先 hydrate cache
     - 不再 `handleOpenRuntimeContext()` 先拉一次、`useEffect` 再补拉一次
     - `runtimeContextRefreshNonce` 变化时改成 `mark stale + silent refresh`
@@ -1654,6 +1747,57 @@
 - 本轮验证结果：
   - 前端构建：`chat_app` `npm run build` 通过
   - 后端检查：`chat_app_server_rs` `cargo check` 通过
+
+- `复盘` 统计与选数口径这轮重新校正回“未被总结的消息”：
+  - 根因复盘：
+    - 之前一度把 `review-repair` 的待处理集合改成了“尚未被 `manual_review_repair*` summary 覆盖的消息”
+    - 这会导致：
+      - 只要当前 session 还没有任何 review-repair summary
+      - 即使大量历史消息早就被普通 summary 处理过
+      - 手动复盘仍可能把整段历史消息重新卷进去
+  - 当前修复：
+    - `review-repair` 的 `pending_message_count` 与实际选数，重新对齐回 `messages.summary_status = pending`
+    - 也就是只处理“当前 scope 下仍未被总结”的消息
+    - 不再按“是否做过 review-repair 覆盖”来计算候选
+    - 同时移除了 `review-repair` 在 scope 级别对 `max_sessions_per_tick` 的复用限制
+    - 手动复盘现在会覆盖当前联系人 + 项目范围内所有仍未总结的 session/message，而不是只处理被定时任务配置截出来的一部分
+  - 直接收益：
+    - 手动复盘不会再把已经总结过的整段历史消息重新拿去处理
+    - `selected / marked / pending_message_count` 的语义会重新一致
+    - 手动复盘不会再被定时总结配置里的 session 限流策略悄悄截断
+    - 更符合最初产品定义：复盘总结当前联系人对应项目下“所有未总结的消息”
+  - 相关文件：
+    - `memory_server/backend/src/repositories/messages/read_ops.rs`
+    - `memory_server/backend/src/jobs/summary.rs`
+- `review-repair` 任务诊断字段这轮也补齐了失败态：
+  - 之前如果复盘在 LLM / summary 落库 / memory sync / mark 阶段失败
+  - `job_runs` 往往只会留下 `status=failed`
+  - 但 `pending / selected / marked / pending_after` 这些诊断列仍然是空的
+  - 当前修复后：
+    - 失败任务也会尽量写入当时的 `pending_before_count`
+    - `selected_count`
+    - `marked_count`
+    - `pending_after_count`
+  - 这样任务面板里即使失败，也更容易看出：
+    - 本次原本打算处理多少条
+    - 实际有没有动到任何消息
+    - 失败前后 pending 是否变化
+  - 相关文件：
+    - `memory_server/backend/src/jobs/job_support.rs`
+    - `memory_server/backend/src/jobs/summary_support.rs`
+    - `memory_server/backend/src/jobs/summary_generation.rs`
+- `review-repair` 的 scope 统计这轮也改成真正的聚合查询：
+  - 之前 scope 级 `pending_message_count` 与可处理 session 列表，是先列出 scope 下所有 session，再逐个 session 计数累加
+  - 当前改成直接复用 messages 聚合层：
+    - `list_session_ids_with_pending_messages_by_scope`
+    - `count_pending_messages_by_scope`
+  - 这样可以让复盘 scope 统计：
+    - 更直接表达“当前联系人 + 项目范围内还有哪些 session 存在未总结消息”
+    - 减少逐 session 计数循环带来的额外噪音
+    - 顺手把之前几个已经实现但没真正接上的 scope 聚合函数接回实际链路
+  - 相关文件：
+    - `memory_server/backend/src/repositories/messages.rs`
+    - `memory_server/backend/src/jobs/summary.rs`
 
 ## 注意事项
 

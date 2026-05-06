@@ -3,6 +3,7 @@ use uuid::Uuid;
 
 use crate::db::Db;
 use crate::models::{CreateSummaryInput, SessionSummary};
+use crate::repositories::messages;
 
 use super::collection;
 use super::now_rfc3339;
@@ -141,10 +142,20 @@ pub async fn mark_summaries_agent_memory_summarized(
     Ok(result.modified_count as usize)
 }
 
-pub async fn delete_summary(db: &Db, session_id: &str, summary_id: &str) -> Result<bool, String> {
+pub async fn delete_summary(
+    db: &Db,
+    session_id: &str,
+    summary_id: &str,
+) -> Result<usize, String> {
+    let reset_count =
+        messages::reset_messages_summary_by_summary_id(db, session_id, summary_id).await?;
     let result = collection(db)
         .delete_one(doc! {"session_id": session_id, "id": summary_id})
         .await
         .map_err(|e| e.to_string())?;
-    Ok(result.deleted_count > 0)
+    if result.deleted_count > 0 || reset_count > 0 {
+        Ok(reset_count)
+    } else {
+        Ok(0)
+    }
 }
