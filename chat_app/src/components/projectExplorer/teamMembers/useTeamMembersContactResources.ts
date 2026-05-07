@@ -113,6 +113,7 @@ export const useTeamMembersContactResources = ({
     markSessionSummariesStale,
     hydrateSessionSummariesFromCache,
     cancelPendingSessionSummariesLoad,
+    applyRealtimeSessionSummaries,
     openSummaryForSession,
     deleteSummary,
     clearSummaries,
@@ -223,6 +224,7 @@ export const useTeamMembersContactResources = ({
       markSessionSummariesStale,
       hydrateSessionSummariesFromCache,
       cancelPendingSessionSummariesLoad,
+      applyRealtimeSessionSummaries,
     },
   };
 };

@@ -74,6 +74,31 @@ export interface ReviewRepairRealtimePayload {
   error?: string | null;
 }
 
+export interface RealtimeConversationSummariesUpdatedPayloadWrapper {
+  kind: 'conversation_summaries_updated';
+  conversation_id: string;
+  project_id: string;
+  contact_id?: string | null;
+  agent_id?: string | null;
+  items: Array<{
+    id: string;
+    conversation_id?: string | null;
+    summary_text?: string;
+    summary_model?: string;
+    trigger_type?: string;
+    source_message_count?: number;
+    source_estimated_tokens?: number;
+    status?: string;
+    error_message?: string | null;
+    level?: number;
+    created_at?: string;
+    updated_at?: string;
+  }>;
+  total: number;
+  has_summary: boolean;
+  reason: string;
+}
+
 export interface RealtimeReviewRepairPayloadWrapper {
   kind: 'review_repair';
   conversation_id: string;
@@ -106,6 +131,15 @@ export interface RealtimeContactsUpdatedPayloadWrapper {
   kind: 'contacts_updated';
   reason: string;
   contact_id?: string | null;
+  contact?: {
+    id: string;
+    user_id?: string | null;
+    agent_id?: string | null;
+    agent_name_snapshot?: string | null;
+    status?: string | null;
+    created_at?: string;
+    updated_at?: string;
+  } | null;
 }
 
 export interface RealtimeNotepadUpdatedPayloadWrapper {
@@ -121,12 +155,67 @@ export interface RealtimeProjectsUpdatedPayloadWrapper {
   kind: 'projects_updated';
   reason: string;
   project_id?: string | null;
+  project?: {
+    id: string;
+    name: string;
+    root_path?: string;
+    rootPath?: string;
+    description?: string | null;
+    user_id?: string | null;
+    userId?: string | null;
+    created_at?: string;
+    createdAt?: string;
+    updated_at?: string;
+    updatedAt?: string;
+  } | null;
 }
 
 export interface RealtimeRemoteConnectionsUpdatedPayloadWrapper {
   kind: 'remote_connections_updated';
   reason: string;
   connection_id?: string | null;
+  connection?: {
+    id: string;
+    name?: string;
+    host?: string;
+    port?: number;
+    username?: string;
+    auth_type?: 'private_key' | 'private_key_cert' | 'password';
+    authType?: 'private_key' | 'private_key_cert' | 'password';
+    password?: string | null;
+    private_key_path?: string | null;
+    privateKeyPath?: string | null;
+    certificate_path?: string | null;
+    certificatePath?: string | null;
+    default_remote_path?: string | null;
+    defaultRemotePath?: string | null;
+    host_key_policy?: 'strict' | 'accept_new';
+    hostKeyPolicy?: 'strict' | 'accept_new';
+    jump_enabled?: boolean;
+    jumpEnabled?: boolean;
+    jump_connection_id?: string | null;
+    jumpConnectionId?: string | null;
+    jump_host?: string | null;
+    jumpHost?: string | null;
+    jump_port?: number | null;
+    jumpPort?: number | null;
+    jump_username?: string | null;
+    jumpUsername?: string | null;
+    jump_private_key_path?: string | null;
+    jumpPrivateKeyPath?: string | null;
+    jump_certificate_path?: string | null;
+    jumpCertificatePath?: string | null;
+    jump_password?: string | null;
+    jumpPassword?: string | null;
+    user_id?: string | null;
+    userId?: string | null;
+    created_at?: string;
+    createdAt?: string;
+    updated_at?: string;
+    updatedAt?: string;
+    last_active_at?: string;
+    lastActiveAt?: string;
+  } | null;
 }
 
 export interface RealtimeSessionsUpdatedPayloadWrapper {
@@ -134,6 +223,30 @@ export interface RealtimeSessionsUpdatedPayloadWrapper {
   reason: string;
   session_id?: string | null;
   project_id?: string | null;
+  session?: {
+    id: string;
+    title: string;
+    user_id?: string | null;
+    userId?: string | null;
+    project_id?: string | null;
+    projectId?: string | null;
+    created_at?: string;
+    createdAt?: string;
+    updated_at?: string;
+    updatedAt?: string;
+    message_count?: number;
+    messageCount?: number;
+    token_usage?: number;
+    tokenUsage?: number;
+    tags?: string | null;
+    pinned?: boolean;
+    archived?: boolean;
+    status?: string;
+    metadata?: Record<string, unknown> | string | null;
+    selected_model_id?: string | null;
+    selected_agent_id?: string | null;
+    description?: string | null;
+  } | null;
 }
 
 export interface RealtimeTerminalStatePayloadWrapper {
@@ -152,6 +265,23 @@ export interface RealtimeTerminalListInvalidatedPayloadWrapper {
   terminal_id?: string | null;
   project_id?: string | null;
   reason: string;
+  terminal?: {
+    id: string;
+    name?: string | null;
+    cwd?: string | null;
+    user_id?: string | null;
+    userId?: string | null;
+    project_id?: string | null;
+    projectId?: string | null;
+    status?: string | null;
+    busy?: boolean | null;
+    created_at?: string;
+    createdAt?: string;
+    updated_at?: string;
+    updatedAt?: string;
+    last_active_at?: string;
+    lastActiveAt?: string;
+  } | null;
 }
 
 export interface RealtimeProjectRunStatePayloadWrapper {
@@ -171,6 +301,8 @@ export interface RealtimeProjectRunCatalogPayloadWrapper {
   project_id: string;
   reason: string;
   path?: string | null;
+  runner_script_exists?: boolean | null;
+  root_missing?: boolean | null;
 }
 
 export interface RealtimeProjectMembersUpdatedPayloadWrapper {
@@ -253,13 +385,18 @@ export interface RealtimeChatStreamPayloadWrapper {
     timestamp?: string;
     content?: unknown;
     data?: unknown;
-    result?: {
-      content?: unknown;
-    } | null;
     success?: boolean;
     is_error?: boolean;
     code?: string;
     message?: string;
+    result?: {
+      content?: unknown;
+      persisted_user_message?: unknown;
+      persisted_user_message_id?: string | null;
+      persisted_assistant_message?: unknown;
+      persisted_assistant_message_id?: string | null;
+      [key: string]: unknown;
+    } | null;
     [key: string]: unknown;
   };
 }
@@ -282,6 +419,7 @@ export interface RealtimeRemoteSftpTransferPayloadWrapper {
 
 export type RealtimeProjectScopedPayload =
   | RealtimeReviewRepairPayloadWrapper
+  | RealtimeConversationSummariesUpdatedPayloadWrapper
   | RealtimeProjectChangeSummaryPayloadWrapper
   | RealtimeTerminalStatePayloadWrapper
   | RealtimeTerminalListInvalidatedPayloadWrapper

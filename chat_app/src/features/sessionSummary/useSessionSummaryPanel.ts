@@ -4,6 +4,7 @@ import { useDialogService } from '../../components/ui/DialogProvider';
 import type { SessionSummariesListResponse } from '../../lib/api/client/types';
 import type { SessionSummaryItem } from '../../lib/domain/configs';
 import {
+  applyConversationSummaryItemsSnapshot,
   getCachedConversationSummaryItems,
   loadConversationSummaryItems,
   markConversationSummaryCacheStale,
@@ -36,6 +37,10 @@ interface UseSessionSummaryPanelResult {
   markSessionSummariesStale: (sessionId: string) => void;
   hydrateSessionSummariesFromCache: (sessionId: string) => void;
   cancelPendingSessionSummariesLoad: () => void;
+  applyRealtimeSessionSummaries: (
+    sessionId: string,
+    payload: SessionSummariesListResponse | unknown,
+  ) => void;
   openSummaryForSession: (sessionId: string) => Promise<void>;
   deleteSummary: (sessionId: string, summaryId: string) => Promise<void>;
   clearSummaries: (
@@ -100,6 +105,26 @@ export const useSessionSummaryPanel = (
   const cancelPendingSessionSummariesLoad = useCallback(() => {
     summaryLoadSeqRef.current += 1;
   }, []);
+
+  const applyRealtimeSessionSummaries = useCallback((
+    sessionId: string,
+    payload: SessionSummariesListResponse | unknown,
+  ) => {
+    if (!sessionId) {
+      return;
+    }
+    const normalized = applyConversationSummaryItemsSnapshot(apiClient, sessionId, payload, {
+      loadedLimit: 200,
+    });
+    summaryStaleSessionsRef.current.delete(sessionId);
+    if (currentSummarySessionIdRef.current !== sessionId) {
+      return;
+    }
+    setSummaryItems(normalized);
+    setSummaryLoadedSessionId(sessionId);
+    setSummaryError(null);
+    setSummaryLoading(false);
+  }, [apiClient]);
 
   const markSessionSummariesStale = useCallback((sessionId: string) => {
     if (!sessionId) {
@@ -261,6 +286,7 @@ export const useSessionSummaryPanel = (
     markSessionSummariesStale,
     hydrateSessionSummariesFromCache,
     cancelPendingSessionSummariesLoad,
+    applyRealtimeSessionSummaries,
     openSummaryForSession,
     deleteSummary,
     clearSummaries,

@@ -57,6 +57,25 @@ const syncCurrentTerminalSelection = (
 
 export function createTerminalActions({ set, get, client, getUserIdParam }: Deps) {
   return {
+    applyRealtimeTerminalSnapshot: (terminalPayload: Terminal | unknown) => {
+      const terminal = normalizeTerminal(terminalPayload);
+      const normalizedTerminalId = String(terminal?.id || '').trim();
+      if (!normalizedTerminalId) {
+        return null;
+      }
+      upsertTerminalCaches(client, terminal);
+      const uid = getUserIdParam();
+      set((state: ChatStoreDraft) => {
+        state.terminals = upsertTerminal(state.terminals, terminal);
+        if (state.currentTerminalId === normalizedTerminalId) {
+          state.currentTerminal = terminal;
+        } else {
+          syncCurrentTerminalSelection(state, uid, state.terminals);
+        }
+      });
+      return terminal;
+    },
+
     loadTerminals: async (options?: LoadTerminalsOptions) => {
       try {
         const uid = getUserIdParam();

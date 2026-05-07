@@ -5,6 +5,7 @@ use uuid::Uuid;
 
 use crate::db::Db;
 use crate::models::JobRun;
+use crate::services::realtime::publish_job_run_event;
 
 use super::now_rfc3339;
 
@@ -74,6 +75,7 @@ pub async fn create_job_run(
         return Err(err.to_string());
     }
 
+    publish_job_run_event("upsert", &job);
     Ok(job)
 }
 
@@ -99,6 +101,13 @@ pub async fn finish_job_run(
         .await
         .map_err(|e| e.to_string())?;
 
+    if let Some(job_run) = collection(db)
+        .find_one(doc! {"id": job_run_id})
+        .await
+        .map_err(|e| e.to_string())?
+    {
+        publish_job_run_event("upsert", &job_run);
+    }
     Ok(())
 }
 
@@ -124,6 +133,13 @@ pub async fn update_job_run_diagnostics(
         )
         .await
         .map_err(|e| e.to_string())?;
+    if let Some(job_run) = collection(db)
+        .find_one(doc! {"id": job_run_id})
+        .await
+        .map_err(|e| e.to_string())?
+    {
+        publish_job_run_event("upsert", &job_run);
+    }
     Ok(())
 }
 

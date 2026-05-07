@@ -1,5 +1,6 @@
 import type { Project } from '../../../types';
 import type ApiClient from '../../api/client';
+import { ApiRequestError } from '../../api/client/shared';
 import { normalizeProject } from '../helpers/projects';
 import type { ChatStoreDraft, ChatStoreGet, ChatStoreSet } from '../types';
 
@@ -175,6 +176,22 @@ export function createProjectActions({ set, get, client, getUserIdParam }: Deps)
   };
 
   return {
+    applyRealtimeProjectSnapshot: (projectPayload: Project | unknown) => {
+      const project = normalizeProject(projectPayload);
+      const normalizedProjectId = normalizeProjectId(project?.id || '');
+      if (!normalizedProjectId) {
+        return null;
+      }
+      upsertProjectCaches(project);
+      set((state: ChatStoreDraft) => {
+        state.projects = upsertProject(state.projects, project);
+        if (state.currentProjectId === normalizedProjectId) {
+          state.currentProject = project;
+        }
+      });
+      return project;
+    },
+
     loadProjects: async (options?: LoadProjectsOptions) => {
       try {
         const uid = getUserIdParam();
@@ -381,6 +398,20 @@ export function createProjectActions({ set, get, client, getUserIdParam }: Deps)
         });
         return project;
       } catch (error) {
+        if (error instanceof ApiRequestError && error.status === 404) {
+          removeProjectCaches(projectId);
+          set((state: ChatStoreDraft) => {
+            state.projects = state.projects.filter((project) => project.id !== projectId);
+            if (state.currentProjectId === projectId) {
+              state.currentProjectId = null;
+              state.currentProject = null;
+              if (state.activePanel === 'project') {
+                state.activePanel = 'chat';
+              }
+            }
+          });
+          return null;
+        }
         console.error('Failed to refresh project detail:', error);
         return null;
       }

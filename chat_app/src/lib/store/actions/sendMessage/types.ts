@@ -104,6 +104,11 @@ export interface StreamEventPayload {
   data?: unknown;
   result?: {
     content?: unknown;
+    persisted_user_message?: unknown;
+    persisted_user_message_id?: string | null;
+    persisted_assistant_message?: unknown;
+    persisted_assistant_message_id?: string | null;
+    [key: string]: unknown;
   } | null;
   success?: boolean;
   is_error?: boolean;

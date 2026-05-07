@@ -243,6 +243,7 @@ pub fn router(state: SharedState) -> Router {
             post(jobs_api::run_agent_memory_once),
         )
         .route("/api/memory/v1/jobs/runs", get(jobs_api::list_job_runs))
+        .route("/api/memory/v1/jobs/runs/stream", get(jobs_api::stream_job_runs))
         .route("/api/memory/v1/jobs/stats", get(jobs_api::job_stats))
         .route(
             "/api/memory/v1/context/compose",

@@ -26,8 +26,10 @@ export interface WorkspaceSessionFacade {
     conversationId: string,
     params?: { limit?: number; offset?: number; compact?: boolean; strategy?: string },
   ): Promise<SessionMessageResponse[]>;
+  getConversationTurnMessages(conversationId: string, userMessageId: string): Promise<SessionMessageResponse[]>;
   getConversationTurnProcessMessages(conversationId: string, userMessageId: string): Promise<SessionMessageResponse[]>;
   getConversationTurnProcessMessagesByTurn(conversationId: string, turnId: string): Promise<SessionMessageResponse[]>;
+  getConversationTurnMessagesByTurn(conversationId: string, turnId: string): Promise<SessionMessageResponse[]>;
   getConversationLatestTurnRuntimeContext(conversationId: string): Promise<TurnRuntimeSnapshotLookupResponse>;
   getConversationTurnRuntimeContextByTurn(
     conversationId: string,
@@ -55,11 +57,17 @@ export const workspaceSessionFacade: WorkspaceSessionFacade & ThisType<ApiClient
   async getConversationMessages(conversationId, params) {
     return workspaceApi.getConversationMessages(this.getRequestFn(), conversationId, params);
   },
+  async getConversationTurnMessages(conversationId, userMessageId) {
+    return workspaceApi.getConversationTurnMessages(this.getRequestFn(), conversationId, userMessageId);
+  },
   async getConversationTurnProcessMessages(conversationId, userMessageId) {
     return workspaceApi.getConversationTurnProcessMessages(this.getRequestFn(), conversationId, userMessageId);
   },
   async getConversationTurnProcessMessagesByTurn(conversationId, turnId) {
     return workspaceApi.getConversationTurnProcessMessagesByTurn(this.getRequestFn(), conversationId, turnId);
+  },
+  async getConversationTurnMessagesByTurn(conversationId, turnId) {
+    return workspaceApi.getConversationTurnMessagesByTurn(this.getRequestFn(), conversationId, turnId);
   },
   async getConversationLatestTurnRuntimeContext(conversationId) {
     return workspaceApi.getConversationLatestTurnRuntimeContext(this.getRequestFn(), conversationId);

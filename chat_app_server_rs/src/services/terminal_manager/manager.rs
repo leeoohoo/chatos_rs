@@ -58,6 +58,7 @@ impl TerminalsManager {
                         Some(terminal_for_events.id.as_str()),
                         terminal_for_events.project_id.as_deref(),
                         "process_exited",
+                        Some(&terminal_for_events),
                     );
                     if let Some(project_id) = terminal_for_events.project_id.as_deref() {
                         publish_project_run_state_changed(
@@ -93,6 +94,7 @@ impl TerminalsManager {
                 Some(terminal.id.as_str()),
                 terminal.project_id.as_deref(),
                 "created",
+                Some(&terminal),
             );
             publish_terminal_state_changed(user_id, &terminal, false, "created");
             if let Some(project_id) = terminal.project_id.as_deref() {
@@ -126,6 +128,7 @@ impl TerminalsManager {
                 Some(terminal.id.as_str()),
                 terminal.project_id.as_deref(),
                 "ensured_running",
+                Some(terminal),
             );
             publish_terminal_state_changed(user_id, terminal, session.is_busy(), "ensured_running");
             if let Some(project_id) = terminal.project_id.as_deref() {
@@ -157,6 +160,7 @@ impl TerminalsManager {
                     Some(terminal.id.as_str()),
                     terminal.project_id.as_deref(),
                     "closed",
+                    Some(&terminal),
                 );
                 if let Some(project_id) = terminal.project_id.as_deref() {
                     publish_project_run_state_changed(

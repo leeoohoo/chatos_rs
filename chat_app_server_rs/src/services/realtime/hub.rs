@@ -4,12 +4,19 @@ use once_cell::sync::Lazy;
 use tokio::sync::broadcast;
 
 use crate::core::time::now_rfc3339;
+use crate::models::project::Project;
+use crate::models::remote_connection::RemoteConnection;
+use crate::models::session::Session;
 use crate::models::terminal::Terminal;
-use crate::services::memory_server_client::{ReviewRepairStatusDto, RunReviewRepairSummaryRequestDto};
+use crate::models::session_summary_v2::SessionSummaryV2;
+use crate::services::memory_server_client::{
+    MemoryContactDto, ReviewRepairStatusDto, RunReviewRepairSummaryRequestDto,
+};
 use crate::services::task_manager::{TaskDraft, TaskRecord};
 
 use super::types::{
     ChatStreamRealtimePayload,
+    ConversationSummariesUpdatedRealtimePayload,
     ContactsUpdatedRealtimePayload,
     NotepadUpdatedRealtimePayload,
     ProjectChangeSummaryRealtimePayload, ProjectRunCatalogRealtimePayload,
@@ -121,32 +128,37 @@ pub fn publish_review_repair_completed(
             error: None,
         },
     );
-    publish_review_repair_event(
-        "conversation.summaries.updated",
-        user_id,
-        conversation_id,
-        ReviewRepairRealtimePayload {
-            conversation_id: conversation_id.to_string(),
-            project_id: status.project_id.clone(),
-            contact_id: status
-                .contact_id
-                .clone()
-                .or_else(|| scope_req.contact_id.clone()),
-            agent_id: status.agent_id.clone().or_else(|| scope_req.agent_id.clone()),
-            running: false,
-            pending_message_count: Some(status.pending_message_count),
-            running_job_count: Some(status.running_job_count),
-            scope_session_count: Some(status.scope_session_count),
-            processed_sessions: None,
-            summarized_sessions: None,
-            generated_summaries: None,
-            marked_messages: None,
-            failed_sessions: None,
-            job_type: Some(status.job_type.clone()),
-            mode: None,
-            error: None,
-        },
-    );
+}
+
+pub fn publish_conversation_summaries_updated(
+    user_id: &str,
+    conversation_id: &str,
+    project_id: &str,
+    contact_id: Option<&str>,
+    agent_id: Option<&str>,
+    items: Vec<SessionSummaryV2>,
+    reason: &str,
+) {
+    REALTIME_HUB.send(RealtimeEventEnvelope {
+        message_type: "event",
+        event: "conversation.summaries.updated",
+        user_id: user_id.to_string(),
+        conversation_id: Some(conversation_id.to_string()),
+        project_id: Some(project_id.to_string()),
+        payload: RealtimeEventPayload::ConversationSummariesUpdated(
+            ConversationSummariesUpdatedRealtimePayload {
+                conversation_id: conversation_id.to_string(),
+                project_id: project_id.to_string(),
+                contact_id: contact_id.map(|value| value.to_string()),
+                agent_id: agent_id.map(|value| value.to_string()),
+                total: items.len(),
+                has_summary: !items.is_empty(),
+                items,
+                reason: reason.to_string(),
+            },
+        ),
+        ts: now_rfc3339(),
+    });
 }
 
 pub fn publish_review_repair_failed(
@@ -204,7 +216,12 @@ pub fn publish_project_change_summary_updated(
     });
 }
 
-pub fn publish_contacts_updated(user_id: &str, reason: &str, contact_id: Option<&str>) {
+pub fn publish_contacts_updated(
+    user_id: &str,
+    reason: &str,
+    contact_id: Option<&str>,
+    contact: Option<MemoryContactDto>,
+) {
     REALTIME_HUB.send(RealtimeEventEnvelope {
         message_type: "event",
         event: "contacts.updated",
@@ -214,6 +231,7 @@ pub fn publish_contacts_updated(user_id: &str, reason: &str, contact_id: Option<
         payload: RealtimeEventPayload::ContactsUpdated(ContactsUpdatedRealtimePayload {
             reason: reason.to_string(),
             contact_id: contact_id.map(|value| value.to_string()),
+            contact,
         }),
         ts: now_rfc3339(),
     });
@@ -244,7 +262,12 @@ pub fn publish_notepad_updated(
     });
 }
 
-pub fn publish_projects_updated(user_id: &str, reason: &str, project_id: Option<&str>) {
+pub fn publish_projects_updated(
+    user_id: &str,
+    reason: &str,
+    project_id: Option<&str>,
+    project: Option<Project>,
+) {
     REALTIME_HUB.send(RealtimeEventEnvelope {
         message_type: "event",
         event: "projects.updated",
@@ -254,6 +277,7 @@ pub fn publish_projects_updated(user_id: &str, reason: &str, project_id: Option<
         payload: RealtimeEventPayload::ProjectsUpdated(ProjectsUpdatedRealtimePayload {
             reason: reason.to_string(),
             project_id: project_id.map(|value| value.to_string()),
+            project,
         }),
         ts: now_rfc3339(),
     });
@@ -263,6 +287,7 @@ pub fn publish_remote_connections_updated(
     user_id: &str,
     reason: &str,
     connection_id: Option<&str>,
+    connection: Option<RemoteConnection>,
 ) {
     REALTIME_HUB.send(RealtimeEventEnvelope {
         message_type: "event",
@@ -274,6 +299,7 @@ pub fn publish_remote_connections_updated(
             RemoteConnectionsUpdatedRealtimePayload {
                 reason: reason.to_string(),
                 connection_id: connection_id.map(|value| value.to_string()),
+                connection,
             },
         ),
         ts: now_rfc3339(),
@@ -285,6 +311,7 @@ pub fn publish_sessions_updated(
     reason: &str,
     session_id: Option<&str>,
     project_id: Option<&str>,
+    session: Option<Session>,
 ) {
     REALTIME_HUB.send(RealtimeEventEnvelope {
         message_type: "event",
@@ -296,6 +323,7 @@ pub fn publish_sessions_updated(
             reason: reason.to_string(),
             session_id: session_id.map(|value| value.to_string()),
             project_id: project_id.map(|value| value.to_string()),
+            session,
         }),
         ts: now_rfc3339(),
     });
@@ -337,6 +365,7 @@ pub fn publish_terminal_list_invalidated(
     terminal_id: Option<&str>,
     project_id: Option<&str>,
     reason: &str,
+    terminal: Option<&Terminal>,
 ) {
     REALTIME_HUB.send(RealtimeEventEnvelope {
         message_type: "event",
@@ -349,6 +378,7 @@ pub fn publish_terminal_list_invalidated(
                 terminal_id: terminal_id.map(|value| value.to_string()),
                 project_id: project_id.map(|value| value.to_string()),
                 reason: reason.to_string(),
+                terminal: terminal.cloned(),
             },
         ),
         ts: now_rfc3339(),
@@ -390,6 +420,8 @@ pub fn publish_project_run_catalog_updated(
     project_id: &str,
     reason: &str,
     path: Option<&str>,
+    runner_script_exists: Option<bool>,
+    root_missing: Option<bool>,
 ) {
     REALTIME_HUB.send(RealtimeEventEnvelope {
         message_type: "event",
@@ -401,6 +433,8 @@ pub fn publish_project_run_catalog_updated(
             project_id: project_id.to_string(),
             reason: reason.to_string(),
             path: path.map(|value| value.to_string()),
+            runner_script_exists,
+            root_missing,
         }),
         ts: now_rfc3339(),
     });

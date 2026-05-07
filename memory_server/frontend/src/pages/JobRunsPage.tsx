@@ -19,6 +19,7 @@ import type { ColumnsType } from 'antd/es/table';
 
 import { api } from '../api/client';
 import { useI18n } from '../i18n';
+import { connectJobRunsStream } from '../lib/jobRunsStream';
 import type { JobRun } from '../types';
 
 const { Text } = Typography;
@@ -115,10 +116,41 @@ export function JobRunsPage() {
     if (!autoRefresh) {
       return;
     }
-    const timer = window.setInterval(() => {
-      void load();
-    }, 10000);
-    return () => window.clearInterval(timer);
+    const disconnect = connectJobRunsStream(
+      {
+        jobType,
+        status,
+      },
+      {
+        onSnapshot: (nextItems) => {
+          setItems(nextItems);
+          setError(null);
+          setLoading(false);
+        },
+        onUpsert: (jobRun) => {
+          setItems((prev) => {
+            const existingIndex = prev.findIndex((item) => item.id === jobRun.id);
+            if (existingIndex < 0) {
+              return [jobRun, ...prev].slice(0, 500);
+            }
+            const next = prev.slice();
+            next[existingIndex] = {
+              ...next[existingIndex],
+              ...jobRun,
+            };
+            return next;
+          });
+        },
+        onResync: () => {
+          void load();
+        },
+        onError: (streamError) => {
+          setError(streamError.message);
+          void load();
+        },
+      },
+    );
+    return disconnect;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoRefresh, jobType, status]);
 

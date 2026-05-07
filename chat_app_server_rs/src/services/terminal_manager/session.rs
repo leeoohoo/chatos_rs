@@ -419,6 +419,7 @@ impl TerminalSession {
                     Some(self.terminal.id.as_str()),
                     self.terminal.project_id.as_deref(),
                     if busy { "busy_started" } else { "busy_cleared" },
+                    Some(&self.terminal),
                 );
                 if let Some(project_id) = self.terminal.project_id.as_deref() {
                     publish_project_run_state_changed(

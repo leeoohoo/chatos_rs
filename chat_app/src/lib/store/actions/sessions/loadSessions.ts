@@ -1,5 +1,6 @@
 import type { Session } from '../../../../types';
 import { debugLog, generateId } from '@/lib/utils';
+import { ApiRequestError } from '../../../api/client/shared';
 import { normalizeSession } from '../../helpers/sessions';
 import type { ContactRecord } from '../../types';
 import { readSessionAiSelectionFromMetadata } from '../../helpers/sessionAiSelection';
@@ -20,6 +21,7 @@ import {
   loadSessionDetail,
   markSessionCachesStale,
   normalizeTrackedSessions,
+  removeSessionCaches,
   syncLoadedSessions,
 } from './cache';
 
@@ -266,6 +268,24 @@ export function createLoadSessionActions({
         });
         return refreshed;
       } catch (error) {
+        if (error instanceof ApiRequestError && error.status === 404) {
+          removeSessionCaches(client, trimmed);
+          set((state: ChatStoreDraft) => {
+            const remaining = (state.sessions || []).filter((session) => session.id !== trimmed);
+            state.sessions = normalizeTrackedSessions(remaining, state.contacts || []);
+            if (state.currentSessionId === trimmed) {
+              state.currentSessionId = null;
+              state.currentSession = null;
+              state.selectedModelId = null;
+              state.selectedAgentId = null;
+              state.messages = [];
+            }
+            if (state.activePanel === 'chat' && state.currentSessionId === null) {
+              state.activePanel = state.currentProjectId ? 'project' : 'chat';
+            }
+          });
+          return null;
+        }
         console.error('Failed to refresh session by id:', error);
         markSessionCachesStale(client, {
           sessionId: trimmed,

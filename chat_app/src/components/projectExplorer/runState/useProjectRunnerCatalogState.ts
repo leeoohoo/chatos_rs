@@ -7,6 +7,7 @@ import {
   hasProjectRunnerScript,
   isProjectRunnerPathMissingError,
   loadProjectRunnerMembers,
+  patchProjectRunnerScriptStateSnapshot,
   markProjectRunnerContactRowsStale,
   markProjectRunnerScriptStateStale,
   readProjectRunnerErrorMessage,
@@ -107,10 +108,33 @@ export const useProjectRunnerCatalogState = ({
   useProjectRunRealtime({
     enabled: Boolean(project?.id),
     projectId: project?.id || null,
-    onCatalogUpdated: async () => {
-      if (project?.rootPath) {
-        markProjectRunnerScriptStateStale(client, project.rootPath);
+    onCatalogUpdated: async (payload) => {
+      if (!project?.rootPath) {
+        return;
       }
+      const hasRootMissing = typeof payload.root_missing === 'boolean';
+      const hasRunnerScriptExists = typeof payload.runner_script_exists === 'boolean';
+      if (hasRootMissing || hasRunnerScriptExists) {
+        if (hasRunnerScriptExists) {
+          patchProjectRunnerScriptStateSnapshot(client, project.rootPath, payload.runner_script_exists === true);
+          setRunnerScriptExists(payload.runner_script_exists === true);
+        }
+        if (hasRootMissing) {
+          setRunnerRootMissing(payload.root_missing === true);
+          setRunnerScriptError(
+            payload.root_missing === true ? '项目目录不存在，请检查项目路径' : null,
+          );
+          if (payload.root_missing === true) {
+            setRunnerScriptExists(false);
+          }
+        } else if (hasRunnerScriptExists) {
+          setRunnerRootMissing(false);
+          setRunnerScriptError(null);
+        }
+        setRunnerScriptChecking(false);
+        return;
+      }
+      markProjectRunnerScriptStateStale(client, project.rootPath);
       await loadRunnerScriptState();
     },
     onMembersUpdated: async () => {

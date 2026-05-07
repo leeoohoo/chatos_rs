@@ -216,6 +216,8 @@ async fn scan_project(project: &Project) -> Result<(), String> {
                         project.id.as_str(),
                         "project_root_missing",
                         Some(project.root_path.as_str()),
+                        Some(false),
+                        Some(true),
                     );
                 }
             }
@@ -230,6 +232,8 @@ async fn scan_project(project: &Project) -> Result<(), String> {
                         project.id.as_str(),
                         "project_root_available",
                         Some(project.root_path.as_str()),
+                        Some(snapshot_has_runner_script(project.root_path.as_str(), &current_files)),
+                        Some(false),
                     );
                 }
             }
@@ -244,6 +248,10 @@ async fn scan_project(project: &Project) -> Result<(), String> {
             let changes = diff_workspace_files(&previous_files, &current_files);
             state.files = current_files;
             state.initialized = true;
+            let runner_script_exists = snapshot_has_runner_script(
+                project.root_path.as_str(),
+                &state.files,
+            );
             drop(state_guard);
 
             if changes.is_empty() {
@@ -290,6 +298,8 @@ async fn scan_project(project: &Project) -> Result<(), String> {
                         project.id.as_str(),
                         "workspace_runner_script_changed",
                         Some(runner_script_path.as_str()),
+                        Some(runner_script_exists),
+                        Some(false),
                     );
                 }
             }
@@ -485,6 +495,23 @@ fn is_runner_script_path(project_root: &str, path: &str) -> bool {
             .as_ref(),
     );
     runner_path == normalize_path_string(path)
+}
+
+fn snapshot_has_runner_script(
+    project_root: &str,
+    files: &HashMap<String, FileFingerprint>,
+) -> bool {
+    let project_root = normalize_path_string(project_root);
+    if project_root.is_empty() {
+        return false;
+    }
+    let runner_path = normalize_path_string(
+        Path::new(project_root.as_str())
+            .join(WORKSPACE_RUNNER_SCRIPT_RELATIVE_PATH)
+            .to_string_lossy()
+            .as_ref(),
+    );
+    files.contains_key(runner_path.as_str())
 }
 
 fn path_matches_root(path: &str, root: &str) -> bool {

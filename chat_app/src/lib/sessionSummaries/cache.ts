@@ -128,6 +128,20 @@ export const setConversationSummaryCacheEntry = (
   });
 };
 
+export const applyConversationSummaryItemsSnapshot = (
+  apiClient: ConversationSummaryApiClientLike,
+  sessionId: string,
+  payload: SessionSummariesListResponse | unknown,
+  options?: { loadedLimit?: number },
+): SessionSummaryItem[] => {
+  const normalized = normalizeConversationSummaryItems(payload);
+  setConversationSummaryCacheEntry(apiClient, sessionId, normalized, {
+    loadedLimit: options?.loadedLimit,
+    stale: false,
+  });
+  return normalized;
+};
+
 export const loadConversationSummaryItems = (
   apiClient: ConversationSummaryApiClientLike,
   sessionId: string,

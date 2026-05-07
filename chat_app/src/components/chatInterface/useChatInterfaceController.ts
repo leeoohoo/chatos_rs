@@ -12,6 +12,7 @@ import { useChatSessionEffects } from './useChatSessionEffects';
 import { useRuntimeContextState } from './useRuntimeContextState';
 import { useReviewRepairRealtime } from '../../lib/realtime/useReviewRepairRealtime';
 import { useConversationSummariesRealtime } from '../../lib/realtime/useConversationSummariesRealtime';
+import type { RealtimeConversationSummariesUpdatedPayloadWrapper } from '../../lib/realtime/types';
 
 interface UseChatInterfaceControllerParams {
   apiClient: ApiClient;
@@ -48,6 +49,10 @@ interface UseChatInterfaceControllerParams {
   loadAgents: () => Promise<void>;
   loadContactMemoryContext: (sessionId: string, force?: boolean) => Promise<unknown>;
   loadSessionMemorySummaries: (sessionId: string, force?: boolean) => Promise<unknown>;
+  applyRealtimeSessionMemorySummaries: (
+    sessionId: string,
+    payload: RealtimeConversationSummariesUpdatedPayloadWrapper,
+  ) => void;
   hydrateContactMemoryContextFromCache: (sessionId: string) => void;
   markContactMemoryContextStale: (sessionId: string) => void;
   resetMemoryState: () => void;
@@ -90,6 +95,7 @@ export const useChatInterfaceController = ({
   loadAgents,
   loadContactMemoryContext,
   loadSessionMemorySummaries,
+  applyRealtimeSessionMemorySummaries,
   hydrateContactMemoryContextFromCache,
   markContactMemoryContextStale,
   resetMemoryState,
@@ -259,9 +265,13 @@ export const useChatInterfaceController = ({
   useConversationSummariesRealtime({
     sessionId: activePanel === 'chat' ? (currentSession?.id || null) : null,
     enabled: activePanel === 'chat',
-    onEvent: async () => {
+    onEvent: async (payload) => {
       const sessionId = currentSession?.id || null;
       if (!sessionId) {
+        return;
+      }
+      if (Array.isArray(payload?.items)) {
+        applyRealtimeSessionMemorySummaries(sessionId, payload);
         return;
       }
       markContactMemoryContextStale(sessionId);

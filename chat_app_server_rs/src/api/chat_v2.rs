@@ -19,7 +19,7 @@ use crate::core::auth::AuthUser;
 use crate::core::builtin_mcp_prompt::compose_effective_builtin_mcp_system_prompt;
 use crate::core::chat_context::maybe_spawn_session_title_rename;
 use crate::core::chat_stream::{
-    build_v2_callbacks, handle_chat_result, send_error_event, send_start_event,
+    build_v2_callbacks, enrich_chat_result_with_persisted_messages, handle_chat_result, send_error_event, send_start_event,
     send_tools_unavailable_event, ChatEventSink, ChatRealtimeStreamContext,
 };
 use crate::core::mcp_runtime::{load_mcp_servers_by_selection, McpServerBundle};
@@ -249,7 +249,7 @@ async fn stream_chat_v2(
     let cfg = match Config::try_get() {
         Ok(cfg) => cfg,
         Err(err) => {
-            send_error_event(&initial_sink, format!("服务配置未初始化: {err}").as_str());
+            send_error_event(&initial_sink, format!("服务配置未初始化: {err}").as_str(), None);
             initial_sink.send_done();
             return;
         }
@@ -278,7 +278,7 @@ async fn stream_chat_v2(
     ) {
         Ok(ai_server) => ai_server,
         Err(err) => {
-            send_error_event(&initial_sink, format!("初始化 AI 服务失败: {err}").as_str());
+            send_error_event(&initial_sink, format!("初始化 AI 服务失败: {err}").as_str(), None);
             initial_sink.send_done();
             return;
         }
@@ -434,15 +434,31 @@ async fn stream_chat_v2(
         );
     }
 
+    let result = match result {
+        Ok(value) => Ok(
+            enrich_chat_result_with_persisted_messages(
+                &session_id,
+                Some(resolved_turn_id.as_str()),
+                Some(user_message_id.as_str()),
+                value,
+            )
+            .await,
+        ),
+        Err(error) => Err(error),
+    };
+
     let should_send_done = handle_chat_result(
         &sink,
         &session_id,
+        Some(resolved_turn_id.as_str()),
+        Some(user_message_id.as_str()),
         Some(&chunk_sent),
         Some(&callback_bundle.streamed_content),
         result,
         || log_chat_cancelled(&session_id),
         |err| log_chat_error(err),
-    );
+    )
+    .await;
     runtime_guidance_manager().close_turn(&session_id, &resolved_turn_id);
     if always_send_done || should_send_done {
         sink.send_done();

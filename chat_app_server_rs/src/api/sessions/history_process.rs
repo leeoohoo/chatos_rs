@@ -137,3 +137,58 @@ pub(super) fn build_turn_process_messages(messages: &[Message], user_index: usiz
 
     process_messages
 }
+
+pub(super) fn build_turn_display_messages(messages: &[Message], user_index: usize) -> Vec<Message> {
+    let mut user_message = messages[user_index].clone();
+    let user_message_id = user_message.id.clone();
+    let next_user_index = messages
+        .iter()
+        .enumerate()
+        .skip(user_index + 1)
+        .find_map(|(index, message)| (message.role == "user").then_some(index))
+        .unwrap_or(messages.len());
+
+    let final_assistant_index =
+        select_final_assistant_index(messages, user_index + 1, next_user_index);
+
+    let mut tool_call_count = 0usize;
+    let mut thinking_count = 0usize;
+    let mut process_message_count = 0usize;
+
+    for index in (user_index + 1)..next_user_index {
+        let message = &messages[index];
+        if message.role == "assistant" && !is_session_summary(message) {
+            tool_call_count += extract_tool_calls_from_message(message).len();
+            thinking_count += count_assistant_thinking_steps(message);
+        }
+
+        if Some(index) != final_assistant_index
+            && (message.role == "assistant" || message.role == "tool")
+            && !(message.role == "assistant" && is_session_summary(message))
+        {
+            process_message_count += 1;
+        }
+    }
+
+    let final_assistant_message_id =
+        final_assistant_index.map(|index| messages[index].id.clone());
+    attach_user_history_process_metadata(
+        &mut user_message,
+        process_message_count > 0 || tool_call_count > 0 || thinking_count > 0,
+        tool_call_count,
+        thinking_count,
+        process_message_count,
+        final_assistant_message_id,
+    );
+
+    let mut display_messages = vec![user_message];
+    display_messages.extend(build_turn_process_messages(messages, user_index));
+
+    if let Some(final_index) = final_assistant_index {
+        let mut assistant = messages[final_index].clone();
+        strip_assistant_for_compact_history(&mut assistant, &user_message_id);
+        display_messages.push(assistant);
+    }
+
+    display_messages
+}

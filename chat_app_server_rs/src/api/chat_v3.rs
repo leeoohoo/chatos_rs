@@ -23,7 +23,7 @@ use crate::core::auth::AuthUser;
 use crate::core::builtin_mcp_prompt::compose_effective_builtin_mcp_system_prompt;
 use crate::core::chat_context::maybe_spawn_session_title_rename;
 use crate::core::chat_stream::{
-    build_v3_callbacks, handle_chat_result, send_error_event, send_start_event,
+    build_v3_callbacks, enrich_chat_result_with_persisted_messages, handle_chat_result, send_error_event, send_start_event,
     send_tools_unavailable_event, ChatEventSink, ChatRealtimeStreamContext,
 };
 use crate::core::user_scope::ensure_and_set_user_id;
@@ -157,7 +157,7 @@ async fn stream_chat_v3(sender: Option<SseSender>, req: ChatStreamRequest) {
     let cfg = match Config::try_get() {
         Ok(cfg) => cfg,
         Err(err) => {
-            send_error_event(&initial_sink, format!("服务配置未初始化: {err}").as_str());
+            send_error_event(&initial_sink, format!("服务配置未初始化: {err}").as_str(), None);
             initial_sink.send_done();
             return;
         }
@@ -173,7 +173,7 @@ async fn stream_chat_v3(sender: Option<SseSender>, req: ChatStreamRequest) {
         .and_then(|v| v.as_bool())
         != Some(true)
     {
-        send_error_event(&initial_sink, "当前模型未启用 Responses API");
+        send_error_event(&initial_sink, "当前模型未启用 Responses API", None);
         initial_sink.send_done();
         return;
     }
@@ -358,15 +358,31 @@ async fn stream_chat_v3(sender: Option<SseSender>, req: ChatStreamRequest) {
         );
     }
 
+    let result = match result {
+        Ok(value) => Ok(
+            enrich_chat_result_with_persisted_messages(
+                &session_id,
+                Some(resolved_turn_id.as_str()),
+                Some(user_message_id.as_str()),
+                value,
+            )
+            .await,
+        ),
+        Err(error) => Err(error),
+    };
+
     let should_send_done = handle_chat_result(
         &sink,
         &session_id,
+        Some(resolved_turn_id.as_str()),
+        Some(user_message_id.as_str()),
         Some(&chunk_sent),
         Some(&callback_bundle.streamed_content),
         result,
         || log_chat_cancelled(&session_id),
         |err| log_chat_error(err),
-    );
+    )
+    .await;
     if should_send_done {
         sink.send_done();
     }

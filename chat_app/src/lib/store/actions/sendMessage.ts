@@ -1,6 +1,7 @@
 import type { Message } from '../../../types';
 import type { SendMessageRuntimeOptions } from '../../../types';
 import type ApiClient from '../../api/client';
+import { ApiRequestError } from '../../api/client/shared';
 import {
   getRealtimeConnectionStateSnapshot,
   waitForRealtimeConnectedSnapshot,
@@ -37,7 +38,17 @@ import type {
 } from '../types';
 import { type StreamingMessage } from './sendMessage/types';
 
-const REALTIME_STREAM_CONNECT_GRACE_MS = 1200;
+const REALTIME_STREAM_CONNECT_GRACE_MS = 2200;
+
+const shouldFallbackToSseForRealtimeCommandError = (error: unknown): boolean => {
+  if (error instanceof ApiRequestError) {
+    if (error.status >= 400 && error.status < 500) {
+      return false;
+    }
+    return true;
+  }
+  return true;
+};
 
 // 工厂函数：创建 sendMessage 处理器，注入依赖以便于在 store 外部维护
 export function createSendMessageHandler({
@@ -243,20 +254,60 @@ export function createSendMessageHandler({
         preferRealtimeStream = await waitForRealtimeConnectedSnapshot(REALTIME_STREAM_CONNECT_GRACE_MS);
       }
 
+      let shouldFallbackToSse = false;
+      let realtimeCommandError: unknown = null;
       if (preferRealtimeStream) {
-        const commandResponse = await client.sendChatCommand(
-          currentSessionId,
-          content,
-          selectedModel,
-          getUserIdParam(),
-          apiAttachments,
-          reasoningEnabled,
-          streamRuntimeOptions,
-        );
-        if (commandResponse?.accepted === false) {
-          throw new Error('聊天命令未被接受');
+        set((state) => {
+          const prev = state.sessionChatState[currentSessionId] || createDefaultSessionChatState();
+          state.sessionChatState[currentSessionId] = {
+            ...prev,
+            streamingTransport: 'realtime',
+          };
+        });
+        try {
+          const commandResponse = await client.sendChatCommand(
+            currentSessionId,
+            content,
+            selectedModel,
+            getUserIdParam(),
+            apiAttachments,
+            reasoningEnabled,
+            streamRuntimeOptions,
+          );
+          if (commandResponse?.accepted === false) {
+            throw new Error('聊天命令未被接受');
+          }
+        } catch (error) {
+          realtimeCommandError = error;
+          shouldFallbackToSse = shouldFallbackToSseForRealtimeCommandError(error);
+          if (shouldFallbackToSse) {
+            debugLog('⚠️ realtime send command failed, fallback to SSE', {
+              error: error instanceof Error ? error.message : String(error),
+              conversationTurnId,
+              currentSessionId,
+            });
+          } else {
+            debugLog('⛔ realtime send command rejected, skip SSE fallback', {
+              error: error instanceof Error ? error.message : String(error),
+              errorStatus: error instanceof ApiRequestError ? error.status : null,
+              conversationTurnId,
+              currentSessionId,
+            });
+            throw error;
+          }
         }
       } else {
+        shouldFallbackToSse = true;
+      }
+
+      if (shouldFallbackToSse) {
+        set((state) => {
+          const prev = state.sessionChatState[currentSessionId] || createDefaultSessionChatState();
+          state.sessionChatState[currentSessionId] = {
+            ...prev,
+            streamingTransport: 'sse',
+          };
+        });
         const response = await client.streamChat(
           currentSessionId,
           content,
@@ -274,7 +325,16 @@ export function createSendMessageHandler({
         streamExecutionModulePromise ??= import('./sendMessage/streamExecution');
         const { runStreamingAssistantTurn } = await streamExecutionModulePromise;
         await runStreamingAssistantTurn({
+          apiClient: client,
           set,
+          getCurrentState: () => {
+            const state = get();
+            return {
+              currentSessionId: state.currentSessionId,
+              messages: state.messages,
+              loadMessages: state.loadMessages,
+            };
+          },
           currentSessionId,
           tempAssistantMessage,
           tempUserId,
@@ -284,8 +344,11 @@ export function createSendMessageHandler({
         });
       }
 
-      if (!preferRealtimeStream && get().currentSessionId === currentSessionId) {
-        await get().loadMessages(currentSessionId);
+      if (realtimeCommandError) {
+        debugLog('ℹ️ SSE fallback completed after realtime command failure', {
+          conversationTurnId,
+          currentSessionId,
+        });
       }
 
       debugLog('✅ 消息发送完成');

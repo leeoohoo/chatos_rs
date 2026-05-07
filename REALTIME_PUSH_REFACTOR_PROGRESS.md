@@ -10,7 +10,9 @@
   - `REALTIME_REMAINING_GAPS_EXECUTION_PLAN.md`
 - 当前确认的高价值剩余项：
   - 聊天主链仍保留真实 SSE fallback，尚未完全收成“长链接主路径”
-  - `project runner catalog / conversation summaries / sessions|contacts|projects|remote_connections` 仍以 invalidation 后 HTTP snapshot 为主，局部 patch 还有提升空间
+  - `project runner catalog` 仍以 invalidation 后 HTTP snapshot 为主，局部 patch 还有提升空间
+  - 聊天终态里 `cancelled / failed` 仍未像 `completed` 一样携带可直接对账的持久化回执，前端仍保留少量 `loadMessages()` 兜底
+  - 四类高频列表虽然已经支持 payload patch，但冷启动和少量无 id invalidation 仍保留整表 HTTP fallback
 
 ## 已完成
 
@@ -77,8 +79,12 @@
   - `project.run.catalog.updated` 现在只刷新 runner 脚本侧，不再顺手重拉项目成员
   - `project.members.updated` 现在只刷新成员侧，不再顺手重查 runner 脚本
   - 侧边栏 `useProjectRunState` 已拆成 members/script 两条定向刷新，减少事件到达后的整块 HTTP 回拉
-  - runner 脚本存在性查询补上了 client 侧缓存，并在 `project.run.catalog.updated` / 手动分析时失效
-  - 这样项目页与侧边栏同时关注同一项目时，不会重复打文件系统接口检查 `.chatos/project_runner.sh`
+- runner 脚本存在性查询补上了 client 侧缓存，并在 `project.run.catalog.updated` / 手动分析时失效
+- 这样项目页与侧边栏同时关注同一项目时，不会重复打文件系统接口检查 `.chatos/project_runner.sh`
+- `project.run.catalog.updated` 现在又往前收了一层：
+  - 后端 payload 会直接附带 `runner_script_exists / root_missing` 快照
+  - 前端项目页与侧边栏运行态收到该事件后，会优先本地 patch runner script 状态
+  - 只有 payload 没带快照字段时，才继续回退到旧的文件系统 HTTP 检查
 
 ## 已验证
 
@@ -197,6 +203,194 @@
     - `chat_app/src/lib/realtime/useConversationChatStreamRealtime.ts`
     - `chat_app/src/components/chatInterface/useChatStreamRealtimeBridge.ts`
     - `chat_app/src/components/chatInterface/useChatInterfaceController.ts`
+- 聊天完成态又往前收了一步，减少了 WebSocket 主路径结束后的 HTTP 回源：
+  - 后端 `chat.turn.completed` 事件现在会补带当前 turn 的持久化 user/assistant message 回执
+  - 前端 `useChatStreamRealtimeBridge` 收到完成事件后，会优先用这份持久化消息替换当前 turn 的临时消息
+  - 只有本地仍残留 temp user / temp assistant、无法完成持久化对账时，才继续调用 `loadMessages()`
+  - 这一步把“完成后无条件整段 reload messages”收成了“基于真实持久化回执的条件兜底”
+  - 相关文件：
+    - `chat_app_server_rs/src/core/chat_stream/events.rs`
+    - `chat_app_server_rs/src/core/chat_stream/mod.rs`
+    - `chat_app_server_rs/src/api/chat_v2.rs`
+    - `chat_app_server_rs/src/api/chat_v3.rs`
+    - `chat_app/src/lib/realtime/types.ts`
+    - `chat_app/src/components/chatInterface/useChatStreamRealtimeBridge.ts`
+- SSE fallback 成功态也已经收掉了外层无条件回源：
+  - `sendMessage` 不再在 SSE 完成后直接 `loadMessages(currentSessionId)`
+  - `runStreamingAssistantTurn` 现在会在消费 `complete` 事件时提取：
+    - `persisted_user_message`
+    - `persisted_assistant_message`
+  - 然后和 WebSocket 主路径复用同一套本地 reconcile 逻辑，优先把临时 user / assistant 消息就地替换成真正持久化消息
+  - 只有替换后仍残留 temp message 时，才继续做 `loadMessages()` 兜底
+  - 这一步把聊天成功态从“WS 条件兜底 + SSE 无脑回源”统一收成了“终态 payload 对账优先，必要时才回源”
+  - 相关文件：
+    - `chat_app/src/lib/store/actions/sendMessage.ts`
+    - `chat_app/src/lib/store/actions/sendMessage/streamExecution.ts`
+    - `chat_app/src/lib/store/actions/sendMessage/persistedTurnMessages.ts`
+    - `chat_app/src/lib/store/actions/sendMessage/types.ts`
+    - `chat_app/src/components/chatInterface/useChatStreamRealtimeBridge.ts`
+- 聊天 `cancelled` 终态也往前收了一步：
+  - 后端 `chat.turn.cancelled` 现在会尽量补带当前 turn 的持久化 user / assistant message 回执
+  - 前端 realtime bridge 收到取消事件后，会先尝试用这份回执替换当前 turn 的临时消息
+  - 只有本地仍残留 temp user / temp assistant 时，才继续做 `loadMessages()` 兜底
+  - 这一步把取消态也从“事件到达后直接整段回源”收成了“终态 payload 对账优先 + 条件兜底”
+  - 相关文件：
+    - `chat_app_server_rs/src/core/chat_stream/events.rs`
+    - `chat_app_server_rs/src/api/chat_v2.rs`
+    - `chat_app_server_rs/src/api/chat_v3.rs`
+    - `chat_app/src/lib/realtime/types.ts`
+    - `chat_app/src/components/chatInterface/useChatStreamRealtimeBridge.ts`
+- 聊天失败态 / 本地错误保留场景的回源判断也继续收紧了一层：
+  - 新增 `shouldReloadMessagesAfterTerminalState(...)`
+  - 当当前 turn 的 temp user 已经成功对账成持久化 user message，而 assistant 只是本地错误气泡时，不再为了“替换一个本来就可能不存在的持久化 assistant”去强制回源
+- 聊天 realtime 断线恢复也继续收紧了一层：
+  - 现在会区分当前 streaming turn 是走 `realtime` 还是 `sse`
+  - 只有 `realtime` 主链的 streaming turn 才会进入断线恢复逻辑
+  - 且断线后会先给 WebSocket 一个短暂重连窗口，不再一闪断就立刻 `syncSessionMessagesInBackground`
+  - 如果本地 draft / 持久化映射已经足够安全收口，也不会再额外整段同步消息
+  - 相关文件：
+    - `chat_app/src/lib/store/types.ts`
+    - `chat_app/src/lib/store/actions/sendMessage/sessionState.ts`
+    - `chat_app/src/lib/store/actions/sendMessage.ts`
+    - `chat_app/src/lib/store/actions/sendMessage/persistedTurnMessages.ts`
+    - `chat_app/src/components/chatInterface/useChatStreamRealtimeBridge.ts`
+- 聊天失败态又往前收了一层：
+  - realtime `chat.turn.failed` 进入前端错误路径时，现在会先消费后端补带的 `persisted_user_message / persisted_assistant_message`
+  - SSE fallback 的 `error / cancelled` 终态也会先尝试读取同一份 persisted 回执
+  - 这样失败时如果 user message 已经成功持久化，前端会先把 temp user 对账掉，再决定 assistant error 气泡是否需要额外回源
+  - 这一步继续减少了“失败后为了替换 temp user 而整段 `loadMessages()`”的概率
+- 聊天 turn 级恢复又往前收了一层：
+  - `shouldReloadMessagesAfterTerminalState(...)` 现在不再只看“temp user / temp assistant 还在不在”
+  - 当同一 turn 已经有可用的 local final assistant，而且正文 / tool / error payload 足够完整时，即使 temp user 还残留，也不会再默认触发 whole-session `loadMessages()`
+  - `recoverStreamingTurnBySnapshot(...)` 现在在 runtime snapshot 已经终态、但 turn 级消息接口暂时还没返回数据时，会先尝试直接用本地 terminal assistant 收口，而不是立刻判失败再整段回源
+  - 这一步继续压缩了 realtime 断流和 SSE/realtime 终态收口中的 whole-session fallback
+  - 相关文件：
+    - `chat_app/src/lib/store/actions/sendMessage/persistedTurnMessages.ts`
+    - `chat_app/src/lib/store/actions/sendMessage/turnRecovery.ts`
+    - `chat_app/src/lib/store/actions/sendMessage/persistedTurnMessages.test.ts`
+- 聊天发送入口也继续向长链接主路径收了一层：
+  - realtime 连接等待窗口从 `1200ms` 提高到 `2200ms`
+  - `waitForRealtimeConnectedSnapshot(...)` 现在把 `error` 也视为可短暂等待的重连态，不再一看到 `error` 就立即放弃 websocket
+  - `sendMessage` 现在不是“发送前先硬分 websocket / SSE 两条路”，而是：
+    - 先尽力等待 websocket 连接
+    - 连接上后优先发送 `sendChatCommand`
+    - 只有 `sendChatCommand` 明确失败，或者等待窗口内始终没连上，才降级到 SSE
+  - 这一步把 SSE 从“常规分支”继续压成了“长链接命令失败后的降级兜底”
+  - `sendChatCommand` 的错误现在也开始分型：
+    - `4xx` 请求非法会直接报错，不再静默降级 SSE 重打一遍
+    - `5xx` / 网络错误仍允许降级 SSE
+  - 这一步继续减少了“同一条坏请求沿 websocket + SSE 双打一次”的无效流量
+  - 相关文件：
+    - `chat_app/src/lib/realtime/state.ts`
+    - `chat_app/src/lib/api/client/stream.ts`
+    - `chat_app/src/lib/store/actions/sendMessage.ts`
+- 四类高频列表的事件后回源也继续收紧了一层：
+  - `useSessionListController` 现在对 `sessions / contacts / projects / remote_connections` 的 realtime 事件不再默认“reason 不认识就整表 `load*()`”
+  - 只要 payload 里带了实体快照，就直接本地 patch
+  - 只要事件里带了对象 id，就优先走单条 `refresh*ById()`，并复用已有的 `404 => 本地删除` 语义
+  - 只有 create race 导致 detail 暂时查不到，或者事件本身既没有 snapshot 也没有 id，才继续回退整表刷新
+  - 这一步把 delete / update 场景下很多原本会打到整表 `loadSessions/loadContacts/loadProjects/loadRemoteConnections` 的回源压成了定点收口
+  - 相关文件：
+    - `chat_app/src/components/sessionList/useSessionListController.ts`
+
+## 本轮验证
+
+- 前端：`chat_app` `npm run test -- --run src/lib/store/actions/sendMessage/persistedTurnMessages.test.ts` 通过
+- 前端：`chat_app` `npm run build` 通过
+- 前端：`chat_app` `npm run build` 再次通过（包含四类列表 realtime fallback 收紧）
+- 前端：`chat_app` `npm run build` 再次通过（包含发送入口 websocket 优先策略收紧）
+- 聊天断流 / 终态兜底又收紧了一层，开始按 turn 粒度恢复：
+  - 后端新增 `GET /api/conversations/:conversation_id/turns/by-turn/:turn_id/messages`
+  - 该接口返回当前 turn 的完整展示切片：user + process/tool + final assistant
+  - 前端 `useChatStreamRealtimeBridge` 的 realtime 断线恢复不再优先整段 `syncSessionMessagesInBackground(sessionId)`
+  - 现在会先：
+    - 读取 `turn runtime snapshot`
+    - 判断当前 turn 是否仍在 `running` / 已进入终态
+    - 然后只拉当前 turn 的消息切片并 merge 回本地
+  - `cancelled / completed / failed` 三类终态在本地仍需兜底时，也会优先走这套 turn 级恢复，而不是直接整段 `loadMessages()`
+  - 只有 turn snapshot 缺失、或 turn 级恢复拿不到足够数据时，才回退到旧的 whole-session HTTP 同步
+  - 相关文件：
+    - `chat_app_server_rs/src/api/sessions/history_process.rs`
+    - `chat_app_server_rs/src/api/sessions/message_handlers.rs`
+    - `chat_app_server_rs/src/api/sessions.rs`
+    - `chat_app/src/lib/api/client/workspace/sessions.ts`
+    - `chat_app/src/lib/api/client/facades/workspace/sessionsFacade.ts`
+    - `chat_app/src/lib/store/actions/sendMessage/turnRecovery.ts`
+    - `chat_app/src/components/chatInterface/useChatStreamRealtimeBridge.ts`
+- SSE fallback 的结束态也接入了同一套 turn 级恢复：
+  - `streamExecution.ts` 在 SSE 流结束后，如果本地仍需兜底，不再直接整段 `loadMessages(currentSessionId)`
+  - 现在会先复用 `turnRecovery`：
+    - 读取当前 turn 的 runtime snapshot
+    - 只拉当前 turn 的完整消息切片
+    - merge 回本地后再决定是否需要 whole-session fallback
+  - 这样 SSE fallback 主链也从“结束即整段回源”进一步收成了“turn 级恢复优先，整段回源最后兜底”
+  - 相关文件：
+    - `chat_app/src/lib/store/actions/sendMessage/streamExecution.ts`
+    - `chat_app/src/lib/store/actions/sendMessage.ts`
+    - `chat_app/src/lib/store/actions/sendMessage/turnRecovery.ts`
+- `turnRecovery` 本身又补了一层，减少 snapshot 失败时的 whole-session fallback：
+  - 后端新增 `GET /api/conversations/:conversation_id/turns/:user_message_id/messages`
+  - 前端 `turnRecovery` 现在不再是“必须先拿到 by-turn runtime snapshot 才能恢复”
+  - 当前恢复顺序变成：
+    - 先尝试 `turn runtime snapshot by-turn`
+    - 再尝试 `turn messages by-turn`
+    - 如果当前 turn 仍拿不到，再按 `preferredUserMessageId` 走 `turn messages by user_message_id`
+  - 这样即使 snapshot 接口报错、snapshot 缺失、或者 turn_id 对不齐，只要当前 user message 还在，本地仍有机会按这一轮定点恢复，而不是直接 whole-session fallback
+  - 相关文件：
+    - `chat_app_server_rs/src/api/sessions/message_handlers.rs`
+    - `chat_app_server_rs/src/api/sessions.rs`
+    - `chat_app/src/lib/api/client/workspace/sessions.ts`
+    - `chat_app/src/lib/api/client/facades/workspace/sessionsFacade.ts`
+    - `chat_app/src/lib/store/actions/sendMessage/turnRecovery.ts`
+    - `chat_app/src/components/chatInterface/useChatStreamRealtimeBridge.ts`
+    - `chat_app/src/lib/store/actions/sendMessage/streamExecution.ts`
+- `turnRecovery` 又继续补了一层 merge 收口边界：
+  - 如果 `by-turn snapshot` 缺失，现在还会再尝试 `latest runtime snapshot`，只要 latest 仍指向当前 turn，就继续走这轮恢复
+  - 如果 turn 切片里没有 final assistant，但已经拿到了当前轮的 persisted user message，本地临时 assistant 也会被正确挂到新的 persisted user 上，而不是继续因为 user/assistant 映射不稳掉回 whole-session fallback
+  - 这一步主要处理两类高频边界：
+    - snapshot 接口短暂查不到当前 turn，但 latest 仍是这轮
+    - 当前轮只持久化了 user，assistant 仍以本地 terminal 气泡收口
+  - 相关文件：
+    - `chat_app/src/lib/store/actions/sendMessage/turnRecovery.ts`
+
+## 本轮验证补充
+
+- 前端：`chat_app` `npm run build` 通过
+- 后端：`chat_app_server_rs` `cargo check` 通过
+  - 相关文件：
+    - `chat_app/src/components/chatInterface/useChatStreamRealtimeBridge.ts`
+    - `chat_app/src/lib/store/actions/sendMessage/streamExecution.ts`
+- 终端列表的 realtime patch 也已经补上第一轮：
+  - 后端 `terminal.list.invalidated` 现在可附带 `terminal` 实体快照
+  - 前端会优先 `removeTerminalLocally / applyRealtimeTerminalSnapshot / refreshTerminalById`
+  - 只有 created 且 detail 也拿不到时，才整表 `loadTerminals()`
+- `memory_server` 管理后台的 job runs 页面也已去掉固定 `10s` 轮询：
+  - 后端新增 `/api/memory/v1/jobs/runs/stream` SSE
+  - 首包会推当前过滤条件下的 snapshot，后续推 `upsert` 增量事件
+  - 前端 `JobRunsPage` 已改成 SSE 优先，保留手动刷新与 `resync/error` 时的 HTTP 兜底
+  - 相关文件：
+    - `memory_server/backend/src/api/jobs_api.rs`
+    - `memory_server/backend/src/services/realtime.rs`
+    - `memory_server/backend/src/repositories/jobs.rs`
+    - `memory_server/frontend/src/lib/jobRunsStream.ts`
+    - `memory_server/frontend/src/pages/JobRunsPage.tsx`
+  - 这样 SSE fallback 和 WebSocket realtime bridge 在一部分失败态下也会优先本地收口，只在 temp user 仍残留、或本地终态 assistant 无法稳定归属到持久化 user 时才回源
+  - 这一步继续减少了聊天主链终态里的 `loadMessages()` 触发频率
+  - 相关文件：
+    - `chat_app/src/lib/store/actions/sendMessage/persistedTurnMessages.ts`
+    - `chat_app/src/lib/store/actions/sendMessage/streamExecution.ts`
+    - `chat_app/src/components/chatInterface/useChatStreamRealtimeBridge.ts`
+- 四类高频列表的 detail fallback 也继续收紧了一层：
+  - `refreshSessionById / refreshProjectById / refreshRemoteConnectionById` 现在补上了和 `contact` 一样的 `404 => 本地删除` 语义
+  - `useSessionListController` 里 realtime 事件后的 fallback 也从“detail 刷不到就整表 load*()`”收成了：
+    - created 场景刷不到 detail 时，才回退整表刷新
+    - updated / deleted 场景优先靠本地 patch 或 `404 => 本地删除` 收口
+  - 这一步减少了 `sessions / contacts / projects / remote_connections` 在 payload 缺失、对象已删或 detail 接口返回 404 时的整表回源频率
+  - 相关文件：
+    - `chat_app/src/lib/store/actions/sessions/loadSessions.ts`
+    - `chat_app/src/lib/store/actions/projects.ts`
+    - `chat_app/src/lib/store/actions/remoteConnections.ts`
+    - `chat_app/src/components/sessionList/useSessionListController.ts`
 - `review-repair` 前端状态拉取又收紧了一层，减少重复请求：
   - `useReviewRepairRealtime` 现在增加了：
     - 同会话状态请求 inflight 去重
@@ -245,6 +439,74 @@
   - 相关文件：
     - `chat_app_server_rs/src/api/sessions/review_handlers.rs`
     - `chat_app_server_rs/src/services/realtime/hub.rs`
+- `conversation summaries` 已从“事件触发 HTTP reload”收成“后端推 summary 快照、前端直接 patch”：
+  - 后端 `conversation.summaries.updated` 现在发送真实 summary 列表 payload，不再复用 `review_repair` 壳
+  - 聊天主面板的 memory summary 状态新增 `applyRealtimeSessionMemorySummaries(...)`
+  - 团队成员 summary 面板新增直接消费 `applyRealtimeSessionSummaries(...)`
+  - 两处前端消费端现在都会优先把推送的 `items` 直接落本地 cache/store，仅在 payload 缺失时才回退旧的标脏 + HTTP reload
+  - 这样可以减少：
+    - `review_repair.completed` 之后紧跟的 summary reload
+    - 团队成员 summary 面板收到事件后的 `getConversationSummaries`
+    - 聊天主 summary pane 收到事件后的 `getConversationSummaries`
+  - 相关文件：
+    - `chat_app_server_rs/src/services/realtime/types.rs`
+    - `chat_app_server_rs/src/services/realtime/hub.rs`
+    - `chat_app_server_rs/src/services/realtime/mod.rs`
+    - `chat_app_server_rs/src/api/sessions/review_handlers.rs`
+    - `chat_app/src/lib/realtime/types.ts`
+    - `chat_app/src/lib/realtime/useConversationSummariesRealtime.ts`
+    - `chat_app/src/lib/sessionSummaries/cache.ts`
+    - `chat_app/src/features/sessionSummary/useSessionSummaryPanel.ts`
+    - `chat_app/src/components/chatInterface/useContactMemoryContext.ts`
+    - `chat_app/src/components/chatInterface/useChatInterfaceSessionResources.ts`
+    - `chat_app/src/components/chatInterface/useChatInterfaceController.ts`
+    - `chat_app/src/components/chatInterface/useChatInterfaceModel.ts`
+    - `chat_app/src/components/projectExplorer/teamMembers/useTeamMembersContactResources.ts`
+    - `chat_app/src/components/projectExplorer/teamMembers/useTeamMembersRuntimeResources.ts`
+- `sessions.updated` 已开始从 invalidation 走向实体 patch：
+  - 后端 `sessions.updated` 现在对 `session_created / session_updated` 直接附带 session 快照
+  - 前端 store 新增 `applyRealtimeSessionSnapshot(...)`，统一复用会话归一化、cache upsert 和当前会话选择同步逻辑
+  - 会话列表 realtime 现在优先本地 patch；只有 payload 缺失时才回退 `refreshSessionById()`
+  - 这样可以减少：
+    - 会话创建后的单条会话详情回拉
+    - 会话更新后的单条会话详情回拉
+    - `sessions.updated` 到达后列表层的多余 HTTP 刷新
+  - 相关文件：
+    - `chat_app_server_rs/src/services/realtime/types.rs`
+    - `chat_app_server_rs/src/services/realtime/hub.rs`
+    - `chat_app_server_rs/src/api/sessions/session_handlers.rs`
+    - `chat_app/src/lib/realtime/types.ts`
+    - `chat_app/src/lib/store/types.ts`
+    - `chat_app/src/lib/store/actions/sessions/mutations.ts`
+    - `chat_app/src/components/sessionList/useSessionListStoreState.ts`
+    - `chat_app/src/components/sessionList/useSessionListController.ts`
+- `contacts / projects / remote_connections` 三条列表也已开始从 invalidation 走向实体 patch：
+  - 后端 `contacts.updated / projects.updated / remote_connections.updated` 现在对 create/update 事件直接附带实体快照
+  - 前端 store 新增：
+    - `applyRealtimeContactSnapshot(...)`
+    - `applyRealtimeProjectSnapshot(...)`
+    - `applyRealtimeRemoteConnectionSnapshot(...)`
+  - `useSessionListController` 收到对应 realtime 事件时，现在优先本地 patch；只有 payload 缺失时才回退：
+    - `refreshContactById()`
+    - `refreshProjectById()`
+    - `refreshRemoteConnectionById()`
+  - 这样可以减少：
+    - 联系人创建/更新后的单条详情回拉
+    - 项目创建/更新后的单条详情回拉
+    - 远端连接创建/更新后的单条详情回拉
+  - 相关文件：
+    - `chat_app_server_rs/src/services/realtime/types.rs`
+    - `chat_app_server_rs/src/services/realtime/hub.rs`
+    - `chat_app_server_rs/src/api/contacts.rs`
+    - `chat_app_server_rs/src/api/projects/crud_handlers.rs`
+    - `chat_app_server_rs/src/api/remote_connections/handlers.rs`
+    - `chat_app/src/lib/realtime/types.ts`
+    - `chat_app/src/lib/store/types.ts`
+    - `chat_app/src/lib/store/actions/contacts.ts`
+    - `chat_app/src/lib/store/actions/projects.ts`
+    - `chat_app/src/lib/store/actions/remoteConnections.ts`
+    - `chat_app/src/components/sessionList/useSessionListStoreState.ts`
+    - `chat_app/src/components/sessionList/useSessionListController.ts`
     - `chat_app_server_rs/src/services/realtime/mod.rs`
     - `chat_app_server_rs/src/services/memory_server_client/http.rs`
     - `chat_app_server_rs/src/services/memory_server_client/session_ops.rs`

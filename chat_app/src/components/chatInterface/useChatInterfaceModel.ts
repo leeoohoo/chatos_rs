@@ -106,6 +106,7 @@ export const useChatInterfaceModel = ({
     loadAgents: store.loadAgents,
     loadContactMemoryContext: resources.loadContactMemoryContext,
     loadSessionMemorySummaries: resources.loadSessionMemorySummaries,
+    applyRealtimeSessionMemorySummaries: resources.applyRealtimeSessionMemorySummaries,
     hydrateContactMemoryContextFromCache: resources.hydrateContactMemoryContextFromCache,
     markContactMemoryContextStale: resources.markContactMemoryContextStale,
     resetMemoryState: resources.resetMemoryState,

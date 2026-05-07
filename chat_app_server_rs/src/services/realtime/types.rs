@@ -1,7 +1,13 @@
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::models::project::Project;
+use crate::models::remote_connection::RemoteConnection;
+use crate::models::session::Session;
+use crate::models::session_summary_v2::SessionSummaryV2;
+use crate::models::terminal::Terminal;
 use crate::services::task_manager::{TaskDraft, TaskRecord};
+use crate::services::memory_server_client::MemoryContactDto;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ReviewRepairRealtimePayload {
@@ -24,6 +30,18 @@ pub struct ReviewRepairRealtimePayload {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct ConversationSummariesUpdatedRealtimePayload {
+    pub conversation_id: String,
+    pub project_id: String,
+    pub contact_id: Option<String>,
+    pub agent_id: Option<String>,
+    pub items: Vec<SessionSummaryV2>,
+    pub total: usize,
+    pub has_summary: bool,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct ProjectChangeSummaryRealtimePayload {
     pub project_id: String,
     pub reason: String,
@@ -35,6 +53,7 @@ pub struct ProjectChangeSummaryRealtimePayload {
 pub struct ContactsUpdatedRealtimePayload {
     pub reason: String,
     pub contact_id: Option<String>,
+    pub contact: Option<MemoryContactDto>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -50,12 +69,14 @@ pub struct NotepadUpdatedRealtimePayload {
 pub struct ProjectsUpdatedRealtimePayload {
     pub reason: String,
     pub project_id: Option<String>,
+    pub project: Option<Project>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct RemoteConnectionsUpdatedRealtimePayload {
     pub reason: String,
     pub connection_id: Option<String>,
+    pub connection: Option<RemoteConnection>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -63,6 +84,7 @@ pub struct SessionsUpdatedRealtimePayload {
     pub reason: String,
     pub session_id: Option<String>,
     pub project_id: Option<String>,
+    pub session: Option<Session>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -81,6 +103,7 @@ pub struct TerminalListInvalidatedRealtimePayload {
     pub terminal_id: Option<String>,
     pub project_id: Option<String>,
     pub reason: String,
+    pub terminal: Option<Terminal>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -100,6 +123,8 @@ pub struct ProjectRunCatalogRealtimePayload {
     pub project_id: String,
     pub reason: String,
     pub path: Option<String>,
+    pub runner_script_exists: Option<bool>,
+    pub root_missing: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -167,6 +192,7 @@ pub struct RemoteSftpTransferRealtimePayload {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RealtimeEventPayload {
     ReviewRepair(ReviewRepairRealtimePayload),
+    ConversationSummariesUpdated(ConversationSummariesUpdatedRealtimePayload),
     ProjectChangeSummary(ProjectChangeSummaryRealtimePayload),
     ContactsUpdated(ContactsUpdatedRealtimePayload),
     NotepadUpdated(NotepadUpdatedRealtimePayload),

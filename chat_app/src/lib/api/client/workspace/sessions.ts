@@ -89,6 +89,16 @@ export const getConversationTurnProcessMessages = (
   );
 };
 
+export const getConversationTurnMessages = (
+  request: ApiRequestFn,
+  conversationId: string,
+  userMessageId: string,
+): Promise<SessionMessageResponse[]> => {
+  return request<SessionMessageResponse[]>(
+    `/conversations/${conversationId}/turns/${encodeURIComponent(userMessageId)}/messages`,
+  );
+};
+
 export const getConversationTurnProcessMessagesByTurn = (
   request: ApiRequestFn,
   conversationId: string,
@@ -96,6 +106,16 @@ export const getConversationTurnProcessMessagesByTurn = (
 ): Promise<SessionMessageResponse[]> => {
   return request<SessionMessageResponse[]>(
     `/conversations/${conversationId}/turns/by-turn/${encodeURIComponent(turnId)}/process`,
+  );
+};
+
+export const getConversationTurnMessagesByTurn = (
+  request: ApiRequestFn,
+  conversationId: string,
+  turnId: string,
+): Promise<SessionMessageResponse[]> => {
+  return request<SessionMessageResponse[]>(
+    `/conversations/${conversationId}/turns/by-turn/${encodeURIComponent(turnId)}/messages`,
   );
 };
 

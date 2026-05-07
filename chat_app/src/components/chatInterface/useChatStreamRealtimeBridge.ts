@@ -2,11 +2,20 @@ import { useEffect, useMemo, useRef } from 'react';
 import { shallow } from 'zustand/shallow';
 
 import {
+  getRealtimeConnectionStateSnapshot,
   useRealtimeConnectionState,
   useRealtimeTopics,
 } from '../../lib/realtime/RealtimeProvider';
 import { useConversationChatStreamRealtime } from '../../lib/realtime/useConversationChatStreamRealtime';
 import type { RealtimeChatStreamPayloadWrapper } from '../../lib/realtime/types';
+import { apiClient as globalApiClient } from '../../lib/api/client';
+import {
+  normalizePersistedMessage,
+  reconcilePersistedTurnMessages,
+  shouldRecoverStreamingSessionAfterDisconnect,
+  shouldReloadMessagesAfterTerminalState,
+} from '../../lib/store/actions/sendMessage/persistedTurnMessages';
+import { recoverStreamingTurnBySnapshot } from '../../lib/store/actions/sendMessage/turnRecovery';
 import { handleStreamEvent } from '../../lib/store/actions/sendMessage/streamEventHandler';
 import {
   failSendMessageState,
@@ -16,6 +25,7 @@ import { createStreamingMessageStateHelpers } from '../../lib/store/actions/send
 import type { StreamingMessage } from '../../lib/store/actions/sendMessage/types';
 import { buildSendMessageFailure } from '../../lib/store/actions/sendMessage/streamControlEvents';
 import {
+  useChatApiClientFromContext,
   useChatStoreContext,
   useChatStoreSelector,
 } from '../../lib/store/ChatStoreContext';
@@ -37,6 +47,7 @@ const isStreamingMessage = (value: unknown): value is StreamingMessage => (
 );
 
 const DISCONNECT_RECOVERY_COOLDOWN_MS = 4000;
+const DISCONNECT_RECOVERY_GRACE_MS = 1800;
 
 const asRealtimeParsedEvent = (payload: RealtimeChatStreamPayloadWrapper) => {
   const raw = payload.raw && typeof payload.raw === 'object'
@@ -107,6 +118,8 @@ const resolveActiveStreamContext = (
 
 export const useChatStreamRealtimeBridge = () => {
   const store = useChatStoreContext();
+  const apiClientFromContext = useChatApiClientFromContext();
+  const apiClient = apiClientFromContext || globalApiClient;
   const realtimeConnectionState = useRealtimeConnectionState();
   const activeStreamingSessionIds = useChatStoreSelector((state) => (
     Object.entries(state.sessionChatState || {})
@@ -155,7 +168,6 @@ export const useChatStreamRealtimeBridge = () => {
     }
 
     const now = Date.now();
-    const { syncSessionMessagesInBackground } = store.getState();
     activeStreamingSessionIds.forEach((sessionId) => {
       if (disconnectRecoveryInflightRef.current.has(sessionId)) {
         return;
@@ -168,15 +180,49 @@ export const useChatStreamRealtimeBridge = () => {
       disconnectRecoveryInflightRef.current.add(sessionId);
       disconnectRecoveryLastRunAtRef.current.set(sessionId, now);
 
-      void syncSessionMessagesInBackground(sessionId)
-        .catch((error) => {
-          console.error('Failed to recover streaming session after realtime disconnect:', error);
-        })
-        .finally(() => {
+      window.setTimeout(() => {
+        const latest = store.getState();
+        const latestChatState = latest.sessionChatState?.[sessionId];
+        if (
+          !latestChatState?.isStreaming
+          || latestChatState.streamingTransport !== 'realtime'
+          || getRealtimeConnectionStateSnapshot() === 'connected'
+          || !shouldRecoverStreamingSessionAfterDisconnect(latest, sessionId)
+        ) {
           disconnectRecoveryInflightRef.current.delete(sessionId);
-        });
+          return;
+        }
+
+        const latestActive = resolveActiveStreamContext(latest as ChatStoreDraft, sessionId);
+        if (!latestActive) {
+          disconnectRecoveryInflightRef.current.delete(sessionId);
+          return;
+        }
+
+        void recoverStreamingTurnBySnapshot({
+          apiClient,
+          set: chatStoreSet,
+          sessionId,
+          turnId: latestActive.conversationTurnId,
+          tempAssistantMessageId: latestActive.tempAssistantMessageId,
+          tempUserId: latestActive.tempUserId,
+          preferredUserMessageId: latestActive.tempUserId,
+        })
+          .then((result) => {
+            if (result.recovered) {
+              return;
+            }
+            return store.getState().syncSessionMessagesInBackground(sessionId);
+          })
+          .catch((error) => {
+            console.error('Failed to recover streaming session after realtime disconnect:', error);
+          })
+          .finally(() => {
+            disconnectRecoveryInflightRef.current.delete(sessionId);
+          });
+      }, DISCONNECT_RECOVERY_GRACE_MS);
     });
-  }, [activeStreamingSessionIds, realtimeConnectionState, store]);
+  }, [activeStreamingSessionIds, apiClient, chatStoreSet, realtimeConnectionState, store]);
 
   useConversationChatStreamRealtime({
     enabled,
@@ -231,7 +277,22 @@ export const useChatStreamRealtimeBridge = () => {
           const cancellationKey = `${active.sessionId}:${active.tempAssistantMessageId}:cancelled:${payload.raw.timestamp || ''}`;
           if (!processedCompletionKeysRef.current.has(cancellationKey)) {
             processedCompletionKeysRef.current.add(cancellationKey);
+            const persistedUserMessage = normalizePersistedMessage(
+              payload.raw?.result?.persisted_user_message,
+              active.sessionId,
+            );
+            const persistedAssistantMessage = normalizePersistedMessage(
+              payload.raw?.result?.persisted_assistant_message,
+              active.sessionId,
+            );
             chatStoreSet((state) => {
+              reconcilePersistedTurnMessages(
+                state,
+                active.tempAssistantMessageId,
+                active.tempUserId,
+                persistedUserMessage,
+                persistedAssistantMessage,
+              );
               finalizeStreamingSessionState(state, {
                 sessionId: active.sessionId,
                 assistantMessageId: active.tempAssistantMessageId,
@@ -239,9 +300,32 @@ export const useChatStreamRealtimeBridge = () => {
               });
             });
             const latestState = store.getState();
-            if (latestState.currentSessionId === active.sessionId) {
-              void latestState.loadMessages(active.sessionId).catch((error) => {
-                console.error('Failed to reload messages after realtime cancellation:', error);
+            if (
+              latestState.currentSessionId === active.sessionId
+              && shouldReloadMessagesAfterTerminalState(
+                latestState,
+                active.tempAssistantMessageId,
+                active.tempUserId,
+                {
+                  allowLocalTerminalAssistant: true,
+                },
+              )
+            ) {
+              void recoverStreamingTurnBySnapshot({
+                apiClient,
+                set: chatStoreSet,
+                sessionId: active.sessionId,
+                turnId: active.conversationTurnId,
+                tempAssistantMessageId: active.tempAssistantMessageId,
+                tempUserId: active.tempUserId,
+                preferredUserMessageId: active.tempUserId,
+              }).then((result) => {
+                if (result.recovered) {
+                  return;
+                }
+                return latestState.loadMessages(active.sessionId);
+              }).catch((error) => {
+                console.error('Failed to recover messages after realtime cancellation:', error);
               });
             }
           }
@@ -251,7 +335,22 @@ export const useChatStreamRealtimeBridge = () => {
           const completionKey = `${active.sessionId}:${active.tempAssistantMessageId}:${payload.stream_type}:${payload.raw.timestamp || ''}`;
           if (!processedCompletionKeysRef.current.has(completionKey)) {
             processedCompletionKeysRef.current.add(completionKey);
+            const persistedUserMessage = normalizePersistedMessage(
+              payload.raw?.result?.persisted_user_message,
+              active.sessionId,
+            );
+            const persistedAssistantMessage = normalizePersistedMessage(
+              payload.raw?.result?.persisted_assistant_message,
+              active.sessionId,
+            );
             chatStoreSet((state) => {
+              reconcilePersistedTurnMessages(
+                state,
+                active.tempAssistantMessageId,
+                active.tempUserId,
+                persistedUserMessage,
+                persistedAssistantMessage,
+              );
               finalizeStreamingSessionState(state, {
                 sessionId: active.sessionId,
                 assistantMessageId: active.tempAssistantMessageId,
@@ -259,9 +358,32 @@ export const useChatStreamRealtimeBridge = () => {
               });
             });
             const latestState = store.getState();
-            if (latestState.currentSessionId === active.sessionId) {
-              void latestState.loadMessages(active.sessionId).catch((error) => {
-                console.error('Failed to reload messages after realtime completion:', error);
+            if (
+              latestState.currentSessionId === active.sessionId
+              && shouldReloadMessagesAfterTerminalState(
+                latestState,
+                active.tempAssistantMessageId,
+                active.tempUserId,
+                {
+                  allowLocalTerminalAssistant: true,
+                },
+              )
+            ) {
+              void recoverStreamingTurnBySnapshot({
+                apiClient,
+                set: chatStoreSet,
+                sessionId: active.sessionId,
+                turnId: active.conversationTurnId,
+                tempAssistantMessageId: active.tempAssistantMessageId,
+                tempUserId: active.tempUserId,
+                preferredUserMessageId: active.tempUserId,
+              }).then((result) => {
+                if (result.recovered) {
+                  return;
+                }
+                return latestState.loadMessages(active.sessionId);
+              }).catch((error) => {
+                console.error('Failed to recover messages after realtime completion:', error);
               });
             }
           }
@@ -270,11 +392,26 @@ export const useChatStreamRealtimeBridge = () => {
         const completionKey = `${active.sessionId}:${active.tempAssistantMessageId}:error:${payload.raw.timestamp || ''}`;
         if (!processedCompletionKeysRef.current.has(completionKey)) {
           processedCompletionKeysRef.current.add(completionKey);
+          const persistedUserMessage = normalizePersistedMessage(
+            payload.raw?.result?.persisted_user_message,
+            active.sessionId,
+          );
+          const persistedAssistantMessage = normalizePersistedMessage(
+            payload.raw?.result?.persisted_assistant_message,
+            active.sessionId,
+          );
           const { failureContent, readableError } = buildSendMessageFailure(
             error,
             active.streamedTextRef.value,
           );
           chatStoreSet((state) => {
+            reconcilePersistedTurnMessages(
+              state,
+              active.tempAssistantMessageId,
+              active.tempUserId,
+              persistedUserMessage,
+              persistedAssistantMessage,
+            );
             failSendMessageState(state, {
               sessionId: active.sessionId,
               tempAssistantId: active.tempAssistantMessageId,
@@ -283,6 +420,35 @@ export const useChatStreamRealtimeBridge = () => {
               readableError,
             });
           });
+          const latestState = store.getState();
+          if (
+            latestState.currentSessionId === active.sessionId
+            && shouldReloadMessagesAfterTerminalState(
+              latestState,
+              active.tempAssistantMessageId,
+              active.tempUserId,
+              {
+                allowLocalTerminalAssistant: true,
+              },
+            )
+          ) {
+            void recoverStreamingTurnBySnapshot({
+              apiClient,
+              set: chatStoreSet,
+              sessionId: active.sessionId,
+              turnId: active.conversationTurnId,
+              tempAssistantMessageId: active.tempAssistantMessageId,
+              tempUserId: active.tempUserId,
+              preferredUserMessageId: active.tempUserId,
+            }).then((result) => {
+              if (result.recovered) {
+                return;
+              }
+              return latestState.loadMessages(active.sessionId);
+            }).catch((loadError) => {
+              console.error('Failed to recover messages after realtime error:', loadError);
+            });
+          }
         }
       }
     },

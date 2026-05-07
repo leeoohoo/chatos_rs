@@ -130,6 +130,7 @@ export interface SessionChatState {
   streamingMessageId: string | null;
   activeTurnId: string | null;
   streamingPreviewText: string;
+  streamingTransport?: 'realtime' | 'sse' | null;
   runtimeContextRefreshNonce?: number;
 }
 
@@ -219,6 +220,7 @@ export interface ChatActions {
   getContactByAgentId: (agentId: string) => ContactRecord | null;
   markContactsStale: (userId?: string | null) => void;
   removeContactLocally: (contactId: string) => void;
+  applyRealtimeContactSnapshot: (contact: ContactRecord | unknown) => ContactRecord | null;
   refreshContactById: (contactId: string) => Promise<ContactRecord | null>;
 
   // 会话操作
@@ -232,6 +234,7 @@ export interface ChatActions {
   deleteSession: (sessionId: string) => Promise<void>;
   markSessionsStale: (options?: { userId?: string | null; sessionId?: string | null }) => void;
   removeSessionLocally: (sessionId: string) => void;
+  applyRealtimeSessionSnapshot: (session: Session | unknown) => Session | null;
   refreshSessionById: (sessionId: string) => Promise<Session | null>;
 
   // 项目操作
@@ -242,6 +245,7 @@ export interface ChatActions {
   selectProject: (projectId: string) => Promise<void>;
   markProjectsStale: (options?: { userId?: string | null; projectId?: string | null }) => void;
   removeProjectLocally: (projectId: string) => void;
+  applyRealtimeProjectSnapshot: (project: Project | unknown) => Project | null;
   refreshProjectById: (projectId: string) => Promise<Project | null>;
   setActivePanel: (panel: 'chat' | 'project' | 'terminal' | 'remote_terminal' | 'remote_sftp') => void;
 
@@ -252,6 +256,7 @@ export interface ChatActions {
   selectTerminal: (terminalId: string) => Promise<void>;
   markTerminalsStale: (options?: { userId?: string | null; terminalId?: string | null }) => void;
   removeTerminalLocally: (terminalId: string) => void;
+  applyRealtimeTerminalSnapshot: (terminal: Terminal | unknown) => Terminal | null;
   refreshTerminalById: (terminalId: string) => Promise<Terminal | null>;
   loadRemoteConnections: (options?: { force?: boolean }) => Promise<RemoteConnection[]>;
   createRemoteConnection: (payload: {
@@ -302,6 +307,9 @@ export interface ChatActions {
   openRemoteSftp: (connectionId: string) => Promise<void>;
   markRemoteConnectionsStale: (options?: { userId?: string | null; connectionId?: string | null }) => void;
   removeRemoteConnectionLocally: (connectionId: string) => void;
+  applyRealtimeRemoteConnectionSnapshot: (
+    connection: RemoteConnection | unknown,
+  ) => RemoteConnection | null;
   refreshRemoteConnectionById: (connectionId: string) => Promise<RemoteConnection | null>;
 
   // 消息操作

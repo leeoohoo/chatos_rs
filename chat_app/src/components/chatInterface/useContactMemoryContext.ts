@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { SessionSummariesListResponse } from '../../lib/api/client/types';
-import { loadConversationSummaryItems, markConversationSummaryCacheStale } from '../../lib/sessionSummaries/cache';
+import {
+  applyConversationSummaryItemsSnapshot,
+  loadConversationSummaryItems,
+  markConversationSummaryCacheStale,
+} from '../../lib/sessionSummaries/cache';
 
 export interface SessionMemorySummary {
   id: string;
@@ -47,6 +51,10 @@ interface UseContactMemoryContextResult {
   memoryError: string | null;
   loadContactMemoryContext: (sessionId: string, force?: boolean) => Promise<void>;
   loadSessionMemorySummaries: (sessionId: string, force?: boolean) => Promise<void>;
+  applyRealtimeSessionMemorySummaries: (
+    sessionId: string,
+    payload: SessionSummariesListResponse | unknown,
+  ) => void;
   markContactMemoryContextStale: (sessionId: string) => void;
   hydrateContactMemoryContextFromCache: (sessionId: string) => void;
   resetMemoryState: () => void;
@@ -145,6 +153,32 @@ export const useContactMemoryContext = ({
     setMemoryError(null);
     setMemoryLoading(false);
   }, [resetMemoryState]);
+
+  const applyRealtimeSessionMemorySummaries = useCallback((
+    sessionId: string,
+    payload: SessionSummariesListResponse | unknown,
+  ) => {
+    if (!sessionId) {
+      return;
+    }
+    const normalized = applyConversationSummaryItemsSnapshot(apiClient, sessionId, payload, {
+      loadedLimit: 300,
+    });
+    staleMemorySessionsRef.current.delete(sessionId);
+    const cached = memoryCacheRef.current.get(sessionId);
+    const nextEntry = {
+      sessionMemorySummaries: normalized,
+      agentRecalls: cached?.agentRecalls || [],
+    };
+    memoryCacheRef.current.set(sessionId, nextEntry);
+    if (currentSessionIdRef.current !== sessionId) {
+      return;
+    }
+    setSessionMemorySummaries(normalized);
+    setAgentRecalls(nextEntry.agentRecalls);
+    setMemoryError(null);
+    setMemoryLoading(false);
+  }, [apiClient]);
 
   const markContactMemoryContextStale = useCallback((sessionId: string) => {
     if (!sessionId) {
@@ -319,6 +353,7 @@ export const useContactMemoryContext = ({
     memoryError,
     loadContactMemoryContext,
     loadSessionMemorySummaries,
+    applyRealtimeSessionMemorySummaries,
     markContactMemoryContextStale,
     hydrateContactMemoryContextFromCache,
     resetMemoryState,

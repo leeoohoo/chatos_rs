@@ -65,6 +65,31 @@ const isContentSegment = (value: unknown): value is ContentSegment => (
   value !== null && typeof value === 'object' && !Array.isArray(value)
 );
 
+const readMessageContentLength = (message: Message): number => (
+  typeof message?.content === 'string' ? message.content.trim().length : 0
+);
+
+const readNonProcessAssistantDedupKey = (parsed: ParsedMessageForList): string => {
+  if (parsed.role !== 'assistant') {
+    return '';
+  }
+  if (parsed.historyProcessUserMessageId || parsed.historyProcessTurnId) {
+    return '';
+  }
+
+  const turnId = normalizeTurnId(parsed.historyFinalForTurnId || parsed.conversationTurnId);
+  if (turnId) {
+    return `turn:${turnId}`;
+  }
+
+  const userId = normalizeMetaId(parsed.historyFinalForUserMessageId);
+  if (userId) {
+    return `user:${userId}`;
+  }
+
+  return '';
+};
+
 export const parseMessageForList = (message: Message): ParsedMessageForList => {
   const metadataRecord = getMessageMetadataRecord(message);
   const segments = getMessageContentSegments(message).filter(isContentSegment);
@@ -138,7 +163,7 @@ export const parseMessageForList = (message: Message): ParsedMessageForList => {
 };
 
 export const buildVisibleMessageState = (parsedMessages: ParsedMessageForList[]) => {
-  const visible: Message[] = [];
+  const visibleCandidates: ParsedMessageForList[] = [];
   const toolResultMap = new Map<string, Message>();
   const toolResultMetaMap = new Map<string, { id: string; time: number }>();
   const assistantToolById = new Map<string, MessageToolCallLike>();
@@ -161,7 +186,7 @@ export const buildVisibleMessageState = (parsedMessages: ParsedMessageForList[])
 
   parsedMessages.forEach((parsed) => {
     if (parsed.visible) {
-      visible.push(parsed.message);
+      visibleCandidates.push(parsed);
     }
 
     if (parsed.toolResultCallId) {
@@ -344,6 +369,57 @@ export const buildVisibleMessageState = (parsedMessages: ParsedMessageForList[])
       expandedByAssistantId.set(parsed.id, finalAssistantExpandedById.get(parsed.id) === true);
     }
   });
+
+  const visible = (() => {
+    if (visibleCandidates.length <= 1) {
+      return visibleCandidates.map((item) => item.message);
+    }
+
+    const bestFinalAssistantByKey = new Map<string, ParsedMessageForList>();
+
+    visibleCandidates.forEach((parsed) => {
+      const dedupKey = readNonProcessAssistantDedupKey(parsed);
+      if (!dedupKey) {
+        return;
+      }
+
+      const existing = bestFinalAssistantByKey.get(dedupKey);
+      if (!existing) {
+        bestFinalAssistantByKey.set(dedupKey, parsed);
+        return;
+      }
+
+      const parsedStatus = String(parsed.status || '');
+      const existingStatus = String(existing.status || '');
+      const parsedIsTerminal = parsedStatus === 'completed' || parsedStatus === 'error';
+      const existingIsTerminal = existingStatus === 'completed' || existingStatus === 'error';
+      const parsedContentLength = readMessageContentLength(parsed.message);
+      const existingContentLength = readMessageContentLength(existing.message);
+
+      const shouldReplace = (
+        Number(parsedIsTerminal) > Number(existingIsTerminal)
+        || (
+          parsedIsTerminal === existingIsTerminal
+          && (
+            parsedContentLength > existingContentLength
+            || (parsedContentLength === existingContentLength && parsed.time >= existing.time)
+          )
+        )
+      );
+
+      if (shouldReplace) {
+        bestFinalAssistantByKey.set(dedupKey, parsed);
+      }
+    });
+
+    return visibleCandidates.filter((parsed) => {
+      const dedupKey = readNonProcessAssistantDedupKey(parsed);
+      if (!dedupKey) {
+        return true;
+      }
+      return bestFinalAssistantByKey.get(dedupKey)?.id === parsed.id;
+    }).map((parsed) => parsed.message);
+  })();
 
   return {
     visibleMessages: visible,

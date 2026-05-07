@@ -88,6 +88,7 @@ pub(super) async fn create_remote_connection(
         auth.user_id.as_str(),
         "remote_connection_created",
         Some(saved.id.as_str()),
+        Some(saved.clone()),
     );
 
     (
@@ -175,6 +176,7 @@ pub(super) async fn update_remote_connection(
                 auth.user_id.as_str(),
                 "remote_connection_updated",
                 Some(connection.id.as_str()),
+                Some(connection.clone()),
             );
             (
                 StatusCode::OK,
@@ -211,6 +213,7 @@ pub(super) async fn delete_remote_connection(
                 auth.user_id.as_str(),
                 "remote_connection_deleted",
                 Some(id.as_str()),
+                None,
             );
             (
                 StatusCode::OK,

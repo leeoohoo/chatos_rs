@@ -14,6 +14,7 @@ pub(super) fn parse_bool_query_flag(value: Option<String>) -> bool {
 pub(super) use super::history_display::{
     build_turn_process_messages, compact_messages_for_display, find_user_index_by_turn_id,
 };
+pub(super) use super::history_process::build_turn_display_messages;
 
 #[allow(dead_code)]
 fn _type_anchor(_: &[Message]) {}

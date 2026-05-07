@@ -121,6 +121,20 @@ export function createContactActions({ set, get, client, getUserIdParam }: Deps)
   };
 
   return {
+    applyRealtimeContactSnapshot: (contactPayload: ContactRecord | unknown) => {
+      const normalized = normalizeContact(contactPayload);
+      if (!normalized) {
+        return null;
+      }
+      upsertContactCaches(normalized);
+      set((state: ChatStoreDraft) => {
+        state.contacts = upsertContactRecord(state.contacts || [], normalized)
+          .filter((item: ContactRecord) => item.status === '' || item.status === 'active')
+          .sort((a: ContactRecord, b: ContactRecord) => b.updatedAt.getTime() - a.updatedAt.getTime());
+      });
+      return normalized;
+    },
+
     loadContacts: async (options?: LoadContactsOptions) => {
       try {
         const uid = getUserIdParam();

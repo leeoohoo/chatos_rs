@@ -9,6 +9,7 @@ use crate::core::auth::AuthUser;
 use crate::core::session_access::{ensure_owned_session, map_session_access_error_with_success};
 use crate::services::memory_server_client;
 use crate::services::realtime::{
+    publish_conversation_summaries_updated,
     publish_review_repair_completed, publish_review_repair_failed,
     publish_review_repair_started_pending, user_has_realtime_listeners,
 };
@@ -176,6 +177,18 @@ async fn finish_review_repair_success(
         req,
         &final_status,
     );
+
+    if let Ok(items) = memory_server_client::list_summaries(conversation_id, Some(200), 0).await {
+        publish_conversation_summaries_updated(
+            user_id,
+            conversation_id,
+            final_status.project_id.as_str(),
+            final_status.contact_id.as_deref(),
+            final_status.agent_id.as_deref(),
+            items,
+            "review_repair_completed",
+        );
+    }
 }
 
 fn build_review_repair_completed_status_fallback(

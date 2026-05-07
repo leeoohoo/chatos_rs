@@ -4,19 +4,19 @@ import { useRealtimeEvent, useRealtimeTopic } from './RealtimeProvider';
 import { useRealtimeInvalidationQueue } from './invalidationQueue';
 import type {
   RealtimeEventEnvelope,
-  ReviewRepairRealtimePayload,
+  RealtimeConversationSummariesUpdatedPayloadWrapper,
 } from './types';
 
 interface UseConversationSummariesRealtimeOptions {
   sessionId?: string | null;
   enabled?: boolean;
-  onEvent: (payload: ReviewRepairRealtimePayload) => void | Promise<void>;
+  onEvent: (payload: RealtimeConversationSummariesUpdatedPayloadWrapper) => void | Promise<void>;
 }
 
-const isReviewRepairPayload = (
+const isConversationSummariesUpdatedPayload = (
   envelope: RealtimeEventEnvelope,
-): envelope is RealtimeEventEnvelope & { payload: ReviewRepairRealtimePayload & { kind: 'review_repair' } } => (
-  envelope?.payload?.kind === 'review_repair'
+): envelope is RealtimeEventEnvelope & { payload: RealtimeConversationSummariesUpdatedPayloadWrapper } => (
+  envelope?.payload?.kind === 'conversation_summaries_updated'
 );
 
 export const useConversationSummariesRealtime = ({
@@ -30,7 +30,7 @@ export const useConversationSummariesRealtime = ({
     onEventRef.current = onEvent;
   }, [onEvent]);
 
-  const queue = useRealtimeInvalidationQueue<ReviewRepairRealtimePayload>({
+  const queue = useRealtimeInvalidationQueue<RealtimeConversationSummariesUpdatedPayloadWrapper>({
     delayMs: 200,
     onExecute: (payload) => onEventRef.current(payload),
   });
@@ -44,7 +44,7 @@ export const useConversationSummariesRealtime = ({
     if (!enabled || !sessionId || event.event !== 'conversation.summaries.updated') {
       return;
     }
-    if (!isReviewRepairPayload(event)) {
+    if (!isConversationSummariesUpdatedPayload(event)) {
       return;
     }
     const payloadSessionId = String(

@@ -3,7 +3,7 @@ import { LazyMarkdownRenderer } from '../LazyMarkdownRenderer';
 import type { Message, ToolCall } from '../../types';
 import type { RenderSegment, ToolCallLookupMap } from './types';
 import { ToolCallTimeline } from './ToolCallTimeline';
-import { normalizeMetaId } from './helpers';
+import { getCollapsedTextContentForRender, normalizeMetaId } from './helpers';
 
 interface MessageContentRendererProps {
   message: Message;
@@ -34,6 +34,28 @@ export const MessageContentRenderer: React.FC<MessageContentRendererProps> = ({
   const isCurrentlyStreaming = isStreaming && isLast;
 
   if (renderContentSegments.length > 0) {
+    if (collapseAssistantProcessByDefault) {
+      const collapsedTextContent = getCollapsedTextContentForRender(renderContentSegments);
+      const shouldRenderStreamingCursor = isCurrentlyStreaming
+        && renderContentSegments.some((segment) => segment.type === 'text');
+
+      if (collapsedTextContent || shouldRenderStreamingCursor) {
+        return (
+          <div className="space-y-0.5">
+            <div className="prose prose-sm max-w-none">
+              <LazyMarkdownRenderer
+                content={collapsedTextContent}
+                isStreaming={shouldRenderStreamingCursor}
+                onApplyCode={onApplyCode}
+              />
+            </div>
+          </div>
+        );
+      }
+
+      return <div className="space-y-0.5" />;
+    }
+
     const nodes: React.ReactNode[] = [];
     let index = 0;
 

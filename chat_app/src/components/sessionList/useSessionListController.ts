@@ -29,6 +29,15 @@ import { useRemoteConnectionsRealtime } from '../../lib/realtime/useRemoteConnec
 import { useSessionsRealtime } from '../../lib/realtime/useSessionsRealtime';
 import type { ContactItem } from './types';
 
+const CONTACT_CREATE_LIKE_REASONS = new Set(['contact_created', 'contact_upserted']);
+const CONTACT_UPDATE_LIKE_REASONS = new Set(['contact_updated']);
+const PROJECT_CREATE_LIKE_REASONS = new Set(['project_created']);
+const PROJECT_UPDATE_LIKE_REASONS = new Set(['project_updated']);
+const REMOTE_CONNECTION_CREATE_LIKE_REASONS = new Set(['remote_connection_created']);
+const REMOTE_CONNECTION_UPDATE_LIKE_REASONS = new Set(['remote_connection_updated']);
+const SESSION_CREATE_LIKE_REASONS = new Set(['session_created']);
+const SESSION_UPDATE_LIKE_REASONS = new Set(['session_updated']);
+
 interface SessionListControllerParams {
   store?: typeof useChatStore;
   activeSummarySessionId?: string | null;
@@ -59,6 +68,7 @@ export const useSessionListController = ({
     deleteContact: deleteContactAction,
     markContactsStale,
     removeContactLocally,
+    applyRealtimeContactSnapshot,
     refreshContactById,
     createSession,
     selectSession,
@@ -66,6 +76,7 @@ export const useSessionListController = ({
     updateSession,
     markSessionsStale,
     removeSessionLocally,
+    applyRealtimeSessionSnapshot,
     refreshSessionById,
     loadAgents,
     sessionChatState,
@@ -79,6 +90,7 @@ export const useSessionListController = ({
     deleteProject,
     markProjectsStale,
     removeProjectLocally,
+    applyRealtimeProjectSnapshot,
     refreshProjectById,
     setActivePanel,
     terminals,
@@ -89,6 +101,7 @@ export const useSessionListController = ({
     deleteTerminal,
     markTerminalsStale,
     removeTerminalLocally,
+    applyRealtimeTerminalSnapshot,
     refreshTerminalById,
     remoteConnections,
     currentRemoteConnection,
@@ -100,6 +113,7 @@ export const useSessionListController = ({
     openRemoteSftp,
     markRemoteConnectionsStale,
     removeRemoteConnectionLocally,
+    applyRealtimeRemoteConnectionSnapshot,
     refreshRemoteConnectionById,
   } = useSessionListStoreState(storeToUse);
 
@@ -249,8 +263,11 @@ export const useSessionListController = ({
         removeTerminalLocally(terminalId);
         return;
       }
+      if (payload.terminal) {
+        applyRealtimeTerminalSnapshot(payload.terminal);
+        return;
+      }
       if (terminalId) {
-        markTerminalsStale({ terminalId });
         void refreshTerminalById(terminalId).then((terminal) => {
           if (!terminal && reason === 'created') {
             markTerminalsStale();
@@ -273,19 +290,28 @@ export const useSessionListController = ({
         removeContactLocally(contactId);
         return;
       }
-      if (contactId && (
-        reason === 'contact_created'
-        || reason === 'contact_updated'
-        || reason === 'contact_upserted'
-      )) {
-        markContactsStale();
+      if (payload.contact) {
+        applyRealtimeContactSnapshot(payload.contact);
+        return;
+      }
+      if (contactId) {
         void refreshContactById(contactId).then((contact) => {
-          if (!contact) {
-            void loadContactsAction();
+          if (contact) {
+            return;
+          }
+          if (
+            CONTACT_CREATE_LIKE_REASONS.has(reason)
+            || CONTACT_UPDATE_LIKE_REASONS.has(reason)
+          ) {
+            markContactsStale();
+            if (CONTACT_CREATE_LIKE_REASONS.has(reason)) {
+              void loadContactsAction();
+            }
           }
         });
         return;
       }
+      markContactsStale();
       void loadContactsAction();
     },
   });
@@ -299,12 +325,23 @@ export const useSessionListController = ({
         removeProjectLocally(projectId);
         return;
       }
-      if ((reason === 'project_created' || reason === 'project_updated') && projectId) {
-        markProjectsStale({ projectId });
+      if (payload.project) {
+        applyRealtimeProjectSnapshot(payload.project);
+        return;
+      }
+      if (projectId) {
         void refreshProjectById(projectId).then((project) => {
-          if (!project) {
-            markProjectsStale();
-            void loadProjects();
+          if (project) {
+            return;
+          }
+          markProjectsStale({ projectId });
+          if (
+            PROJECT_CREATE_LIKE_REASONS.has(reason)
+            || PROJECT_UPDATE_LIKE_REASONS.has(reason)
+          ) {
+            if (PROJECT_CREATE_LIKE_REASONS.has(reason)) {
+              void loadProjects();
+            }
           }
         });
         return;
@@ -323,12 +360,23 @@ export const useSessionListController = ({
         removeRemoteConnectionLocally(connectionId);
         return;
       }
-      if ((reason === 'remote_connection_created' || reason === 'remote_connection_updated') && connectionId) {
-        markRemoteConnectionsStale({ connectionId });
+      if (payload.connection) {
+        applyRealtimeRemoteConnectionSnapshot(payload.connection);
+        return;
+      }
+      if (connectionId) {
         void refreshRemoteConnectionById(connectionId).then((connection) => {
-          if (!connection) {
-            markRemoteConnectionsStale();
-            void loadRemoteConnections();
+          if (connection) {
+            return;
+          }
+          markRemoteConnectionsStale({ connectionId });
+          if (
+            REMOTE_CONNECTION_CREATE_LIKE_REASONS.has(reason)
+            || REMOTE_CONNECTION_UPDATE_LIKE_REASONS.has(reason)
+          ) {
+            if (REMOTE_CONNECTION_CREATE_LIKE_REASONS.has(reason)) {
+              void loadRemoteConnections();
+            }
           }
         });
         return;
@@ -347,12 +395,23 @@ export const useSessionListController = ({
         removeSessionLocally(sessionId);
         return;
       }
-      if ((reason === 'session_created' || reason === 'session_updated') && sessionId) {
-        markSessionsStale({ sessionId });
+      if (payload.session) {
+        applyRealtimeSessionSnapshot(payload.session);
+        return;
+      }
+      if (sessionId) {
         void refreshSessionById(sessionId).then((session) => {
-          if (!session) {
-            markSessionsStale();
-            void loadSessions({ silent: true });
+          if (session) {
+            return;
+          }
+          markSessionsStale({ sessionId });
+          if (
+            SESSION_CREATE_LIKE_REASONS.has(reason)
+            || SESSION_UPDATE_LIKE_REASONS.has(reason)
+          ) {
+            if (SESSION_CREATE_LIKE_REASONS.has(reason)) {
+              void loadSessions({ silent: true });
+            }
           }
         });
         return;

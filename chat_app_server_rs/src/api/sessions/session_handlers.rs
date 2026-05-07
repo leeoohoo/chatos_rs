@@ -178,6 +178,7 @@ pub(super) async fn create_session(
                 "session_created",
                 Some(saved.id.as_str()),
                 Some(project_id.as_str()),
+                Some(saved.clone()),
             );
             (
                 StatusCode::CREATED,
@@ -224,6 +225,7 @@ pub(super) async fn update_session(
                 "session_updated",
                 Some(session.id.as_str()),
                 Some(project_id.as_str()),
+                Some(session.clone()),
             );
             (
                 StatusCode::OK,
@@ -248,7 +250,13 @@ pub(super) async fn delete_session(
 
     match memory_server_client::delete_session(&id).await {
         Ok(true) => {
-            publish_sessions_updated(auth.user_id.as_str(), "session_deleted", Some(id.as_str()), None);
+            publish_sessions_updated(
+                auth.user_id.as_str(),
+                "session_deleted",
+                Some(id.as_str()),
+                None,
+                None,
+            );
             (
                 StatusCode::OK,
                 Json(serde_json::json!({"success": true, "message": "对话线程已归档"})),

@@ -8,6 +8,7 @@ const WAITABLE_REALTIME_CONNECTION_STATES = new Set<RealtimeConnectionState>([
   'idle',
   'connecting',
   'disconnected',
+  'error',
 ]);
 
 export const getRealtimeConnectionStateSnapshot = (): RealtimeConnectionState => {

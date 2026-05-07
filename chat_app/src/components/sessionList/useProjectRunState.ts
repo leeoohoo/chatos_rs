@@ -21,6 +21,7 @@ import {
   markProjectRunnerContactRowsStale,
   markProjectRunnerScriptStateStale,
   normalizeProjectRunnerRootPath,
+  patchProjectRunnerScriptStateSnapshot,
   readProjectRunnerErrorMessage,
   resolveProjectRuntimeTerminal,
 } from '../../lib/domain/projectRunner';
@@ -253,6 +254,46 @@ const loadProjectRunScriptDetails = async (
   }
 };
 
+const resolveProjectRunScriptSnapshotDetails = (
+  apiClient: ApiClient,
+  project: Project,
+  payload: RealtimeProjectRunCatalogPayloadWrapper,
+): Partial<ProjectRunStateDetails> | null => {
+  const hasRootMissing = typeof payload.root_missing === 'boolean';
+  const hasRunnerScriptExists = typeof payload.runner_script_exists === 'boolean';
+  if (!hasRootMissing && !hasRunnerScriptExists) {
+    return null;
+  }
+
+  if (hasRunnerScriptExists && project.rootPath) {
+    patchProjectRunnerScriptStateSnapshot(
+      apiClient,
+      project.rootPath,
+      payload.runner_script_exists === true,
+    );
+  }
+
+  const next: Partial<ProjectRunStateDetails> = {
+    runnerScriptLoading: false,
+  };
+
+  if (hasRunnerScriptExists) {
+    next.runnerScriptExists = payload.runner_script_exists === true;
+    next.runnerRootMissing = false;
+    next.runnerScriptError = null;
+  }
+
+  if (hasRootMissing) {
+    next.runnerRootMissing = payload.root_missing === true;
+    next.runnerScriptError = payload.root_missing === true ? '项目目录不存在，请检查项目路径' : null;
+    if (payload.root_missing === true) {
+      next.runnerScriptExists = false;
+    }
+  }
+
+  return next;
+};
+
 const resolveProjectRunState = async (
   apiClient: ApiClient,
   project: Project,
@@ -466,7 +507,33 @@ export const useProjectRunState = ({
       if (!payloadProjectId || !projectIds.has(payloadProjectId)) {
         return;
       }
-      void refreshProjectRunScriptState(payloadProjectId);
+      const project = (projects || []).find((item) => item.id === payloadProjectId);
+      if (!project) {
+        return;
+      }
+      const nextScriptDetails = resolveProjectRunScriptSnapshotDetails(apiClient, project, event.payload);
+      if (!nextScriptDetails) {
+        void refreshProjectRunScriptState(payloadProjectId);
+        return;
+      }
+      setProjectRunStateById((prev) => {
+        const currentDetails = projectRunStateDetailsRef.current[payloadProjectId]
+          || createInitialProjectRunStateDetails();
+        const nextDetails: ProjectRunStateDetails = {
+          ...currentDetails,
+          ...nextScriptDetails,
+        };
+        const next = {
+          ...prev,
+          [payloadProjectId]: buildProjectRunViewState(project, nextDetails),
+        };
+        projectRunStateRef.current = next;
+        projectRunStateDetailsRef.current = {
+          ...projectRunStateDetailsRef.current,
+          [payloadProjectId]: nextDetails,
+        };
+        return next;
+      });
       return;
     }
 

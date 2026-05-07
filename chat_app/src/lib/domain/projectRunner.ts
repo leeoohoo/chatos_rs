@@ -340,6 +340,21 @@ export const markProjectRunnerScriptStateStale = (
   });
 };
 
+export const patchProjectRunnerScriptStateSnapshot = (
+  client: RunnerFilesystemClient,
+  rootPath: string,
+  exists: boolean,
+): boolean => {
+  const normalizedRootPath = normalizeProjectRunnerRootPath(rootPath);
+  if (!normalizedRootPath) {
+    return exists;
+  }
+  return setProjectRunnerScriptCacheEntry(client, normalizedRootPath, {
+    exists,
+    stale: false,
+  });
+};
+
 export const hasProjectRunnerScript = async (
   client: RunnerFilesystemClient,
   rootPath: string,

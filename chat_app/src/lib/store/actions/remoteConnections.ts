@@ -1,5 +1,6 @@
 import type { RemoteConnection } from '../../../types';
 import type ApiClient from '../../api/client';
+import { ApiRequestError } from '../../api/client/shared';
 import { normalizeRemoteConnection } from '../helpers/remoteConnections';
 import { mergeSessionRuntimeIntoMetadata } from '../helpers/sessionRuntime';
 import type { ChatStoreDraft, ChatStoreGet, ChatStoreSet } from '../types';
@@ -264,6 +265,22 @@ export function createRemoteConnectionActions({ set, get, client, getUserIdParam
   };
 
   return {
+    applyRealtimeRemoteConnectionSnapshot: (connectionPayload: RemoteConnection | unknown) => {
+      const connection = normalizeRemoteConnection(connectionPayload);
+      const normalizedConnectionId = normalizeConnectionId(connection?.id || '');
+      if (!normalizedConnectionId) {
+        return null;
+      }
+      upsertRemoteConnectionCaches(connection);
+      set((state: ChatStoreDraft) => {
+        state.remoteConnections = upsertRemoteConnection(state.remoteConnections, connection);
+        if (state.currentRemoteConnectionId === normalizedConnectionId) {
+          state.currentRemoteConnection = connection;
+        }
+      });
+      return connection;
+    },
+
     loadRemoteConnections: async (options?: LoadRemoteConnectionsOptions) => {
       try {
         const uid = getUserIdParam();
@@ -501,6 +518,24 @@ export function createRemoteConnectionActions({ set, get, client, getUserIdParam
         });
         return connection;
       } catch (error) {
+        if (error instanceof ApiRequestError && error.status === 404) {
+          const shouldClearSessionRuntime = get().currentRemoteConnectionId === connectionId;
+          removeRemoteConnectionCaches(connectionId);
+          set((state: ChatStoreDraft) => {
+            state.remoteConnections = removeRemoteConnection(state.remoteConnections, connectionId);
+            if (state.currentRemoteConnectionId === connectionId) {
+              state.currentRemoteConnectionId = null;
+              state.currentRemoteConnection = null;
+              if (state.activePanel === 'remote_terminal' || state.activePanel === 'remote_sftp') {
+                state.activePanel = 'chat';
+              }
+            }
+          });
+          if (shouldClearSessionRuntime) {
+            persistRemoteConnectionToCurrentSession(null);
+          }
+          return null;
+        }
         console.error('Failed to refresh remote connection detail:', error);
         return null;
       }

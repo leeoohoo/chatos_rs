@@ -18,7 +18,8 @@ mod support;
 
 use self::mcp_server_handlers::{add_mcp_server, delete_mcp_server, list_mcp_servers};
 use self::message_handlers::{
-    create_session_message, get_session_messages, get_session_turn_process_messages,
+    create_session_message, get_session_messages, get_session_turn_display_messages,
+    get_session_turn_display_messages_by_turn, get_session_turn_process_messages,
     get_session_turn_process_messages_by_turn, get_session_turn_runtime_context_by_turn,
     get_session_turn_runtime_context_latest,
 };
@@ -57,8 +58,16 @@ pub fn router() -> Router {
             get(get_session_turn_process_messages),
         )
         .route(
+            "/api/conversations/:conversation_id/turns/:user_message_id/messages",
+            get(get_session_turn_display_messages),
+        )
+        .route(
             "/api/conversations/:conversation_id/turns/by-turn/:turn_id/process",
             get(get_session_turn_process_messages_by_turn),
+        )
+        .route(
+            "/api/conversations/:conversation_id/turns/by-turn/:turn_id/messages",
+            get(get_session_turn_display_messages_by_turn),
         )
         .route(
             "/api/conversations/:conversation_id/turns/latest/runtime-context",

@@ -3,7 +3,10 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
 
+use crate::core::messages::message_turn_id;
+use crate::models::message::Message;
 use crate::services::realtime::publish_chat_stream_event;
+use crate::services::memory_server_client;
 use crate::utils::abort_registry;
 use crate::utils::events::Events;
 use crate::utils::sse::SseSender;
@@ -118,33 +121,162 @@ pub fn send_complete_event(sink: &ChatEventSink, result: &Value) {
     );
 }
 
-pub fn send_cancelled_event(sink: &ChatEventSink) {
+async fn resolve_persisted_turn_messages(
+    conversation_id: &str,
+    conversation_turn_id: Option<&str>,
+    user_message_id: Option<&str>,
+) -> Option<(Message, Option<Message>)> {
+    let turn_id = conversation_turn_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+
+    let messages = memory_server_client::list_messages(conversation_id, None, 0, true)
+        .await
+        .ok()?;
+    if messages.is_empty() {
+        return None;
+    }
+
+    let user_message = if let Some(user_id) = user_message_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        messages
+            .iter()
+            .find(|message| message.id == user_id && message.role == "user")
+            .cloned()
+    } else {
+        None
+    }
+    .or_else(|| {
+        messages
+            .iter()
+            .find(|message| message.role == "user" && message_turn_id(message) == Some(turn_id))
+            .cloned()
+    })?;
+
+    let assistant_message = messages
+        .iter()
+        .rev()
+        .find(|message| message.role == "assistant" && message_turn_id(message) == Some(turn_id))
+        .cloned();
+
+    Some((user_message, assistant_message))
+}
+
+pub async fn enrich_chat_result_with_persisted_messages(
+    conversation_id: &str,
+    conversation_turn_id: Option<&str>,
+    user_message_id: Option<&str>,
+    result: Value,
+) -> Value {
+    let Some((user_message, assistant_message)) = resolve_persisted_turn_messages(
+        conversation_id,
+        conversation_turn_id,
+        user_message_id,
+    )
+    .await else {
+        return result;
+    };
+
+    let mut map = match result {
+        Value::Object(map) => map,
+        other => {
+            let mut map = serde_json::Map::new();
+            map.insert("value".to_string(), other);
+            map
+        }
+    };
+
+    map.insert(
+        "persisted_user_message".to_string(),
+        serde_json::to_value(&user_message).unwrap_or(Value::Null),
+    );
+    map.insert(
+        "persisted_user_message_id".to_string(),
+        Value::String(user_message.id.clone()),
+    );
+    if let Some(assistant_message) = assistant_message {
+        map.insert(
+            "persisted_assistant_message".to_string(),
+            serde_json::to_value(&assistant_message).unwrap_or(Value::Null),
+        );
+        map.insert(
+            "persisted_assistant_message_id".to_string(),
+            Value::String(assistant_message.id.clone()),
+        );
+    }
+
+    Value::Object(map)
+}
+
+pub async fn build_chat_turn_persisted_messages_payload(
+    conversation_id: &str,
+    conversation_turn_id: Option<&str>,
+    user_message_id: Option<&str>,
+) -> Option<Value> {
+    enrich_chat_result_with_persisted_messages(
+        conversation_id,
+        conversation_turn_id,
+        user_message_id,
+        Value::Object(serde_json::Map::new()),
+    )
+    .await
+    .as_object()
+    .cloned()
+    .map(Value::Object)
+}
+
+pub fn send_cancelled_event(sink: &ChatEventSink, result: Option<&Value>) {
+    let mut payload = serde_json::Map::new();
+    payload.insert(
+        "type".to_string(),
+        Value::String(Events::CANCELLED.to_string()),
+    );
+    payload.insert(
+        "timestamp".to_string(),
+        Value::String(crate::core::time::now_rfc3339()),
+    );
+    if let Some(result) = result {
+        payload.insert("result".to_string(), result.clone());
+    }
     sink.send_json_event(
         "chat.turn.cancelled",
         Events::CANCELLED,
-        json!({ "type": Events::CANCELLED, "timestamp": crate::core::time::now_rfc3339() }),
+        Value::Object(payload),
     );
 }
 
-pub fn send_error_event(sink: &ChatEventSink, error: &str) {
+pub fn send_error_event(sink: &ChatEventSink, error: &str, result: Option<&Value>) {
+    let mut payload = serde_json::Map::new();
+    payload.insert("type".to_string(), Value::String(Events::ERROR.to_string()));
+    payload.insert(
+        "timestamp".to_string(),
+        Value::String(crate::core::time::now_rfc3339()),
+    );
+    payload.insert("message".to_string(), Value::String(error.to_string()));
+    payload.insert(
+        "data".to_string(),
+        json!({
+            "error": error,
+            "message": error
+        }),
+    );
+    if let Some(result) = result {
+        payload.insert("result".to_string(), result.clone());
+    }
     sink.send_json_event(
         "chat.turn.failed",
         Events::ERROR,
-        json!({
-            "type": Events::ERROR,
-            "timestamp": crate::core::time::now_rfc3339(),
-            "message": error,
-            "data": {
-                "error": error,
-                "message": error
-            }
-        }),
+        Value::Object(payload),
     );
 }
 
-pub fn handle_chat_result(
+pub async fn handle_chat_result(
     sink: &ChatEventSink,
     session_id: &str,
+    conversation_turn_id: Option<&str>,
+    user_message_id: Option<&str>,
     chunk_sent: Option<&Arc<AtomicBool>>,
     streamed_content: Option<&Arc<Mutex<String>>>,
     result: Result<Value, String>,
@@ -155,7 +287,13 @@ pub fn handle_chat_result(
         Ok(res) => {
             if abort_registry::is_aborted(session_id) {
                 on_cancelled();
-                send_cancelled_event(sink);
+                let persisted_result = build_chat_turn_persisted_messages_payload(
+                    session_id,
+                    conversation_turn_id,
+                    user_message_id,
+                )
+                .await;
+                send_cancelled_event(sink, persisted_result.as_ref());
                 return false;
             }
 
@@ -169,10 +307,22 @@ pub fn handle_chat_result(
         Err(err) => {
             if abort_registry::is_aborted(session_id) {
                 on_cancelled();
-                send_cancelled_event(sink);
+                let persisted_result = build_chat_turn_persisted_messages_payload(
+                    session_id,
+                    conversation_turn_id,
+                    user_message_id,
+                )
+                .await;
+                send_cancelled_event(sink, persisted_result.as_ref());
             } else {
                 on_error(err.as_str());
-                send_error_event(sink, &err);
+                let persisted_result = build_chat_turn_persisted_messages_payload(
+                    session_id,
+                    conversation_turn_id,
+                    user_message_id,
+                )
+                .await;
+                send_error_event(sink, &err, persisted_result.as_ref());
             }
             false
         }

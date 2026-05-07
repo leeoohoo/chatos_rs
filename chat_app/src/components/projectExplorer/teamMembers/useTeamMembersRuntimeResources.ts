@@ -256,9 +256,13 @@ export const useTeamMembersRuntimeResources = ({
   useConversationSummariesRealtime({
     sessionId: conversation.selectedProjectSession?.id || null,
     enabled: Boolean(conversation.selectedProjectSession?.id),
-    onEvent: async () => {
+    onEvent: async (payload) => {
       const selectedSessionId = conversation.selectedProjectSession?.id || null;
       if (!selectedSessionId) {
+        return;
+      }
+      if (Array.isArray(payload?.items)) {
+        summary.applyRealtimeSessionSummaries(selectedSessionId, payload);
         return;
       }
       summary.markSessionSummariesStale(selectedSessionId);

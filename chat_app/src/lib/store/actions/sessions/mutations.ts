@@ -46,6 +46,42 @@ export function createSessionMutationActions({
   };
 
   return {
+    applyRealtimeSessionSnapshot: (sessionPayload: Session | unknown) => {
+      const updatedSession = normalizeSession(sessionPayload);
+      const normalizedSessionId = String(updatedSession?.id || '').trim();
+      if (!normalizedSessionId) {
+        return null;
+      }
+      upsertSessionCaches(client, updatedSession);
+      const selectionFromMetadata = readSessionAiSelectionFromMetadata(updatedSession.metadata);
+      set((state: ChatStoreDraft) => {
+        state.sessions = normalizeTrackedSessions(
+          [
+            updatedSession,
+            ...(state.sessions || []).filter((session: Session) => session.id !== normalizedSessionId),
+          ],
+          state.contacts || [],
+        );
+        if (state.currentSessionId === normalizedSessionId) {
+          state.currentSession = updatedSession;
+          if (selectionFromMetadata) {
+            state.selectedModelId = selectionFromMetadata.selectedModelId ?? null;
+            state.selectedAgentId = selectionFromMetadata.selectedAgentId ?? null;
+          }
+        }
+        if (selectionFromMetadata) {
+          if (!state.sessionAiSelectionBySession) {
+            state.sessionAiSelectionBySession = {};
+          }
+          state.sessionAiSelectionBySession[normalizedSessionId] = {
+            selectedModelId: selectionFromMetadata.selectedModelId ?? null,
+            selectedAgentId: selectionFromMetadata.selectedAgentId ?? null,
+          };
+        }
+      });
+      return updatedSession;
+    },
+
     updateSession: async (sessionId: string, updates: Partial<Session>) => {
       try {
         const updatesRecord = updates as Partial<Session> & { description?: string | null };

@@ -15,7 +15,8 @@ use crate::core::session_access::{ensure_owned_session, map_session_access_error
 
 use super::contracts::{CreateMessageRequest, PageQuery};
 use super::history::{
-    build_turn_process_messages, compact_messages_for_display, find_user_index_by_turn_id,
+    build_turn_display_messages, build_turn_process_messages, compact_messages_for_display,
+    find_user_index_by_turn_id,
     parse_bool_query_flag,
 };
 use super::support::list_all_session_messages;
@@ -141,6 +142,43 @@ pub(super) async fn get_session_turn_process_messages(
     }
 }
 
+pub(super) async fn get_session_turn_display_messages(
+    auth: AuthUser,
+    Path((conversation_id, user_message_id)): Path<(String, String)>,
+) -> (StatusCode, Json<Value>) {
+    if let Err(err) = ensure_owned_session(&conversation_id, &auth).await {
+        return map_session_access_error(err);
+    }
+    let result = list_all_session_messages(&conversation_id).await;
+
+    match result {
+        Ok(messages) => {
+            let user_index = messages
+                .iter()
+                .position(|message| message.id == user_message_id && message.role == "user");
+
+            let Some(user_index) = user_index else {
+                return (StatusCode::OK, Json(Value::Array(Vec::new())));
+            };
+
+            let turn_messages = build_turn_display_messages(&messages, user_index);
+            let out: Vec<Value> = turn_messages
+                .into_iter()
+                .map(|message| {
+                    serde_json::to_value(MessageOut::from(message)).unwrap_or(Value::Null)
+                })
+                .collect();
+            (StatusCode::OK, Json(Value::Array(out)))
+        }
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(
+                serde_json::json!({"error": "Failed to get turn display messages", "detail": err}),
+            ),
+        ),
+    }
+}
+
 pub(super) async fn get_session_turn_process_messages_by_turn(
     auth: AuthUser,
     Path((conversation_id, turn_id)): Path<(String, String)>,
@@ -169,6 +207,39 @@ pub(super) async fn get_session_turn_process_messages_by_turn(
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(
                 serde_json::json!({"error": "Failed to get turn process messages", "detail": err}),
+            ),
+        ),
+    }
+}
+
+pub(super) async fn get_session_turn_display_messages_by_turn(
+    auth: AuthUser,
+    Path((conversation_id, turn_id)): Path<(String, String)>,
+) -> (StatusCode, Json<Value>) {
+    if let Err(err) = ensure_owned_session(&conversation_id, &auth).await {
+        return map_session_access_error(err);
+    }
+    let result = list_all_session_messages(&conversation_id).await;
+
+    match result {
+        Ok(messages) => {
+            let Some(user_index) = find_user_index_by_turn_id(&messages, &turn_id) else {
+                return (StatusCode::OK, Json(Value::Array(Vec::new())));
+            };
+
+            let turn_messages = build_turn_display_messages(&messages, user_index);
+            let out: Vec<Value> = turn_messages
+                .into_iter()
+                .map(|message| {
+                    serde_json::to_value(MessageOut::from(message)).unwrap_or(Value::Null)
+                })
+                .collect();
+            (StatusCode::OK, Json(Value::Array(out)))
+        }
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(
+                serde_json::json!({"error": "Failed to get turn display messages", "detail": err}),
             ),
         ),
     }

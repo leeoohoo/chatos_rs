@@ -4,6 +4,7 @@ mod types;
 
 pub use hub::{
     publish_contacts_updated,
+    publish_conversation_summaries_updated,
     publish_notepad_updated,
     publish_project_members_updated,
     publish_project_change_summary_updated, publish_review_repair_completed,

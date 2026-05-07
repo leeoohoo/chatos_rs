@@ -120,6 +120,7 @@ pub(super) async fn delete_terminal(
                     Some(id.as_str()),
                     terminal_project_id.as_deref(),
                     "deleted",
+                    None,
                 );
             }
             (

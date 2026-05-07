@@ -143,6 +143,7 @@ async fn create_contact(
                     "contact_upserted"
                 },
                 Some(result.contact.id.as_str()),
+                Some(result.contact.clone()),
             );
             let status = if result.created {
                 StatusCode::CREATED
@@ -165,7 +166,12 @@ async fn delete_contact(
     let user_id = auth.user_id.clone();
     match memory_server_client::delete_memory_contact(contact_id.as_str()).await {
         Ok(true) => {
-            publish_contacts_updated(user_id.as_str(), "contact_deleted", Some(contact_id.as_str()));
+            publish_contacts_updated(
+                user_id.as_str(),
+                "contact_deleted",
+                Some(contact_id.as_str()),
+                None,
+            );
             (StatusCode::OK, Json(json!({"success": true})))
         }
         Ok(false) => (
